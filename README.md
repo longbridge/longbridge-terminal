@@ -1,6 +1,6 @@
 # Longbridge Terminal
 
-An _experimental_ terminal-based app of [Longbridge](https://longportapp.com).
+An _experimental_ terminal-based app of [Longbridge](https://longbridge.com).
 
 We build this app to help us in development of the cross-platform Rust core library (named: Engine) of Longbridge.
 
@@ -26,7 +26,7 @@ This is also for making a fun, so we can watch the stock market data in the term
 If you'r on macOS or Linux, just run the following command in your terminal:
 
 ```bash
-curl -sSL https://github.com/longbridgeapp/longbridge-terminal/raw/main/install | sh
+curl -sSL https://github.com/longbridge/longbridge-terminal/raw/main/install | sh
 ```
 
 Then you will get `longbridge` command in your terminal.
