@@ -2,7 +2,7 @@
 set -u
 type curl > /dev/null || { echo "curl: not found"; exit 1; }
 
-repo='longbridgeapp/longbridge-terminal'
+repo='longbridge/longbridge-terminal'
 
 get_latest_release() {
   curl --silent "https://api.github.com/repos/$repo/releases/latest" | # Get latest release from GitHub api
