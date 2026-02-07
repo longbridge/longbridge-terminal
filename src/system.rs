@@ -1100,7 +1100,7 @@ fn stock_detail(
         .constraints([
             Constraint::Length(column_height),
             Constraint::Length(1),
-            Constraint::Min(20),
+            Constraint::Min(19),
         ])
         .direction(Direction::Vertical)
         .split(rect);
