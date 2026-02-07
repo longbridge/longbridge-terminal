@@ -460,3 +460,33 @@ pub struct StaticInfo {
     pub stock_derivatives: Vec<i32>,     // Supported derivative types
     pub board: String,                   // Board
 }
+
+/// Trade direction
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TradeDirection {
+    Neutral,
+    Up,
+    Down,
+}
+
+/// Single trade record
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TradeData {
+    pub price: Decimal,
+    pub volume: i64,
+    pub timestamp: i64,
+    pub trade_type: String,
+    pub direction: TradeDirection,
+}
+
+impl Default for TradeData {
+    fn default() -> Self {
+        Self {
+            price: Decimal::ZERO,
+            volume: 0,
+            timestamp: 0,
+            trade_type: String::new(),
+            direction: TradeDirection::Neutral,
+        }
+    }
+}

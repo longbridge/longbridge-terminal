@@ -279,21 +279,20 @@ pub async fn run(
                              stock.quote.timestamp = quote.timestamp.unix_timestamp();
                              // prev_close keeps original value or obtained from elsewhere
 
-                             // Update trade_status based on market trading hours
-                             // if not available in push data
-                             let market = counter.region();
-                             if market.is_trading() {
-                                 if stock.trade_status == crate::data::TradeStatus::STOP
-                                     || stock.trade_status == crate::data::TradeStatus::UsStop
-                                 {
-                                     stock.trade_status = crate::data::TradeStatus::Normal;
+                             // Update trade_status from SDK (more accurate than our own judgment)
+                             stock.trade_status = match quote.trade_status {
+                                 longport::quote::TradeStatus::Normal => crate::data::TradeStatus::Normal,
+                                 longport::quote::TradeStatus::Halted => crate::data::TradeStatus::Halted,
+                                 longport::quote::TradeStatus::Delisted => crate::data::TradeStatus::Delisted,
+                                 _ => {
+                                     // For other statuses (closed, pre/post market, etc.)
+                                     let market = counter.region();
+                                     match market {
+                                         crate::data::Market::US => crate::data::TradeStatus::UsStop,
+                                         _ => crate::data::TradeStatus::STOP,
+                                     }
                                  }
-                             } else {
-                                 stock.trade_status = match market {
-                                     crate::data::Market::US => crate::data::TradeStatus::UsStop,
-                                     _ => crate::data::TradeStatus::STOP,
-                                 };
-                             }
+                             };
                          });
                      }
                      PushEventDetail::Depth(depth) => {
@@ -458,7 +457,7 @@ fn handle_global_keys(
     update_tx: mpsc::UnboundedSender<CommandQueue>,
 ) {
     match event {
-        ctrl!('c') => std::process::exit(0),
+        ctrl!('c') => crate::widgets::Terminal::graceful_exit(0),
         key!('1') if state != AppState::Watchlist => {
             app.world
                 .insert_resource(NextState(Some(AppState::Watchlist)));
@@ -514,7 +513,7 @@ fn handle_global_keys(
         key!('R') | shift!('R') => {
             match state {
                 AppState::Portfolio => {
-                    // TODO: refresh portfolio
+                    system::refresh_portfolio();
                 }
                 AppState::Watchlist => {
                     system::refresh_watchlist(update_tx.clone());

@@ -10,3 +10,10 @@ pub async fn fetch_static_info(symbols: &[String]) -> Result<Vec<longport::quote
     let info = ctx.static_info(symbols.iter().map(|s| s.as_str())).await?;
     Ok(info)
 }
+
+/// Fetch recent trades for a symbol
+pub async fn fetch_trades(symbol: &str, count: usize) -> Result<Vec<longport::quote::Trade>> {
+    let ctx = QUOTE_CTX.get().ok_or_else(|| anyhow::anyhow!("QuoteContext not initialized"))?;
+    let trades = ctx.trades(symbol, count).await?;
+    Ok(trades)
+}

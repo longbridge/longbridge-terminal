@@ -12,6 +12,7 @@ pub struct Stock {
     pub quote: QuoteData,
     pub depth: DepthData,
     pub static_info: Option<StaticInfo>,  // Static info (market cap, shares, etc.)
+    pub trades: Vec<TradeData>,           // Recent trades
 }
 
 impl Default for Stock {
@@ -24,6 +25,7 @@ impl Default for Stock {
             quote: QuoteData::default(),
             depth: DepthData::default(),
             static_info: None,
+            trades: Vec::new(),
         }
     }
 }
@@ -38,6 +40,7 @@ impl Stock {
             quote: QuoteData::default(),
             depth: DepthData::default(),
             static_info: None,
+            trades: Vec::new(),
         }
     }
 
@@ -94,6 +97,24 @@ impl Stock {
                 price: d.price.unwrap_or_default(),
                 volume: d.volume,
                 order_num: d.order_num,
+            })
+            .collect();
+    }
+
+    /// Update trades data (from longport SDK)
+    pub fn update_from_trades(&mut self, trades: &[longport::quote::Trade]) {
+        self.trades = trades
+            .iter()
+            .map(|t| TradeData {
+                price: t.price,
+                volume: t.volume,
+                timestamp: t.timestamp.unix_timestamp(),
+                trade_type: t.trade_type.clone(),
+                direction: match t.direction {
+                    longport::quote::TradeDirection::Neutral => super::types::TradeDirection::Neutral,
+                    longport::quote::TradeDirection::Down => super::types::TradeDirection::Down,
+                    longport::quote::TradeDirection::Up => super::types::TradeDirection::Up,
+                },
             })
             .collect();
     }

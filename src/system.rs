@@ -9,11 +9,10 @@ use bevy_ecs::{
 use once_cell::sync::Lazy;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{
-        Block, BorderType, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, TableState,
-        Tabs,
+        Block, BorderType, Borders, Cell, List, ListItem, Paragraph, Row, Table, TableState, Tabs,
     },
     Frame,
 };
@@ -175,6 +174,117 @@ pub async fn fetch_holdings() -> anyhow::Result<Vec<Counter>> {
             Ok(vec![])
         }
     }
+}
+
+// 持仓信息
+#[derive(Clone, Debug)]
+pub struct PositionInfo {
+    pub symbol: Counter,
+    pub symbol_name: String,
+    pub quantity: Decimal,
+    pub available_quantity: Decimal,
+    pub cost_price: Decimal,
+    pub current_price: Decimal,
+    pub market_value: Decimal,
+    pub profit_loss: Decimal,
+    pub profit_loss_percent: Decimal,
+}
+
+// 获取 Portfolio 数据
+pub async fn fetch_portfolio_data() -> anyhow::Result<(Vec<PositionInfo>, Decimal, Decimal)> {
+    let ctx = crate::openapi::trade();
+
+    // 获取账户余额
+    let balance = match ctx.account_balance(None).await {
+        Ok(balances) => balances
+            .iter()
+            .fold(Decimal::ZERO, |acc, b| acc + b.total_cash),
+        Err(e) => {
+            tracing::error!("获取账户余额失败: {}", e);
+            Decimal::ZERO
+        }
+    };
+
+    // 获取持仓
+    let mut positions = match ctx.stock_positions(None).await {
+        Ok(response) => {
+            let mut positions = Vec::new();
+            for channel in &response.channels {
+                for position in &channel.positions {
+                    let counter: Counter = position.symbol.parse().unwrap();
+                    positions.push(PositionInfo {
+                        symbol: counter,
+                        symbol_name: position.symbol_name.clone(),
+                        quantity: position.quantity,
+                        available_quantity: position.available_quantity,
+                        cost_price: Decimal::ZERO, // 将在下面通过行情计算
+                        current_price: Decimal::ZERO,
+                        market_value: Decimal::ZERO,
+                        profit_loss: Decimal::ZERO,
+                        profit_loss_percent: Decimal::ZERO,
+                    });
+                }
+            }
+            positions
+        }
+        Err(e) => {
+            tracing::error!("获取持仓失败: {}", e);
+            vec![]
+        }
+    };
+
+    // 获取实时行情来计算市值和盈亏
+    if !positions.is_empty() {
+        let quote_ctx = crate::openapi::quote();
+        let symbols: Vec<String> = positions.iter().map(|p| p.symbol.to_string()).collect();
+
+        if let Ok(quotes) = quote_ctx.quote(&symbols).await {
+            for (pos, quote) in positions.iter_mut().zip(quotes.iter()) {
+                // 更新当前价格
+                pos.current_price = quote.last_done;
+
+                // 计算市值
+                pos.market_value = pos.quantity * pos.current_price;
+
+                // 从 STOCKS 缓存中获取成本价(如果有的话)
+                if let Some(_stock) = STOCKS.get(&pos.symbol) {
+                    // 注意: longport SDK 可能不直接提供成本价
+                    // 这里我们尝试从静态信息或其他来源获取
+                    // 临时使用开盘价作为参考
+                    pos.cost_price = quote.open;
+
+                    // 计算盈亏
+                    if pos.cost_price > Decimal::ZERO {
+                        let cost_total = pos.quantity * pos.cost_price;
+                        pos.profit_loss = pos.market_value - cost_total;
+                        pos.profit_loss_percent =
+                            (pos.profit_loss / cost_total * Decimal::from(100)).round_dp(2);
+                    }
+                } else {
+                    // 如果没有缓存,使用昨收价作为成本价的估算
+                    pos.cost_price = if quote.prev_close > Decimal::ZERO {
+                        quote.prev_close
+                    } else {
+                        quote.last_done
+                    };
+
+                    let cost_total = pos.quantity * pos.cost_price;
+                    if cost_total > Decimal::ZERO {
+                        pos.profit_loss = pos.market_value - cost_total;
+                        pos.profit_loss_percent =
+                            (pos.profit_loss / cost_total * Decimal::from(100)).round_dp(2);
+                    }
+                }
+            }
+        }
+    }
+
+    // 计算持仓总市值
+    let total_market_value = positions
+        .iter()
+        .fold(Decimal::ZERO, |acc, p| acc + p.market_value);
+
+    Ok((positions, balance, total_market_value))
 }
 
 // WebSocket 订阅管理（简化实现）
@@ -453,11 +563,18 @@ pub fn refresh_stock(counter: Counter) {
             // 异步获取静态信息
             if let Ok(infos) = crate::api::quote::fetch_static_info(&[counter.to_string()]).await {
                 if let Some(info) = infos.first() {
-                    STOCKS.modify(counter, |stock| {
+                    STOCKS.modify(counter.clone(), |stock| {
                         stock.update_from_static_info(info);
                     });
                 }
             }
+        }
+
+        // 获取成交记录
+        if let Ok(trades) = crate::api::quote::fetch_trades(&counter.to_string(), 50).await {
+            STOCKS.modify(counter.clone(), |stock| {
+                stock.update_from_trades(&trades);
+            });
         }
     });
 }
@@ -473,9 +590,40 @@ pub fn exit_stock() {
     });
 }
 
+// Portfolio 数据全局存储
+pub static PORTFOLIO_POSITIONS: Lazy<std::sync::RwLock<Vec<PositionInfo>>> =
+    Lazy::new(|| std::sync::RwLock::new(Vec::new()));
+pub static PORTFOLIO_BALANCE: Lazy<std::sync::RwLock<Decimal>> =
+    Lazy::new(|| std::sync::RwLock::new(Decimal::ZERO));
+pub static PORTFOLIO_MARKET_VALUE: Lazy<std::sync::RwLock<Decimal>> =
+    Lazy::new(|| std::sync::RwLock::new(Decimal::ZERO));
+
+// 刷新 Portfolio 数据
+pub fn refresh_portfolio() {
+    RT.get().unwrap().spawn(async move {
+        tracing::info!("开始刷新 Portfolio 数据...");
+        match fetch_portfolio_data().await {
+            Ok((positions, balance, market_value)) => {
+                tracing::info!(
+                    "成功获取 Portfolio: {} 个持仓, 余额: {}, 市值: {}",
+                    positions.len(),
+                    balance,
+                    market_value
+                );
+
+                *PORTFOLIO_POSITIONS.write().expect("poison") = positions;
+                *PORTFOLIO_BALANCE.write().expect("poison") = balance;
+                *PORTFOLIO_MARKET_VALUE.write().expect("poison") = market_value;
+            }
+            Err(e) => {
+                tracing::error!("获取 Portfolio 数据失败: {}", e);
+            }
+        }
+    });
+}
+
 pub fn enter_portfolio(_portfolio: Res<Portfolio>) {
-    // SignalApp mount 功能已移除，这里简化实现
-    // TODO: 如果需要，可以在这里添加 portfolio 初始化逻辑
+    refresh_portfolio();
 }
 
 pub fn exit_portfolio() {
@@ -726,33 +874,45 @@ fn stock_detail(
     _selected: usize,
 ) {
     fn price_spans(data: &crate::data::QuoteData, counter: &Counter) -> Vec<Span<'static>> {
-        let (last_done, increase, increase_percent) =
-            data.last_done.zip(data.prev_close).map_or_else(
-                || {
-                    (
-                        EMPTY_PLACEHOLDER.to_string(),
-                        EMPTY_PLACEHOLDER.to_string(),
-                        EMPTY_PLACEHOLDER.to_string(),
-                    )
-                },
-                |(last_done, prev_close)| {
-                    let prev_close = if prev_close == Decimal::ZERO {
-                        last_done
-                    } else {
-                        prev_close
-                    };
-                    let increase = last_done - prev_close;
-                    (
-                        last_done.format_quote_by_counter(counter),
-                        increase.format_quote_by_counter(counter),
-                        (increase / prev_close).format_percent(),
-                    )
-                },
-            );
+        // 优先使用 last_done，如果没有则使用 prev_close
+        let display_price = data
+            .last_done
+            .or(data.prev_close)
+            .filter(|&p| p > Decimal::ZERO);
+
+        let prev_close = data.prev_close.filter(|&p| p > Decimal::ZERO);
+
+        let (price_str, increase, increase_percent) = match (display_price, prev_close) {
+            (Some(price), Some(prev)) => {
+                let increase = price - prev;
+                (
+                    price.format_quote_by_counter(counter),
+                    increase.format_quote_by_counter(counter),
+                    (increase / prev).format_percent(),
+                )
+            }
+            (Some(price), None) => {
+                // 有价格但没有昨收，显示价格但不显示涨跌
+                (
+                    price.format_quote_by_counter(counter),
+                    EMPTY_PLACEHOLDER.to_string(),
+                    EMPTY_PLACEHOLDER.to_string(),
+                )
+            }
+            _ => {
+                // 都没有，显示占位符
+                (
+                    EMPTY_PLACEHOLDER.to_string(),
+                    EMPTY_PLACEHOLDER.to_string(),
+                    EMPTY_PLACEHOLDER.to_string(),
+                )
+            }
+        };
+
         let trend_style = styles::up(increase.sign());
         vec![
             Span::raw(" "),
-            Span::styled(last_done, trend_style),
+            Span::styled(price_str, trend_style),
             Span::raw(" ("),
             Span::styled(format!("{increase_percent}, {increase}"), trend_style),
             Span::raw(") "),
@@ -789,6 +949,35 @@ fn stock_detail(
             .unwrap_or_else(|| EMPTY_PLACEHOLDER.to_string())
     };
 
+    // Helper function to create ListItem with price and color based on prev_close
+    let price_item = |label: String, price_opt: Option<Decimal>| -> ListItem<'static> {
+        let prev_close = stock.quote.prev_close.filter(|&p| p > Decimal::ZERO);
+        let price = price_opt.filter(|&p| p > Decimal::ZERO);
+
+        match (price, prev_close) {
+            (Some(p), Some(prev)) => {
+                let price_str = p.format_quote_by_counter(counter);
+                let cmp = p.cmp(&prev);
+                let style = styles::up(cmp);
+                ListItem::new(Line::from(vec![
+                    Span::styled(format!("{label}: "), crate::ui::styles::label()),
+                    Span::styled(price_str, style),
+                ]))
+            }
+            (Some(p), None) => {
+                // 有价格但没有昨收，显示但不着色
+                let price_str = p.format_quote_by_counter(counter);
+                item(label, price_str)
+            }
+            (None, Some(prev)) => {
+                // 没有价格但有昨收，显示昨收但不着色
+                let price_str = prev.format_quote_by_counter(counter);
+                item(label, price_str)
+            }
+            _ => item(label, EMPTY_PLACEHOLDER),
+        }
+    };
+
     // Helper function to format u64
     let fmt_u64 = |val: u64| -> String {
         if val == 0 {
@@ -812,11 +1001,11 @@ fn stock_detail(
         ListItem::new(" "),
         item("交易状态".to_string(), stock.trade_status.label()),
         ListItem::new(" "),
-        item("开盘价".to_string(), fmt_decimal(stock.quote.open)),
+        price_item("开盘价".to_string(), stock.quote.open),
         item("昨收价".to_string(), fmt_decimal(stock.quote.prev_close)),
         ListItem::new(" "),
-        item("最高价".to_string(), fmt_decimal(stock.quote.high)),
-        item("最低价".to_string(), fmt_decimal(stock.quote.low)),
+        price_item("最高价".to_string(), stock.quote.high),
+        price_item("最低价".to_string(), stock.quote.low),
         item("均价".to_string(), EMPTY_PLACEHOLDER), // 需要计算
         ListItem::new(" "),
         item("成交量".to_string(), fmt_u64(stock.quote.volume)),
@@ -1009,14 +1198,35 @@ fn stock_detail(
         ]);
         frame.render_widget(Paragraph::new(ratio_bar), chunks[1]);
 
-        // 深度列表
-        let depth_lines: Vec<Line> = stock
+        // 深度列表：卖盘在上（倒序），买盘在下（正序）
+        let mut depth_lines: Vec<Line> = Vec::new();
+
+        // 卖盘（asks）- 倒序显示（从低到高）
+        let asks: Vec<Line> = stock
+            .depth
+            .asks
+            .iter()
+            .rev()
+            .take(10)
+            .map(|d| format_depth_line(d, counter, stock.quote.prev_close))
+            .collect();
+        depth_lines.extend(asks.into_iter().rev());
+
+        // 分隔线（可选）
+        if !stock.depth.asks.is_empty() && !stock.depth.bids.is_empty() {
+            depth_lines.push(Line::from("―".repeat(rect.width as usize)));
+        }
+
+        // 买盘（bids）- 正序显示（从高到低）
+        let bids: Vec<Line> = stock
             .depth
             .bids
             .iter()
             .take(10)
             .map(|d| format_depth_line(d, counter, stock.quote.prev_close))
             .collect();
+        depth_lines.extend(bids);
+
         frame.render_widget(Paragraph::new(Text::from(depth_lines)), chunks[2]);
     }
 
@@ -1080,7 +1290,7 @@ fn stock_detail(
         // 如果没有数据，显示提示信息
         if samples.is_empty() {
             frame.render_widget(
-                Paragraph::new("加载K线数据中...").alignment(Alignment::Center),
+                Paragraph::new("加载 K 线数据中...").alignment(Alignment::Center),
                 area,
             );
         } else {
@@ -1148,14 +1358,77 @@ fn stock_detail(
         }
     }
 
-    // 渲染交易记录区域（暂时显示占位符）
-    frame.render_widget(
-        Block::default()
-            .borders(Borders::LEFT)
-            .border_type(BorderType::Plain)
-            .title(" 成交记录 "),
-        chart_chunks[1],
-    );
+    // 渲染成交记录区域
+    {
+        let trades_area = chart_chunks[1];
+        frame.render_widget(
+            Block::default()
+                .borders(Borders::LEFT)
+                .border_type(BorderType::Plain)
+                .title(" 成交记录 "),
+            trades_area,
+        );
+
+        let inner_area = trades_area.inner(&Margin {
+            vertical: 1,
+            horizontal: 2,
+        });
+
+        if stock.trades.is_empty() {
+            // 显示加载提示
+            frame.render_widget(
+                Paragraph::new("加载成交记录中...").alignment(Alignment::Center),
+                inner_area,
+            );
+        } else {
+            // 格式化成交记录
+            let trade_lines: Vec<Line> = stock
+                .trades
+                .iter()
+                .take(inner_area.height as usize)
+                .map(|trade| {
+                    // 简化时间显示
+                    let time_str = time::OffsetDateTime::from_unix_timestamp(trade.timestamp)
+                        .ok()
+                        .and_then(|dt| {
+                            let format =
+                                time::format_description::parse("[hour]:[minute]:[second]").ok()?;
+                            dt.format(&format).ok()
+                        })
+                        .unwrap_or_else(|| "--:--:--".to_string());
+
+                    // 根据方向设置样式
+                    let (price_style, direction_symbol) = match trade.direction {
+                        crate::data::TradeDirection::Up => {
+                            (styles::up(std::cmp::Ordering::Greater), "↑")
+                        }
+                        crate::data::TradeDirection::Down => {
+                            (styles::up(std::cmp::Ordering::Less), "↓")
+                        }
+                        crate::data::TradeDirection::Neutral => (Style::default(), " "),
+                    };
+
+                    Line::from(vec![
+                        Span::styled(format!("{} ", time_str), crate::ui::styles::label()),
+                        Span::styled(direction_symbol, price_style),
+                        Span::styled(
+                            format!(" {:>8} ", trade.price.format_quote_by_counter(counter)),
+                            price_style,
+                        ),
+                        Span::styled(
+                            crate::ui::text::align_right(
+                                &crate::ui::text::unit(Decimal::from(trade.volume), 0),
+                                8,
+                            ),
+                            Style::default(),
+                        ),
+                    ])
+                })
+                .collect();
+
+            frame.render_widget(Paragraph::new(Text::from(trade_lines)), inner_area);
+        }
+    }
     //
     //     let _guard = RT.get().unwrap().enter();
     //     // SignalApp 已移除，简化实现
@@ -1787,26 +2060,36 @@ fn watch_group_table(
             static EMPTY: Lazy<Stock> = Lazy::new(Stock::default);
             let stock = stock.as_deref().unwrap_or(&EMPTY);
             let quote_data = &stock.quote;
-            let last_done = quote_data.last_done.unwrap_or_default();
-            let _last = last_dones.insert(counter.clone(), last_done);
-            // 计算涨跌幅
-            let (increase, increase_percent) = quote_data
+
+            // 优先使用 last_done，如果没有则使用 prev_close
+            let display_price = quote_data
                 .last_done
-                .zip(quote_data.prev_close)
-                .map(|(last, prev)| {
-                    let increase = last - prev;
-                    let percent = if prev != Decimal::ZERO {
-                        (increase / prev * Decimal::from(100)).round_dp(2)
-                    } else {
-                        Decimal::ZERO
-                    };
+                .or(quote_data.prev_close)
+                .filter(|&p| p > Decimal::ZERO)
+                .unwrap_or_default();
+
+            let _last = last_dones.insert(counter.clone(), display_price);
+
+            // 计算涨跌幅：如果有 last_done 用 last_done，否则用 prev_close（此时涨跌为0）
+            let prev_close = quote_data.prev_close.filter(|&p| p > Decimal::ZERO);
+            let current_price = quote_data
+                .last_done
+                .or(quote_data.prev_close)
+                .filter(|&p| p > Decimal::ZERO);
+
+            let (increase, increase_percent) = match (current_price, prev_close) {
+                (Some(price), Some(prev)) => {
+                    let increase = price - prev;
+                    let percent = (increase / prev * Decimal::from(100)).round_dp(2);
                     (increase, percent)
-                })
-                .unwrap_or((Decimal::ZERO, Decimal::ZERO));
+                }
+                _ => (Decimal::ZERO, Decimal::ZERO),
+            };
+
             // 价格和涨跌幅使用前景色，不使用背景色以避免干扰
             let style = styles::up(increase.sign());
             let trade_status_name = stock.trade_status.label();
-            let increase_percent = if stock.trade_status == TradeStatus::STOP
+            let increase_percent_str = if stock.trade_status == TradeStatus::STOP
                 || stock.trade_status == TradeStatus::UsStop
             {
                 trade_status_name.to_string()
@@ -1825,10 +2108,10 @@ fn watch_group_table(
                 Span::raw(counter.code().to_string()),
             ])));
             cells.push(Cell::from(stock.name.to_string()));
-            cells.push(Cell::from(last_done.format_quote_by_counter(counter)).style(style));
+            cells.push(Cell::from(display_price.format_quote_by_counter(counter)).style(style));
             cells.push(
                 Cell::from(crate::ui::text::align_right(
-                    &increase_percent,
+                    &increase_percent_str,
                     COLUMN_WIDTHS[3],
                 ))
                 .style(style),
@@ -1850,7 +2133,17 @@ fn watch_group_table(
         .map(|i| {
             let increase = if let Some(Some(stock)) = stocks.get(i) {
                 let quote_data = &stock.quote;
-                quote_data.last_done.cmp(&quote_data.prev_close)
+                // 优先使用 last_done，如果没有则使用 prev_close
+                let display_price = quote_data
+                    .last_done
+                    .or(quote_data.prev_close)
+                    .filter(|&p| p > Decimal::ZERO);
+                let prev_close = quote_data.prev_close.filter(|&p| p > Decimal::ZERO);
+
+                match (display_price, prev_close) {
+                    (Some(price), Some(prev)) => price.cmp(&prev),
+                    _ => std::cmp::Ordering::Equal,
+                }
             } else {
                 std::cmp::Ordering::Equal
             };
@@ -1875,12 +2168,12 @@ pub fn render_portfolio(
     (mut account, mut currency, mut search, mut watchgroup): PopUp,
     _table_state: Local<TableState>,
 ) {
-    // 处理按键事件(目前只支持退出)
+    // 处理按键事件
     for _event in &mut events {
-        // 按键处理可以在这里添加
+        // 按键处理在 handle_global_keys 中统一处理
     }
 
-    // 渲染临时界面
+    // 渲染界面
     _ = terminal.draw(|frame| {
         let rect = frame.size();
 
@@ -1903,30 +2196,161 @@ pub fn render_portfolio(
             ..rect
         };
 
-        // 显示 Portfolio 开发中的提示
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(format!(" {} ", t!("Portfolio.Title")));
+        // 获取 Portfolio 数据
+        let positions = PORTFOLIO_POSITIONS.read().expect("poison");
+        let balance = *PORTFOLIO_BALANCE.read().expect("poison");
+        let market_value = *PORTFOLIO_MARKET_VALUE.read().expect("poison");
+        let total_assets = balance + market_value;
 
-        let message = vec![
-            Line::from(""),
-            Line::from(""),
-            Line::from(Span::styled(
-                "Portfolio 功能开发中...",
-                Style::default().fg(Color::Yellow)
-            )),
-            Line::from(""),
-            Line::from(Span::styled(
-                "按 1 返回自选列表",
-                Style::default().fg(Color::Gray)
-            )),
-        ];
+        // 创建布局
+        let chunks = Layout::default()
+            .constraints([Constraint::Length(8), Constraint::Min(10)])
+            .direction(Direction::Vertical)
+            .split(content_rect);
 
-        let paragraph = Paragraph::new(message)
-            .block(block)
-            .alignment(ratatui::layout::Alignment::Center);
+        // 顶部：账户概览
+        {
+            let overview_block = Block::default()
+                .borders(Borders::ALL)
+                .title(format!(" {} ", t!("Portfolio.Title")));
 
-        frame.render_widget(paragraph, content_rect);
+            // 计算总盈亏
+            let total_profit_loss: Decimal = positions.iter().map(|p| p.profit_loss).sum();
+            let pl_style = styles::up(total_profit_loss.cmp(&Decimal::ZERO));
+
+            // 创建两列布局
+            let inner_area = overview_block.inner(chunks[0]);
+            frame.render_widget(overview_block, chunks[0]);
+
+            let inner_chunks = Layout::default()
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .direction(Direction::Horizontal)
+                .split(inner_area);
+
+            // 左列
+            let left_items = vec![
+                ListItem::new(Line::from(vec![
+                    Span::styled(
+                        format!("{}: ", t!("Portfolio.Total Asset")),
+                        styles::label(),
+                    ),
+                    Span::styled(format!("{:.2}", total_assets), styles::text()),
+                ])),
+                ListItem::new(Line::from(vec![
+                    Span::styled(format!("{}: ", t!("Portfolio.Market Cap")), styles::label()),
+                    Span::styled(format!("{:.2}", market_value), styles::text()),
+                ])),
+                ListItem::new(Line::from(vec![
+                    Span::styled(format!("{}: ", t!("Portfolio.P/L")), styles::label()),
+                    Span::styled(format!("{:+.2}", total_profit_loss), pl_style),
+                ])),
+            ];
+
+            // 右列
+            let right_items = vec![
+                ListItem::new(Line::from(vec![
+                    Span::styled(
+                        format!("{}: ", t!("Portfolio.Total Cash Amount")),
+                        styles::label(),
+                    ),
+                    Span::styled(format!("{:.2}", balance), styles::text()),
+                ])),
+                ListItem::new(Line::from(vec![
+                    Span::styled(format!("持仓数量: "), styles::label()),
+                    Span::styled(format!("{}", positions.len()), styles::text()),
+                ])),
+                ListItem::new(""),
+                ListItem::new(Span::styled(
+                    "按 R 刷新数据",
+                    Style::default().fg(Color::Gray),
+                )),
+            ];
+
+            let left_list = List::new(left_items);
+            let right_list = List::new(right_items);
+
+            frame.render_widget(left_list, inner_chunks[0]);
+            frame.render_widget(right_list, inner_chunks[1]);
+        }
+
+        // 底部：持仓列表
+        {
+            let holdings_block = Block::default()
+                .borders(Borders::ALL)
+                .title(format!(" {} ", t!("Holding.Holding")));
+
+            if positions.is_empty() {
+                let message = Paragraph::new(vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "暂无持仓数据",
+                        Style::default().fg(Color::Gray),
+                    )),
+                ])
+                .block(holdings_block)
+                .alignment(Alignment::Center);
+                frame.render_widget(message, chunks[1]);
+            } else {
+                // 创建持仓表格
+                let header = Row::new(vec![
+                    t!("Holding.Code"),
+                    t!("Holding.Name"),
+                    t!("Holding.Quantity"),
+                    t!("Holding.Price"),
+                    t!("Holding.Cost Price"),
+                    t!("Holding.Market Value"),
+                    t!("Holding.P/L"),
+                    t!("Holding.P/L%"),
+                ])
+                .style(styles::header())
+                .bottom_margin(1);
+
+                let rows: Vec<Row> = positions
+                    .iter()
+                    .map(|pos| {
+                        let counter = &pos.symbol;
+
+                        // 计算盈亏样式
+                        let pl_style = styles::up(pos.profit_loss.cmp(&Decimal::ZERO));
+
+                        Row::new(vec![
+                            Cell::from(Line::from(vec![
+                                Span::styled(
+                                    counter.market().to_string(),
+                                    styles::market(counter.region()),
+                                ),
+                                Span::raw(" "),
+                                Span::raw(counter.code().to_string()),
+                            ])),
+                            Cell::from(pos.symbol_name.clone()),
+                            Cell::from(format!("{:.0}", pos.quantity)),
+                            Cell::from(format!("{:.2}", pos.current_price)),
+                            Cell::from(format!("{:.2}", pos.cost_price)),
+                            Cell::from(format!("{:.2}", pos.market_value)),
+                            Cell::from(format!("{:+.2}", pos.profit_loss)).style(pl_style),
+                            Cell::from(format!("{:+.2}%", pos.profit_loss_percent)).style(pl_style),
+                        ])
+                    })
+                    .collect();
+
+                let table = Table::new(rows)
+                    .header(header)
+                    .block(holdings_block)
+                    .widths(&[
+                        Constraint::Length(12), // 代码
+                        Constraint::Min(15),    // 名称
+                        Constraint::Length(10), // 数量
+                        Constraint::Length(10), // 现价
+                        Constraint::Length(10), // 成本
+                        Constraint::Length(12), // 市值
+                        Constraint::Length(12), // 盈亏
+                        Constraint::Length(10), // 盈亏%
+                    ])
+                    .column_spacing(1);
+
+                frame.render_widget(table, chunks[1]);
+            }
+        }
 
         // 渲染弹窗
         crate::views::popup::render(
@@ -1938,430 +2362,4 @@ pub fn render_portfolio(
             &mut watchgroup,
         );
     });
-}
-    //     for event in &mut events {
-    //         match event {
-    //             Key::Up | Key::BackTab => {
-    //                 let idx = table_state.selected();
-    //                 let len = portfolio.view.stock_hold.values().flatten().count();
-    //                 table_state.select(cycle::prev(idx, len));
-    //             }
-    //             Key::Down | Key::Tab => {
-    //                 let idx = table_state.selected();
-    //                 let len = portfolio.view.stock_hold.values().flatten().count();
-    //                 table_state.select(cycle::next(idx, len));
-    //             }
-    //             Key::Enter => {
-    //                 let Some(idx) = table_state.selected() else {
-    //                     continue;
-    //                 };
-    //                 if let Some(stock) = portfolio.view.stock_hold.values().flatten().nth(idx) {
-    //                     _ = command.0.send({
-    //                         let mut queue = CommandQueue::default();
-    //                         queue.push(InsertResource {
-    //                             resource: StockDetail(stock.inner.counter_id),
-    //                         });
-    //                         queue.push(InsertResource {
-    //                             resource: NextState(Some(AppState::WatchlistStock)),
-    //                         });
-    //                         queue
-    //                     });
-    //                 }
-    //             }
-    //             Key::Left | Key::Right => (),
-    //         }
-    //     }
-    //
-    //     _ = terminal.draw(|frame| {
-    //         let rect = frame.size();
-    //         let top = Rect { height: 1, ..rect };
-    //         crate::views::navbar::render(frame, top, *state.get());
-    //
-    //         let bottom = Rect {
-    //             y: rect.y + rect.height - 1,
-    //             height: 1,
-    //             ..rect
-    //         };
-    //         crate::views::footer::render(frame, bottom, indexes.tick(), &ws);
-    //
-    //         let rect = Rect {
-    //             y: rect.y + 1,
-    //             height: rect.height - 2,
-    //             ..rect
-    //         };
-    //         folio(
-    //             frame,
-    //             rect,
-    //             accounts.current(),
-    //             &portfolio,
-    //             &mut table_state,
-    //         );
-    //
-    //         crate::views::popup::render(
-    //             frame,
-    //             rect,
-    //             &mut account,
-    //             &mut currency,
-    //             &mut search,
-    //             &mut watchgroup,
-    //         );
-    //     });
-    // }
-    //
-    // fn folio(
-    //     frame: &mut Frame,
-    //     rect: Rect,
-    //     account: &Account,
-    //     portfolio: &Portfolio,
-    //     table_state: &mut TableState,
-    // ) {
-    //     let main_chunks = Layout::default()
-    //         .constraints([Constraint::Length(8), Constraint::Min(5)].as_ref())
-    //         .direction(Direction::Vertical)
-    //         .split(rect);
-    //
-    //     let bottom_chunks = Layout::default()
-    //         .constraints([Constraint::Percentage(30), Constraint::Min(40)].as_ref())
-    //         .direction(Direction::Horizontal)
-    //         .split(main_chunks[1]);
-    //
-    //     let middle_chunks = Layout::default()
-    //         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
-    //         .direction(Direction::Vertical)
-    //         .split(bottom_chunks[0]);
-    //
-    //     let account_channel = &portfolio.view.props.account_channel;
-    //     let currency = &portfolio.view.props.currency;
-    //
-    //     // overview
-    //     {
-    //         let rect = main_chunks[0];
-    //         // title
-    //         let title = Line::from(vec![
-    //             Span::raw(" "),
-    //             Span::styled(t!("Portfolio.Title"), styles::label()),
-    //             Span::raw(" ─── "),
-    //             Span::styled(&account.org.name, styles::gray()),
-    //             Span::styled(" [a] ", styles::gray()),
-    //             Span::raw(" ─── "),
-    //             Span::styled(currency, styles::currency(currency)),
-    //             Span::styled(" [c] ", styles::gray()),
-    //         ]);
-    //
-    //         // content
-    //         let frame_container = Block::default().borders(Borders::ALL).title(title);
-    //         frame.render_widget(frame_container, rect);
-    //
-    //         // column
-    //         let overview = &portfolio.view.overview;
-    //         let column0 = List::new([
-    //             item(
-    //                 t!("Portfolio.Total Asset"),
-    //                 overview.total_fortune.to_string(),
-    //             ),
-    //             item(
-    //                 t!("Portfolio.Market Cap"),
-    //                 overview.total_market_value.to_string(),
-    //             ),
-    //             item(
-    //                 t!("Portfolio.Margin Call"),
-    //                 overview.margin_call.to_string(),
-    //             ),
-    //             item(
-    //                 t!("Portfolio.Health Status"),
-    //                 overview.leverage_status.name(),
-    //             ),
-    //         ]);
-    //
-    //         let column1 = List::new([
-    //             item_up(t!("Portfolio.P/L"), overview.total_hold_pl.to_string()),
-    //             item(
-    //                 t!("Portfolio.Total Cash Amount"),
-    //                 overview.total_cash.to_string(),
-    //             ),
-    //             ListItem::new(Line::from(vec![
-    //                 Span::styled(format!("{}: ", t!("Portfolio.Risk Level")), styles::label()),
-    //                 {
-    //                     let risk_style = Style::default().fg(match overview.risk_level {
-    //                         RiskLevel::Danger => Color::Red,
-    //                         RiskLevel::MiddleLow | RiskLevel::Middle | RiskLevel::MiddleHigh => {
-    //                             Color::Yellow
-    //                         }
-    //                         RiskLevel::Warning => Color::Magenta, // orange?
-    //                         RiskLevel::Safe => Color::Green,
-    //                     });
-    //                     Span::styled(overview.risk_level.name(), risk_style)
-    //                 },
-    //             ])),
-    //             item(
-    //                 t!("Portfolio.Credit Limit"),
-    //                 overview.credit_limit.to_string(),
-    //             ),
-    //         ]);
-    //
-    //         let column2 = List::new([
-    //             item_up(
-    //                 t!("Portfolio.Intraday P/L"),
-    //                 overview.total_today_pl.to_string(),
-    //             ),
-    //             item(
-    //                 t!("Portfolio.Fund Market Cap"),
-    //                 overview.total_fund_market_value.to_string(),
-    //             ),
-    //             ListItem::new(" "),
-    //         ]);
-    //
-    //         let overview_chunks = Layout::default()
-    //             .constraints([
-    //                 Constraint::Ratio(1, 3),
-    //                 Constraint::Ratio(1, 3),
-    //                 Constraint::Ratio(1, 3),
-    //             ])
-    //             .direction(Direction::Horizontal)
-    //             .split(rect.inner(&Margin {
-    //                 vertical: 2,
-    //                 horizontal: 2,
-    //             }));
-    //         frame.render_widget(column0, overview_chunks[0]);
-    //         frame.render_widget(column1, overview_chunks[1]);
-    //         frame.render_widget(column2, overview_chunks[2]);
-    //     }
-    //
-    //     // markets
-    //     {
-    //         let rect = middle_chunks[0];
-    //         let market_portfolio = &portfolio.view.market_portfolio;
-    //
-    //         let frame_container = Block::default()
-    //             .borders(Borders::ALL)
-    //             .title(t!("StockAccount.title"));
-    //         frame.render_widget(frame_container, rect);
-    //
-    //         let len = market_portfolio.len();
-    //         let chunks = Layout::default()
-    //             .constraints(
-    //                 std::iter::repeat(Constraint::Min(22))
-    //                     .take(len)
-    //                     .collect::<Vec<_>>(),
-    //             )
-    //             .direction(Direction::Horizontal)
-    //             .split(rect.inner(&Margin {
-    //                 vertical: 2,
-    //                 horizontal: 2,
-    //             }));
-    //
-    //         let _guard = RT.get().unwrap().enter();
-    //         // SignalApp 已移除，简化实现
-    //         let exchanges = std::collections::HashMap::new();
-    //         for ((market, portfolio), &chunk) in market_portfolio
-    //             .iter()
-    //             .sorted_by_key(|(market, _)| **market)
-    //             .zip(chunks.iter())
-    //         {
-    //             // Skip if this market not have any position
-    //             if portfolio.net_asset == rust_decimal_macros::dec!(0) {
-    //                 continue;
-    //             }
-    //
-    //             let items = vec![
-    //                 ListItem::new(Line::from(vec![
-    //                     Span::styled(market.to_string(), styles::region(*market)),
-    //                     Span::styled(format!(" ({})", exchanges.currency(market)), styles::text()),
-    //                 ])),
-    //                 item_label(t!("StockAccount.Net Assets")),
-    //                 item_value(portfolio.net_asset.to_string()),
-    //                 item_label(t!("StockAccount.Intraday P/L")),
-    //                 item_value_up(portfolio.all_today_pl.to_string()),
-    //                 item_label(t!("StockAccount.Mkt Value")),
-    //                 item_value(portfolio.all_market_value.to_string()),
-    //                 item_label(t!("StockAccount.P/L")),
-    //                 item_value_up(portfolio.all_hold_pl.to_string()),
-    //                 item_label(t!("StockAccount.Max Buying Power")),
-    //                 item_value(portfolio.max_buy_limit.to_string()),
-    //                 item_label(t!("StockAccount.Avail. Balance")),
-    //                 item_value(portfolio.balance.to_string()),
-    //                 item_label(t!("StockAccount.Cash Withdrawable")),
-    //                 item_value(portfolio.withdraw_cash.to_string()),
-    //                 item_label(t!("StockAccount.Cash Locked")),
-    //                 item_value(portfolio.frozen_buy_cash.to_string()),
-    //             ];
-    //             frame.render_widget(List::new(items), chunk);
-    //         }
-    //     }
-    //
-    //     // cash
-    //     {
-    //         let rect = middle_chunks[1];
-    //         let total_cash_amount = &portfolio.view.overview.total_cash;
-    //         let cash_balances = &portfolio.view.cash_balance;
-    //
-    //         let frame_container = Block::default()
-    //             .borders(Borders::ALL)
-    //             .title(t!("CashBalance.title"));
-    //         frame.render_widget(frame_container, rect);
-    //
-    //         let cash_balance_chunks = Layout::default()
-    //             .constraints([Constraint::Length(3), Constraint::Min(9)])
-    //             .direction(Direction::Vertical)
-    //             .split(rect.inner(&Margin {
-    //                 vertical: 1,
-    //                 horizontal: 2,
-    //             }));
-    //
-    //         let total_cash_balance_span = [
-    //             ListItem::new(" "),
-    //             item(
-    //                 t!("CashBalance.Total"),
-    //                 format!("{total_cash_amount} {currency}"),
-    //             ),
-    //         ];
-    //         frame.render_widget(List::new(total_cash_balance_span), cash_balance_chunks[0]);
-    //
-    //         let len = cash_balances.len();
-    //         let chunks = Layout::default()
-    //             .constraints(
-    //                 std::iter::repeat(Constraint::Min(22))
-    //                     .take(len)
-    //                     .collect::<Vec<_>>(),
-    //             )
-    //             .direction(Direction::Horizontal)
-    //             .split(cash_balance_chunks[1]);
-    //
-    //         for (v, &chunk) in cash_balances.iter().zip(chunks.iter()) {
-    //             let cash_widgets = vec![
-    //                 ListItem::new(Span::styled(
-    //                     &v.currency,
-    //                     styles::region(*Market::from_currency(&v.currency).first().unwrap()),
-    //                 )),
-    //                 item_label(t!("CashBalance.Total")),
-    //                 item_value(v.total_amount.to_string()),
-    //                 item_label(t!("CashBalance.Avail. Balance")),
-    //                 item_value(v.balance.to_string()),
-    //                 item_label(t!("CashBalance.Cash Locked")),
-    //                 item_value(v.frozen_buy_cash.to_string()),
-    //                 item_label(t!("CashBalance.Cash Withdrawable")),
-    //                 item_value(v.withdraw_cash.to_string()),
-    //             ];
-    //             frame.render_widget(List::new(cash_widgets), chunk);
-    //         }
-    //     }
-    //
-    //     // holdings
-    //     {
-    //         let rect = bottom_chunks[1];
-    //         let holdings = &portfolio.view.stock_hold;
-    //
-    //         let frame_container = Block::default()
-    //             .borders(Borders::ALL)
-    //             .title(format!(" {} ", t!("Holding.Holding")));
-    //         frame.render_widget(frame_container, rect);
-    //
-    //         let header = Row::new(vec![
-    //             t!("Holding.Code"),
-    //             t!("Holding.Name"),
-    //             t!("Holding.Market Value"),
-    //             t!("Holding.Quantity"),
-    //             t!("Holding.Price"),
-    //             t!("Holding.Cost Price"),
-    //             align_right(&t!("Holding.P/L"), 12),
-    //             align_right(&t!("Holding.P/L%"), 12),
-    //             align_right(&t!("Holding.Intraday P/L"), 12),
-    //             align_right(&t!("Holding.Intraday P/L%"), 12),
-    //             align_right(&t!("Holding.Hold Ratio"), 9),
-    //         ])
-    //         .style(crate::ui::styles::header())
-    //         .bottom_margin(1);
-    //
-    //         // 简化实现：使用默认市场排序
-    //         let watch_order = vec![Market::HK, Market::US, Market::CN, Market::SG];
-    //         let rows: Vec<Row> =
-    //             holdings
-    //                 .iter()
-    //                 .sorted_by(|(a, _), (b, _)| {
-    //                     let a_idx = watch_order.iter().position(|m| m == a).unwrap_or(999);
-    //                     let b_idx = watch_order.iter().position(|m| m == b).unwrap_or(999);
-    //                     a_idx.cmp(&b_idx)
-    //                 })
-    //                 .flat_map(|(_, holds)| {
-    //                     holds.iter().sorted_by(|a, b| {
-    //                         a.inner
-    //                             .counter_id
-    //                             .market()
-    //                             .cmp(&b.inner.counter_id.market())
-    //                             // sort desc
-    //                             .then_with(|| b.inner.market_value.cmp(&a.inner.market_value))
-    //                     })
-    //                 })
-    //                 .map(|holding| {
-    //                     let stock = &holding.inner;
-    //                     let counter_id = &holding.inner.counter_id;
-    //                     let float_style = styles::up(stock.finally_unrealized_pl.cmp(&Decimal::ZERO));
-    //                     let today_style = styles::up(stock.today_pl.cmp(&Decimal::ZERO));
-    //                     let market_style = styles::region(counter_id.region());
-    //
-    //                     Row::new(vec![
-    //                         Cell::from(Line::from(vec![
-    //                             Span::styled(counter_id.market().to_string(), market_style),
-    //                             Span::raw(format!(" {}", counter_id.code())),
-    //                         ])),
-    //                         Cell::from(stock.name.as_str()),
-    //                         Cell::from(stock.market_value.to_string()),
-    //                         {
-    //                             if counter_id.is_option() {
-    //                                 Cell::from(stock.quantity.to_string() + t!("OptionUnit").as_str())
-    //                             } else {
-    //                                 Cell::from(stock.quantity.to_string())
-    //                             }
-    //                         },
-    //                         Cell::from(stock.last_done.to_string()),
-    //                         Cell::from(stock.cost_price.map_or_else(
-    //                             || EMPTY_PLACEHOLDER.to_string(),
-    //                             |v| v.to_string(),
-    //                         )),
-    //                         Cell::from(align_right(&stock.finally_unrealized_pl.to_string(), 12))
-    //                             .style(float_style),
-    //                         Cell::from(align_right(&stock.finally_unrealized_pl_percent, 12))
-    //                             .style(float_style),
-    //                         Cell::from(align_right(&stock.today_pl.to_string(), 12)).style(today_style),
-    //                         Cell::from(align_right(&stock.today_pl_percent, 12)).style(today_style),
-    //                         Cell::from(align_right(&holding.hold_ratio, 9)),
-    //                     ])
-    //                 })
-    //                 .collect();
-    //
-    //         let highlight = table_state
-    //             .selected()
-    //             .and_then(|selected| holdings.values().flatten().nth(selected))
-    //             .map(|h| {
-    //                 styles::up(h.inner.today_pl.cmp(&Decimal::ZERO)).add_modifier(Modifier::REVERSED)
-    //             })
-    //             .unwrap_or_default();
-    //
-    //         let table = Table::new(rows)
-    //             .header(header)
-    //             .highlight_style(highlight)
-    //             .widths(&[
-    //                 Constraint::Length(12),
-    //                 Constraint::Min(25),
-    //                 Constraint::Length(12),
-    //                 Constraint::Length(15),
-    //                 Constraint::Length(12),
-    //                 Constraint::Length(9),
-    //                 Constraint::Length(12),
-    //                 Constraint::Length(12),
-    //                 Constraint::Length(12),
-    //                 Constraint::Length(12),
-    //                 Constraint::Length(9),
-    //             ])
-    //             .column_spacing(1);
-    //
-    //         frame.render_stateful_widget(
-    //             table,
-    //             rect.inner(&Margin {
-    //                 vertical: 2,
-    //                 horizontal: 2,
-    //         }),
-    //         table_state,
-    //     );
-    // }
 }
