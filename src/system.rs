@@ -34,11 +34,11 @@ use crate::{
     widgets::{Carousel, Loading, LoadingWidget, LocalSearch, Search, Select, Terminal},
 };
 
-// 兼容性类型别名
+// Compatibility type alias
 pub type Component = ();
 const EMPTY_PLACEHOLDER: &str = "--";
 
-// Portfolio 相关的存根类型
+// Portfolio stub types
 pub mod portfolio {
     #[derive(Clone, Debug, Default)]
     pub struct Props {
@@ -80,11 +80,11 @@ pub mod portfolio {
     }
 }
 
-// Watchlist API - 使用 longport SDK
+// Watchlist API - uses longport SDK
 pub async fn fetch_watchlist(
     group_id: Option<u64>,
 ) -> anyhow::Result<(Vec<Counter>, Vec<crate::data::WatchlistGroup>)> {
-    // 翻译默认分组名称
+    // Translate default group names
     fn translate_group_name(name: &str) -> String {
         match name.to_lowercase().as_str() {
             "all" => t!("watchlist_group.all"),
@@ -103,30 +103,30 @@ pub async fn fetch_watchlist(
 
     let ctx = crate::openapi::quote();
 
-    // 获取自选股列表
+    // Get watchlist
     match ctx.watchlist().await {
         Ok(watchlist) => {
-            // 提取分组信息和自选股
+            // Extract group info and symbols
             let mut groups = Vec::new();
             let mut counters = Vec::new();
 
             for group in watchlist {
                 let group_id_u64 = group.id as u64;
 
-                // 添加分组信息,翻译默认分组名称
+                // Add group info with translated name
                 groups.push(crate::data::WatchlistGroup {
                     id: group_id_u64,
                     name: translate_group_name(&group.name),
                 });
 
-                // 如果指定了分组ID，只返回该分组的股票
+                // If group_id is specified, only return that group's stocks
                 if let Some(filter_id) = group_id {
                     if group_id_u64 != filter_id {
                         continue;
                     }
                 }
 
-                // 添加该分组下的股票
+                // Add stocks from this group
                 for security in group.securities {
                     match security.symbol.parse() {
                         Ok(counter) => {
@@ -138,7 +138,7 @@ pub async fn fetch_watchlist(
             }
 
             tracing::info!(
-                "获取到 {} 个分组，共 {} 个股票 (过滤分组: {:?})",
+                "Fetched {} groups, {} stocks total (filtered by group: {:?})",
                 groups.len(),
                 counters.len(),
                 group_id
@@ -152,10 +152,10 @@ pub async fn fetch_watchlist(
 pub async fn fetch_holdings() -> anyhow::Result<Vec<Counter>> {
     let ctx = crate::openapi::trade();
 
-    // 获取持仓列表
+    // Get holdings list
     match ctx.stock_positions(None).await {
         Ok(response) => {
-            // StockPositionsResponse 包含多个渠道的持仓
+            // StockPositionsResponse contains positions from multiple channels
             let mut counters = Vec::new();
             for channel in &response.channels {
                 for position in &channel.positions {
@@ -170,13 +170,13 @@ pub async fn fetch_holdings() -> anyhow::Result<Vec<Counter>> {
             Ok(counters)
         }
         Err(e) => {
-            tracing::error!("获取持仓失败: {}", e);
+            tracing::error!("Failed to fetch holdings: {}", e);
             Ok(vec![])
         }
     }
 }
 
-// 持仓信息
+// Position information
 #[derive(Clone, Debug)]
 pub struct PositionInfo {
     pub symbol: Counter,
@@ -190,22 +190,22 @@ pub struct PositionInfo {
     pub profit_loss_percent: Decimal,
 }
 
-// 获取 Portfolio 数据
+// Fetch Portfolio data
 pub async fn fetch_portfolio_data() -> anyhow::Result<(Vec<PositionInfo>, Decimal, Decimal)> {
     let ctx = crate::openapi::trade();
 
-    // 获取账户余额
+    // Get account balance
     let balance = match ctx.account_balance(None).await {
         Ok(balances) => balances
             .iter()
             .fold(Decimal::ZERO, |acc, b| acc + b.total_cash),
         Err(e) => {
-            tracing::error!("获取账户余额失败: {}", e);
+            tracing::error!("Failed to fetch account balance: {}", e);
             Decimal::ZERO
         }
     };
 
-    // 获取持仓
+    // Get positions
     let mut positions = match ctx.stock_positions(None).await {
         Ok(response) => {
             let mut positions = Vec::new();
@@ -217,7 +217,7 @@ pub async fn fetch_portfolio_data() -> anyhow::Result<(Vec<PositionInfo>, Decima
                         symbol_name: position.symbol_name.clone(),
                         quantity: position.quantity,
                         available_quantity: position.available_quantity,
-                        cost_price: Decimal::ZERO, // 将在下面通过行情计算
+                        cost_price: Decimal::ZERO, // Will be calculated below using quotes
                         current_price: Decimal::ZERO,
                         market_value: Decimal::ZERO,
                         profit_loss: Decimal::ZERO,
@@ -228,32 +228,32 @@ pub async fn fetch_portfolio_data() -> anyhow::Result<(Vec<PositionInfo>, Decima
             positions
         }
         Err(e) => {
-            tracing::error!("获取持仓失败: {}", e);
+            tracing::error!("Failed to fetch positions: {}", e);
             vec![]
         }
     };
 
-    // 获取实时行情来计算市值和盈亏
+    // Get real-time quotes to calculate market value and P/L
     if !positions.is_empty() {
         let quote_ctx = crate::openapi::quote();
         let symbols: Vec<String> = positions.iter().map(|p| p.symbol.to_string()).collect();
 
         if let Ok(quotes) = quote_ctx.quote(&symbols).await {
             for (pos, quote) in positions.iter_mut().zip(quotes.iter()) {
-                // 更新当前价格
+                // Update current price
                 pos.current_price = quote.last_done;
 
-                // 计算市值
+                // Calculate market value
                 pos.market_value = pos.quantity * pos.current_price;
 
-                // 从 STOCKS 缓存中获取成本价(如果有的话)
+                // Get cost price from STOCKS cache (if available)
                 if let Some(_stock) = STOCKS.get(&pos.symbol) {
-                    // 注意: longport SDK 可能不直接提供成本价
-                    // 这里我们尝试从静态信息或其他来源获取
-                    // 临时使用开盘价作为参考
+                    // Note: longport SDK may not directly provide cost price
+                    // We try to get it from static info or other sources
+                    // Temporarily use open price as reference
                     pos.cost_price = quote.open;
 
-                    // 计算盈亏
+                    // Calculate P/L
                     if pos.cost_price > Decimal::ZERO {
                         let cost_total = pos.quantity * pos.cost_price;
                         pos.profit_loss = pos.market_value - cost_total;
@@ -261,7 +261,7 @@ pub async fn fetch_portfolio_data() -> anyhow::Result<(Vec<PositionInfo>, Decima
                             (pos.profit_loss / cost_total * Decimal::from(100)).round_dp(2);
                     }
                 } else {
-                    // 如果没有缓存,使用昨收价作为成本价的估算
+                    // If no cache, use prev_close as cost price estimate
                     pos.cost_price = if quote.prev_close > Decimal::ZERO {
                         quote.prev_close
                     } else {
@@ -279,7 +279,7 @@ pub async fn fetch_portfolio_data() -> anyhow::Result<(Vec<PositionInfo>, Decima
         }
     }
 
-    // 计算持仓总市值
+    // Calculate total market value of positions
     let total_market_value = positions
         .iter()
         .fold(Decimal::ZERO, |acc, p| acc + p.market_value);
@@ -287,12 +287,12 @@ pub async fn fetch_portfolio_data() -> anyhow::Result<(Vec<PositionInfo>, Decima
     Ok((positions, balance, total_market_value))
 }
 
-// WebSocket 订阅管理（简化实现）
+// WebSocket subscription management (simplified implementation)
 pub struct WsManager;
 
 impl WsManager {
     pub async fn unmount(&self, _name: &str) -> anyhow::Result<()> {
-        // TODO: 使用 longport SDK 取消订阅
+        // TODO: Use longport SDK to unsubscribe
         Ok(())
     }
 
@@ -302,7 +302,7 @@ impl WsManager {
         symbols: &[Counter],
         _sub_type: SubTypes,
     ) -> anyhow::Result<()> {
-        // TODO: 使用 longport SDK 重新订阅
+        // TODO: Use longport SDK to resubscribe
         let ctx = crate::openapi::quote();
         let symbol_strings: Vec<String> = symbols.iter().map(|c| c.to_string()).collect();
         let _ = ctx
@@ -335,15 +335,15 @@ impl WsManager {
 
 pub static WS: once_cell::sync::Lazy<WsManager> = once_cell::sync::Lazy::new(|| WsManager);
 
-// 其他存根类型
+// Other stub types
 #[derive(Clone, Debug, Default)]
 pub struct DepthView {
-    // TODO: 实现
+    // TODO: Implement
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct DetailView {
-    // TODO: 实现
+    // TODO: Implement
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -463,28 +463,28 @@ pub fn refresh_watchlist(update_tx: mpsc::UnboundedSender<CommandQueue>) {
         }
 
         let counters = {
-            // 简化实现：使用默认排序
+            // Simplified implementation: use default sorting
             let mut watchlist = WATCHLIST.write().expect("poison");
             watchlist.set_hidden(true);
             watchlist.set_sortby((0, 0, false)); // (sort_mode, sort_by, reverse)
             watchlist.counters().to_vec()
         };
 
-        // 为每个自选股创建 Stock 条目（如果不存在）
+        // Create Stock entry for each watchlist item (if not exists)
         for counter in &counters {
             if STOCKS.get(counter).is_none() {
                 let mut stock = crate::data::Stock::new(counter.clone());
-                stock.name = counter.to_string(); // 临时使用 symbol 作为名称
+                stock.name = counter.to_string(); // Temporarily use symbol as name
                 STOCKS.insert(stock);
             }
         }
 
-        // 获取初始行情数据
+        // Get initial quote data
         if !counters.is_empty() {
             let ctx = crate::openapi::quote();
             let symbols: Vec<String> = counters.iter().map(|c| c.as_str().to_string()).collect();
 
-            // 使用 realtime_quote 获取实时行情数据
+            // Use realtime_quote to get real-time quote data
             match ctx.realtime_quote(symbols.iter().map(|s| s.as_str())).await {
                 Ok(quotes) => {
                     for quote in quotes {
@@ -499,11 +499,11 @@ pub fn refresh_watchlist(update_tx: mpsc::UnboundedSender<CommandQueue>) {
                     }
                 }
                 Err(e) => {
-                    tracing::error!("获取初始行情失败: {}", e);
+                    tracing::error!("Failed to fetch initial quotes: {}", e);
                 }
             }
 
-            // 获取股票静态信息（包含名称等）
+            // Get stock static info (including name, etc.)
             match ctx.static_info(symbols.iter().map(|s| s.as_str())).await {
                 Ok(infos) => {
                     for info in infos {
@@ -519,12 +519,12 @@ pub fn refresh_watchlist(update_tx: mpsc::UnboundedSender<CommandQueue>) {
                     }
                 }
                 Err(e) => {
-                    tracing::error!("获取股票静态信息失败: {}", e);
+                    tracing::error!("Failed to fetch stock static info: {}", e);
                 }
             }
         }
 
-        // SignalApp 已移除
+        // SignalApp removed
         let _ = WS.remount("watchlist", &counters, SubTypes::LIST).await;
 
         // refresh watchlist sort
@@ -553,14 +553,14 @@ pub fn refresh_stock(counter: Counter) {
         let _ = WS.quote_detail("stock_detail", &[counter.clone()]).await;
         let _ = WS.quote_trade("stock_detail", &[counter.clone()]).await;
 
-        // 获取静态信息（如果还没有）
+        // Get static info (if not already fetched)
         let should_fetch = STOCKS
             .get(&counter)
             .map(|s| s.static_info.is_none())
             .unwrap_or(false);
 
         if should_fetch {
-            // 异步获取静态信息
+            // Async fetch static info
             if let Ok(infos) = crate::api::quote::fetch_static_info(&[counter.to_string()]).await {
                 if let Some(info) = infos.first() {
                     STOCKS.modify(counter.clone(), |stock| {
@@ -570,7 +570,7 @@ pub fn refresh_stock(counter: Counter) {
             }
         }
 
-        // 获取成交记录
+        // Get trade records
         if let Ok(trades) = crate::api::quote::fetch_trades(&counter.to_string(), 50).await {
             STOCKS.modify(counter.clone(), |stock| {
                 stock.update_from_trades(&trades);
@@ -590,7 +590,7 @@ pub fn exit_stock() {
     });
 }
 
-// Portfolio 数据全局存储
+// Portfolio data global storage
 pub static PORTFOLIO_POSITIONS: Lazy<std::sync::RwLock<Vec<PositionInfo>>> =
     Lazy::new(|| std::sync::RwLock::new(Vec::new()));
 pub static PORTFOLIO_BALANCE: Lazy<std::sync::RwLock<Decimal>> =
@@ -598,14 +598,14 @@ pub static PORTFOLIO_BALANCE: Lazy<std::sync::RwLock<Decimal>> =
 pub static PORTFOLIO_MARKET_VALUE: Lazy<std::sync::RwLock<Decimal>> =
     Lazy::new(|| std::sync::RwLock::new(Decimal::ZERO));
 
-// 刷新 Portfolio 数据
+// Refresh Portfolio data
 pub fn refresh_portfolio() {
     RT.get().unwrap().spawn(async move {
-        tracing::info!("开始刷新 Portfolio 数据...");
+        tracing::info!("Starting to refresh Portfolio data...");
         match fetch_portfolio_data().await {
             Ok((positions, balance, market_value)) => {
                 tracing::info!(
-                    "成功获取 Portfolio: {} 个持仓, 余额: {}, 市值: {}",
+                    "Successfully fetched Portfolio: {} positions, balance: {}, market value: {}",
                     positions.len(),
                     balance,
                     market_value
@@ -616,7 +616,7 @@ pub fn refresh_portfolio() {
                 *PORTFOLIO_MARKET_VALUE.write().expect("poison") = market_value;
             }
             Err(e) => {
-                tracing::error!("获取 Portfolio 数据失败: {}", e);
+                tracing::error!("Failed to fetch Portfolio data: {}", e);
             }
         }
     });
@@ -655,7 +655,7 @@ pub fn render_watchlist_stock(
                 let new_idx = cycle::prev(idx, len);
                 WATCHLIST_TABLE.lock().expect("poison").select(new_idx);
 
-                // 立即更新股票详情
+                // Immediately update stock detail
                 if let Some(idx) = new_idx {
                     if let Some(counter) = WATCHLIST
                         .read()
@@ -680,7 +680,7 @@ pub fn render_watchlist_stock(
                 let new_idx = cycle::next(idx, len);
                 WATCHLIST_TABLE.lock().expect("poison").select(new_idx);
 
-                // 立即更新股票详情
+                // Immediately update stock detail
                 if let Some(idx) = new_idx {
                     if let Some(counter) = WATCHLIST
                         .read()
@@ -874,7 +874,7 @@ fn stock_detail(
     _selected: usize,
 ) {
     fn price_spans(data: &crate::data::QuoteData, counter: &Counter) -> Vec<Span<'static>> {
-        // 优先使用 last_done，如果没有则使用 prev_close
+        // Prefer last_done, fallback to prev_close if not available
         let display_price = data
             .last_done
             .or(data.prev_close)
@@ -892,7 +892,7 @@ fn stock_detail(
                 )
             }
             (Some(price), None) => {
-                // 有价格但没有昨收，显示价格但不显示涨跌
+                // Has price but no prev_close, show price without change
                 (
                     price.format_quote_by_counter(counter),
                     EMPTY_PLACEHOLDER.to_string(),
@@ -900,7 +900,7 @@ fn stock_detail(
                 )
             }
             _ => {
-                // 都没有，显示占位符
+                // Neither available, show placeholder
                 (
                     EMPTY_PLACEHOLDER.to_string(),
                     EMPTY_PLACEHOLDER.to_string(),
@@ -943,7 +943,7 @@ fn stock_detail(
     // draw border
     frame.render_widget(detail_container, rect);
 
-    // Helper function to format optional Decimal (价格类)
+    // Helper function to format optional Decimal (price type)
     let fmt_decimal = |opt: Option<Decimal>| -> String {
         opt.map(|d| d.format_quote_by_counter(counter))
             .unwrap_or_else(|| EMPTY_PLACEHOLDER.to_string())
@@ -965,12 +965,12 @@ fn stock_detail(
                 ]))
             }
             (Some(p), None) => {
-                // 有价格但没有昨收，显示但不着色
+                // Has price but no prev_close, show without coloring
                 let price_str = p.format_quote_by_counter(counter);
                 item(label, price_str)
             }
             (None, Some(prev)) => {
-                // 没有价格但有昨收，显示昨收但不着色
+                // No price but has prev_close, show prev_close without coloring
                 let price_str = prev.format_quote_by_counter(counter);
                 item(label, price_str)
             }
@@ -996,34 +996,34 @@ fn stock_detail(
         }
     };
 
-    // 构建详情列 - 第一列：基本交易数据
+    // Build detail columns - Column 1: Basic trading data
     let column0 = vec![
         ListItem::new(" "),
-        item("交易状态".to_string(), stock.trade_status.label()),
+        item(t!("StockDetail.Trading Status"), stock.trade_status.label()),
         ListItem::new(" "),
-        price_item("开盘价".to_string(), stock.quote.open),
-        item("昨收价".to_string(), fmt_decimal(stock.quote.prev_close)),
+        price_item(t!("StockDetail.Open"), stock.quote.open),
+        item(t!("StockDetail.Prev. Close"), fmt_decimal(stock.quote.prev_close)),
         ListItem::new(" "),
-        price_item("最高价".to_string(), stock.quote.high),
-        price_item("最低价".to_string(), stock.quote.low),
-        item("均价".to_string(), EMPTY_PLACEHOLDER), // 需要计算
+        price_item(t!("StockDetail.High"), stock.quote.high),
+        price_item(t!("StockDetail.Low"), stock.quote.low),
+        item(t!("StockDetail.Average"), EMPTY_PLACEHOLDER), // Needs calculation
         ListItem::new(" "),
-        item("成交量".to_string(), fmt_u64(stock.quote.volume)),
+        item(t!("StockDetail.Volume"), fmt_u64(stock.quote.volume)),
         item(
-            "成交额".to_string(),
+            t!("StockDetail.Turnover"),
             crate::ui::text::unit(stock.quote.turnover, 2),
         ),
         ListItem::new(" "),
     ];
 
-    // 第二列：静态信息（如果有）
+    // Column 2: Static info (if available)
     let column1 = if let Some(ref info) = stock.static_info {
         vec![
             ListItem::new(" "),
             ListItem::new(" "),
             ListItem::new(" "),
-            item("市盈率(TTM)".to_string(), fmt_decimal(info.eps_ttm)),
-            item("每股收益".to_string(), fmt_decimal(info.eps)),
+            item(t!("StockDetail.P/E (TTM)"), fmt_decimal(info.eps_ttm)),
+            item(t!("StockDetail.EPS (TTM)"), fmt_decimal(info.eps)),
             ListItem::new(" "),
         ]
     } else {
@@ -1031,26 +1031,26 @@ fn stock_detail(
             ListItem::new(" "),
             ListItem::new(" "),
             ListItem::new(" "),
-            item("市盈率(TTM)".to_string(), EMPTY_PLACEHOLDER),
-            item("每股收益".to_string(), EMPTY_PLACEHOLDER),
+            item(t!("StockDetail.P/E (TTM)"), EMPTY_PLACEHOLDER),
+            item(t!("StockDetail.EPS (TTM)"), EMPTY_PLACEHOLDER),
             ListItem::new(" "),
         ]
     };
 
-    // 第三列：更多静态信息
+    // Column 3: More static info
     let column2 = if let Some(ref info) = stock.static_info {
         vec![
             ListItem::new(" "),
             ListItem::new(" "),
             ListItem::new(" "),
-            item("总股本".to_string(), fmt_i64(info.total_shares)),
-            item("流通股本".to_string(), fmt_i64(info.circulating_shares)),
+            item(t!("StockDetail.Shares"), fmt_i64(info.total_shares)),
+            item(t!("StockDetail.Shares Float"), fmt_i64(info.circulating_shares)),
             ListItem::new(" "),
-            item("每股净资产".to_string(), fmt_decimal(info.bps)),
-            item("股息率".to_string(), fmt_decimal(info.dividend_yield)),
+            item(t!("StockDetail.BPS"), fmt_decimal(info.bps)),
+            item(t!("StockDetail.Dividend Yield (TTM)"), fmt_decimal(info.dividend_yield)),
             ListItem::new(" "),
             ListItem::new(" "),
-            item("每手股数".to_string(), info.lot_size.to_string()),
+            item(t!("StockDetail.Min lot size"), info.lot_size.to_string()),
             ListItem::new(" "),
         ]
     } else {
@@ -1058,19 +1058,19 @@ fn stock_detail(
             ListItem::new(" "),
             ListItem::new(" "),
             ListItem::new(" "),
-            item("总股本".to_string(), EMPTY_PLACEHOLDER),
-            item("流通股本".to_string(), EMPTY_PLACEHOLDER),
+            item(t!("StockDetail.Shares"), EMPTY_PLACEHOLDER),
+            item(t!("StockDetail.Shares Float"), EMPTY_PLACEHOLDER),
             ListItem::new(" "),
-            item("每股净资产".to_string(), EMPTY_PLACEHOLDER),
-            item("股息率".to_string(), EMPTY_PLACEHOLDER),
+            item(t!("StockDetail.BPS"), EMPTY_PLACEHOLDER),
+            item(t!("StockDetail.Dividend Yield (TTM)"), EMPTY_PLACEHOLDER),
             ListItem::new(" "),
             ListItem::new(" "),
-            item("每手股数".to_string(), EMPTY_PLACEHOLDER),
+            item(t!("StockDetail.Min lot size"), EMPTY_PLACEHOLDER),
             ListItem::new(" "),
         ]
     };
 
-    // 渲染三列布局
+    // Render three-column layout
     let column_height = column0.len().max(column1.len()).max(column2.len()) as u16;
     let chunks = Layout::default()
         .constraints([
@@ -1096,7 +1096,7 @@ fn stock_detail(
     frame.render_widget(List::new(column1), columns_chunks[1]);
     frame.render_widget(List::new(column2), columns_chunks[2]);
 
-    // 绘制盘口深度
+    // Draw market depth
     let depth_rect = columns_chunks[3].inner(&Margin {
         vertical: 1,
         horizontal: 0,
@@ -1109,17 +1109,17 @@ fn stock_detail(
     );
 
     if !stock.depth.bids.is_empty() || !stock.depth.asks.is_empty() {
-        // 格式化单个深度档位
+        // Format single depth level
         let format_depth_line = |depth: &crate::data::Depth,
                                  counter: &Counter,
                                  prev_close: Option<Decimal>|
          -> Line<'static> {
-            // 档位
+            // Position/Level
             let position = Span::styled(
                 format!("{:>2}:", depth.position),
                 crate::ui::styles::label(),
             );
-            // 价格
+            // Price
             let price_cmp = prev_close
                 .map(|pc| depth.price.cmp(&pc))
                 .unwrap_or(std::cmp::Ordering::Equal);
@@ -1128,12 +1128,12 @@ fn stock_detail(
                 format!("{:>10} ", depth.price.format_quote_by_counter(counter)),
                 price_style,
             );
-            // 数量
+            // Volume
             let volume = crate::ui::text::align_right(
                 &crate::ui::text::unit(Decimal::from(depth.volume), 0),
                 6,
             );
-            // 订单数（仅港股显示）
+            // Order count (only for HK stocks)
             let order_count = if counter.is_hk() {
                 crate::ui::text::align_right(&format!("({})", depth.order_num.clamp(0, 999)), 5)
             } else {

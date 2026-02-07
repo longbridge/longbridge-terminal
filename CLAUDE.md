@@ -132,6 +132,23 @@ Project uses strict `clippy::pedantic` rules with the following exceptions:
 - Functions and variables use snake_case
 - Constants use SCREAMING_SNAKE_CASE
 
+### Language and Localization
+
+**IMPORTANT**: All code comments and documentation MUST be written in English only.
+
+- **Never** write Chinese or other non-English text in code comments
+- **Never** use Chinese strings directly in code
+- Use `rust-i18n` (`t!` macro) for all user-facing text and messages
+- All locale strings should be defined in `locales/*.yml` files
+- Example:
+  ```rust
+  // Good: English comment
+  let status = t!("TradeStatus.Normal");  // Use i18n for display text
+
+  // Bad: Chinese comment
+  // let status = "交易中";  // Never hardcode Chinese strings
+  ```
+
 ## Longport SDK Reference
 
 ### Documentation
