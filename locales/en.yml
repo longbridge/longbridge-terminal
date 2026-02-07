@@ -1,0 +1,200 @@
+---
+error:
+  general: "Something went wrong"
+  api:
+    heading: "Failed to request"
+    content: "Please check network connectivity, and try later"
+  session:
+    heading: "Session Expired"
+    content: "Please relaunch the application"
+exit:
+  any_key: "Press any key to exit"
+  multi_instance: "another instance is running, please close it first"
+qrcode_view:
+  scan_hint: |
+    To sign in, scan the QR code using Longbridge iOS or Android app.
+    https://longbridge.hk/download
+  error:
+    heading: "Failed to create QR code"
+    content: "Please quit the app and try again"
+  timeout:
+    heading: "QR Code is expired"
+    content: "Please quit the app and try again"
+user:
+  open_account:
+    heading: "Account is not opened"
+    content: "Please open account in other LongBridge app"
+Prompt:
+  Esc: Press 'ESC' to cancel
+Candlestick:
+  Open: Open
+  Close: Close
+StockIndex:
+  .DJI.US: Dow
+  .IXIC.US: NASDAQ
+  SPY.US: S&P ETF
+  HSI.HK: HSI
+  HSCEI.HK: HSCEI
+  HSTECH.HK: HSTECH
+  000001.SH: SSE Composite
+  399001.SZ: SZSE Component
+  399006.SZ: GEM Index
+Stock.SharesSuffix: " shrs"
+Please sign in: "Please sign in"
+Scan the QR code to finish signing in: "Scan the QR code to finish signing in"
+Signing in...: "Signing in..."
+Console.Title: " Console "
+"Please wait...": "Please wait..."
+Update: " Update "
+Downloading: "Downloading"
+tabs.Portfolio: PORTFOLIO
+tabs.Watchlist: WATCHLIST
+Watchlist: Watchlist
+WebSocket Connected: "Realtime Data"
+WebSocket Connecting: "Data Update Paused"
+WebSocket Disconnected: "Data Update Paused"
+Keyboard.Help: "Help [?]"
+Keyboard.Search: "Search [/]"
+Keyboard.Quit: "Quit [^c]"
+Keyboard.OpenDetail: "Select [⏎]"
+Keyboard.QRCode.Enter: "Sign in [⏎]"
+Keyboard.SwitchChart: "Switch Chart [⇥]"
+Keyboard.Scroll: Scroll [↑↓]
+Keyboard.Console: Console [`]
+"Welcome, %{name}": "Hi, %{name}"
+stock counter id must be valid: "Stock counter id must be valid"
+watchlist.CHG: "CHG"
+watchlist.CODE: "CODE"
+watchlist.NAME: "NAME"
+watchlist.PRICE: "PRICE"
+watchlist.STATUS: "STATUS"
+watchlist.VOL: "VOL"
+watchlist_group.all: "ALL"
+watchlist_group.holdings: "HOLDINGS"
+watchlist_group.us: "US"
+watchlist_group.hk: "HK"
+watchlist_group.cn: "CN"
+watchlist_group.sg: "SG"
+watchlist_group.jp: "JP"
+watchlist_group.uk: "UK"
+watchlist_group.de: "DE"
+watchlist_group.na: "NA"
+StockDetail.52wk High: 52wk High
+StockDetail.52wk Low: 52wk Low
+StockDetail.Amplitude: Amplitude
+StockDetail.Average: Average
+StockDetail.BPS: BPS
+StockDetail.Bid/Ask Ratio: Bid/Ask Ratio
+StockDetail.Dividend (TTM): Dividend (TTM)
+StockDetail.Dividend Yield (TTM): Dividend Yield (TTM)
+StockDetail.EPS (Dynamic): EPS (Dynamic)
+StockDetail.EPS (Static): EPS (Static)
+StockDetail.EPS (TTM): EPS (TTM)
+StockDetail.Float Cap: Float Cap
+StockDetail.High: High
+StockDetail.Low: Low
+StockDetail.Market Cap: Market Cap
+StockDetail.Min lot size: Min lot size
+StockDetail.Open: Open
+StockDetail.P/B: P/B
+StockDetail.P/E (Dynamic): P/E (Dynamic)
+StockDetail.P/E (Static): P/E (Static)
+StockDetail.P/E (TTM): P/E (TTM)
+StockDetail.Prev. Close: "Prev. Close"
+StockDetail.Shares: Shares
+StockDetail.Shares Float: Shares Float
+StockDetail.Trading Status: Trading Status
+StockDetail.Turnover: Turnover
+StockDetail.Turnover Ratio: Turnover Ratio
+StockDetail.Volume: Volume
+StockDetail.Volume Ratio: Volume Ratio
+Portfolio.Title: Overview
+Portfolio.Intraday P/L: Intraday P/L
+Portfolio.Total Cash Amount: Total Cash Amount
+Portfolio.Total Asset: Total Asset
+Portfolio.P/L: P/L
+Portfolio.Market Cap: Market Cap
+Portfolio.Margin Call: Margin Call
+Portfolio.Risk Level: Risk Level
+Portfolio.Credit Limit: Credit Limit
+Portfolio.Health Status: Health Status
+Portfolio.Fund Market Cap: Fund Market Cap
+Holding.Code: Code
+Holding.Cost Price: Cost
+Holding.Hold Ratio: Owned%
+Holding.Holding: "Holding"
+Holding.Intraday P/L: Intraday
+Holding.Intraday P/L%: Intraday P/L%
+Holding.Market Value: Mkt value
+Holding.Name: Name
+Holding.P/L: Floating
+Holding.P/L%: Floating P/L%
+Holding.Price: Price
+Holding.Quantity: Quantity
+StockDepth:
+  Bid: "Bid"
+  Ask: "Ask"
+StockQuoteTrades: "Trades"
+CashBalance:
+  title: " Cash Balance "
+  Total: Total
+  Avail. Balance: Avail. Balance
+  Cash Locked: Cash Locked
+  Cash Withdrawable: Cash Withdrawable
+StockAccount:
+  title: " Stock Account "
+  Net Assets: Net Assets
+  Intraday P/L: Intraday P/L
+  Mkt Value: Mkt Value
+  P/L: P/L
+  Max Buying Power: Max Buying Power
+  Avail. Balance: Avail. Balance
+  Cash Withdrawable: Cash Withdrawable
+  Cash Locked: Cash Locked
+SwitchAccount.title: Choose Account
+SwitchCurrency.title: Choose Currency
+SwitchWatchlist.title: Choose Watchlist group
+SearchStock:
+  title: Search Stock
+TextInput:
+  placeholder: "What are you searching for?"
+TradeToken.title: Trade Password
+OptionUnit: " unit"
+LeverageStatus.Unused: Unused
+LeverageStatus.Used: Used
+RiskLevel.Danger: Danger
+RiskLevel.Middle: Middle
+RiskLevel.Safe: Safe
+RiskLevel.Warning: Warning
+TradeStatus.Normal: Trading
+TradeStatus.Halted: Halted
+TradeStatus.Delisted: Delisted
+TradeStatus.STOP: Closed
+TradeStatus.UsStop: Closed
+Help: " Help "
+HelpTips: |-
+  - General ----------------------------------------------------------------------------------
+
+    ?                               Show help info
+    /                               Open search stock popup
+    q, ESC                          Dismiss current window, or go back to last tab
+    Enter                           Perform action for the current selection
+    R                               Refresh data manually
+
+  - Stock Detail -----------------------------------------------------------------------------
+
+    t                               Toggle watchlist view
+    TAB, Shift+TAB                  Switch kline sampling selection
+    h, Left Arrow, l, Right Arrow   Switch kline sampling interval for candlestick charts
+
+  - Watchlist --------------------------------------------------------------------------------
+
+    G                               Switch watchlist group
+    t                               Toggle stock detail view
+    j, Up Arrow, k, Down Arrow      Switch watching selection
+
+  - Portfolio  -------------------------------------------------------------------------------
+
+    a                               Switch account
+    c                               Switch currency
+    j, Up Arrow, k, Down Arrow      Switch holding selection

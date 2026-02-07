@@ -1,0 +1,200 @@
+---
+error:
+  general: "發生錯誤"
+  api:
+    heading: "請求失敗"
+    content: "發起請求失敗，請檢查網絡連接狀況，退出應用後稍後再試"
+  session:
+    heading: "會話失效"
+    content: "用户登錄狀態失效，請退出重試"
+exit:
+  any_key: "按下任意鍵退出"
+  multi_instance: "檢測到其他運行實例，請先關閉後再運行"
+qrcode_view:
+  scan_hint: |
+    請使用長橋 iOS 或 Android app 掃描二維碼
+    https://longbridge.hk/download
+  error:
+    heading: "生成二維碼失敗"
+    content: "請退出 app 後重試"
+  timeout:
+    heading: "二維碼已失效"
+    content: "請退出 app 後重試"
+user:
+  open_account:
+    heading: "請開户"
+    content: "請在其他長橋應用上開户後使用"
+Prompt:
+  Esc: 按 ESC 鍵退出
+Candlestick:
+  Open: 開盤
+  Close: 收盤
+StockIndex:
+  .DJI.US: "道瓊斯"
+  .IXIC.US: "納斯達克"
+  SPY.US: "標普 ETF"
+  HSI.HK: "恆生指數"
+  HSCEI.HK: "國企指數"
+  HSTECH.HK: "恆生科技"
+  000001.SH: "上證指數"
+  399001.SZ: "深證成指"
+  399006.SZ: "創業板指"
+Please sign in: "請登陸"
+Scan the QR code to finish signing in: "掃描二維碼以完成登錄"
+Signing in...: "登錄中..."
+"Please wait...": "請稍後..."
+Stock.SharesSuffix: "股"
+Console.Title: " Console "
+Update: " 更新 "
+Downloading: "下載中"
+tabs.Portfolio: 資產概覽
+tabs.Watchlist: 自選列表
+Watchlist: 自選列表
+WebSocket Connected: "數據實時更新中"
+WebSocket Connecting: "實時更新中斷"
+WebSocket Disconnected: "實時更新中斷"
+Keyboard.Help: "幫助 [?]"
+Keyboard.Search: "搜索 [/]"
+Keyboard.Quit: "退出 [^c]"
+Keyboard.OpenDetail: "選擇 [o]"
+Keyboard.QRCode.Enter: "登錄 [⏎]"
+Keyboard.SwitchChart: "切換圖標 [⇥]"
+Keyboard.Scroll: 滾動 [↑↓]
+Keyboard.Console: 日誌 [`]
+"Welcome, %{name}": "歡迎，%{name}"
+stock counter id must be valid: "CounterID 不正確"
+watchlist.CHG: "漲跌幅"
+watchlist.CODE: "代碼"
+watchlist.NAME: "名稱"
+watchlist.PRICE: "價格"
+watchlist.STATUS: "狀態"
+watchlist.VOL: "漲跌"
+watchlist_group.all: "所有"
+watchlist_group.holdings: "持倉"
+watchlist_group.us: "美股"
+watchlist_group.hk: "港股"
+watchlist_group.cn: "A股"
+watchlist_group.sg: "新加坡"
+watchlist_group.jp: "日本"
+watchlist_group.uk: "英国"
+watchlist_group.de: "德国"
+StockDetail.52wk High: 52 周高
+StockDetail.52wk Low: 52 周低
+StockDetail.Amplitude: 振幅
+StockDetail.Average: 均價
+StockDetail.BPS: 每股淨資產
+StockDetail.Bid/Ask Ratio: 換手率
+StockDetail.Dividend (TTM): 股息 (TTM)
+StockDetail.Dividend Yield (TTM): 股息率 (TTM)
+StockDetail.EPS (Dynamic): 每股收益 (動)
+StockDetail.EPS (Static): 每股收益 (靜)
+StockDetail.EPS (TTM): 每股收益 (TTM)
+StockDetail.Float Cap: 流通市值
+StockDetail.High: 最高
+StockDetail.Low: 最低
+StockDetail.Market Cap: 總市值
+StockDetail.Min lot size: 最小單位
+StockDetail.Open: 今開
+StockDetail.P/B: 市淨率
+StockDetail.P/E (Dynamic): 市盈率 (動)
+StockDetail.P/E (Static): 市盈率 (靜)
+StockDetail.P/E (TTM): 市盈率 (TTM)
+StockDetail.Prev. Close: 昨收
+StockDetail.Shares: 總股本
+StockDetail.Shares Float: 流通股本
+StockDetail.Trading Status: 交易狀態
+StockDetail.Turnover: 成交額
+StockDetail.Turnover Ratio: 委比
+StockDetail.Volume: 成交量
+StockDetail.Volume Ratio: 量比
+Portfolio.Title: 資產總覽
+Portfolio.Intraday P/L: 當日盈虧
+Portfolio.Total Cash Amount: 現金
+Portfolio.Total Asset: 總資產
+Portfolio.P/L: 持倉盈虧
+Portfolio.Market Cap: 持倉市值
+Portfolio.Margin Call: 應追繳保證金
+Portfolio.Risk Level: 風控狀態
+Portfolio.Credit Limit: 融資額度
+Portfolio.Health Status: 槓桿
+Portfolio.Fund Market Cap: 基金市值
+Holding.Code: 代碼
+Holding.Cost Price: 成本價
+Holding.Hold Ratio: 佔比%
+Holding.Holding: "持倉列表"
+Holding.Intraday P/L: 當日盈虧
+Holding.Intraday P/L%: "當日盈虧率%"
+Holding.Market Value: 股票市值
+Holding.Name: 名稱
+Holding.P/L: 浮動盈虧
+Holding.P/L%: "浮動盈虧率%"
+Holding.Price: 最新價
+Holding.Quantity: 持倉數量
+StockDepth:
+  Bid: "買盤"
+  Ask: "賣盤"
+StockQuoteTrades: "交易明細"
+CashBalance:
+  title: " 現金 "
+  total: 現金總額
+  Total: 總額
+  Avail. Balance: 可用現金
+  Cash Locked: 凍結現金
+  Cash Withdrawable: 現金可提
+StockAccount:
+  title: " 股票賬户 "
+  Net Assets: 淨資產
+  Intraday P/L: 當日盈虧
+  Mkt Value: 持倉市值
+  P/L: 浮動盈虧
+  Max Buying Power: 最大購買力
+  Avail. Balance: 可用現金
+  Cash Withdrawable: 現金可提
+  Cash Locked: 凍結現金
+SwitchAccount.title: 選擇賬號
+SwitchCurrency.title: 選擇幣種
+SwitchWatchlist.title: 選擇自選列表分組
+SearchStock:
+  title: 搜索股票
+TextInput:
+  placeholder: "輸入想搜索的內容"
+TradeToken.title: 交易密碼
+OptionUnit: " 張"
+LeverageStatus.Unused: 未使用
+LeverageStatus.Used: 已使用
+RiskLevel.Danger: 危險
+RiskLevel.Middle: 中等
+RiskLevel.Safe: 安全
+RiskLevel.Warning: 預警
+TradeStatus.Normal: 交易中
+TradeStatus.Halted: 停牌
+TradeStatus.Delisted: 退市
+TradeStatus.STOP: 休市
+TradeStatus.UsStop: 休市
+Help: " 幫助 "
+HelpTips: |-
+  - 通用 ---------------------------------------------------------------------------------
+
+    ?                               顯示幫助信息
+    /                               打開股票搜索窗口
+    q, ESC                          關閉當前窗口，或返回上一個 Tab
+    Enter                           選擇或確定
+    R                               手動刷新行情數據
+
+  - 個股詳情 -----------------------------------------------------------------------------
+
+    t                               展示或隱藏關注列表視圖
+    TAB, Shift+TAB                  切換行情圖表的時間間隔
+    h, Left Arrow, l, Right Arrow   切換蠟燭圖的 K 線採樣間隔
+
+  - 關注列表 -----------------------------------------------------------------------------
+
+    G                               切換關注列表分組
+    t                               展示或隱藏個股詳情視圖
+    j, Up Arrow, k, Down Arrow      上下切換關注列表中的項目
+
+  - 資產總覽 -----------------------------------------------------------------------------
+
+    a                               多賬户之前切換（如有）
+    c                               切換展示幣種
+    j, Up Arrow, k, Down Arrow      上下切換持倉列表或其他列表的選中項

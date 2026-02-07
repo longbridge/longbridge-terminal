@@ -1,0 +1,2367 @@
+#![allow(clippy::too_many_arguments, clippy::too_many_lines)]
+use std::{collections::HashMap, sync::atomic::Ordering, sync::Mutex};
+
+use atomic::Atomic;
+use bevy_ecs::{
+    prelude::*,
+    system::{CommandQueue, InsertResource},
+};
+use once_cell::sync::Lazy;
+use ratatui::{
+    layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
+    style::{Modifier, Style},
+    text::{Line, Span, Text},
+    widgets::{
+        Block, BorderType, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, TableState,
+        Tabs,
+    },
+    Frame,
+};
+use rust_decimal::Decimal;
+use tokio::sync::mpsc;
+
+use crate::{
+    app::{AppState, RT, WATCHLIST},
+    data::{
+        Account, Counter, KlineType, ReadyState, Stock, SubTypes, TradeStatus, WatchlistGroup,
+        STOCKS,
+    },
+    helper::{cycle, DecimalExt, Sign},
+    kline::KLINES,
+    ui::{
+        styles::{self, item},
+        Content,
+    },
+    widgets::{Carousel, Loading, LoadingWidget, LocalSearch, Search, Select, Terminal},
+};
+
+// 兼容性类型别名
+pub type Component = ();
+const EMPTY_PLACEHOLDER: &str = "--";
+
+// Portfolio 相关的存根类型
+pub mod portfolio {
+    #[derive(Clone, Debug, Default)]
+    pub struct Props {
+        pub account_channel: String,
+        pub aaid: String,
+    }
+
+    use crate::data::Market;
+    use rust_decimal::Decimal;
+    use std::collections::HashMap;
+
+    #[derive(Clone, Debug, Default)]
+    pub struct StockHold {
+        pub total: Decimal,
+    }
+
+    #[derive(Clone, Debug, Default)]
+    pub struct Overview {
+        pub total_assets: Decimal,
+    }
+
+    #[derive(Clone, Debug, Default)]
+    pub struct MarketPortfolio {
+        pub total: Decimal,
+    }
+
+    #[derive(Clone, Debug, Default)]
+    pub struct CashBalance {
+        pub total: Decimal,
+    }
+
+    #[derive(Clone, Debug, Default)]
+    pub struct View {
+        pub stock_hold: StockHold,
+        pub props: Props,
+        pub overview: Overview,
+        pub market_portfolio: HashMap<Market, MarketPortfolio>,
+        pub cash_balance: CashBalance,
+    }
+}
+
+// Watchlist API - 使用 longport SDK
+pub async fn fetch_watchlist(
+    group_id: Option<u64>,
+) -> anyhow::Result<(Vec<Counter>, Vec<crate::data::WatchlistGroup>)> {
+    // 翻译默认分组名称
+    fn translate_group_name(name: &str) -> String {
+        match name.to_lowercase().as_str() {
+            "all" => t!("watchlist_group.all"),
+            "holdings" => t!("watchlist_group.holdings"),
+            "us" => t!("watchlist_group.us"),
+            "hk" => t!("watchlist_group.hk"),
+            "cn" => t!("watchlist_group.cn"),
+            "sg" => t!("watchlist_group.sg"),
+            "jp" => t!("watchlist_group.jp"),
+            "uk" => t!("watchlist_group.uk"),
+            "de" => t!("watchlist_group.de"),
+            "na" => t!("watchlist_group.na"),
+            _ => name.to_string(),
+        }
+    }
+
+    let ctx = crate::openapi::quote();
+
+    // 获取自选股列表
+    match ctx.watchlist().await {
+        Ok(watchlist) => {
+            // 提取分组信息和自选股
+            let mut groups = Vec::new();
+            let mut counters = Vec::new();
+
+            for group in watchlist {
+                let group_id_u64 = group.id as u64;
+
+                // 添加分组信息,翻译默认分组名称
+                groups.push(crate::data::WatchlistGroup {
+                    id: group_id_u64,
+                    name: translate_group_name(&group.name),
+                });
+
+                // 如果指定了分组ID，只返回该分组的股票
+                if let Some(filter_id) = group_id {
+                    if group_id_u64 != filter_id {
+                        continue;
+                    }
+                }
+
+                // 添加该分组下的股票
+                for security in group.securities {
+                    match security.symbol.parse() {
+                        Ok(counter) => {
+                            counters.push(counter);
+                        }
+                        _ => (),
+                    }
+                }
+            }
+
+            tracing::info!(
+                "获取到 {} 个分组，共 {} 个股票 (过滤分组: {:?})",
+                groups.len(),
+                counters.len(),
+                group_id
+            );
+            Ok((counters, groups))
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
+pub async fn fetch_holdings() -> anyhow::Result<Vec<Counter>> {
+    let ctx = crate::openapi::trade();
+
+    // 获取持仓列表
+    match ctx.stock_positions(None).await {
+        Ok(response) => {
+            // StockPositionsResponse 包含多个渠道的持仓
+            let mut counters = Vec::new();
+            for channel in &response.channels {
+                for position in &channel.positions {
+                    match position.symbol.parse() {
+                        Ok(counter) => {
+                            counters.push(counter);
+                        }
+                        _ => (),
+                    }
+                }
+            }
+            Ok(counters)
+        }
+        Err(e) => {
+            tracing::error!("获取持仓失败: {}", e);
+            Ok(vec![])
+        }
+    }
+}
+
+// WebSocket 订阅管理（简化实现）
+pub struct WsManager;
+
+impl WsManager {
+    pub async fn unmount(&self, _name: &str) -> anyhow::Result<()> {
+        // TODO: 使用 longport SDK 取消订阅
+        Ok(())
+    }
+
+    pub async fn remount(
+        &self,
+        _name: &str,
+        symbols: &[Counter],
+        _sub_type: SubTypes,
+    ) -> anyhow::Result<()> {
+        // TODO: 使用 longport SDK 重新订阅
+        let ctx = crate::openapi::quote();
+        let symbol_strings: Vec<String> = symbols.iter().map(|c| c.to_string()).collect();
+        let _ = ctx
+            .subscribe(&symbol_strings, longport::quote::SubFlags::QUOTE)
+            .await;
+        Ok(())
+    }
+
+    pub async fn quote_detail(&self, _name: &str, symbols: &[Counter]) -> anyhow::Result<()> {
+        let ctx = crate::openapi::quote();
+        let symbol_strings: Vec<String> = symbols.iter().map(|c| c.to_string()).collect();
+        let _ = ctx
+            .subscribe(
+                &symbol_strings,
+                longport::quote::SubFlags::QUOTE | longport::quote::SubFlags::DEPTH,
+            )
+            .await;
+        Ok(())
+    }
+
+    pub async fn quote_trade(&self, _name: &str, symbols: &[Counter]) -> anyhow::Result<()> {
+        let ctx = crate::openapi::quote();
+        let symbol_strings: Vec<String> = symbols.iter().map(|c| c.to_string()).collect();
+        let _ = ctx
+            .subscribe(&symbol_strings, longport::quote::SubFlags::TRADE)
+            .await;
+        Ok(())
+    }
+}
+
+pub static WS: once_cell::sync::Lazy<WsManager> = once_cell::sync::Lazy::new(|| WsManager);
+
+// 其他存根类型
+#[derive(Clone, Debug, Default)]
+pub struct DepthView {
+    // TODO: 实现
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct DetailView {
+    // TODO: 实现
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RiskLevel {
+    Safe,
+    Low,
+    MiddleLow,
+    Middle,
+    MiddleHigh,
+    Medium,
+    High,
+    Danger,
+    Warning,
+}
+
+pub(crate) static KLINE_TYPE: Atomic<KlineType> = Atomic::new(KlineType::PerMinute);
+pub(crate) static KLINE_INDEX: Atomic<usize> = Atomic::new(0);
+
+pub(crate) static LAST_DONE: Lazy<Mutex<HashMap<Counter, Decimal>>> = Lazy::new(Mutex::default);
+pub(crate) static WATCHLIST_TABLE: Lazy<Mutex<TableState>> = Lazy::new(Mutex::default);
+
+type NavFooter<'w> = (
+    Res<'w, State<AppState>>,
+    Res<'w, Carousel<[Counter; 3]>>,
+    Res<'w, WsState>,
+);
+type PopUp<'w> = (
+    ResMut<'w, LocalSearch<Account>>,
+    ResMut<'w, LocalSearch<crate::api::account::CurrencyInfo>>,
+    ResMut<'w, Search<crate::api::search::StockItem>>,
+    ResMut<'w, LocalSearch<WatchlistGroup>>,
+);
+
+#[derive(Event)]
+pub enum Key {
+    Up,
+    Down,
+    Left,
+    Right,
+    Tab,
+    BackTab,
+    Enter,
+}
+
+#[derive(Event)]
+pub struct TuiEvent(pub tui_input::InputRequest);
+
+#[derive(Clone, Resource)]
+pub struct Command(pub mpsc::UnboundedSender<CommandQueue>);
+
+#[derive(Resource)]
+pub struct QrCode(pub String);
+
+#[derive(Resource)]
+pub struct WsState(pub ReadyState);
+
+#[derive(Resource)]
+pub struct StockDetail(pub Counter);
+
+#[derive(Debug, Resource)]
+pub struct Portfolio {
+    pub props: portfolio::Props,
+    pub view: portfolio::View,
+}
+
+pub fn error(mut terminal: ResMut<Terminal>, err: Res<Content<'static>>) {
+    _ = terminal.draw(|frame| {
+        frame.render_widget(err.clone(), frame.size());
+    });
+}
+
+pub fn loading(mut terminal: ResMut<Terminal>, loading: Res<Loading>) {
+    _ = terminal.draw(|frame| {
+        frame.render_widget(LoadingWidget::from(&*loading), frame.size());
+    });
+}
+
+pub fn qr_code(mut terminal: ResMut<Terminal>, token: Res<QrCode>) {
+    _ = terminal.draw(|frame| {
+        let content = Content::new(t!("qrcode_view.scan_hint"), Text::raw(&token.0));
+        frame.render_widget(content, frame.size());
+    });
+}
+
+pub fn exit_watchlist() {
+    crate::app::LAST_STATE.store(AppState::Watchlist, Ordering::Relaxed);
+}
+
+pub fn enter_watchlist_common(command: Res<Command>) {
+    refresh_watchlist(command.0.clone());
+}
+
+pub fn exit_watchlist_common() {
+    RT.get().unwrap().spawn(async move {
+        _ = WS.unmount("watchlist").await;
+    });
+}
+
+pub fn refresh_watchlist(update_tx: mpsc::UnboundedSender<CommandQueue>) {
+    RT.get().unwrap().spawn(async move {
+        let group_id = WATCHLIST.read().expect("poison").group_id;
+        let (watch_resp, holdings) = tokio::join!(fetch_watchlist(group_id), fetch_holdings());
+        match watch_resp {
+            Ok((counters, groups)) => {
+                let mut watchlist = WATCHLIST.write().expect("poison");
+                watchlist.set_groups(groups);
+                if let Ok(holdings) = holdings {
+                    watchlist.full_load(counters, holdings);
+                } else {
+                    watchlist.load(counters);
+                }
+            }
+            Err(err) => {
+                tracing::error!("fail to fetch watchlist: {err}");
+                return;
+            }
+        }
+
+        let counters = {
+            // 简化实现：使用默认排序
+            let mut watchlist = WATCHLIST.write().expect("poison");
+            watchlist.set_hidden(true);
+            watchlist.set_sortby((0, 0, false)); // (sort_mode, sort_by, reverse)
+            watchlist.counters().to_vec()
+        };
+
+        // 为每个自选股创建 Stock 条目（如果不存在）
+        for counter in &counters {
+            if STOCKS.get(counter).is_none() {
+                let mut stock = crate::data::Stock::new(counter.clone());
+                stock.name = counter.to_string(); // 临时使用 symbol 作为名称
+                STOCKS.insert(stock);
+            }
+        }
+
+        // 获取初始行情数据
+        if !counters.is_empty() {
+            let ctx = crate::openapi::quote();
+            let symbols: Vec<String> = counters.iter().map(|c| c.as_str().to_string()).collect();
+
+            // 使用 realtime_quote 获取实时行情数据
+            match ctx.realtime_quote(symbols.iter().map(|s| s.as_str())).await {
+                Ok(quotes) => {
+                    for quote in quotes {
+                        match quote.symbol.parse() {
+                            Ok(counter) => {
+                                STOCKS.modify(counter, |stock| {
+                                    stock.update_from_quote(&quote);
+                                });
+                            }
+                            _ => (),
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("获取初始行情失败: {}", e);
+                }
+            }
+
+            // 获取股票静态信息（包含名称等）
+            match ctx.static_info(symbols.iter().map(|s| s.as_str())).await {
+                Ok(infos) => {
+                    for info in infos {
+                        match info.symbol.parse() {
+                            Ok(counter) => {
+                                STOCKS.modify(counter, |stock| {
+                                    stock.name = info.name_cn.clone();
+                                    stock.update_from_static_info(&info);
+                                });
+                            }
+                            _ => (),
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("获取股票静态信息失败: {}", e);
+                }
+            }
+        }
+
+        // SignalApp 已移除
+        let _ = WS.remount("watchlist", &counters, SubTypes::LIST).await;
+
+        // refresh watchlist sort
+        WATCHLIST.write().expect("poison").refresh();
+        // counter order maybe change, reset table highlight
+        WATCHLIST_TABLE.lock().expect("poison").select(None);
+
+        let local_search = LocalSearch::new(
+            WATCHLIST.read().expect("poison").groups().to_vec(),
+            |keyword: &str, group: &crate::data::WatchlistGroup| {
+                let keyword = &keyword.to_ascii_lowercase();
+                group.name.to_ascii_lowercase().contains(keyword)
+            },
+        );
+        let mut queue = CommandQueue::default();
+        queue.push(InsertResource {
+            resource: local_search,
+        });
+        _ = update_tx.send(queue);
+    });
+}
+
+pub fn refresh_stock(counter: Counter) {
+    RT.get().unwrap().spawn(async move {
+        KLINES.clear();
+        let _ = WS.quote_detail("stock_detail", &[counter.clone()]).await;
+        let _ = WS.quote_trade("stock_detail", &[counter.clone()]).await;
+
+        // 获取静态信息（如果还没有）
+        let should_fetch = STOCKS
+            .get(&counter)
+            .map(|s| s.static_info.is_none())
+            .unwrap_or(false);
+
+        if should_fetch {
+            // 异步获取静态信息
+            if let Ok(infos) = crate::api::quote::fetch_static_info(&[counter.to_string()]).await {
+                if let Some(info) = infos.first() {
+                    STOCKS.modify(counter, |stock| {
+                        stock.update_from_static_info(info);
+                    });
+                }
+            }
+        }
+    });
+}
+
+pub fn enter_stock(counter: Res<StockDetail>) {
+    refresh_stock(counter.0.clone());
+}
+
+pub fn exit_stock() {
+    KLINES.clear();
+    RT.get().unwrap().spawn(async move {
+        _ = WS.unmount("stock_detail").await;
+    });
+}
+
+pub fn enter_portfolio(_portfolio: Res<Portfolio>) {
+    // SignalApp mount 功能已移除，这里简化实现
+    // TODO: 如果需要，可以在这里添加 portfolio 初始化逻辑
+}
+
+pub fn exit_portfolio() {
+    crate::app::LAST_STATE.store(AppState::Portfolio, Ordering::Relaxed);
+}
+
+pub fn render_watchlist_stock(
+    mut terminal: ResMut<Terminal>,
+    mut events: EventReader<Key>,
+    stock: Res<StockDetail>,
+    command: Res<Command>,
+    (state, indexes, ws): NavFooter,
+    (mut account, mut currency, mut search, mut watchgroup): PopUp,
+    mut last_choose: Local<Counter>,
+) {
+    // workaround bevyengine/bevy#9130
+    if *last_choose != stock.0 {
+        if !last_choose.is_empty() {
+            refresh_stock(stock.0.clone());
+        }
+        *last_choose = stock.0.clone();
+    }
+
+    for event in &mut events {
+        match event {
+            Key::Up => {
+                let idx = WATCHLIST_TABLE.lock().expect("poison").selected();
+                let len = WATCHLIST.read().expect("poison").counters().len();
+                let new_idx = cycle::prev(idx, len);
+                WATCHLIST_TABLE.lock().expect("poison").select(new_idx);
+
+                // 立即更新股票详情
+                if let Some(idx) = new_idx {
+                    if let Some(counter) = WATCHLIST
+                        .read()
+                        .expect("poison")
+                        .counters()
+                        .get(idx)
+                        .cloned()
+                    {
+                        _ = command.0.send({
+                            let mut queue = CommandQueue::default();
+                            queue.push(InsertResource {
+                                resource: StockDetail(counter),
+                            });
+                            queue
+                        });
+                    }
+                }
+            }
+            Key::Down => {
+                let idx = WATCHLIST_TABLE.lock().expect("poison").selected();
+                let len = WATCHLIST.read().expect("poison").counters().len();
+                let new_idx = cycle::next(idx, len);
+                WATCHLIST_TABLE.lock().expect("poison").select(new_idx);
+
+                // 立即更新股票详情
+                if let Some(idx) = new_idx {
+                    if let Some(counter) = WATCHLIST
+                        .read()
+                        .expect("poison")
+                        .counters()
+                        .get(idx)
+                        .cloned()
+                    {
+                        _ = command.0.send({
+                            let mut queue = CommandQueue::default();
+                            queue.push(InsertResource {
+                                resource: StockDetail(counter),
+                            });
+                            queue
+                        });
+                    }
+                }
+            }
+            Key::Left => {
+                _ = KLINE_INDEX.fetch_update(Ordering::Acquire, Ordering::Relaxed, |old| {
+                    Some(old.saturating_add(1))
+                });
+            }
+            Key::Right => {
+                _ = KLINE_INDEX.fetch_update(Ordering::Acquire, Ordering::Relaxed, |old| {
+                    Some(old.saturating_sub(1))
+                });
+            }
+            Key::Tab => {
+                KLINE_INDEX.store(0, Ordering::Relaxed);
+                _ = KLINE_TYPE.fetch_update(Ordering::Acquire, Ordering::Relaxed, |kline_type| {
+                    Some(kline_type.next())
+                });
+            }
+            Key::BackTab => {
+                KLINE_INDEX.store(0, Ordering::Relaxed);
+                _ = KLINE_TYPE.fetch_update(Ordering::Acquire, Ordering::Relaxed, |kline_type| {
+                    Some(kline_type.prev())
+                });
+            }
+            Key::Enter => {
+                let Some(idx) = WATCHLIST_TABLE.lock().expect("poison").selected() else {
+                    continue;
+                };
+                let counter = WATCHLIST
+                    .read()
+                    .expect("poison")
+                    .counters()
+                    .get(idx)
+                    .cloned();
+                if let Some(counter) = counter {
+                    _ = command.0.send({
+                        let mut queue = CommandQueue::default();
+                        queue.push(InsertResource {
+                            resource: StockDetail(counter),
+                        });
+                        queue.push(InsertResource {
+                            resource: NextState(Some(AppState::WatchlistStock)),
+                        });
+                        queue
+                    });
+                }
+            }
+        }
+    }
+
+    _ = terminal.draw(|frame| {
+        let rect = frame.size();
+        let top = Rect { height: 1, ..rect };
+        crate::views::navbar::render(frame, top, *state.get());
+
+        let bottom = Rect {
+            y: rect.y + rect.height - 1,
+            height: 1,
+            ..rect
+        };
+        crate::views::footer::render(frame, bottom, indexes.tick(), &ws);
+
+        let rect = Rect {
+            y: rect.y + 1,
+            height: rect.height - 2,
+            ..rect
+        };
+        let chunks = Layout::default()
+            .constraints([Constraint::Length(57), Constraint::Min(20)])
+            .direction(Direction::Horizontal)
+            .split(rect);
+        watch(frame, chunks[0], false);
+        stock_detail(
+            frame,
+            chunks[1],
+            &stock.0,
+            KLINE_TYPE.load(Ordering::Relaxed),
+            KLINE_INDEX.load(Ordering::Relaxed),
+        );
+
+        crate::views::popup::render(
+            frame,
+            rect,
+            &mut account,
+            &mut currency,
+            &mut search,
+            &mut watchgroup,
+        );
+    });
+}
+
+pub fn render_stock(
+    mut terminal: ResMut<Terminal>,
+    mut events: EventReader<Key>,
+    stock: Res<StockDetail>,
+    (state, indexes, ws): NavFooter,
+    (mut account, mut currency, mut search, mut watchgroup): PopUp,
+    mut last_choose: Local<Counter>,
+) {
+    // workaround bevyengine/bevy#9130
+    if *last_choose != stock.0 {
+        if !last_choose.is_empty() {
+            refresh_stock(stock.0.clone());
+        }
+        *last_choose = stock.0.clone();
+    }
+
+    for event in &mut events {
+        match event {
+            Key::Left => {
+                _ = KLINE_INDEX.fetch_update(Ordering::Acquire, Ordering::Relaxed, |old| {
+                    Some(old.saturating_add(1))
+                });
+            }
+            Key::Right => {
+                _ = KLINE_INDEX.fetch_update(Ordering::Acquire, Ordering::Relaxed, |old| {
+                    Some(old.saturating_sub(1))
+                });
+            }
+            Key::Tab => {
+                _ = KLINE_TYPE.fetch_update(Ordering::Acquire, Ordering::Relaxed, |kline_type| {
+                    Some(kline_type.next())
+                });
+            }
+            Key::BackTab => {
+                _ = KLINE_TYPE.fetch_update(Ordering::Acquire, Ordering::Relaxed, |kline_type| {
+                    Some(kline_type.prev())
+                });
+            }
+            Key::Enter | Key::Up | Key::Down => {}
+        }
+    }
+
+    _ = terminal.draw(|frame| {
+        let rect = frame.size();
+        let top = Rect { height: 1, ..rect };
+        crate::views::navbar::render(frame, top, *state.get());
+
+        let bottom = Rect {
+            y: rect.y + rect.height - 1,
+            height: 1,
+            ..rect
+        };
+        crate::views::footer::render(frame, bottom, indexes.tick(), &ws);
+
+        let rect = Rect {
+            y: rect.y + 1,
+            height: rect.height - 2,
+            ..rect
+        };
+
+        stock_detail(
+            frame,
+            rect,
+            &stock.0,
+            KLINE_TYPE.load(Ordering::Relaxed),
+            KLINE_INDEX.load(Ordering::Relaxed),
+        );
+        crate::views::popup::render(
+            frame,
+            rect,
+            &mut account,
+            &mut currency,
+            &mut search,
+            &mut watchgroup,
+        );
+    });
+}
+
+fn stock_detail(
+    frame: &mut Frame,
+    rect: Rect,
+    counter: &Counter,
+    _kline_type: KlineType,
+    _selected: usize,
+) {
+    fn price_spans(data: &crate::data::QuoteData, counter: &Counter) -> Vec<Span<'static>> {
+        let (last_done, increase, increase_percent) =
+            data.last_done.zip(data.prev_close).map_or_else(
+                || {
+                    (
+                        EMPTY_PLACEHOLDER.to_string(),
+                        EMPTY_PLACEHOLDER.to_string(),
+                        EMPTY_PLACEHOLDER.to_string(),
+                    )
+                },
+                |(last_done, prev_close)| {
+                    let prev_close = if prev_close == Decimal::ZERO {
+                        last_done
+                    } else {
+                        prev_close
+                    };
+                    let increase = last_done - prev_close;
+                    (
+                        last_done.format_quote_by_counter(counter),
+                        increase.format_quote_by_counter(counter),
+                        (increase / prev_close).format_percent(),
+                    )
+                },
+            );
+        let trend_style = styles::up(increase.sign());
+        vec![
+            Span::raw(" "),
+            Span::styled(last_done, trend_style),
+            Span::raw(" ("),
+            Span::styled(format!("{increase_percent}, {increase}"), trend_style),
+            Span::raw(") "),
+        ]
+    }
+
+    let Some(stock) = STOCKS.get(counter) else {
+        return;
+    };
+
+    // draw title
+    let mut titles = vec![Span::raw(format!(
+        " {} ({}.{})",
+        stock.name,
+        counter.code(),
+        counter.market(),
+    ))];
+    titles.extend(price_spans(&stock.quote, counter));
+    if stock.trade_status.is_us_pre_post() || stock.trade_status.is_us_night() {
+        titles.push(Span::raw(stock.trade_status.label()));
+        titles.extend(price_spans(&stock.quote, counter));
+    }
+
+    let detail_container = Block::default()
+        .title(Line::from(titles))
+        .borders(Borders::ALL);
+
+    // draw border
+    frame.render_widget(detail_container, rect);
+
+    // Helper function to format optional Decimal (价格类)
+    let fmt_decimal = |opt: Option<Decimal>| -> String {
+        opt.map(|d| d.format_quote_by_counter(counter))
+            .unwrap_or_else(|| EMPTY_PLACEHOLDER.to_string())
+    };
+
+    // Helper function to format u64
+    let fmt_u64 = |val: u64| -> String {
+        if val == 0 {
+            EMPTY_PLACEHOLDER.to_string()
+        } else {
+            crate::ui::text::unit(Decimal::from(val), 0)
+        }
+    };
+
+    // Helper function to format i64
+    let fmt_i64 = |val: i64| -> String {
+        if val == 0 {
+            EMPTY_PLACEHOLDER.to_string()
+        } else {
+            crate::ui::text::unit(Decimal::from(val), 0)
+        }
+    };
+
+    // 构建详情列 - 第一列：基本交易数据
+    let column0 = vec![
+        ListItem::new(" "),
+        item("交易状态".to_string(), stock.trade_status.label()),
+        ListItem::new(" "),
+        item("开盘价".to_string(), fmt_decimal(stock.quote.open)),
+        item("昨收价".to_string(), fmt_decimal(stock.quote.prev_close)),
+        ListItem::new(" "),
+        item("最高价".to_string(), fmt_decimal(stock.quote.high)),
+        item("最低价".to_string(), fmt_decimal(stock.quote.low)),
+        item("均价".to_string(), EMPTY_PLACEHOLDER), // 需要计算
+        ListItem::new(" "),
+        item("成交量".to_string(), fmt_u64(stock.quote.volume)),
+        item(
+            "成交额".to_string(),
+            crate::ui::text::unit(stock.quote.turnover, 2),
+        ),
+        ListItem::new(" "),
+    ];
+
+    // 第二列：静态信息（如果有）
+    let column1 = if let Some(ref info) = stock.static_info {
+        vec![
+            ListItem::new(" "),
+            ListItem::new(" "),
+            ListItem::new(" "),
+            item("市盈率(TTM)".to_string(), fmt_decimal(info.eps_ttm)),
+            item("每股收益".to_string(), fmt_decimal(info.eps)),
+            ListItem::new(" "),
+        ]
+    } else {
+        vec![
+            ListItem::new(" "),
+            ListItem::new(" "),
+            ListItem::new(" "),
+            item("市盈率(TTM)".to_string(), EMPTY_PLACEHOLDER),
+            item("每股收益".to_string(), EMPTY_PLACEHOLDER),
+            ListItem::new(" "),
+        ]
+    };
+
+    // 第三列：更多静态信息
+    let column2 = if let Some(ref info) = stock.static_info {
+        vec![
+            ListItem::new(" "),
+            ListItem::new(" "),
+            ListItem::new(" "),
+            item("总股本".to_string(), fmt_i64(info.total_shares)),
+            item("流通股本".to_string(), fmt_i64(info.circulating_shares)),
+            ListItem::new(" "),
+            item("每股净资产".to_string(), fmt_decimal(info.bps)),
+            item("股息率".to_string(), fmt_decimal(info.dividend_yield)),
+            ListItem::new(" "),
+            ListItem::new(" "),
+            item("每手股数".to_string(), info.lot_size.to_string()),
+            ListItem::new(" "),
+        ]
+    } else {
+        vec![
+            ListItem::new(" "),
+            ListItem::new(" "),
+            ListItem::new(" "),
+            item("总股本".to_string(), EMPTY_PLACEHOLDER),
+            item("流通股本".to_string(), EMPTY_PLACEHOLDER),
+            ListItem::new(" "),
+            item("每股净资产".to_string(), EMPTY_PLACEHOLDER),
+            item("股息率".to_string(), EMPTY_PLACEHOLDER),
+            ListItem::new(" "),
+            ListItem::new(" "),
+            item("每手股数".to_string(), EMPTY_PLACEHOLDER),
+            ListItem::new(" "),
+        ]
+    };
+
+    // 渲染三列布局
+    let column_height = column0.len().max(column1.len()).max(column2.len()) as u16;
+    let chunks = Layout::default()
+        .constraints([
+            Constraint::Length(column_height),
+            Constraint::Length(1),
+            Constraint::Min(20),
+        ])
+        .direction(Direction::Vertical)
+        .split(rect);
+    let columns_chunks = Layout::default()
+        .constraints([
+            Constraint::Ratio(2, 9),
+            Constraint::Ratio(2, 9),
+            Constraint::Ratio(2, 9),
+            Constraint::Ratio(3, 9),
+        ])
+        .direction(Direction::Horizontal)
+        .split(chunks[0].inner(&Margin {
+            vertical: 1,
+            horizontal: 2,
+        }));
+    frame.render_widget(List::new(column0), columns_chunks[0]);
+    frame.render_widget(List::new(column1), columns_chunks[1]);
+    frame.render_widget(List::new(column2), columns_chunks[2]);
+
+    // 绘制盘口深度
+    let depth_rect = columns_chunks[3].inner(&Margin {
+        vertical: 1,
+        horizontal: 0,
+    });
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::LEFT)
+            .border_type(BorderType::Plain),
+        depth_rect,
+    );
+
+    if !stock.depth.bids.is_empty() || !stock.depth.asks.is_empty() {
+        // 格式化单个深度档位
+        let format_depth_line = |depth: &crate::data::Depth,
+                                 counter: &Counter,
+                                 prev_close: Option<Decimal>|
+         -> Line<'static> {
+            // 档位
+            let position = Span::styled(
+                format!("{:>2}:", depth.position),
+                crate::ui::styles::label(),
+            );
+            // 价格
+            let price_cmp = prev_close
+                .map(|pc| depth.price.cmp(&pc))
+                .unwrap_or(std::cmp::Ordering::Equal);
+            let price_style = styles::up(price_cmp);
+            let price = Span::styled(
+                format!("{:>10} ", depth.price.format_quote_by_counter(counter)),
+                price_style,
+            );
+            // 数量
+            let volume = crate::ui::text::align_right(
+                &crate::ui::text::unit(Decimal::from(depth.volume), 0),
+                6,
+            );
+            // 订单数（仅港股显示）
+            let order_count = if counter.is_hk() {
+                crate::ui::text::align_right(&format!("({})", depth.order_num.clamp(0, 999)), 5)
+            } else {
+                String::new()
+            };
+            Line::from(vec![position, price, volume.into(), order_count.into()])
+        };
+
+        let rect = depth_rect.inner(&Margin {
+            vertical: 1,
+            horizontal: 2,
+        });
+
+        // 计算买卖比例
+        let total_bid_volume: i64 = stock.depth.bids.iter().map(|d| d.volume).sum();
+        let total_ask_volume: i64 = stock.depth.asks.iter().map(|d| d.volume).sum();
+        let total_volume = total_bid_volume + total_ask_volume;
+        let (bid_ratio, ask_ratio) = if total_volume > 0 {
+            let bid_r = Decimal::from(total_bid_volume) / Decimal::from(total_volume);
+            let ask_r = Decimal::from(total_ask_volume) / Decimal::from(total_volume);
+            (bid_r, ask_r)
+        } else {
+            (Decimal::ZERO, Decimal::ZERO)
+        };
+
+        // 布局
+        let chunks = Layout::default()
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Min(10),
+            ])
+            .direction(Direction::Vertical)
+            .split(rect);
+
+        // 标题
+        let bidding_title = format!(" 买盘: {:.1}%", bid_ratio * Decimal::from(100));
+        let asking_title = format!(" 卖盘: {:.1}%", ask_ratio * Decimal::from(100));
+
+        let title_chunks = Layout::default()
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .direction(Direction::Horizontal)
+            .split(chunks[0]);
+        frame.render_widget(Paragraph::new(bidding_title), title_chunks[0]);
+        frame.render_widget(Paragraph::new(asking_title), title_chunks[1]);
+
+        // 比例条
+        const BLOCK: &str = "▂";
+        let bar_width = rect.width as usize;
+        let bid_blocks = ((Decimal::from(bar_width) * bid_ratio)
+            .to_string()
+            .parse::<f64>()
+            .unwrap_or(0.0)
+            .round() as usize)
+            .min(bar_width);
+        let ask_blocks = bar_width.saturating_sub(bid_blocks);
+
+        let (bull_style, bear_style) = styles::bull_bear();
+        let ratio_bar = Line::from(vec![
+            Span::styled(BLOCK.repeat(bid_blocks), bull_style),
+            Span::styled(BLOCK.repeat(ask_blocks), bear_style),
+        ]);
+        frame.render_widget(Paragraph::new(ratio_bar), chunks[1]);
+
+        // 深度列表
+        let depth_lines: Vec<Line> = stock
+            .depth
+            .bids
+            .iter()
+            .take(10)
+            .map(|d| format_depth_line(d, counter, stock.quote.prev_close))
+            .collect();
+        frame.render_widget(Paragraph::new(Text::from(depth_lines)), chunks[2]);
+    }
+
+    // 渲染 K线图区域
+    let chart_chunks = Layout::default()
+        .constraints([Constraint::Ratio(2, 3), Constraint::Ratio(1, 3)])
+        .direction(Direction::Horizontal)
+        .split(chunks[2].inner(&Margin {
+            vertical: 1,
+            horizontal: 0,
+        }));
+
+    // Draw chart
+    {
+        const Y_AXIS_WIDTH: u16 = 17;
+
+        let chart_chunks_inner = Layout::default()
+            .constraints([Constraint::Length(2), Constraint::Min(20)])
+            .direction(Direction::Vertical)
+            .split(chart_chunks[0].inner(&Margin {
+                vertical: 0,
+                horizontal: 2,
+            }));
+
+        let selected_type_index = KlineType::iter()
+            .position(|t| t == _kline_type)
+            .unwrap_or_default();
+        let chart_tabs = Tabs::new(
+            KlineType::iter()
+                .map(|chart_type| {
+                    Line::from(vec![
+                        Span::raw(" "),
+                        Span::raw(chart_type.to_string()),
+                        Span::raw(" "),
+                    ])
+                })
+                .collect(),
+        )
+        .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+        .select(selected_type_index);
+        frame.render_widget(chart_tabs, chart_chunks_inner[0]);
+
+        let area = chart_chunks_inner[1];
+        let (width, page, _index) = area
+            .width
+            .checked_sub(Y_AXIS_WIDTH)
+            .filter(|&v| v > 0)
+            .map(|width| {
+                let width = width as usize;
+                (width, _selected / width, _selected % width)
+            })
+            .unwrap_or_default();
+        let samples = crate::kline::KLINES.by_pagination(
+            counter.clone(),
+            _kline_type,
+            crate::data::AdjustType::ForwardAdjust,
+            page,
+            width,
+        );
+
+        // 如果没有数据，显示提示信息
+        if samples.is_empty() {
+            frame.render_widget(
+                Paragraph::new("加载K线数据中...").alignment(Alignment::Center),
+                area,
+            );
+        } else {
+            let candles: Vec<cli_candlestick_chart::Candle> = samples
+                .iter()
+                .filter_map(|sample| {
+                    // 安全转换，过滤无效数据
+                    let open = f64::try_from(sample.open).ok()?;
+                    let high = f64::try_from(sample.high).ok()?;
+                    let low = f64::try_from(sample.low).ok()?;
+                    let close = f64::try_from(sample.close).ok()?;
+
+                    // 验证数据有效性
+                    if open <= 0.0 || high <= 0.0 || low <= 0.0 || close <= 0.0 {
+                        return None;
+                    }
+                    if high < low || high < open || high < close || low > open || low > close {
+                        return None;
+                    }
+
+                    Some(cli_candlestick_chart::Candle {
+                        open,
+                        high,
+                        low,
+                        close,
+                        volume: Some(
+                            #[allow(clippy::cast_precision_loss)]
+                            {
+                                sample.amount as f64
+                            },
+                        ),
+                        timestamp: Some(sample.timestamp),
+                    })
+                })
+                .collect();
+
+            if candles.is_empty() {
+                frame.render_widget(
+                    Paragraph::new("K线数据格式错误").alignment(Alignment::Center),
+                    area,
+                );
+            } else {
+                // 调整图表大小，减去边框和信息行的高度
+                let chart_height = area.height.saturating_sub(1);
+                let mut chart = cli_candlestick_chart::Chart::new_with_size(
+                    candles,
+                    (area.width, chart_height),
+                );
+                let (bull, bear) = styles::bull_bear_color();
+                chart.set_bull_color(bull);
+                chart.set_vol_bull_color(bull);
+                chart.set_bear_color(bear);
+                chart.set_vol_bear_color(bear);
+                chart.set_name(counter.code().to_string());
+                // 渲染图表，留出底部空间给信息显示
+                frame.render_widget(
+                    crate::widgets::Ansi(&chart.render()),
+                    Rect {
+                        y: area.y + 1,
+                        height: area.height.saturating_sub(1),
+                        ..area
+                    },
+                );
+            }
+        }
+    }
+
+    // 渲染交易记录区域（暂时显示占位符）
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::LEFT)
+            .border_type(BorderType::Plain)
+            .title(" 成交记录 "),
+        chart_chunks[1],
+    );
+    //
+    //     let _guard = RT.get().unwrap().enter();
+    //     // SignalApp 已移除，简化实现
+    //     // let quote_config = Default::default();
+    //     // let detail = DetailView::new(&stock, &quote_config, locale());
+    //
+    //     // draw detail
+    //     //     let column0 = vec![
+    //     //         ListItem::new(" "),
+    //     //         item(t!("StockDetail.Trading Status"), detail.trade_status_name),
+    //     //         ListItem::new(" "),
+    //     //         item(t!("StockDetail.Open"), detail.open),
+    //     //         item(t!("StockDetail.Prev. Close"), detail.prev_close),
+    //     //         ListItem::new(" "),
+    //     //         item(t!("StockDetail.High"), detail.high),
+    //     //         item(t!("StockDetail.Low"), detail.low),
+    //     //         item(t!("StockDetail.Average"), detail.average),
+    //     //         ListItem::new(" "),
+    //     //         item(t!("StockDetail.Volume"), detail.amount),
+    //     //         item(t!("StockDetail.Turnover"), detail.balance),
+    //     //         ListItem::new(" "),
+    //     //         item(t!("StockDetail.Bid/Ask Ratio"), detail.turnover_rate),
+    //     //         item(t!("StockDetail.Amplitude"), detail.amplitude),
+    //     //         ListItem::new(" "),
+    //     //     ];
+    //     //
+    //     //     let column1 = vec![
+    //     //         ListItem::new(" "),
+    //     //         ListItem::new(" "),
+    //     //         ListItem::new(" "),
+    //     //         item(t!("StockDetail.52wk High"), detail.year_high),
+    //     //         item(t!("StockDetail.52wk Low"), detail.year_low),
+    //     //         ListItem::new(" "),
+    //     //         item(t!("StockDetail.Turnover Ratio"), detail.depth_rate),
+    //     //         item(t!("StockDetail.Volume Ratio"), detail.volume_rate),
+    //     //         ListItem::new(" "),
+    //     //         item(t!("StockDetail.P/E (TTM)"), detail.per_ttm),
+    //     //         item(t!("StockDetail.P/E (Dynamic)"), detail.per_forecast),
+    //     //         item(t!("StockDetail.P/E (Static)"), detail.per_lyr),
+    //     //         ListItem::new(" "),
+    //     //         item(t!("StockDetail.EPS (TTM)"), detail.eps_ttm),
+    //     //         item(t!("StockDetail.EPS (Dynamic)"), detail.eps_forecast),
+    //     //         item(t!("StockDetail.EPS (Static)"), detail.eps),
+    //     //         ListItem::new(" "),
+    //     //     ];
+    //     //
+    //     //     let column2 = vec![
+    //     //         ListItem::new(" "),
+    //     //         ListItem::new(" "),
+    //     //         ListItem::new(" "),
+    //     //         item(t!("StockDetail.Market Cap"), detail.market_cap), // TODO: add currency name
+    //     //         item(t!("StockDetail.Shares"), detail.total_shares),
+    //     //         ListItem::new(" "),
+    //     //         item(t!("StockDetail.Float Cap"), detail.circulating_cap), // TODO: "HK Cap"
+    //     //         item(
+    //     //             t!("StockDetail.Shares Float"), // TODO: "HK Shares Float"
+    //     //             detail.circulating_shares,
+    //     //         ),
+    //     //         ListItem::new(" "),
+    //     //         item(t!("StockDetail.P/B"), detail.bps_rate),
+    //     //         item(t!("StockDetail.BPS"), detail.bps),
+    //     //         ListItem::new(" "),
+    //     //         item(t!("StockDetail.Dividend Yield (TTM)"), detail.dps_rate),
+    //     //         item(t!("StockDetail.Dividend (TTM)"), detail.dividend_yield),
+    //     //         ListItem::new(" "),
+    //     //         ListItem::new(" "),
+    //     //         item(t!("StockDetail.Min lot size"), detail.unit),
+    //     //         ListItem::new(" "),
+    //     //     ];
+    //     //
+    //     //     let column_height = column0.len().max(column1.len()).max(column2.len()) as u16;
+    //     //     let chunks = Layout::default()
+    //     //         .constraints(
+    //     //             [
+    //     //                 Constraint::Length(column_height),
+    //     //                 Constraint::Length(1),
+    //     //                 Constraint::Min(20),
+    //     //             ]
+    //     //             .as_ref(),
+    //     //         )
+    //     //         .direction(Direction::Vertical)
+    //     //         .split(rect);
+    //     //     let columns_chunks = Layout::default()
+    //     //         .constraints([
+    //     //             Constraint::Ratio(2, 9),
+    //     //             Constraint::Ratio(2, 9),
+    //     //             Constraint::Ratio(2, 9),
+    //     //             Constraint::Ratio(3, 9),
+    //     //         ])
+    //     //         .direction(Direction::Horizontal)
+    //     //         .split(chunks[0].inner(&Margin {
+    //     //             vertical: 1,
+    //     //             horizontal: 2,
+    //     //         }));
+    //     //     frame.render_widget(List::new(column0), columns_chunks[0]);
+    //     //     frame.render_widget(List::new(column1), columns_chunks[1]);
+    //     //     frame.render_widget(List::new(column2), columns_chunks[2]);
+    //     //
+    //     // draw depth
+    //     let depth_rect = columns_chunks[3].inner(&Margin {
+    //         vertical: 1,
+    //         horizontal: 0,
+    //     });
+    //     frame.render_widget(
+    //         Block::default()
+    //             .borders(Borders::LEFT)
+    //             .border_type(BorderType::Plain),
+    //         depth_rect,
+    //     );
+    //     let quoting = stock.quoting();
+    //     if !(quoting.depths.bid.is_empty() && quoting.depths.ask.is_empty()) {
+    //         const BLOCK: &str = "▂"; // U+2582 LOWER ONE QUARTER BLOCK
+    //
+    //         fn format_quote(
+    //             depth: &crate::data::Depth,
+    //             counter: &Counter,
+    //             prev_close: Option<Decimal>,
+    //         ) -> Line<'static> {
+    //             // 档位
+    //             let price_level = Span::styled(
+    //                 format!("{:>2}:", depth.price_level),
+    //                 crate::ui::styles::label(),
+    //             );
+    //             // 价格
+    //             let price = {
+    //                 let delta = prev_close
+    //                     .and_then(|prev_close| {
+    //                         depth
+    //                             .price
+    //                             .parse()
+    //                             .map(|price: Decimal| price.cmp(&prev_close))
+    //                             .ok()
+    //                     })
+    //                     .unwrap_or(std::cmp::Ordering::Equal);
+    //                 let trend_style = styles::up(delta);
+    //                 Span::styled(depth.price.clone(), trend_style)
+    //             };
+    //             // 数量
+    //             let volume =
+    //                 crate::ui::text::align_right(&crate::ui::text::unit(depth.volume.into(), 0), 6);
+    //             // 订单总量
+    //             let count = counter
+    //                 .is_hk()
+    //                 .then(|| {
+    //                     crate::ui::text::align_right(&format!("({})", depth.count.clamp(0, 999)), 5)
+    //                 })
+    //                 .unwrap_or_default();
+    //             Line::from(vec![price_level, price, volume.into(), count.into()])
+    //         }
+    //
+    //         let rect = depth_rect.inner(&Margin {
+    //             vertical: 1,
+    //             horizontal: 2,
+    //         });
+    //         let depth_view_data = DepthView::new(&stock);
+    //         let chunks = Layout::default()
+    //             .constraints([
+    //                 Constraint::Length(1),
+    //                 Constraint::Length(1),
+    //                 Constraint::Min(10),
+    //             ])
+    //             .direction(Direction::Vertical)
+    //             .split(rect);
+    //         let bidding_title = format!(
+    //             " {}: {}",
+    //             t!("StockDepth.Bid"),
+    //             depth_view_data.bid_ratio.format_percent()
+    //         );
+    //         let asking_title = format!(
+    //             " {}: {}",
+    //             t!("StockDepth.Ask"),
+    //             depth_view_data.ask_ratio.format_percent()
+    //         );
+    //
+    //         let title_chunks = Layout::default()
+    //             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+    //             .direction(Direction::Horizontal)
+    //             .split(chunks[0]);
+    //
+    //         frame.render_widget(Paragraph::new(bidding_title), title_chunks[0]);
+    //         frame.render_widget(Paragraph::new(asking_title), title_chunks[1]);
+    //
+    //         let (bid_blocks, ask_blocks) = {
+    //             let bid_blocks = (Decimal::from(rect.width) * depth_view_data.bid_ratio)
+    //                 .round()
+    //                 .to_usize()
+    //                 .unwrap();
+    //             (bid_blocks, rect.width as usize - bid_blocks)
+    //         };
+    //         let (bull, bear) = styles::bull_bear();
+    //         let ratio_bar = Line::from(vec![
+    //             Span::styled(BLOCK.repeat(bid_blocks), bull),
+    //             Span::styled(BLOCK.repeat(ask_blocks), bear),
+    //         ]);
+    //
+    //         frame.render_widget(Paragraph::new(ratio_bar), chunks[1]);
+    //
+    //         let mut depth_rows: Vec<Row> = vec![];
+    //
+    //         let biddings = &depth_view_data.depth_data.bid;
+    //         let askings = &depth_view_data.depth_data.ask;
+    //         let prev_close = depth_view_data.prev_close.parse().ok();
+    //         for item in askings.iter().zip_longest(biddings.iter()) {
+    //             let (left, right) = match item {
+    //                 itertools::EitherOrBoth::Both(a, b) => (Some(a), Some(b)),
+    //                 itertools::EitherOrBoth::Left(a) => (Some(a), None),
+    //                 itertools::EitherOrBoth::Right(b) => (None, Some(b)),
+    //             };
+    //             let bid = right
+    //                 .map(|depth| format_quote(depth, counter, prev_close))
+    //                 .unwrap_or_default();
+    //             let ask = left
+    //                 .map(|depth| format_quote(depth, counter, prev_close))
+    //                 .unwrap_or_default();
+    //             depth_rows.push(Row::new([bid, ask]));
+    //         }
+    //
+    //         let constraints = &[Constraint::Percentage(50), Constraint::Percentage(50)];
+    //         let table = Table::new(depth_rows).widths(constraints).column_spacing(1);
+    //
+    //         frame.render_widget(table, chunks[2]);
+    //     }
+    //
+    //     // draw separator
+    //     let block = Block::default()
+    //         .borders(Borders::TOP)
+    //         .border_type(BorderType::Plain);
+    //     frame.render_widget(
+    //         block,
+    //         chunks[1].inner(&Margin {
+    //             vertical: 0,
+    //             horizontal: 1,
+    //         }),
+    //     );
+    //
+    //     let chart_chunks = Layout::default()
+    //         .constraints([Constraint::Ratio(2, 3), Constraint::Ratio(1, 3)])
+    //         .direction(Direction::Horizontal)
+    //         .split(chunks[2].inner(&Margin {
+    //             vertical: 1,
+    //             horizontal: 0,
+    //         }));
+    //
+    //     // Draw chart
+    //     {
+    //         const Y_AXIS_WIDTH: u16 = 17;
+    //
+    //         let chart_chunks = Layout::default()
+    //             .constraints([Constraint::Length(2), Constraint::Min(20)])
+    //             .direction(Direction::Vertical)
+    //             .split(chart_chunks[0].inner(&Margin {
+    //                 vertical: 0,
+    //                 horizontal: 2,
+    //             }));
+    //
+    //         let selected_type_index = KlineType::iter()
+    //             .position(|t| t == kline_type)
+    //             .unwrap_or_default();
+    //         let chart_tabs = Tabs::new(
+    //             KlineType::iter()
+    //                 .map(|chart_type| {
+    //                     Line::from(vec![
+    //                         Span::raw(" "),
+    //                         Span::raw(chart_type.to_string()),
+    //                         Span::raw(" "),
+    //                     ])
+    //                 })
+    //                 .collect(),
+    //         )
+    //         .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+    //         .select(selected_type_index);
+    //         frame.render_widget(chart_tabs, chart_chunks[0]);
+    //
+    //         let area = chart_chunks[1];
+    //         let (width, page, index) = area
+    //             .width
+    //             .checked_sub(Y_AXIS_WIDTH)
+    //             .filter(|&v| v > 0)
+    //             .map(|width| {
+    //                 let width = width as usize;
+    //                 (width, selected / width, selected % width)
+    //             })
+    //             .unwrap_or_default();
+    //         let samples = crate::kline::KLINES.by_pagination(
+    //             *counter,
+    //             kline_type,
+    //             AdjustType::ForwardAdjust,
+    //             page,
+    //             width,
+    //         );
+    //         let candles = samples
+    //             .iter()
+    //             .map(|sample| cli_candlestick_chart::Candle {
+    //                 open: f64::try_from(sample.open).unwrap(),
+    //                 high: f64::try_from(sample.high).unwrap(),
+    //                 low: f64::try_from(sample.low).unwrap(),
+    //                 close: f64::try_from(sample.close).unwrap(),
+    //                 volume: Some(
+    //                     #[allow(clippy::cast_precision_loss)]
+    //                     {
+    //                         sample.amount as f64
+    //                     },
+    //                 ),
+    //                 timestamp: Some(sample.timestamp),
+    //             })
+    //             .collect();
+    //
+    //         let mut chart =
+    //             cli_candlestick_chart::Chart::new_with_size(candles, (area.width, area.height));
+    //         let (bull, bear) = styles::bull_bear_color();
+    //         chart.set_bull_color(bull);
+    //         chart.set_vol_bull_color(bull);
+    //         chart.set_bear_color(bear);
+    //         chart.set_vol_bear_color(bear);
+    //         chart.set_name(counter.code().to_string());
+    //         frame.render_widget(
+    //             crate::widgets::Ansi(&chart.render()),
+    //             Rect {
+    //                 height: area.height.saturating_sub(2), // replace info panel with our homemade one
+    //                 ..area
+    //             },
+    //         );
+    //
+    //         let indicator_line = {
+    //             let width = area.width as usize;
+    //             // U+2500 BOX DRAWINGS LIGHT HORIZONTAL, 3 bytes
+    //             let mut s = "─".repeat(width);
+    //             // indicator index
+    //             // one for length index, and one for margin
+    //             let index = usize::from(Y_AXIS_WIDTH - 2) + samples.len().saturating_sub(index);
+    //             if index < width {
+    //                 let index = index * 3;
+    //                 s.replace_range(index..(index + 3), "⇡");
+    //             }
+    //             s.into()
+    //         };
+    //         let info_line = if let Some(sample) = samples.iter().rev().nth(index) {
+    //             let local_time = counter.region().local_time(
+    //                 time::OffsetDateTime::from_unix_timestamp(sample.timestamp)
+    //                     .unwrap_or(time::OffsetDateTime::UNIX_EPOCH),
+    //             );
+    //             let format = if kline_type >= KlineType::PerDay {
+    //                 time::macros::format_description!("[month]-[day]")
+    //             } else {
+    //                 time::macros::format_description!("[hour]:[minute]")
+    //             };
+    //             Line::from(vec![Span::raw(format!(
+    //                 "{} | {}: {} | {}: {} | {}: {} | {}: {} | {}: {}",
+    //                 local_time.format(format).unwrap(),
+    //                 t!("Candlestick.Open"),
+    //                 sample.open,
+    //                 t!("StockDetail.High"),
+    //                 sample.high,
+    //                 t!("StockDetail.Low"),
+    //                 sample.low,
+    //                 t!("Candlestick.Close"),
+    //                 sample.close,
+    //                 t!("StockDetail.Volume"),
+    //                 sample.amount,
+    //             ))])
+    //         } else {
+    //             Line::default()
+    //         };
+    //         let paragraph =
+    //             Paragraph::new(vec![indicator_line, info_line]).alignment(Alignment::Center);
+    //         frame.render_widget(
+    //             paragraph,
+    //             Rect {
+    //                 y: (area.y + area.height).saturating_sub(2),
+    //                 height: 2,
+    //                 ..area
+    //             },
+    //         );
+    //     }
+    //
+    //     // draw trades
+    //     frame.render_widget(
+    //         Block::default()
+    //             .borders(Borders::LEFT)
+    //             .border_type(BorderType::Plain),
+    //         chart_chunks[1],
+    //     );
+    //
+    //     {
+    //         const UP: &str = "▲";
+    //         const DOWN: &str = "▼";
+    //         const NEUTRAL: &str = "◆";
+    //
+    //         let trades = &quoting.trades.trades;
+    //         if trades.is_empty() {
+    //             return;
+    //         }
+    //
+    //         let trade_rect = chart_chunks[1].inner(&Margin {
+    //             vertical: 1,
+    //             horizontal: 1,
+    //         });
+    //         let chunks = Layout::default()
+    //             .constraints([Constraint::Length(2), Constraint::Min(10)])
+    //             .direction(Direction::Vertical)
+    //             .split(trade_rect);
+    //
+    //         // render title chunk[0]
+    //         let title_spans = Line::from(t!("StockQuoteTrades"));
+    //         let title_lines = vec![title_spans, Line::default()];
+    //         frame.render_widget(
+    //             Paragraph::new(title_lines),
+    //             chunks[0].inner(&Margin {
+    //                 vertical: 0,
+    //                 horizontal: 1,
+    //             }),
+    //         );
+    //
+    //         // render table chunk[1]
+    //         let rect = chunks[1].inner(&Margin {
+    //             vertical: 0,
+    //             horizontal: 1,
+    //         });
+    //
+    //         let trade_prev_close = quoting.data.prev_close;
+    //         let timezone = std::cell::OnceCell::new();
+    //         let trade_rows: Vec<Row> = trades
+    //             .iter()
+    //             .rev()
+    //             .take(rect.height as usize)
+    //             .map(|trade| {
+    //                 let dt = time::OffsetDateTime::from_unix_timestamp(trade.timestamp).unwrap();
+    //                 let offset = *timezone.get_or_init(|| counter.region().local_time(dt).offset());
+    //                 let time_cell = Cell::from(
+    //                     dt.to_offset(offset)
+    //                         .format(time::macros::format_description!("[hour]:[minute]"))
+    //                         .unwrap(),
+    //                 );
+    //
+    //                 let delta = Decimal::from_str(&trade.price)
+    //                     .ok()
+    //                     .zip(trade_prev_close)
+    //                     .map_or(std::cmp::Ordering::Equal, |(a, b)| a.cmp(&b));
+    //                 let price_cell =
+    //                     Cell::from(trade.price.as_str()).style(crate::ui::styles::up(delta));
+    //
+    //                 let (symbol, style) = match trade.direction {
+    //                     1 => (DOWN, crate::ui::styles::up(std::cmp::Ordering::Less)),
+    //                     2 => (UP, crate::ui::styles::up(std::cmp::Ordering::Greater)),
+    //                     _ => (NEUTRAL, crate::ui::styles::up(std::cmp::Ordering::Equal)),
+    //                 };
+    //                 let amount_cell = Cell::from(format!("{} {}", trade.amount, symbol)).style(style);
+    //
+    //                 Row::new(vec![time_cell, price_cell, amount_cell])
+    //             })
+    //             .collect();
+    //
+    //         let constraints = &[
+    //             Constraint::Length(5),      // TODO: left align
+    //             Constraint::Percentage(60), // TODO: center align
+    //             Constraint::Percentage(40), // TODO: right align
+    //         ];
+    //         let table = Table::new(trade_rows).column_spacing(1).widths(constraints);
+    //
+    //         frame.render_widget(table, rect);
+    //     }
+}
+
+pub fn render_watchlist(
+    mut terminal: ResMut<Terminal>,
+    mut events: EventReader<Key>,
+    command: Res<Command>,
+    (state, indexes, ws): NavFooter,
+    (mut account, mut currency, mut search, mut watchgroup): PopUp,
+) {
+    for event in &mut events {
+        match event {
+            Key::Up => {
+                let idx = WATCHLIST_TABLE.lock().expect("poison").selected();
+                let len = WATCHLIST.read().expect("poison").counters().len();
+                WATCHLIST_TABLE
+                    .lock()
+                    .expect("poison")
+                    .select(cycle::prev(idx, len));
+            }
+            Key::Down => {
+                let idx = WATCHLIST_TABLE.lock().expect("poison").selected();
+                let len = WATCHLIST.read().expect("poison").counters().len();
+                WATCHLIST_TABLE
+                    .lock()
+                    .expect("poison")
+                    .select(cycle::next(idx, len));
+            }
+            Key::Left | Key::Right | Key::Tab | Key::BackTab => (),
+            Key::Enter => {
+                let Some(idx) = WATCHLIST_TABLE.lock().expect("poison").selected() else {
+                    continue;
+                };
+                let counter = WATCHLIST
+                    .read()
+                    .expect("poison")
+                    .counters()
+                    .get(idx)
+                    .cloned();
+                if let Some(counter) = counter {
+                    _ = command.0.send({
+                        let mut queue = CommandQueue::default();
+                        queue.push(InsertResource {
+                            resource: StockDetail(counter),
+                        });
+                        queue.push(InsertResource {
+                            resource: NextState(Some(AppState::WatchlistStock)),
+                        });
+                        queue
+                    });
+                }
+            }
+        }
+    }
+
+    _ = terminal.draw(|frame| {
+        let rect = frame.size();
+        let top = Rect { height: 1, ..rect };
+        crate::views::navbar::render(frame, top, *state.get());
+
+        let bottom = Rect {
+            y: rect.y + rect.height - 1,
+            height: 1,
+            ..rect
+        };
+        crate::views::footer::render(frame, bottom, indexes.tick(), &ws);
+
+        let rect = Rect {
+            y: rect.y + 1,
+            height: rect.height - 2,
+            ..rect
+        };
+
+        let chunks = Layout::default()
+            .constraints([Constraint::Length(81), Constraint::Min(20)])
+            .direction(Direction::Horizontal)
+            .split(rect);
+
+        watch(frame, chunks[0], true);
+        banner(frame, chunks[1]);
+
+        crate::views::popup::render(
+            frame,
+            rect,
+            &mut account,
+            &mut currency,
+            &mut search,
+            &mut watchgroup,
+        );
+    });
+}
+
+fn watch(frame: &mut Frame, rect: Rect, full_mode: bool) {
+    let watchlist = WATCHLIST.read().expect("poison");
+    let background = Block::default().borders(Borders::ALL).title(format!(
+        " {} ─── {} [g] ",
+        t!("Watchlist"),
+        watchlist.group().map_or("--", |g| &g.name)
+    ));
+    frame.render_widget(background, rect);
+
+    let selected = WATCHLIST_TABLE.lock().expect("poison").selected();
+    frame.render_stateful_widget(
+        watch_group_table(
+            &watchlist.counters(),
+            selected,
+            &mut LAST_DONE.lock().expect("poison"),
+            full_mode,
+        ),
+        rect.inner(&Margin {
+            vertical: 2,
+            horizontal: 2,
+        }),
+        &mut WATCHLIST_TABLE.lock().expect("poison"),
+    );
+}
+
+fn banner(frame: &mut Frame, rect: Rect) {
+    frame.render_widget(Block::default().borders(Borders::ALL), rect);
+
+    frame.render_widget(
+        crate::ui::assets::banner(crate::ui::styles::text()),
+        crate::ui::rect::centered(0, crate::ui::assets::BANNER_HEIGHT, rect),
+    );
+}
+
+fn watch_group_table(
+    counters: &[Counter],
+    selected: Option<usize>,
+    last_dones: &mut HashMap<Counter, Decimal>,
+    full_mode: bool,
+) -> Table<'static> {
+    // todo: auto scale
+    const COLUMN_WIDTHS: [usize; 6] = [9, 21, 10, 8, 10, 14];
+    const COLUMN_WIDTHS2: [Constraint; 6] = [
+        Constraint::Length(9),
+        Constraint::Length(21),
+        Constraint::Length(10),
+        Constraint::Length(8),
+        Constraint::Length(10),
+        // tradeStatus 在 en 下，最长可能有 14 个字符
+        Constraint::Length(14),
+    ];
+
+    let header = {
+        let mut cells = Vec::with_capacity(if full_mode { 6 } else { 4 });
+        cells.push(t!("watchlist.CODE"));
+        cells.push(t!("watchlist.NAME"));
+        cells.push(t!("watchlist.PRICE"));
+        cells.push(crate::ui::text::align_right(
+            &t!("watchlist.CHG"),
+            COLUMN_WIDTHS[3],
+        ));
+        if full_mode {
+            cells.push(crate::ui::text::align_right(
+                &t!("watchlist.VOL"),
+                COLUMN_WIDTHS[4],
+            ));
+            cells.push(t!("watchlist.STATUS"));
+        };
+        Row::new(cells).style(styles::header()).bottom_margin(1)
+    };
+
+    let stocks = STOCKS.mget(counters);
+    let rows = counters
+        .iter()
+        .zip(stocks.iter())
+        .map(|(counter, stock)| {
+            static EMPTY: Lazy<Stock> = Lazy::new(Stock::default);
+            let stock = stock.as_deref().unwrap_or(&EMPTY);
+            let quote_data = &stock.quote;
+            let last_done = quote_data.last_done.unwrap_or_default();
+            let _last = last_dones.insert(counter.clone(), last_done);
+            // 计算涨跌幅
+            let (increase, increase_percent) = quote_data
+                .last_done
+                .zip(quote_data.prev_close)
+                .map(|(last, prev)| {
+                    let increase = last - prev;
+                    let percent = if prev != Decimal::ZERO {
+                        (increase / prev * Decimal::from(100)).round_dp(2)
+                    } else {
+                        Decimal::ZERO
+                    };
+                    (increase, percent)
+                })
+                .unwrap_or((Decimal::ZERO, Decimal::ZERO));
+            // 价格和涨跌幅使用前景色，不使用背景色以避免干扰
+            let style = styles::up(increase.sign());
+            let trade_status_name = stock.trade_status.label();
+            let increase_percent = if stock.trade_status == TradeStatus::STOP
+                || stock.trade_status == TradeStatus::UsStop
+            {
+                trade_status_name.to_string()
+            } else if increase.positive() {
+                format!("+{}", &increase_percent)
+            } else {
+                increase_percent.to_string()
+            };
+            let mut cells = Vec::with_capacity(if full_mode { 6 } else { 4 });
+            cells.push(Cell::from(Line::from(vec![
+                Span::styled(
+                    counter.market().to_string(),
+                    styles::market(counter.region()),
+                ),
+                Span::raw(" "),
+                Span::raw(counter.code().to_string()),
+            ])));
+            cells.push(Cell::from(stock.name.to_string()));
+            cells.push(Cell::from(last_done.format_quote_by_counter(counter)).style(style));
+            cells.push(
+                Cell::from(crate::ui::text::align_right(
+                    &increase_percent,
+                    COLUMN_WIDTHS[3],
+                ))
+                .style(style),
+            );
+            if full_mode {
+                // 成交量：格式化为简短格式（如 1.23M）
+                let volume_text = crate::helper::format_volume(quote_data.volume);
+                cells.push(Cell::from(crate::ui::text::align_right(
+                    &volume_text,
+                    COLUMN_WIDTHS[4],
+                )));
+                cells.push(Cell::from(trade_status_name));
+            }
+            Row::new(cells)
+        })
+        .collect::<Vec<Row<'static>>>();
+
+    let highlight_style = selected
+        .map(|i| {
+            let increase = if let Some(Some(stock)) = stocks.get(i) {
+                let quote_data = &stock.quote;
+                quote_data.last_done.cmp(&quote_data.prev_close)
+            } else {
+                std::cmp::Ordering::Equal
+            };
+            styles::up(increase).add_modifier(Modifier::REVERSED)
+        })
+        .unwrap_or_default();
+
+    Table::new(rows)
+        .header(header)
+        .highlight_style(highlight_style)
+        .widths(&COLUMN_WIDTHS2)
+        .column_spacing(1)
+}
+
+pub fn render_portfolio(
+    mut terminal: ResMut<Terminal>,
+    mut events: EventReader<Key>,
+    _portfolio: Res<Portfolio>,
+    _accounts: Res<Select<Account>>,
+    _command: Res<Command>,
+    (state, indexes, ws): NavFooter,
+    (mut account, mut currency, mut search, mut watchgroup): PopUp,
+    _table_state: Local<TableState>,
+) {
+    // 处理按键事件(目前只支持退出)
+    for _event in &mut events {
+        // 按键处理可以在这里添加
+    }
+
+    // 渲染临时界面
+    _ = terminal.draw(|frame| {
+        let rect = frame.size();
+
+        // 顶部导航栏
+        let top = Rect { height: 1, ..rect };
+        crate::views::navbar::render(frame, top, *state.get());
+
+        // 底部状态栏
+        let bottom = Rect {
+            y: rect.y + rect.height - 1,
+            height: 1,
+            ..rect
+        };
+        crate::views::footer::render(frame, bottom, indexes.tick(), &ws);
+
+        // 主内容区域
+        let content_rect = Rect {
+            y: rect.y + 1,
+            height: rect.height - 2,
+            ..rect
+        };
+
+        // 显示 Portfolio 开发中的提示
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(format!(" {} ", t!("Portfolio.Title")));
+
+        let message = vec![
+            Line::from(""),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Portfolio 功能开发中...",
+                Style::default().fg(Color::Yellow)
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "按 1 返回自选列表",
+                Style::default().fg(Color::Gray)
+            )),
+        ];
+
+        let paragraph = Paragraph::new(message)
+            .block(block)
+            .alignment(ratatui::layout::Alignment::Center);
+
+        frame.render_widget(paragraph, content_rect);
+
+        // 渲染弹窗
+        crate::views::popup::render(
+            frame,
+            rect,
+            &mut account,
+            &mut currency,
+            &mut search,
+            &mut watchgroup,
+        );
+    });
+}
+    //     for event in &mut events {
+    //         match event {
+    //             Key::Up | Key::BackTab => {
+    //                 let idx = table_state.selected();
+    //                 let len = portfolio.view.stock_hold.values().flatten().count();
+    //                 table_state.select(cycle::prev(idx, len));
+    //             }
+    //             Key::Down | Key::Tab => {
+    //                 let idx = table_state.selected();
+    //                 let len = portfolio.view.stock_hold.values().flatten().count();
+    //                 table_state.select(cycle::next(idx, len));
+    //             }
+    //             Key::Enter => {
+    //                 let Some(idx) = table_state.selected() else {
+    //                     continue;
+    //                 };
+    //                 if let Some(stock) = portfolio.view.stock_hold.values().flatten().nth(idx) {
+    //                     _ = command.0.send({
+    //                         let mut queue = CommandQueue::default();
+    //                         queue.push(InsertResource {
+    //                             resource: StockDetail(stock.inner.counter_id),
+    //                         });
+    //                         queue.push(InsertResource {
+    //                             resource: NextState(Some(AppState::WatchlistStock)),
+    //                         });
+    //                         queue
+    //                     });
+    //                 }
+    //             }
+    //             Key::Left | Key::Right => (),
+    //         }
+    //     }
+    //
+    //     _ = terminal.draw(|frame| {
+    //         let rect = frame.size();
+    //         let top = Rect { height: 1, ..rect };
+    //         crate::views::navbar::render(frame, top, *state.get());
+    //
+    //         let bottom = Rect {
+    //             y: rect.y + rect.height - 1,
+    //             height: 1,
+    //             ..rect
+    //         };
+    //         crate::views::footer::render(frame, bottom, indexes.tick(), &ws);
+    //
+    //         let rect = Rect {
+    //             y: rect.y + 1,
+    //             height: rect.height - 2,
+    //             ..rect
+    //         };
+    //         folio(
+    //             frame,
+    //             rect,
+    //             accounts.current(),
+    //             &portfolio,
+    //             &mut table_state,
+    //         );
+    //
+    //         crate::views::popup::render(
+    //             frame,
+    //             rect,
+    //             &mut account,
+    //             &mut currency,
+    //             &mut search,
+    //             &mut watchgroup,
+    //         );
+    //     });
+    // }
+    //
+    // fn folio(
+    //     frame: &mut Frame,
+    //     rect: Rect,
+    //     account: &Account,
+    //     portfolio: &Portfolio,
+    //     table_state: &mut TableState,
+    // ) {
+    //     let main_chunks = Layout::default()
+    //         .constraints([Constraint::Length(8), Constraint::Min(5)].as_ref())
+    //         .direction(Direction::Vertical)
+    //         .split(rect);
+    //
+    //     let bottom_chunks = Layout::default()
+    //         .constraints([Constraint::Percentage(30), Constraint::Min(40)].as_ref())
+    //         .direction(Direction::Horizontal)
+    //         .split(main_chunks[1]);
+    //
+    //     let middle_chunks = Layout::default()
+    //         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+    //         .direction(Direction::Vertical)
+    //         .split(bottom_chunks[0]);
+    //
+    //     let account_channel = &portfolio.view.props.account_channel;
+    //     let currency = &portfolio.view.props.currency;
+    //
+    //     // overview
+    //     {
+    //         let rect = main_chunks[0];
+    //         // title
+    //         let title = Line::from(vec![
+    //             Span::raw(" "),
+    //             Span::styled(t!("Portfolio.Title"), styles::label()),
+    //             Span::raw(" ─── "),
+    //             Span::styled(&account.org.name, styles::gray()),
+    //             Span::styled(" [a] ", styles::gray()),
+    //             Span::raw(" ─── "),
+    //             Span::styled(currency, styles::currency(currency)),
+    //             Span::styled(" [c] ", styles::gray()),
+    //         ]);
+    //
+    //         // content
+    //         let frame_container = Block::default().borders(Borders::ALL).title(title);
+    //         frame.render_widget(frame_container, rect);
+    //
+    //         // column
+    //         let overview = &portfolio.view.overview;
+    //         let column0 = List::new([
+    //             item(
+    //                 t!("Portfolio.Total Asset"),
+    //                 overview.total_fortune.to_string(),
+    //             ),
+    //             item(
+    //                 t!("Portfolio.Market Cap"),
+    //                 overview.total_market_value.to_string(),
+    //             ),
+    //             item(
+    //                 t!("Portfolio.Margin Call"),
+    //                 overview.margin_call.to_string(),
+    //             ),
+    //             item(
+    //                 t!("Portfolio.Health Status"),
+    //                 overview.leverage_status.name(),
+    //             ),
+    //         ]);
+    //
+    //         let column1 = List::new([
+    //             item_up(t!("Portfolio.P/L"), overview.total_hold_pl.to_string()),
+    //             item(
+    //                 t!("Portfolio.Total Cash Amount"),
+    //                 overview.total_cash.to_string(),
+    //             ),
+    //             ListItem::new(Line::from(vec![
+    //                 Span::styled(format!("{}: ", t!("Portfolio.Risk Level")), styles::label()),
+    //                 {
+    //                     let risk_style = Style::default().fg(match overview.risk_level {
+    //                         RiskLevel::Danger => Color::Red,
+    //                         RiskLevel::MiddleLow | RiskLevel::Middle | RiskLevel::MiddleHigh => {
+    //                             Color::Yellow
+    //                         }
+    //                         RiskLevel::Warning => Color::Magenta, // orange?
+    //                         RiskLevel::Safe => Color::Green,
+    //                     });
+    //                     Span::styled(overview.risk_level.name(), risk_style)
+    //                 },
+    //             ])),
+    //             item(
+    //                 t!("Portfolio.Credit Limit"),
+    //                 overview.credit_limit.to_string(),
+    //             ),
+    //         ]);
+    //
+    //         let column2 = List::new([
+    //             item_up(
+    //                 t!("Portfolio.Intraday P/L"),
+    //                 overview.total_today_pl.to_string(),
+    //             ),
+    //             item(
+    //                 t!("Portfolio.Fund Market Cap"),
+    //                 overview.total_fund_market_value.to_string(),
+    //             ),
+    //             ListItem::new(" "),
+    //         ]);
+    //
+    //         let overview_chunks = Layout::default()
+    //             .constraints([
+    //                 Constraint::Ratio(1, 3),
+    //                 Constraint::Ratio(1, 3),
+    //                 Constraint::Ratio(1, 3),
+    //             ])
+    //             .direction(Direction::Horizontal)
+    //             .split(rect.inner(&Margin {
+    //                 vertical: 2,
+    //                 horizontal: 2,
+    //             }));
+    //         frame.render_widget(column0, overview_chunks[0]);
+    //         frame.render_widget(column1, overview_chunks[1]);
+    //         frame.render_widget(column2, overview_chunks[2]);
+    //     }
+    //
+    //     // markets
+    //     {
+    //         let rect = middle_chunks[0];
+    //         let market_portfolio = &portfolio.view.market_portfolio;
+    //
+    //         let frame_container = Block::default()
+    //             .borders(Borders::ALL)
+    //             .title(t!("StockAccount.title"));
+    //         frame.render_widget(frame_container, rect);
+    //
+    //         let len = market_portfolio.len();
+    //         let chunks = Layout::default()
+    //             .constraints(
+    //                 std::iter::repeat(Constraint::Min(22))
+    //                     .take(len)
+    //                     .collect::<Vec<_>>(),
+    //             )
+    //             .direction(Direction::Horizontal)
+    //             .split(rect.inner(&Margin {
+    //                 vertical: 2,
+    //                 horizontal: 2,
+    //             }));
+    //
+    //         let _guard = RT.get().unwrap().enter();
+    //         // SignalApp 已移除，简化实现
+    //         let exchanges = std::collections::HashMap::new();
+    //         for ((market, portfolio), &chunk) in market_portfolio
+    //             .iter()
+    //             .sorted_by_key(|(market, _)| **market)
+    //             .zip(chunks.iter())
+    //         {
+    //             // Skip if this market not have any position
+    //             if portfolio.net_asset == rust_decimal_macros::dec!(0) {
+    //                 continue;
+    //             }
+    //
+    //             let items = vec![
+    //                 ListItem::new(Line::from(vec![
+    //                     Span::styled(market.to_string(), styles::region(*market)),
+    //                     Span::styled(format!(" ({})", exchanges.currency(market)), styles::text()),
+    //                 ])),
+    //                 item_label(t!("StockAccount.Net Assets")),
+    //                 item_value(portfolio.net_asset.to_string()),
+    //                 item_label(t!("StockAccount.Intraday P/L")),
+    //                 item_value_up(portfolio.all_today_pl.to_string()),
+    //                 item_label(t!("StockAccount.Mkt Value")),
+    //                 item_value(portfolio.all_market_value.to_string()),
+    //                 item_label(t!("StockAccount.P/L")),
+    //                 item_value_up(portfolio.all_hold_pl.to_string()),
+    //                 item_label(t!("StockAccount.Max Buying Power")),
+    //                 item_value(portfolio.max_buy_limit.to_string()),
+    //                 item_label(t!("StockAccount.Avail. Balance")),
+    //                 item_value(portfolio.balance.to_string()),
+    //                 item_label(t!("StockAccount.Cash Withdrawable")),
+    //                 item_value(portfolio.withdraw_cash.to_string()),
+    //                 item_label(t!("StockAccount.Cash Locked")),
+    //                 item_value(portfolio.frozen_buy_cash.to_string()),
+    //             ];
+    //             frame.render_widget(List::new(items), chunk);
+    //         }
+    //     }
+    //
+    //     // cash
+    //     {
+    //         let rect = middle_chunks[1];
+    //         let total_cash_amount = &portfolio.view.overview.total_cash;
+    //         let cash_balances = &portfolio.view.cash_balance;
+    //
+    //         let frame_container = Block::default()
+    //             .borders(Borders::ALL)
+    //             .title(t!("CashBalance.title"));
+    //         frame.render_widget(frame_container, rect);
+    //
+    //         let cash_balance_chunks = Layout::default()
+    //             .constraints([Constraint::Length(3), Constraint::Min(9)])
+    //             .direction(Direction::Vertical)
+    //             .split(rect.inner(&Margin {
+    //                 vertical: 1,
+    //                 horizontal: 2,
+    //             }));
+    //
+    //         let total_cash_balance_span = [
+    //             ListItem::new(" "),
+    //             item(
+    //                 t!("CashBalance.Total"),
+    //                 format!("{total_cash_amount} {currency}"),
+    //             ),
+    //         ];
+    //         frame.render_widget(List::new(total_cash_balance_span), cash_balance_chunks[0]);
+    //
+    //         let len = cash_balances.len();
+    //         let chunks = Layout::default()
+    //             .constraints(
+    //                 std::iter::repeat(Constraint::Min(22))
+    //                     .take(len)
+    //                     .collect::<Vec<_>>(),
+    //             )
+    //             .direction(Direction::Horizontal)
+    //             .split(cash_balance_chunks[1]);
+    //
+    //         for (v, &chunk) in cash_balances.iter().zip(chunks.iter()) {
+    //             let cash_widgets = vec![
+    //                 ListItem::new(Span::styled(
+    //                     &v.currency,
+    //                     styles::region(*Market::from_currency(&v.currency).first().unwrap()),
+    //                 )),
+    //                 item_label(t!("CashBalance.Total")),
+    //                 item_value(v.total_amount.to_string()),
+    //                 item_label(t!("CashBalance.Avail. Balance")),
+    //                 item_value(v.balance.to_string()),
+    //                 item_label(t!("CashBalance.Cash Locked")),
+    //                 item_value(v.frozen_buy_cash.to_string()),
+    //                 item_label(t!("CashBalance.Cash Withdrawable")),
+    //                 item_value(v.withdraw_cash.to_string()),
+    //             ];
+    //             frame.render_widget(List::new(cash_widgets), chunk);
+    //         }
+    //     }
+    //
+    //     // holdings
+    //     {
+    //         let rect = bottom_chunks[1];
+    //         let holdings = &portfolio.view.stock_hold;
+    //
+    //         let frame_container = Block::default()
+    //             .borders(Borders::ALL)
+    //             .title(format!(" {} ", t!("Holding.Holding")));
+    //         frame.render_widget(frame_container, rect);
+    //
+    //         let header = Row::new(vec![
+    //             t!("Holding.Code"),
+    //             t!("Holding.Name"),
+    //             t!("Holding.Market Value"),
+    //             t!("Holding.Quantity"),
+    //             t!("Holding.Price"),
+    //             t!("Holding.Cost Price"),
+    //             align_right(&t!("Holding.P/L"), 12),
+    //             align_right(&t!("Holding.P/L%"), 12),
+    //             align_right(&t!("Holding.Intraday P/L"), 12),
+    //             align_right(&t!("Holding.Intraday P/L%"), 12),
+    //             align_right(&t!("Holding.Hold Ratio"), 9),
+    //         ])
+    //         .style(crate::ui::styles::header())
+    //         .bottom_margin(1);
+    //
+    //         // 简化实现：使用默认市场排序
+    //         let watch_order = vec![Market::HK, Market::US, Market::CN, Market::SG];
+    //         let rows: Vec<Row> =
+    //             holdings
+    //                 .iter()
+    //                 .sorted_by(|(a, _), (b, _)| {
+    //                     let a_idx = watch_order.iter().position(|m| m == a).unwrap_or(999);
+    //                     let b_idx = watch_order.iter().position(|m| m == b).unwrap_or(999);
+    //                     a_idx.cmp(&b_idx)
+    //                 })
+    //                 .flat_map(|(_, holds)| {
+    //                     holds.iter().sorted_by(|a, b| {
+    //                         a.inner
+    //                             .counter_id
+    //                             .market()
+    //                             .cmp(&b.inner.counter_id.market())
+    //                             // sort desc
+    //                             .then_with(|| b.inner.market_value.cmp(&a.inner.market_value))
+    //                     })
+    //                 })
+    //                 .map(|holding| {
+    //                     let stock = &holding.inner;
+    //                     let counter_id = &holding.inner.counter_id;
+    //                     let float_style = styles::up(stock.finally_unrealized_pl.cmp(&Decimal::ZERO));
+    //                     let today_style = styles::up(stock.today_pl.cmp(&Decimal::ZERO));
+    //                     let market_style = styles::region(counter_id.region());
+    //
+    //                     Row::new(vec![
+    //                         Cell::from(Line::from(vec![
+    //                             Span::styled(counter_id.market().to_string(), market_style),
+    //                             Span::raw(format!(" {}", counter_id.code())),
+    //                         ])),
+    //                         Cell::from(stock.name.as_str()),
+    //                         Cell::from(stock.market_value.to_string()),
+    //                         {
+    //                             if counter_id.is_option() {
+    //                                 Cell::from(stock.quantity.to_string() + t!("OptionUnit").as_str())
+    //                             } else {
+    //                                 Cell::from(stock.quantity.to_string())
+    //                             }
+    //                         },
+    //                         Cell::from(stock.last_done.to_string()),
+    //                         Cell::from(stock.cost_price.map_or_else(
+    //                             || EMPTY_PLACEHOLDER.to_string(),
+    //                             |v| v.to_string(),
+    //                         )),
+    //                         Cell::from(align_right(&stock.finally_unrealized_pl.to_string(), 12))
+    //                             .style(float_style),
+    //                         Cell::from(align_right(&stock.finally_unrealized_pl_percent, 12))
+    //                             .style(float_style),
+    //                         Cell::from(align_right(&stock.today_pl.to_string(), 12)).style(today_style),
+    //                         Cell::from(align_right(&stock.today_pl_percent, 12)).style(today_style),
+    //                         Cell::from(align_right(&holding.hold_ratio, 9)),
+    //                     ])
+    //                 })
+    //                 .collect();
+    //
+    //         let highlight = table_state
+    //             .selected()
+    //             .and_then(|selected| holdings.values().flatten().nth(selected))
+    //             .map(|h| {
+    //                 styles::up(h.inner.today_pl.cmp(&Decimal::ZERO)).add_modifier(Modifier::REVERSED)
+    //             })
+    //             .unwrap_or_default();
+    //
+    //         let table = Table::new(rows)
+    //             .header(header)
+    //             .highlight_style(highlight)
+    //             .widths(&[
+    //                 Constraint::Length(12),
+    //                 Constraint::Min(25),
+    //                 Constraint::Length(12),
+    //                 Constraint::Length(15),
+    //                 Constraint::Length(12),
+    //                 Constraint::Length(9),
+    //                 Constraint::Length(12),
+    //                 Constraint::Length(12),
+    //                 Constraint::Length(12),
+    //                 Constraint::Length(12),
+    //                 Constraint::Length(9),
+    //             ])
+    //             .column_spacing(1);
+    //
+    //         frame.render_stateful_widget(
+    //             table,
+    //             rect.inner(&Margin {
+    //                 vertical: 2,
+    //                 horizontal: 2,
+    //         }),
+    //         table_state,
+    //     );
+    // }
+}
