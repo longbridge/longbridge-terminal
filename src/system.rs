@@ -484,14 +484,22 @@ pub fn refresh_watchlist(update_tx: mpsc::UnboundedSender<CommandQueue>) {
             let ctx = crate::openapi::quote();
             let symbols: Vec<String> = counters.iter().map(|c| c.as_str().to_string()).collect();
 
-            // 使用 realtime_quote 获取实时行情数据
-            match ctx.realtime_quote(symbols.iter().map(|s| s.as_str())).await {
+            // Use quote() to get full quote data (including prev_close)
+            match ctx.quote(&symbols).await {
                 Ok(quotes) => {
                     for quote in quotes {
                         match quote.symbol.parse() {
                             Ok(counter) => {
                                 STOCKS.modify(counter, |stock| {
-                                    stock.update_from_quote(&quote);
+                                    // Update quote data with prev_close
+                                    stock.quote.last_done = Some(quote.last_done);
+                                    stock.quote.prev_close = Some(quote.prev_close);
+                                    stock.quote.open = Some(quote.open);
+                                    stock.quote.high = Some(quote.high);
+                                    stock.quote.low = Some(quote.low);
+                                    stock.quote.volume = quote.volume as u64;
+                                    stock.quote.turnover = quote.turnover;
+                                    stock.quote.timestamp = quote.timestamp.unix_timestamp();
                                 });
                             }
                             _ => (),
@@ -499,7 +507,7 @@ pub fn refresh_watchlist(update_tx: mpsc::UnboundedSender<CommandQueue>) {
                     }
                 }
                 Err(e) => {
-                    tracing::error!("获取初始行情失败: {}", e);
+                    tracing::error!("Failed to fetch initial quotes: {}", e);
                 }
             }
 
