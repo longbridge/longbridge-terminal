@@ -926,7 +926,7 @@ fn stock_detail(
     // draw title
     let mut titles = vec![Span::raw(format!(
         " {} ({}.{})",
-        stock.name,
+        stock.display_name(),
         counter.code(),
         counter.market(),
     ))];
@@ -2070,11 +2070,11 @@ fn watch_group_table(
 
             let _last = last_dones.insert(counter.clone(), display_price);
 
-            // 计算涨跌幅：如果有 last_done 用 last_done，否则用 prev_close（此时涨跌为0）
+            // Calculate price change: prefer last_done, fallback to open (for after-market display)
             let prev_close = quote_data.prev_close.filter(|&p| p > Decimal::ZERO);
             let current_price = quote_data
                 .last_done
-                .or(quote_data.prev_close)
+                .or(quote_data.open)  // Use open price if last_done not available
                 .filter(|&p| p > Decimal::ZERO);
 
             let (increase, increase_percent) = match (current_price, prev_close) {
@@ -2107,7 +2107,7 @@ fn watch_group_table(
                 Span::raw(" "),
                 Span::raw(counter.code().to_string()),
             ])));
-            cells.push(Cell::from(stock.name.to_string()));
+            cells.push(Cell::from(stock.display_name().to_string()));
             cells.push(Cell::from(display_price.format_quote_by_counter(counter)).style(style));
             cells.push(
                 Cell::from(crate::ui::text::align_right(
@@ -2189,14 +2189,15 @@ pub fn render_portfolio(
         };
         crate::views::footer::render(frame, bottom, indexes.tick(), &ws);
 
-        // 主内容区域
+        // Main content area with horizontal margins (1 char on each side)
         let content_rect = Rect {
+            x: rect.x + 1,
             y: rect.y + 1,
+            width: rect.width.saturating_sub(2),
             height: rect.height - 2,
-            ..rect
         };
 
-        // 获取 Portfolio 数据
+        // Get Portfolio data
         let positions = PORTFOLIO_POSITIONS.read().expect("poison");
         let balance = *PORTFOLIO_BALANCE.read().expect("poison");
         let market_value = *PORTFOLIO_MARKET_VALUE.read().expect("poison");
