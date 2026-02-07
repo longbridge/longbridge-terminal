@@ -561,14 +561,31 @@ pub fn refresh_stock(counter: Counter) {
         let _ = WS.quote_detail("stock_detail", &[counter.clone()]).await;
         let _ = WS.quote_trade("stock_detail", &[counter.clone()]).await;
 
-        // 获取静态信息（如果还没有）
+        // Get full quote data (including prev_close)
+        let ctx = crate::openapi::quote();
+        if let Ok(quotes) = ctx.quote(&[counter.to_string()]).await {
+            if let Some(quote) = quotes.first() {
+                STOCKS.modify(counter.clone(), |stock| {
+                    stock.quote.last_done = Some(quote.last_done);
+                    stock.quote.prev_close = Some(quote.prev_close);
+                    stock.quote.open = Some(quote.open);
+                    stock.quote.high = Some(quote.high);
+                    stock.quote.low = Some(quote.low);
+                    stock.quote.volume = quote.volume as u64;
+                    stock.quote.turnover = quote.turnover;
+                    stock.quote.timestamp = quote.timestamp.unix_timestamp();
+                });
+            }
+        }
+
+        // Get static info (if not already fetched)
         let should_fetch = STOCKS
             .get(&counter)
             .map(|s| s.static_info.is_none())
             .unwrap_or(false);
 
         if should_fetch {
-            // 异步获取静态信息
+            // Async fetch static info
             if let Ok(infos) = crate::api::quote::fetch_static_info(&[counter.to_string()]).await {
                 if let Some(info) = infos.first() {
                     STOCKS.modify(counter.clone(), |stock| {
@@ -578,7 +595,7 @@ pub fn refresh_stock(counter: Counter) {
             }
         }
 
-        // 获取成交记录
+        // Get trade records
         if let Ok(trades) = crate::api::quote::fetch_trades(&counter.to_string(), 50).await {
             STOCKS.modify(counter.clone(), |stock| {
                 stock.update_from_trades(&trades);
@@ -1014,7 +1031,6 @@ fn stock_detail(
         ListItem::new(" "),
         price_item("最高价".to_string(), stock.quote.high),
         price_item("最低价".to_string(), stock.quote.low),
-        item("均价".to_string(), EMPTY_PLACEHOLDER), // 需要计算
         ListItem::new(" "),
         item("成交量".to_string(), fmt_u64(stock.quote.volume)),
         item(
@@ -1437,467 +1453,6 @@ fn stock_detail(
             frame.render_widget(Paragraph::new(Text::from(trade_lines)), inner_area);
         }
     }
-    //
-    //     let _guard = RT.get().unwrap().enter();
-    //     // SignalApp 已移除，简化实现
-    //     // let quote_config = Default::default();
-    //     // let detail = DetailView::new(&stock, &quote_config, locale());
-    //
-    //     // draw detail
-    //     //     let column0 = vec![
-    //     //         ListItem::new(" "),
-    //     //         item(t!("StockDetail.Trading Status"), detail.trade_status_name),
-    //     //         ListItem::new(" "),
-    //     //         item(t!("StockDetail.Open"), detail.open),
-    //     //         item(t!("StockDetail.Prev. Close"), detail.prev_close),
-    //     //         ListItem::new(" "),
-    //     //         item(t!("StockDetail.High"), detail.high),
-    //     //         item(t!("StockDetail.Low"), detail.low),
-    //     //         item(t!("StockDetail.Average"), detail.average),
-    //     //         ListItem::new(" "),
-    //     //         item(t!("StockDetail.Volume"), detail.amount),
-    //     //         item(t!("StockDetail.Turnover"), detail.balance),
-    //     //         ListItem::new(" "),
-    //     //         item(t!("StockDetail.Bid/Ask Ratio"), detail.turnover_rate),
-    //     //         item(t!("StockDetail.Amplitude"), detail.amplitude),
-    //     //         ListItem::new(" "),
-    //     //     ];
-    //     //
-    //     //     let column1 = vec![
-    //     //         ListItem::new(" "),
-    //     //         ListItem::new(" "),
-    //     //         ListItem::new(" "),
-    //     //         item(t!("StockDetail.52wk High"), detail.year_high),
-    //     //         item(t!("StockDetail.52wk Low"), detail.year_low),
-    //     //         ListItem::new(" "),
-    //     //         item(t!("StockDetail.Turnover Ratio"), detail.depth_rate),
-    //     //         item(t!("StockDetail.Volume Ratio"), detail.volume_rate),
-    //     //         ListItem::new(" "),
-    //     //         item(t!("StockDetail.P/E (TTM)"), detail.per_ttm),
-    //     //         item(t!("StockDetail.P/E (Dynamic)"), detail.per_forecast),
-    //     //         item(t!("StockDetail.P/E (Static)"), detail.per_lyr),
-    //     //         ListItem::new(" "),
-    //     //         item(t!("StockDetail.EPS (TTM)"), detail.eps_ttm),
-    //     //         item(t!("StockDetail.EPS (Dynamic)"), detail.eps_forecast),
-    //     //         item(t!("StockDetail.EPS (Static)"), detail.eps),
-    //     //         ListItem::new(" "),
-    //     //     ];
-    //     //
-    //     //     let column2 = vec![
-    //     //         ListItem::new(" "),
-    //     //         ListItem::new(" "),
-    //     //         ListItem::new(" "),
-    //     //         item(t!("StockDetail.Market Cap"), detail.market_cap), // TODO: add currency name
-    //     //         item(t!("StockDetail.Shares"), detail.total_shares),
-    //     //         ListItem::new(" "),
-    //     //         item(t!("StockDetail.Float Cap"), detail.circulating_cap), // TODO: "HK Cap"
-    //     //         item(
-    //     //             t!("StockDetail.Shares Float"), // TODO: "HK Shares Float"
-    //     //             detail.circulating_shares,
-    //     //         ),
-    //     //         ListItem::new(" "),
-    //     //         item(t!("StockDetail.P/B"), detail.bps_rate),
-    //     //         item(t!("StockDetail.BPS"), detail.bps),
-    //     //         ListItem::new(" "),
-    //     //         item(t!("StockDetail.Dividend Yield (TTM)"), detail.dps_rate),
-    //     //         item(t!("StockDetail.Dividend (TTM)"), detail.dividend_yield),
-    //     //         ListItem::new(" "),
-    //     //         ListItem::new(" "),
-    //     //         item(t!("StockDetail.Min lot size"), detail.unit),
-    //     //         ListItem::new(" "),
-    //     //     ];
-    //     //
-    //     //     let column_height = column0.len().max(column1.len()).max(column2.len()) as u16;
-    //     //     let chunks = Layout::default()
-    //     //         .constraints(
-    //     //             [
-    //     //                 Constraint::Length(column_height),
-    //     //                 Constraint::Length(1),
-    //     //                 Constraint::Min(20),
-    //     //             ]
-    //     //             .as_ref(),
-    //     //         )
-    //     //         .direction(Direction::Vertical)
-    //     //         .split(rect);
-    //     //     let columns_chunks = Layout::default()
-    //     //         .constraints([
-    //     //             Constraint::Ratio(2, 9),
-    //     //             Constraint::Ratio(2, 9),
-    //     //             Constraint::Ratio(2, 9),
-    //     //             Constraint::Ratio(3, 9),
-    //     //         ])
-    //     //         .direction(Direction::Horizontal)
-    //     //         .split(chunks[0].inner(&Margin {
-    //     //             vertical: 1,
-    //     //             horizontal: 2,
-    //     //         }));
-    //     //     frame.render_widget(List::new(column0), columns_chunks[0]);
-    //     //     frame.render_widget(List::new(column1), columns_chunks[1]);
-    //     //     frame.render_widget(List::new(column2), columns_chunks[2]);
-    //     //
-    //     // draw depth
-    //     let depth_rect = columns_chunks[3].inner(&Margin {
-    //         vertical: 1,
-    //         horizontal: 0,
-    //     });
-    //     frame.render_widget(
-    //         Block::default()
-    //             .borders(Borders::LEFT)
-    //             .border_type(BorderType::Plain),
-    //         depth_rect,
-    //     );
-    //     let quoting = stock.quoting();
-    //     if !(quoting.depths.bid.is_empty() && quoting.depths.ask.is_empty()) {
-    //         const BLOCK: &str = "▂"; // U+2582 LOWER ONE QUARTER BLOCK
-    //
-    //         fn format_quote(
-    //             depth: &crate::data::Depth,
-    //             counter: &Counter,
-    //             prev_close: Option<Decimal>,
-    //         ) -> Line<'static> {
-    //             // 档位
-    //             let price_level = Span::styled(
-    //                 format!("{:>2}:", depth.price_level),
-    //                 crate::ui::styles::label(),
-    //             );
-    //             // 价格
-    //             let price = {
-    //                 let delta = prev_close
-    //                     .and_then(|prev_close| {
-    //                         depth
-    //                             .price
-    //                             .parse()
-    //                             .map(|price: Decimal| price.cmp(&prev_close))
-    //                             .ok()
-    //                     })
-    //                     .unwrap_or(std::cmp::Ordering::Equal);
-    //                 let trend_style = styles::up(delta);
-    //                 Span::styled(depth.price.clone(), trend_style)
-    //             };
-    //             // 数量
-    //             let volume =
-    //                 crate::ui::text::align_right(&crate::ui::text::unit(depth.volume.into(), 0), 6);
-    //             // 订单总量
-    //             let count = counter
-    //                 .is_hk()
-    //                 .then(|| {
-    //                     crate::ui::text::align_right(&format!("({})", depth.count.clamp(0, 999)), 5)
-    //                 })
-    //                 .unwrap_or_default();
-    //             Line::from(vec![price_level, price, volume.into(), count.into()])
-    //         }
-    //
-    //         let rect = depth_rect.inner(&Margin {
-    //             vertical: 1,
-    //             horizontal: 2,
-    //         });
-    //         let depth_view_data = DepthView::new(&stock);
-    //         let chunks = Layout::default()
-    //             .constraints([
-    //                 Constraint::Length(1),
-    //                 Constraint::Length(1),
-    //                 Constraint::Min(10),
-    //             ])
-    //             .direction(Direction::Vertical)
-    //             .split(rect);
-    //         let bidding_title = format!(
-    //             " {}: {}",
-    //             t!("StockDepth.Bid"),
-    //             depth_view_data.bid_ratio.format_percent()
-    //         );
-    //         let asking_title = format!(
-    //             " {}: {}",
-    //             t!("StockDepth.Ask"),
-    //             depth_view_data.ask_ratio.format_percent()
-    //         );
-    //
-    //         let title_chunks = Layout::default()
-    //             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-    //             .direction(Direction::Horizontal)
-    //             .split(chunks[0]);
-    //
-    //         frame.render_widget(Paragraph::new(bidding_title), title_chunks[0]);
-    //         frame.render_widget(Paragraph::new(asking_title), title_chunks[1]);
-    //
-    //         let (bid_blocks, ask_blocks) = {
-    //             let bid_blocks = (Decimal::from(rect.width) * depth_view_data.bid_ratio)
-    //                 .round()
-    //                 .to_usize()
-    //                 .unwrap();
-    //             (bid_blocks, rect.width as usize - bid_blocks)
-    //         };
-    //         let (bull, bear) = styles::bull_bear();
-    //         let ratio_bar = Line::from(vec![
-    //             Span::styled(BLOCK.repeat(bid_blocks), bull),
-    //             Span::styled(BLOCK.repeat(ask_blocks), bear),
-    //         ]);
-    //
-    //         frame.render_widget(Paragraph::new(ratio_bar), chunks[1]);
-    //
-    //         let mut depth_rows: Vec<Row> = vec![];
-    //
-    //         let biddings = &depth_view_data.depth_data.bid;
-    //         let askings = &depth_view_data.depth_data.ask;
-    //         let prev_close = depth_view_data.prev_close.parse().ok();
-    //         for item in askings.iter().zip_longest(biddings.iter()) {
-    //             let (left, right) = match item {
-    //                 itertools::EitherOrBoth::Both(a, b) => (Some(a), Some(b)),
-    //                 itertools::EitherOrBoth::Left(a) => (Some(a), None),
-    //                 itertools::EitherOrBoth::Right(b) => (None, Some(b)),
-    //             };
-    //             let bid = right
-    //                 .map(|depth| format_quote(depth, counter, prev_close))
-    //                 .unwrap_or_default();
-    //             let ask = left
-    //                 .map(|depth| format_quote(depth, counter, prev_close))
-    //                 .unwrap_or_default();
-    //             depth_rows.push(Row::new([bid, ask]));
-    //         }
-    //
-    //         let constraints = &[Constraint::Percentage(50), Constraint::Percentage(50)];
-    //         let table = Table::new(depth_rows).widths(constraints).column_spacing(1);
-    //
-    //         frame.render_widget(table, chunks[2]);
-    //     }
-    //
-    //     // draw separator
-    //     let block = Block::default()
-    //         .borders(Borders::TOP)
-    //         .border_type(BorderType::Plain);
-    //     frame.render_widget(
-    //         block,
-    //         chunks[1].inner(&Margin {
-    //             vertical: 0,
-    //             horizontal: 1,
-    //         }),
-    //     );
-    //
-    //     let chart_chunks = Layout::default()
-    //         .constraints([Constraint::Ratio(2, 3), Constraint::Ratio(1, 3)])
-    //         .direction(Direction::Horizontal)
-    //         .split(chunks[2].inner(&Margin {
-    //             vertical: 1,
-    //             horizontal: 0,
-    //         }));
-    //
-    //     // Draw chart
-    //     {
-    //         const Y_AXIS_WIDTH: u16 = 17;
-    //
-    //         let chart_chunks = Layout::default()
-    //             .constraints([Constraint::Length(2), Constraint::Min(20)])
-    //             .direction(Direction::Vertical)
-    //             .split(chart_chunks[0].inner(&Margin {
-    //                 vertical: 0,
-    //                 horizontal: 2,
-    //             }));
-    //
-    //         let selected_type_index = KlineType::iter()
-    //             .position(|t| t == kline_type)
-    //             .unwrap_or_default();
-    //         let chart_tabs = Tabs::new(
-    //             KlineType::iter()
-    //                 .map(|chart_type| {
-    //                     Line::from(vec![
-    //                         Span::raw(" "),
-    //                         Span::raw(chart_type.to_string()),
-    //                         Span::raw(" "),
-    //                     ])
-    //                 })
-    //                 .collect(),
-    //         )
-    //         .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-    //         .select(selected_type_index);
-    //         frame.render_widget(chart_tabs, chart_chunks[0]);
-    //
-    //         let area = chart_chunks[1];
-    //         let (width, page, index) = area
-    //             .width
-    //             .checked_sub(Y_AXIS_WIDTH)
-    //             .filter(|&v| v > 0)
-    //             .map(|width| {
-    //                 let width = width as usize;
-    //                 (width, selected / width, selected % width)
-    //             })
-    //             .unwrap_or_default();
-    //         let samples = crate::kline::KLINES.by_pagination(
-    //             *counter,
-    //             kline_type,
-    //             AdjustType::ForwardAdjust,
-    //             page,
-    //             width,
-    //         );
-    //         let candles = samples
-    //             .iter()
-    //             .map(|sample| cli_candlestick_chart::Candle {
-    //                 open: f64::try_from(sample.open).unwrap(),
-    //                 high: f64::try_from(sample.high).unwrap(),
-    //                 low: f64::try_from(sample.low).unwrap(),
-    //                 close: f64::try_from(sample.close).unwrap(),
-    //                 volume: Some(
-    //                     #[allow(clippy::cast_precision_loss)]
-    //                     {
-    //                         sample.amount as f64
-    //                     },
-    //                 ),
-    //                 timestamp: Some(sample.timestamp),
-    //             })
-    //             .collect();
-    //
-    //         let mut chart =
-    //             cli_candlestick_chart::Chart::new_with_size(candles, (area.width, area.height));
-    //         let (bull, bear) = styles::bull_bear_color();
-    //         chart.set_bull_color(bull);
-    //         chart.set_vol_bull_color(bull);
-    //         chart.set_bear_color(bear);
-    //         chart.set_vol_bear_color(bear);
-    //         chart.set_name(counter.code().to_string());
-    //         frame.render_widget(
-    //             crate::widgets::Ansi(&chart.render()),
-    //             Rect {
-    //                 height: area.height.saturating_sub(2), // replace info panel with our homemade one
-    //                 ..area
-    //             },
-    //         );
-    //
-    //         let indicator_line = {
-    //             let width = area.width as usize;
-    //             // U+2500 BOX DRAWINGS LIGHT HORIZONTAL, 3 bytes
-    //             let mut s = "─".repeat(width);
-    //             // indicator index
-    //             // one for length index, and one for margin
-    //             let index = usize::from(Y_AXIS_WIDTH - 2) + samples.len().saturating_sub(index);
-    //             if index < width {
-    //                 let index = index * 3;
-    //                 s.replace_range(index..(index + 3), "⇡");
-    //             }
-    //             s.into()
-    //         };
-    //         let info_line = if let Some(sample) = samples.iter().rev().nth(index) {
-    //             let local_time = counter.region().local_time(
-    //                 time::OffsetDateTime::from_unix_timestamp(sample.timestamp)
-    //                     .unwrap_or(time::OffsetDateTime::UNIX_EPOCH),
-    //             );
-    //             let format = if kline_type >= KlineType::PerDay {
-    //                 time::macros::format_description!("[month]-[day]")
-    //             } else {
-    //                 time::macros::format_description!("[hour]:[minute]")
-    //             };
-    //             Line::from(vec![Span::raw(format!(
-    //                 "{} | {}: {} | {}: {} | {}: {} | {}: {} | {}: {}",
-    //                 local_time.format(format).unwrap(),
-    //                 t!("Candlestick.Open"),
-    //                 sample.open,
-    //                 t!("StockDetail.High"),
-    //                 sample.high,
-    //                 t!("StockDetail.Low"),
-    //                 sample.low,
-    //                 t!("Candlestick.Close"),
-    //                 sample.close,
-    //                 t!("StockDetail.Volume"),
-    //                 sample.amount,
-    //             ))])
-    //         } else {
-    //             Line::default()
-    //         };
-    //         let paragraph =
-    //             Paragraph::new(vec![indicator_line, info_line]).alignment(Alignment::Center);
-    //         frame.render_widget(
-    //             paragraph,
-    //             Rect {
-    //                 y: (area.y + area.height).saturating_sub(2),
-    //                 height: 2,
-    //                 ..area
-    //             },
-    //         );
-    //     }
-    //
-    //     // draw trades
-    //     frame.render_widget(
-    //         Block::default()
-    //             .borders(Borders::LEFT)
-    //             .border_type(BorderType::Plain),
-    //         chart_chunks[1],
-    //     );
-    //
-    //     {
-    //         const UP: &str = "▲";
-    //         const DOWN: &str = "▼";
-    //         const NEUTRAL: &str = "◆";
-    //
-    //         let trades = &quoting.trades.trades;
-    //         if trades.is_empty() {
-    //             return;
-    //         }
-    //
-    //         let trade_rect = chart_chunks[1].inner(&Margin {
-    //             vertical: 1,
-    //             horizontal: 1,
-    //         });
-    //         let chunks = Layout::default()
-    //             .constraints([Constraint::Length(2), Constraint::Min(10)])
-    //             .direction(Direction::Vertical)
-    //             .split(trade_rect);
-    //
-    //         // render title chunk[0]
-    //         let title_spans = Line::from(t!("StockQuoteTrades"));
-    //         let title_lines = vec![title_spans, Line::default()];
-    //         frame.render_widget(
-    //             Paragraph::new(title_lines),
-    //             chunks[0].inner(&Margin {
-    //                 vertical: 0,
-    //                 horizontal: 1,
-    //             }),
-    //         );
-    //
-    //         // render table chunk[1]
-    //         let rect = chunks[1].inner(&Margin {
-    //             vertical: 0,
-    //             horizontal: 1,
-    //         });
-    //
-    //         let trade_prev_close = quoting.data.prev_close;
-    //         let timezone = std::cell::OnceCell::new();
-    //         let trade_rows: Vec<Row> = trades
-    //             .iter()
-    //             .rev()
-    //             .take(rect.height as usize)
-    //             .map(|trade| {
-    //                 let dt = time::OffsetDateTime::from_unix_timestamp(trade.timestamp).unwrap();
-    //                 let offset = *timezone.get_or_init(|| counter.region().local_time(dt).offset());
-    //                 let time_cell = Cell::from(
-    //                     dt.to_offset(offset)
-    //                         .format(time::macros::format_description!("[hour]:[minute]"))
-    //                         .unwrap(),
-    //                 );
-    //
-    //                 let delta = Decimal::from_str(&trade.price)
-    //                     .ok()
-    //                     .zip(trade_prev_close)
-    //                     .map_or(std::cmp::Ordering::Equal, |(a, b)| a.cmp(&b));
-    //                 let price_cell =
-    //                     Cell::from(trade.price.as_str()).style(crate::ui::styles::up(delta));
-    //
-    //                 let (symbol, style) = match trade.direction {
-    //                     1 => (DOWN, crate::ui::styles::up(std::cmp::Ordering::Less)),
-    //                     2 => (UP, crate::ui::styles::up(std::cmp::Ordering::Greater)),
-    //                     _ => (NEUTRAL, crate::ui::styles::up(std::cmp::Ordering::Equal)),
-    //                 };
-    //                 let amount_cell = Cell::from(format!("{} {}", trade.amount, symbol)).style(style);
-    //
-    //                 Row::new(vec![time_cell, price_cell, amount_cell])
-    //             })
-    //             .collect();
-    //
-    //         let constraints = &[
-    //             Constraint::Length(5),      // TODO: left align
-    //             Constraint::Percentage(60), // TODO: center align
-    //             Constraint::Percentage(40), // TODO: right align
-    //         ];
-    //         let table = Table::new(trade_rows).column_spacing(1).widths(constraints);
-    //
-    //         frame.render_widget(table, rect);
-    //     }
 }
 
 pub fn render_watchlist(
@@ -2082,7 +1637,7 @@ fn watch_group_table(
             let prev_close = quote_data.prev_close.filter(|&p| p > Decimal::ZERO);
             let current_price = quote_data
                 .last_done
-                .or(quote_data.open)  // Use open price if last_done not available
+                .or(quote_data.open) // Use open price if last_done not available
                 .filter(|&p| p > Decimal::ZERO);
 
             let (increase, increase_percent) = match (current_price, prev_close) {
