@@ -50,6 +50,15 @@ impl Stock {
         true
     }
 
+    /// Get display name, fallback to code if name is empty
+    pub fn display_name(&self) -> &str {
+        if self.name.is_empty() {
+            self.counter.code()
+        } else {
+            &self.name
+        }
+    }
+
     /// Update quote data (from longport SDK)
     pub fn update_from_quote(&mut self, quote: &longport::quote::RealtimeQuote) {
         self.quote.last_done = Some(quote.last_done);
