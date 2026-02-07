@@ -31,6 +31,9 @@ pub struct Args {
 
 #[tokio::main]
 async fn main() {
+    // Set default locale to English
+    rust_i18n::set_locale("en");
+
     // Initialize logger
     let _guard = logger::init();
     tracing::info!("App started");
