@@ -96,9 +96,9 @@ pub fn currency(currency: &str) -> Style {
 
 #[inline]
 pub fn stock_color_mode() -> StockColorMode {
-    // Default to RedUp mode
+    // Default to GreenUp mode (green for up, red for down - China mainland convention)
     // TODO: Read from user settings
-    StockColorMode::RedUp
+    StockColorMode::GreenUp
 }
 
 #[inline]
