@@ -119,6 +119,7 @@ Portfolio.Risk Level: Risk Level
 Portfolio.Credit Limit: Credit Limit
 Portfolio.Health Status: Health Status
 Portfolio.Fund Market Cap: Fund Market Cap
+Portfolio.No Holdings: No holdings data
 Holding.Code: Code
 Holding.Cost Price: Cost
 Holding.Hold Ratio: Owned%
@@ -166,11 +167,19 @@ RiskLevel.Danger: Danger
 RiskLevel.Middle: Middle
 RiskLevel.Safe: Safe
 RiskLevel.Warning: Warning
-TradeStatus.Normal: Trading
+TradeStatus.TRADING: Trading
+TradeStatus.US_PREV: Pre-Market
+TradeStatus.US_TRADING: Trading
+TradeStatus.US_AFTER: After Hours
+TradeStatus.US_NIGHT: Night Trading
+TradeStatus.US_CLOSING: Closed
+TradeStatus.CLOSING: Closed
+TradeStatus.OPEN_BID: Opening Auction
+TradeStatus.CLOSE_BID: Closing Auction
+TradeStatus.NOON_CLOSING: Lunch Break
 TradeStatus.Halted: Halted
 TradeStatus.Delisted: Delisted
-TradeStatus.STOP: Closed
-TradeStatus.UsStop: Closed
+TradeStatus.STOP: Stopped
 Help: " Help "
 HelpTips: |-
   - General ----------------------------------------------------------------------------------

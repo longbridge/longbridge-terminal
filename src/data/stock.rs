@@ -70,18 +70,15 @@ impl Stock {
         self.quote.timestamp = quote.timestamp.unix_timestamp();
 
         // Update trade_status from quote
+        // Note: Longport SDK only provides simplified status (Normal/Halted/Delisted)
+        // We map these to our detailed status codes
         self.trade_status = match quote.trade_status {
-            longport::quote::TradeStatus::Normal => TradeStatus::Normal,
-            longport::quote::TradeStatus::Halted => TradeStatus::Halted,
-            longport::quote::TradeStatus::Delisted => TradeStatus::Delisted,
-            _ => {
-                // For other statuses (closed, pre/post market, etc.), map to STOP/UsStop
-                let market = self.counter.region();
-                match market {
-                    super::types::Market::US => TradeStatus::UsStop,
-                    _ => TradeStatus::STOP,
-                }
-            }
+            longport::quote::TradeStatus::Normal => TradeStatus::TRADING,
+            longport::quote::TradeStatus::Halted => TradeStatus::TRADING_HALT,
+            longport::quote::TradeStatus::Delisted => TradeStatus::DELIST,
+            longport::quote::TradeStatus::Fuse => TradeStatus::STOP,
+            longport::quote::TradeStatus::SuspendTrade => TradeStatus::STOP,
+            _ => TradeStatus::UNKNOWN,
         };
     }
 

@@ -119,6 +119,7 @@ Portfolio.Risk Level: 风控状态
 Portfolio.Credit Limit: 融资额度
 Portfolio.Health Status: 杠杆
 Portfolio.Fund Market Cap: 基金市值
+Portfolio.No Holdings: 暂无持仓数据
 Holding.Code: 代码
 Holding.Cost Price: 成本价
 Holding.Hold Ratio: 占比%

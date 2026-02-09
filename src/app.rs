@@ -237,27 +237,32 @@ pub async fn run(
         }
     });
 
-    let loading_interval = std::time::Duration::from_millis(120);
-    let mut tick = tokio::time::interval(loading_interval);
+    // FPS-based rendering: 30 FPS for smooth UI updates
+    let render_interval = std::time::Duration::from_millis(33); // ~30 FPS
+    let mut render_tick = tokio::time::interval(render_interval);
+    render_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     // Wait briefly to ensure terminal is fully ready
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     let mut events = crossterm::event::EventStream::new();
-    let mut refresh = true;
+    let mut needs_render = true;
 
     loop {
-        if refresh {
-            app.update();
-        } else {
-            refresh = true;
-        }
-
         tokio::select! {
-            _ = tick.tick() => (),
+            // Render at fixed FPS
+            _ = render_tick.tick() => {
+                if needs_render {
+                    app.update();
+                    needs_render = false;
+                }
+            }
+            // Handle commands (state changes, resource updates)
             Some(mut cmd) = update_rx.recv() => {
                 cmd.apply(&mut app.world);
+                needs_render = true; // Mark for re-render
             }
+            // Handle quote push events (data updates)
             Some(push_event) = tokio_stream::StreamExt::next(&mut quote_receiver) => {
                 // Handle WebSocket push events
                 // PushEvent contains symbol and detail
@@ -281,19 +286,15 @@ pub async fn run(
 
                              // Update trade_status from SDK (more accurate than our own judgment)
                              stock.trade_status = match quote.trade_status {
-                                 longport::quote::TradeStatus::Normal => crate::data::TradeStatus::Normal,
-                                 longport::quote::TradeStatus::Halted => crate::data::TradeStatus::Halted,
-                                 longport::quote::TradeStatus::Delisted => crate::data::TradeStatus::Delisted,
-                                 _ => {
-                                     // For other statuses (closed, pre/post market, etc.)
-                                     let market = counter.region();
-                                     match market {
-                                         crate::data::Market::US => crate::data::TradeStatus::UsStop,
-                                         _ => crate::data::TradeStatus::STOP,
-                                     }
-                                 }
+                                 longport::quote::TradeStatus::Normal => crate::data::TradeStatus::TRADING,
+                                 longport::quote::TradeStatus::Halted => crate::data::TradeStatus::TRADING_HALT,
+                                 longport::quote::TradeStatus::Delisted => crate::data::TradeStatus::DELIST,
+                                 longport::quote::TradeStatus::Fuse => crate::data::TradeStatus::STOP,
+                                 longport::quote::TradeStatus::SuspendTrade => crate::data::TradeStatus::STOP,
+                                 _ => crate::data::TradeStatus::UNKNOWN,
                              };
                          });
+                         needs_render = true; // Mark for re-render
                      }
                      PushEventDetail::Depth(depth) => {
                          tracing::debug!("Update depth: {}", symbol);
@@ -313,17 +314,19 @@ pub async fn run(
                                  order_num: d.order_num,
                              }).collect();
                          });
+                         needs_render = true; // Mark for re-render
                      }
                      _ => {
                          // Other event types not handled yet
                      }
                  }
             }
+            // Handle user input events
             Some(event) = tokio_stream::StreamExt::next(&mut events) => {
                 let event = match event {
                     Ok(crossterm::event::Event::Key(event)) => event,
                     Ok(_) => {
-                        refresh = false;
+                        // Non-key events (mouse, resize, etc.) - ignore for now
                         continue
                     },
                     Err(err) => {
@@ -333,6 +336,7 @@ pub async fn run(
                             t!("qrcode_view.error.content"),
                         ));
                         app.world.insert_resource(NextState(Some(AppState::Error)));
+                        needs_render = true;
                         continue;
                     }
                 };
@@ -343,6 +347,7 @@ pub async fn run(
                 // Handle various popups
                 if popup != 0 {
                     handle_popup_input(&mut app, popup, event, update_tx.clone());
+                    needs_render = true;
                     continue;
                 }
 
@@ -358,11 +363,15 @@ pub async fn run(
                     AppState::TradeToken => {
                         match event {
                             ctrl!('c') => return,
-                            key!(Esc) => app.world.insert_resource(NextState(Some(LAST_STATE.load(Ordering::Relaxed)))),
+                            key!(Esc) => {
+                                app.world.insert_resource(NextState(Some(LAST_STATE.load(Ordering::Relaxed))));
+                                needs_render = true;
+                            }
                             _ => {
                                 let evt = crossterm::event::Event::Key(event);
                                 if let Some(evt) = tui_input::backend::crossterm::to_input_request(&evt) {
                                     send_evt(system::TuiEvent(evt), &mut app.world);
+                                    needs_render = true;
                                 }
                             }
                         }
@@ -373,6 +382,7 @@ pub async fn run(
 
                 // Handle global keyboard shortcuts
                 handle_global_keys(&mut app, event, state, update_tx.clone());
+                needs_render = true; // Always mark for re-render after handling input
             }
         }
     }

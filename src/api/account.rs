@@ -1,6 +1,11 @@
 use anyhow::Result;
-use crate::data::{Account, AccountList};
+use crate::data::{
+    Account, AccountBalance, AccountList, CashBalance, CashInfo, Holding, MarketAccount,
+    OverviewData, PortfolioView,
+};
 use crate::openapi;
+use rust_decimal::Decimal;
+use std::collections::HashMap;
 
 /// Get account list
 pub async fn fetch_account_list() -> Result<AccountList> {
@@ -108,4 +113,194 @@ pub async fn currencies(_account_channel: &str) -> Result<Vec<CurrencyInfo>> {
             account_channel: _account_channel.to_string(),
         },
     ])
+}
+
+/// Fetch account balance from Longport SDK
+pub async fn fetch_account_balance() -> Result<AccountBalance> {
+    let ctx = openapi::trade();
+    let balances = ctx.account_balance(None).await?;
+
+    // Take the first account (user typically has one main account)
+    let response = balances
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("No account balance found"))?;
+
+    // Map longport response to our AccountBalance structure
+    let mut cash_infos = Vec::new();
+    for cash_info in &response.cash_infos {
+        cash_infos.push(CashInfo {
+            withdraw_cash: cash_info.withdraw_cash,
+            available_cash: cash_info.available_cash,
+            frozen_cash: cash_info.frozen_cash,
+            settling_cash: cash_info.settling_cash,
+            currency: cash_info.currency.clone(),
+        });
+    }
+
+    Ok(AccountBalance {
+        total_cash: response.total_cash,
+        max_finance_amount: response.max_finance_amount,
+        remaining_finance_amount: response.remaining_finance_amount,
+        risk_level: response.risk_level as u8,
+        margin_call: response.margin_call,
+        currency: response.currency,
+        net_assets: response.net_assets,
+        init_margin: response.init_margin,
+        maintenance_margin: response.maintenance_margin,
+        buy_power: response.buy_power,
+        cash_infos,
+    })
+}
+
+/// Fetch stock holdings from Longport SDK
+pub async fn fetch_stock_holdings() -> Result<Vec<Holding>> {
+    let ctx = openapi::trade();
+    let response = ctx.stock_positions(None).await?;
+
+    let mut holdings = Vec::new();
+    for channel in response.channels {
+        for position in &channel.positions {
+            // Map currency string to Currency enum
+            let currency = match position.currency.as_str() {
+                "HKD" => crate::data::Currency::HKD,
+                "USD" => crate::data::Currency::USD,
+                "CNY" => crate::data::Currency::CNY,
+                "SGD" => crate::data::Currency::SGD,
+                _ => crate::data::Currency::HKD,
+            };
+
+            // Calculate market value (using cost price as placeholder since SDK doesn't provide current price)
+            let market_value = position.cost_price * position.quantity;
+
+            holdings.push(Holding {
+                symbol: position.symbol.clone(),
+                name: position.symbol_name.clone(),
+                currency,
+                quantity: position.quantity,
+                available_quantity: position.available_quantity,
+                cost_price: Some(position.cost_price),
+                market_value,
+                market_price: position.cost_price, // Placeholder: would need real-time quote for actual market price
+            });
+        }
+    }
+
+    Ok(holdings)
+}
+
+/// Calculate overview data from balance and holdings
+fn calculate_overview(balance: &AccountBalance, holdings: &[Holding]) -> OverviewData {
+    let market_cap: Decimal = holdings.iter().map(|h| h.market_value).sum();
+
+    // Calculate total P/L (simplified: market_value - cost)
+    let total_pl: Decimal = holdings
+        .iter()
+        .filter_map(|h| {
+            h.cost_price
+                .map(|cost| h.market_value - (cost * h.quantity))
+        })
+        .sum();
+
+    // Calculate leverage ratio (simplified)
+    let leverage_ratio = if balance.net_assets > Decimal::ZERO {
+        (balance.total_cash - balance.net_assets) / balance.net_assets
+    } else {
+        Decimal::ZERO
+    };
+
+    OverviewData {
+        total_asset: balance.net_assets + market_cap,
+        market_cap,
+        total_cash: balance.total_cash,
+        total_pl,
+        total_today_pl: Decimal::ZERO, // Not available from SDK
+        margin_call: balance.margin_call,
+        risk_level: balance.risk_level,
+        credit_limit: balance.max_finance_amount,
+        leverage_ratio,
+        fund_market_value: Decimal::ZERO, // Not implemented yet
+    }
+}
+
+/// Group holdings by market
+fn group_by_market(holdings: &[Holding]) -> HashMap<crate::data::Market, MarketAccount> {
+    let mut markets = HashMap::new();
+
+    for holding in holdings {
+        // Parse market from symbol (e.g., "700.HK" -> HK)
+        let market = if let Some(dot_pos) = holding.symbol.rfind('.') {
+            let market_str = &holding.symbol[dot_pos + 1..];
+            match market_str {
+                "HK" => crate::data::Market::HK,
+                "US" => crate::data::Market::US,
+                "SH" | "SZ" => crate::data::Market::CN,
+                "SG" => crate::data::Market::SG,
+                _ => crate::data::Market::HK,
+            }
+        } else {
+            crate::data::Market::HK
+        };
+
+        let account = markets.entry(market).or_insert_with(|| MarketAccount {
+            market,
+            currency: holding.currency,
+            ..Default::default()
+        });
+
+        account.market_value += holding.market_value;
+        // Calculate P/L if cost_price is available
+        if let Some(cost) = holding.cost_price {
+            account.pl += holding.market_value - (cost * holding.quantity);
+        }
+    }
+
+    markets
+}
+
+/// Extract cash balances from account balance
+fn extract_cash_balances(balance: &AccountBalance) -> Vec<CashBalance> {
+    balance
+        .cash_infos
+        .iter()
+        .map(|info| {
+            let currency = match info.currency.as_str() {
+                "HKD" => crate::data::Currency::HKD,
+                "USD" => crate::data::Currency::USD,
+                "CNY" => crate::data::Currency::CNY,
+                "SGD" => crate::data::Currency::SGD,
+                _ => crate::data::Currency::HKD,
+            };
+
+            CashBalance {
+                currency,
+                total_amount: info.available_cash + info.frozen_cash,
+                balance: info.available_cash,
+                frozen_cash: info.frozen_cash,
+                withdraw_cash: info.withdraw_cash,
+            }
+        })
+        .collect()
+}
+
+/// Fetch complete portfolio data
+pub async fn fetch_portfolio() -> Result<PortfolioView> {
+    // Fetch data concurrently
+    let (balance_result, holdings_result) =
+        tokio::join!(fetch_account_balance(), fetch_stock_holdings());
+
+    let balance = balance_result?;
+    let holdings = holdings_result?;
+
+    // Calculate aggregated metrics
+    let overview = calculate_overview(&balance, &holdings);
+    let market_accounts = group_by_market(&holdings);
+    let cash_balances = extract_cash_balances(&balance);
+
+    Ok(PortfolioView {
+        overview,
+        market_accounts,
+        cash_balances,
+        holdings,
+    })
 }
