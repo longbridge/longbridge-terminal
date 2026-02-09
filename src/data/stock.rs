@@ -59,7 +59,7 @@ impl Stock {
         }
     }
 
-    /// Update quote data (from longport SDK)
+    /// Update quote data (from longport SDK RealtimeQuote, for WebSocket push)
     pub fn update_from_quote(&mut self, quote: &longport::quote::RealtimeQuote) {
         self.quote.last_done = Some(quote.last_done);
         self.quote.open = Some(quote.open);
@@ -70,6 +70,21 @@ impl Stock {
         self.quote.timestamp = quote.timestamp.unix_timestamp();
 
         // Update trade_status directly from quote
+        self.trade_status = quote.trade_status;
+    }
+
+    /// Update from SecurityQuote (full quote data from API, includes prev_close)
+    pub fn update_from_security_quote(&mut self, quote: &longport::quote::SecurityQuote) {
+        self.quote.last_done = Some(quote.last_done);
+        self.quote.prev_close = Some(quote.prev_close);
+        self.quote.open = Some(quote.open);
+        self.quote.high = Some(quote.high);
+        self.quote.low = Some(quote.low);
+        self.quote.volume = quote.volume as u64;
+        self.quote.turnover = quote.turnover;
+        self.quote.timestamp = quote.timestamp.unix_timestamp();
+
+        // Update trade_status from quote
         self.trade_status = quote.trade_status;
     }
 

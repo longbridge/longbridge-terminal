@@ -52,13 +52,13 @@ pub fn render(frame: &mut Frame, rect: Rect, indexes: &[Counter; 3], state: &WsS
     let (status, status_style) = match state.0 {
         ReadyState::Open => {
             if crate::app::QUOTE_BMP.load(atomic::Ordering::Relaxed) {
-                ("▯▯▮", styles::bmp()) // Semi-automatic
+                ("○○●", styles::bmp()) // Semi-automatic
             } else {
-                ("▮▮▮", styles::online())
+                ("●●●", styles::online())
             }
         }
-        ReadyState::Closed => ("▯▯▯", styles::offline()),
-        _ => ("Connecting...", styles::text()),
+        ReadyState::Closed => ("○○○", styles::offline()),
+        _ => ("···", styles::text()),
     };
     let text = Span::styled(status, status_style);
 

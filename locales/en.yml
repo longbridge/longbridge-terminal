@@ -103,7 +103,7 @@ StockDetail.P/E (TTM): P/E (TTM)
 StockDetail.Prev. Close: "Prev. Close"
 StockDetail.Shares: Shares
 StockDetail.Shares Float: Shares Float
-StockDetail.Trading Status: Trading Status
+StockDetail.Trading Status: Status
 StockDetail.Turnover: Turnover
 StockDetail.Turnover Ratio: Turnover Ratio
 StockDetail.Volume: Volume

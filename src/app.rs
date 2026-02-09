@@ -10,6 +10,7 @@ use once_cell::sync::Lazy;
 use tokio::sync::mpsc;
 
 use crate::data::{Counter, User, Watchlist, WatchlistGroup};
+use crate::render::{DirtyFlags, RenderState};
 use crate::system;
 use crate::ui::Content;
 use crate::widgets::{Carousel, Loading, LocalSearch, Search, Terminal};
@@ -56,18 +57,38 @@ pub async fn run(
         ["000001.SH".into(), "399001.SZ".into(), "399006.SZ".into()],
     ];
 
-    // Subscribe to indexes
+    // Subscribe to indexes and fetch initial data
     let subs: Vec<Counter> = indexes.iter().flatten().cloned().collect();
     tokio::spawn({
         let subs = subs.clone();
         async move {
             let ctx = crate::openapi::quote();
             let symbols: Vec<String> = subs.iter().map(|c| c.to_string()).collect();
+
+            // First, fetch initial quote data (includes prev_close)
+            match ctx.quote(&symbols).await {
+                Ok(quotes) => {
+                    tracing::info!("Fetched {} index quotes", quotes.len());
+                    for quote in quotes {
+                        let counter = Counter::new(&quote.symbol);
+                        let mut stock = crate::data::Stock::new(counter);
+                        stock.update_from_security_quote(&quote);
+                        crate::data::STOCKS.insert(stock);
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to fetch index quotes: {}", e);
+                }
+            }
+
+            // Then subscribe for real-time updates
             if let Err(e) = ctx
                 .subscribe(&symbols, longport::quote::SubFlags::QUOTE)
                 .await
             {
                 tracing::error!("Failed to subscribe indexes: {}", e);
+            } else {
+                tracing::info!("Successfully subscribed to {} indexes", symbols.len());
             }
         }
     });
@@ -246,21 +267,26 @@ pub async fn run(
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     let mut events = crossterm::event::EventStream::new();
-    let mut needs_render = true;
+    let mut render_state = RenderState::new();
+    // Initial render to display UI
+    render_state.mark_all_dirty();
 
     loop {
         tokio::select! {
             // Render at fixed FPS
             _ = render_tick.tick() => {
-                if needs_render {
+                if render_state.needs_render() {
                     app.update();
-                    needs_render = false;
+                    render_state.clear();
+                } else {
+                    render_state.skip();
                 }
             }
             // Handle commands (state changes, resource updates)
             Some(mut cmd) = update_rx.recv() => {
                 cmd.apply(&mut app.world);
-                needs_render = true; // Mark for re-render
+                // State changes typically affect all components
+                render_state.mark_dirty(DirtyFlags::ALL);
             }
             // Handle quote push events (data updates)
             Some(push_event) = tokio_stream::StreamExt::next(&mut quote_receiver) => {
@@ -287,7 +313,8 @@ pub async fn run(
                              // Update trade_status directly from SDK
                              stock.trade_status = quote.trade_status;
                          });
-                         needs_render = true; // Mark for re-render
+                         // Quote updates affect watchlist, stock detail, and indexes
+                         render_state.mark_dirty(DirtyFlags::NONE.mark_quote_update());
                      }
                      PushEventDetail::Depth(depth) => {
                          tracing::debug!("Update depth: {}", symbol);
@@ -307,7 +334,8 @@ pub async fn run(
                                  order_num: d.order_num,
                              }).collect();
                          });
-                         needs_render = true; // Mark for re-render
+                         // Depth updates only affect stock detail view and depth widget
+                         render_state.mark_dirty(DirtyFlags::NONE.mark_depth_update());
                      }
                      _ => {
                          // Other event types not handled yet
@@ -329,7 +357,7 @@ pub async fn run(
                             t!("qrcode_view.error.content"),
                         ));
                         app.world.insert_resource(NextState(Some(AppState::Error)));
-                        needs_render = true;
+                        render_state.mark_dirty(DirtyFlags::ERROR);
                         continue;
                     }
                 };
@@ -340,7 +368,7 @@ pub async fn run(
                 // Handle various popups
                 if popup != 0 {
                     handle_popup_input(&mut app, popup, event, update_tx.clone());
-                    needs_render = true;
+                    render_state.mark_dirty(DirtyFlags::NONE.mark_popup_change(popup));
                     continue;
                 }
 
@@ -358,13 +386,13 @@ pub async fn run(
                             ctrl!('c') => return,
                             key!(Esc) => {
                                 app.world.insert_resource(NextState(Some(LAST_STATE.load(Ordering::Relaxed))));
-                                needs_render = true;
+                                render_state.mark_dirty(DirtyFlags::ALL);
                             }
                             _ => {
                                 let evt = crossterm::event::Event::Key(event);
                                 if let Some(evt) = tui_input::backend::crossterm::to_input_request(&evt) {
                                     send_evt(system::TuiEvent(evt), &mut app.world);
-                                    needs_render = true;
+                                    render_state.mark_dirty(DirtyFlags::ALL);
                                 }
                             }
                         }
@@ -374,8 +402,7 @@ pub async fn run(
                 }
 
                 // Handle global keyboard shortcuts
-                handle_global_keys(&mut app, event, state, update_tx.clone());
-                needs_render = true; // Always mark for re-render after handling input
+                handle_global_keys(&mut app, event, state, update_tx.clone(), &mut render_state);
             }
         }
     }
@@ -458,12 +485,14 @@ fn handle_global_keys(
     event: crossterm::event::KeyEvent,
     state: AppState,
     update_tx: mpsc::UnboundedSender<CommandQueue>,
+    render_state: &mut RenderState,
 ) {
     match event {
         ctrl!('c') => crate::widgets::Terminal::graceful_exit(0),
         key!('1') if state != AppState::Watchlist => {
             app.world
                 .insert_resource(NextState(Some(AppState::Watchlist)));
+            render_state.mark_dirty(DirtyFlags::ALL);
         }
         key!('2') if state != AppState::Portfolio => {
             // Create default Portfolio resource if it doesn't exist
@@ -475,6 +504,7 @@ fn handle_global_keys(
             }
             app.world
                 .insert_resource(NextState(Some(AppState::Portfolio)));
+            render_state.mark_dirty(DirtyFlags::ALL);
         }
         key!('a') | shift!('a') if state == AppState::Portfolio => {
             if let Some(mut account) = app
@@ -483,6 +513,7 @@ fn handle_global_keys(
             {
                 POPUP.store(POPUP_ACCOUNT, Ordering::Relaxed);
                 account.visible();
+                render_state.mark_dirty(DirtyFlags::POPUP_ACCOUNT);
             }
         }
         key!('c') | shift!('c') if state == AppState::Portfolio => {
@@ -492,6 +523,7 @@ fn handle_global_keys(
             {
                 POPUP.store(POPUP_CURRENCY, Ordering::Relaxed);
                 currency.visible();
+                render_state.mark_dirty(DirtyFlags::POPUP_CURRENCY);
             }
         }
         key!('g') | key!('G')
@@ -500,39 +532,56 @@ fn handle_global_keys(
             if let Some(mut search) = app.world.get_resource_mut::<LocalSearch<WatchlistGroup>>() {
                 POPUP.store(POPUP_WATCHLIST, Ordering::Relaxed);
                 search.visible();
+                render_state.mark_dirty(DirtyFlags::POPUP_WATCHLIST);
             };
         }
-        key!('Q') | shift!('Q') => show_index(&mut app.world, 0),
-        key!('W') | shift!('W') => show_index(&mut app.world, 1),
-        key!('E') | shift!('E') => show_index(&mut app.world, 2),
+        key!('Q') | shift!('Q') => {
+            show_index(&mut app.world, 0);
+            render_state.mark_dirty(DirtyFlags::STOCK_DETAIL | DirtyFlags::WATCHLIST);
+        }
+        key!('W') | shift!('W') => {
+            show_index(&mut app.world, 1);
+            render_state.mark_dirty(DirtyFlags::STOCK_DETAIL | DirtyFlags::WATCHLIST);
+        }
+        key!('E') | shift!('E') => {
+            show_index(&mut app.world, 2);
+            render_state.mark_dirty(DirtyFlags::STOCK_DETAIL | DirtyFlags::WATCHLIST);
+        }
         key!('t') | shift!('t') => {
             if state == AppState::Stock {
                 app.world
                     .insert_resource(NextState(Some(AppState::WatchlistStock)));
+                render_state.mark_dirty(DirtyFlags::STOCK_DETAIL | DirtyFlags::WATCHLIST);
             } else if state == AppState::WatchlistStock {
                 app.world.insert_resource(NextState(Some(AppState::Stock)));
+                render_state.mark_dirty(DirtyFlags::STOCK_DETAIL | DirtyFlags::WATCHLIST);
             }
         }
         key!('R') | shift!('R') => {
             match state {
                 AppState::Portfolio => {
                     system::refresh_portfolio();
+                    render_state.mark_dirty(DirtyFlags::PORTFOLIO);
                 }
                 AppState::Watchlist => {
                     system::refresh_watchlist(update_tx.clone());
+                    render_state.mark_dirty(DirtyFlags::WATCHLIST);
                 }
                 AppState::WatchlistStock => {
                     system::refresh_stock(app.world.resource::<system::StockDetail>().0.clone());
                     system::refresh_watchlist(update_tx.clone());
+                    render_state.mark_dirty(DirtyFlags::STOCK_DETAIL | DirtyFlags::WATCHLIST);
                 }
                 AppState::Stock => {
                     system::refresh_stock(app.world.resource::<system::StockDetail>().0.clone());
+                    render_state.mark_dirty(DirtyFlags::STOCK_DETAIL);
                 }
                 _ => {}
             };
         }
         key!('?') => {
             POPUP.store(POPUP_HELP, Ordering::Relaxed);
+            render_state.mark_dirty(DirtyFlags::POPUP_HELP);
         }
         key!('/') => {
             if let Some(mut search) = app
@@ -541,34 +590,66 @@ fn handle_global_keys(
             {
                 POPUP.store(POPUP_SEARCH, Ordering::Relaxed);
                 search.visible();
+                render_state.mark_dirty(DirtyFlags::POPUP_SEARCH);
             }
         }
         key!(Esc) | key!('q') => {
             let last_state = LAST_STATE.load(Ordering::Relaxed);
             if last_state != state {
                 app.world.insert_resource(NextState(Some(last_state)));
+                render_state.mark_dirty(DirtyFlags::ALL);
             }
         }
         key!(Up) | key!('k') | shift!('k') => {
             send_evt(system::Key::Up, &mut app.world);
+            // Navigation keys affect current view
+            render_state.mark_dirty(match state {
+                AppState::Watchlist | AppState::WatchlistStock => DirtyFlags::WATCHLIST,
+                AppState::Stock => DirtyFlags::STOCK_DETAIL,
+                AppState::Portfolio => DirtyFlags::PORTFOLIO,
+                _ => DirtyFlags::ALL,
+            });
         }
         key!(Down) | key!('j') | shift!('j') => {
             send_evt(system::Key::Down, &mut app.world);
+            render_state.mark_dirty(match state {
+                AppState::Watchlist | AppState::WatchlistStock => DirtyFlags::WATCHLIST,
+                AppState::Stock => DirtyFlags::STOCK_DETAIL,
+                AppState::Portfolio => DirtyFlags::PORTFOLIO,
+                _ => DirtyFlags::ALL,
+            });
         }
         key!(Left) | key!('h') | shift!('h') => {
             send_evt(system::Key::Left, &mut app.world);
+            render_state.mark_dirty(match state {
+                AppState::Stock => DirtyFlags::STOCK_DETAIL,
+                _ => DirtyFlags::ALL,
+            });
         }
         key!(Right) | key!('l') | shift!('l') => {
             send_evt(system::Key::Right, &mut app.world);
+            render_state.mark_dirty(match state {
+                AppState::Stock => DirtyFlags::STOCK_DETAIL,
+                _ => DirtyFlags::ALL,
+            });
         }
         key!(Tab) => {
             send_evt(system::Key::Tab, &mut app.world);
+            render_state.mark_dirty(match state {
+                AppState::Stock => DirtyFlags::STOCK_DETAIL,
+                _ => DirtyFlags::ALL,
+            });
         }
         key!(Enter) => {
             send_evt(system::Key::Enter, &mut app.world);
+            render_state.mark_dirty(DirtyFlags::ALL);
         }
         shift!(BackTab) => {
             send_evt(system::Key::BackTab, &mut app.world);
+            render_state.mark_dirty(match state {
+                AppState::Stock => DirtyFlags::STOCK_DETAIL,
+                _ => DirtyFlags::ALL,
+            });
         }
         _ => (),
     }

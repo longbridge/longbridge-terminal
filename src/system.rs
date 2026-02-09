@@ -21,7 +21,10 @@ use tokio::sync::mpsc;
 
 use crate::{
     app::{AppState, RT, WATCHLIST},
-    data::{Account, Counter, KlineType, ReadyState, Stock, SubTypes, TradeStatusExt, WatchlistGroup, STOCKS},
+    data::{
+        Account, Counter, KlineType, ReadyState, Stock, SubTypes, TradeStatusExt, WatchlistGroup,
+        STOCKS,
+    },
     helper::{cycle, DecimalExt, Sign},
     kline::KLINES,
     ui::{
@@ -1014,7 +1017,10 @@ fn stock_detail(
         item(t!("StockDetail.Trading Status"), stock.trade_status.label()),
         ListItem::new(" "),
         price_item(t!("StockDetail.Open"), stock.quote.open),
-        item(t!("StockDetail.Prev. Close"), fmt_decimal(stock.quote.prev_close)),
+        item(
+            t!("StockDetail.Prev. Close"),
+            fmt_decimal(stock.quote.prev_close),
+        ),
         ListItem::new(" "),
         price_item(t!("StockDetail.High"), stock.quote.high),
         price_item(t!("StockDetail.Low"), stock.quote.low),
@@ -1056,10 +1062,16 @@ fn stock_detail(
             ListItem::new(" "),
             ListItem::new(" "),
             item(t!("StockDetail.Shares"), fmt_i64(info.total_shares)),
-            item(t!("StockDetail.Shares Float"), fmt_i64(info.circulating_shares)),
+            item(
+                t!("StockDetail.Shares Float"),
+                fmt_i64(info.circulating_shares),
+            ),
             ListItem::new(" "),
             item(t!("StockDetail.BPS"), fmt_decimal(info.bps)),
-            item(t!("StockDetail.Dividend Yield (TTM)"), fmt_decimal(info.dividend_yield)),
+            item(
+                t!("StockDetail.Dividend Yield (TTM)"),
+                fmt_decimal(info.dividend_yield),
+            ),
             ListItem::new(" "),
             ListItem::new(" "),
             item(t!("StockDetail.Min lot size"), info.lot_size.to_string()),
@@ -1463,7 +1475,8 @@ fn stock_detail(
                     // Foreground part (left side, no background)
                     let fg_part: String = volume_chars.iter().take(fg_width).collect();
                     // Background part (right side, with colored background)
-                    let bg_part: String = volume_chars.iter().skip(fg_width).take(bg_width).collect();
+                    let bg_part: String =
+                        volume_chars.iter().skip(fg_width).take(bg_width).collect();
 
                     // Create volume span with background color (from right to left)
                     let mut volume_spans = vec![];
@@ -1585,7 +1598,10 @@ fn watch(frame: &mut Frame, rect: Rect, full_mode: bool) {
         let watchlist = WATCHLIST.read().expect("poison");
         (
             watchlist.counters().to_vec(),
-            watchlist.group().map(|g| g.name.clone()).unwrap_or_else(|| "--".to_string()),
+            watchlist
+                .group()
+                .map(|g| g.name.clone())
+                .unwrap_or_else(|| "--".to_string()),
         )
     }; // Lock released here
 
@@ -1694,19 +1710,17 @@ fn watch_group_table(
                 _ => (Decimal::ZERO, Decimal::ZERO),
             };
 
-            // 价格和涨跌幅使用前景色，不使用背景色以避免干扰
             let style = styles::up(increase.sign());
             let trade_status_name = stock.trade_status.label();
             // Show status label instead of percentage when market is closed
-            let increase_percent_str = if !trade_status_name.is_empty()
-                && stock.trade_status.is_closed()
-            {
-                trade_status_name.to_string()
-            } else if increase.positive() {
-                format!("+{}", &increase_percent)
-            } else {
-                increase_percent.to_string()
-            };
+            let increase_percent_str =
+                if !trade_status_name.is_empty() && stock.trade_status.is_closed() {
+                    trade_status_name.to_string()
+                } else if increase.positive() {
+                    format!("+{}", &increase_percent)
+                } else {
+                    increase_percent.to_string()
+                };
             let mut cells = Vec::with_capacity(if full_mode { 6 } else { 4 });
             cells.push(Cell::from(Line::from(vec![
                 Span::styled(
@@ -1877,12 +1891,21 @@ pub fn render_portfolio(
                     Span::styled(format!("{:.2}", overview.market_cap), styles::text()),
                 ])),
                 ListItem::new(Line::from(vec![
-                    Span::styled(format!("{}: ", t!("Portfolio.Margin Call")), styles::label()),
+                    Span::styled(
+                        format!("{}: ", t!("Portfolio.Margin Call")),
+                        styles::label(),
+                    ),
                     Span::styled(format!("{:.2}", overview.margin_call), styles::text()),
                 ])),
                 ListItem::new(Line::from(vec![
-                    Span::styled(format!("{}: ", t!("Portfolio.Health Status")), styles::label()),
-                    Span::styled(format!("{:.2}%", overview.leverage_ratio * Decimal::from(100)), styles::text()),
+                    Span::styled(
+                        format!("{}: ", t!("Portfolio.Health Status")),
+                        styles::label(),
+                    ),
+                    Span::styled(
+                        format!("{:.2}%", overview.leverage_ratio * Decimal::from(100)),
+                        styles::text(),
+                    ),
                 ])),
             ];
 
@@ -1893,7 +1916,10 @@ pub fn render_portfolio(
                     Span::styled(format!("{:+.2}", overview.total_pl), pl_style),
                 ])),
                 ListItem::new(Line::from(vec![
-                    Span::styled(format!("{}: ", t!("Portfolio.Intraday P/L")), styles::label()),
+                    Span::styled(
+                        format!("{}: ", t!("Portfolio.Intraday P/L")),
+                        styles::label(),
+                    ),
                     Span::styled(format!("{:+.2}", overview.total_today_pl), today_pl_style),
                 ])),
                 ListItem::new(Line::from(vec![
@@ -1904,7 +1930,10 @@ pub fn render_portfolio(
                     Span::styled(format!("{:.2}", overview.total_cash), styles::text()),
                 ])),
                 ListItem::new(Line::from(vec![
-                    Span::styled(format!("{}: ", t!("Portfolio.Fund Market Cap")), styles::label()),
+                    Span::styled(
+                        format!("{}: ", t!("Portfolio.Fund Market Cap")),
+                        styles::label(),
+                    ),
                     Span::styled(format!("{:.2}", overview.fund_market_value), styles::text()),
                 ])),
             ];
@@ -1916,7 +1945,10 @@ pub fn render_portfolio(
                     Span::styled(format!("{}", overview.risk_level), styles::text()),
                 ])),
                 ListItem::new(Line::from(vec![
-                    Span::styled(format!("{}: ", t!("Portfolio.Credit Limit")), styles::label()),
+                    Span::styled(
+                        format!("{}: ", t!("Portfolio.Credit Limit")),
+                        styles::label(),
+                    ),
                     Span::styled(format!("{:.2}", overview.credit_limit), styles::text()),
                 ])),
                 ListItem::new(Line::from(vec![
@@ -1978,17 +2010,19 @@ pub fn render_portfolio(
                         let counter = Counter::from(holding.symbol.as_str());
 
                         // Calculate P/L
-                        let (profit_loss, profit_loss_percent) = if let Some(cost_price) = holding.cost_price {
-                            let pl = holding.market_value - (cost_price * holding.quantity);
-                            let pl_pct = if cost_price > Decimal::ZERO {
-                                (holding.market_price - cost_price) / cost_price * Decimal::from(100)
+                        let (profit_loss, profit_loss_percent) =
+                            if let Some(cost_price) = holding.cost_price {
+                                let pl = holding.market_value - (cost_price * holding.quantity);
+                                let pl_pct = if cost_price > Decimal::ZERO {
+                                    (holding.market_price - cost_price) / cost_price
+                                        * Decimal::from(100)
+                                } else {
+                                    Decimal::ZERO
+                                };
+                                (pl, pl_pct)
                             } else {
-                                Decimal::ZERO
+                                (Decimal::ZERO, Decimal::ZERO)
                             };
-                            (pl, pl_pct)
-                        } else {
-                            (Decimal::ZERO, Decimal::ZERO)
-                        };
 
                         let pl_style = styles::up(profit_loss.cmp(&Decimal::ZERO));
 
@@ -2004,7 +2038,11 @@ pub fn render_portfolio(
                             Cell::from(holding.name.clone()),
                             Cell::from(format!("{:.0}", holding.quantity)),
                             Cell::from(format!("{:.2}", holding.market_price)),
-                            Cell::from(holding.cost_price.map_or("-".to_string(), |p| format!("{:.2}", p))),
+                            Cell::from(
+                                holding
+                                    .cost_price
+                                    .map_or("-".to_string(), |p| format!("{:.2}", p)),
+                            ),
                             Cell::from(format!("{:.2}", holding.market_value)),
                             Cell::from(format!("{:+.2}", profit_loss)).style(pl_style),
                             Cell::from(format!("{:+.2}%", profit_loss_percent)).style(pl_style),

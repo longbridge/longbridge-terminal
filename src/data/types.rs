@@ -155,15 +155,15 @@ impl Default for KlineType {
 impl std::fmt::Display for KlineType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::PerMinute => write!(f, "1分钟"),
-            Self::PerFiveMinutes => write!(f, "5分钟"),
-            Self::PerFifteenMinutes => write!(f, "15分钟"),
-            Self::PerThirtyMinutes => write!(f, "30分钟"),
-            Self::PerHour => write!(f, "1小时"),
-            Self::PerDay => write!(f, "日线"),
-            Self::PerWeek => write!(f, "周线"),
-            Self::PerMonth => write!(f, "月线"),
-            Self::PerYear => write!(f, "年线"),
+            Self::PerMinute => write!(f, "1m"),
+            Self::PerFiveMinutes => write!(f, "5m"),
+            Self::PerFifteenMinutes => write!(f, "15m"),
+            Self::PerThirtyMinutes => write!(f, "30m"),
+            Self::PerHour => write!(f, "1h"),
+            Self::PerDay => write!(f, "Day"),
+            Self::PerWeek => write!(f, "Week"),
+            Self::PerMonth => write!(f, "Month"),
+            Self::PerYear => write!(f, "Year"),
         }
     }
 }
@@ -320,8 +320,8 @@ impl Market {
 
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::HK => "HK",
             Self::US => "US",
+            Self::HK => "HK",
             Self::CN => "CN",
             Self::SG => "SG",
         }
@@ -339,15 +339,23 @@ impl Market {
         // DST is only between March and November
         match month {
             Month::January | Month::February | Month::December => false,
-            Month::April | Month::May | Month::June | Month::July | Month::August | Month::September | Month::October => true,
+            Month::April
+            | Month::May
+            | Month::June
+            | Month::July
+            | Month::August
+            | Month::September
+            | Month::October => true,
             Month::March => {
                 // Find second Sunday of March
-                let second_sunday = Self::nth_weekday_of_month(year, Month::March, Weekday::Sunday, 2);
+                let second_sunday =
+                    Self::nth_weekday_of_month(year, Month::March, Weekday::Sunday, 2);
                 dt.ordinal() >= second_sunday
             }
             Month::November => {
                 // Find first Sunday of November
-                let first_sunday = Self::nth_weekday_of_month(year, Month::November, Weekday::Sunday, 1);
+                let first_sunday =
+                    Self::nth_weekday_of_month(year, Month::November, Weekday::Sunday, 1);
                 dt.ordinal() < first_sunday
             }
         }
@@ -362,14 +370,17 @@ impl Market {
         let first_weekday = first_day.weekday();
 
         // Calculate days until first occurrence of target weekday
-        let days_until_first = ((weekday.number_from_monday() as i16
-                                - first_weekday.number_from_monday() as i16 + 7) % 7) as u8;
+        let days_until_first =
+            ((weekday.number_from_monday() as i16 - first_weekday.number_from_monday() as i16 + 7)
+                % 7) as u8;
 
         // Calculate the date of the Nth occurrence
         let target_day = 1 + days_until_first + (n - 1) * 7;
 
         // Convert to ordinal (day of year)
-        Date::from_calendar_date(year, month, target_day).unwrap().ordinal()
+        Date::from_calendar_date(year, month, target_day)
+            .unwrap()
+            .ordinal()
     }
 
     /// Check if market is in trading session (simplified implementation)
@@ -389,9 +400,9 @@ impl Market {
                 };
                 now.to_offset(offset)
             }
-            Self::HK => now.to_offset(time::UtcOffset::from_hms(8, 0, 0).unwrap()),  // HKT
-            Self::CN => now.to_offset(time::UtcOffset::from_hms(8, 0, 0).unwrap()),  // CST
-            Self::SG => now.to_offset(time::UtcOffset::from_hms(8, 0, 0).unwrap()),  // SGT
+            Self::HK => now.to_offset(time::UtcOffset::from_hms(8, 0, 0).unwrap()), // HKT
+            Self::CN => now.to_offset(time::UtcOffset::from_hms(8, 0, 0).unwrap()), // CST
+            Self::SG => now.to_offset(time::UtcOffset::from_hms(8, 0, 0).unwrap()), // SGT
         };
 
         // Markets are closed on weekends
