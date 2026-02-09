@@ -166,11 +166,15 @@ RiskLevel.Danger: 危險
 RiskLevel.Middle: 中等
 RiskLevel.Safe: 安全
 RiskLevel.Warning: 預警
-TradeStatus.Normal: 交易中
+TradeStatus.Normal: ""
 TradeStatus.Halted: 停牌
 TradeStatus.Delisted: 退市
 TradeStatus.STOP: 休市
 TradeStatus.UsStop: 休市
+TradeSession.Intraday: 交易中
+TradeSession.Pre: 盤前
+TradeSession.Post: 盤後
+TradeSession.Overnight: 夜盤
 Help: " 幫助 "
 HelpTips: |-
   - 通用 ---------------------------------------------------------------------------------

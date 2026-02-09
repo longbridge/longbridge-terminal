@@ -119,6 +119,7 @@ Portfolio.Risk Level: 风控状态
 Portfolio.Credit Limit: 融资额度
 Portfolio.Health Status: 杠杆
 Portfolio.Fund Market Cap: 基金市值
+Portfolio.No Holdings: 暂无持仓数据
 Holding.Code: 代码
 Holding.Cost Price: 成本价
 Holding.Hold Ratio: 占比%
@@ -167,11 +168,21 @@ RiskLevel.Danger: 危险
 RiskLevel.Middle: 中等
 RiskLevel.Safe: 安全
 RiskLevel.Warning: 预警
-TradeStatus.Normal: 交易中
+TradeStatus.Normal: ""
 TradeStatus.Halted: 停牌
 TradeStatus.Delisted: 退市
-TradeStatus.STOP: 休市
-TradeStatus.UsStop: 休市
+TradeStatus.Fuse: 熔断
+TradeStatus.PrepareList: 准备上市
+TradeStatus.CodeMoved: 代码变更
+TradeStatus.ToBeOpened: 即将开盘
+TradeStatus.SplitStockHalts: 分拆停牌
+TradeStatus.Expired: 已过期
+TradeStatus.WarrantPrepareList: 权证准备中
+TradeStatus.SuspendTrade: 暂停交易
+TradeSession.Intraday: 交易中
+TradeSession.Pre: 盘前
+TradeSession.Post: 盘后
+TradeSession.Overnight: 夜盘
 Help: " 帮助 "
 HelpTips: |-
   - 通用 ---------------------------------------------------------------------------------

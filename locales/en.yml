@@ -103,7 +103,7 @@ StockDetail.P/E (TTM): P/E (TTM)
 StockDetail.Prev. Close: "Prev. Close"
 StockDetail.Shares: Shares
 StockDetail.Shares Float: Shares Float
-StockDetail.Trading Status: Trading Status
+StockDetail.Trading Status: Status
 StockDetail.Turnover: Turnover
 StockDetail.Turnover Ratio: Turnover Ratio
 StockDetail.Volume: Volume
@@ -119,6 +119,7 @@ Portfolio.Risk Level: Risk Level
 Portfolio.Credit Limit: Credit Limit
 Portfolio.Health Status: Health Status
 Portfolio.Fund Market Cap: Fund Market Cap
+Portfolio.No Holdings: No holdings data
 Holding.Code: Code
 Holding.Cost Price: Cost
 Holding.Hold Ratio: Owned%
@@ -166,11 +167,21 @@ RiskLevel.Danger: Danger
 RiskLevel.Middle: Middle
 RiskLevel.Safe: Safe
 RiskLevel.Warning: Warning
-TradeStatus.Normal: Trading
+TradeStatus.Normal: ""
 TradeStatus.Halted: Halted
 TradeStatus.Delisted: Delisted
-TradeStatus.STOP: Closed
-TradeStatus.UsStop: Closed
+TradeStatus.Fuse: Circuit Breaker
+TradeStatus.PrepareList: Preparing to List
+TradeStatus.CodeMoved: Code Changed
+TradeStatus.ToBeOpened: To Be Opened
+TradeStatus.SplitStockHalts: Split/Merge Halted
+TradeStatus.Expired: Expired
+TradeStatus.WarrantPrepareList: Warrant Preparing
+TradeStatus.SuspendTrade: Suspended
+TradeSession.Intraday: Trading
+TradeSession.Pre: Pre
+TradeSession.Post: Post
+TradeSession.Overnight: Night
 Help: " Help "
 HelpTips: |-
   - General ----------------------------------------------------------------------------------

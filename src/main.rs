@@ -13,6 +13,7 @@ pub mod openapi;
 #[cfg_attr(target_family = "windows", path = "os/windows.rs")]
 #[cfg_attr(target_family = "unix", path = "os/unix.rs")]
 pub mod os;
+pub mod render;
 pub mod system;
 pub mod ui;
 pub mod widgets;

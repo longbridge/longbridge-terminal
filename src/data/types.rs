@@ -69,37 +69,67 @@ impl From<String> for Counter {
     }
 }
 
-/// Trading status
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TradeStatus {
-    #[default]
-    Normal,
-    Halted,
-    Delisted,
-    STOP,
-    UsStop,
+/// Re-export TradeStatus and TradeSession from Longport SDK
+pub use longport::quote::{TradeSession, TradeStatus};
+
+/// Extension trait for TradeSession to provide helper methods
+pub trait TradeSessionExt {
+    /// Check if in normal trading session
+    fn is_normal_trading(self) -> bool;
+
+    /// Get localized label for display
+    fn label(self) -> String;
 }
 
-impl TradeStatus {
-    pub fn is_trading(self) -> bool {
-        matches!(self, Self::Normal)
+impl TradeSessionExt for TradeSession {
+    fn is_normal_trading(self) -> bool {
+        matches!(self, TradeSession::Intraday)
     }
 
-    pub fn is_us_pre_post(self) -> bool {
-        false // Simplified implementation
-    }
-
-    pub fn is_us_night(self) -> bool {
-        false // Simplified implementation
-    }
-
-    pub fn label(self) -> String {
+    fn label(self) -> String {
         match self {
-            Self::Normal => t!("TradeStatus.Normal"),
-            Self::Halted => t!("TradeStatus.Halted"),
-            Self::Delisted => t!("TradeStatus.Delisted"),
-            Self::STOP => t!("TradeStatus.STOP"),
-            Self::UsStop => t!("TradeStatus.UsStop"),
+            TradeSession::Intraday => t!("TradeSession.Intraday"),
+            TradeSession::Pre => t!("TradeSession.Pre"),
+            TradeSession::Post => t!("TradeSession.Post"),
+            TradeSession::Overnight => t!("TradeSession.Overnight"),
+        }
+    }
+}
+
+/// Extension trait for TradeStatus to provide additional helper methods
+pub trait TradeStatusExt {
+    /// Check if currently in active trading state
+    fn is_trading(self) -> bool;
+
+    /// Check if market is closed or halted
+    fn is_closed(self) -> bool;
+
+    /// Get localized label for display
+    fn label(self) -> String;
+}
+
+impl TradeStatusExt for TradeStatus {
+    fn is_trading(self) -> bool {
+        matches!(self, TradeStatus::Normal)
+    }
+
+    fn is_closed(self) -> bool {
+        !self.is_trading()
+    }
+
+    fn label(self) -> String {
+        match self {
+            TradeStatus::Normal => String::new(), // No label for normal status
+            TradeStatus::Halted => t!("TradeStatus.Halted"),
+            TradeStatus::Delisted => t!("TradeStatus.Delisted"),
+            TradeStatus::Fuse => t!("TradeStatus.Fuse"),
+            TradeStatus::PrepareList => t!("TradeStatus.PrepareList"),
+            TradeStatus::CodeMoved => t!("TradeStatus.CodeMoved"),
+            TradeStatus::ToBeOpened => t!("TradeStatus.ToBeOpened"),
+            TradeStatus::SplitStockHalts => t!("TradeStatus.SplitStockHalts"),
+            TradeStatus::Expired => t!("TradeStatus.Expired"),
+            TradeStatus::WarrantPrepareList => t!("TradeStatus.WarrantPrepareList"),
+            TradeStatus::SuspendTrade => t!("TradeStatus.SuspendTrade"),
         }
     }
 }
@@ -149,15 +179,15 @@ impl Default for KlineType {
 impl std::fmt::Display for KlineType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::PerMinute => write!(f, "1分钟"),
-            Self::PerFiveMinutes => write!(f, "5分钟"),
-            Self::PerFifteenMinutes => write!(f, "15分钟"),
-            Self::PerThirtyMinutes => write!(f, "30分钟"),
-            Self::PerHour => write!(f, "1小时"),
-            Self::PerDay => write!(f, "日线"),
-            Self::PerWeek => write!(f, "周线"),
-            Self::PerMonth => write!(f, "月线"),
-            Self::PerYear => write!(f, "年线"),
+            Self::PerMinute => write!(f, "1m"),
+            Self::PerFiveMinutes => write!(f, "5m"),
+            Self::PerFifteenMinutes => write!(f, "15m"),
+            Self::PerThirtyMinutes => write!(f, "30m"),
+            Self::PerHour => write!(f, "1h"),
+            Self::PerDay => write!(f, "Day"),
+            Self::PerWeek => write!(f, "Week"),
+            Self::PerMonth => write!(f, "Month"),
+            Self::PerYear => write!(f, "Year"),
         }
     }
 }
@@ -314,11 +344,67 @@ impl Market {
 
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::HK => "HK",
             Self::US => "US",
+            Self::HK => "HK",
             Self::CN => "CN",
             Self::SG => "SG",
         }
+    }
+
+    /// Check if a date is in US Daylight Saving Time (EDT)
+    /// DST starts: Second Sunday of March at 02:00
+    /// DST ends: First Sunday of November at 02:00
+    fn is_us_daylight_saving_time(dt: time::OffsetDateTime) -> bool {
+        use time::{Month, Weekday};
+
+        let month = dt.month();
+        let year = dt.year();
+
+        // DST is only between March and November
+        match month {
+            Month::January | Month::February | Month::December => false,
+            Month::April
+            | Month::May
+            | Month::June
+            | Month::July
+            | Month::August
+            | Month::September
+            | Month::October => true,
+            Month::March => {
+                // Find second Sunday of March
+                let second_sunday =
+                    Self::nth_weekday_of_month(year, Month::March, Weekday::Sunday, 2);
+                dt.ordinal() >= second_sunday
+            }
+            Month::November => {
+                // Find first Sunday of November
+                let first_sunday =
+                    Self::nth_weekday_of_month(year, Month::November, Weekday::Sunday, 1);
+                dt.ordinal() < first_sunday
+            }
+        }
+    }
+
+    /// Find the Nth occurrence of a weekday in a given month
+    fn nth_weekday_of_month(year: i32, month: time::Month, weekday: time::Weekday, n: u8) -> u16 {
+        use time::Date;
+
+        // Start from the first day of the month
+        let first_day = Date::from_calendar_date(year, month, 1).unwrap();
+        let first_weekday = first_day.weekday();
+
+        // Calculate days until first occurrence of target weekday
+        let days_until_first =
+            ((weekday.number_from_monday() as i16 - first_weekday.number_from_monday() as i16 + 7)
+                % 7) as u8;
+
+        // Calculate the date of the Nth occurrence
+        let target_day = 1 + days_until_first + (n - 1) * 7;
+
+        // Convert to ordinal (day of year)
+        Date::from_calendar_date(year, month, target_day)
+            .unwrap()
+            .ordinal()
     }
 
     /// Check if market is in trading session (simplified implementation)
@@ -329,10 +415,18 @@ impl Market {
         // Check if it's weekend (Saturday or Sunday)
         // Note: Need to check in the market's local timezone, not UTC
         let local_time = match self {
-            Self::US => now.to_offset(time::UtcOffset::from_hms(-5, 0, 0).unwrap()), // EST
-            Self::HK => now.to_offset(time::UtcOffset::from_hms(8, 0, 0).unwrap()),  // HKT
-            Self::CN => now.to_offset(time::UtcOffset::from_hms(8, 0, 0).unwrap()),  // CST
-            Self::SG => now.to_offset(time::UtcOffset::from_hms(8, 0, 0).unwrap()),  // SGT
+            Self::US => {
+                // Use correct offset based on DST
+                let offset = if Self::is_us_daylight_saving_time(now) {
+                    time::UtcOffset::from_hms(-4, 0, 0).unwrap() // EDT
+                } else {
+                    time::UtcOffset::from_hms(-5, 0, 0).unwrap() // EST
+                };
+                now.to_offset(offset)
+            }
+            Self::HK => now.to_offset(time::UtcOffset::from_hms(8, 0, 0).unwrap()), // HKT
+            Self::CN => now.to_offset(time::UtcOffset::from_hms(8, 0, 0).unwrap()), // CST
+            Self::SG => now.to_offset(time::UtcOffset::from_hms(8, 0, 0).unwrap()), // SGT
         };
 
         // Markets are closed on weekends
@@ -346,10 +440,17 @@ impl Market {
         let time_minutes = hour as u32 * 60 + minute as u32;
 
         match self {
-            // US: 13:30-20:00 UTC (EST 08:30-15:00 or EDT 09:30-16:00)
+            // US: Trading hours 09:30-16:00 local time
+            // EST (UTC-5): 14:30-21:00 UTC (November - March)
+            // EDT (UTC-4): 13:30-20:00 UTC (March - November)
             Self::US => {
-                (time_minutes >= 13 * 60 + 30 && time_minutes < 20 * 60)
-                    || (time_minutes >= 14 * 60 + 30 && time_minutes < 21 * 60)
+                if Self::is_us_daylight_saving_time(now) {
+                    // EDT: 13:30-20:00 UTC
+                    time_minutes >= 13 * 60 + 30 && time_minutes < 20 * 60
+                } else {
+                    // EST: 14:30-21:00 UTC
+                    time_minutes >= 14 * 60 + 30 && time_minutes < 21 * 60
+                }
             }
             // HK: 01:30-08:00 UTC (Hong Kong time 09:30-16:00)
             Self::HK => {

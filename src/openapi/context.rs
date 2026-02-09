@@ -1,11 +1,19 @@
 use anyhow::Result;
 use std::sync::{Arc, OnceLock};
 
+use super::wrapper::{RateLimitedQuoteContext, RateLimitedTradeContext};
+
 /// Global QuoteContext
 pub static QUOTE_CTX: OnceLock<longport::quote::QuoteContext> = OnceLock::new();
 
 /// Global TradeContext
 pub static TRADE_CTX: OnceLock<longport::trade::TradeContext> = OnceLock::new();
+
+/// Global rate-limited QuoteContext wrapper
+pub static RATE_LIMITED_QUOTE_CTX: OnceLock<RateLimitedQuoteContext> = OnceLock::new();
+
+/// Global rate-limited TradeContext wrapper
+pub static RATE_LIMITED_TRADE_CTX: OnceLock<RateLimitedTradeContext> = OnceLock::new();
 
 /// Initialize contexts (should be called once at app startup)
 /// Returns quote receiver for caller to handle WebSocket events
@@ -28,6 +36,19 @@ pub async fn init_contexts(
         .set(trade_ctx)
         .map_err(|_| anyhow::anyhow!("TradeContext already initialized"))?;
 
+    // Initialize rate-limited wrappers
+    let quote_ref = QUOTE_CTX.get().expect("QuoteContext just initialized");
+    let trade_ref = TRADE_CTX.get().expect("TradeContext just initialized");
+
+    RATE_LIMITED_QUOTE_CTX
+        .set(RateLimitedQuoteContext::new(quote_ref))
+        .map_err(|_| anyhow::anyhow!("RateLimitedQuoteContext already initialized"))?;
+    RATE_LIMITED_TRADE_CTX
+        .set(RateLimitedTradeContext::new(trade_ref))
+        .map_err(|_| anyhow::anyhow!("RateLimitedTradeContext already initialized"))?;
+
+    tracing::info!("Rate limiter initialized: 10 requests/second, burst capacity: 20");
+
     // Wrap as Stream
     Ok(tokio_stream::wrappers::UnboundedReceiverStream::new(
         quote_receiver,
@@ -46,6 +67,20 @@ pub fn trade() -> &'static longport::trade::TradeContext {
     TRADE_CTX
         .get()
         .expect("TradeContext not initialized, please call init_contexts() first")
+}
+
+/// Get rate-limited QuoteContext (recommended for all API calls)
+pub fn quote_limited() -> &'static RateLimitedQuoteContext {
+    RATE_LIMITED_QUOTE_CTX
+        .get()
+        .expect("RateLimitedQuoteContext not initialized, please call init_contexts() first")
+}
+
+/// Get rate-limited TradeContext (recommended for all API calls)
+pub fn trade_limited() -> &'static RateLimitedTradeContext {
+    RATE_LIMITED_TRADE_CTX
+        .get()
+        .expect("RateLimitedTradeContext not initialized, please call init_contexts() first")
 }
 
 /// Display config guide (when config loading fails)

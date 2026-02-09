@@ -22,8 +22,8 @@ use tokio::sync::mpsc;
 use crate::{
     app::{AppState, RT, WATCHLIST},
     data::{
-        Account, Counter, KlineType, ReadyState, Stock, SubTypes, TradeStatus, WatchlistGroup,
-        STOCKS,
+        Account, Counter, KlineType, ReadyState, Stock, SubTypes, TradeSessionExt, TradeStatusExt,
+        WatchlistGroup, STOCKS,
     },
     helper::{cycle, DecimalExt, Sign},
     kline::KLINES,
@@ -484,22 +484,21 @@ pub fn refresh_watchlist(update_tx: mpsc::UnboundedSender<CommandQueue>) {
             let ctx = crate::openapi::quote();
             let symbols: Vec<String> = counters.iter().map(|c| c.as_str().to_string()).collect();
 
-            // Use quote() to get full quote data (including prev_close)
+            // Use quote() to get full quote data (including prev_close and trade_status)
             match ctx.quote(&symbols).await {
                 Ok(quotes) => {
                     for quote in quotes {
+                        // Debug: log trade_status from API
+                        tracing::debug!(
+                            "API quote for {}: trade_status = {:?}",
+                            quote.symbol,
+                            quote.trade_status
+                        );
                         match quote.symbol.parse() {
                             Ok(counter) => {
                                 STOCKS.modify(counter, |stock| {
-                                    // Update quote data with prev_close
-                                    stock.quote.last_done = Some(quote.last_done);
-                                    stock.quote.prev_close = Some(quote.prev_close);
-                                    stock.quote.open = Some(quote.open);
-                                    stock.quote.high = Some(quote.high);
-                                    stock.quote.low = Some(quote.low);
-                                    stock.quote.volume = quote.volume as u64;
-                                    stock.quote.turnover = quote.turnover;
-                                    stock.quote.timestamp = quote.timestamp.unix_timestamp();
+                                    // Use update_from_security_quote to update all fields including trade_status
+                                    stock.update_from_security_quote(&quote);
                                 });
                             }
                             _ => (),
@@ -561,19 +560,13 @@ pub fn refresh_stock(counter: Counter) {
         let _ = WS.quote_detail("stock_detail", &[counter.clone()]).await;
         let _ = WS.quote_trade("stock_detail", &[counter.clone()]).await;
 
-        // Get full quote data (including prev_close)
+        // Get full quote data (including prev_close and trade_status)
         let ctx = crate::openapi::quote();
         if let Ok(quotes) = ctx.quote(&[counter.to_string()]).await {
             if let Some(quote) = quotes.first() {
                 STOCKS.modify(counter.clone(), |stock| {
-                    stock.quote.last_done = Some(quote.last_done);
-                    stock.quote.prev_close = Some(quote.prev_close);
-                    stock.quote.open = Some(quote.open);
-                    stock.quote.high = Some(quote.high);
-                    stock.quote.low = Some(quote.low);
-                    stock.quote.volume = quote.volume as u64;
-                    stock.quote.turnover = quote.turnover;
-                    stock.quote.timestamp = quote.timestamp.unix_timestamp();
+                    // Use update_from_security_quote to update all fields including trade_status
+                    stock.update_from_security_quote(quote);
                 });
             }
         }
@@ -616,29 +609,22 @@ pub fn exit_stock() {
 }
 
 // Portfolio data global storage
-pub static PORTFOLIO_POSITIONS: Lazy<std::sync::RwLock<Vec<PositionInfo>>> =
-    Lazy::new(|| std::sync::RwLock::new(Vec::new()));
-pub static PORTFOLIO_BALANCE: Lazy<std::sync::RwLock<Decimal>> =
-    Lazy::new(|| std::sync::RwLock::new(Decimal::ZERO));
-pub static PORTFOLIO_MARKET_VALUE: Lazy<std::sync::RwLock<Decimal>> =
-    Lazy::new(|| std::sync::RwLock::new(Decimal::ZERO));
+pub static PORTFOLIO_VIEW: Lazy<std::sync::RwLock<Option<crate::data::PortfolioView>>> =
+    Lazy::new(|| std::sync::RwLock::new(None));
 
 // Refresh Portfolio data
 pub fn refresh_portfolio() {
     RT.get().unwrap().spawn(async move {
         tracing::info!("Starting to refresh Portfolio data...");
-        match fetch_portfolio_data().await {
-            Ok((positions, balance, market_value)) => {
+        match crate::api::account::fetch_portfolio().await {
+            Ok(view) => {
                 tracing::info!(
-                    "Successfully fetched Portfolio: {} positions, balance: {}, market value: {}",
-                    positions.len(),
-                    balance,
-                    market_value
+                    "Successfully fetched Portfolio: {} holdings, total asset: {}",
+                    view.holdings.len(),
+                    view.overview.total_asset
                 );
 
-                *PORTFOLIO_POSITIONS.write().expect("poison") = positions;
-                *PORTFOLIO_BALANCE.write().expect("poison") = balance;
-                *PORTFOLIO_MARKET_VALUE.write().expect("poison") = market_value;
+                *PORTFOLIO_VIEW.write().expect("poison") = Some(view);
             }
             Err(e) => {
                 tracing::error!("Failed to fetch Portfolio data: {}", e);
@@ -675,20 +661,17 @@ pub fn render_watchlist_stock(
     for event in &mut events {
         match event {
             Key::Up => {
-                let idx = WATCHLIST_TABLE.lock().expect("poison").selected();
-                let len = WATCHLIST.read().expect("poison").counters().len();
+                let watchlist = WATCHLIST.read().expect("poison");
+                let len = watchlist.counters().len();
+                let mut table = WATCHLIST_TABLE.lock().expect("poison");
+                let idx = table.selected();
                 let new_idx = cycle::prev(idx, len);
-                WATCHLIST_TABLE.lock().expect("poison").select(new_idx);
+                table.select(new_idx);
+                drop(table); // Explicitly release lock
 
                 // Immediately update stock detail
                 if let Some(idx) = new_idx {
-                    if let Some(counter) = WATCHLIST
-                        .read()
-                        .expect("poison")
-                        .counters()
-                        .get(idx)
-                        .cloned()
-                    {
+                    if let Some(counter) = watchlist.counters().get(idx).cloned() {
                         _ = command.0.send({
                             let mut queue = CommandQueue::default();
                             queue.push(InsertResource {
@@ -700,20 +683,17 @@ pub fn render_watchlist_stock(
                 }
             }
             Key::Down => {
-                let idx = WATCHLIST_TABLE.lock().expect("poison").selected();
-                let len = WATCHLIST.read().expect("poison").counters().len();
+                let watchlist = WATCHLIST.read().expect("poison");
+                let len = watchlist.counters().len();
+                let mut table = WATCHLIST_TABLE.lock().expect("poison");
+                let idx = table.selected();
                 let new_idx = cycle::next(idx, len);
-                WATCHLIST_TABLE.lock().expect("poison").select(new_idx);
+                table.select(new_idx);
+                drop(table); // Explicitly release lock
 
                 // Immediately update stock detail
                 if let Some(idx) = new_idx {
-                    if let Some(counter) = WATCHLIST
-                        .read()
-                        .expect("poison")
-                        .counters()
-                        .get(idx)
-                        .cloned()
-                    {
+                    if let Some(counter) = watchlist.counters().get(idx).cloned() {
                         _ = command.0.send({
                             let mut queue = CommandQueue::default();
                             queue.push(InsertResource {
@@ -956,9 +936,17 @@ fn stock_detail(
         counter.market(),
     ))];
     titles.extend(price_spans(&stock.quote, counter));
-    if stock.trade_status.is_us_pre_post() || stock.trade_status.is_us_night() {
-        titles.push(Span::raw(stock.trade_status.label()));
-        titles.extend(price_spans(&stock.quote, counter));
+    // Show session or status label if not in normal trading
+    let session_label = stock.trade_session.label();
+    let status_label = if !session_label.is_empty() {
+        session_label
+    } else if !stock.trade_status.is_trading() {
+        stock.trade_status.label()
+    } else {
+        String::new()
+    };
+    if !status_label.is_empty() {
+        titles.push(Span::raw(format!(" [{}]", status_label)));
     }
 
     let detail_container = Block::default()
@@ -1024,10 +1012,23 @@ fn stock_detail(
     // Build detail columns - Column 1: Basic trading data
     let column0 = vec![
         ListItem::new(" "),
-        item(t!("StockDetail.Trading Status"), stock.trade_status.label()),
+        item(
+            t!("StockDetail.Trading Status"),
+            {
+                let session_label = stock.trade_session.label();
+                if !session_label.is_empty() {
+                    session_label
+                } else {
+                    stock.trade_status.label()
+                }
+            }
+        ),
         ListItem::new(" "),
         price_item(t!("StockDetail.Open"), stock.quote.open),
-        item(t!("StockDetail.Prev. Close"), fmt_decimal(stock.quote.prev_close)),
+        item(
+            t!("StockDetail.Prev. Close"),
+            fmt_decimal(stock.quote.prev_close),
+        ),
         ListItem::new(" "),
         price_item(t!("StockDetail.High"), stock.quote.high),
         price_item(t!("StockDetail.Low"), stock.quote.low),
@@ -1069,10 +1070,16 @@ fn stock_detail(
             ListItem::new(" "),
             ListItem::new(" "),
             item(t!("StockDetail.Shares"), fmt_i64(info.total_shares)),
-            item(t!("StockDetail.Shares Float"), fmt_i64(info.circulating_shares)),
+            item(
+                t!("StockDetail.Shares Float"),
+                fmt_i64(info.circulating_shares),
+            ),
             ListItem::new(" "),
             item(t!("StockDetail.BPS"), fmt_decimal(info.bps)),
-            item(t!("StockDetail.Dividend Yield (TTM)"), fmt_decimal(info.dividend_yield)),
+            item(
+                t!("StockDetail.Dividend Yield (TTM)"),
+                fmt_decimal(info.dividend_yield),
+            ),
             ListItem::new(" "),
             ListItem::new(" "),
             item(t!("StockDetail.Min lot size"), info.lot_size.to_string()),
@@ -1194,9 +1201,17 @@ fn stock_detail(
             .direction(Direction::Vertical)
             .split(rect);
 
-        // 标题
-        let bidding_title = format!(" 买盘: {:.1}%", bid_ratio * Decimal::from(100));
-        let asking_title = format!(" 卖盘: {:.1}%", ask_ratio * Decimal::from(100));
+        // Title
+        let bidding_title = format!(
+            " {}: {:.1}%",
+            t!("StockDepth.Bid"),
+            bid_ratio * Decimal::from(100)
+        );
+        let asking_title = format!(
+            " {}: {:.1}%",
+            t!("StockDepth.Ask"),
+            ask_ratio * Decimal::from(100)
+        );
 
         let title_chunks = Layout::default()
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
@@ -1390,7 +1405,7 @@ fn stock_detail(
             Block::default()
                 .borders(Borders::LEFT)
                 .border_type(BorderType::Plain)
-                .title(" 成交记录 "),
+                .title(format!(" {} ", t!("StockQuoteTrades"))),
             trades_area,
         );
 
@@ -1400,19 +1415,27 @@ fn stock_detail(
         });
 
         if stock.trades.is_empty() {
-            // 显示加载提示
+            // Show loading hint
             frame.render_widget(
                 Paragraph::new("加载成交记录中...").alignment(Alignment::Center),
                 inner_area,
             );
         } else {
-            // 格式化成交记录
+            // Calculate max volume for progress bar
+            let max_volume = stock
+                .trades
+                .iter()
+                .map(|t| t.volume.abs())
+                .max()
+                .unwrap_or(1);
+
+            // Format trade records
             let trade_lines: Vec<Line> = stock
                 .trades
                 .iter()
                 .take(inner_area.height as usize)
                 .map(|trade| {
-                    // 简化时间显示
+                    // Simplified time display
                     let time_str = time::OffsetDateTime::from_unix_timestamp(trade.timestamp)
                         .ok()
                         .and_then(|dt| {
@@ -1422,32 +1445,68 @@ fn stock_detail(
                         })
                         .unwrap_or_else(|| "--:--:--".to_string());
 
-                    // 根据方向设置样式
-                    let (price_style, direction_symbol) = match trade.direction {
+                    // Set style based on direction
+                    let (price_style, direction_symbol, bg_color) = match trade.direction {
                         crate::data::TradeDirection::Up => {
-                            (styles::up(std::cmp::Ordering::Greater), "↑")
+                            let style = styles::up(std::cmp::Ordering::Greater);
+                            (style, "↑", style.fg.unwrap_or(Color::Green))
                         }
                         crate::data::TradeDirection::Down => {
-                            (styles::up(std::cmp::Ordering::Less), "↓")
+                            let style = styles::up(std::cmp::Ordering::Less);
+                            (style, "↓", style.fg.unwrap_or(Color::Red))
                         }
-                        crate::data::TradeDirection::Neutral => (Style::default(), " "),
+                        crate::data::TradeDirection::Neutral => {
+                            (Style::default(), " ", Color::DarkGray)
+                        }
                     };
 
-                    Line::from(vec![
+                    // Calculate progress percentage (0.0 to 1.0)
+                    let volume_ratio = if max_volume > 0 {
+                        trade.volume.abs() as f64 / max_volume as f64
+                    } else {
+                        0.0
+                    };
+
+                    // Create volume text with progress bar background
+                    let volume_text = crate::ui::text::align_right(
+                        &crate::ui::text::unit(Decimal::from(trade.volume), 0),
+                        8,
+                    );
+
+                    // Calculate background width (in characters)
+                    let volume_width: usize = 8; // Width of volume column
+                    let bg_width = (volume_width as f64 * volume_ratio).ceil() as usize;
+                    let fg_width = volume_width.saturating_sub(bg_width);
+
+                    // Split text into foreground and background parts (right to left)
+                    let volume_chars: Vec<char> = volume_text.chars().collect();
+                    // Foreground part (left side, no background)
+                    let fg_part: String = volume_chars.iter().take(fg_width).collect();
+                    // Background part (right side, with colored background)
+                    let bg_part: String =
+                        volume_chars.iter().skip(fg_width).take(bg_width).collect();
+
+                    // Create volume span with background color (from right to left)
+                    let mut volume_spans = vec![];
+                    if !fg_part.is_empty() {
+                        volume_spans.push(Span::styled(fg_part, Style::default()));
+                    }
+                    if !bg_part.is_empty() {
+                        volume_spans.push(Span::styled(bg_part, Style::default().bg(bg_color)));
+                    }
+
+                    // Combine all spans
+                    let mut line_spans = vec![
                         Span::styled(format!("{} ", time_str), crate::ui::styles::label()),
                         Span::styled(direction_symbol, price_style),
                         Span::styled(
                             format!(" {:>8} ", trade.price.format_quote_by_counter(counter)),
                             price_style,
                         ),
-                        Span::styled(
-                            crate::ui::text::align_right(
-                                &crate::ui::text::unit(Decimal::from(trade.volume), 0),
-                                8,
-                            ),
-                            Style::default(),
-                        ),
-                    ])
+                    ];
+                    line_spans.extend(volume_spans);
+
+                    Line::from(line_spans)
                 })
                 .collect();
 
@@ -1466,20 +1525,16 @@ pub fn render_watchlist(
     for event in &mut events {
         match event {
             Key::Up => {
-                let idx = WATCHLIST_TABLE.lock().expect("poison").selected();
                 let len = WATCHLIST.read().expect("poison").counters().len();
-                WATCHLIST_TABLE
-                    .lock()
-                    .expect("poison")
-                    .select(cycle::prev(idx, len));
+                let mut table = WATCHLIST_TABLE.lock().expect("poison");
+                let idx = table.selected();
+                table.select(cycle::prev(idx, len));
             }
             Key::Down => {
-                let idx = WATCHLIST_TABLE.lock().expect("poison").selected();
                 let len = WATCHLIST.read().expect("poison").counters().len();
-                WATCHLIST_TABLE
-                    .lock()
-                    .expect("poison")
-                    .select(cycle::next(idx, len));
+                let mut table = WATCHLIST_TABLE.lock().expect("poison");
+                let idx = table.selected();
+                table.select(cycle::next(idx, len));
             }
             Key::Left | Key::Right | Key::Tab | Key::BackTab => (),
             Key::Enter => {
@@ -1546,18 +1601,31 @@ pub fn render_watchlist(
 }
 
 fn watch(frame: &mut Frame, rect: Rect, full_mode: bool) {
-    let watchlist = WATCHLIST.read().expect("poison");
+    // Extract data from watchlist early and release the lock
+    let (counters, group_name) = {
+        let watchlist = WATCHLIST.read().expect("poison");
+        (
+            watchlist.counters().to_vec(),
+            watchlist
+                .group()
+                .map(|g| g.name.clone())
+                .unwrap_or_else(|| "--".to_string()),
+        )
+    }; // Lock released here
+
     let background = Block::default().borders(Borders::ALL).title(format!(
         " {} ─── {} [g] ",
         t!("Watchlist"),
-        watchlist.group().map_or("--", |g| &g.name)
+        group_name
     ));
     frame.render_widget(background, rect);
 
-    let selected = WATCHLIST_TABLE.lock().expect("poison").selected();
+    // Lock WATCHLIST_TABLE once for both reading and rendering
+    let mut table_state = WATCHLIST_TABLE.lock().expect("poison");
+    let selected = table_state.selected();
     frame.render_stateful_widget(
         watch_group_table(
-            &watchlist.counters(),
+            &counters,
             selected,
             &mut LAST_DONE.lock().expect("poison"),
             full_mode,
@@ -1566,7 +1634,7 @@ fn watch(frame: &mut Frame, rect: Rect, full_mode: bool) {
             vertical: 2,
             horizontal: 2,
         }),
-        &mut WATCHLIST_TABLE.lock().expect("poison"),
+        &mut *table_state,
     );
 }
 
@@ -1650,18 +1718,40 @@ fn watch_group_table(
                 _ => (Decimal::ZERO, Decimal::ZERO),
             };
 
-            // 价格和涨跌幅使用前景色，不使用背景色以避免干扰
             let style = styles::up(increase.sign());
-            let trade_status_name = stock.trade_status.label();
-            let increase_percent_str = if stock.trade_status == TradeStatus::STOP
-                || stock.trade_status == TradeStatus::UsStop
-            {
-                trade_status_name.to_string()
-            } else if increase.positive() {
-                format!("+{}", &increase_percent)
-            } else {
-                increase_percent.to_string()
+
+            // Determine status to display:
+            // 1. If stock status is abnormal (Halted/Suspended/etc), show trade status
+            // 2. If not in normal trading session (Pre/Post/Night), show session status
+            // 3. Otherwise show "Trading" for normal trading session with normal status
+            let get_status_label = || {
+                if !stock.trade_status.is_trading() {
+                    // Abnormal status (Halted, Delisted, etc.) - highest priority
+                    stock.trade_status.label()
+                } else if !stock.trade_session.is_normal_trading() {
+                    // Non-Intraday session (Pre, Post, Overnight)
+                    stock.trade_session.label()
+                } else {
+                    // Normal trading: Intraday + Normal status
+                    stock.trade_session.label() // Show "Trading" for Intraday
+                }
             };
+
+            let status_label = get_status_label();
+            // Format: +5.44/5% (no sign for percentage, omit decimal if .00)
+            let change_sign = if increase.is_sign_positive() { "+" } else { "" };
+            let percent_str = if increase_percent.fract().abs() == Decimal::ZERO {
+                // Integer percentage: omit decimal point
+                format!("{}", increase_percent.abs().trunc())
+            } else {
+                format!("{}", increase_percent.abs())
+            };
+            let increase_percent_str = format!(
+                "{}{}/{}%",
+                change_sign,
+                increase.round_dp(2),
+                percent_str
+            );
             let mut cells = Vec::with_capacity(if full_mode { 6 } else { 4 });
             cells.push(Cell::from(Line::from(vec![
                 Span::styled(
@@ -1681,13 +1771,13 @@ fn watch_group_table(
                 .style(style),
             );
             if full_mode {
-                // 成交量：格式化为简短格式（如 1.23M）
                 let volume_text = crate::helper::format_volume(quote_data.volume);
                 cells.push(Cell::from(crate::ui::text::align_right(
                     &volume_text,
                     COLUMN_WIDTHS[4],
                 )));
-                cells.push(Cell::from(trade_status_name));
+                // Display session status or trade status in STATUS column
+                cells.push(Cell::from(status_label));
             }
             Row::new(cells)
         })
@@ -1697,7 +1787,6 @@ fn watch_group_table(
         .map(|i| {
             let increase = if let Some(Some(stock)) = stocks.get(i) {
                 let quote_data = &stock.quote;
-                // 优先使用 last_done，如果没有则使用 prev_close
                 let display_price = quote_data
                     .last_done
                     .or(quote_data.prev_close)
@@ -1724,7 +1813,7 @@ fn watch_group_table(
 
 pub fn render_portfolio(
     mut terminal: ResMut<Terminal>,
-    mut events: EventReader<Key>,
+    mut _events: EventReader<Key>,
     _portfolio: Res<Portfolio>,
     _accounts: Res<Select<Account>>,
     _command: Res<Command>,
@@ -1732,20 +1821,12 @@ pub fn render_portfolio(
     (mut account, mut currency, mut search, mut watchgroup): PopUp,
     _table_state: Local<TableState>,
 ) {
-    // 处理按键事件
-    for _event in &mut events {
-        // 按键处理在 handle_global_keys 中统一处理
-    }
-
-    // 渲染界面
     _ = terminal.draw(|frame| {
         let rect = frame.size();
 
-        // 顶部导航栏
         let top = Rect { height: 1, ..rect };
         crate::views::navbar::render(frame, top, *state.get());
 
-        // 底部状态栏
         let bottom = Rect {
             y: rect.y + rect.height - 1,
             height: 1,
@@ -1762,80 +1843,152 @@ pub fn render_portfolio(
         };
 
         // Get Portfolio data
-        let positions = PORTFOLIO_POSITIONS.read().expect("poison");
-        let balance = *PORTFOLIO_BALANCE.read().expect("poison");
-        let market_value = *PORTFOLIO_MARKET_VALUE.read().expect("poison");
-        let total_assets = balance + market_value;
+        let portfolio_view_lock = PORTFOLIO_VIEW.read().expect("poison");
+        let portfolio_view = match &*portfolio_view_lock {
+            Some(view) => view,
+            None => {
+                // Show loading message if no data yet
+                frame.render_widget(
+                    Paragraph::new("Loading portfolio data...")
+                        .alignment(Alignment::Center)
+                        .block(Block::default().borders(Borders::ALL)),
+                    content_rect,
+                );
+                drop(portfolio_view_lock);
+                crate::views::popup::render(
+                    frame,
+                    rect,
+                    &mut account,
+                    &mut currency,
+                    &mut search,
+                    &mut watchgroup,
+                );
+                return;
+            }
+        };
 
-        // 创建布局
+        let overview = &portfolio_view.overview;
+        let holdings = &portfolio_view.holdings;
+
         let chunks = Layout::default()
             .constraints([Constraint::Length(8), Constraint::Min(10)])
             .direction(Direction::Vertical)
             .split(content_rect);
 
-        // 顶部：账户概览
         {
             let overview_block = Block::default()
                 .borders(Borders::ALL)
                 .title(format!(" {} ", t!("Portfolio.Title")));
 
-            // 计算总盈亏
-            let total_profit_loss: Decimal = positions.iter().map(|p| p.profit_loss).sum();
-            let pl_style = styles::up(total_profit_loss.cmp(&Decimal::ZERO));
+            // Calculate styles for P/L
+            let pl_style = styles::up(overview.total_pl.cmp(&Decimal::ZERO));
+            let today_pl_style = styles::up(overview.total_today_pl.cmp(&Decimal::ZERO));
 
-            // 创建两列布局
+            // Create three-column layout
             let inner_area = overview_block.inner(chunks[0]);
             frame.render_widget(overview_block, chunks[0]);
 
             let inner_chunks = Layout::default()
-                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .constraints([
+                    Constraint::Ratio(1, 3),
+                    Constraint::Ratio(1, 3),
+                    Constraint::Ratio(1, 3),
+                ])
                 .direction(Direction::Horizontal)
                 .split(inner_area);
 
-            // 左列
+            // Column 1
             let left_items = vec![
                 ListItem::new(Line::from(vec![
                     Span::styled(
                         format!("{}: ", t!("Portfolio.Total Asset")),
                         styles::label(),
                     ),
-                    Span::styled(format!("{:.2}", total_assets), styles::text()),
+                    Span::styled(format!("{:.2}", overview.total_asset), styles::text()),
                 ])),
                 ListItem::new(Line::from(vec![
                     Span::styled(format!("{}: ", t!("Portfolio.Market Cap")), styles::label()),
-                    Span::styled(format!("{:.2}", market_value), styles::text()),
+                    Span::styled(format!("{:.2}", overview.market_cap), styles::text()),
                 ])),
                 ListItem::new(Line::from(vec![
-                    Span::styled(format!("{}: ", t!("Portfolio.P/L")), styles::label()),
-                    Span::styled(format!("{:+.2}", total_profit_loss), pl_style),
+                    Span::styled(
+                        format!("{}: ", t!("Portfolio.Margin Call")),
+                        styles::label(),
+                    ),
+                    Span::styled(format!("{:.2}", overview.margin_call), styles::text()),
+                ])),
+                ListItem::new(Line::from(vec![
+                    Span::styled(
+                        format!("{}: ", t!("Portfolio.Health Status")),
+                        styles::label(),
+                    ),
+                    Span::styled(
+                        format!("{:.2}%", overview.leverage_ratio * Decimal::from(100)),
+                        styles::text(),
+                    ),
                 ])),
             ];
 
-            // 右列
-            let right_items = vec![
+            // Column 2
+            let middle_items = vec![
+                ListItem::new(Line::from(vec![
+                    Span::styled(format!("{}: ", t!("Portfolio.P/L")), styles::label()),
+                    Span::styled(format!("{:+.2}", overview.total_pl), pl_style),
+                ])),
+                ListItem::new(Line::from(vec![
+                    Span::styled(
+                        format!("{}: ", t!("Portfolio.Intraday P/L")),
+                        styles::label(),
+                    ),
+                    Span::styled(format!("{:+.2}", overview.total_today_pl), today_pl_style),
+                ])),
                 ListItem::new(Line::from(vec![
                     Span::styled(
                         format!("{}: ", t!("Portfolio.Total Cash Amount")),
                         styles::label(),
                     ),
-                    Span::styled(format!("{:.2}", balance), styles::text()),
+                    Span::styled(format!("{:.2}", overview.total_cash), styles::text()),
                 ])),
                 ListItem::new(Line::from(vec![
-                    Span::styled(format!("持仓数量: "), styles::label()),
-                    Span::styled(format!("{}", positions.len()), styles::text()),
+                    Span::styled(
+                        format!("{}: ", t!("Portfolio.Fund Market Cap")),
+                        styles::label(),
+                    ),
+                    Span::styled(format!("{:.2}", overview.fund_market_value), styles::text()),
+                ])),
+            ];
+
+            // Column 3
+            let right_items = vec![
+                ListItem::new(Line::from(vec![
+                    Span::styled(format!("{}: ", t!("Portfolio.Risk Level")), styles::label()),
+                    Span::styled(format!("{}", overview.risk_level), styles::text()),
+                ])),
+                ListItem::new(Line::from(vec![
+                    Span::styled(
+                        format!("{}: ", t!("Portfolio.Credit Limit")),
+                        styles::label(),
+                    ),
+                    Span::styled(format!("{:.2}", overview.credit_limit), styles::text()),
+                ])),
+                ListItem::new(Line::from(vec![
+                    Span::styled("Holdings: ", styles::label()),
+                    Span::styled(format!("{}", holdings.len()), styles::text()),
                 ])),
                 ListItem::new(""),
                 ListItem::new(Span::styled(
-                    "按 R 刷新数据",
+                    "Press R to refresh",
                     Style::default().fg(Color::Gray),
                 )),
             ];
 
             let left_list = List::new(left_items);
+            let middle_list = List::new(middle_items);
             let right_list = List::new(right_items);
 
             frame.render_widget(left_list, inner_chunks[0]);
-            frame.render_widget(right_list, inner_chunks[1]);
+            frame.render_widget(middle_list, inner_chunks[1]);
+            frame.render_widget(right_list, inner_chunks[2]);
         }
 
         // 底部：持仓列表
@@ -1844,11 +1997,11 @@ pub fn render_portfolio(
                 .borders(Borders::ALL)
                 .title(format!(" {} ", t!("Holding.Holding")));
 
-            if positions.is_empty() {
+            if holdings.is_empty() {
                 let message = Paragraph::new(vec![
                     Line::from(""),
                     Line::from(Span::styled(
-                        "暂无持仓数据",
+                        t!("Portfolio.No Holdings"),
                         Style::default().fg(Color::Gray),
                     )),
                 ])
@@ -1870,13 +2023,28 @@ pub fn render_portfolio(
                 .style(styles::header())
                 .bottom_margin(1);
 
-                let rows: Vec<Row> = positions
+                let rows: Vec<Row> = holdings
                     .iter()
-                    .map(|pos| {
-                        let counter = &pos.symbol;
+                    .map(|holding| {
+                        // Parse Counter from symbol string
+                        let counter = Counter::from(holding.symbol.as_str());
 
-                        // 计算盈亏样式
-                        let pl_style = styles::up(pos.profit_loss.cmp(&Decimal::ZERO));
+                        // Calculate P/L
+                        let (profit_loss, profit_loss_percent) =
+                            if let Some(cost_price) = holding.cost_price {
+                                let pl = holding.market_value - (cost_price * holding.quantity);
+                                let pl_pct = if cost_price > Decimal::ZERO {
+                                    (holding.market_price - cost_price) / cost_price
+                                        * Decimal::from(100)
+                                } else {
+                                    Decimal::ZERO
+                                };
+                                (pl, pl_pct)
+                            } else {
+                                (Decimal::ZERO, Decimal::ZERO)
+                            };
+
+                        let pl_style = styles::up(profit_loss.cmp(&Decimal::ZERO));
 
                         Row::new(vec![
                             Cell::from(Line::from(vec![
@@ -1887,13 +2055,17 @@ pub fn render_portfolio(
                                 Span::raw(" "),
                                 Span::raw(counter.code().to_string()),
                             ])),
-                            Cell::from(pos.symbol_name.clone()),
-                            Cell::from(format!("{:.0}", pos.quantity)),
-                            Cell::from(format!("{:.2}", pos.current_price)),
-                            Cell::from(format!("{:.2}", pos.cost_price)),
-                            Cell::from(format!("{:.2}", pos.market_value)),
-                            Cell::from(format!("{:+.2}", pos.profit_loss)).style(pl_style),
-                            Cell::from(format!("{:+.2}%", pos.profit_loss_percent)).style(pl_style),
+                            Cell::from(holding.name.clone()),
+                            Cell::from(format!("{:.0}", holding.quantity)),
+                            Cell::from(format!("{:.2}", holding.market_price)),
+                            Cell::from(
+                                holding
+                                    .cost_price
+                                    .map_or("-".to_string(), |p| format!("{:.2}", p)),
+                            ),
+                            Cell::from(format!("{:.2}", holding.market_value)),
+                            Cell::from(format!("{:+.2}", profit_loss)).style(pl_style),
+                            Cell::from(format!("{:+.2}%", profit_loss_percent)).style(pl_style),
                         ])
                     })
                     .collect();
