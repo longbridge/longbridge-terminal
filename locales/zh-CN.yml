@@ -168,7 +168,7 @@ RiskLevel.Danger: 危险
 RiskLevel.Middle: 中等
 RiskLevel.Safe: 安全
 RiskLevel.Warning: 预警
-TradeStatus.Normal: 交易中
+TradeStatus.Normal: ""
 TradeStatus.Halted: 停牌
 TradeStatus.Delisted: 退市
 TradeStatus.Fuse: 熔断
@@ -179,6 +179,10 @@ TradeStatus.SplitStockHalts: 分拆停牌
 TradeStatus.Expired: 已过期
 TradeStatus.WarrantPrepareList: 权证准备中
 TradeStatus.SuspendTrade: 暂停交易
+TradeSession.Intraday: 交易中
+TradeSession.Pre: 盘前
+TradeSession.Post: 盘后
+TradeSession.Overnight: 夜盘
 Help: " 帮助 "
 HelpTips: |-
   - 通用 ---------------------------------------------------------------------------------

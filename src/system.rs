@@ -22,8 +22,8 @@ use tokio::sync::mpsc;
 use crate::{
     app::{AppState, RT, WATCHLIST},
     data::{
-        Account, Counter, KlineType, ReadyState, Stock, SubTypes, TradeStatusExt, WatchlistGroup,
-        STOCKS,
+        Account, Counter, KlineType, ReadyState, Stock, SubTypes, TradeSessionExt, TradeStatusExt,
+        WatchlistGroup, STOCKS,
     },
     helper::{cycle, DecimalExt, Sign},
     kline::KLINES,
@@ -484,22 +484,21 @@ pub fn refresh_watchlist(update_tx: mpsc::UnboundedSender<CommandQueue>) {
             let ctx = crate::openapi::quote();
             let symbols: Vec<String> = counters.iter().map(|c| c.as_str().to_string()).collect();
 
-            // Use quote() to get full quote data (including prev_close)
+            // Use quote() to get full quote data (including prev_close and trade_status)
             match ctx.quote(&symbols).await {
                 Ok(quotes) => {
                     for quote in quotes {
+                        // Debug: log trade_status from API
+                        tracing::debug!(
+                            "API quote for {}: trade_status = {:?}",
+                            quote.symbol,
+                            quote.trade_status
+                        );
                         match quote.symbol.parse() {
                             Ok(counter) => {
                                 STOCKS.modify(counter, |stock| {
-                                    // Update quote data with prev_close
-                                    stock.quote.last_done = Some(quote.last_done);
-                                    stock.quote.prev_close = Some(quote.prev_close);
-                                    stock.quote.open = Some(quote.open);
-                                    stock.quote.high = Some(quote.high);
-                                    stock.quote.low = Some(quote.low);
-                                    stock.quote.volume = quote.volume as u64;
-                                    stock.quote.turnover = quote.turnover;
-                                    stock.quote.timestamp = quote.timestamp.unix_timestamp();
+                                    // Use update_from_security_quote to update all fields including trade_status
+                                    stock.update_from_security_quote(&quote);
                                 });
                             }
                             _ => (),
@@ -561,19 +560,13 @@ pub fn refresh_stock(counter: Counter) {
         let _ = WS.quote_detail("stock_detail", &[counter.clone()]).await;
         let _ = WS.quote_trade("stock_detail", &[counter.clone()]).await;
 
-        // Get full quote data (including prev_close)
+        // Get full quote data (including prev_close and trade_status)
         let ctx = crate::openapi::quote();
         if let Ok(quotes) = ctx.quote(&[counter.to_string()]).await {
             if let Some(quote) = quotes.first() {
                 STOCKS.modify(counter.clone(), |stock| {
-                    stock.quote.last_done = Some(quote.last_done);
-                    stock.quote.prev_close = Some(quote.prev_close);
-                    stock.quote.open = Some(quote.open);
-                    stock.quote.high = Some(quote.high);
-                    stock.quote.low = Some(quote.low);
-                    stock.quote.volume = quote.volume as u64;
-                    stock.quote.turnover = quote.turnover;
-                    stock.quote.timestamp = quote.timestamp.unix_timestamp();
+                    // Use update_from_security_quote to update all fields including trade_status
+                    stock.update_from_security_quote(quote);
                 });
             }
         }
@@ -943,12 +936,17 @@ fn stock_detail(
         counter.market(),
     ))];
     titles.extend(price_spans(&stock.quote, counter));
-    // Show trade status label if not normal trading
-    if !stock.trade_status.is_trading() {
-        let label = stock.trade_status.label();
-        if !label.is_empty() {
-            titles.push(Span::raw(format!(" [{}]", label)));
-        }
+    // Show session or status label if not in normal trading
+    let session_label = stock.trade_session.label();
+    let status_label = if !session_label.is_empty() {
+        session_label
+    } else if !stock.trade_status.is_trading() {
+        stock.trade_status.label()
+    } else {
+        String::new()
+    };
+    if !status_label.is_empty() {
+        titles.push(Span::raw(format!(" [{}]", status_label)));
     }
 
     let detail_container = Block::default()
@@ -1014,7 +1012,17 @@ fn stock_detail(
     // Build detail columns - Column 1: Basic trading data
     let column0 = vec![
         ListItem::new(" "),
-        item(t!("StockDetail.Trading Status"), stock.trade_status.label()),
+        item(
+            t!("StockDetail.Trading Status"),
+            {
+                let session_label = stock.trade_session.label();
+                if !session_label.is_empty() {
+                    session_label
+                } else {
+                    stock.trade_status.label()
+                }
+            }
+        ),
         ListItem::new(" "),
         price_item(t!("StockDetail.Open"), stock.quote.open),
         item(
@@ -1711,16 +1719,39 @@ fn watch_group_table(
             };
 
             let style = styles::up(increase.sign());
-            let trade_status_name = stock.trade_status.label();
-            // Show status label instead of percentage when market is closed
-            let increase_percent_str =
-                if !trade_status_name.is_empty() && stock.trade_status.is_closed() {
-                    trade_status_name.to_string()
-                } else if increase.positive() {
-                    format!("+{}", &increase_percent)
+
+            // Determine status to display:
+            // 1. If stock status is abnormal (Halted/Suspended/etc), show trade status
+            // 2. If not in normal trading session (Pre/Post/Night), show session status
+            // 3. Otherwise show "Trading" for normal trading session with normal status
+            let get_status_label = || {
+                if !stock.trade_status.is_trading() {
+                    // Abnormal status (Halted, Delisted, etc.) - highest priority
+                    stock.trade_status.label()
+                } else if !stock.trade_session.is_normal_trading() {
+                    // Non-Intraday session (Pre, Post, Overnight)
+                    stock.trade_session.label()
                 } else {
-                    increase_percent.to_string()
-                };
+                    // Normal trading: Intraday + Normal status
+                    stock.trade_session.label() // Show "Trading" for Intraday
+                }
+            };
+
+            let status_label = get_status_label();
+            // Format: +5.44/5% (no sign for percentage, omit decimal if .00)
+            let change_sign = if increase.is_sign_positive() { "+" } else { "" };
+            let percent_str = if increase_percent.fract().abs() == Decimal::ZERO {
+                // Integer percentage: omit decimal point
+                format!("{}", increase_percent.abs().trunc())
+            } else {
+                format!("{}", increase_percent.abs())
+            };
+            let increase_percent_str = format!(
+                "{}{}/{}%",
+                change_sign,
+                increase.round_dp(2),
+                percent_str
+            );
             let mut cells = Vec::with_capacity(if full_mode { 6 } else { 4 });
             cells.push(Cell::from(Line::from(vec![
                 Span::styled(
@@ -1740,13 +1771,13 @@ fn watch_group_table(
                 .style(style),
             );
             if full_mode {
-                // 成交量：格式化为简短格式（如 1.23M）
                 let volume_text = crate::helper::format_volume(quote_data.volume);
                 cells.push(Cell::from(crate::ui::text::align_right(
                     &volume_text,
                     COLUMN_WIDTHS[4],
                 )));
-                cells.push(Cell::from(trade_status_name));
+                // Display session status or trade status in STATUS column
+                cells.push(Cell::from(status_label));
             }
             Row::new(cells)
         })
@@ -1756,7 +1787,6 @@ fn watch_group_table(
         .map(|i| {
             let increase = if let Some(Some(stock)) = stocks.get(i) {
                 let quote_data = &stock.quote;
-                // 优先使用 last_done，如果没有则使用 prev_close
                 let display_price = quote_data
                     .last_done
                     .or(quote_data.prev_close)
@@ -1783,7 +1813,7 @@ fn watch_group_table(
 
 pub fn render_portfolio(
     mut terminal: ResMut<Terminal>,
-    mut events: EventReader<Key>,
+    mut _events: EventReader<Key>,
     _portfolio: Res<Portfolio>,
     _accounts: Res<Select<Account>>,
     _command: Res<Command>,
@@ -1791,20 +1821,12 @@ pub fn render_portfolio(
     (mut account, mut currency, mut search, mut watchgroup): PopUp,
     _table_state: Local<TableState>,
 ) {
-    // 处理按键事件
-    for _event in &mut events {
-        // 按键处理在 handle_global_keys 中统一处理
-    }
-
-    // 渲染界面
     _ = terminal.draw(|frame| {
         let rect = frame.size();
 
-        // 顶部导航栏
         let top = Rect { height: 1, ..rect };
         crate::views::navbar::render(frame, top, *state.get());
 
-        // 底部状态栏
         let bottom = Rect {
             y: rect.y + rect.height - 1,
             height: 1,
@@ -1848,13 +1870,11 @@ pub fn render_portfolio(
         let overview = &portfolio_view.overview;
         let holdings = &portfolio_view.holdings;
 
-        // 创建布局
         let chunks = Layout::default()
             .constraints([Constraint::Length(8), Constraint::Min(10)])
             .direction(Direction::Vertical)
             .split(content_rect);
 
-        // 顶部：账户概览
         {
             let overview_block = Block::default()
                 .borders(Borders::ALL)

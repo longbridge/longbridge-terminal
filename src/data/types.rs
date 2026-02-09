@@ -69,8 +69,32 @@ impl From<String> for Counter {
     }
 }
 
-/// Re-export TradeStatus from Longport SDK
-pub use longport::quote::TradeStatus;
+/// Re-export TradeStatus and TradeSession from Longport SDK
+pub use longport::quote::{TradeSession, TradeStatus};
+
+/// Extension trait for TradeSession to provide helper methods
+pub trait TradeSessionExt {
+    /// Check if in normal trading session
+    fn is_normal_trading(self) -> bool;
+
+    /// Get localized label for display
+    fn label(self) -> String;
+}
+
+impl TradeSessionExt for TradeSession {
+    fn is_normal_trading(self) -> bool {
+        matches!(self, TradeSession::Intraday)
+    }
+
+    fn label(self) -> String {
+        match self {
+            TradeSession::Intraday => t!("TradeSession.Intraday"),
+            TradeSession::Pre => t!("TradeSession.Pre"),
+            TradeSession::Post => t!("TradeSession.Post"),
+            TradeSession::Overnight => t!("TradeSession.Overnight"),
+        }
+    }
+}
 
 /// Extension trait for TradeStatus to provide additional helper methods
 pub trait TradeStatusExt {
@@ -95,7 +119,7 @@ impl TradeStatusExt for TradeStatus {
 
     fn label(self) -> String {
         match self {
-            TradeStatus::Normal => t!("TradeStatus.Normal"),
+            TradeStatus::Normal => String::new(), // No label for normal status
             TradeStatus::Halted => t!("TradeStatus.Halted"),
             TradeStatus::Delisted => t!("TradeStatus.Delisted"),
             TradeStatus::Fuse => t!("TradeStatus.Fuse"),

@@ -167,7 +167,7 @@ RiskLevel.Danger: Danger
 RiskLevel.Middle: Middle
 RiskLevel.Safe: Safe
 RiskLevel.Warning: Warning
-TradeStatus.Normal: Trading
+TradeStatus.Normal: ""
 TradeStatus.Halted: Halted
 TradeStatus.Delisted: Delisted
 TradeStatus.Fuse: Circuit Breaker
@@ -178,6 +178,10 @@ TradeStatus.SplitStockHalts: Split/Merge Halted
 TradeStatus.Expired: Expired
 TradeStatus.WarrantPrepareList: Warrant Preparing
 TradeStatus.SuspendTrade: Suspended
+TradeSession.Intraday: Trading
+TradeSession.Pre: Pre
+TradeSession.Post: Post
+TradeSession.Overnight: Night
 Help: " Help "
 HelpTips: |-
   - General ----------------------------------------------------------------------------------

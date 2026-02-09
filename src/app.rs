@@ -298,20 +298,15 @@ pub async fn run(
                 let counter = Counter::new(&symbol);
                  match push_event.detail {
                      PushEventDetail::Quote(quote) => {
-                         tracing::debug!("Update quote: {} = {}", symbol, quote.last_done);
+                         tracing::debug!(
+                             "Update quote: {} = {}, trade_session = {:?}",
+                             symbol,
+                             quote.last_done,
+                             quote.trade_session
+                         );
                          crate::data::STOCKS.modify(counter.clone(), |stock| {
-                             // PushQuote only contains partial fields, update available fields
-                             stock.quote.last_done = Some(quote.last_done);
-                             stock.quote.open = Some(quote.open);
-                             stock.quote.high = Some(quote.high);
-                             stock.quote.low = Some(quote.low);
-                             stock.quote.volume = quote.volume as u64;
-                             stock.quote.turnover = quote.turnover;
-                             stock.quote.timestamp = quote.timestamp.unix_timestamp();
-                             // prev_close keeps original value or obtained from elsewhere
-
-                             // Update trade_status directly from SDK
-                             stock.trade_status = quote.trade_status;
+                             // Use update_from_push_quote to update all fields including trade_session
+                             stock.update_from_push_quote(&quote);
                          });
                          // Quote updates affect watchlist, stock detail, and indexes
                          render_state.mark_dirty(DirtyFlags::NONE.mark_quote_update());

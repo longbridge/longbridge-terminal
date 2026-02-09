@@ -1,4 +1,4 @@
-use super::Counter;
+use super::{Counter, TradeSessionExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -78,45 +78,50 @@ impl Watchlist {
 
     /// Refresh (re-apply sorting, etc.)
     pub fn refresh(&mut self) {
-        // Get market sort priority (considering trading hours and fixed order)
-        fn market_priority(market: &str, is_trading: bool) -> u8 {
-            // Base priority: US=0, HK=1, SH/CN=2, SZ=3, SG=4
-            let base = match market {
+        // Get market sort priority
+        fn market_priority(market: &str) -> u8 {
+            // Base priority: US=0, HK=1, SH/SZ=2, SG=3
+            match market {
                 "US" => 0,
                 "HK" => 1,
                 "SH" | "SZ" => 2,
                 "SG" => 3,
                 _ => 99,
-            };
-
-            if is_trading {
-                // Markets in trading session: priority 0-4
-                base
-            } else {
-                // Markets not trading: priority 10-14 (after trading markets)
-                base + 10
             }
         }
 
-        // Sort by market trading hours and default order
+        // Sort by trading status first, then market, then code
         self.counters.sort_by(|a, b| {
             let a_market_str = a.market();
             let b_market_str = b.market();
-            let a_market = a.region();
-            let b_market = b.region();
-            let a_trading = a_market.is_trading();
-            let b_trading = b_market.is_trading();
 
-            // First sort by market priority (trading markets first)
-            let a_priority = market_priority(a_market_str, a_trading);
-            let b_priority = market_priority(b_market_str, b_trading);
-            let market_cmp = a_priority.cmp(&b_priority);
-            if market_cmp != std::cmp::Ordering::Equal {
-                return market_cmp;
+            // Check if in normal trading session (not Pre/Post/Overnight)
+            let a_normal_trading = super::STOCKS
+                .get(a)
+                .map(|s| s.trade_session.is_normal_trading())
+                .unwrap_or(false);
+            let b_normal_trading = super::STOCKS
+                .get(b)
+                .map(|s| s.trade_session.is_normal_trading())
+                .unwrap_or(false);
+
+            // First sort by trading session (Intraday first)
+            // false < true in bool ordering, so reverse comparison to put true first
+            match a_normal_trading.cmp(&b_normal_trading).reverse() {
+                std::cmp::Ordering::Equal => {
+                    // Same trading status, sort by market priority
+                    let a_priority = market_priority(a_market_str);
+                    let b_priority = market_priority(b_market_str);
+                    match a_priority.cmp(&b_priority) {
+                        std::cmp::Ordering::Equal => {
+                            // Same market, sort by code
+                            a.as_str().cmp(b.as_str())
+                        }
+                        other => other,
+                    }
+                }
+                other => other,
             }
-
-            // Within same market, sort by code
-            a.as_str().cmp(b.as_str())
         });
     }
 

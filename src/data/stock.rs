@@ -9,6 +9,7 @@ pub struct Stock {
     pub name: String,
     pub currency: Currency,
     pub trade_status: TradeStatus,
+    pub trade_session: TradeSession,
     pub quote: QuoteData,
     pub depth: DepthData,
     pub static_info: Option<StaticInfo>,  // Static info (market cap, shares, etc.)
@@ -22,6 +23,7 @@ impl Default for Stock {
             name: String::new(),
             currency: Currency::default(),
             trade_status: TradeStatus::default(),
+            trade_session: TradeSession::default(),
             quote: QuoteData::default(),
             depth: DepthData::default(),
             static_info: None,
@@ -37,6 +39,7 @@ impl Stock {
             name: String::new(),
             currency: Currency::default(),
             trade_status: TradeStatus::default(),
+            trade_session: TradeSession::default(),
             quote: QuoteData::default(),
             depth: DepthData::default(),
             static_info: None,
@@ -59,8 +62,8 @@ impl Stock {
         }
     }
 
-    /// Update quote data (from longport SDK RealtimeQuote, for WebSocket push)
-    pub fn update_from_quote(&mut self, quote: &longport::quote::RealtimeQuote) {
+    /// Update quote data (from longport SDK PushQuote, for WebSocket push)
+    pub fn update_from_push_quote(&mut self, quote: &longport::quote::PushQuote) {
         self.quote.last_done = Some(quote.last_done);
         self.quote.open = Some(quote.open);
         self.quote.high = Some(quote.high);
@@ -69,11 +72,12 @@ impl Stock {
         self.quote.turnover = quote.turnover;
         self.quote.timestamp = quote.timestamp.unix_timestamp();
 
-        // Update trade_status directly from quote
+        // Update trade_status and trade_session directly from PushQuote
         self.trade_status = quote.trade_status;
+        self.trade_session = quote.trade_session;
     }
 
-    /// Update from SecurityQuote (full quote data from API, includes prev_close)
+    /// Update from SecurityQuote (full quote data from API, includes prev_close but NO trade_session)
     pub fn update_from_security_quote(&mut self, quote: &longport::quote::SecurityQuote) {
         self.quote.last_done = Some(quote.last_done);
         self.quote.prev_close = Some(quote.prev_close);
@@ -84,8 +88,9 @@ impl Stock {
         self.quote.turnover = quote.turnover;
         self.quote.timestamp = quote.timestamp.unix_timestamp();
 
-        // Update trade_status from quote
+        // Update trade_status from SecurityQuote (Note: SecurityQuote does NOT have trade_session)
         self.trade_status = quote.trade_status;
+        // trade_session will be updated from WebSocket PushQuote or calculated from market hours
     }
 
     /// Update depth data (from longport SDK)
