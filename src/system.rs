@@ -21,7 +21,7 @@ use tokio::sync::mpsc;
 
 use crate::{
     app::{AppState, RT, WATCHLIST},
-    data::{Account, Counter, KlineType, ReadyState, Stock, SubTypes, WatchlistGroup, STOCKS},
+    data::{Account, Counter, KlineType, ReadyState, Stock, SubTypes, TradeStatusExt, WatchlistGroup, STOCKS},
     helper::{cycle, DecimalExt, Sign},
     kline::KLINES,
     ui::{
@@ -940,9 +940,12 @@ fn stock_detail(
         counter.market(),
     ))];
     titles.extend(price_spans(&stock.quote, counter));
-    if stock.trade_status.is_us_pre_post() || stock.trade_status.is_us_night() {
-        titles.push(Span::raw(stock.trade_status.label()));
-        titles.extend(price_spans(&stock.quote, counter));
+    // Show trade status label if not normal trading
+    if !stock.trade_status.is_trading() {
+        let label = stock.trade_status.label();
+        if !label.is_empty() {
+            titles.push(Span::raw(format!(" [{}]", label)));
+        }
     }
 
     let detail_container = Block::default()
@@ -1694,9 +1697,9 @@ fn watch_group_table(
             // 价格和涨跌幅使用前景色，不使用背景色以避免干扰
             let style = styles::up(increase.sign());
             let trade_status_name = stock.trade_status.label();
-            // Show status label instead of percentage when market is closed or status is special
+            // Show status label instead of percentage when market is closed
             let increase_percent_str = if !trade_status_name.is_empty()
-                && (stock.trade_status.is_closing() || stock.trade_status.is_special())
+                && stock.trade_status.is_closed()
             {
                 trade_status_name.to_string()
             } else if increase.positive() {

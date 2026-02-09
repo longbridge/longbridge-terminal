@@ -69,17 +69,8 @@ impl Stock {
         self.quote.turnover = quote.turnover;
         self.quote.timestamp = quote.timestamp.unix_timestamp();
 
-        // Update trade_status from quote
-        // Note: Longport SDK only provides simplified status (Normal/Halted/Delisted)
-        // We map these to our detailed status codes
-        self.trade_status = match quote.trade_status {
-            longport::quote::TradeStatus::Normal => TradeStatus::TRADING,
-            longport::quote::TradeStatus::Halted => TradeStatus::TRADING_HALT,
-            longport::quote::TradeStatus::Delisted => TradeStatus::DELIST,
-            longport::quote::TradeStatus::Fuse => TradeStatus::STOP,
-            longport::quote::TradeStatus::SuspendTrade => TradeStatus::STOP,
-            _ => TradeStatus::UNKNOWN,
-        };
+        // Update trade_status directly from quote
+        self.trade_status = quote.trade_status;
     }
 
     /// Update depth data (from longport SDK)

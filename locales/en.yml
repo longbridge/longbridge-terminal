@@ -167,19 +167,17 @@ RiskLevel.Danger: Danger
 RiskLevel.Middle: Middle
 RiskLevel.Safe: Safe
 RiskLevel.Warning: Warning
-TradeStatus.TRADING: Trading
-TradeStatus.US_PREV: Pre-Market
-TradeStatus.US_TRADING: Trading
-TradeStatus.US_AFTER: After Hours
-TradeStatus.US_NIGHT: Night Trading
-TradeStatus.US_CLOSING: Closed
-TradeStatus.CLOSING: Closed
-TradeStatus.OPEN_BID: Opening Auction
-TradeStatus.CLOSE_BID: Closing Auction
-TradeStatus.NOON_CLOSING: Lunch Break
+TradeStatus.Normal: Trading
 TradeStatus.Halted: Halted
 TradeStatus.Delisted: Delisted
-TradeStatus.STOP: Stopped
+TradeStatus.Fuse: Circuit Breaker
+TradeStatus.PrepareList: Preparing to List
+TradeStatus.CodeMoved: Code Changed
+TradeStatus.ToBeOpened: To Be Opened
+TradeStatus.SplitStockHalts: Split/Merge Halted
+TradeStatus.Expired: Expired
+TradeStatus.WarrantPrepareList: Warrant Preparing
+TradeStatus.SuspendTrade: Suspended
 Help: " Help "
 HelpTips: |-
   - General ----------------------------------------------------------------------------------

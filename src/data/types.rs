@@ -69,215 +69,43 @@ impl From<String> for Counter {
     }
 }
 
-/// Trading status (aligned with engine implementation)
-#[allow(non_camel_case_types)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[repr(i32)]
-pub enum TradeStatus {
-    #[default]
-    UNKNOWN = -1,
-    /// No registered quote
-    NO_REGISTER_QUOTE = 0,
-    /// Market clearing
-    CLEAN = 101,
-    /// Opening auction
-    OPEN_BID = 102,
-    /// Trading
-    TRADING = 105,
-    /// Lunch break
-    NOON_CLOSING = 106,
-    /// Closing auction
-    CLOSE_BID = 107,
-    /// Market closed
-    CLOSING = 108,
-    /// Dark pool waiting
-    DARK_WAIT = 110,
-    /// Dark pool trading
-    DARK_TRADING = 111,
-    /// Dark pool closed
-    DARK_CLOSING = 112,
-    /// After hours fixed price
-    AFTER_FIX = 120,
-    /// Half day closed
-    HALF_CLOSING = 121,
-    /// Not yet opened
-    NOT_OPENED = 122,
-    /// US pre-market
-    US_PREV = 201,
-    /// US trading
-    US_TRADING = 202,
-    /// US after hours
-    US_AFTER = 203,
-    /// US market closed
-    US_CLOSING = 204,
-    /// US trading stopped
-    US_STOP = 205,
-    /// US pre-market clearing
-    US_CLEAN = 206,
-    /// US night trading
-    US_NIGHT = 207,
-    /// US pre-market clearing
-    US_PREV_MARKET_CLEAN = 209,
-    /// US after market clearing
-    US_AFTER_MARKET_CLEAN = 210,
-    /// Stock refresh
-    REFRESH = 1000,
-    /// Delisted
-    DELIST = 1001,
-    /// Preparing to list
-    PREPARE = 1002,
-    /// Code change
-    CODE_CHANGE = 1003,
-    /// Trading stopped
-    STOP = 1004,
-    /// Will open
-    WILL_OPEN = 1005,
-    /// Split/merge suspended
-    COMMON_SUSPEND = 1006,
-    /// Expired
-    EXPIRE = 1007,
-    /// No quote
-    NO_QUOTE = 1008,
-    /// Waiting to list
-    UNITED = 1009,
-    /// Trading halted
-    TRADING_HALT = 1010,
-    /// Waiting to list (warrants)
-    WAIT_LISTING = 1011,
-}
+/// Re-export TradeStatus from Longport SDK
+pub use longport::quote::TradeStatus;
 
-impl From<i32> for TradeStatus {
-    fn from(value: i32) -> Self {
-        match value {
-            -1 => Self::UNKNOWN,
-            0 => Self::NO_REGISTER_QUOTE,
-            101 => Self::CLEAN,
-            102 => Self::OPEN_BID,
-            105 => Self::TRADING,
-            106 => Self::NOON_CLOSING,
-            107 => Self::CLOSE_BID,
-            108 => Self::CLOSING,
-            110 => Self::DARK_WAIT,
-            111 => Self::DARK_TRADING,
-            112 => Self::DARK_CLOSING,
-            120 => Self::AFTER_FIX,
-            121 => Self::HALF_CLOSING,
-            122 => Self::NOT_OPENED,
-            201 => Self::US_PREV,
-            202 => Self::US_TRADING,
-            203 => Self::US_AFTER,
-            204 => Self::US_CLOSING,
-            205 => Self::US_STOP,
-            206 => Self::US_CLEAN,
-            207 => Self::US_NIGHT,
-            209 => Self::US_PREV_MARKET_CLEAN,
-            210 => Self::US_AFTER_MARKET_CLEAN,
-            1000 => Self::REFRESH,
-            1001 => Self::DELIST,
-            1002 => Self::PREPARE,
-            1003 => Self::CODE_CHANGE,
-            1004 => Self::STOP,
-            1005 => Self::WILL_OPEN,
-            1006 => Self::COMMON_SUSPEND,
-            1007 => Self::EXPIRE,
-            1008 => Self::NO_QUOTE,
-            1009 => Self::UNITED,
-            1010 => Self::TRADING_HALT,
-            1011 => Self::WAIT_LISTING,
-            _ => Self::UNKNOWN,
-        }
-    }
-}
-
-impl TradeStatus {
+/// Extension trait for TradeStatus to provide additional helper methods
+pub trait TradeStatusExt {
     /// Check if currently in active trading state
-    pub fn is_trading(self) -> bool {
-        matches!(
-            self,
-            Self::TRADING | Self::US_TRADING | Self::US_AFTER_MARKET_CLEAN
-        )
-    }
+    fn is_trading(self) -> bool;
 
-    /// Check if in US pre/post market
-    pub fn is_us_pre_post(self) -> bool {
-        self.is_us_prev() || self.is_us_after()
-    }
-
-    /// Check if in US pre-market
-    pub fn is_us_prev(self) -> bool {
-        matches!(self, Self::US_PREV | Self::US_CLEAN)
-    }
-
-    /// Check if in US after hours
-    pub fn is_us_after(self) -> bool {
-        matches!(self, Self::US_AFTER)
-    }
-
-    /// Check if in US night trading
-    pub fn is_us_night(self) -> bool {
-        matches!(self, Self::US_NIGHT)
-    }
-
-    /// Check if market is closed
-    pub fn is_closing(self) -> bool {
-        matches!(
-            self,
-            Self::CLOSING
-                | Self::HALF_CLOSING
-                | Self::US_CLOSING
-                | Self::US_PREV_MARKET_CLEAN
-        )
-    }
-
-    /// Check if trading is allowed (including auctions)
-    pub fn allow_trading(self) -> bool {
-        matches!(
-            self,
-            Self::OPEN_BID
-                | Self::TRADING
-                | Self::CLOSE_BID
-                | Self::NOT_OPENED
-                | Self::NOON_CLOSING
-                | Self::US_TRADING
-                | Self::US_AFTER_MARKET_CLEAN
-        )
-    }
-
-    /// Normalize status for display
-    #[must_use]
-    pub fn normalize(self) -> Self {
-        match self {
-            Self::CLEAN => Self::CLOSING,
-            Self::US_PREV_MARKET_CLEAN => Self::US_CLOSING,
-            Self::US_CLEAN => Self::US_PREV,
-            Self::US_AFTER_MARKET_CLEAN => Self::US_TRADING,
-            _ => self,
-        }
-    }
-
-    /// Check if status is special (not regular trading status)
-    pub fn is_special(self) -> bool {
-        (self as i32) < 100 || (self as i32) == (Self::US_STOP as i32) || (self as i32) >= 1000
-    }
+    /// Check if market is closed or halted
+    fn is_closed(self) -> bool;
 
     /// Get localized label for display
-    pub fn label(self) -> String {
-        let normalized = self.normalize();
-        match normalized {
-            Self::TRADING => t!("TradeStatus.TRADING"),
-            Self::US_PREV => t!("TradeStatus.US_PREV"),
-            Self::US_TRADING => t!("TradeStatus.US_TRADING"),
-            Self::US_AFTER => t!("TradeStatus.US_AFTER"),
-            Self::US_NIGHT => t!("TradeStatus.US_NIGHT"),
-            Self::US_CLOSING => t!("TradeStatus.US_CLOSING"),
-            Self::CLOSING => t!("TradeStatus.CLOSING"),
-            Self::OPEN_BID => t!("TradeStatus.OPEN_BID"),
-            Self::CLOSE_BID => t!("TradeStatus.CLOSE_BID"),
-            Self::NOON_CLOSING => t!("TradeStatus.NOON_CLOSING"),
-            Self::DELIST => t!("TradeStatus.Delisted"),
-            Self::TRADING_HALT => t!("TradeStatus.Halted"),
-            Self::STOP => t!("TradeStatus.STOP"),
-            _ => String::new(),
+    fn label(self) -> String;
+}
+
+impl TradeStatusExt for TradeStatus {
+    fn is_trading(self) -> bool {
+        matches!(self, TradeStatus::Normal)
+    }
+
+    fn is_closed(self) -> bool {
+        !self.is_trading()
+    }
+
+    fn label(self) -> String {
+        match self {
+            TradeStatus::Normal => t!("TradeStatus.Normal"),
+            TradeStatus::Halted => t!("TradeStatus.Halted"),
+            TradeStatus::Delisted => t!("TradeStatus.Delisted"),
+            TradeStatus::Fuse => t!("TradeStatus.Fuse"),
+            TradeStatus::PrepareList => t!("TradeStatus.PrepareList"),
+            TradeStatus::CodeMoved => t!("TradeStatus.CodeMoved"),
+            TradeStatus::ToBeOpened => t!("TradeStatus.ToBeOpened"),
+            TradeStatus::SplitStockHalts => t!("TradeStatus.SplitStockHalts"),
+            TradeStatus::Expired => t!("TradeStatus.Expired"),
+            TradeStatus::WarrantPrepareList => t!("TradeStatus.WarrantPrepareList"),
+            TradeStatus::SuspendTrade => t!("TradeStatus.SuspendTrade"),
         }
     }
 }

@@ -171,8 +171,14 @@ RiskLevel.Warning: 预警
 TradeStatus.Normal: 交易中
 TradeStatus.Halted: 停牌
 TradeStatus.Delisted: 退市
-TradeStatus.STOP: 休市
-TradeStatus.UsStop: 休市
+TradeStatus.Fuse: 熔断
+TradeStatus.PrepareList: 准备上市
+TradeStatus.CodeMoved: 代码变更
+TradeStatus.ToBeOpened: 即将开盘
+TradeStatus.SplitStockHalts: 分拆停牌
+TradeStatus.Expired: 已过期
+TradeStatus.WarrantPrepareList: 权证准备中
+TradeStatus.SuspendTrade: 暂停交易
 Help: " 帮助 "
 HelpTips: |-
   - 通用 ---------------------------------------------------------------------------------

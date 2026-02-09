@@ -284,15 +284,8 @@ pub async fn run(
                              stock.quote.timestamp = quote.timestamp.unix_timestamp();
                              // prev_close keeps original value or obtained from elsewhere
 
-                             // Update trade_status from SDK (more accurate than our own judgment)
-                             stock.trade_status = match quote.trade_status {
-                                 longport::quote::TradeStatus::Normal => crate::data::TradeStatus::TRADING,
-                                 longport::quote::TradeStatus::Halted => crate::data::TradeStatus::TRADING_HALT,
-                                 longport::quote::TradeStatus::Delisted => crate::data::TradeStatus::DELIST,
-                                 longport::quote::TradeStatus::Fuse => crate::data::TradeStatus::STOP,
-                                 longport::quote::TradeStatus::SuspendTrade => crate::data::TradeStatus::STOP,
-                                 _ => crate::data::TradeStatus::UNKNOWN,
-                             };
+                             // Update trade_status directly from SDK
+                             stock.trade_status = quote.trade_status;
                          });
                          needs_render = true; // Mark for re-render
                      }
