@@ -11,17 +11,22 @@ use crate::helper::Sign;
 
 #[inline]
 pub fn header() -> Style {
-    Style::default().fg(Color::Reset)
+    Style::default().fg(Color::Gray)
 }
 
 #[inline]
 pub fn gray() -> Style {
+    Style::default().fg(Color::Gray)
+}
+
+#[inline]
+pub fn dark_gray() -> Style {
     Style::default().fg(Color::DarkGray)
 }
 
 #[inline]
 pub fn label() -> Style {
-    Style::default().fg(Color::Reset)
+    Style::default().fg(Color::Gray)
 }
 
 #[inline]
@@ -51,8 +56,14 @@ pub fn title() -> Style {
 
 #[inline]
 pub fn market(m: Market) -> Style {
-    let (r, g, b) = m.color();
-    Style::default().fg(Color::Rgb(r, g, b))
+    use crate::data::Market as M;
+    let color = match m {
+        M::US => Color::Cyan,
+        M::HK => Color::Magenta,
+        M::CN => Color::Red,
+        M::SG => Color::Cyan,
+    };
+    Style::default().fg(color)
 }
 
 #[inline]

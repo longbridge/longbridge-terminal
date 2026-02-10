@@ -133,6 +133,7 @@ pub struct OverviewData {
     pub credit_limit: rust_decimal::Decimal,
     pub leverage_ratio: rust_decimal::Decimal,
     pub fund_market_value: rust_decimal::Decimal,
+    pub currency: String,
 }
 
 /// Market-specific account data

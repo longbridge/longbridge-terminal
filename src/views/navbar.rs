@@ -5,10 +5,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::{
-    app::AppState,
-    ui::styles,
-};
+use crate::{app::AppState, ui::styles};
 
 pub fn render(frame: &mut Frame, rect: Rect, state: AppState) {
     let chunks = Layout::default()
@@ -33,17 +30,21 @@ pub fn render(frame: &mut Frame, rect: Rect, state: AppState) {
 
     // Simplified implementation: use fixed username
     let nickname = "User".to_string();
-    let name = Span::raw(t!("Welcome, %{name}", name = nickname));
-    let help = Span::styled(t!("Keyboard.Help"), styles::keyboard());
-    let search = Span::styled(t!("Keyboard.Search"), styles::keyboard());
-    let quit = Span::styled(t!("Keyboard.Quit"), styles::keyboard());
+    let dark_gray_style = styles::dark_gray();
+    let name = Span::styled(t!("Welcome, %{name}", name = nickname), dark_gray_style);
+    let help = Span::styled(t!("Keyboard.Help"), dark_gray_style);
+    let log = Span::styled(t!("Keyboard.Console"), dark_gray_style);
+    let search = Span::styled(t!("Keyboard.Search"), dark_gray_style);
+    let quit = Span::styled(t!("Keyboard.Quit"), dark_gray_style);
     let user_info = Paragraph::new(Line::from(vec![
         name,
-        " | ".into(),
+        Span::styled(" | ", dark_gray_style),
         help,
-        " ".into(),
+        Span::styled(" ", dark_gray_style),
+        log,
+        Span::styled(" ", dark_gray_style),
         search,
-        " ".into(),
+        Span::styled(" ", dark_gray_style),
         quit,
     ]))
     .alignment(Alignment::Right);

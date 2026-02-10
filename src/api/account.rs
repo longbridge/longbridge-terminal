@@ -159,6 +159,9 @@ pub async fn fetch_stock_holdings() -> Result<Vec<Holding>> {
     let response = ctx.stock_positions(None).await?;
 
     let mut holdings = Vec::new();
+    let mut symbols = Vec::new();
+
+    // First, collect all holdings with basic info
     for channel in response.channels {
         for position in &channel.positions {
             // Map currency string to Currency enum
@@ -170,8 +173,7 @@ pub async fn fetch_stock_holdings() -> Result<Vec<Holding>> {
                 _ => crate::data::Currency::HKD,
             };
 
-            // Calculate market value (using cost price as placeholder since SDK doesn't provide current price)
-            let market_value = position.cost_price * position.quantity;
+            symbols.push(position.symbol.clone());
 
             holdings.push(Holding {
                 symbol: position.symbol.clone(),
@@ -180,9 +182,31 @@ pub async fn fetch_stock_holdings() -> Result<Vec<Holding>> {
                 quantity: position.quantity,
                 available_quantity: position.available_quantity,
                 cost_price: Some(position.cost_price),
-                market_value,
-                market_price: position.cost_price, // Placeholder: would need real-time quote for actual market price
+                market_value: position.cost_price * position.quantity, // Will be updated with real price
+                market_price: position.cost_price, // Will be updated with real price
             });
+        }
+    }
+
+    // Fetch real-time quotes for all holdings
+    if !symbols.is_empty() {
+        let quote_ctx = openapi::quote();
+        if let Ok(quotes) = quote_ctx.quote(&symbols).await {
+            // Create a map for quick lookup
+            let mut quote_map: std::collections::HashMap<String, rust_decimal::Decimal> =
+                std::collections::HashMap::new();
+
+            for quote in quotes {
+                quote_map.insert(quote.symbol.clone(), quote.last_done);
+            }
+
+            // Update market prices and market values with real-time data
+            for holding in &mut holdings {
+                if let Some(&real_price) = quote_map.get(&holding.symbol) {
+                    holding.market_price = real_price;
+                    holding.market_value = real_price * holding.quantity;
+                }
+            }
         }
     }
 
@@ -191,14 +215,33 @@ pub async fn fetch_stock_holdings() -> Result<Vec<Holding>> {
 
 /// Calculate overview data from balance and holdings
 fn calculate_overview(balance: &AccountBalance, holdings: &[Holding]) -> OverviewData {
-    let market_cap: Decimal = holdings.iter().map(|h| h.market_value).sum();
+    // Trust SDK's net_assets which includes cash + actual market value
+    // Market cap = net_assets - total_cash
+    let market_cap: Decimal = balance.net_assets - balance.total_cash;
 
-    // Calculate total P/L (simplified: market_value - cost)
-    let total_pl: Decimal = holdings
+    // Calculate total cost (all holdings)
+    let total_cost: Decimal = holdings
         .iter()
-        .filter_map(|h| {
-            h.cost_price
-                .map(|cost| h.market_value - (cost * h.quantity))
+        .filter_map(|h| h.cost_price.map(|cost| cost * h.quantity))
+        .sum();
+
+    // Calculate total P/L: market_value - cost
+    // Since market_cap = actual market value from SDK
+    let total_pl: Decimal = market_cap - total_cost;
+
+    // Calculate intraday P/L using STOCKS cache (if available)
+    // Intraday P/L = (current_price - prev_close) * quantity
+    let total_today_pl: Decimal = holdings
+        .iter()
+        .map(|h| {
+            let counter = crate::data::Counter::new(&h.symbol);
+            if let Some(stock) = crate::data::STOCKS.get(&counter) {
+                if let (Some(last_done), Some(prev_close)) = (stock.quote.last_done, stock.quote.prev_close) {
+                    // Intraday P/L = (current_price - prev_close) * quantity
+                    return (last_done - prev_close) * h.quantity;
+                }
+            }
+            Decimal::ZERO
         })
         .sum();
 
@@ -210,16 +253,18 @@ fn calculate_overview(balance: &AccountBalance, holdings: &[Holding]) -> Overvie
     };
 
     OverviewData {
-        total_asset: balance.net_assets + market_cap,
+        // net_assets from SDK already includes cash and market value
+        total_asset: balance.net_assets,
         market_cap,
         total_cash: balance.total_cash,
         total_pl,
-        total_today_pl: Decimal::ZERO, // Not available from SDK
+        total_today_pl,
         margin_call: balance.margin_call,
         risk_level: balance.risk_level,
         credit_limit: balance.max_finance_amount,
         leverage_ratio,
         fund_market_value: Decimal::ZERO, // Not implemented yet
+        currency: balance.currency.clone(),
     }
 }
 

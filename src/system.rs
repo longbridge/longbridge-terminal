@@ -18,6 +18,7 @@ use ratatui::{
 };
 use rust_decimal::Decimal;
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 
 use crate::{
     app::{AppState, RT, WATCHLIST},
@@ -335,6 +336,30 @@ impl WsManager {
 
 pub static WS: once_cell::sync::Lazy<WsManager> = once_cell::sync::Lazy::new(|| WsManager);
 
+// Debounce state for stock refresh
+static REFRESH_STOCK_TASK: Lazy<Mutex<Option<JoinHandle<()>>>> = Lazy::new(|| Mutex::new(None));
+// Flag to track if a refresh is currently executing
+static REFRESH_EXECUTING: Atomic<bool> = Atomic::new(false);
+
+// RAII guard to ensure REFRESH_EXECUTING is always cleared
+struct RefreshGuard;
+
+impl RefreshGuard {
+    fn try_acquire() -> Option<Self> {
+        if REFRESH_EXECUTING.swap(true, Ordering::Relaxed) {
+            None
+        } else {
+            Some(RefreshGuard)
+        }
+    }
+}
+
+impl Drop for RefreshGuard {
+    fn drop(&mut self) {
+        REFRESH_EXECUTING.store(false, Ordering::Relaxed);
+    }
+}
+
 // Other stub types
 #[derive(Clone, Debug, Default)]
 pub struct DepthView {
@@ -359,7 +384,7 @@ pub enum RiskLevel {
     Warning,
 }
 
-pub(crate) static KLINE_TYPE: Atomic<KlineType> = Atomic::new(KlineType::PerMinute);
+pub(crate) static KLINE_TYPE: Atomic<KlineType> = Atomic::new(KlineType::PerDay);
 pub(crate) static KLINE_INDEX: Atomic<usize> = Atomic::new(0);
 
 pub(crate) static LAST_DONE: Lazy<Mutex<HashMap<Counter, Decimal>>> = Lazy::new(Mutex::default);
@@ -597,8 +622,87 @@ pub fn refresh_stock(counter: Counter) {
     });
 }
 
+/// Debounced version of refresh_stock with 50ms delay
+/// Cancels previous pending requests if a new one arrives within the debounce window
+/// Also prevents multiple concurrent executions
+pub fn refresh_stock_debounced(counter: Counter) {
+    // Cancel previous pending task if it exists
+    if let Ok(mut task_guard) = REFRESH_STOCK_TASK.lock() {
+        if let Some(task) = task_guard.take() {
+            task.abort();
+        }
+
+        // Spawn a new debounced task
+        let handle = RT.get().unwrap().spawn(async move {
+            // Wait 50ms before executing
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+            // Try to acquire the execution lock (RAII guard)
+            let _guard = match RefreshGuard::try_acquire() {
+                Some(guard) => guard,
+                None => {
+                    tracing::debug!(
+                        "Skipping refresh for {} - another refresh is in progress",
+                        counter
+                    );
+                    return;
+                }
+            };
+
+            tracing::debug!("Starting refresh for {}", counter);
+
+            // Execute the actual refresh
+            KLINES.clear();
+            let _ = WS.quote_detail("stock_detail", &[counter.clone()]).await;
+            let _ = WS.quote_trade("stock_detail", &[counter.clone()]).await;
+
+            // Get full quote data (including prev_close and trade_status)
+            let ctx = crate::openapi::quote();
+            if let Ok(quotes) = ctx.quote(&[counter.to_string()]).await {
+                if let Some(quote) = quotes.first() {
+                    STOCKS.modify(counter.clone(), |stock| {
+                        stock.update_from_security_quote(quote);
+                    });
+                }
+            }
+
+            // Get static info (if not already fetched)
+            let should_fetch = STOCKS
+                .get(&counter)
+                .map(|s| s.static_info.is_none())
+                .unwrap_or(false);
+
+            if should_fetch {
+                // Async fetch static info
+                if let Ok(infos) =
+                    crate::api::quote::fetch_static_info(&[counter.to_string()]).await
+                {
+                    if let Some(info) = infos.first() {
+                        STOCKS.modify(counter.clone(), |stock| {
+                            stock.update_from_static_info(info);
+                        });
+                    }
+                }
+            }
+
+            // Get trade records
+            if let Ok(trades) = crate::api::quote::fetch_trades(&counter.to_string(), 50).await {
+                STOCKS.modify(counter.clone(), |stock| {
+                    stock.update_from_trades(&trades);
+                });
+            }
+
+            tracing::debug!("Completed refresh for {}", counter);
+
+            // The _guard will be dropped here, automatically clearing REFRESH_EXECUTING
+        });
+
+        *task_guard = Some(handle);
+    }
+}
+
 pub fn enter_stock(counter: Res<StockDetail>) {
-    refresh_stock(counter.0.clone());
+    refresh_stock_debounced(counter.0.clone());
 }
 
 pub fn exit_stock() {
@@ -649,11 +753,12 @@ pub fn render_watchlist_stock(
     (state, indexes, ws): NavFooter,
     (mut account, mut currency, mut search, mut watchgroup): PopUp,
     mut last_choose: Local<Counter>,
+    mut log_panel: Local<crate::widgets::LogPanel>,
 ) {
     // workaround bevyengine/bevy#9130
     if *last_choose != stock.0 {
         if !last_choose.is_empty() {
-            refresh_stock(stock.0.clone());
+            refresh_stock_debounced(stock.0.clone());
         }
         *last_choose = stock.0.clone();
     }
@@ -790,6 +895,21 @@ pub fn render_watchlist_stock(
             &mut search,
             &mut watchgroup,
         );
+
+        // Render floating log panel if visible
+        let log_panel_visible =
+            crate::app::LOG_PANEL_VISIBLE.load(std::sync::atomic::Ordering::Relaxed);
+        if log_panel_visible {
+            log_panel.set_visible(true);
+            let panel_height = 15;
+            let log_rect = Rect {
+                x: rect.x,
+                y: rect.y + rect.height.saturating_sub(panel_height),
+                width: rect.width,
+                height: panel_height,
+            };
+            log_panel.render(frame, log_rect);
+        }
     });
 }
 
@@ -800,11 +920,12 @@ pub fn render_stock(
     (state, indexes, ws): NavFooter,
     (mut account, mut currency, mut search, mut watchgroup): PopUp,
     mut last_choose: Local<Counter>,
+    mut log_panel: Local<crate::widgets::LogPanel>,
 ) {
     // workaround bevyengine/bevy#9130
     if *last_choose != stock.0 {
         if !last_choose.is_empty() {
-            refresh_stock(stock.0.clone());
+            refresh_stock_debounced(stock.0.clone());
         }
         *last_choose = stock.0.clone();
     }
@@ -868,6 +989,21 @@ pub fn render_stock(
             &mut search,
             &mut watchgroup,
         );
+
+        // Render floating log panel if visible
+        let log_panel_visible =
+            crate::app::LOG_PANEL_VISIBLE.load(std::sync::atomic::Ordering::Relaxed);
+        if log_panel_visible {
+            log_panel.set_visible(true);
+            let panel_height = 15;
+            let log_rect = Rect {
+                x: rect.x,
+                y: rect.y + rect.height.saturating_sub(panel_height),
+                width: rect.width,
+                height: panel_height,
+            };
+            log_panel.render(frame, log_rect);
+        }
     });
 }
 
@@ -1012,17 +1148,14 @@ fn stock_detail(
     // Build detail columns - Column 1: Basic trading data
     let column0 = vec![
         ListItem::new(" "),
-        item(
-            t!("StockDetail.Trading Status"),
-            {
-                let session_label = stock.trade_session.label();
-                if !session_label.is_empty() {
-                    session_label
-                } else {
-                    stock.trade_status.label()
-                }
+        item(t!("StockDetail.Trading Status"), {
+            let session_label = stock.trade_session.label();
+            if !session_label.is_empty() {
+                session_label
+            } else {
+                stock.trade_status.label()
             }
-        ),
+        }),
         ListItem::new(" "),
         price_item(t!("StockDetail.Open"), stock.quote.open),
         item(
@@ -1104,6 +1237,19 @@ fn stock_detail(
 
     // Render three-column layout
     let column_height = column0.len().max(column1.len()).max(column2.len()) as u16;
+
+    // Split into upper and lower sections with a divider
+    // Use asymmetric margin: left 2 for spacing, right 1
+    let block_inner = rect.inner(&Margin {
+        vertical: 1,
+        horizontal: 0,
+    });
+    let inner_rect = Rect {
+        x: block_inner.x + 2,
+        y: block_inner.y,
+        width: block_inner.width.saturating_sub(3), // left: 2, right: 1
+        height: block_inner.height,
+    };
     let chunks = Layout::default()
         .constraints([
             Constraint::Length(column_height),
@@ -1111,7 +1257,12 @@ fn stock_detail(
             Constraint::Min(19),
         ])
         .direction(Direction::Vertical)
-        .split(rect);
+        .split(inner_rect);
+
+    // Render horizontal divider line
+    let divider_line = Paragraph::new("─".repeat(inner_rect.width as usize));
+    frame.render_widget(divider_line, chunks[1]);
+
     let columns_chunks = Layout::default()
         .constraints([
             Constraint::Ratio(2, 9),
@@ -1120,19 +1271,13 @@ fn stock_detail(
             Constraint::Ratio(3, 9),
         ])
         .direction(Direction::Horizontal)
-        .split(chunks[0].inner(&Margin {
-            vertical: 1,
-            horizontal: 2,
-        }));
+        .split(chunks[0]);
     frame.render_widget(List::new(column0), columns_chunks[0]);
     frame.render_widget(List::new(column1), columns_chunks[1]);
     frame.render_widget(List::new(column2), columns_chunks[2]);
 
-    // Draw market depth
-    let depth_rect = columns_chunks[3].inner(&Margin {
-        vertical: 1,
-        horizontal: 0,
-    });
+    // Draw market depth with left border
+    let depth_rect = columns_chunks[3];
     frame.render_widget(
         Block::default()
             .borders(Borders::LEFT)
@@ -1141,43 +1286,14 @@ fn stock_detail(
     );
 
     if !stock.depth.bids.is_empty() || !stock.depth.asks.is_empty() {
-        // Format single depth level
-        let format_depth_line = |depth: &crate::data::Depth,
-                                 counter: &Counter,
-                                 prev_close: Option<Decimal>|
-         -> Line<'static> {
-            // Position/Level
-            let position = Span::styled(
-                format!("{:>2}:", depth.position),
-                crate::ui::styles::label(),
-            );
-            // Price
-            let price_cmp = prev_close
-                .map(|pc| depth.price.cmp(&pc))
-                .unwrap_or(std::cmp::Ordering::Equal);
-            let price_style = styles::up(price_cmp);
-            let price = Span::styled(
-                format!("{:>10} ", depth.price.format_quote_by_counter(counter)),
-                price_style,
-            );
-            // Volume
-            let volume = crate::ui::text::align_right(
-                &crate::ui::text::unit(Decimal::from(depth.volume), 0),
-                6,
-            );
-            // Order count (only for HK stocks)
-            let order_count = if counter.is_hk() {
-                crate::ui::text::align_right(&format!("({})", depth.order_num.clamp(0, 999)), 5)
-            } else {
-                String::new()
-            };
-            Line::from(vec![position, price, volume.into(), order_count.into()])
+        // Calculate inner area: first remove border (left only), then add margins
+        let block_inner = Block::default().borders(Borders::LEFT).inner(depth_rect);
+        let depth_inner_rect = Rect {
+            x: block_inner.x + 1, // left margin
+            y: block_inner.y,
+            width: block_inner.width.saturating_sub(2), // left: 1, right: 1
+            height: block_inner.height,
         };
-
-        let rect = depth_rect.inner(&Margin {
-            vertical: 1,
-            horizontal: 2,
-        });
 
         // 计算买卖比例
         let total_bid_volume: i64 = stock.depth.bids.iter().map(|d| d.volume).sum();
@@ -1191,93 +1307,184 @@ fn stock_detail(
             (Decimal::ZERO, Decimal::ZERO)
         };
 
-        // 布局
-        let chunks = Layout::default()
-            .constraints([
-                Constraint::Length(1),
-                Constraint::Length(1),
-                Constraint::Min(10),
+        // Calculate volume column width (adaptive)
+        let fixed_width = if counter.is_hk() {
+            // position (4) + price (10) + order_count (6) + spacing (3) = 23
+            23
+        } else {
+            // position (4) + price (10) + spacing (2) = 16
+            16
+        };
+        let depth_volume_width = (depth_inner_rect.width as usize)
+            .saturating_sub(fixed_width)
+            .max(10);
+
+        // Format depth row for Table widget
+        let format_depth_row = |depth: &crate::data::Depth,
+                                counter: &Counter,
+                                prev_close: Option<Decimal>,
+                                volume_width: usize|
+         -> ratatui::widgets::Row<'static> {
+            use ratatui::widgets::{Cell, Row};
+
+            // Position (without colon)
+            let position = if depth.position < 10 {
+                format!("{}   ", depth.position)
+            } else {
+                format!("{}  ", depth.position)
+            };
+
+            // Price with color
+            let price_cmp = prev_close
+                .map(|pc| depth.price.cmp(&pc))
+                .unwrap_or(std::cmp::Ordering::Equal);
+            let price_style = styles::up(price_cmp);
+            let price_str = depth.price.format_quote_by_counter(counter).to_string();
+
+            // Volume (right-aligned to fixed width)
+            let volume_str = crate::ui::text::align_right(
+                &crate::ui::text::unit(Decimal::from(depth.volume), 0),
+                volume_width,
+            );
+
+            // Order count (only for HK stocks, right-aligned to 6 chars)
+            let order_count_str = if counter.is_hk() {
+                crate::ui::text::align_right(&format!("({})", depth.order_num.clamp(0, 999)), 6)
+            } else {
+                String::new()
+            };
+
+            Row::new(vec![
+                Cell::from(position).style(crate::ui::styles::gray()),
+                Cell::from(price_str).style(price_style),
+                Cell::from(volume_str),
+                Cell::from(order_count_str),
             ])
+        };
+
+        // 卖盘（asks）- 顶部，倒序显示（价格从低到高），最多显示5档
+        let asks_rows: Vec<_> = stock
+            .depth
+            .asks
+            .iter()
+            .take(5)
+            .map(|d| format_depth_row(d, counter, stock.quote.prev_close, depth_volume_width))
+            .collect();
+        let asks_rows: Vec<_> = asks_rows.into_iter().rev().collect();
+
+        // 买盘（bids）- 底部，正序显示（价格从高到低），最多显示5档
+        let bids_rows: Vec<_> = stock
+            .depth
+            .bids
+            .iter()
+            .take(5)
+            .map(|d| format_depth_row(d, counter, stock.quote.prev_close, depth_volume_width))
+            .collect();
+
+        // 根据实际档位数量计算高度
+        let asks_count = asks_rows.len() as u16;
+        let bids_count = bids_rows.len() as u16;
+        let total_depth_height = asks_count + 1 + bids_count; // asks + bar + bids
+        let available_height = depth_inner_rect.height;
+        let top_padding = available_height.saturating_sub(total_depth_height) / 2;
+
+        // 垂直布局：卖盘 -> 比例条 -> 买盘（动态高度，垂直居中）
+        let depth_layout = Layout::default()
             .direction(Direction::Vertical)
-            .split(rect);
+            .constraints([
+                Constraint::Length(top_padding), // 上方空白
+                Constraint::Length(asks_count),  // asks（实际行数）
+                Constraint::Length(1),           // bar（1行）
+                Constraint::Length(bids_count),  // bids（实际行数）
+                Constraint::Min(0),              // 下方空白
+            ])
+            .split(depth_inner_rect);
 
-        // Title
-        let bidding_title = format!(
-            " {}: {:.1}%",
-            t!("StockDepth.Bid"),
-            bid_ratio * Decimal::from(100)
-        );
-        let asking_title = format!(
-            " {}: {:.1}%",
-            t!("StockDepth.Ask"),
-            ask_ratio * Decimal::from(100)
-        );
+        // 卖盘 Table（无边框，列对齐）
+        use ratatui::widgets::Table;
+        let table_widths = if counter.is_hk() {
+            vec![
+                Constraint::Length(4),                         // 位置号
+                Constraint::Length(10),                        // 价格
+                Constraint::Length(depth_volume_width as u16), // 成交量（固定宽度，右对齐）
+                Constraint::Length(6),                         // 订单数（右对齐）
+            ]
+        } else {
+            vec![
+                Constraint::Length(4),                         // 位置号
+                Constraint::Length(10),                        // 价格
+                Constraint::Length(depth_volume_width as u16), // 成交量（固定宽度，右对齐）
+                Constraint::Length(0),                         // 无订单数
+            ]
+        };
 
-        let title_chunks = Layout::default()
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .direction(Direction::Horizontal)
-            .split(chunks[0]);
-        frame.render_widget(Paragraph::new(bidding_title), title_chunks[0]);
-        frame.render_widget(Paragraph::new(asking_title), title_chunks[1]);
+        let asks_table = Table::new(asks_rows)
+            .widths(&table_widths)
+            .column_spacing(1);
 
-        // 比例条
-        const BLOCK: &str = "▂";
-        let bar_width = rect.width as usize;
-        let bid_blocks = ((Decimal::from(bar_width) * bid_ratio)
+        frame.render_widget(asks_table, depth_layout[1]);
+
+        // 比例条：使用 Paragraph 实现双色背景（左绿右红）
+        let (bull_style, bear_style) = styles::bull_bear();
+        let green_color = bull_style.fg.unwrap_or(Color::Green);
+        let red_color = bear_style.fg.unwrap_or(Color::Red);
+
+        // 计算按比例分配的宽度
+        let available_width = depth_layout[2].width as usize;
+        let bid_width = ((Decimal::from(available_width) * bid_ratio)
             .to_string()
             .parse::<f64>()
             .unwrap_or(0.0)
             .round() as usize)
-            .min(bar_width);
-        let ask_blocks = bar_width.saturating_sub(bid_blocks);
+            .min(available_width);
+        let ask_width = available_width.saturating_sub(bid_width);
 
-        let (bull_style, bear_style) = styles::bull_bear();
-        let ratio_bar = Line::from(vec![
-            Span::styled(BLOCK.repeat(bid_blocks), bull_style),
-            Span::styled(BLOCK.repeat(ask_blocks), bear_style),
+        // 构建标签：Bid 在左，Ask 在右
+        let bid_label = format!(
+            " {}: {:.1}%",
+            t!("StockDepth.Bid"),
+            bid_ratio * Decimal::from(100)
+        );
+        let ask_label = format!(
+            "{}: {:.1}% ",
+            t!("StockDepth.Ask"),
+            ask_ratio * Decimal::from(100)
+        );
+
+        let bid_label_len = bid_label.chars().count();
+        let ask_label_len = ask_label.chars().count();
+
+        // Bid 部分：绿色背景，标签在左
+        let bid_padding = bid_width.saturating_sub(bid_label_len);
+        let bid_content = format!("{}{}", bid_label, " ".repeat(bid_padding));
+
+        // Ask 部分：红色背景，标签在右
+        let ask_padding = ask_width.saturating_sub(ask_label_len);
+        let ask_content = format!("{}{}", " ".repeat(ask_padding), ask_label);
+
+        let ratio_line = Line::from(vec![
+            Span::styled(
+                bid_content,
+                Style::default().fg(Color::White).bg(green_color),
+            ),
+            Span::styled(ask_content, Style::default().fg(Color::White).bg(red_color)),
         ]);
-        frame.render_widget(Paragraph::new(ratio_bar), chunks[1]);
 
-        // 深度列表：卖盘在上（倒序），买盘在下（正序）
-        let mut depth_lines: Vec<Line> = Vec::new();
+        frame.render_widget(Paragraph::new(ratio_line), depth_layout[2]);
 
-        // 卖盘（asks）- 倒序显示（从低到高）
-        let asks: Vec<Line> = stock
-            .depth
-            .asks
-            .iter()
-            .rev()
-            .take(10)
-            .map(|d| format_depth_line(d, counter, stock.quote.prev_close))
-            .collect();
-        depth_lines.extend(asks.into_iter().rev());
+        // 买盘 Table（无边框，列对齐）
+        let bids_table = Table::new(bids_rows)
+            .widths(&table_widths)
+            .column_spacing(1);
 
-        // 分隔线（可选）
-        if !stock.depth.asks.is_empty() && !stock.depth.bids.is_empty() {
-            depth_lines.push(Line::from("―".repeat(rect.width as usize)));
-        }
-
-        // 买盘（bids）- 正序显示（从高到低）
-        let bids: Vec<Line> = stock
-            .depth
-            .bids
-            .iter()
-            .take(10)
-            .map(|d| format_depth_line(d, counter, stock.quote.prev_close))
-            .collect();
-        depth_lines.extend(bids);
-
-        frame.render_widget(Paragraph::new(Text::from(depth_lines)), chunks[2]);
+        frame.render_widget(bids_table, depth_layout[3]);
     }
 
     // 渲染 K线图区域
     let chart_chunks = Layout::default()
         .constraints([Constraint::Ratio(2, 3), Constraint::Ratio(1, 3)])
         .direction(Direction::Horizontal)
-        .split(chunks[2].inner(&Margin {
-            vertical: 1,
-            horizontal: 0,
-        }));
+        .split(chunks[2]);
 
     // Draw chart
     {
@@ -1409,10 +1616,13 @@ fn stock_detail(
             trades_area,
         );
 
-        let inner_area = trades_area.inner(&Margin {
-            vertical: 1,
-            horizontal: 2,
-        });
+        // Use asymmetric margin: left margin for border, minimal right margin
+        let inner_area = Rect {
+            x: trades_area.x + 2,
+            y: trades_area.y + 1,
+            width: trades_area.width.saturating_sub(3), // left: 2, right: 1
+            height: trades_area.height.saturating_sub(2),
+        };
 
         if stock.trades.is_empty() {
             // Show loading hint
@@ -1421,6 +1631,13 @@ fn stock_detail(
                 inner_area,
             );
         } else {
+            // Calculate available width for volume column (adaptive)
+            // Fixed columns: time (9) + space (1) + direction (1) + space (1) + price (8) + space (1) = 21
+            let fixed_width = 21;
+            let volume_width = (inner_area.width as usize)
+                .saturating_sub(fixed_width)
+                .max(8);
+
             // Calculate max volume for progress bar
             let max_volume = stock
                 .trades
@@ -1429,8 +1646,10 @@ fn stock_detail(
                 .max()
                 .unwrap_or(1);
 
-            // Format trade records
-            let trade_lines: Vec<Line> = stock
+            use ratatui::widgets::{Cell, Row, Table};
+
+            // Format trade records as table rows
+            let trade_rows: Vec<Row> = stock
                 .trades
                 .iter()
                 .take(inner_area.height as usize)
@@ -1460,21 +1679,31 @@ fn stock_detail(
                         }
                     };
 
-                    // Calculate progress percentage (0.0 to 1.0)
+                    // Calculate progress percentage (0.0 to 1.0) using power scale
+                    // This prevents huge differences when some trades have very large volumes
+                    // Power of 0.5 (sqrt) compresses less than log10, showing more difference
+                    // You can adjust the power value: 0.3 = more compression, 0.7 = less compression
                     let volume_ratio = if max_volume > 0 {
-                        trade.volume.abs() as f64 / max_volume as f64
+                        let current_volume = trade.volume.abs() as f64;
+                        let max_vol_f64 = max_volume as f64;
+
+                        // Use power scale (0.5 = square root)
+                        let power = 0.5;
+                        let current_pow = current_volume.powf(power);
+                        let max_pow = max_vol_f64.powf(power);
+
+                        (current_pow / max_pow).max(0.0).min(1.0)
                     } else {
                         0.0
                     };
 
-                    // Create volume text with progress bar background
+                    // Create volume text with progress bar background (adaptive width)
                     let volume_text = crate::ui::text::align_right(
                         &crate::ui::text::unit(Decimal::from(trade.volume), 0),
-                        8,
+                        volume_width,
                     );
 
-                    // Calculate background width (in characters)
-                    let volume_width: usize = 8; // Width of volume column
+                    // Calculate background width (in characters, using adaptive width)
                     let bg_width = (volume_width as f64 * volume_ratio).ceil() as usize;
                     let fg_width = volume_width.saturating_sub(bg_width);
 
@@ -1486,31 +1715,40 @@ fn stock_detail(
                     let bg_part: String =
                         volume_chars.iter().skip(fg_width).take(bg_width).collect();
 
-                    // Create volume span with background color (from right to left)
-                    let mut volume_spans = vec![];
-                    if !fg_part.is_empty() {
-                        volume_spans.push(Span::styled(fg_part, Style::default()));
-                    }
-                    if !bg_part.is_empty() {
-                        volume_spans.push(Span::styled(bg_part, Style::default().bg(bg_color)));
-                    }
+                    // Create volume cell with progress bar effect
+                    let volume_cell = if !fg_part.is_empty() && !bg_part.is_empty() {
+                        Cell::from(Line::from(vec![
+                            Span::styled(fg_part, Style::default()),
+                            Span::styled(bg_part, Style::default().bg(bg_color)),
+                        ]))
+                    } else if !bg_part.is_empty() {
+                        Cell::from(Span::styled(bg_part, Style::default().bg(bg_color)))
+                    } else {
+                        Cell::from(fg_part)
+                    };
 
-                    // Combine all spans
-                    let mut line_spans = vec![
-                        Span::styled(format!("{} ", time_str), crate::ui::styles::label()),
-                        Span::styled(direction_symbol, price_style),
-                        Span::styled(
-                            format!(" {:>8} ", trade.price.format_quote_by_counter(counter)),
-                            price_style,
-                        ),
-                    ];
-                    line_spans.extend(volume_spans);
+                    // Format price with fixed width
+                    let price_str = format!("{:>8}", trade.price.format_quote_by_counter(counter));
 
-                    Line::from(line_spans)
+                    Row::new(vec![
+                        Cell::from(time_str).style(crate::ui::styles::label()),
+                        Cell::from(direction_symbol).style(price_style),
+                        Cell::from(price_str).style(price_style),
+                        volume_cell,
+                    ])
                 })
                 .collect();
 
-            frame.render_widget(Paragraph::new(Text::from(trade_lines)), inner_area);
+            // Create table with borderless style
+            let widths = [
+                Constraint::Length(9),                   // time
+                Constraint::Length(1),                   // direction
+                Constraint::Length(8),                   // price
+                Constraint::Length(volume_width as u16), // volume (fixed to match formatted width)
+            ];
+            let table = Table::new(trade_rows).widths(&widths).column_spacing(1);
+
+            frame.render_widget(table, inner_area);
         }
     }
 }
@@ -1521,6 +1759,7 @@ pub fn render_watchlist(
     command: Res<Command>,
     (state, indexes, ws): NavFooter,
     (mut account, mut currency, mut search, mut watchgroup): PopUp,
+    mut log_panel: Local<crate::widgets::LogPanel>,
 ) {
     for event in &mut events {
         match event {
@@ -1597,6 +1836,21 @@ pub fn render_watchlist(
             &mut search,
             &mut watchgroup,
         );
+
+        // Render floating log panel if visible
+        let log_panel_visible =
+            crate::app::LOG_PANEL_VISIBLE.load(std::sync::atomic::Ordering::Relaxed);
+        if log_panel_visible {
+            log_panel.set_visible(true);
+            let panel_height = 15;
+            let log_rect = Rect {
+                x: rect.x,
+                y: rect.y + rect.height.saturating_sub(panel_height),
+                width: rect.width,
+                height: panel_height,
+            };
+            log_panel.render(frame, log_rect);
+        }
     });
 }
 
@@ -1608,13 +1862,13 @@ fn watch(frame: &mut Frame, rect: Rect, full_mode: bool) {
             watchlist.counters().to_vec(),
             watchlist
                 .group()
-                .map(|g| g.name.clone())
-                .unwrap_or_else(|| "--".to_string()),
+                .map(|g| format!("{} ", g.name))
+                .unwrap_or_else(|| "".to_string()),
         )
     }; // Lock released here
 
     let background = Block::default().borders(Borders::ALL).title(format!(
-        " {} ─── {} [g] ",
+        " {} ─── {}[g] ",
         t!("Watchlist"),
         group_name
     ));
@@ -1623,6 +1877,17 @@ fn watch(frame: &mut Frame, rect: Rect, full_mode: bool) {
     // Lock WATCHLIST_TABLE once for both reading and rendering
     let mut table_state = WATCHLIST_TABLE.lock().expect("poison");
     let selected = table_state.selected();
+    // Use asymmetric margin: left 2 for spacing, right 1
+    let block_inner = rect.inner(&Margin {
+        vertical: 2,
+        horizontal: 0,
+    });
+    let table_area = Rect {
+        x: block_inner.x + 2,
+        y: block_inner.y,
+        width: block_inner.width.saturating_sub(3), // left: 2, right: 1
+        height: block_inner.height,
+    };
     frame.render_stateful_widget(
         watch_group_table(
             &counters,
@@ -1630,10 +1895,7 @@ fn watch(frame: &mut Frame, rect: Rect, full_mode: bool) {
             &mut LAST_DONE.lock().expect("poison"),
             full_mode,
         ),
-        rect.inner(&Margin {
-            vertical: 2,
-            horizontal: 2,
-        }),
+        table_area,
         &mut *table_state,
     );
 }
@@ -1681,7 +1943,7 @@ fn watch_group_table(
             ));
             cells.push(t!("watchlist.STATUS"));
         };
-        Row::new(cells).style(styles::header()).bottom_margin(1)
+        Row::new(cells).style(styles::header())
     };
 
     let stocks = STOCKS.mget(counters);
@@ -1721,16 +1983,17 @@ fn watch_group_table(
             let style = styles::up(increase.sign());
 
             // Determine status to display:
-            // 1. If stock status is abnormal (Halted/Suspended/etc), show trade status
-            // 2. If not in normal trading session (Pre/Post/Night), show session status
-            // 3. Otherwise show "Trading" for normal trading session with normal status
+            // 1. If it's an index (code starts with "IN"), don't show trading status
+            // 2. If stock status is abnormal (Halted/Suspended/etc), show trade status
+            // 3. If not in normal trading session (Pre/Post/Night), show session status
+            // 4. Otherwise show "Trading" for normal trading session with normal status
             let get_status_label = || {
-                if !stock.trade_status.is_trading() {
-                    // Abnormal status (Halted, Delisted, etc.) - highest priority
-                    stock.trade_status.label()
-                } else if !stock.trade_session.is_normal_trading() {
+                if !stock.trade_session.is_normal_trading() {
                     // Non-Intraday session (Pre, Post, Overnight)
                     stock.trade_session.label()
+                } else if !stock.trade_status.is_trading() {
+                    // Abnormal status (Halted, Delisted, etc.) - highest priority
+                    stock.trade_status.label()
                 } else {
                     // Normal trading: Intraday + Normal status
                     stock.trade_session.label() // Show "Trading" for Intraday
@@ -1738,7 +2001,7 @@ fn watch_group_table(
             };
 
             let status_label = get_status_label();
-            // Format: +5.44/5% (no sign for percentage, omit decimal if .00)
+            // Format: +5% (only percentage with sign)
             let change_sign = if increase.is_sign_positive() { "+" } else { "" };
             let percent_str = if increase_percent.fract().abs() == Decimal::ZERO {
                 // Integer percentage: omit decimal point
@@ -1746,12 +2009,7 @@ fn watch_group_table(
             } else {
                 format!("{}", increase_percent.abs())
             };
-            let increase_percent_str = format!(
-                "{}{}/{}%",
-                change_sign,
-                increase.round_dp(2),
-                percent_str
-            );
+            let increase_percent_str = format!("{}{}%", change_sign, percent_str);
             let mut cells = Vec::with_capacity(if full_mode { 6 } else { 4 });
             cells.push(Cell::from(Line::from(vec![
                 Span::styled(
@@ -1820,6 +2078,7 @@ pub fn render_portfolio(
     (state, indexes, ws): NavFooter,
     (mut account, mut currency, mut search, mut watchgroup): PopUp,
     _table_state: Local<TableState>,
+    mut log_panel: Local<crate::widgets::LogPanel>,
 ) {
     _ = terminal.draw(|frame| {
         let rect = frame.size();
@@ -1876,16 +2135,24 @@ pub fn render_portfolio(
             .split(content_rect);
 
         {
-            let overview_block = Block::default()
-                .borders(Borders::ALL)
-                .title(format!(" {} ", t!("Portfolio.Title")));
+            let overview_block = Block::default().borders(Borders::ALL).title(format!(
+                " {} ({}) ",
+                t!("Portfolio.Title"),
+                overview.currency
+            ));
 
             // Calculate styles for P/L
             let pl_style = styles::up(overview.total_pl.cmp(&Decimal::ZERO));
             let today_pl_style = styles::up(overview.total_today_pl.cmp(&Decimal::ZERO));
 
-            // Create three-column layout
-            let inner_area = overview_block.inner(chunks[0]);
+            // Create three-column layout with horizontal margin (1 char each side)
+            let block_inner = overview_block.inner(chunks[0]);
+            let inner_area = Rect {
+                x: block_inner.x + 1,
+                y: block_inner.y,
+                width: block_inner.width.saturating_sub(2),
+                height: block_inner.height,
+            };
             frame.render_widget(overview_block, chunks[0]);
 
             let inner_chunks = Layout::default()
@@ -1904,7 +2171,10 @@ pub fn render_portfolio(
                         format!("{}: ", t!("Portfolio.Total Asset")),
                         styles::label(),
                     ),
-                    Span::styled(format!("{:.2}", overview.total_asset), styles::text()),
+                    Span::styled(
+                        format!("{:.2} {}", overview.total_asset, overview.currency),
+                        styles::text(),
+                    ),
                 ])),
                 ListItem::new(Line::from(vec![
                     Span::styled(format!("{}: ", t!("Portfolio.Market Cap")), styles::label()),
@@ -2020,72 +2290,87 @@ pub fn render_portfolio(
                     t!("Holding.P/L"),
                     t!("Holding.P/L%"),
                 ])
-                .style(styles::header())
-                .bottom_margin(1);
+                .style(styles::header());
 
-                let rows: Vec<Row> = holdings
-                    .iter()
-                    .map(|holding| {
-                        // Parse Counter from symbol string
-                        let counter = Counter::from(holding.symbol.as_str());
+                let rows: Vec<Row> =
+                    holdings
+                        .iter()
+                        .map(|holding| {
+                            // Parse Counter from symbol string
+                            let counter = Counter::from(holding.symbol.as_str());
 
-                        // Calculate P/L
-                        let (profit_loss, profit_loss_percent) =
-                            if let Some(cost_price) = holding.cost_price {
-                                let pl = holding.market_value - (cost_price * holding.quantity);
-                                let pl_pct = if cost_price > Decimal::ZERO {
-                                    (holding.market_price - cost_price) / cost_price
-                                        * Decimal::from(100)
+                            // Calculate P/L
+                            let (profit_loss, profit_loss_percent) =
+                                if let Some(cost_price) = holding.cost_price {
+                                    let pl = holding.market_value - (cost_price * holding.quantity);
+                                    let pl_pct = if cost_price > Decimal::ZERO {
+                                        (holding.market_price - cost_price) / cost_price
+                                            * Decimal::from(100)
+                                    } else {
+                                        Decimal::ZERO
+                                    };
+                                    (pl, pl_pct)
                                 } else {
-                                    Decimal::ZERO
+                                    (Decimal::ZERO, Decimal::ZERO)
                                 };
-                                (pl, pl_pct)
-                            } else {
-                                (Decimal::ZERO, Decimal::ZERO)
+
+                            let pl_style = styles::up(profit_loss.cmp(&Decimal::ZERO));
+
+                            // Get currency string
+                            let currency_str = match holding.currency {
+                                crate::data::Currency::HKD => "HKD",
+                                crate::data::Currency::USD => "USD",
+                                crate::data::Currency::CNY => "CNY",
+                                crate::data::Currency::SGD => "SGD",
                             };
 
-                        let pl_style = styles::up(profit_loss.cmp(&Decimal::ZERO));
+                            Row::new(vec![
+                                Cell::from(Line::from(vec![
+                                    Span::styled(
+                                        counter.market().to_string(),
+                                        styles::market(counter.region()),
+                                    ),
+                                    Span::raw(" "),
+                                    Span::raw(counter.code().to_string()),
+                                ])),
+                                Cell::from(holding.name.clone()),
+                                Cell::from(format!("{:.0}", holding.quantity)),
+                                Cell::from(format!("{:.2} {}", holding.market_price, currency_str)),
+                                Cell::from(holding.cost_price.map_or("-".to_string(), |p| {
+                                    format!("{:.2} {}", p, currency_str)
+                                })),
+                                Cell::from(format!("{:.2} {}", holding.market_value, currency_str)),
+                                Cell::from(format!("{:+.2}", profit_loss)).style(pl_style),
+                                Cell::from(format!("{:+.2}%", profit_loss_percent)).style(pl_style),
+                            ])
+                        })
+                        .collect();
 
-                        Row::new(vec![
-                            Cell::from(Line::from(vec![
-                                Span::styled(
-                                    counter.market().to_string(),
-                                    styles::market(counter.region()),
-                                ),
-                                Span::raw(" "),
-                                Span::raw(counter.code().to_string()),
-                            ])),
-                            Cell::from(holding.name.clone()),
-                            Cell::from(format!("{:.0}", holding.quantity)),
-                            Cell::from(format!("{:.2}", holding.market_price)),
-                            Cell::from(
-                                holding
-                                    .cost_price
-                                    .map_or("-".to_string(), |p| format!("{:.2}", p)),
-                            ),
-                            Cell::from(format!("{:.2}", holding.market_value)),
-                            Cell::from(format!("{:+.2}", profit_loss)).style(pl_style),
-                            Cell::from(format!("{:+.2}%", profit_loss_percent)).style(pl_style),
-                        ])
-                    })
-                    .collect();
+                // Render block and get inner area with horizontal margin
+                frame.render_widget(holdings_block, chunks[1]);
+                let block_inner = Block::default().borders(Borders::ALL).inner(chunks[1]);
+                let table_area = Rect {
+                    x: block_inner.x + 1,
+                    y: block_inner.y,
+                    width: block_inner.width.saturating_sub(2),
+                    height: block_inner.height,
+                };
 
                 let table = Table::new(rows)
                     .header(header)
-                    .block(holdings_block)
                     .widths(&[
-                        Constraint::Length(12), // 代码
-                        Constraint::Min(15),    // 名称
-                        Constraint::Length(10), // 数量
-                        Constraint::Length(10), // 现价
-                        Constraint::Length(10), // 成本
-                        Constraint::Length(12), // 市值
-                        Constraint::Length(12), // 盈亏
-                        Constraint::Length(10), // 盈亏%
+                        Constraint::Percentage(10), // Code
+                        Constraint::Percentage(10), // Name
+                        Constraint::Percentage(8),  // Quantity
+                        Constraint::Percentage(14), // Price (with currency)
+                        Constraint::Percentage(14), // Cost Price (with currency)
+                        Constraint::Percentage(16), // Market Value (with currency)
+                        Constraint::Percentage(10), // P/L
+                        Constraint::Percentage(10), // P/L%
                     ])
                     .column_spacing(1);
 
-                frame.render_widget(table, chunks[1]);
+                frame.render_widget(table, table_area);
             }
         }
 
@@ -2098,5 +2383,20 @@ pub fn render_portfolio(
             &mut search,
             &mut watchgroup,
         );
+
+        // Render floating log panel if visible
+        let log_panel_visible =
+            crate::app::LOG_PANEL_VISIBLE.load(std::sync::atomic::Ordering::Relaxed);
+        if log_panel_visible {
+            log_panel.set_visible(true);
+            let panel_height = 15;
+            let log_rect = Rect {
+                x: rect.x,
+                y: rect.y + rect.height.saturating_sub(panel_height),
+                width: rect.width,
+                height: panel_height,
+            };
+            log_panel.render(frame, log_rect);
+        }
     });
 }

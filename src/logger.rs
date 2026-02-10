@@ -1,7 +1,7 @@
 use std::any::Any;
 use std::path::PathBuf;
 
-fn default_log_dir() -> PathBuf {
+pub fn default_log_dir() -> PathBuf {
     #[cfg(target_os = "macos")]
     {
         let mut path = dirs::home_dir().expect("Unable to get user home directory");
