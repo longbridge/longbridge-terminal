@@ -53,6 +53,7 @@ fn switch_account(
     let paragraph = Paragraph::new(input.value()).block(
         Block::default()
             .borders(Borders::ALL)
+            .border_style(styles::border())
             .title(t!("SwitchAccount.title")),
     );
     frame.render_widget(paragraph, chunks[0]);
@@ -82,7 +83,7 @@ fn switch_account(
     let column_constraints = column_widths.map(|w| Constraint::Length(u16::try_from(w).unwrap()));
 
     let table = Table::new(rows)
-        .block(Block::default().borders(Borders::all()))
+        .block(Block::default().borders(Borders::all()).border_style(styles::border()))
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
         .widths(&column_constraints)
         .column_spacing(2);
@@ -110,6 +111,7 @@ fn switch_currency(
     let paragraph = Paragraph::new(input.value()).block(
         Block::default()
             .borders(Borders::ALL)
+            .border_style(styles::border())
             .title(t!("SwitchCurrency.title")),
     );
     frame.render_widget(paragraph, chunks[0]);
@@ -136,7 +138,7 @@ fn switch_currency(
     let column_constraints = column_widths.map(|w| Constraint::Length(u16::try_from(w).unwrap()));
 
     let table = Table::new(rows)
-        .block(Block::default().borders(Borders::all()))
+        .block(Block::default().borders(Borders::all()).border_style(styles::border()))
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
         .widths(&column_constraints)
         .column_spacing(2);
@@ -164,6 +166,7 @@ fn switch_watchlist(
     let paragraph = Paragraph::new(input.value()).block(
         Block::default()
             .borders(Borders::ALL)
+            .border_style(styles::border())
             .title(t!("SwitchWatchlist.title")),
     );
     frame.render_widget(paragraph, chunks[0]);
@@ -190,7 +193,7 @@ fn switch_watchlist(
     let column_constraints = column_widths.map(|w| Constraint::Length(u16::try_from(w).unwrap()));
 
     let table = Table::new(rows)
-        .block(Block::default().borders(Borders::all()))
+        .block(Block::default().borders(Borders::all()).border_style(styles::border()))
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
         .widths(&column_constraints)
         .column_spacing(2);
@@ -214,6 +217,7 @@ fn searching(frame: &mut Frame, rect: Rect, search: &mut Search<crate::api::sear
     let paragraph = Paragraph::new(input.value()).block(
         Block::default()
             .borders(Borders::ALL)
+            .border_style(styles::border())
             .title(t!("SearchStock.title")),
     );
     frame.render_widget(paragraph, chunks[0]);
@@ -245,7 +249,7 @@ fn searching(frame: &mut Frame, rect: Rect, search: &mut Search<crate::api::sear
     let column_constraints = column_widths.map(|w| Constraint::Length(u16::try_from(w).unwrap()));
 
     let table = Table::new(rows)
-        .block(Block::default().borders(Borders::all()))
+        .block(Block::default().borders(Borders::all()).border_style(styles::border()))
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
         .widths(&column_constraints)
         .column_spacing(2);

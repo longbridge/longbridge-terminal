@@ -12,7 +12,8 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{
-        Block, BorderType, Borders, Cell, List, ListItem, Paragraph, Row, Table, TableState, Tabs,
+        Block, BorderType, Borders, Cell, List, ListItem, Paragraph, Row, Scrollbar,
+        ScrollbarOrientation, ScrollbarState, Table, TableState, Tabs,
     },
     Frame,
 };
@@ -1065,29 +1066,21 @@ fn stock_detail(
     };
 
     // draw title
-    let mut titles = vec![Span::raw(format!(
-        " {} ({}.{})",
-        stock.display_name(),
-        counter.code(),
-        counter.market(),
-    ))];
+    let mut titles = vec![Span::styled(
+        format!(
+            " {} ({}.{})",
+            stock.display_name(),
+            counter.code(),
+            counter.market(),
+        ),
+        styles::primary(),
+    )];
     titles.extend(price_spans(&stock.quote, counter));
-    // Show session or status label if not in normal trading
-    let session_label = stock.trade_session.label();
-    let status_label = if !session_label.is_empty() {
-        session_label
-    } else if !stock.trade_status.is_trading() {
-        stock.trade_status.label()
-    } else {
-        String::new()
-    };
-    if !status_label.is_empty() {
-        titles.push(Span::raw(format!(" [{}]", status_label)));
-    }
 
     let detail_container = Block::default()
         .title(Line::from(titles))
-        .borders(Borders::ALL);
+        .borders(Borders::ALL)
+        .border_style(styles::border());
 
     // draw border
     frame.render_widget(detail_container, rect);
@@ -1259,9 +1252,11 @@ fn stock_detail(
         .direction(Direction::Vertical)
         .split(inner_rect);
 
-    // Render horizontal divider line
-    let divider_line = Paragraph::new("─".repeat(inner_rect.width as usize));
-    frame.render_widget(divider_line, chunks[1]);
+    // Render horizontal divider line using Block's top border
+    let divider = Block::default()
+        .borders(Borders::TOP)
+        .border_style(styles::border());
+    frame.render_widget(divider, chunks[1]);
 
     let columns_chunks = Layout::default()
         .constraints([
@@ -1281,7 +1276,8 @@ fn stock_detail(
     frame.render_widget(
         Block::default()
             .borders(Borders::LEFT)
-            .border_type(BorderType::Plain),
+            .border_type(BorderType::Plain)
+            .border_style(styles::border()),
         depth_rect,
     );
 
@@ -1537,7 +1533,7 @@ fn stock_detail(
         // 如果没有数据，显示提示信息
         if samples.is_empty() {
             frame.render_widget(
-                Paragraph::new("加载 K 线数据中...").alignment(Alignment::Center),
+                Paragraph::new("Loading...").alignment(Alignment::Center),
                 area,
             );
         } else {
@@ -1576,31 +1572,20 @@ fn stock_detail(
 
             if candles.is_empty() {
                 frame.render_widget(
-                    Paragraph::new("K线数据格式错误").alignment(Alignment::Center),
+                    Paragraph::new("K 线数据格式错误").alignment(Alignment::Center),
                     area,
                 );
             } else {
-                // 调整图表大小，减去边框和信息行的高度
-                let chart_height = area.height.saturating_sub(1);
-                let mut chart = cli_candlestick_chart::Chart::new_with_size(
-                    candles,
-                    (area.width, chart_height),
-                );
+                // Adjust chart size to fit within area
+                let mut chart =
+                    cli_candlestick_chart::Chart::new_with_size(candles, (area.width, area.height));
                 let (bull, bear) = styles::bull_bear_color();
                 chart.set_bull_color(bull);
                 chart.set_vol_bull_color(bull);
                 chart.set_bear_color(bear);
                 chart.set_vol_bear_color(bear);
-                chart.set_name(counter.code().to_string());
-                // 渲染图表，留出底部空间给信息显示
-                frame.render_widget(
-                    crate::widgets::Ansi(&chart.render()),
-                    Rect {
-                        y: area.y + 1,
-                        height: area.height.saturating_sub(1),
-                        ..area
-                    },
-                );
+                // Don't set name to avoid "CCL |" prefix in the info line
+                frame.render_widget(crate::widgets::Ansi(&chart.render()), area);
             }
         }
     }
@@ -1612,6 +1597,7 @@ fn stock_detail(
             Block::default()
                 .borders(Borders::LEFT)
                 .border_type(BorderType::Plain)
+                .border_style(styles::border())
                 .title(format!(" {} ", t!("StockQuoteTrades"))),
             trades_area,
         );
@@ -1627,7 +1613,7 @@ fn stock_detail(
         if stock.trades.is_empty() {
             // Show loading hint
             frame.render_widget(
-                Paragraph::new("加载成交记录中...").alignment(Alignment::Center),
+                Paragraph::new("Loading...").alignment(Alignment::Center),
                 inner_area,
             );
         } else {
@@ -1867,11 +1853,10 @@ fn watch(frame: &mut Frame, rect: Rect, full_mode: bool) {
         )
     }; // Lock released here
 
-    let background = Block::default().borders(Borders::ALL).title(format!(
-        " {} ─── {}[g] ",
-        t!("Watchlist"),
-        group_name
-    ));
+    let background = Block::default()
+        .borders(Borders::ALL)
+        .border_style(styles::border())
+        .title(format!(" {} ─── {}[g] ", t!("Watchlist"), group_name));
     frame.render_widget(background, rect);
 
     // Lock WATCHLIST_TABLE once for both reading and rendering
@@ -1898,10 +1883,28 @@ fn watch(frame: &mut Frame, rect: Rect, full_mode: bool) {
         table_area,
         &mut *table_state,
     );
+
+    // Render scrollbar
+    let mut scrollbar_state = ScrollbarState::new(counters.len()).position(selected.unwrap_or(0));
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(None)
+        .end_symbol(None);
+    let scrollbar_area = Rect {
+        x: block_inner.x + block_inner.width - 1,
+        y: block_inner.y,
+        width: 1,
+        height: block_inner.height,
+    };
+    frame.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
 }
 
 fn banner(frame: &mut Frame, rect: Rect) {
-    frame.render_widget(Block::default().borders(Borders::ALL), rect);
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(styles::border()),
+        rect,
+    );
 
     frame.render_widget(
         crate::ui::assets::banner(crate::ui::styles::text()),
@@ -1929,21 +1932,27 @@ fn watch_group_table(
 
     let header = {
         let mut cells = Vec::with_capacity(if full_mode { 6 } else { 4 });
-        cells.push(t!("watchlist.CODE"));
-        cells.push(t!("watchlist.NAME"));
-        cells.push(t!("watchlist.PRICE"));
-        cells.push(crate::ui::text::align_right(
-            &t!("watchlist.CHG"),
-            COLUMN_WIDTHS[3],
-        ));
+        cells.push(Cell::from(t!("watchlist.CODE")).style(styles::header()));
+        cells.push(Cell::from(t!("watchlist.NAME")).style(styles::header()));
+        cells.push(Cell::from(t!("watchlist.PRICE")).style(styles::header()));
+        cells.push(
+            Cell::from(crate::ui::text::align_right(
+                &t!("watchlist.CHG"),
+                COLUMN_WIDTHS[3],
+            ))
+            .style(styles::header()),
+        );
         if full_mode {
-            cells.push(crate::ui::text::align_right(
-                &t!("watchlist.VOL"),
-                COLUMN_WIDTHS[4],
-            ));
-            cells.push(t!("watchlist.STATUS"));
+            cells.push(
+                Cell::from(crate::ui::text::align_right(
+                    &t!("watchlist.VOL"),
+                    COLUMN_WIDTHS[4],
+                ))
+                .style(styles::header()),
+            );
+            cells.push(Cell::from(t!("watchlist.STATUS")).style(styles::header()));
         };
-        Row::new(cells).style(styles::header())
+        Row::new(cells)
     };
 
     let stocks = STOCKS.mget(counters);
@@ -2110,7 +2119,11 @@ pub fn render_portfolio(
                 frame.render_widget(
                     Paragraph::new("Loading portfolio data...")
                         .alignment(Alignment::Center)
-                        .block(Block::default().borders(Borders::ALL)),
+                        .block(
+                            Block::default()
+                                .borders(Borders::ALL)
+                                .border_style(styles::border()),
+                        ),
                     content_rect,
                 );
                 drop(portfolio_view_lock);
@@ -2135,11 +2148,14 @@ pub fn render_portfolio(
             .split(content_rect);
 
         {
-            let overview_block = Block::default().borders(Borders::ALL).title(format!(
-                " {} ({}) ",
-                t!("Portfolio.Title"),
-                overview.currency
-            ));
+            let overview_block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(styles::border())
+                .title(format!(
+                    " {} ({}) ",
+                    t!("Portfolio.Title"),
+                    overview.currency
+                ));
 
             // Calculate styles for P/L
             let pl_style = styles::up(overview.total_pl.cmp(&Decimal::ZERO));
@@ -2265,6 +2281,7 @@ pub fn render_portfolio(
         {
             let holdings_block = Block::default()
                 .borders(Borders::ALL)
+                .border_style(styles::border())
                 .title(format!(" {} ", t!("Holding.Holding")));
 
             if holdings.is_empty() {
