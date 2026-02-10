@@ -19,6 +19,7 @@ pub static RT: OnceLock<tokio::runtime::Handle> = OnceLock::new();
 pub static POPUP: AtomicU8 = AtomicU8::new(0);
 pub static LAST_STATE: Atomic<AppState> = Atomic::new(AppState::Watchlist);
 pub static QUOTE_BMP: Atomic<bool> = Atomic::new(false);
+pub static LOG_PANEL_VISIBLE: Atomic<bool> = Atomic::new(false);
 pub static WATCHLIST: Lazy<RwLock<Watchlist>> = Lazy::new(Default::default);
 pub static USER: Lazy<RwLock<User>> = Lazy::new(Default::default);
 
@@ -258,6 +259,76 @@ pub async fn run(
         }
     });
 
+    // Start log file watcher for auto-refresh when log panel is visible
+    tokio::spawn({
+        let tx = update_tx.clone();
+        async move {
+            use std::fs;
+            use std::path::PathBuf;
+            use std::time::SystemTime;
+
+            let mut last_modified: Option<SystemTime> = None;
+            let mut last_size: u64 = 0;
+
+            // Helper to get the latest log file
+            let get_latest_log_file = || -> Option<PathBuf> {
+                let log_dir = crate::logger::default_log_dir();
+                let mut log_files: Vec<PathBuf> = fs::read_dir(&log_dir)
+                    .ok()?
+                    .filter_map(|entry| entry.ok())
+                    .map(|entry| entry.path())
+                    .filter(|path| {
+                        path.is_file()
+                            && path
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .map(|n| n.starts_with("longbridge") && n.ends_with(".log"))
+                                .unwrap_or(false)
+                    })
+                    .collect();
+
+                log_files.sort_by(|a, b| {
+                    let time_a = fs::metadata(a).and_then(|m| m.modified()).ok();
+                    let time_b = fs::metadata(b).and_then(|m| m.modified()).ok();
+                    match (time_a, time_b) {
+                        (Some(ta), Some(tb)) => tb.cmp(&ta),
+                        (Some(_), None) => std::cmp::Ordering::Less,
+                        (None, Some(_)) => std::cmp::Ordering::Greater,
+                        (None, None) => std::cmp::Ordering::Equal,
+                    }
+                });
+
+                log_files.into_iter().next()
+            };
+
+            loop {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+
+                // Only check if log panel is visible
+                if !LOG_PANEL_VISIBLE.load(Ordering::Relaxed) {
+                    continue;
+                }
+
+                if let Some(log_file) = get_latest_log_file() {
+                    if let Ok(metadata) = fs::metadata(&log_file) {
+                        let modified = metadata.modified().ok();
+                        let size = metadata.len();
+
+                        // Check if file has been modified or size changed
+                        if modified != last_modified || size != last_size {
+                            last_modified = modified;
+                            last_size = size;
+
+                            // Trigger UI refresh by sending empty command queue
+                            let queue = CommandQueue::default();
+                            _ = tx.send(queue);
+                        }
+                    }
+                }
+            }
+        }
+    });
+
     // FPS-based rendering: 30 FPS for smooth UI updates
     let render_interval = std::time::Duration::from_millis(33); // ~30 FPS
     let mut render_tick = tokio::time::interval(render_interval);
@@ -359,6 +430,16 @@ pub async fn run(
 
                 let popup = POPUP.load(Ordering::Relaxed);
                 let state = *app.world.resource::<State<AppState>>().get();
+
+                // Handle global shortcuts that should work even with popups open
+                if event.code == crossterm::event::KeyCode::Char('`')
+                    && event.modifiers == crossterm::event::KeyModifiers::NONE {
+                    // Toggle log panel visibility
+                    let was_visible = LOG_PANEL_VISIBLE.load(Ordering::Relaxed);
+                    LOG_PANEL_VISIBLE.store(!was_visible, Ordering::Relaxed);
+                    render_state.mark_dirty(DirtyFlags::ALL);
+                    continue;
+                }
 
                 // Handle various popups
                 if popup != 0 {
@@ -563,12 +644,12 @@ fn handle_global_keys(
                     render_state.mark_dirty(DirtyFlags::WATCHLIST);
                 }
                 AppState::WatchlistStock => {
-                    system::refresh_stock(app.world.resource::<system::StockDetail>().0.clone());
+                    system::refresh_stock_debounced(app.world.resource::<system::StockDetail>().0.clone());
                     system::refresh_watchlist(update_tx.clone());
                     render_state.mark_dirty(DirtyFlags::STOCK_DETAIL | DirtyFlags::WATCHLIST);
                 }
                 AppState::Stock => {
-                    system::refresh_stock(app.world.resource::<system::StockDetail>().0.clone());
+                    system::refresh_stock_debounced(app.world.resource::<system::StockDetail>().0.clone());
                     render_state.mark_dirty(DirtyFlags::STOCK_DETAIL);
                 }
                 _ => {}

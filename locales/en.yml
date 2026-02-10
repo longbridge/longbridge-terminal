@@ -86,7 +86,7 @@ StockDetail.Average: Average
 StockDetail.BPS: BPS
 StockDetail.Bid/Ask Ratio: Bid/Ask Ratio
 StockDetail.Dividend (TTM): Dividend (TTM)
-StockDetail.Dividend Yield (TTM): Dividend Yield (TTM)
+StockDetail.Dividend Yield (TTM): Div Yield (TTM)
 StockDetail.EPS (Dynamic): EPS (Dynamic)
 StockDetail.EPS (Static): EPS (Static)
 StockDetail.EPS (TTM): EPS (TTM)
@@ -187,6 +187,7 @@ HelpTips: |-
   - General ----------------------------------------------------------------------------------
 
     ?                               Show help info
+    `                               Toggle debug log panel
     /                               Open search stock popup
     q, ESC                          Dismiss current window, or go back to last tab
     Enter                           Perform action for the current selection
