@@ -211,3 +211,8 @@ HelpTips: |-
     a                               多账户之前切换（如有）
     c                               切换展示币种
     j, Up Arrow, k, Down Arrow      上下切换持仓列表或其他列表的选中项
+
+Error.KlineDataFormat: "K 线数据格式错误"
+Currency.HKD: "港币"
+Currency.USD: "美元"
+Currency.CNY: "人民币"

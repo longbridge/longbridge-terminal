@@ -52,16 +52,16 @@ impl Terminal {
     pub fn exit_full_screen() {
         use crossterm::{cursor, terminal};
 
-        // 恢复终端状态
+        // Restore terminal state
         _ = crossterm::execute!(
             std::io::stdout(),
-            cursor::Show,  // 显示光标
-            terminal::LeaveAlternateScreen,  // 离开备用屏幕
+            cursor::Show,  // Show cursor
+            terminal::LeaveAlternateScreen,  // Leave alternate screen
         );
-        _ = terminal::disable_raw_mode();  // 禁用 raw mode
+        _ = terminal::disable_raw_mode();  // Disable raw mode
     }
 
-    /// 优雅退出 - 清理终端并退出程序
+    /// Graceful exit - cleanup terminal and exit program
     pub fn graceful_exit(code: i32) -> ! {
         Self::exit_full_screen();
         std::process::exit(code);

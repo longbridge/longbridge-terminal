@@ -210,3 +210,8 @@ HelpTips: |-
     a                               Switch account
     c                               Switch currency
     j, Up Arrow, k, Down Arrow      Switch holding selection
+
+Error.KlineDataFormat: "Invalid K-line data format"
+Currency.HKD: "Hong Kong Dollar"
+Currency.USD: "US Dollar"
+Currency.CNY: "Chinese Yuan"

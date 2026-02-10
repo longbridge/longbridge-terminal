@@ -1,57 +1,89 @@
 # Longbridge Terminal
 
-An _experimental_ terminal-based app of [Longbridge](https://longbridge.com).
+An _experimental_ terminal-based stock trading app built with [Longport OpenAPI](https://open.longbridge.com).
 
-We build this app to help us in development of the cross-platform Rust core library (named: Engine) of Longbridge.
+A Rust-based TUI (Terminal User Interface) for monitoring market data and managing stock portfolios. Built to showcase the capabilities of the Longport OpenAPI SDK.
 
-This is also for making a fun, so we can watch the stock market data in the terminal.
-
-![longbridge-terminal](https://github.com/longbridgeapp/longbridge-terminal/assets/5518/49c93838-852e-4127-8377-f49876923069)
+<img width="1601" height="1155" alt="image" src="https://github.com/user-attachments/assets/3b853eba-658c-4ee8-a626-ba03170e6b28" />
 
 ## Features
 
-- Watchlist
-- Portfolio
-- Real-time stock data
-- Built on Rust + Ratatui.
-- Vim like keybindings.
+- Real-time watchlist with live market data
+- Portfolio management
+- Stock search and quotes
+- Candlestick charts
+- Multi-market support (Hong Kong, US, China A-share)
+- Built on Rust + Ratatui
+- Vim-like keybindings
 
 ## System Requirements
 
-- macOS
-- Linux
+- macOS or Linux
+- Longport OpenAPI credentials (free to obtain)
 
 ## Installation
 
-If you'r on macOS or Linux, just run the following command in your terminal:
+### From Binary
+
+If you're on macOS or Linux, run the following command in your terminal:
 
 ```bash
 curl -sSL https://github.com/longbridge/longbridge-terminal/raw/main/install | sh
 ```
 
-Then you will get `longbridge` command in your terminal.
+This will install the `longbridge` command in your terminal.
 
-```bash
-$ longbridge
-```
+## Configuration
 
-Run `longbridge` can start the app.
+Before running the app, you need to configure your Longport OpenAPI credentials:
 
-## QA
+1. **Get API Credentials**: Visit [Longport Open Platform](https://open.longbridge.com) to create an application and obtain:
+   - `APP_KEY`
+   - `APP_SECRET`
+   - `ACCESS_TOKEN`
 
-- Q: "Another instance is running, please close it first" error.
-- A: Because of the real-time stock data limited you only have one instance.
+2. **Configure Environment Variables**:
 
----
+   Create a `.env` file in the project root:
 
-- Q: "How can I switch another account?"
-- A: Just run `longbridge --logout`, and scan QRCode again.
+   ```bash
+   cp .env.example .env
+   ```
 
----
+   Edit `.env` and add your credentials:
 
-- Q: "Where is the login session storaged at?"
-- A: macOS: `$HOME/Library/Application Support/Longbridge TUI`, Linux: `~/.local/share/Longbridge TUI/`
+   ```bash
+   LONGPORT_APP_KEY=your_app_key
+   LONGPORT_APP_SECRET=your_app_secret
+   LONGPORT_ACCESS_TOKEN=your_access_token
+   ```
+
+   Alternatively, export them as environment variables:
+
+   ```bash
+   export LONGPORT_APP_KEY=your_app_key
+   export LONGPORT_APP_SECRET=your_app_secret
+   export LONGPORT_ACCESS_TOKEN=your_access_token
+   ```
+
+3. **Run the App**:
+
+   ```bash
+   longbridge
+   ```
+
+## API Rate Limits
+
+The Longport OpenAPI has rate limiting:
+
+- Maximum 10 API calls per second
+- Access tokens expire every 3 months and need to be renewed
+
+## Documentation
+
+- [Longport OpenAPI Documentation](https://open.longbridge.com)
+- [Rust SDK Documentation](https://longportapp.github.io/openapi/rust/longport/)
 
 ## License
 
-This is not a open-source project, this repository just for release and give a install script.
+MIT

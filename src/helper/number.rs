@@ -55,8 +55,8 @@ impl Sign for rust_decimal::Decimal {
     }
 }
 
-/// 格式化成交量为简短格式
-/// 例如: 1234567 → 1.23M
+/// Format volume to short format
+/// Example: 1234567 → 1.23M
 pub fn format_volume(volume: u64) -> String {
     if volume == 0 {
         return "--".to_string();
