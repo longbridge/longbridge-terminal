@@ -203,3 +203,8 @@ HelpTips: |-
     a                               多賬户之前切換（如有）
     c                               切換展示幣種
     j, Up Arrow, k, Down Arrow      上下切換持倉列表或其他列表的選中項
+
+Error.KlineDataFormat: "K 線數據格式錯誤"
+Currency.HKD: "港幣"
+Currency.USD: "美元"
+Currency.CNY: "人民幣"

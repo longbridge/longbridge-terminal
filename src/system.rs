@@ -12,7 +12,8 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{
-        Block, BorderType, Borders, Cell, List, ListItem, Paragraph, Row, Table, TableState, Tabs,
+        Block, BorderType, Borders, Cell, List, ListItem, Paragraph, Row, Scrollbar,
+        ScrollbarOrientation, ScrollbarState, Table, TableState, Tabs,
     },
     Frame,
 };
@@ -1065,29 +1066,21 @@ fn stock_detail(
     };
 
     // draw title
-    let mut titles = vec![Span::raw(format!(
-        " {} ({}.{})",
-        stock.display_name(),
-        counter.code(),
-        counter.market(),
-    ))];
+    let mut titles = vec![Span::styled(
+        format!(
+            " {} ({}.{})",
+            stock.display_name(),
+            counter.code(),
+            counter.market(),
+        ),
+        styles::primary(),
+    )];
     titles.extend(price_spans(&stock.quote, counter));
-    // Show session or status label if not in normal trading
-    let session_label = stock.trade_session.label();
-    let status_label = if !session_label.is_empty() {
-        session_label
-    } else if !stock.trade_status.is_trading() {
-        stock.trade_status.label()
-    } else {
-        String::new()
-    };
-    if !status_label.is_empty() {
-        titles.push(Span::raw(format!(" [{}]", status_label)));
-    }
 
     let detail_container = Block::default()
         .title(Line::from(titles))
-        .borders(Borders::ALL);
+        .borders(Borders::ALL)
+        .border_style(styles::border());
 
     // draw border
     frame.render_widget(detail_container, rect);
@@ -1259,9 +1252,11 @@ fn stock_detail(
         .direction(Direction::Vertical)
         .split(inner_rect);
 
-    // Render horizontal divider line
-    let divider_line = Paragraph::new("─".repeat(inner_rect.width as usize));
-    frame.render_widget(divider_line, chunks[1]);
+    // Render horizontal divider line using Block's top border
+    let divider = Block::default()
+        .borders(Borders::TOP)
+        .border_style(styles::border());
+    frame.render_widget(divider, chunks[1]);
 
     let columns_chunks = Layout::default()
         .constraints([
@@ -1281,7 +1276,8 @@ fn stock_detail(
     frame.render_widget(
         Block::default()
             .borders(Borders::LEFT)
-            .border_type(BorderType::Plain),
+            .border_type(BorderType::Plain)
+            .border_style(styles::border()),
         depth_rect,
     );
 
@@ -1295,7 +1291,7 @@ fn stock_detail(
             height: block_inner.height,
         };
 
-        // 计算买卖比例
+        // Calculate bid/ask ratio
         let total_bid_volume: i64 = stock.depth.bids.iter().map(|d| d.volume).sum();
         let total_ask_volume: i64 = stock.depth.asks.iter().map(|d| d.volume).sum();
         let total_volume = total_bid_volume + total_ask_volume;
@@ -1362,7 +1358,7 @@ fn stock_detail(
             ])
         };
 
-        // 卖盘（asks）- 顶部，倒序显示（价格从低到高），最多显示5档
+        // Asks - top section, reverse order (price low to high), max 5 levels
         let asks_rows: Vec<_> = stock
             .depth
             .asks
@@ -1372,7 +1368,7 @@ fn stock_detail(
             .collect();
         let asks_rows: Vec<_> = asks_rows.into_iter().rev().collect();
 
-        // 买盘（bids）- 底部，正序显示（价格从高到低），最多显示5档
+        // Bids - bottom section, normal order (price high to low), max 5 levels
         let bids_rows: Vec<_> = stock
             .depth
             .bids
@@ -1381,40 +1377,40 @@ fn stock_detail(
             .map(|d| format_depth_row(d, counter, stock.quote.prev_close, depth_volume_width))
             .collect();
 
-        // 根据实际档位数量计算高度
+        // Calculate height based on actual depth levels
         let asks_count = asks_rows.len() as u16;
         let bids_count = bids_rows.len() as u16;
         let total_depth_height = asks_count + 1 + bids_count; // asks + bar + bids
         let available_height = depth_inner_rect.height;
         let top_padding = available_height.saturating_sub(total_depth_height) / 2;
 
-        // 垂直布局：卖盘 -> 比例条 -> 买盘（动态高度，垂直居中）
+        // Vertical layout: asks -> ratio bar -> bids (dynamic height, vertically centered)
         let depth_layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(top_padding), // 上方空白
-                Constraint::Length(asks_count),  // asks（实际行数）
-                Constraint::Length(1),           // bar（1行）
-                Constraint::Length(bids_count),  // bids（实际行数）
-                Constraint::Min(0),              // 下方空白
+                Constraint::Length(top_padding), // Top padding
+                Constraint::Length(asks_count),  // Asks (actual row count)
+                Constraint::Length(1),           // Ratio bar (1 row)
+                Constraint::Length(bids_count),  // Bids (actual row count)
+                Constraint::Min(0),              // Bottom padding
             ])
             .split(depth_inner_rect);
 
-        // 卖盘 Table（无边框，列对齐）
+        // Asks table (borderless, column-aligned)
         use ratatui::widgets::Table;
         let table_widths = if counter.is_hk() {
             vec![
-                Constraint::Length(4),                         // 位置号
-                Constraint::Length(10),                        // 价格
-                Constraint::Length(depth_volume_width as u16), // 成交量（固定宽度，右对齐）
-                Constraint::Length(6),                         // 订单数（右对齐）
+                Constraint::Length(4),                         // Position number
+                Constraint::Length(10),                        // Price
+                Constraint::Length(depth_volume_width as u16), // Volume (fixed width, right-aligned)
+                Constraint::Length(6),                         // Order count (right-aligned)
             ]
         } else {
             vec![
-                Constraint::Length(4),                         // 位置号
-                Constraint::Length(10),                        // 价格
-                Constraint::Length(depth_volume_width as u16), // 成交量（固定宽度，右对齐）
-                Constraint::Length(0),                         // 无订单数
+                Constraint::Length(4),                         // Position number
+                Constraint::Length(10),                        // Price
+                Constraint::Length(depth_volume_width as u16), // Volume (fixed width, right-aligned)
+                Constraint::Length(0),                         // No order count
             ]
         };
 
@@ -1424,12 +1420,12 @@ fn stock_detail(
 
         frame.render_widget(asks_table, depth_layout[1]);
 
-        // 比例条：使用 Paragraph 实现双色背景（左绿右红）
+        // Ratio bar: dual-color background using Paragraph (left green right red)
         let (bull_style, bear_style) = styles::bull_bear();
         let green_color = bull_style.fg.unwrap_or(Color::Green);
         let red_color = bear_style.fg.unwrap_or(Color::Red);
 
-        // 计算按比例分配的宽度
+        // Calculate width by ratio
         let available_width = depth_layout[2].width as usize;
         let bid_width = ((Decimal::from(available_width) * bid_ratio)
             .to_string()
@@ -1439,7 +1435,7 @@ fn stock_detail(
             .min(available_width);
         let ask_width = available_width.saturating_sub(bid_width);
 
-        // 构建标签：Bid 在左，Ask 在右
+        // Build labels: Bid on left, Ask on right
         let bid_label = format!(
             " {}: {:.1}%",
             t!("StockDepth.Bid"),
@@ -1454,11 +1450,11 @@ fn stock_detail(
         let bid_label_len = bid_label.chars().count();
         let ask_label_len = ask_label.chars().count();
 
-        // Bid 部分：绿色背景，标签在左
+        // Bid section: green background, label on left
         let bid_padding = bid_width.saturating_sub(bid_label_len);
         let bid_content = format!("{}{}", bid_label, " ".repeat(bid_padding));
 
-        // Ask 部分：红色背景，标签在右
+        // Ask section: red background, label on right
         let ask_padding = ask_width.saturating_sub(ask_label_len);
         let ask_content = format!("{}{}", " ".repeat(ask_padding), ask_label);
 
@@ -1472,7 +1468,7 @@ fn stock_detail(
 
         frame.render_widget(Paragraph::new(ratio_line), depth_layout[2]);
 
-        // 买盘 Table（无边框，列对齐）
+        // Bids table (borderless, column-aligned)
         let bids_table = Table::new(bids_rows)
             .widths(&table_widths)
             .column_spacing(1);
@@ -1480,7 +1476,7 @@ fn stock_detail(
         frame.render_widget(bids_table, depth_layout[3]);
     }
 
-    // 渲染 K线图区域
+    // Render K-line chart area
     let chart_chunks = Layout::default()
         .constraints([Constraint::Ratio(2, 3), Constraint::Ratio(1, 3)])
         .direction(Direction::Horizontal)
@@ -1493,10 +1489,7 @@ fn stock_detail(
         let chart_chunks_inner = Layout::default()
             .constraints([Constraint::Length(2), Constraint::Min(20)])
             .direction(Direction::Vertical)
-            .split(chart_chunks[0].inner(&Margin {
-                vertical: 0,
-                horizontal: 2,
-            }));
+            .split(chart_chunks[0]);
 
         let selected_type_index = KlineType::iter()
             .position(|t| t == _kline_type)
@@ -1534,23 +1527,23 @@ fn stock_detail(
             width,
         );
 
-        // 如果没有数据，显示提示信息
+        // Show loading hint if no data
         if samples.is_empty() {
             frame.render_widget(
-                Paragraph::new("加载 K 线数据中...").alignment(Alignment::Center),
+                Paragraph::new("Loading...").alignment(Alignment::Center),
                 area,
             );
         } else {
             let candles: Vec<cli_candlestick_chart::Candle> = samples
                 .iter()
                 .filter_map(|sample| {
-                    // 安全转换，过滤无效数据
+                    // Safe conversion, filter invalid data
                     let open = f64::try_from(sample.open).ok()?;
                     let high = f64::try_from(sample.high).ok()?;
                     let low = f64::try_from(sample.low).ok()?;
                     let close = f64::try_from(sample.close).ok()?;
 
-                    // 验证数据有效性
+                    // Validate data
                     if open <= 0.0 || high <= 0.0 || low <= 0.0 || close <= 0.0 {
                         return None;
                     }
@@ -1566,7 +1559,8 @@ fn stock_detail(
                         volume: Some(
                             #[allow(clippy::cast_precision_loss)]
                             {
-                                sample.amount as f64
+                                // Divide by 1M to shorten display (e.g., 6979570787 -> 6979.57)
+                                (sample.amount as f64) / 1_000_000.0
                             },
                         ),
                         timestamp: Some(sample.timestamp),
@@ -1576,42 +1570,33 @@ fn stock_detail(
 
             if candles.is_empty() {
                 frame.render_widget(
-                    Paragraph::new("K线数据格式错误").alignment(Alignment::Center),
+                    Paragraph::new(t!("Error.KlineDataFormat")).alignment(Alignment::Center),
                     area,
                 );
             } else {
-                // 调整图表大小，减去边框和信息行的高度
-                let chart_height = area.height.saturating_sub(1);
-                let mut chart = cli_candlestick_chart::Chart::new_with_size(
-                    candles,
-                    (area.width, chart_height),
-                );
+                // Adjust chart size - reduce width slightly to prevent bottom info line overflow
+                let chart_width = area.width.saturating_sub(1);
+                let mut chart =
+                    cli_candlestick_chart::Chart::new_with_size(candles, (chart_width, area.height));
                 let (bull, bear) = styles::bull_bear_color();
                 chart.set_bull_color(bull);
                 chart.set_vol_bull_color(bull);
                 chart.set_bear_color(bear);
                 chart.set_vol_bear_color(bear);
-                chart.set_name(counter.code().to_string());
-                // 渲染图表，留出底部空间给信息显示
-                frame.render_widget(
-                    crate::widgets::Ansi(&chart.render()),
-                    Rect {
-                        y: area.y + 1,
-                        height: area.height.saturating_sub(1),
-                        ..area
-                    },
-                );
+                // Don't set name to avoid "CCL |" prefix in the info line
+                frame.render_widget(crate::widgets::Ansi(&chart.render()), area);
             }
         }
     }
 
-    // 渲染成交记录区域
+    // Render trades area
     {
         let trades_area = chart_chunks[1];
         frame.render_widget(
             Block::default()
                 .borders(Borders::LEFT)
                 .border_type(BorderType::Plain)
+                .border_style(styles::border())
                 .title(format!(" {} ", t!("StockQuoteTrades"))),
             trades_area,
         );
@@ -1627,7 +1612,7 @@ fn stock_detail(
         if stock.trades.is_empty() {
             // Show loading hint
             frame.render_widget(
-                Paragraph::new("加载成交记录中...").alignment(Alignment::Center),
+                Paragraph::new("Loading...").alignment(Alignment::Center),
                 inner_area,
             );
         } else {
@@ -1867,11 +1852,10 @@ fn watch(frame: &mut Frame, rect: Rect, full_mode: bool) {
         )
     }; // Lock released here
 
-    let background = Block::default().borders(Borders::ALL).title(format!(
-        " {} ─── {}[g] ",
-        t!("Watchlist"),
-        group_name
-    ));
+    let background = Block::default()
+        .borders(Borders::ALL)
+        .border_style(styles::border())
+        .title(format!(" {} ─── {}[g] ", t!("Watchlist"), group_name));
     frame.render_widget(background, rect);
 
     // Lock WATCHLIST_TABLE once for both reading and rendering
@@ -1898,10 +1882,28 @@ fn watch(frame: &mut Frame, rect: Rect, full_mode: bool) {
         table_area,
         &mut *table_state,
     );
+
+    // Render scrollbar
+    let mut scrollbar_state = ScrollbarState::new(counters.len()).position(selected.unwrap_or(0));
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(None)
+        .end_symbol(None);
+    let scrollbar_area = Rect {
+        x: block_inner.x + block_inner.width - 1,
+        y: block_inner.y,
+        width: 1,
+        height: block_inner.height,
+    };
+    frame.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
 }
 
 fn banner(frame: &mut Frame, rect: Rect) {
-    frame.render_widget(Block::default().borders(Borders::ALL), rect);
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(styles::border()),
+        rect,
+    );
 
     frame.render_widget(
         crate::ui::assets::banner(crate::ui::styles::text()),
@@ -1923,27 +1925,33 @@ fn watch_group_table(
         Constraint::Length(10),
         Constraint::Length(8),
         Constraint::Length(10),
-        // tradeStatus 在 en 下，最长可能有 14 个字符
+        // tradeStatus in en locale can be up to 14 characters
         Constraint::Length(14),
     ];
 
     let header = {
         let mut cells = Vec::with_capacity(if full_mode { 6 } else { 4 });
-        cells.push(t!("watchlist.CODE"));
-        cells.push(t!("watchlist.NAME"));
-        cells.push(t!("watchlist.PRICE"));
-        cells.push(crate::ui::text::align_right(
-            &t!("watchlist.CHG"),
-            COLUMN_WIDTHS[3],
-        ));
+        cells.push(Cell::from(t!("watchlist.CODE")).style(styles::header()));
+        cells.push(Cell::from(t!("watchlist.NAME")).style(styles::header()));
+        cells.push(Cell::from(t!("watchlist.PRICE")).style(styles::header()));
+        cells.push(
+            Cell::from(crate::ui::text::align_right(
+                &t!("watchlist.CHG"),
+                COLUMN_WIDTHS[3],
+            ))
+            .style(styles::header()),
+        );
         if full_mode {
-            cells.push(crate::ui::text::align_right(
-                &t!("watchlist.VOL"),
-                COLUMN_WIDTHS[4],
-            ));
-            cells.push(t!("watchlist.STATUS"));
+            cells.push(
+                Cell::from(crate::ui::text::align_right(
+                    &t!("watchlist.VOL"),
+                    COLUMN_WIDTHS[4],
+                ))
+                .style(styles::header()),
+            );
+            cells.push(Cell::from(t!("watchlist.STATUS")).style(styles::header()));
         };
-        Row::new(cells).style(styles::header())
+        Row::new(cells)
     };
 
     let stocks = STOCKS.mget(counters);
@@ -1955,7 +1963,7 @@ fn watch_group_table(
             let stock = stock.as_deref().unwrap_or(&EMPTY);
             let quote_data = &stock.quote;
 
-            // 优先使用 last_done，如果没有则使用 prev_close
+            // Prefer last_done, fallback to prev_close if unavailable
             let display_price = quote_data
                 .last_done
                 .or(quote_data.prev_close)
@@ -2110,7 +2118,11 @@ pub fn render_portfolio(
                 frame.render_widget(
                     Paragraph::new("Loading portfolio data...")
                         .alignment(Alignment::Center)
-                        .block(Block::default().borders(Borders::ALL)),
+                        .block(
+                            Block::default()
+                                .borders(Borders::ALL)
+                                .border_style(styles::border()),
+                        ),
                     content_rect,
                 );
                 drop(portfolio_view_lock);
@@ -2135,11 +2147,14 @@ pub fn render_portfolio(
             .split(content_rect);
 
         {
-            let overview_block = Block::default().borders(Borders::ALL).title(format!(
-                " {} ({}) ",
-                t!("Portfolio.Title"),
-                overview.currency
-            ));
+            let overview_block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(styles::border())
+                .title(format!(
+                    " {} ({}) ",
+                    t!("Portfolio.Title"),
+                    overview.currency
+                ));
 
             // Calculate styles for P/L
             let pl_style = styles::up(overview.total_pl.cmp(&Decimal::ZERO));
@@ -2261,10 +2276,11 @@ pub fn render_portfolio(
             frame.render_widget(right_list, inner_chunks[2]);
         }
 
-        // 底部：持仓列表
+        // Bottom: Holdings list
         {
             let holdings_block = Block::default()
                 .borders(Borders::ALL)
+                .border_style(styles::border())
                 .title(format!(" {} ", t!("Holding.Holding")));
 
             if holdings.is_empty() {
@@ -2279,7 +2295,7 @@ pub fn render_portfolio(
                 .alignment(Alignment::Center);
                 frame.render_widget(message, chunks[1]);
             } else {
-                // 创建持仓表格
+                // Create holdings table
                 let header = Row::new(vec![
                     t!("Holding.Code"),
                     t!("Holding.Name"),
@@ -2374,7 +2390,7 @@ pub fn render_portfolio(
             }
         }
 
-        // 渲染弹窗
+        // Render popups
         crate::views::popup::render(
             frame,
             rect,

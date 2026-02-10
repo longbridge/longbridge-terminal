@@ -43,9 +43,7 @@ impl InfoBar {
         };
 
         output_str += &format!(
-            "{:>width$} | Price: {price} | Highest: {high} | Lowest: {low} | Var.: {var} | Avg.: {avg} │ Cum. Vol: {vol}",
-            &self.name,
-            width = YAxis::WIDTH as usize + 3,
+            "Price: {price} | Highest: {high} | Lowest: {low} | Var.: {var} | Avg.: {avg} │ Cum. Vol: {vol}",
             high = format!("{:.2}", main_set.max_price).green().bold(),
             low = format!("{:.2}", main_set.min_price).red().bold(),
             var = format!("{} {:>+.2}%", variation_output.0, main_set.variation).color(variation_output.1).bold(),

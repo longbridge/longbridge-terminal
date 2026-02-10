@@ -43,7 +43,7 @@ pub fn render(frame: &mut Frame, rect: Rect, indexes: &[Counter; 3], state: &WsS
         let name = t!(&format!("StockIndex.{counter}"));
         let index_name = Span::styled(name, color);
         let index_num = Span::styled(numbers, color);
-        let toggle_key = Span::from(format!("[{toggle_key}]  "));
+        let toggle_key = Span::styled(format!("[{toggle_key}]  "), styles::dark_gray());
         spans.extend([index_name, index_num, toggle_key]);
     }
     let indexes = Paragraph::new(Line::from(spans));
@@ -52,12 +52,12 @@ pub fn render(frame: &mut Frame, rect: Rect, indexes: &[Counter; 3], state: &WsS
     let (status, status_style) = match state.0 {
         ReadyState::Open => {
             if crate::app::QUOTE_BMP.load(atomic::Ordering::Relaxed) {
-                ("○○●", styles::bmp()) // Semi-automatic
+                ("□□■", styles::bmp()) // Semi-automatic
             } else {
-                ("●●●", styles::online())
+                ("■■■", styles::online())
             }
         }
-        ReadyState::Closed => ("○○○", styles::offline()),
+        ReadyState::Closed => ("□□□", styles::offline()),
         _ => ("···", styles::text()),
     };
     let text = Span::styled(status, status_style);

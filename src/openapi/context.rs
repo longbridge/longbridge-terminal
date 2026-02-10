@@ -15,10 +15,24 @@ pub static RATE_LIMITED_QUOTE_CTX: OnceLock<RateLimitedQuoteContext> = OnceLock:
 /// Global rate-limited TradeContext wrapper
 pub static RATE_LIMITED_TRADE_CTX: OnceLock<RateLimitedTradeContext> = OnceLock::new();
 
+/// Get API language based on current UI locale
+/// Maps UI locale to API-supported languages: en, zh-CN, zh-HK
+/// Defaults to "en" if locale is not supported
+fn get_api_language() -> &'static str {
+    match rust_i18n::locale().as_str() {
+        "zh-CN" => "zh-CN",
+        "zh-HK" => "zh-HK",
+        _ => "en", // Default to English
+    }
+}
+
 /// Initialize contexts (should be called once at app startup)
 /// Returns quote receiver for caller to handle WebSocket events
 pub async fn init_contexts(
 ) -> Result<impl tokio_stream::Stream<Item = longport::quote::PushEvent> + Send + Unpin> {
+    // Set language based on current UI locale
+    std::env::set_var("LONGPORT_LANGUAGE", get_api_language());
+
     // Load config from environment variables
     let config = Arc::new(longport::Config::from_env()?);
 

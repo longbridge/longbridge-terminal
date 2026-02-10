@@ -62,7 +62,7 @@ impl KlineStore {
             ));
         }
 
-        // 修正前复权
+        // Fix forward adjust
         if kline_type <= KlineType::PerDay && adjust_type == AdjustType::ForwardAdjust {
             results
                 .iter()

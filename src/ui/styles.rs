@@ -11,7 +11,8 @@ use crate::helper::Sign;
 
 #[inline]
 pub fn header() -> Style {
-    Style::default().fg(Color::Gray)
+    Style::default()
+        .fg(Color::Gray)
 }
 
 #[inline]
@@ -35,6 +36,11 @@ pub fn text() -> Style {
 }
 
 #[inline]
+pub fn primary() -> Style {
+    Style::default().fg(Color::White)
+}
+
+#[inline]
 pub fn text_selected() -> Style {
     text().add_modifier(Modifier::REVERSED)
 }
@@ -52,6 +58,11 @@ pub fn popup() -> Style {
 #[inline]
 pub fn title() -> Style {
     text()
+}
+
+#[inline]
+pub fn border() -> Style {
+    Style::default().fg(Color::DarkGray)
 }
 
 #[inline]

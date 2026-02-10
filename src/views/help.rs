@@ -26,6 +26,7 @@ pub fn render(frame: &mut Frame, rect: Rect) {
     let paragraph = Paragraph::new(spans).style(styles::popup()).block(
         Block::default()
             .borders(Borders::ALL)
+            .border_style(styles::border())
             .padding(Padding::horizontal(2))
             .title(Span::styled(t!("Help"), styles::title())),
     );
