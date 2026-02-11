@@ -1,7 +1,7 @@
 [package]
 edition = "2021"
 name = "longbridge"
-version = "0.6.0"
+version = "0.7.0-preview0"
 
 [profile.release]
 debug = true               # Release build 时也生成 Debug Info
