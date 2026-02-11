@@ -11,7 +11,7 @@ get_latest_release() {
 }
 
 bin_name='longbridge'
-version='v0.6.0'
+version='v0.7.0-preview0'
 
 platform="$(uname | tr "[A-Z]" "[a-z]")"  # Linux => linux
 arch="$(uname -m | sed 's/x86_64/amd64/')"  # x86_64 => amd64
