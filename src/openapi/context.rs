@@ -32,6 +32,7 @@ pub async fn init_contexts(
 ) -> Result<impl tokio_stream::Stream<Item = longport::quote::PushEvent> + Send + Unpin> {
     // Set language based on current UI locale
     std::env::set_var("LONGPORT_LANGUAGE", get_api_language());
+    std::env::set_var("LONGPORT_PRINT_QUOTE_PACKAGES", "false");
 
     // Load config from environment variables
     let config = Arc::new(longport::Config::from_env()?);
