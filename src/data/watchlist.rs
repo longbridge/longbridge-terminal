@@ -98,12 +98,10 @@ impl Watchlist {
             // Check if in normal trading session (not Pre/Post/Overnight)
             let a_normal_trading = super::STOCKS
                 .get(a)
-                .map(|s| s.trade_session.is_normal_trading())
-                .unwrap_or(false);
+                .is_some_and(|s| s.trade_session.is_normal_trading());
             let b_normal_trading = super::STOCKS
                 .get(b)
-                .map(|s| s.trade_session.is_normal_trading())
-                .unwrap_or(false);
+                .is_some_and(|s| s.trade_session.is_normal_trading());
 
             // First sort by trading session (Intraday first)
             // false < true in bool ordering, so reverse comparison to put true first

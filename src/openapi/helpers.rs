@@ -1,6 +1,5 @@
 /// Helper functions for rate-limited API calls
 /// These functions wrap common API patterns with automatic rate limiting
-
 use anyhow::Result;
 use crate::openapi::{quote_limited, trade_limited};
 
@@ -17,7 +16,7 @@ where
     let symbols: Vec<String> = symbols.into_iter().map(Into::into).collect();
     let symbols_str = symbols.join(",");
 
-    ctx.execute(&format!("subscribe({})", symbols_str), || {
+    ctx.execute(&format!("subscribe({symbols_str})"), || {
         let inner = ctx.inner();
         let symbols = symbols.clone();
         Box::pin(async move {
@@ -40,7 +39,7 @@ where
     let symbols: Vec<String> = symbols.into_iter().map(Into::into).collect();
     let symbols_str = symbols.join(",");
 
-    ctx.execute(&format!("unsubscribe({})", symbols_str), || {
+    ctx.execute(&format!("unsubscribe({symbols_str})"), || {
         let inner = ctx.inner();
         let symbols = symbols.clone();
         Box::pin(async move {
@@ -60,7 +59,7 @@ where
     let symbols: Vec<String> = symbols.into_iter().map(Into::into).collect();
     let symbols_str = symbols.join(",");
 
-    ctx.execute(&format!("quote({})", symbols_str), || {
+    ctx.execute(&format!("quote({symbols_str})"), || {
         let inner = ctx.inner();
         let symbols = symbols.clone();
         Box::pin(async move {
@@ -82,7 +81,7 @@ where
     let symbols: Vec<String> = symbols.into_iter().map(Into::into).collect();
     let symbols_str = symbols.join(",");
 
-    ctx.execute(&format!("static_info({})", symbols_str), || {
+    ctx.execute(&format!("static_info({symbols_str})"), || {
         let inner = ctx.inner();
         let symbols = symbols.clone();
         Box::pin(async move {
@@ -97,7 +96,7 @@ pub async fn get_trades(symbol: &str, count: usize) -> Result<Vec<longport::quot
     let ctx = quote_limited();
     let symbol = symbol.to_string();
 
-    ctx.execute(&format!("trades({}, {})", symbol, count), || {
+    ctx.execute(&format!("trades({symbol}, {count})"), || {
         let inner = ctx.inner();
         let symbol = symbol.clone();
         Box::pin(async move {

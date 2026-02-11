@@ -1,4 +1,5 @@
 use crate::widgets::Terminal;
+use std::io::Write;
 
 #[macro_use]
 mod macros;
@@ -44,7 +45,7 @@ async fn main() {
         Ok(receiver) => receiver,
         Err(e) => {
             openapi::print_config_guide();
-            eprintln!("\nError details: {}", e);
+            eprintln!("\nError details: {e}");
             return;
         }
     };
@@ -59,7 +60,7 @@ async fn main() {
     }));
 
     // Clean terminal state to ensure no residual output
-    use std::io::Write;
+
     let _ = std::io::stdout().write_all(b"\n");
     let _ = std::io::stdout().flush();
 

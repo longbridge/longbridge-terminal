@@ -31,8 +31,8 @@ pub fn render(frame: &mut Frame, rect: Rect, indexes: &[Counter; 3], state: &WsS
                     let increase_percent = increase / prev_close;
                     let numbers = format!(
                         " {} {} {} ",
-                        last_done.format_quote_by_counter(&counter),
-                        increase.format_quote_by_counter(&counter),
+                        last_done.format_quote_by_counter(counter),
+                        increase.format_quote_by_counter(counter),
                         increase_percent.format_percent()
                     );
                     (increase.cmp(&Decimal::ZERO), numbers)

@@ -1,10 +1,9 @@
 use std::{collections::HashMap, sync::RwLock};
 
 use crate::data::{AdjustType, Counter, Kline, KlineType, Klines, Market};
-use once_cell::sync::Lazy;
 use rust_decimal::Decimal;
 
-pub static KLINES: Lazy<KlineStore> = Lazy::new(KlineStore::new);
+pub static KLINES: std::sync::LazyLock<KlineStore> = std::sync::LazyLock::new(KlineStore::new);
 
 type StoreKey = (Counter, KlineType, AdjustType);
 
@@ -194,7 +193,7 @@ impl KlineStore {
                         high: c.high,
                         low: c.low,
                         close: c.close,
-                        amount: c.volume as u64,
+                        amount: c.volume.cast_unsigned(),
                         balance: c.turnover,
                         factor_a: Decimal::ONE,
                         factor_b: Decimal::ZERO,

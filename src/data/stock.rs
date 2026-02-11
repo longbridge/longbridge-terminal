@@ -1,9 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-use super::types::*;
+use super::types::{Counter, Currency, TradeStatus, TradeSession, QuoteData, DepthData, StaticInfo, TradeData, Depth};
 
 /// Stock data (simplified)
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct Stock {
     pub counter: Counter,
     pub name: String,
@@ -16,21 +17,6 @@ pub struct Stock {
     pub trades: Vec<TradeData>,           // Recent trades
 }
 
-impl Default for Stock {
-    fn default() -> Self {
-        Self {
-            counter: Counter::default(),
-            name: String::new(),
-            currency: Currency::default(),
-            trade_status: TradeStatus::default(),
-            trade_session: TradeSession::default(),
-            quote: QuoteData::default(),
-            depth: DepthData::default(),
-            static_info: None,
-            trades: Vec::new(),
-        }
-    }
-}
 
 impl Stock {
     pub fn new(counter: Counter) -> Self {
@@ -62,13 +48,13 @@ impl Stock {
         }
     }
 
-    /// Update quote data (from longport SDK PushQuote, for WebSocket push)
+    /// Update quote data (from longport SDK `PushQuote`, for WebSocket push)
     pub fn update_from_push_quote(&mut self, quote: &longport::quote::PushQuote) {
         self.quote.last_done = Some(quote.last_done);
         self.quote.open = Some(quote.open);
         self.quote.high = Some(quote.high);
         self.quote.low = Some(quote.low);
-        self.quote.volume = quote.volume as u64;
+        self.quote.volume = quote.volume.cast_unsigned();
         self.quote.turnover = quote.turnover;
         self.quote.timestamp = quote.timestamp.unix_timestamp();
 
@@ -77,14 +63,14 @@ impl Stock {
         self.trade_session = quote.trade_session;
     }
 
-    /// Update from SecurityQuote (full quote data from API, includes prev_close but NO trade_session)
+    /// Update from `SecurityQuote` (full quote data from API, includes `prev_close` but NO `trade_session`)
     pub fn update_from_security_quote(&mut self, quote: &longport::quote::SecurityQuote) {
         self.quote.last_done = Some(quote.last_done);
         self.quote.prev_close = Some(quote.prev_close);
         self.quote.open = Some(quote.open);
         self.quote.high = Some(quote.high);
         self.quote.low = Some(quote.low);
-        self.quote.volume = quote.volume as u64;
+        self.quote.volume = quote.volume.cast_unsigned();
         self.quote.turnover = quote.turnover;
         self.quote.timestamp = quote.timestamp.unix_timestamp();
 

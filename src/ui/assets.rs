@@ -1,5 +1,4 @@
 use ansi_parser::AnsiParser;
-use once_cell::sync::Lazy;
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Rect},
@@ -10,7 +9,7 @@ use ratatui::{
 
 static LOGO_STR: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/logo.ascii"));
 
-static BANNER_STR: Lazy<String> = Lazy::new(|| {
+static BANNER_STR: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
     let banner = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/banner.txt"));
     banner.replace("%{version}", env!("CARGO_PKG_VERSION"))
 });

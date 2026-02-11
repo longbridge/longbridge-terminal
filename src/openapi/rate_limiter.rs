@@ -55,6 +55,7 @@ impl RateLimiter {
         let elapsed = now.duration_since(*last_refill);
 
         // Calculate tokens to add based on elapsed time
+        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
         let tokens_to_add = (elapsed.as_secs_f64() * f64::from(self.tokens_per_second)) as u32;
 
         if tokens_to_add > 0 {
@@ -80,9 +81,9 @@ impl RateLimiter {
     ///
     /// # Returns
     /// Result from the async function
-    pub async fn execute<F, T, E>(&self, request_name: &str, f: F) -> Result<T, E>
+    pub async fn execute<F, T, E>(&self, request_name: &str, mut f: F) -> Result<T, E>
     where
-        F: Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<T, E>> + Send>>,
+        F: FnMut() -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<T, E>> + Send>>,
         E: std::fmt::Display,
     {
         const MAX_RETRIES: u32 = 3;
@@ -105,7 +106,7 @@ impl RateLimiter {
                 }
                 Err(e) => {
                     // Check if this is a rate limit error
-                    let error_msg = format!("{}", e);
+                    let error_msg = format!("{e}");
                     let is_rate_limit_error = error_msg.contains("429")
                         || error_msg.contains("rate limit")
                         || error_msg.contains("too many requests");

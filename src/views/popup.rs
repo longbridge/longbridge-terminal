@@ -72,10 +72,10 @@ fn switch_account(
         .map(|account| {
             Row::new(vec![
                 Cell::from(Span::styled(
-                    account.account_name.to_string(),
+                    account.account_name.clone(),
                     styles::popup(),
                 )),
-                Cell::from(account.org.name.to_string()),
+                Cell::from(account.org.name.clone()),
             ])
         })
         .collect::<Vec<_>>();
@@ -129,7 +129,7 @@ fn switch_currency(
         .iter()
         .map(|currency| {
             Row::new(vec![Cell::from(Span::styled(
-                currency.currency_iso.to_string(),
+                currency.currency_iso.clone(),
                 styles::popup(),
             ))])
         })
@@ -184,7 +184,7 @@ fn switch_watchlist(
         .iter()
         .map(|group| {
             Row::new(vec![Cell::from(Span::styled(
-                group.name.to_string(),
+                group.name.clone(),
                 styles::popup(),
             ))])
         })

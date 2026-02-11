@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 pub struct StockItem {
     /// Stock code
     pub code: String,
-    /// Stock counter_id
+    /// Stock `counter_id`
     pub counter_id: Counter,
     /// Trading currency
     pub currency: String,

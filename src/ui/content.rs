@@ -33,7 +33,7 @@ impl<'a> Content<'a> {
     }
 }
 
-impl<'a> Widget for Content<'a> {
+impl Widget for Content<'_> {
     fn render(self, rect: ratatui::layout::Rect, buf: &mut ratatui::buffer::Buffer) {
         // make vertical center
         let heading_len = u16::try_from(self.heading.lines.len()).unwrap_or(5);

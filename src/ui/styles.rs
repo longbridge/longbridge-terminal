@@ -11,8 +11,7 @@ use crate::helper::Sign;
 
 #[inline]
 pub fn header() -> Style {
-    Style::default()
-        .fg(Color::Gray)
+    Style::default().fg(Color::Gray)
 }
 
 #[inline]
@@ -69,7 +68,7 @@ pub fn border() -> Style {
 pub fn market(m: Market) -> Style {
     use crate::data::Market as M;
     let color = match m {
-        M::US => Color::Cyan,
+        M::US => Color::Blue,
         M::HK => Color::Magenta,
         M::CN => Color::Red,
         M::SG => Color::Cyan,

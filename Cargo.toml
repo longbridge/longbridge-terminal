@@ -63,7 +63,7 @@ windows-sys = { version = "0.48.0", features = [
 ] }
 
 [lints.clippy]
-all = "deny"
+all = { level = "deny", priority = -1 }
 cast_possible_truncation = "allow"
 ignored_unit_patterns = "allow"
 implicit_hasher = "allow"
@@ -72,6 +72,6 @@ missing_panics_doc = "allow"
 module_name_repetitions = "allow"
 must_use_candidate = "allow"
 needless_pass_by_value = "allow"
-pedantic = "deny"
+pedantic = { level = "deny", priority = -1 }
 too_many_arguments = "allow"
 too_many_lines = "allow"

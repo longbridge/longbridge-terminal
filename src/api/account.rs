@@ -1,9 +1,9 @@
-use anyhow::Result;
 use crate::data::{
     Account, AccountBalance, AccountList, CashBalance, CashInfo, Holding, MarketAccount,
     OverviewData, PortfolioView,
 };
 use crate::openapi;
+use anyhow::Result;
 use rust_decimal::Decimal;
 use std::collections::HashMap;
 
@@ -19,7 +19,10 @@ pub async fn fetch_account_list() -> Result<AccountList> {
             tracing::info!("Successfully fetched account balance");
         }
         Err(e) => {
-            tracing::warn!("Failed to fetch account balance (may lack trading permission): {}", e);
+            tracing::warn!(
+                "Failed to fetch account balance (may lack trading permission): {}",
+                e
+            );
             // Continue execution, do not block app startup
         }
     }
@@ -36,7 +39,7 @@ pub async fn fetch_account_list() -> Result<AccountList> {
     };
 
     Ok(AccountList {
-        status: vec![account]
+        status: vec![account],
     })
 }
 
@@ -60,7 +63,7 @@ pub struct CurrencyInfo {
 }
 
 /// Get currency list (simplified implementation, returns common currencies)
-pub async fn currencies(_account_channel: &str) -> Result<Vec<CurrencyInfo>> {
+pub fn currencies(account_channel: &str) -> Result<Vec<CurrencyInfo>> {
     // OpenAPI may not directly provide currency list API
     // Return some common currencies as default
     Ok(vec![
@@ -78,7 +81,7 @@ pub async fn currencies(_account_channel: &str) -> Result<Vec<CurrencyInfo>> {
             amount_precision: 2,
             amount_round_mode: "truncate".to_string(),
             json_config: "{}".to_string(),
-            account_channel: _account_channel.to_string(),
+            account_channel: account_channel.to_string(),
         },
         CurrencyInfo {
             currency: "USD".to_string(),
@@ -94,7 +97,7 @@ pub async fn currencies(_account_channel: &str) -> Result<Vec<CurrencyInfo>> {
             amount_precision: 2,
             amount_round_mode: "truncate".to_string(),
             json_config: "{}".to_string(),
-            account_channel: _account_channel.to_string(),
+            account_channel: account_channel.to_string(),
         },
         CurrencyInfo {
             currency: "CNY".to_string(),
@@ -110,7 +113,7 @@ pub async fn currencies(_account_channel: &str) -> Result<Vec<CurrencyInfo>> {
             amount_precision: 2,
             amount_round_mode: "truncate".to_string(),
             json_config: "{}".to_string(),
-            account_channel: _account_channel.to_string(),
+            account_channel: account_channel.to_string(),
         },
     ])
 }
@@ -142,6 +145,7 @@ pub async fn fetch_account_balance() -> Result<AccountBalance> {
         total_cash: response.total_cash,
         max_finance_amount: response.max_finance_amount,
         remaining_finance_amount: response.remaining_finance_amount,
+        #[allow(clippy::cast_sign_loss)]
         risk_level: response.risk_level as u8,
         margin_call: response.margin_call,
         currency: response.currency,
@@ -166,7 +170,6 @@ pub async fn fetch_stock_holdings() -> Result<Vec<Holding>> {
         for position in &channel.positions {
             // Map currency string to Currency enum
             let currency = match position.currency.as_str() {
-                "HKD" => crate::data::Currency::HKD,
                 "USD" => crate::data::Currency::USD,
                 "CNY" => crate::data::Currency::CNY,
                 "SGD" => crate::data::Currency::SGD,
@@ -236,7 +239,9 @@ fn calculate_overview(balance: &AccountBalance, holdings: &[Holding]) -> Overvie
         .map(|h| {
             let counter = crate::data::Counter::new(&h.symbol);
             if let Some(stock) = crate::data::STOCKS.get(&counter) {
-                if let (Some(last_done), Some(prev_close)) = (stock.quote.last_done, stock.quote.prev_close) {
+                if let (Some(last_done), Some(prev_close)) =
+                    (stock.quote.last_done, stock.quote.prev_close)
+                {
                     // Intraday P/L = (current_price - prev_close) * quantity
                     return (last_done - prev_close) * h.quantity;
                 }
@@ -277,7 +282,6 @@ fn group_by_market(holdings: &[Holding]) -> HashMap<crate::data::Market, MarketA
         let market = if let Some(dot_pos) = holding.symbol.rfind('.') {
             let market_str = &holding.symbol[dot_pos + 1..];
             match market_str {
-                "HK" => crate::data::Market::HK,
                 "US" => crate::data::Market::US,
                 "SH" | "SZ" => crate::data::Market::CN,
                 "SG" => crate::data::Market::SG,
@@ -310,7 +314,6 @@ fn extract_cash_balances(balance: &AccountBalance) -> Vec<CashBalance> {
         .iter()
         .map(|info| {
             let currency = match info.currency.as_str() {
-                "HKD" => crate::data::Currency::HKD,
                 "USD" => crate::data::Currency::USD,
                 "CNY" => crate::data::Currency::CNY,
                 "SGD" => crate::data::Currency::SGD,
