@@ -1,10 +1,12 @@
 use serde::{Deserialize, Serialize};
 
-use super::types::{Counter, Currency, TradeStatus, TradeSession, QuoteData, DepthData, StaticInfo, TradeData, Depth};
+use super::types::{
+    Counter, Currency, Depth, DepthData, QuoteData, StaticInfo, TradeData, TradeSession,
+    TradeStatus,
+};
 
 /// Stock data (simplified)
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct Stock {
     pub counter: Counter,
     pub name: String,
@@ -13,10 +15,9 @@ pub struct Stock {
     pub trade_session: TradeSession,
     pub quote: QuoteData,
     pub depth: DepthData,
-    pub static_info: Option<StaticInfo>,  // Static info (market cap, shares, etc.)
-    pub trades: Vec<TradeData>,           // Recent trades
+    pub static_info: Option<StaticInfo>, // Static info (market cap, shares, etc.)
+    pub trades: Vec<TradeData>,          // Recent trades
 }
-
 
 impl Stock {
     pub fn new(counter: Counter) -> Self {
@@ -114,7 +115,9 @@ impl Stock {
                 timestamp: t.timestamp.unix_timestamp(),
                 trade_type: t.trade_type.clone(),
                 direction: match t.direction {
-                    longport::quote::TradeDirection::Neutral => super::types::TradeDirection::Neutral,
+                    longport::quote::TradeDirection::Neutral => {
+                        super::types::TradeDirection::Neutral
+                    }
                     longport::quote::TradeDirection::Down => super::types::TradeDirection::Down,
                     longport::quote::TradeDirection::Up => super::types::TradeDirection::Up,
                 },

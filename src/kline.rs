@@ -173,10 +173,16 @@ impl KlineStore {
 
         tracing::info!(
             "Requesting candlestick data: counter={}, period={:?}, count={}, adjust={:?}",
-            counter, period, count, adjust
+            counter,
+            period,
+            count,
+            adjust
         );
 
-        match ctx.candlesticks(counter.as_str(), period, count, adjust, trade_session).await {
+        match ctx
+            .candlesticks(counter.as_str(), period, count, adjust, trade_session)
+            .await
+        {
             Ok(candlesticks) => {
                 tracing::info!(
                     "Successfully fetched candlestick data: counter={}, count={}",
@@ -204,7 +210,11 @@ impl KlineStore {
                 if !klines.is_empty() {
                     tracing::debug!(
                         "First candlestick: open={}, high={}, low={}, close={}, volume={}",
-                        klines[0].open, klines[0].high, klines[0].low, klines[0].close, klines[0].amount
+                        klines[0].open,
+                        klines[0].high,
+                        klines[0].low,
+                        klines[0].close,
+                        klines[0].amount
                     );
                 }
 
@@ -212,7 +222,11 @@ impl KlineStore {
                 KLINES.update(counter, kline_type, adjust_type, klines, has_more);
             }
             Err(e) => {
-                tracing::error!("Failed to request candlestick data: counter={}, error={}", counter, e);
+                tracing::error!(
+                    "Failed to request candlestick data: counter={}, error={}",
+                    counter,
+                    e
+                );
             }
         }
     }

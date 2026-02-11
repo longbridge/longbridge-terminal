@@ -1,5 +1,5 @@
-use rust_decimal::Decimal;
 use crate::data::Counter;
+use rust_decimal::Decimal;
 
 /// Decimal extension trait
 pub trait DecimalExt {

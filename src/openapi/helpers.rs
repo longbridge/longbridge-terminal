@@ -1,13 +1,10 @@
+use crate::openapi::{quote_limited, trade_limited};
 /// Helper functions for rate-limited API calls
 /// These functions wrap common API patterns with automatic rate limiting
 use anyhow::Result;
-use crate::openapi::{quote_limited, trade_limited};
 
 /// Subscribe to quotes with automatic rate limiting
-pub async fn subscribe_quotes<I, T>(
-    symbols: I,
-    sub_types: longport::quote::SubFlags,
-) -> Result<()>
+pub async fn subscribe_quotes<I, T>(symbols: I, sub_types: longport::quote::SubFlags) -> Result<()>
 where
     I: IntoIterator<Item = T>,
     T: Into<String>,
@@ -20,7 +17,10 @@ where
         let inner = ctx.inner();
         let symbols = symbols.clone();
         Box::pin(async move {
-            inner.subscribe(&symbols, sub_types).await.map_err(anyhow::Error::from)
+            inner
+                .subscribe(&symbols, sub_types)
+                .await
+                .map_err(anyhow::Error::from)
         })
     })
     .await
@@ -43,7 +43,10 @@ where
         let inner = ctx.inner();
         let symbols = symbols.clone();
         Box::pin(async move {
-            inner.unsubscribe(&symbols, sub_types).await.map_err(anyhow::Error::from)
+            inner
+                .unsubscribe(&symbols, sub_types)
+                .await
+                .map_err(anyhow::Error::from)
         })
     })
     .await
@@ -62,17 +65,13 @@ where
     ctx.execute(&format!("quote({symbols_str})"), || {
         let inner = ctx.inner();
         let symbols = symbols.clone();
-        Box::pin(async move {
-            inner.quote(&symbols).await.map_err(anyhow::Error::from)
-        })
+        Box::pin(async move { inner.quote(&symbols).await.map_err(anyhow::Error::from) })
     })
     .await
 }
 
 /// Get static info with automatic rate limiting
-pub async fn get_static_info<I, T>(
-    symbols: I,
-) -> Result<Vec<longport::quote::SecurityStaticInfo>>
+pub async fn get_static_info<I, T>(symbols: I) -> Result<Vec<longport::quote::SecurityStaticInfo>>
 where
     I: IntoIterator<Item = T>,
     T: Into<String>,
@@ -85,7 +84,10 @@ where
         let inner = ctx.inner();
         let symbols = symbols.clone();
         Box::pin(async move {
-            inner.static_info(&symbols).await.map_err(anyhow::Error::from)
+            inner
+                .static_info(&symbols)
+                .await
+                .map_err(anyhow::Error::from)
         })
     })
     .await
@@ -100,7 +102,10 @@ pub async fn get_trades(symbol: &str, count: usize) -> Result<Vec<longport::quot
         let inner = ctx.inner();
         let symbol = symbol.clone();
         Box::pin(async move {
-            inner.trades(&symbol, count).await.map_err(anyhow::Error::from)
+            inner
+                .trades(&symbol, count)
+                .await
+                .map_err(anyhow::Error::from)
         })
     })
     .await
@@ -112,9 +117,7 @@ pub async fn get_watchlist() -> Result<Vec<longport::quote::WatchlistGroup>> {
 
     ctx.execute("watchlist", || {
         let inner = ctx.inner();
-        Box::pin(async move {
-            inner.watchlist().await.map_err(anyhow::Error::from)
-        })
+        Box::pin(async move { inner.watchlist().await.map_err(anyhow::Error::from) })
     })
     .await
 }

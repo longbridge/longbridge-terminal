@@ -279,12 +279,12 @@ pub async fn run(
                     .map(|entry| entry.path())
                     .filter(|path| {
                         path.is_file()
-                            && path
-                                .file_name()
-                                .and_then(|n| n.to_str())
-                                .is_some_and(|n| n.starts_with("longbridge") && std::path::Path::new(n)
-                                    .extension()
-                                    .is_some_and(|ext| ext.eq_ignore_ascii_case("log")))
+                            && path.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+                                n.starts_with("longbridge")
+                                    && std::path::Path::new(n)
+                                        .extension()
+                                        .is_some_and(|ext| ext.eq_ignore_ascii_case("log"))
+                            })
                     })
                     .collect();
 

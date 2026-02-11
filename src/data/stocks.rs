@@ -40,7 +40,8 @@ impl StockStore {
         F: FnOnce(&mut Stock),
     {
         let mut stock = self
-            .get(&counter).map_or_else(|| Stock::new(counter.clone()), |s| (*s).clone());
+            .get(&counter)
+            .map_or_else(|| Stock::new(counter.clone()), |s| (*s).clone());
         f(&mut stock);
         self.insert(stock);
     }

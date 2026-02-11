@@ -590,8 +590,12 @@ pub fn refresh_watchlist(update_tx: mpsc::UnboundedSender<CommandQueue>) {
 pub fn refresh_stock(counter: Counter) {
     RT.get().unwrap().spawn(async move {
         KLINES.clear();
-        let _ = WS.quote_detail("stock_detail", std::slice::from_ref(&counter)).await;
-        let _ = WS.quote_trade("stock_detail", std::slice::from_ref(&counter)).await;
+        let _ = WS
+            .quote_detail("stock_detail", std::slice::from_ref(&counter))
+            .await;
+        let _ = WS
+            .quote_trade("stock_detail", std::slice::from_ref(&counter))
+            .await;
 
         // Get full quote data (including prev_close and trade_status)
         let ctx = crate::openapi::quote();
@@ -657,8 +661,12 @@ pub fn refresh_stock_debounced(counter: Counter) {
 
             // Execute the actual refresh
             KLINES.clear();
-            let _ = WS.quote_detail("stock_detail", std::slice::from_ref(&counter)).await;
-            let _ = WS.quote_trade("stock_detail", std::slice::from_ref(&counter)).await;
+            let _ = WS
+                .quote_detail("stock_detail", std::slice::from_ref(&counter))
+                .await;
+            let _ = WS
+                .quote_trade("stock_detail", std::slice::from_ref(&counter))
+                .await;
 
             // Get full quote data (including prev_close and trade_status)
             let ctx = crate::openapi::quote();
@@ -1695,7 +1703,11 @@ fn stock_detail(
                     );
 
                     // Calculate background width (in characters, using adaptive width)
-                    #[allow(clippy::cast_sign_loss, clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+                    #[allow(
+                        clippy::cast_sign_loss,
+                        clippy::cast_precision_loss,
+                        clippy::cast_possible_truncation
+                    )]
                     let bg_width = (volume_width as f64 * volume_ratio).ceil() as usize;
                     let fg_width = volume_width.saturating_sub(bg_width);
 

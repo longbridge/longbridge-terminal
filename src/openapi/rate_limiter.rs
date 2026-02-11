@@ -45,7 +45,10 @@ impl RateLimiter {
         // The delay is handled by refill_tokens()
         permit.forget();
 
-        debug!("Rate limiter: token acquired, available permits: {}", self.semaphore.available_permits());
+        debug!(
+            "Rate limiter: token acquired, available permits: {}",
+            self.semaphore.available_permits()
+        );
     }
 
     /// Refill tokens based on elapsed time since last refill
@@ -67,8 +70,11 @@ impl RateLimiter {
             if tokens_to_add > 0 {
                 self.semaphore.add_permits(tokens_to_add as usize);
                 *last_refill = now;
-                debug!("Rate limiter: refilled {} tokens, total available: {}",
-                       tokens_to_add, self.semaphore.available_permits());
+                debug!(
+                    "Rate limiter: refilled {} tokens, total available: {}",
+                    tokens_to_add,
+                    self.semaphore.available_permits()
+                );
             }
         }
     }
@@ -100,7 +106,10 @@ impl RateLimiter {
             match f().await {
                 Ok(result) => {
                     if retry_count > 0 {
-                        debug!("Request succeeded after {} retries: {}", retry_count, request_name);
+                        debug!(
+                            "Request succeeded after {} retries: {}",
+                            retry_count, request_name
+                        );
                     }
                     return Ok(result);
                 }
@@ -126,7 +135,10 @@ impl RateLimiter {
 
                     // Non-rate-limit error or max retries reached
                     if retry_count > 0 {
-                        warn!("Request failed after {} retries: {}", retry_count, request_name);
+                        warn!(
+                            "Request failed after {} retries: {}",
+                            retry_count, request_name
+                        );
                     }
                     return Err(e);
                 }
@@ -166,7 +178,10 @@ mod tests {
         limiter.acquire().await;
         let elapsed = start.elapsed();
 
-        assert!(elapsed < Duration::from_millis(100), "First acquire should be immediate");
+        assert!(
+            elapsed < Duration::from_millis(100),
+            "First acquire should be immediate"
+        );
     }
 
     #[tokio::test]
@@ -184,7 +199,10 @@ mod tests {
         let elapsed = start.elapsed();
 
         // Should wait at least 100ms (1 token at 10/sec = 0.1s)
-        assert!(elapsed >= Duration::from_millis(90), "Should wait for token refill");
+        assert!(
+            elapsed >= Duration::from_millis(90),
+            "Should wait for token refill"
+        );
     }
 
     #[tokio::test]

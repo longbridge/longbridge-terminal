@@ -17,7 +17,11 @@ impl Drop for FileGuard {
 }
 
 pub fn flock(path: &Path) -> std::io::Result<FileGuard> {
-    let file = OpenOptions::new().write(true).create(true).truncate(true).open(path)?;
+    let file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)?;
     fcntl::flock(
         file.as_raw_fd(),
         nix::fcntl::FlockArg::LockExclusiveNonblock,

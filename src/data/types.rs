@@ -175,7 +175,6 @@ pub enum KlineType {
     PerYear = 8,
 }
 
-
 impl std::fmt::Display for KlineType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -394,9 +393,10 @@ impl Market {
 
         // Calculate days until first occurrence of target weekday
         #[allow(clippy::cast_sign_loss)]
-        let days_until_first =
-            ((i16::from(weekday.number_from_monday()) - i16::from(first_weekday.number_from_monday()) + 7)
-                % 7) as u8;
+        let days_until_first = ((i16::from(weekday.number_from_monday())
+            - i16::from(first_weekday.number_from_monday())
+            + 7)
+            % 7) as u8;
 
         // Calculate the date of the Nth occurrence
         let target_day = 1 + days_until_first + (n - 1) * 7;
@@ -424,7 +424,9 @@ impl Market {
                 };
                 now.to_offset(offset)
             }
-            Self::HK | Self::CN | Self::SG => now.to_offset(time::UtcOffset::from_hms(8, 0, 0).unwrap()), // HKT/CST/SGT
+            Self::HK | Self::CN | Self::SG => {
+                now.to_offset(time::UtcOffset::from_hms(8, 0, 0).unwrap())
+            } // HKT/CST/SGT
         };
 
         // Markets are closed on weekends

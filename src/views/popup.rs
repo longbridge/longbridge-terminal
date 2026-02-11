@@ -33,11 +33,7 @@ pub fn render(
     }
 }
 
-fn switch_account(
-    frame: &mut Frame,
-    rect: Rect,
-    account: &mut LocalSearch<crate::data::Account>,
-) {
+fn switch_account(frame: &mut Frame, rect: Rect, account: &mut LocalSearch<crate::data::Account>) {
     const MAX_SIZE: (u16, u16) = (50, 30);
     let rect = crate::ui::rect::centered(MAX_SIZE.0, MAX_SIZE.1, rect);
     frame.render_widget(Clear, rect);
@@ -71,10 +67,7 @@ fn switch_account(
         .iter()
         .map(|account| {
             Row::new(vec![
-                Cell::from(Span::styled(
-                    account.account_name.clone(),
-                    styles::popup(),
-                )),
+                Cell::from(Span::styled(account.account_name.clone(), styles::popup())),
                 Cell::from(account.org.name.clone()),
             ])
         })
@@ -83,7 +76,11 @@ fn switch_account(
     let column_constraints = column_widths.map(|w| Constraint::Length(u16::try_from(w).unwrap()));
 
     let table = Table::new(rows)
-        .block(Block::default().borders(Borders::all()).border_style(styles::border()))
+        .block(
+            Block::default()
+                .borders(Borders::all())
+                .border_style(styles::border()),
+        )
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
         .widths(&column_constraints)
         .column_spacing(2);
@@ -138,7 +135,11 @@ fn switch_currency(
     let column_constraints = column_widths.map(|w| Constraint::Length(u16::try_from(w).unwrap()));
 
     let table = Table::new(rows)
-        .block(Block::default().borders(Borders::all()).border_style(styles::border()))
+        .block(
+            Block::default()
+                .borders(Borders::all())
+                .border_style(styles::border()),
+        )
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
         .widths(&column_constraints)
         .column_spacing(2);
@@ -193,7 +194,11 @@ fn switch_watchlist(
     let column_constraints = column_widths.map(|w| Constraint::Length(u16::try_from(w).unwrap()));
 
     let table = Table::new(rows)
-        .block(Block::default().borders(Borders::all()).border_style(styles::border()))
+        .block(
+            Block::default()
+                .borders(Borders::all())
+                .border_style(styles::border()),
+        )
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
         .widths(&column_constraints)
         .column_spacing(2);
@@ -249,7 +254,11 @@ fn searching(frame: &mut Frame, rect: Rect, search: &mut Search<crate::api::sear
     let column_constraints = column_widths.map(|w| Constraint::Length(u16::try_from(w).unwrap()));
 
     let table = Table::new(rows)
-        .block(Block::default().borders(Borders::all()).border_style(styles::border()))
+        .block(
+            Block::default()
+                .borders(Borders::all())
+                .border_style(styles::border()),
+        )
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
         .widths(&column_constraints)
         .column_spacing(2);

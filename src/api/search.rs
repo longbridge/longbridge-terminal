@@ -1,6 +1,6 @@
-use anyhow::Result;
 use crate::data::Counter;
 use crate::openapi;
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
