@@ -4,7 +4,7 @@ An _experimental_ terminal-based stock trading app built with [Longbridge OpenAP
 
 A Rust-based TUI (Terminal User Interface) for monitoring market data and managing stock portfolios. Built to showcase the capabilities of the Longbridge OpenAPI SDK.
 
-<img width="1601" height="1155" alt="image" src="https://github.com/user-attachments/assets/3b853eba-658c-4ee8-a626-ba03170e6b28" />
+[![asciicast](https://asciinema.org/a/785102.svg)](https://asciinema.org/a/785102)
 
 ## Features
 
