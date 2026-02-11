@@ -45,7 +45,10 @@ impl RateLimiter {
         // The delay is handled by refill_tokens()
         permit.forget();
 
-        debug!("Rate limiter: token acquired, available permits: {}", self.semaphore.available_permits());
+        debug!(
+            "Rate limiter: token acquired, available permits: {}",
+            self.semaphore.available_permits()
+        );
     }
 
     /// Refill tokens based on elapsed time since last refill
@@ -55,6 +58,7 @@ impl RateLimiter {
         let elapsed = now.duration_since(*last_refill);
 
         // Calculate tokens to add based on elapsed time
+        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
         let tokens_to_add = (elapsed.as_secs_f64() * f64::from(self.tokens_per_second)) as u32;
 
         if tokens_to_add > 0 {
@@ -66,8 +70,11 @@ impl RateLimiter {
             if tokens_to_add > 0 {
                 self.semaphore.add_permits(tokens_to_add as usize);
                 *last_refill = now;
-                debug!("Rate limiter: refilled {} tokens, total available: {}",
-                       tokens_to_add, self.semaphore.available_permits());
+                debug!(
+                    "Rate limiter: refilled {} tokens, total available: {}",
+                    tokens_to_add,
+                    self.semaphore.available_permits()
+                );
             }
         }
     }
@@ -80,9 +87,9 @@ impl RateLimiter {
     ///
     /// # Returns
     /// Result from the async function
-    pub async fn execute<F, T, E>(&self, request_name: &str, f: F) -> Result<T, E>
+    pub async fn execute<F, T, E>(&self, request_name: &str, mut f: F) -> Result<T, E>
     where
-        F: Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<T, E>> + Send>>,
+        F: FnMut() -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<T, E>> + Send>>,
         E: std::fmt::Display,
     {
         const MAX_RETRIES: u32 = 3;
@@ -99,13 +106,16 @@ impl RateLimiter {
             match f().await {
                 Ok(result) => {
                     if retry_count > 0 {
-                        debug!("Request succeeded after {} retries: {}", retry_count, request_name);
+                        debug!(
+                            "Request succeeded after {} retries: {}",
+                            retry_count, request_name
+                        );
                     }
                     return Ok(result);
                 }
                 Err(e) => {
                     // Check if this is a rate limit error
-                    let error_msg = format!("{}", e);
+                    let error_msg = format!("{e}");
                     let is_rate_limit_error = error_msg.contains("429")
                         || error_msg.contains("rate limit")
                         || error_msg.contains("too many requests");
@@ -125,7 +135,10 @@ impl RateLimiter {
 
                     // Non-rate-limit error or max retries reached
                     if retry_count > 0 {
-                        warn!("Request failed after {} retries: {}", retry_count, request_name);
+                        warn!(
+                            "Request failed after {} retries: {}",
+                            retry_count, request_name
+                        );
                     }
                     return Err(e);
                 }
@@ -165,7 +178,10 @@ mod tests {
         limiter.acquire().await;
         let elapsed = start.elapsed();
 
-        assert!(elapsed < Duration::from_millis(100), "First acquire should be immediate");
+        assert!(
+            elapsed < Duration::from_millis(100),
+            "First acquire should be immediate"
+        );
     }
 
     #[tokio::test]
@@ -183,7 +199,10 @@ mod tests {
         let elapsed = start.elapsed();
 
         // Should wait at least 100ms (1 token at 10/sec = 0.1s)
-        assert!(elapsed >= Duration::from_millis(90), "Should wait for token refill");
+        assert!(
+            elapsed >= Duration::from_millis(90),
+            "Should wait for token refill"
+        );
     }
 
     #[tokio::test]

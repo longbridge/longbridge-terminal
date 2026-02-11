@@ -15,15 +15,14 @@ fn get_latest_log_file() -> Option<PathBuf> {
     // Find all log files in the directory
     let mut log_files: Vec<PathBuf> = fs::read_dir(&log_dir)
         .ok()?
-        .filter_map(|entry| entry.ok())
+        .filter_map(std::result::Result::ok)
         .map(|entry| entry.path())
         .filter(|path| {
             path.is_file()
                 && path
                     .file_name()
                     .and_then(|n| n.to_str())
-                    .map(|n| n.starts_with("longbridge") && n.ends_with(".log"))
-                    .unwrap_or(false)
+                    .is_some_and(|n| n == "longbridge.log")
         })
         .collect();
 
@@ -47,7 +46,10 @@ fn get_latest_log_file() -> Option<PathBuf> {
 fn read_last_lines(path: &PathBuf, count: usize) -> Vec<String> {
     match fs::read_to_string(path) {
         Ok(content) => {
-            let lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+            let lines: Vec<String> = content
+                .lines()
+                .map(std::string::ToString::to_string)
+                .collect();
             let start = lines.len().saturating_sub(count);
             lines[start..].to_vec()
         }

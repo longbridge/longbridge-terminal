@@ -62,6 +62,7 @@ pub fn format_volume(volume: u64) -> String {
         return "--".to_string();
     }
 
+    #[allow(clippy::cast_precision_loss)]
     let volume_f = volume as f64;
 
     if volume >= 1_000_000_000 {

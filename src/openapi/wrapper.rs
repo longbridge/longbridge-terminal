@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-/// Wrapper for QuoteContext with rate limiting
+/// Wrapper for `QuoteContext` with rate limiting
 /// Provides access to inner context while tracking rate limits
 pub struct RateLimitedQuoteContext {
     inner: &'static longport::quote::QuoteContext,
@@ -17,7 +17,7 @@ impl RateLimitedQuoteContext {
     }
 
     /// Get reference to inner context
-    /// Use this for direct API calls that will be rate-limited by execute()
+    /// Use this for direct API calls that will be rate-limited by `execute()`
     pub fn inner(&self) -> &'static longport::quote::QuoteContext {
         self.inner
     }
@@ -37,7 +37,7 @@ impl RateLimitedQuoteContext {
     }
 }
 
-/// Wrapper for TradeContext with rate limiting
+/// Wrapper for `TradeContext` with rate limiting
 /// Provides access to inner context while tracking rate limits
 pub struct RateLimitedTradeContext {
     inner: &'static longport::trade::TradeContext,
@@ -54,7 +54,7 @@ impl RateLimitedTradeContext {
     }
 
     /// Get reference to inner context
-    /// Use this for direct API calls that will be rate-limited by execute()
+    /// Use this for direct API calls that will be rate-limited by `execute()`
     pub fn inner(&self) -> &'static longport::trade::TradeContext {
         self.inner
     }

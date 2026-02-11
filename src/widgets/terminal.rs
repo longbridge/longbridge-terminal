@@ -55,10 +55,10 @@ impl Terminal {
         // Restore terminal state
         _ = crossterm::execute!(
             std::io::stdout(),
-            cursor::Show,  // Show cursor
-            terminal::LeaveAlternateScreen,  // Leave alternate screen
+            cursor::Show,                   // Show cursor
+            terminal::LeaveAlternateScreen, // Leave alternate screen
         );
-        _ = terminal::disable_raw_mode();  // Disable raw mode
+        _ = terminal::disable_raw_mode(); // Disable raw mode
     }
 
     /// Graceful exit - cleanup terminal and exit program

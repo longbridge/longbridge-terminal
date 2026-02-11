@@ -1,10 +1,15 @@
 use ansi_parser::AnsiParser;
-use ratatui::{buffer::Buffer, layout::Rect, style::{Color, Modifier, Style}, widgets::Widget};
+use ratatui::{
+    buffer::Buffer,
+    layout::Rect,
+    style::{Color, Modifier, Style},
+    widgets::Widget,
+};
 use unicode_width::UnicodeWidthStr;
 
 pub struct Ansi<'a>(pub &'a str);
 
-impl<'a> Widget for Ansi<'a> {
+impl Widget for Ansi<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         for (h, line) in self.0.lines().enumerate() {
             let h = area.top() + h as u16;
@@ -36,7 +41,7 @@ impl<'a> Widget for Ansi<'a> {
                                 }
                             }
 
-                            s = match v.get(0) {
+                            s = match v.first() {
                                 Some(0) => Style::default(),
                                 Some(1) => s.add_modifier(Modifier::BOLD),
                                 Some(2) => s.remove_modifier(Modifier::BOLD),
@@ -48,7 +53,7 @@ impl<'a> Widget for Ansi<'a> {
                                 Some(34) => s.fg(Color::Blue),
                                 Some(35) => s.fg(Color::Magenta),
                                 Some(36) => s.fg(Color::Cyan),
-                                Some(37) => s.fg(Color::White),
+                                Some(37 | 97) => s.fg(Color::White),
                                 // Bright foreground colors (90-97)
                                 Some(90) => s.fg(Color::DarkGray),
                                 Some(91) => s.fg(Color::LightRed),
@@ -57,7 +62,6 @@ impl<'a> Widget for Ansi<'a> {
                                 Some(94) => s.fg(Color::LightBlue),
                                 Some(95) => s.fg(Color::LightMagenta),
                                 Some(96) => s.fg(Color::LightCyan),
-                                Some(97) => s.fg(Color::White),
                                 // 256-color/RGB foreground
                                 Some(38) => {
                                     if let Some(c) = color(&v) {

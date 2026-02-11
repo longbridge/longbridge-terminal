@@ -6,7 +6,6 @@ use atomic::Atomic;
 use bevy_app::prelude::*;
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::{CommandQueue, InsertResource, SystemState};
-use once_cell::sync::Lazy;
 use tokio::sync::mpsc;
 
 use crate::data::{Counter, User, Watchlist, WatchlistGroup};
@@ -20,8 +19,9 @@ pub static POPUP: AtomicU8 = AtomicU8::new(0);
 pub static LAST_STATE: Atomic<AppState> = Atomic::new(AppState::Watchlist);
 pub static QUOTE_BMP: Atomic<bool> = Atomic::new(false);
 pub static LOG_PANEL_VISIBLE: Atomic<bool> = Atomic::new(false);
-pub static WATCHLIST: Lazy<RwLock<Watchlist>> = Lazy::new(Default::default);
-pub static USER: Lazy<RwLock<User>> = Lazy::new(Default::default);
+pub static WATCHLIST: std::sync::LazyLock<RwLock<Watchlist>> =
+    std::sync::LazyLock::new(Default::default);
+pub static USER: std::sync::LazyLock<RwLock<User>> = std::sync::LazyLock::new(Default::default);
 
 pub const POPUP_HELP: u8 = 0b1;
 pub const POPUP_SEARCH: u8 = 0b10;
@@ -64,7 +64,7 @@ pub async fn run(
         let subs = subs.clone();
         async move {
             let ctx = crate::openapi::quote();
-            let symbols: Vec<String> = subs.iter().map(|c| c.to_string()).collect();
+            let symbols: Vec<String> = subs.iter().map(std::string::ToString::to_string).collect();
 
             // First, fetch initial quote data (includes prev_close)
             match ctx.quote(&symbols).await {
@@ -202,8 +202,8 @@ pub async fn run(
                     let account = &accounts.status[0];
                     {
                         let mut user = USER.write().expect("poison");
-                        user.account_channel = account.account_channel.clone();
-                        user.aaid = account.aaid.clone();
+                        user.account_channel.clone_from(&account.account_channel);
+                        user.aaid.clone_from(&account.aaid);
                     }
 
                     let mut queue = CommandQueue::default();
@@ -224,7 +224,7 @@ pub async fn run(
 
                     // Get currency list
                     if let Ok(currencies) =
-                        crate::api::account::currencies(&account.account_channel).await
+                        crate::api::account::currencies(&account.account_channel)
                     {
                         queue.push(InsertResource {
                             resource: LocalSearch::new(currencies.clone(), |keyword, currency| {
@@ -275,15 +275,16 @@ pub async fn run(
                 let log_dir = crate::logger::default_log_dir();
                 let mut log_files: Vec<PathBuf> = fs::read_dir(&log_dir)
                     .ok()?
-                    .filter_map(|entry| entry.ok())
+                    .filter_map(std::result::Result::ok)
                     .map(|entry| entry.path())
                     .filter(|path| {
                         path.is_file()
-                            && path
-                                .file_name()
-                                .and_then(|n| n.to_str())
-                                .map(|n| n.starts_with("longbridge") && n.ends_with(".log"))
-                                .unwrap_or(false)
+                            && path.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+                                n.starts_with("longbridge")
+                                    && std::path::Path::new(n)
+                                        .extension()
+                                        .is_some_and(|ext| ext.eq_ignore_ascii_case("log"))
+                            })
                     })
                     .collect();
 
@@ -500,7 +501,7 @@ fn handle_popup_input(
         }
         if let Some(account) = selected {
             let mut user = USER.write().expect("poison");
-            if user.get_account_channel() != &account.account_channel {
+            if user.get_account_channel() != account.account_channel {
                 // TODO: Fetch currency list in background
             }
             user.account_channel = account.account_channel;
@@ -582,7 +583,13 @@ fn handle_global_keys(
                 .insert_resource(NextState(Some(AppState::Portfolio)));
             render_state.mark_dirty(DirtyFlags::ALL);
         }
-        key!('a') | shift!('a') if state == AppState::Portfolio => {
+        ::crossterm::event::KeyEvent {
+            code: ::crossterm::event::KeyCode::Char('a'),
+            modifiers:
+                ::crossterm::event::KeyModifiers::NONE | ::crossterm::event::KeyModifiers::SHIFT,
+            kind: ::crossterm::event::KeyEventKind::Press,
+            state: ::crossterm::event::KeyEventState::NONE,
+        } if state == AppState::Portfolio => {
             if let Some(mut account) = app
                 .world
                 .get_resource_mut::<LocalSearch<crate::data::Account>>()
@@ -592,7 +599,13 @@ fn handle_global_keys(
                 render_state.mark_dirty(DirtyFlags::POPUP_ACCOUNT);
             }
         }
-        key!('c') | shift!('c') if state == AppState::Portfolio => {
+        ::crossterm::event::KeyEvent {
+            code: ::crossterm::event::KeyCode::Char('c'),
+            modifiers:
+                ::crossterm::event::KeyModifiers::NONE | ::crossterm::event::KeyModifiers::SHIFT,
+            kind: ::crossterm::event::KeyEventKind::Press,
+            state: ::crossterm::event::KeyEventState::NONE,
+        } if state == AppState::Portfolio => {
             if let Some(mut currency) = app
                 .world
                 .get_resource_mut::<LocalSearch<crate::api::account::CurrencyInfo>>()
@@ -602,28 +615,55 @@ fn handle_global_keys(
                 render_state.mark_dirty(DirtyFlags::POPUP_CURRENCY);
             }
         }
-        key!('g') | key!('G')
-            if state == AppState::Watchlist || state == AppState::WatchlistStock =>
-        {
+        ::crossterm::event::KeyEvent {
+            code: ::crossterm::event::KeyCode::Char('g' | 'G'),
+            modifiers: ::crossterm::event::KeyModifiers::NONE,
+            kind: ::crossterm::event::KeyEventKind::Press,
+            state: ::crossterm::event::KeyEventState::NONE,
+        } if state == AppState::Watchlist || state == AppState::WatchlistStock => {
             if let Some(mut search) = app.world.get_resource_mut::<LocalSearch<WatchlistGroup>>() {
                 POPUP.store(POPUP_WATCHLIST, Ordering::Relaxed);
                 search.visible();
                 render_state.mark_dirty(DirtyFlags::POPUP_WATCHLIST);
-            };
+            }
         }
-        key!('Q') | shift!('Q') => {
+        ::crossterm::event::KeyEvent {
+            code: ::crossterm::event::KeyCode::Char('Q'),
+            modifiers:
+                ::crossterm::event::KeyModifiers::NONE | ::crossterm::event::KeyModifiers::SHIFT,
+            kind: ::crossterm::event::KeyEventKind::Press,
+            state: ::crossterm::event::KeyEventState::NONE,
+        } => {
             show_index(&mut app.world, 0);
             render_state.mark_dirty(DirtyFlags::STOCK_DETAIL | DirtyFlags::WATCHLIST);
         }
-        key!('W') | shift!('W') => {
+        ::crossterm::event::KeyEvent {
+            code: ::crossterm::event::KeyCode::Char('W'),
+            modifiers:
+                ::crossterm::event::KeyModifiers::NONE | ::crossterm::event::KeyModifiers::SHIFT,
+            kind: ::crossterm::event::KeyEventKind::Press,
+            state: ::crossterm::event::KeyEventState::NONE,
+        } => {
             show_index(&mut app.world, 1);
             render_state.mark_dirty(DirtyFlags::STOCK_DETAIL | DirtyFlags::WATCHLIST);
         }
-        key!('E') | shift!('E') => {
+        ::crossterm::event::KeyEvent {
+            code: ::crossterm::event::KeyCode::Char('E'),
+            modifiers:
+                ::crossterm::event::KeyModifiers::NONE | ::crossterm::event::KeyModifiers::SHIFT,
+            kind: ::crossterm::event::KeyEventKind::Press,
+            state: ::crossterm::event::KeyEventState::NONE,
+        } => {
             show_index(&mut app.world, 2);
             render_state.mark_dirty(DirtyFlags::STOCK_DETAIL | DirtyFlags::WATCHLIST);
         }
-        key!('t') | shift!('t') => {
+        ::crossterm::event::KeyEvent {
+            code: ::crossterm::event::KeyCode::Char('t'),
+            modifiers:
+                ::crossterm::event::KeyModifiers::NONE | ::crossterm::event::KeyModifiers::SHIFT,
+            kind: ::crossterm::event::KeyEventKind::Press,
+            state: ::crossterm::event::KeyEventState::NONE,
+        } => {
             if state == AppState::Stock {
                 app.world
                     .insert_resource(NextState(Some(AppState::WatchlistStock)));
@@ -633,28 +673,36 @@ fn handle_global_keys(
                 render_state.mark_dirty(DirtyFlags::STOCK_DETAIL | DirtyFlags::WATCHLIST);
             }
         }
-        key!('R') | shift!('R') => {
-            match state {
-                AppState::Portfolio => {
-                    system::refresh_portfolio();
-                    render_state.mark_dirty(DirtyFlags::PORTFOLIO);
-                }
-                AppState::Watchlist => {
-                    system::refresh_watchlist(update_tx.clone());
-                    render_state.mark_dirty(DirtyFlags::WATCHLIST);
-                }
-                AppState::WatchlistStock => {
-                    system::refresh_stock_debounced(app.world.resource::<system::StockDetail>().0.clone());
-                    system::refresh_watchlist(update_tx.clone());
-                    render_state.mark_dirty(DirtyFlags::STOCK_DETAIL | DirtyFlags::WATCHLIST);
-                }
-                AppState::Stock => {
-                    system::refresh_stock_debounced(app.world.resource::<system::StockDetail>().0.clone());
-                    render_state.mark_dirty(DirtyFlags::STOCK_DETAIL);
-                }
-                _ => {}
-            };
-        }
+        ::crossterm::event::KeyEvent {
+            code: ::crossterm::event::KeyCode::Char('R'),
+            modifiers:
+                ::crossterm::event::KeyModifiers::NONE | ::crossterm::event::KeyModifiers::SHIFT,
+            kind: ::crossterm::event::KeyEventKind::Press,
+            state: ::crossterm::event::KeyEventState::NONE,
+        } => match state {
+            AppState::Portfolio => {
+                system::refresh_portfolio();
+                render_state.mark_dirty(DirtyFlags::PORTFOLIO);
+            }
+            AppState::Watchlist => {
+                system::refresh_watchlist(update_tx.clone());
+                render_state.mark_dirty(DirtyFlags::WATCHLIST);
+            }
+            AppState::WatchlistStock => {
+                system::refresh_stock_debounced(
+                    app.world.resource::<system::StockDetail>().0.clone(),
+                );
+                system::refresh_watchlist(update_tx.clone());
+                render_state.mark_dirty(DirtyFlags::STOCK_DETAIL | DirtyFlags::WATCHLIST);
+            }
+            AppState::Stock => {
+                system::refresh_stock_debounced(
+                    app.world.resource::<system::StockDetail>().0.clone(),
+                );
+                render_state.mark_dirty(DirtyFlags::STOCK_DETAIL);
+            }
+            _ => {}
+        },
         key!('?') => {
             POPUP.store(POPUP_HELP, Ordering::Relaxed);
             render_state.mark_dirty(DirtyFlags::POPUP_HELP);
@@ -669,14 +717,30 @@ fn handle_global_keys(
                 render_state.mark_dirty(DirtyFlags::POPUP_SEARCH);
             }
         }
-        key!(Esc) | key!('q') => {
+        ::crossterm::event::KeyEvent {
+            code: ::crossterm::event::KeyCode::Esc | ::crossterm::event::KeyCode::Char('q'),
+            modifiers: ::crossterm::event::KeyModifiers::NONE,
+            kind: ::crossterm::event::KeyEventKind::Press,
+            state: ::crossterm::event::KeyEventState::NONE,
+        } => {
             let last_state = LAST_STATE.load(Ordering::Relaxed);
             if last_state != state {
                 app.world.insert_resource(NextState(Some(last_state)));
                 render_state.mark_dirty(DirtyFlags::ALL);
             }
         }
-        key!(Up) | key!('k') | shift!('k') => {
+        ::crossterm::event::KeyEvent {
+            code: ::crossterm::event::KeyCode::Up | ::crossterm::event::KeyCode::Char('k'),
+            modifiers: ::crossterm::event::KeyModifiers::NONE,
+            kind: ::crossterm::event::KeyEventKind::Press,
+            state: ::crossterm::event::KeyEventState::NONE,
+        }
+        | ::crossterm::event::KeyEvent {
+            code: ::crossterm::event::KeyCode::Char('k'),
+            modifiers: ::crossterm::event::KeyModifiers::SHIFT,
+            kind: ::crossterm::event::KeyEventKind::Press,
+            state: ::crossterm::event::KeyEventState::NONE,
+        } => {
             send_evt(system::Key::Up, &mut app.world);
             // Navigation keys affect current view
             render_state.mark_dirty(match state {
@@ -686,7 +750,18 @@ fn handle_global_keys(
                 _ => DirtyFlags::ALL,
             });
         }
-        key!(Down) | key!('j') | shift!('j') => {
+        ::crossterm::event::KeyEvent {
+            code: ::crossterm::event::KeyCode::Down | ::crossterm::event::KeyCode::Char('j'),
+            modifiers: ::crossterm::event::KeyModifiers::NONE,
+            kind: ::crossterm::event::KeyEventKind::Press,
+            state: ::crossterm::event::KeyEventState::NONE,
+        }
+        | ::crossterm::event::KeyEvent {
+            code: ::crossterm::event::KeyCode::Char('j'),
+            modifiers: ::crossterm::event::KeyModifiers::SHIFT,
+            kind: ::crossterm::event::KeyEventKind::Press,
+            state: ::crossterm::event::KeyEventState::NONE,
+        } => {
             send_evt(system::Key::Down, &mut app.world);
             render_state.mark_dirty(match state {
                 AppState::Watchlist | AppState::WatchlistStock => DirtyFlags::WATCHLIST,
@@ -695,14 +770,36 @@ fn handle_global_keys(
                 _ => DirtyFlags::ALL,
             });
         }
-        key!(Left) | key!('h') | shift!('h') => {
+        ::crossterm::event::KeyEvent {
+            code: ::crossterm::event::KeyCode::Left | ::crossterm::event::KeyCode::Char('h'),
+            modifiers: ::crossterm::event::KeyModifiers::NONE,
+            kind: ::crossterm::event::KeyEventKind::Press,
+            state: ::crossterm::event::KeyEventState::NONE,
+        }
+        | ::crossterm::event::KeyEvent {
+            code: ::crossterm::event::KeyCode::Char('h'),
+            modifiers: ::crossterm::event::KeyModifiers::SHIFT,
+            kind: ::crossterm::event::KeyEventKind::Press,
+            state: ::crossterm::event::KeyEventState::NONE,
+        } => {
             send_evt(system::Key::Left, &mut app.world);
             render_state.mark_dirty(match state {
                 AppState::Stock => DirtyFlags::STOCK_DETAIL,
                 _ => DirtyFlags::ALL,
             });
         }
-        key!(Right) | key!('l') | shift!('l') => {
+        ::crossterm::event::KeyEvent {
+            code: ::crossterm::event::KeyCode::Right | ::crossterm::event::KeyCode::Char('l'),
+            modifiers: ::crossterm::event::KeyModifiers::NONE,
+            kind: ::crossterm::event::KeyEventKind::Press,
+            state: ::crossterm::event::KeyEventState::NONE,
+        }
+        | ::crossterm::event::KeyEvent {
+            code: ::crossterm::event::KeyCode::Char('l'),
+            modifiers: ::crossterm::event::KeyModifiers::SHIFT,
+            kind: ::crossterm::event::KeyEventKind::Press,
+            state: ::crossterm::event::KeyEventState::NONE,
+        } => {
             send_evt(system::Key::Right, &mut app.world);
             render_state.mark_dirty(match state {
                 AppState::Stock => DirtyFlags::STOCK_DETAIL,

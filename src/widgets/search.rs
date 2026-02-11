@@ -154,7 +154,7 @@ where
                     // debounce input
                     loop {
                         match tokio::time::timeout(Duration::from_millis(10), rx.changed()).await {
-                            Ok(Ok(_)) => continue,
+                            Ok(Ok(_)) => {}
                             Ok(Err(_)) => return,
                             Err(_) => break,
                         }

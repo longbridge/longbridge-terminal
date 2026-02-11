@@ -1,6 +1,6 @@
-pub mod types;
 pub mod stock;
 pub mod stocks;
+pub mod types;
 pub mod user;
 pub mod watchlist;
 pub mod ws;

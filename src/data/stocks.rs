@@ -1,11 +1,10 @@
 use dashmap::DashMap;
-use once_cell::sync::Lazy;
 use std::sync::Arc;
 
 use super::{Counter, Stock};
 
 /// Global stock cache
-pub static STOCKS: Lazy<StockStore> = Lazy::new(StockStore::new);
+pub static STOCKS: std::sync::LazyLock<StockStore> = std::sync::LazyLock::new(StockStore::new);
 
 /// Stock storage (simplified)
 pub struct StockStore {
@@ -42,8 +41,7 @@ impl StockStore {
     {
         let mut stock = self
             .get(&counter)
-            .map(|s| (*s).clone())
-            .unwrap_or_else(|| Stock::new(counter.clone()));
+            .map_or_else(|| Stock::new(counter.clone()), |s| (*s).clone());
         f(&mut stock);
         self.insert(stock);
     }

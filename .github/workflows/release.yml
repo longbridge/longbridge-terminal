@@ -1,0 +1,156 @@
+name: Release
+on:
+  push:
+    branches:
+      - build-test
+    tags:
+      - "v*"
+
+jobs:
+  # Build sources for every OS
+  github_build:
+    name: Build release binaries
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            name: longbridge-terminal-linux-amd64.tar.gz
+            arch: x86_64
+
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            name: longbridge-terminal-linux-arm64.tar.gz
+            arch: aarch64
+
+          - target: x86_64-apple-darwin
+            os: macOS-latest
+            name: longbridge-terminal-darwin-amd64.tar.gz
+            arch: x86_64
+
+          - target: aarch64-apple-darwin
+            os: macOS-latest
+            name: longbridge-terminal-darwin-arm64.tar.gz
+            arch: aarch64
+
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            name: longbridge-terminal-windows-amd64.zip
+            arch: x86_64
+
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            name: longbridge-terminal-linux-musl-amd64.tar.gz
+            arch: x86_64
+
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            name: longbridge-terminal-linux-musl-arm64.tar.gz
+            arch: aarch64
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Setup | Checkout
+        uses: actions/checkout@v4
+
+      - uses: olegtarasov/get-tag@v2.1
+        id: tagName
+        with:
+          tagRegex: "v(?<version>.*)"
+
+      # Cache files between builds
+      - name: Setup | Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install Musl Tool
+        if: matrix.target == 'x86_64-unknown-linux-musl' || matrix.target == 'aarch64-unknown-linux-musl'
+        run: |
+          sudo apt-get install musl-tools
+
+      - name: Setup | Rust
+        uses: actions-rs/toolchain@v1.0.7
+        with:
+          toolchain: stable
+          override: true
+          profile: minimal
+          target: ${{ matrix.target }}
+
+      - name: Build | Build
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --manifest-path Cargo.toml --release --target ${{ matrix.target }} --config 'package.version="${{ steps.tagName.outputs.version }}"'
+          use-cross: ${{ matrix.os == 'ubuntu-latest' }}
+
+      - name: Prepare artifacts [Windows]
+        if: matrix.os == 'windows-latest'
+        run: |
+          cd target/${{ matrix.target }}/release
+          strip longbridge.exe
+          7z a ../../../${{ matrix.name }} longbridge.exe
+          cd -
+
+      - name: Prepare artifacts [Linux & macOS]
+        if: matrix.os != 'windows-latest'
+        run: |
+          cd target/${{ matrix.target }}/release
+          # TODO: investigate better cross platform stripping
+          strip longbridge || true
+          tar czvf ../../../${{ matrix.name }} longbridge
+          cd -
+
+      - name: Test Bin [Linux & macOS]
+        if: matrix.arch == 'x86_64' && matrix.os != 'windows-latest'
+        run: |
+          cd target/${{ matrix.target }}/release
+          ./longbridge --version
+          cd -
+
+      - name: Test Bin [Windows]
+        if: matrix.arch == 'x86_64' && matrix.os == 'windows-latest'
+        run: |
+          cd target/${{ matrix.target }}/release
+          ./longbridge.exe --version
+          cd -
+
+      - name: Deploy | Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}
+
+  # Create GitHub release with Rust build targets and release notes
+  github_release:
+    name: Create GitHub Release
+    needs: github_build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup | Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup | Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-dist
+
+      - name: Setup | Checksums
+        run: |
+          ls -lha release-dist
+          for file in release-dist/**/*; do openssl dgst -sha256 -r "$file" | awk '{print $1}' > "${file}.sha256"; done
+
+      - name: Publish
+        uses: softprops/action-gh-release@v1
+        with:
+          files: release-dist/**/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

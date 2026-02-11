@@ -3,16 +3,16 @@ use std::sync::{Arc, OnceLock};
 
 use super::wrapper::{RateLimitedQuoteContext, RateLimitedTradeContext};
 
-/// Global QuoteContext
+/// Global `QuoteContext`
 pub static QUOTE_CTX: OnceLock<longport::quote::QuoteContext> = OnceLock::new();
 
-/// Global TradeContext
+/// Global `TradeContext`
 pub static TRADE_CTX: OnceLock<longport::trade::TradeContext> = OnceLock::new();
 
-/// Global rate-limited QuoteContext wrapper
+/// Global rate-limited `QuoteContext` wrapper
 pub static RATE_LIMITED_QUOTE_CTX: OnceLock<RateLimitedQuoteContext> = OnceLock::new();
 
-/// Global rate-limited TradeContext wrapper
+/// Global rate-limited `TradeContext` wrapper
 pub static RATE_LIMITED_TRADE_CTX: OnceLock<RateLimitedTradeContext> = OnceLock::new();
 
 /// Get API language based on current UI locale
@@ -69,28 +69,28 @@ pub async fn init_contexts(
     ))
 }
 
-/// Get global QuoteContext
+/// Get global `QuoteContext`
 pub fn quote() -> &'static longport::quote::QuoteContext {
     QUOTE_CTX
         .get()
         .expect("QuoteContext not initialized, please call init_contexts() first")
 }
 
-/// Get global TradeContext
+/// Get global `TradeContext`
 pub fn trade() -> &'static longport::trade::TradeContext {
     TRADE_CTX
         .get()
         .expect("TradeContext not initialized, please call init_contexts() first")
 }
 
-/// Get rate-limited QuoteContext (recommended for all API calls)
+/// Get rate-limited `QuoteContext` (recommended for all API calls)
 pub fn quote_limited() -> &'static RateLimitedQuoteContext {
     RATE_LIMITED_QUOTE_CTX
         .get()
         .expect("RateLimitedQuoteContext not initialized, please call init_contexts() first")
 }
 
-/// Get rate-limited TradeContext (recommended for all API calls)
+/// Get rate-limited `TradeContext` (recommended for all API calls)
 pub fn trade_limited() -> &'static RateLimitedTradeContext {
     RATE_LIMITED_TRADE_CTX
         .get()

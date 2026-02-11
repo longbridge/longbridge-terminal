@@ -1,5 +1,5 @@
-use rust_decimal::Decimal;
 use crate::data::Counter;
+use rust_decimal::Decimal;
 
 /// Decimal extension trait
 pub trait DecimalExt {
@@ -11,11 +11,9 @@ impl DecimalExt for Decimal {
     fn format_quote_by_counter(&self, _counter: &Counter) -> String {
         // Simplified implementation: choose precision based on value size
         if self.abs() < Decimal::from(10) {
-            format!("{:.3}", self)
-        } else if self.abs() < Decimal::from(100) {
-            format!("{:.2}", self)
+            format!("{self:.3}")
         } else {
-            format!("{:.2}", self)
+            format!("{self:.2}")
         }
     }
 

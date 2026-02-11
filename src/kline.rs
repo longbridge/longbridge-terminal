@@ -1,10 +1,9 @@
 use std::{collections::HashMap, sync::RwLock};
 
 use crate::data::{AdjustType, Counter, Kline, KlineType, Klines, Market};
-use once_cell::sync::Lazy;
 use rust_decimal::Decimal;
 
-pub static KLINES: Lazy<KlineStore> = Lazy::new(KlineStore::new);
+pub static KLINES: std::sync::LazyLock<KlineStore> = std::sync::LazyLock::new(KlineStore::new);
 
 type StoreKey = (Counter, KlineType, AdjustType);
 
@@ -174,10 +173,16 @@ impl KlineStore {
 
         tracing::info!(
             "Requesting candlestick data: counter={}, period={:?}, count={}, adjust={:?}",
-            counter, period, count, adjust
+            counter,
+            period,
+            count,
+            adjust
         );
 
-        match ctx.candlesticks(counter.as_str(), period, count, adjust, trade_session).await {
+        match ctx
+            .candlesticks(counter.as_str(), period, count, adjust, trade_session)
+            .await
+        {
             Ok(candlesticks) => {
                 tracing::info!(
                     "Successfully fetched candlestick data: counter={}, count={}",
@@ -194,7 +199,7 @@ impl KlineStore {
                         high: c.high,
                         low: c.low,
                         close: c.close,
-                        amount: c.volume as u64,
+                        amount: c.volume.cast_unsigned(),
                         balance: c.turnover,
                         factor_a: Decimal::ONE,
                         factor_b: Decimal::ZERO,
@@ -205,7 +210,11 @@ impl KlineStore {
                 if !klines.is_empty() {
                     tracing::debug!(
                         "First candlestick: open={}, high={}, low={}, close={}, volume={}",
-                        klines[0].open, klines[0].high, klines[0].low, klines[0].close, klines[0].amount
+                        klines[0].open,
+                        klines[0].high,
+                        klines[0].low,
+                        klines[0].close,
+                        klines[0].amount
                     );
                 }
 
@@ -213,7 +222,11 @@ impl KlineStore {
                 KLINES.update(counter, kline_type, adjust_type, klines, has_more);
             }
             Err(e) => {
-                tracing::error!("Failed to request candlestick data: counter={}, error={}", counter, e);
+                tracing::error!(
+                    "Failed to request candlestick data: counter={}, error={}",
+                    counter,
+                    e
+                );
             }
         }
     }

@@ -6,7 +6,6 @@ use bevy_ecs::{
     prelude::*,
     system::{CommandQueue, InsertResource},
 };
-use once_cell::sync::Lazy;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
@@ -113,7 +112,7 @@ pub async fn fetch_watchlist(
             let mut counters = Vec::new();
 
             for group in watchlist {
-                let group_id_u64 = group.id as u64;
+                let group_id_u64 = group.id.cast_unsigned();
 
                 // Add group info with translated name
                 groups.push(crate::data::WatchlistGroup {
@@ -130,11 +129,9 @@ pub async fn fetch_watchlist(
 
                 // Add stocks from this group
                 for security in group.securities {
-                    match security.symbol.parse() {
-                        Ok(counter) => {
-                            counters.push(counter);
-                        }
-                        _ => (),
+                    #[allow(irrefutable_let_patterns)]
+                    if let Ok(counter) = security.symbol.parse() {
+                        counters.push(counter);
                     }
                 }
             }
@@ -161,11 +158,9 @@ pub async fn fetch_holdings() -> anyhow::Result<Vec<Counter>> {
             let mut counters = Vec::new();
             for channel in &response.channels {
                 for position in &channel.positions {
-                    match position.symbol.parse() {
-                        Ok(counter) => {
-                            counters.push(counter);
-                        }
-                        _ => (),
+                    #[allow(irrefutable_let_patterns)]
+                    if let Ok(counter) = position.symbol.parse() {
+                        counters.push(counter);
                     }
                 }
             }
@@ -293,6 +288,7 @@ pub async fn fetch_portfolio_data() -> anyhow::Result<(Vec<PositionInfo>, Decima
 pub struct WsManager;
 
 impl WsManager {
+    #[allow(clippy::unused_async)]
     pub async fn unmount(&self, _name: &str) -> anyhow::Result<()> {
         // TODO: Use longport SDK to unsubscribe
         Ok(())
@@ -306,7 +302,10 @@ impl WsManager {
     ) -> anyhow::Result<()> {
         // TODO: Use longport SDK to resubscribe
         let ctx = crate::openapi::quote();
-        let symbol_strings: Vec<String> = symbols.iter().map(|c| c.to_string()).collect();
+        let symbol_strings: Vec<String> = symbols
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect();
         let _ = ctx
             .subscribe(&symbol_strings, longport::quote::SubFlags::QUOTE)
             .await;
@@ -315,7 +314,10 @@ impl WsManager {
 
     pub async fn quote_detail(&self, _name: &str, symbols: &[Counter]) -> anyhow::Result<()> {
         let ctx = crate::openapi::quote();
-        let symbol_strings: Vec<String> = symbols.iter().map(|c| c.to_string()).collect();
+        let symbol_strings: Vec<String> = symbols
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect();
         let _ = ctx
             .subscribe(
                 &symbol_strings,
@@ -327,7 +329,10 @@ impl WsManager {
 
     pub async fn quote_trade(&self, _name: &str, symbols: &[Counter]) -> anyhow::Result<()> {
         let ctx = crate::openapi::quote();
-        let symbol_strings: Vec<String> = symbols.iter().map(|c| c.to_string()).collect();
+        let symbol_strings: Vec<String> = symbols
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect();
         let _ = ctx
             .subscribe(&symbol_strings, longport::quote::SubFlags::TRADE)
             .await;
@@ -335,10 +340,11 @@ impl WsManager {
     }
 }
 
-pub static WS: once_cell::sync::Lazy<WsManager> = once_cell::sync::Lazy::new(|| WsManager);
+pub static WS: std::sync::LazyLock<WsManager> = std::sync::LazyLock::new(|| WsManager);
 
 // Debounce state for stock refresh
-static REFRESH_STOCK_TASK: Lazy<Mutex<Option<JoinHandle<()>>>> = Lazy::new(|| Mutex::new(None));
+static REFRESH_STOCK_TASK: std::sync::LazyLock<Mutex<Option<JoinHandle<()>>>> =
+    std::sync::LazyLock::new(|| Mutex::new(None));
 // Flag to track if a refresh is currently executing
 static REFRESH_EXECUTING: Atomic<bool> = Atomic::new(false);
 
@@ -388,8 +394,10 @@ pub enum RiskLevel {
 pub(crate) static KLINE_TYPE: Atomic<KlineType> = Atomic::new(KlineType::PerDay);
 pub(crate) static KLINE_INDEX: Atomic<usize> = Atomic::new(0);
 
-pub(crate) static LAST_DONE: Lazy<Mutex<HashMap<Counter, Decimal>>> = Lazy::new(Mutex::default);
-pub(crate) static WATCHLIST_TABLE: Lazy<Mutex<TableState>> = Lazy::new(Mutex::default);
+pub(crate) static LAST_DONE: std::sync::LazyLock<Mutex<HashMap<Counter, Decimal>>> =
+    std::sync::LazyLock::new(Mutex::default);
+pub(crate) static WATCHLIST_TABLE: std::sync::LazyLock<Mutex<TableState>> =
+    std::sync::LazyLock::new(Mutex::default);
 
 type NavFooter<'w> = (
     Res<'w, State<AppState>>,
@@ -520,14 +528,12 @@ pub fn refresh_watchlist(update_tx: mpsc::UnboundedSender<CommandQueue>) {
                             quote.symbol,
                             quote.trade_status
                         );
-                        match quote.symbol.parse() {
-                            Ok(counter) => {
-                                STOCKS.modify(counter, |stock| {
-                                    // Use update_from_security_quote to update all fields including trade_status
-                                    stock.update_from_security_quote(&quote);
-                                });
-                            }
-                            _ => (),
+                        #[allow(irrefutable_let_patterns)]
+                        if let Ok(counter) = quote.symbol.parse() {
+                            STOCKS.modify(counter, |stock| {
+                                // Use update_from_security_quote to update all fields including trade_status
+                                stock.update_from_security_quote(&quote);
+                            });
                         }
                     }
                 }
@@ -537,17 +543,18 @@ pub fn refresh_watchlist(update_tx: mpsc::UnboundedSender<CommandQueue>) {
             }
 
             // Get stock static info (including name, etc.)
-            match ctx.static_info(symbols.iter().map(|s| s.as_str())).await {
+            match ctx
+                .static_info(symbols.iter().map(std::string::String::as_str))
+                .await
+            {
                 Ok(infos) => {
                     for info in infos {
-                        match info.symbol.parse() {
-                            Ok(counter) => {
-                                STOCKS.modify(counter, |stock| {
-                                    stock.name = info.name_cn.clone();
-                                    stock.update_from_static_info(&info);
-                                });
-                            }
-                            _ => (),
+                        #[allow(irrefutable_let_patterns)]
+                        if let Ok(counter) = info.symbol.parse() {
+                            STOCKS.modify(counter, |stock| {
+                                stock.name.clone_from(&info.name_cn);
+                                stock.update_from_static_info(&info);
+                            });
                         }
                     }
                 }
@@ -583,8 +590,12 @@ pub fn refresh_watchlist(update_tx: mpsc::UnboundedSender<CommandQueue>) {
 pub fn refresh_stock(counter: Counter) {
     RT.get().unwrap().spawn(async move {
         KLINES.clear();
-        let _ = WS.quote_detail("stock_detail", &[counter.clone()]).await;
-        let _ = WS.quote_trade("stock_detail", &[counter.clone()]).await;
+        let _ = WS
+            .quote_detail("stock_detail", std::slice::from_ref(&counter))
+            .await;
+        let _ = WS
+            .quote_trade("stock_detail", std::slice::from_ref(&counter))
+            .await;
 
         // Get full quote data (including prev_close and trade_status)
         let ctx = crate::openapi::quote();
@@ -600,8 +611,7 @@ pub fn refresh_stock(counter: Counter) {
         // Get static info (if not already fetched)
         let should_fetch = STOCKS
             .get(&counter)
-            .map(|s| s.static_info.is_none())
-            .unwrap_or(false);
+            .is_some_and(|s| s.static_info.is_none());
 
         if should_fetch {
             // Async fetch static info
@@ -623,7 +633,7 @@ pub fn refresh_stock(counter: Counter) {
     });
 }
 
-/// Debounced version of refresh_stock with 50ms delay
+/// Debounced version of `refresh_stock` with 50ms delay
 /// Cancels previous pending requests if a new one arrives within the debounce window
 /// Also prevents multiple concurrent executions
 pub fn refresh_stock_debounced(counter: Counter) {
@@ -639,23 +649,24 @@ pub fn refresh_stock_debounced(counter: Counter) {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
             // Try to acquire the execution lock (RAII guard)
-            let _guard = match RefreshGuard::try_acquire() {
-                Some(guard) => guard,
-                None => {
-                    tracing::debug!(
-                        "Skipping refresh for {} - another refresh is in progress",
-                        counter
-                    );
-                    return;
-                }
+            let Some(_guard) = RefreshGuard::try_acquire() else {
+                tracing::debug!(
+                    "Skipping refresh for {} - another refresh is in progress",
+                    counter
+                );
+                return;
             };
 
             tracing::debug!("Starting refresh for {}", counter);
 
             // Execute the actual refresh
             KLINES.clear();
-            let _ = WS.quote_detail("stock_detail", &[counter.clone()]).await;
-            let _ = WS.quote_trade("stock_detail", &[counter.clone()]).await;
+            let _ = WS
+                .quote_detail("stock_detail", std::slice::from_ref(&counter))
+                .await;
+            let _ = WS
+                .quote_trade("stock_detail", std::slice::from_ref(&counter))
+                .await;
 
             // Get full quote data (including prev_close and trade_status)
             let ctx = crate::openapi::quote();
@@ -670,8 +681,7 @@ pub fn refresh_stock_debounced(counter: Counter) {
             // Get static info (if not already fetched)
             let should_fetch = STOCKS
                 .get(&counter)
-                .map(|s| s.static_info.is_none())
-                .unwrap_or(false);
+                .is_some_and(|s| s.static_info.is_none());
 
             if should_fetch {
                 // Async fetch static info
@@ -714,8 +724,9 @@ pub fn exit_stock() {
 }
 
 // Portfolio data global storage
-pub static PORTFOLIO_VIEW: Lazy<std::sync::RwLock<Option<crate::data::PortfolioView>>> =
-    Lazy::new(|| std::sync::RwLock::new(None));
+pub static PORTFOLIO_VIEW: std::sync::LazyLock<
+    std::sync::RwLock<Option<crate::data::PortfolioView>>,
+> = std::sync::LazyLock::new(|| std::sync::RwLock::new(None));
 
 // Refresh Portfolio data
 pub fn refresh_portfolio() {
@@ -1012,9 +1023,11 @@ fn stock_detail(
     frame: &mut Frame,
     rect: Rect,
     counter: &Counter,
-    _kline_type: KlineType,
-    _selected: usize,
+    kline_type: KlineType,
+    selected: usize,
 ) {
+    use ratatui::widgets::{Cell, Row, Table};
+
     fn price_spans(data: &crate::data::QuoteData, counter: &Counter) -> Vec<Span<'static>> {
         // Prefer last_done, fallback to prev_close if not available
         let display_price = data
@@ -1087,8 +1100,10 @@ fn stock_detail(
 
     // Helper function to format optional Decimal (price type)
     let fmt_decimal = |opt: Option<Decimal>| -> String {
-        opt.map(|d| d.format_quote_by_counter(counter))
-            .unwrap_or_else(|| EMPTY_PLACEHOLDER.to_string())
+        opt.map_or_else(
+            || EMPTY_PLACEHOLDER.to_string(),
+            |d| d.format_quote_by_counter(counter),
+        )
     };
 
     // Helper function to create ListItem with price and color based on prev_close
@@ -1121,7 +1136,7 @@ fn stock_detail(
     };
 
     // Helper function to format u64
-    let fmt_u64 = |val: u64| -> String {
+    let fmt_unsigned = |val: u64| -> String {
         if val == 0 {
             EMPTY_PLACEHOLDER.to_string()
         } else {
@@ -1130,7 +1145,7 @@ fn stock_detail(
     };
 
     // Helper function to format i64
-    let fmt_i64 = |val: i64| -> String {
+    let fmt_signed = |val: i64| -> String {
         if val == 0 {
             EMPTY_PLACEHOLDER.to_string()
         } else {
@@ -1143,10 +1158,10 @@ fn stock_detail(
         ListItem::new(" "),
         item(t!("StockDetail.Trading Status"), {
             let session_label = stock.trade_session.label();
-            if !session_label.is_empty() {
-                session_label
-            } else {
+            if session_label.is_empty() {
                 stock.trade_status.label()
+            } else {
+                session_label
             }
         }),
         ListItem::new(" "),
@@ -1160,7 +1175,7 @@ fn stock_detail(
         price_item(t!("StockDetail.Low"), stock.quote.low),
         item(t!("StockDetail.Average"), EMPTY_PLACEHOLDER), // Needs calculation
         ListItem::new(" "),
-        item(t!("StockDetail.Volume"), fmt_u64(stock.quote.volume)),
+        item(t!("StockDetail.Volume"), fmt_unsigned(stock.quote.volume)),
         item(
             t!("StockDetail.Turnover"),
             crate::ui::text::unit(stock.quote.turnover, 2),
@@ -1195,10 +1210,10 @@ fn stock_detail(
             ListItem::new(" "),
             ListItem::new(" "),
             ListItem::new(" "),
-            item(t!("StockDetail.Shares"), fmt_i64(info.total_shares)),
+            item(t!("StockDetail.Shares"), fmt_signed(info.total_shares)),
             item(
                 t!("StockDetail.Shares Float"),
-                fmt_i64(info.circulating_shares),
+                fmt_signed(info.circulating_shares),
             ),
             ListItem::new(" "),
             item(t!("StockDetail.BPS"), fmt_decimal(info.bps)),
@@ -1331,11 +1346,9 @@ fn stock_detail(
             };
 
             // Price with color
-            let price_cmp = prev_close
-                .map(|pc| depth.price.cmp(&pc))
-                .unwrap_or(std::cmp::Ordering::Equal);
+            let price_cmp = prev_close.map_or(std::cmp::Ordering::Equal, |pc| depth.price.cmp(&pc));
             let price_style = styles::up(price_cmp);
-            let price_str = depth.price.format_quote_by_counter(counter).to_string();
+            let price_str = depth.price.format_quote_by_counter(counter).clone();
 
             // Volume (right-aligned to fixed width)
             let volume_str = crate::ui::text::align_right(
@@ -1397,7 +1410,6 @@ fn stock_detail(
             .split(depth_inner_rect);
 
         // Asks table (borderless, column-aligned)
-        use ratatui::widgets::Table;
         let table_widths = if counter.is_hk() {
             vec![
                 Constraint::Length(4),                         // Position number
@@ -1427,6 +1439,7 @@ fn stock_detail(
 
         // Calculate width by ratio
         let available_width = depth_layout[2].width as usize;
+        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
         let bid_width = ((Decimal::from(available_width) * bid_ratio)
             .to_string()
             .parse::<f64>()
@@ -1492,7 +1505,7 @@ fn stock_detail(
             .split(chart_chunks[0]);
 
         let selected_type_index = KlineType::iter()
-            .position(|t| t == _kline_type)
+            .position(|t| t == kline_type)
             .unwrap_or_default();
         let chart_tabs = Tabs::new(
             KlineType::iter()
@@ -1516,12 +1529,12 @@ fn stock_detail(
             .filter(|&v| v > 0)
             .map(|width| {
                 let width = width as usize;
-                (width, _selected / width, _selected % width)
+                (width, selected / width, selected % width)
             })
             .unwrap_or_default();
         let samples = crate::kline::KLINES.by_pagination(
             counter.clone(),
-            _kline_type,
+            kline_type,
             crate::data::AdjustType::ForwardAdjust,
             page,
             width,
@@ -1576,8 +1589,10 @@ fn stock_detail(
             } else {
                 // Adjust chart size - reduce width slightly to prevent bottom info line overflow
                 let chart_width = area.width.saturating_sub(1);
-                let mut chart =
-                    cli_candlestick_chart::Chart::new_with_size(candles, (chart_width, area.height));
+                let mut chart = cli_candlestick_chart::Chart::new_with_size(
+                    candles,
+                    (chart_width, area.height),
+                );
                 let (bull, bear) = styles::bull_bear_color();
                 chart.set_bull_color(bull);
                 chart.set_vol_bull_color(bull);
@@ -1631,8 +1646,6 @@ fn stock_detail(
                 .max()
                 .unwrap_or(1);
 
-            use ratatui::widgets::{Cell, Row, Table};
-
             // Format trade records as table rows
             let trade_rows: Vec<Row> = stock
                 .trades
@@ -1668,6 +1681,7 @@ fn stock_detail(
                     // This prevents huge differences when some trades have very large volumes
                     // Power of 0.5 (sqrt) compresses less than log10, showing more difference
                     // You can adjust the power value: 0.3 = more compression, 0.7 = less compression
+                    #[allow(clippy::cast_precision_loss)]
                     let volume_ratio = if max_volume > 0 {
                         let current_volume = trade.volume.abs() as f64;
                         let max_vol_f64 = max_volume as f64;
@@ -1677,7 +1691,7 @@ fn stock_detail(
                         let current_pow = current_volume.powf(power);
                         let max_pow = max_vol_f64.powf(power);
 
-                        (current_pow / max_pow).max(0.0).min(1.0)
+                        (current_pow / max_pow).clamp(0.0, 1.0)
                     } else {
                         0.0
                     };
@@ -1689,6 +1703,11 @@ fn stock_detail(
                     );
 
                     // Calculate background width (in characters, using adaptive width)
+                    #[allow(
+                        clippy::cast_sign_loss,
+                        clippy::cast_precision_loss,
+                        clippy::cast_possible_truncation
+                    )]
                     let bg_width = (volume_width as f64 * volume_ratio).ceil() as usize;
                     let fg_width = volume_width.saturating_sub(bg_width);
 
@@ -1847,8 +1866,7 @@ fn watch(frame: &mut Frame, rect: Rect, full_mode: bool) {
             watchlist.counters().to_vec(),
             watchlist
                 .group()
-                .map(|g| format!("{} ", g.name))
-                .unwrap_or_else(|| "".to_string()),
+                .map_or_else(String::new, |g| format!("{} ", g.name)),
         )
     }; // Lock released here
 
@@ -1950,7 +1968,7 @@ fn watch_group_table(
                 .style(styles::header()),
             );
             cells.push(Cell::from(t!("watchlist.STATUS")).style(styles::header()));
-        };
+        }
         Row::new(cells)
     };
 
@@ -1959,7 +1977,7 @@ fn watch_group_table(
         .iter()
         .zip(stocks.iter())
         .map(|(counter, stock)| {
-            static EMPTY: Lazy<Stock> = Lazy::new(Stock::default);
+            static EMPTY: std::sync::LazyLock<Stock> = std::sync::LazyLock::new(Stock::default);
             let stock = stock.as_deref().unwrap_or(&EMPTY);
             let quote_data = &stock.quote;
 
@@ -2017,7 +2035,7 @@ fn watch_group_table(
             } else {
                 format!("{}", increase_percent.abs())
             };
-            let increase_percent_str = format!("{}{}%", change_sign, percent_str);
+            let increase_percent_str = format!("{change_sign}{percent_str}%");
             let mut cells = Vec::with_capacity(if full_mode { 6 } else { 4 });
             cells.push(Cell::from(Line::from(vec![
                 Span::styled(
@@ -2111,31 +2129,28 @@ pub fn render_portfolio(
 
         // Get Portfolio data
         let portfolio_view_lock = PORTFOLIO_VIEW.read().expect("poison");
-        let portfolio_view = match &*portfolio_view_lock {
-            Some(view) => view,
-            None => {
-                // Show loading message if no data yet
-                frame.render_widget(
-                    Paragraph::new("Loading portfolio data...")
-                        .alignment(Alignment::Center)
-                        .block(
-                            Block::default()
-                                .borders(Borders::ALL)
-                                .border_style(styles::border()),
-                        ),
-                    content_rect,
-                );
-                drop(portfolio_view_lock);
-                crate::views::popup::render(
-                    frame,
-                    rect,
-                    &mut account,
-                    &mut currency,
-                    &mut search,
-                    &mut watchgroup,
-                );
-                return;
-            }
+        let Some(portfolio_view) = &*portfolio_view_lock else {
+            // Show loading message if no data yet
+            frame.render_widget(
+                Paragraph::new("Loading portfolio data...")
+                    .alignment(Alignment::Center)
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_style(styles::border()),
+                    ),
+                content_rect,
+            );
+            drop(portfolio_view_lock);
+            crate::views::popup::render(
+                frame,
+                rect,
+                &mut account,
+                &mut currency,
+                &mut search,
+                &mut watchgroup,
+            );
+            return;
         };
 
         let overview = &portfolio_view.overview;
@@ -2308,59 +2323,60 @@ pub fn render_portfolio(
                 ])
                 .style(styles::header());
 
-                let rows: Vec<Row> =
-                    holdings
-                        .iter()
-                        .map(|holding| {
-                            // Parse Counter from symbol string
-                            let counter = Counter::from(holding.symbol.as_str());
+                let rows: Vec<Row> = holdings
+                    .iter()
+                    .map(|holding| {
+                        // Parse Counter from symbol string
+                        let counter = Counter::from(holding.symbol.as_str());
 
-                            // Calculate P/L
-                            let (profit_loss, profit_loss_percent) =
-                                if let Some(cost_price) = holding.cost_price {
-                                    let pl = holding.market_value - (cost_price * holding.quantity);
-                                    let pl_pct = if cost_price > Decimal::ZERO {
-                                        (holding.market_price - cost_price) / cost_price
-                                            * Decimal::from(100)
-                                    } else {
-                                        Decimal::ZERO
-                                    };
-                                    (pl, pl_pct)
+                        // Calculate P/L
+                        let (profit_loss, profit_loss_percent) =
+                            if let Some(cost_price) = holding.cost_price {
+                                let pl = holding.market_value - (cost_price * holding.quantity);
+                                let pl_pct = if cost_price > Decimal::ZERO {
+                                    (holding.market_price - cost_price) / cost_price
+                                        * Decimal::from(100)
                                 } else {
-                                    (Decimal::ZERO, Decimal::ZERO)
+                                    Decimal::ZERO
                                 };
-
-                            let pl_style = styles::up(profit_loss.cmp(&Decimal::ZERO));
-
-                            // Get currency string
-                            let currency_str = match holding.currency {
-                                crate::data::Currency::HKD => "HKD",
-                                crate::data::Currency::USD => "USD",
-                                crate::data::Currency::CNY => "CNY",
-                                crate::data::Currency::SGD => "SGD",
+                                (pl, pl_pct)
+                            } else {
+                                (Decimal::ZERO, Decimal::ZERO)
                             };
 
-                            Row::new(vec![
-                                Cell::from(Line::from(vec![
-                                    Span::styled(
-                                        counter.market().to_string(),
-                                        styles::market(counter.region()),
-                                    ),
-                                    Span::raw(" "),
-                                    Span::raw(counter.code().to_string()),
-                                ])),
-                                Cell::from(holding.name.clone()),
-                                Cell::from(format!("{:.0}", holding.quantity)),
-                                Cell::from(format!("{:.2} {}", holding.market_price, currency_str)),
-                                Cell::from(holding.cost_price.map_or("-".to_string(), |p| {
-                                    format!("{:.2} {}", p, currency_str)
-                                })),
-                                Cell::from(format!("{:.2} {}", holding.market_value, currency_str)),
-                                Cell::from(format!("{:+.2}", profit_loss)).style(pl_style),
-                                Cell::from(format!("{:+.2}%", profit_loss_percent)).style(pl_style),
-                            ])
-                        })
-                        .collect();
+                        let pl_style = styles::up(profit_loss.cmp(&Decimal::ZERO));
+
+                        // Get currency string
+                        let currency_str = match holding.currency {
+                            crate::data::Currency::HKD => "HKD",
+                            crate::data::Currency::USD => "USD",
+                            crate::data::Currency::CNY => "CNY",
+                            crate::data::Currency::SGD => "SGD",
+                        };
+
+                        Row::new(vec![
+                            Cell::from(Line::from(vec![
+                                Span::styled(
+                                    counter.market().to_string(),
+                                    styles::market(counter.region()),
+                                ),
+                                Span::raw(" "),
+                                Span::raw(counter.code().to_string()),
+                            ])),
+                            Cell::from(holding.name.clone()),
+                            Cell::from(format!("{:.0}", holding.quantity)),
+                            Cell::from(format!("{:.2} {}", holding.market_price, currency_str)),
+                            Cell::from(
+                                holding
+                                    .cost_price
+                                    .map_or("-".to_string(), |p| format!("{p:.2} {currency_str}")),
+                            ),
+                            Cell::from(format!("{:.2} {}", holding.market_value, currency_str)),
+                            Cell::from(format!("{profit_loss:+.2}")).style(pl_style),
+                            Cell::from(format!("{profit_loss_percent:+.2}%")).style(pl_style),
+                        ])
+                    })
+                    .collect();
 
                 // Render block and get inner area with horizontal margin
                 frame.render_widget(holdings_block, chunks[1]);

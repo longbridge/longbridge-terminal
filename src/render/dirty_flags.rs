@@ -47,6 +47,7 @@ impl DirtyFlags {
 
     /// Mark components for a quote update
     #[inline]
+    #[must_use]
     pub fn mark_quote_update(mut self) -> Self {
         self.insert(Self::WATCHLIST | Self::STOCK_DETAIL | Self::INDEXES | Self::STATUS_BAR);
         self
@@ -54,6 +55,7 @@ impl DirtyFlags {
 
     /// Mark components for a depth (order book) update
     #[inline]
+    #[must_use]
     pub fn mark_depth_update(mut self) -> Self {
         self.insert(Self::STOCK_DETAIL | Self::DEPTH);
         self
@@ -61,6 +63,7 @@ impl DirtyFlags {
 
     /// Mark components for a portfolio update
     #[inline]
+    #[must_use]
     pub fn mark_portfolio_update(mut self) -> Self {
         self.insert(Self::PORTFOLIO);
         self
@@ -68,6 +71,7 @@ impl DirtyFlags {
 
     /// Mark components for a state change
     #[inline]
+    #[must_use]
     pub fn mark_state_change(mut self) -> Self {
         self.insert(Self::ALL);
         self
@@ -75,6 +79,7 @@ impl DirtyFlags {
 
     /// Mark components for a popup change
     #[inline]
+    #[must_use]
     pub fn mark_popup_change(mut self, popup: u8) -> Self {
         if popup & crate::app::POPUP_HELP != 0 {
             self.insert(Self::POPUP_HELP);
@@ -170,6 +175,7 @@ impl RenderState {
     }
 
     /// Get rendering efficiency (percentage of renders that were skipped)
+    #[allow(clippy::cast_precision_loss)]
     pub fn efficiency(&self) -> f64 {
         let total = self.render_count + self.skip_count;
         if total == 0 {
@@ -243,6 +249,6 @@ mod tests {
 
         assert_eq!(state.render_count, 3);
         assert_eq!(state.skip_count, 7);
-        assert_eq!(state.efficiency(), 70.0);
+        assert!((state.efficiency() - 70.0).abs() < f64::EPSILON);
     }
 }

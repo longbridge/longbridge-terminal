@@ -69,12 +69,13 @@ impl From<String> for Counter {
     }
 }
 
-/// Re-export TradeStatus and TradeSession from Longport SDK
+/// Re-export `TradeStatus` and `TradeSession` from Longport SDK
 pub use longport::quote::{TradeSession, TradeStatus};
 
-/// Extension trait for TradeSession to provide helper methods
+/// Extension trait for `TradeSession` to provide helper methods
 pub trait TradeSessionExt {
     /// Check if in normal trading session
+    #[allow(clippy::wrong_self_convention)]
     fn is_normal_trading(self) -> bool;
 
     /// Get localized label for display
@@ -96,12 +97,14 @@ impl TradeSessionExt for TradeSession {
     }
 }
 
-/// Extension trait for TradeStatus to provide additional helper methods
+/// Extension trait for `TradeStatus` to provide additional helper methods
 pub trait TradeStatusExt {
     /// Check if currently in active trading state
+    #[allow(clippy::wrong_self_convention)]
     fn is_trading(self) -> bool;
 
     /// Check if market is closed or halted
+    #[allow(clippy::wrong_self_convention)]
     fn is_closed(self) -> bool;
 
     /// Get localized label for display
@@ -158,22 +161,18 @@ pub enum StockColorMode {
     strum::EnumIter,
 )]
 #[repr(u8)]
+#[derive(Default)]
 pub enum KlineType {
     PerMinute = 0,
     PerFiveMinutes = 1,
     PerFifteenMinutes = 2,
     PerThirtyMinutes = 3,
     PerHour = 4,
+    #[default]
     PerDay = 5,
     PerWeek = 6,
     PerMonth = 7,
     PerYear = 8,
-}
-
-impl Default for KlineType {
-    fn default() -> Self {
-        Self::PerDay
-    }
 }
 
 impl std::fmt::Display for KlineType {
@@ -194,6 +193,7 @@ impl std::fmt::Display for KlineType {
 
 impl KlineType {
     /// Get next period type
+    #[must_use]
     pub fn next(self) -> Self {
         match self {
             Self::PerMinute => Self::PerFiveMinutes,
@@ -203,16 +203,15 @@ impl KlineType {
             Self::PerHour => Self::PerDay,
             Self::PerDay => Self::PerWeek,
             Self::PerWeek => Self::PerMonth,
-            Self::PerMonth => Self::PerYear,
-            Self::PerYear => Self::PerYear, // Already the maximum period
+            Self::PerMonth | Self::PerYear => Self::PerYear,
         }
     }
 
     /// Get previous period type
+    #[must_use]
     pub fn prev(self) -> Self {
         match self {
-            Self::PerMinute => Self::PerMinute, // Already the minimum period
-            Self::PerFiveMinutes => Self::PerMinute,
+            Self::PerMinute | Self::PerFiveMinutes => Self::PerMinute,
             Self::PerFifteenMinutes => Self::PerFiveMinutes,
             Self::PerThirtyMinutes => Self::PerFifteenMinutes,
             Self::PerHour => Self::PerThirtyMinutes,
@@ -325,7 +324,6 @@ pub enum Market {
 impl From<&str> for Market {
     fn from(s: &str) -> Self {
         match s {
-            "HK" => Self::HK,
             "US" => Self::US,
             "CN" | "SH" | "SZ" => Self::CN,
             "SG" => Self::SG,
@@ -394,9 +392,11 @@ impl Market {
         let first_weekday = first_day.weekday();
 
         // Calculate days until first occurrence of target weekday
-        let days_until_first =
-            ((weekday.number_from_monday() as i16 - first_weekday.number_from_monday() as i16 + 7)
-                % 7) as u8;
+        #[allow(clippy::cast_sign_loss)]
+        let days_until_first = ((i16::from(weekday.number_from_monday())
+            - i16::from(first_weekday.number_from_monday())
+            + 7)
+            % 7) as u8;
 
         // Calculate the date of the Nth occurrence
         let target_day = 1 + days_until_first + (n - 1) * 7;
@@ -424,9 +424,9 @@ impl Market {
                 };
                 now.to_offset(offset)
             }
-            Self::HK => now.to_offset(time::UtcOffset::from_hms(8, 0, 0).unwrap()), // HKT
-            Self::CN => now.to_offset(time::UtcOffset::from_hms(8, 0, 0).unwrap()), // CST
-            Self::SG => now.to_offset(time::UtcOffset::from_hms(8, 0, 0).unwrap()), // SGT
+            Self::HK | Self::CN | Self::SG => {
+                now.to_offset(time::UtcOffset::from_hms(8, 0, 0).unwrap())
+            } // HKT/CST/SGT
         };
 
         // Markets are closed on weekends
@@ -437,7 +437,7 @@ impl Market {
         // Get current hour and minute (UTC)
         let hour = now.hour();
         let minute = now.minute();
-        let time_minutes = hour as u32 * 60 + minute as u32;
+        let time_minutes = u32::from(hour) * 60 + u32::from(minute);
 
         match self {
             // US: Trading hours 09:30-16:00 local time
@@ -446,24 +446,24 @@ impl Market {
             Self::US => {
                 if Self::is_us_daylight_saving_time(now) {
                     // EDT: 13:30-20:00 UTC
-                    time_minutes >= 13 * 60 + 30 && time_minutes < 20 * 60
+                    (13 * 60 + 30..20 * 60).contains(&time_minutes)
                 } else {
                     // EST: 14:30-21:00 UTC
-                    time_minutes >= 14 * 60 + 30 && time_minutes < 21 * 60
+                    (14 * 60 + 30..21 * 60).contains(&time_minutes)
                 }
             }
             // HK: 01:30-08:00 UTC (Hong Kong time 09:30-16:00)
             Self::HK => {
-                (time_minutes >= 1 * 60 + 30 && time_minutes < 4 * 60)
-                    || (time_minutes >= 5 * 60 && time_minutes < 8 * 60)
+                (60 + 30..4 * 60).contains(&time_minutes)
+                    || (5 * 60..8 * 60).contains(&time_minutes)
             }
             // CN: 01:30-07:00 UTC (Beijing time 09:30-15:00)
             Self::CN => {
-                (time_minutes >= 1 * 60 + 30 && time_minutes < 3 * 60)
-                    || (time_minutes >= 5 * 60 && time_minutes < 7 * 60)
+                (60 + 30..3 * 60).contains(&time_minutes)
+                    || (5 * 60..7 * 60).contains(&time_minutes)
             }
             // SG: 01:00-09:00 UTC (Singapore time 09:00-17:00)
-            Self::SG => time_minutes >= 1 * 60 && time_minutes < 9 * 60,
+            Self::SG => (60..9 * 60).contains(&time_minutes),
         }
     }
 
