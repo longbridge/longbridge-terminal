@@ -11,23 +11,36 @@ get_latest_release() {
 }
 
 bin_name='longbridge'
+package_name='longbridge-terminal'
 version='v0.7.0-preview0'
 
 platform="$(uname | tr "[A-Z]" "[a-z]")"  # Linux => linux
-arch="$(uname -m | sed 's/x86_64/amd64/')"  # x86_64 => amd64
+arch="$(uname -m)"  # x86_64, arm64, aarch64, etc.
 
-if [ "$platform" = "darwin" ]; then
-  arch="universal"
+# Normalize architecture names
+case "$arch" in
+  x86_64)
+    arch="amd64"
+    ;;
+  aarch64)
+    arch="arm64"
+    ;;
+  arm64)
+    arch="arm64"
+    ;;
+esac
+
+echo "Downloading $package_name@$version ..."
+
+# Detect musl libc on Linux
+libc=''
+if [ "$platform" = "linux" ]; then
+  if ldd --version 2>&1 | grep -q 'musl'; then
+    libc='-musl'
+  fi
 fi
 
-echo "Downloading $bin_name@$version ..."
-
-libc=''
-# if ldd --version 2>&1 | grep -q 'musl'; then
-#   libc='-musl'
-# fi
-
-download_url=https://github.com/$repo/releases/download/$version/$bin_name-$platform$libc-$arch.tar.gz
+download_url=https://github.com/$repo/releases/download/$version/$package_name-$platform$libc-$arch.tar.gz
 echo $download_url
 
 curl -Lo $bin_name.tar.gz $download_url
@@ -42,5 +55,5 @@ fi
 rm $bin_name.tar.gz
 echo "Longbridge Terminal $version has installed successfully."
 echo ""
-echo "You can use `longbridge -h` to get help."
+echo "You can use \`longbridge -h\` to get help."
 echo ""
