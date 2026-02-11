@@ -94,8 +94,8 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: |
           cd target/${{ matrix.target }}/release
-          strip longbridge-terminal.exe
-          7z a ../../../${{ matrix.name }} longbridge-terminal.exe
+          strip longbridge.exe
+          7z a ../../../${{ matrix.name }} longbridge.exe
           cd -
 
       - name: Prepare artifacts [Linux & macOS]
@@ -103,22 +103,22 @@ jobs:
         run: |
           cd target/${{ matrix.target }}/release
           # TODO: investigate better cross platform stripping
-          strip longbridge-terminal || true
-          tar czvf ../../../${{ matrix.name }} longbridge-terminal
+          strip longbridge || true
+          tar czvf ../../../${{ matrix.name }} longbridge
           cd -
 
       - name: Test Bin [Linux & macOS]
         if: matrix.arch == 'x86_64' && matrix.os != 'windows-latest'
         run: |
           cd target/${{ matrix.target }}/release
-          ./longbridge-terminal --version
+          ./longbridge --version
           cd -
 
       - name: Test Bin [Windows]
         if: matrix.arch == 'x86_64' && matrix.os == 'windows-latest'
         run: |
           cd target/${{ matrix.target }}/release
-          ./longbridge-terminal.exe --version
+          ./longbridge.exe --version
           cd -
 
       - name: Deploy | Upload artifacts
