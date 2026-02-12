@@ -1,4 +1,5 @@
 use crate::{
+    openapi,
     ui::styles,
     widgets::{LocalSearch, Search},
 };
@@ -15,8 +16,8 @@ pub fn render(
     frame: &mut Frame,
     rect: Rect,
     account: &mut LocalSearch<crate::data::Account>,
-    currency: &mut LocalSearch<crate::api::account::CurrencyInfo>,
-    search: &mut Search<crate::api::search::StockItem>,
+    currency: &mut LocalSearch<openapi::account::CurrencyInfo>,
+    search: &mut Search<openapi::search::StockItem>,
     watchlist: &mut LocalSearch<crate::data::WatchlistGroup>,
 ) {
     let popup = crate::app::POPUP.load(std::sync::atomic::Ordering::Relaxed);
@@ -91,7 +92,7 @@ fn switch_account(frame: &mut Frame, rect: Rect, account: &mut LocalSearch<crate
 fn switch_currency(
     frame: &mut Frame,
     rect: Rect,
-    currency: &mut LocalSearch<crate::api::account::CurrencyInfo>,
+    currency: &mut LocalSearch<openapi::account::CurrencyInfo>,
 ) {
     const MAX_SIZE: (u16, u16) = (50, 30);
     let rect = crate::ui::rect::centered(MAX_SIZE.0, MAX_SIZE.1, rect);
@@ -206,7 +207,7 @@ fn switch_watchlist(
     frame.render_stateful_widget(table, chunks[1], &mut groups.table);
 }
 
-fn searching(frame: &mut Frame, rect: Rect, search: &mut Search<crate::api::search::StockItem>) {
+fn searching(frame: &mut Frame, rect: Rect, search: &mut Search<openapi::search::StockItem>) {
     const MAX_SIZE: (u16, u16) = (50, 30);
     let rect = crate::ui::rect::centered(MAX_SIZE.0, MAX_SIZE.1, rect);
     frame.render_widget(Clear, rect);

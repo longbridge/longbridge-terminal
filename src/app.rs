@@ -10,9 +10,9 @@ use tokio::sync::mpsc;
 
 use crate::data::{Counter, User, Watchlist, WatchlistGroup};
 use crate::render::{DirtyFlags, RenderState};
-use crate::system;
 use crate::ui::Content;
 use crate::widgets::{Carousel, Loading, LocalSearch, Search, Terminal};
+use crate::{openapi, systems};
 
 pub static RT: OnceLock<tokio::runtime::Handle> = OnceLock::new();
 pub static POPUP: AtomicU8 = AtomicU8::new(0);
@@ -97,7 +97,7 @@ pub async fn run(
     // Create search components
     let search_stock = Search::new(update_tx.clone(), |keyword| {
         Box::pin(async move {
-            let query = crate::api::search::StockQuery {
+            let query = openapi::search::StockQuery {
                 keyword,
                 market: "HK,SG,SH,SZ,US".to_string(),
                 product: "BK,ETF,IX,ST,WT".to_string(),
@@ -107,7 +107,7 @@ pub async fn run(
                     .get_account_channel()
                     .to_string(),
             };
-            crate::api::search::fetch_stock(&query)
+            openapi::search::fetch_stock(&query)
                 .await
                 .map(|v| v.product_list)
                 .unwrap_or_default()
@@ -118,39 +118,39 @@ pub async fn run(
     RT.set(tokio::runtime::Handle::current()).unwrap();
     let mut app = bevy_app::App::new();
     app.add_state::<AppState>()
-        .add_event::<system::Key>()
-        .add_event::<system::TuiEvent>()
+        .add_event::<systems::Key>()
+        .add_event::<systems::TuiEvent>()
         .init_resource::<Terminal>()
         .init_resource::<Loading>()
         .insert_resource(search_stock)
         .insert_resource(search_watchlist)
-        .insert_resource(system::Command(update_tx.clone()))
+        .insert_resource(systems::Command(update_tx.clone()))
         .insert_resource(Carousel::new(indexes, Duration::from_secs(5)))
-        .insert_resource(system::WsState(crate::data::ReadyState::Open))
-        .add_systems(Update, system::loading.run_if(in_state(AppState::Loading)))
-        .add_systems(Update, system::error.run_if(in_state(AppState::Error)))
-        .add_systems(OnExit(AppState::Watchlist), system::exit_watchlist)
+        .insert_resource(systems::WsState(crate::data::ReadyState::Open))
+        .add_systems(Update, systems::loading.run_if(in_state(AppState::Loading)))
+        .add_systems(Update, systems::error.run_if(in_state(AppState::Error)))
+        .add_systems(OnExit(AppState::Watchlist), systems::exit_watchlist)
         .add_systems(
             Update,
-            system::render_watchlist.run_if(in_state(AppState::Watchlist)),
+            systems::render_watchlist.run_if(in_state(AppState::Watchlist)),
         )
-        .add_systems(OnEnter(AppState::Stock), system::enter_stock)
-        .add_systems(OnExit(AppState::Stock), system::exit_stock)
+        .add_systems(OnEnter(AppState::Stock), systems::enter_stock)
+        .add_systems(OnExit(AppState::Stock), systems::exit_stock)
         .add_systems(
             Update,
-            system::render_stock.run_if(in_state(AppState::Stock)),
+            systems::render_stock.run_if(in_state(AppState::Stock)),
         )
-        .add_systems(OnEnter(AppState::WatchlistStock), system::enter_stock)
-        .add_systems(OnExit(AppState::WatchlistStock), system::exit_stock)
+        .add_systems(OnEnter(AppState::WatchlistStock), systems::enter_stock)
+        .add_systems(OnExit(AppState::WatchlistStock), systems::exit_stock)
         .add_systems(
             Update,
-            system::render_watchlist_stock.run_if(in_state(AppState::WatchlistStock)),
+            systems::render_watchlist_stock.run_if(in_state(AppState::WatchlistStock)),
         )
-        .add_systems(OnEnter(AppState::Portfolio), system::enter_portfolio)
-        .add_systems(OnExit(AppState::Portfolio), system::exit_portfolio)
+        .add_systems(OnEnter(AppState::Portfolio), systems::enter_portfolio)
+        .add_systems(OnExit(AppState::Portfolio), systems::exit_portfolio)
         .add_systems(
             Update,
-            system::render_portfolio.run_if(in_state(AppState::Portfolio)),
+            systems::render_portfolio.run_if(in_state(AppState::Portfolio)),
         );
 
     // Don't refresh watchlist when transitioning between Watchlist and WatchlistStock
@@ -161,11 +161,11 @@ pub async fn run(
         for watch in [AppState::Watchlist, AppState::WatchlistStock] {
             app.add_systems(
                 OnTransition { from: v, to: watch },
-                system::enter_watchlist_common,
+                systems::enter_watchlist_common,
             );
             app.add_systems(
                 OnTransition { from: watch, to: v },
-                system::exit_watchlist_common,
+                systems::exit_watchlist_common,
             );
         }
     }
@@ -179,7 +179,7 @@ pub async fn run(
         let tx = update_tx.clone();
         async move {
             tracing::info!("Fetching account list...");
-            match crate::api::account::fetch_account_list().await {
+            match openapi::account::fetch_account_list().await {
                 Ok(accounts) => {
                     tracing::info!("Successfully fetched {} accounts", accounts.status.len());
                     if accounts.status.is_empty() {
@@ -223,9 +223,7 @@ pub async fn run(
                     });
 
                     // Get currency list
-                    if let Ok(currencies) =
-                        crate::api::account::currencies(&account.account_channel)
-                    {
+                    if let Ok(currencies) = openapi::account::currencies(&account.account_channel) {
                         queue.push(InsertResource {
                             resource: LocalSearch::new(currencies.clone(), |keyword, currency| {
                                 currency
@@ -242,7 +240,7 @@ pub async fn run(
 
                     // Load watchlist data
                     tracing::info!("Loading watchlist data...");
-                    system::refresh_watchlist(tx.clone());
+                    systems::refresh_watchlist(tx.clone());
                 }
                 Err(e) => {
                     tracing::error!("Failed to fetch account list: {}", e);
@@ -468,7 +466,7 @@ pub async fn run(
                             _ => {
                                 let evt = crossterm::event::Event::Key(event);
                                 if let Some(evt) = tui_input::backend::crossterm::to_input_request(&evt) {
-                                    send_evt(system::TuiEvent(evt), &mut app.world);
+                                    send_evt(systems::TuiEvent(evt), &mut app.world);
                                     render_state.mark_dirty(DirtyFlags::ALL);
                                 }
                             }
@@ -510,7 +508,7 @@ fn handle_popup_input(
     } else if popup == POPUP_CURRENCY {
         let mut search = app
             .world
-            .resource_mut::<LocalSearch<crate::api::account::CurrencyInfo>>();
+            .resource_mut::<LocalSearch<openapi::account::CurrencyInfo>>();
         let (hidden, selected) = search.handle_key(event);
         if hidden {
             POPUP.store(0, Ordering::Relaxed);
@@ -529,12 +527,12 @@ fn handle_popup_input(
         if let Some(group) = selected {
             POPUP.store(0, Ordering::Relaxed);
             WATCHLIST.write().expect("poison").set_group_id(group.id);
-            system::refresh_watchlist(update_tx.clone());
+            systems::refresh_watchlist(update_tx.clone());
         }
     } else if popup == POPUP_SEARCH {
         let mut search = app
             .world
-            .resource_mut::<Search<crate::api::search::StockItem>>();
+            .resource_mut::<Search<openapi::search::StockItem>>();
         let (hidden, selected) = search.handle_key(event);
         if hidden {
             POPUP.store(0, Ordering::Relaxed);
@@ -542,7 +540,7 @@ fn handle_popup_input(
         if let Some(selected) = selected {
             POPUP.store(0, Ordering::Relaxed);
             app.world
-                .insert_resource(system::StockDetail(selected.counter_id));
+                .insert_resource(systems::StockDetail(selected.counter_id));
             let state = *app.world.resource::<State<AppState>>().get();
             let next_state = if state == AppState::Stock {
                 AppState::Stock
@@ -573,11 +571,8 @@ fn handle_global_keys(
         }
         key!('2') if state != AppState::Portfolio => {
             // Create default Portfolio resource if it doesn't exist
-            if app.world.get_resource::<system::Portfolio>().is_none() {
-                app.world.insert_resource(system::Portfolio {
-                    props: system::portfolio::Props::default(),
-                    view: system::portfolio::View::default(),
-                });
+            if app.world.get_resource::<systems::Portfolio>().is_none() {
+                app.world.insert_resource(systems::Portfolio::default());
             }
             app.world
                 .insert_resource(NextState(Some(AppState::Portfolio)));
@@ -608,7 +603,7 @@ fn handle_global_keys(
         } if state == AppState::Portfolio => {
             if let Some(mut currency) = app
                 .world
-                .get_resource_mut::<LocalSearch<crate::api::account::CurrencyInfo>>()
+                .get_resource_mut::<LocalSearch<openapi::account::CurrencyInfo>>()
             {
                 POPUP.store(POPUP_CURRENCY, Ordering::Relaxed);
                 currency.visible();
@@ -681,23 +676,23 @@ fn handle_global_keys(
             state: ::crossterm::event::KeyEventState::NONE,
         } => match state {
             AppState::Portfolio => {
-                system::refresh_portfolio();
+                systems::refresh_portfolio();
                 render_state.mark_dirty(DirtyFlags::PORTFOLIO);
             }
             AppState::Watchlist => {
-                system::refresh_watchlist(update_tx.clone());
+                systems::refresh_watchlist(update_tx.clone());
                 render_state.mark_dirty(DirtyFlags::WATCHLIST);
             }
             AppState::WatchlistStock => {
-                system::refresh_stock_debounced(
-                    app.world.resource::<system::StockDetail>().0.clone(),
+                systems::refresh_stock_debounced(
+                    app.world.resource::<systems::StockDetail>().0.clone(),
                 );
-                system::refresh_watchlist(update_tx.clone());
+                systems::refresh_watchlist(update_tx.clone());
                 render_state.mark_dirty(DirtyFlags::STOCK_DETAIL | DirtyFlags::WATCHLIST);
             }
             AppState::Stock => {
-                system::refresh_stock_debounced(
-                    app.world.resource::<system::StockDetail>().0.clone(),
+                systems::refresh_stock_debounced(
+                    app.world.resource::<systems::StockDetail>().0.clone(),
                 );
                 render_state.mark_dirty(DirtyFlags::STOCK_DETAIL);
             }
@@ -710,7 +705,7 @@ fn handle_global_keys(
         key!('/') => {
             if let Some(mut search) = app
                 .world
-                .get_resource_mut::<Search<crate::api::search::StockItem>>()
+                .get_resource_mut::<Search<openapi::search::StockItem>>()
             {
                 POPUP.store(POPUP_SEARCH, Ordering::Relaxed);
                 search.visible();
@@ -741,7 +736,7 @@ fn handle_global_keys(
             kind: ::crossterm::event::KeyEventKind::Press,
             state: ::crossterm::event::KeyEventState::NONE,
         } => {
-            send_evt(system::Key::Up, &mut app.world);
+            send_evt(systems::Key::Up, &mut app.world);
             // Navigation keys affect current view
             render_state.mark_dirty(match state {
                 AppState::Watchlist | AppState::WatchlistStock => DirtyFlags::WATCHLIST,
@@ -762,7 +757,7 @@ fn handle_global_keys(
             kind: ::crossterm::event::KeyEventKind::Press,
             state: ::crossterm::event::KeyEventState::NONE,
         } => {
-            send_evt(system::Key::Down, &mut app.world);
+            send_evt(systems::Key::Down, &mut app.world);
             render_state.mark_dirty(match state {
                 AppState::Watchlist | AppState::WatchlistStock => DirtyFlags::WATCHLIST,
                 AppState::Stock => DirtyFlags::STOCK_DETAIL,
@@ -782,7 +777,7 @@ fn handle_global_keys(
             kind: ::crossterm::event::KeyEventKind::Press,
             state: ::crossterm::event::KeyEventState::NONE,
         } => {
-            send_evt(system::Key::Left, &mut app.world);
+            send_evt(systems::Key::Left, &mut app.world);
             render_state.mark_dirty(match state {
                 AppState::Stock => DirtyFlags::STOCK_DETAIL,
                 _ => DirtyFlags::ALL,
@@ -800,25 +795,25 @@ fn handle_global_keys(
             kind: ::crossterm::event::KeyEventKind::Press,
             state: ::crossterm::event::KeyEventState::NONE,
         } => {
-            send_evt(system::Key::Right, &mut app.world);
+            send_evt(systems::Key::Right, &mut app.world);
             render_state.mark_dirty(match state {
                 AppState::Stock => DirtyFlags::STOCK_DETAIL,
                 _ => DirtyFlags::ALL,
             });
         }
         key!(Tab) => {
-            send_evt(system::Key::Tab, &mut app.world);
+            send_evt(systems::Key::Tab, &mut app.world);
             render_state.mark_dirty(match state {
                 AppState::Stock => DirtyFlags::STOCK_DETAIL,
                 _ => DirtyFlags::ALL,
             });
         }
         key!(Enter) => {
-            send_evt(system::Key::Enter, &mut app.world);
+            send_evt(systems::Key::Enter, &mut app.world);
             render_state.mark_dirty(DirtyFlags::ALL);
         }
         shift!(BackTab) => {
-            send_evt(system::Key::BackTab, &mut app.world);
+            send_evt(systems::Key::BackTab, &mut app.world);
             render_state.mark_dirty(match state {
                 AppState::Stock => DirtyFlags::STOCK_DETAIL,
                 _ => DirtyFlags::ALL,
@@ -835,6 +830,6 @@ fn send_evt<T: Event>(evt: T, world: &mut World) {
 
 fn show_index(world: &mut World, index: usize) {
     let indexes = world.resource::<Carousel<[Counter; 3]>>().current();
-    world.insert_resource(system::StockDetail(indexes[index].clone()));
+    world.insert_resource(systems::StockDetail(indexes[index].clone()));
     world.insert_resource(NextState(Some(AppState::WatchlistStock)));
 }

@@ -7,8 +7,8 @@ use ratatui::{
 use rust_decimal::Decimal;
 
 use crate::data::{Counter, ReadyState, STOCKS};
-use crate::helper::DecimalExt;
-use crate::{system::WsState, ui::styles};
+use crate::utils::DecimalExt;
+use crate::{systems::WsState, ui::styles};
 
 pub fn render(frame: &mut Frame, rect: Rect, indexes: &[Counter; 3], state: &WsState) {
     let chunks = Layout::default()

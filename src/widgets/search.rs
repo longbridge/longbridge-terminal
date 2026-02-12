@@ -10,7 +10,7 @@ use ratatui::widgets::TableState;
 use tokio::sync::{mpsc, watch};
 use tui_input::backend::crossterm::EventHandler;
 
-use crate::helper::cycle;
+use crate::utils::cycle;
 
 #[derive(Resource, Component)]
 pub struct LocalSearch<T> {

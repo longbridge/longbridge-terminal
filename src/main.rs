@@ -4,10 +4,8 @@ use std::io::Write;
 #[macro_use]
 mod macros;
 
-pub mod api;
 pub mod app;
 pub mod data;
-pub mod helper;
 pub mod kline;
 pub mod logger;
 pub mod openapi;
@@ -15,8 +13,9 @@ pub mod openapi;
 #[cfg_attr(target_family = "unix", path = "os/unix.rs")]
 pub mod os;
 pub mod render;
-pub mod system;
+pub mod systems;
 pub mod ui;
+pub mod utils;
 pub mod widgets;
 
 mod views;

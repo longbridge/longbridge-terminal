@@ -1,6 +1,10 @@
+pub mod account;
 pub mod context;
 pub mod helpers;
+pub mod login;
+pub mod quote;
 pub mod rate_limiter;
+pub mod search;
 pub mod wrapper;
 
 pub use context::{init_contexts, print_config_guide, quote, quote_limited, trade, trade_limited};
