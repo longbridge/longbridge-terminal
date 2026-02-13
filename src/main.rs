@@ -5,6 +5,7 @@ use std::io::Write;
 mod macros;
 
 pub mod app;
+pub mod auth;
 pub mod data;
 pub mod kline;
 pub mod logger;
@@ -43,8 +44,8 @@ async fn main() {
     let quote_receiver = match openapi::init_contexts().await {
         Ok(receiver) => receiver,
         Err(e) => {
-            openapi::print_config_guide();
-            eprintln!("\nError details: {e}");
+            eprintln!("OAuth2 authentication failed: {e}");
+            eprintln!();
             return;
         }
     };

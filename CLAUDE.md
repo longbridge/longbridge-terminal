@@ -18,15 +18,25 @@ A Rust-based TUI (Terminal User Interface) stock trading terminal using the Long
 
 ### Key Modules
 
-#### 1. `src/openapi/` - OpenAPI Integration Layer
+#### 1. `src/oauth2.rs` - OAuth2.1 Authentication
+
+- Handles OAuth2.1 authorization code flow
+- `authorize()` - Start OAuth flow (register client, open browser, wait for callback, exchange token)
+- `load_token()` - Load existing token from system keychain
+- `refresh_token_if_needed()` - Refresh token if expiring soon
+- Token storage: System keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service)
+- Auto-registration: Automatically registers OAuth client on first run
+- Local callback server: Listens on `localhost:8877` (fallback to 8878-8880)
+
+#### 2. `src/openapi/` - OpenAPI Integration Layer
 
 - `context.rs` - Global context management
-  - `init_contexts()` - Initialize QuoteContext and TradeContext, returns WebSocket receiver
+  - `init_contexts()` - Initialize QuoteContext and TradeContext with OAuth token, returns WebSocket receiver
   - `quote()` - Get global QuoteContext (for quotes, subscriptions)
   - `trade()` - Get global TradeContext (for trading operations)
   - Uses `OnceLock` for global singleton
 
-#### 2. `src/data/` - Data Layer
+#### 3. `src/data/` - Data Layer
 
 - `types.rs` - Base type definitions
   - `Counter` - Stock identifier (format: `700.HK`, `AAPL.US`)
@@ -38,26 +48,26 @@ A Rust-based TUI (Terminal User Interface) stock trading terminal using the Long
 - `stocks.rs` - Global stock cache (based on `DashMap`)
   - `STOCKS` - Global singleton, provides `get()`, `mget()`, `insert()`, `modify()` methods
 
-#### 3. `src/app.rs` - Application Main Loop
+#### 4. `src/app.rs` - Application Main Loop
 
 - Uses Bevy ECS to manage app state (`AppState`)
 - Handles UI updates via `mpsc::unbounded_channel`
 - Subscribes to index quotes (HSI, DJI, Shanghai Composite, etc.)
 - Integrates search, selection, popup components
 
-#### 4. `src/system.rs` - System Logic and UI Rendering
+#### 5. `src/system.rs` - System Logic and UI Rendering
 
 - Contains rendering logic for pages (Watchlist, Stock, Portfolio, etc.)
 - Handles user input and state transitions
 
-#### 5. `src/api/` - API Call Layer
+#### 6. `src/api/` - API Call Layer
 
 - `search.rs` - Stock search
 - `quote.rs` - Quote queries
 - `account.rs` - Account information
 - Uses `openapi::quote()` and `openapi::trade()`
 
-#### 6. `src/widgets/` and `src/views/` - UI Components
+#### 7. `src/widgets/` and `src/views/` - UI Components
 
 - `Terminal` - Terminal management
 - `Search`, `LocalSearch` - Search components
@@ -67,10 +77,11 @@ A Rust-based TUI (Terminal User Interface) stock trading terminal using the Long
 
 ### Data Flow
 
-1. **Initialization**: `main.rs` → `openapi::init_contexts()` → Get WebSocket receiver
-2. **Subscribe Quotes**: `app.rs` → `openapi::quote().subscribe()` → longport SDK
-3. **Receive Push**: WebSocket receiver → Parse `PushEvent` → Update `STOCKS` cache
-4. **UI Rendering**: Bevy ECS systems → Read `STOCKS` → Ratatui rendering
+1. **Authentication**: `main.rs` → `oauth2::authorize()` → OAuth2 flow → Token saved to keychain
+2. **Initialization**: `main.rs` → `openapi::init_contexts()` → Initialize with OAuth token → Get WebSocket receiver
+3. **Subscribe Quotes**: `app.rs` → `openapi::quote().subscribe()` → longport SDK
+4. **Receive Push**: WebSocket receiver → Parse `PushEvent` → Update `STOCKS` cache
+5. **UI Rendering**: Bevy ECS systems → Read `STOCKS` → Ratatui rendering
 
 ## Development Commands
 
@@ -99,16 +110,34 @@ cargo fmt
 
 ### Configuration
 
-Requires Longport OpenAPI credentials via environment variables or `.env` file:
+**Authentication Method: OAuth2.1**
 
+The application uses OAuth2.1 for authentication. On first run:
+
+1. OAuth client is automatically registered with Longbridge
+2. Browser opens for user authorization
+3. Access token is saved securely to system keychain
+
+**No environment variables or manual configuration required!**
+
+Requirements:
+- Internet connection
+- Browser access
+- Longbridge account (register at https://open.longbridge.com)
+
+**Token Storage:**
+- macOS: Keychain Access
+- Windows: Credential Manager
+- Linux: Secret Service (libsecret)
+
+**Troubleshooting:**
 ```bash
-# Copy example config
-cp .env.example .env
+# View detailed OAuth flow logs
+RUST_LOG=debug cargo run
 
-# Edit config (get credentials from https://open.longbridge.com)
-# LONGPORT_APP_KEY=...
-# LONGPORT_APP_SECRET=...
-# LONGPORT_ACCESS_TOKEN=...
+# Token location in keychain
+# Service: "com.longbridge.terminal"
+# Entries: oauth_client_id, oauth_client_secret, oauth_token
 ```
 
 ## Code Style

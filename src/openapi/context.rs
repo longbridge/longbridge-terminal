@@ -30,12 +30,41 @@ fn get_api_language() -> &'static str {
 /// Returns quote receiver for caller to handle WebSocket events
 pub async fn init_contexts(
 ) -> Result<impl tokio_stream::Stream<Item = longport::quote::PushEvent> + Send + Unpin> {
+    // Try to load existing token or start OAuth flow
+    let token = match crate::auth::load_token()? {
+        Some(t) if !t.is_expired() => {
+            tracing::debug!("Using existing OAuth token from keychain");
+            t.access_token
+        }
+        Some(_) => {
+            tracing::debug!("Token expired, starting OAuth flow");
+            let token = crate::auth::authorize().await?;
+            token.access_token
+        }
+        None => {
+            tracing::debug!("No token found, starting OAuth flow");
+            let token = crate::auth::authorize().await?;
+            token.access_token
+        }
+    };
+
+    init_contexts_with_token(token).await
+}
+
+/// Initialize contexts with OAuth token
+async fn init_contexts_with_token(
+    access_token: String,
+) -> Result<impl tokio_stream::Stream<Item = longport::quote::PushEvent> + Send + Unpin> {
     // Set language based on current UI locale
     std::env::set_var("LONGPORT_LANGUAGE", get_api_language());
     std::env::set_var("LONGPORT_PRINT_QUOTE_PACKAGES", "false");
 
-    // Load config from environment variables
-    let config = Arc::new(longport::Config::from_env()?);
+    // Construct Config with OAuth token
+    let config = Arc::new(longport::Config::new(
+        "", // app_key not needed with OAuth
+        "", // app_secret not needed with OAuth
+        access_token,
+    ));
 
     // Create QuoteContext and TradeContext
     let (quote_ctx, quote_receiver) =
@@ -96,20 +125,4 @@ pub fn trade_limited() -> &'static RateLimitedTradeContext {
     RATE_LIMITED_TRADE_CTX
         .get()
         .expect("RateLimitedTradeContext not initialized, please call init_contexts() first")
-}
-
-/// Display config guide (when config loading fails)
-pub fn print_config_guide() {
-    eprintln!("Configuration Error: Missing required environment variables");
-    eprintln!();
-    eprintln!("Please configure the following environment variables:");
-    eprintln!("  LONGPORT_APP_KEY=<your_app_key>");
-    eprintln!("  LONGPORT_APP_SECRET=<your_app_secret>");
-    eprintln!("  LONGPORT_ACCESS_TOKEN=<your_access_token>");
-    eprintln!();
-    eprintln!("You can also specify custom server addresses via LONGPORT_HTTP_URL and LONGPORT_QUOTE_WS_URL");
-    eprintln!();
-    eprintln!("Get Token: https://open.longbridge.com");
-    eprintln!();
-    eprintln!("Tip: You can create a .env file to configure these variables");
 }
