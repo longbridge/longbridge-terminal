@@ -301,7 +301,10 @@ async fn wait_for_callback() -> Result<(String, String)> {
                         }
                     }
 
-                    const STYLE: &str = "<style>html { font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif; font-size: 16px; color: #e0e0e0; background: #202020; padding: 2rem; text-align: center; } </style>";
+                    const STYLE: &str = "<style>html { \
+                        font-family: system-ui, -apple-system, BlinkMacSystemFont, \
+                        sans-serif; font-size: 16px; color: #e0e0e0; background: #202020; \
+                        padding: 2rem; text-align: center; } </style>";
 
                     // Send HTML response to browser
                     let response = if let Some(err) = &received_error {
@@ -309,22 +312,26 @@ async fn wait_for_callback() -> Result<(String, String)> {
                             "HTTP/1.1 400 Bad Request\r\n\
                              Content-Type: text/html; charset=utf-8\r\n\
                              \r\n\
-                             <html><body>{STYLE}<h1>Authorization Failed</h1><p>Error: {err}</p></body></html>"
-                        )
+                             <html><body>{}<h1>Authorization Failed</h1>\
+                             <p>Error: {err}</p></body></html>",
+                             STYLE)
                     } else if received_code.is_some() && received_state.is_some() {
                         *code_clone.lock().unwrap() = received_code;
                         *state_clone.lock().unwrap() = received_state;
-                        r"HTTP/1.1 200 OK\r\n\
+                        format!("HTTP/1.1 200 OK\r\n\
                          Content-Type: text/html; charset=utf-8\r\n\
                          \r\n\
-                         <html><body>{STYLE}<h1>✓ Authorization Successful!</h1> <p>You can close this window and return to the terminal.</p> </body> </html>"
-                            .to_string()
+                         <html><body>{}<h1>✓ Authorization Successful!</h1>\
+                         <p>You can close this window and return to the terminal.</p> </body> </html>", STYLE)
                     } else {
-                        "HTTP/1.1 400 Bad Request\r\n\
+                        format!(
+                            "HTTP/1.1 400 Bad Request\r\n\
                          Content-Type: text/html; charset=utf-8\r\n\
                          \r\n\
-                         <html><body>{STYLE}<h1>Missing Parameters</h1><p>Authorization code or state not received</p></body></html>"
-                            .to_string()
+                         <html><body>{}<h1>Missing Parameters</h1>\
+                         <p>Authorization code or state not received</p></body></html>",
+                            STYLE
+                        )
                     };
 
                     let _ = stream.write_all(response.as_bytes());
