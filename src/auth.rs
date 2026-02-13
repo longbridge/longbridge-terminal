@@ -312,9 +312,8 @@ async fn wait_for_callback() -> Result<(String, String)> {
                             "HTTP/1.1 400 Bad Request\r\n\
                              Content-Type: text/html; charset=utf-8\r\n\
                              \r\n\
-                             <html><body>{}<h1>Authorization Failed</h1>\
-                             <p>Error: {err}</p></body></html>",
-                            STYLE
+                             <html><body>{STYLE}<h1>Authorization Failed</h1>\
+                             <p>Error: {err}</p></body></html>"
                         )
                     } else if received_code.is_some() && received_state.is_some() {
                         *code_clone.lock().unwrap() = received_code;
@@ -322,16 +321,15 @@ async fn wait_for_callback() -> Result<(String, String)> {
                         format!("HTTP/1.1 200 OK\r\n\
                          Content-Type: text/html; charset=utf-8\r\n\
                          \r\n\
-                         <html><body>{}<h1>✓ Authorization Successful!</h1>\
-                         <p>You can close this window and return to the terminal.</p> </body> </html>", STYLE)
+                         <html><body>{STYLE}<h1>✓ Authorization Successful!</h1>\
+                         <p>You can close this window and return to the terminal.</p> </body> </html>")
                     } else {
                         format!(
                             "HTTP/1.1 400 Bad Request\r\n\
                          Content-Type: text/html; charset=utf-8\r\n\
                          \r\n\
-                         <html><body>{}<h1>Missing Parameters</h1>\
-                         <p>Authorization code or state not received</p></body></html>",
-                            STYLE
+                         <html><body>{STYLE}<h1>Missing Parameters</h1>\
+                         <p>Authorization code or state not received</p></body></html>"
                         )
                     };
 
