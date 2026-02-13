@@ -226,8 +226,8 @@ async fn start_authorization_flow(creds: ClientCredentials) -> Result<OAuthToken
         .url();
 
     tracing::debug!("Starting OAuth authorization flow");
-    println!("\nOpening browser for Longbridge OpenAPI authorization...");
-    println!("If the browser doesn't open, please visit:\n");
+    println!("Opening browser for Longbridge OpenAPI authorization...");
+    println!("If the browser doesn't open, please visit:");
     println!("{auth_url}");
 
     // Try to open browser
@@ -301,27 +301,29 @@ async fn wait_for_callback() -> Result<(String, String)> {
                         }
                     }
 
+                    const STYLE: &str = "<style>html { font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif; font-size: 16px; color: #e0e0e0; background: #202020; padding: 2rem; text-align: center; } </style>";
+
                     // Send HTML response to browser
                     let response = if let Some(err) = &received_error {
                         format!(
                             "HTTP/1.1 400 Bad Request\r\n\
                              Content-Type: text/html; charset=utf-8\r\n\
                              \r\n\
-                             <html><body><h1>Authorization Failed</h1><p>Error: {err}</p></body></html>"
+                             <html><body>{STYLE}<h1>Authorization Failed</h1><p>Error: {err}</p></body></html>"
                         )
                     } else if received_code.is_some() && received_state.is_some() {
                         *code_clone.lock().unwrap() = received_code;
                         *state_clone.lock().unwrap() = received_state;
-                        "HTTP/1.1 200 OK\r\n\
+                        r"HTTP/1.1 200 OK\r\n\
                          Content-Type: text/html; charset=utf-8\r\n\
                          \r\n\
-                         <html><body><h1>✓ Authorization Successful!</h1><p>You can close this window and return to the terminal.</p></body></html>"
+                         <html><body>{STYLE}<h1>✓ Authorization Successful!</h1> <p>You can close this window and return to the terminal.</p> </body> </html>"
                             .to_string()
                     } else {
                         "HTTP/1.1 400 Bad Request\r\n\
                          Content-Type: text/html; charset=utf-8\r\n\
                          \r\n\
-                         <html><body><h1>Missing Parameters</h1><p>Authorization code or state not received</p></body></html>"
+                         <html><body>{STYLE}<h1>Missing Parameters</h1><p>Authorization code or state not received</p></body></html>"
                             .to_string()
                     };
 
