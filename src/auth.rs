@@ -314,7 +314,8 @@ async fn wait_for_callback() -> Result<(String, String)> {
                              \r\n\
                              <html><body>{}<h1>Authorization Failed</h1>\
                              <p>Error: {err}</p></body></html>",
-                             STYLE)
+                            STYLE
+                        )
                     } else if received_code.is_some() && received_state.is_some() {
                         *code_clone.lock().unwrap() = received_code;
                         *state_clone.lock().unwrap() = received_state;
