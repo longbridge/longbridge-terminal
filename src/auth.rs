@@ -410,3 +410,29 @@ pub async fn refresh_token_if_needed() -> Result<()> {
     }
     Ok(())
 }
+
+pub fn clear_token() -> Result<()> {
+    tracing::debug!("Clearing OAuth token and client credentials from keychain");
+
+    // Try to delete token
+    if let Ok(Some(_)) = KeychainStorage::load("oauth_token") {
+        let entry = keyring::Entry::new(KEYCHAIN_SERVICE, "oauth_token")
+            .context("Failed to create keychain entry for token")?;
+        entry
+            .delete_password()
+            .context("Failed to delete token from keychain")?;
+        tracing::debug!("OAuth token deleted from keychain");
+    }
+
+    // Try to delete client credentials
+    if let Ok(Some(_)) = KeychainStorage::load("oauth_client_id") {
+        let entry = keyring::Entry::new(KEYCHAIN_SERVICE, "oauth_client_id")
+            .context("Failed to create keychain entry for client_id")?;
+        entry
+            .delete_password()
+            .context("Failed to delete client_id from keychain")?;
+        tracing::debug!("OAuth client_id deleted from keychain");
+    }
+
+    Ok(())
+}
