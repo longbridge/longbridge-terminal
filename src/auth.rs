@@ -254,6 +254,7 @@ async fn start_authorization_flow(creds: ClientCredentials) -> Result<OAuthToken
     Ok(OAuthToken::from_oauth2_response(&token_response))
 }
 
+#[allow(clippy::items_after_statements)]
 async fn wait_for_callback() -> Result<(String, String)> {
     let listener = bind_callback_server()?;
     let addr = listener.local_addr()?;
@@ -301,7 +302,8 @@ async fn wait_for_callback() -> Result<(String, String)> {
                         }
                     }
 
-                    const STYLE: &str = "<style>html { \
+                    const STYLE: &str =
+                        "<style>html { \
                         font-family: system-ui, -apple-system, BlinkMacSystemFont, \
                         sans-serif; font-size: 16px; color: #e0e0e0; background: #202020; \
                         padding: 2rem; text-align: center; } </style>";
