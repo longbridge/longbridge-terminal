@@ -6,135 +6,76 @@ use oauth2::{
     Scope, TokenResponse, TokenUrl,
 };
 use serde::{Deserialize, Serialize};
+use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
 
-const OAUTH_BASE_URL: &str = "https://openapi.longbridge.xyz";
-const KEYCHAIN_SERVICE: &str = "com.longbridge.terminal";
-const REDIRECT_URI: &str = "http://localhost:8877/callback";
 const AUTH_TIMEOUT: Duration = Duration::from_secs(300); // 5 minutes
 
-// ============================================================================
-// Keychain Storage - Business Logic
-// ============================================================================
+const OAUTH_BASE_URL: &str = "https://openapi.longportapp.cn";
+const OAUTH_CLIENT_ID: &str = "fd52fbc5-02a9-47f5-ad30-0842c841aae9";
 
-pub struct KeychainStorage;
+fn session_file_path() -> Result<PathBuf> {
+    Ok(dirs::home_dir()
+        .ok_or_else(|| anyhow!("Failed to get home directory"))?
+        .join(".longbridge/terminal/.openapi-session"))
+}
 
-impl KeychainStorage {
-    pub fn save(key: &str, value: &str) -> Result<()> {
-        let entry = keyring::Entry::new(KEYCHAIN_SERVICE, key)
-            .context("Failed to create keychain entry")?;
-        entry
-            .set_password(value)
-            .context("Failed to save to keychain")?;
+pub struct FileStorage;
+
+impl FileStorage {
+    pub fn save(data: &str) -> Result<()> {
+        let path = session_file_path()?;
+
+        // Create parent directory if it doesn't exist
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).context("Failed to create config directory")?;
+        }
+
+        fs::write(&path, data).context("Failed to write session file")?;
+
+        tracing::debug!("Session saved to {}", path.display());
         Ok(())
     }
 
-    pub fn load(key: &str) -> Result<Option<String>> {
-        let entry = keyring::Entry::new(KEYCHAIN_SERVICE, key)
-            .context("Failed to create keychain entry")?;
-        match entry.get_password() {
-            Ok(value) => Ok(Some(value)),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(e) => Err(anyhow!("Failed to load from keychain: {e}")),
+    pub fn load() -> Result<Option<String>> {
+        let path = session_file_path()?;
+
+        if !path.exists() {
+            return Ok(None);
         }
+
+        let content = fs::read_to_string(&path).context("Failed to read session file")?;
+
+        Ok(Some(content))
     }
-}
 
-// ============================================================================
-// OAuth Client Registration - Longbridge-specific Business Logic
-// ============================================================================
+    pub fn delete() -> Result<()> {
+        let path = session_file_path()?;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ClientCredentials {
-    client_id: String,
-}
+        if path.exists() {
+            fs::remove_file(&path).context("Failed to delete session file")?;
+            tracing::debug!("Session file deleted: {}", path.display());
+        }
 
-#[derive(Deserialize)]
-struct RegisterResponse {
-    client_id: String,
-}
-
-impl ClientCredentials {
-    fn save(&self) -> Result<()> {
-        KeychainStorage::save("oauth_client_id", &self.client_id)?;
-        tracing::debug!("OAuth client saved to keychain");
         Ok(())
     }
-
-    fn load() -> Result<Option<Self>> {
-        let client_id = KeychainStorage::load("oauth_client_id")?;
-
-        match client_id {
-            Some(id) => Ok(Some(Self { client_id: id })),
-            _ => Ok(None),
-        }
-    }
-
-    async fn register() -> Result<Self> {
-        tracing::debug!("Registering new OAuth client with Longbridge");
-
-        let client = reqwest::Client::new();
-        let response = client
-            .post(format!("{OAUTH_BASE_URL}/oauth2/register"))
-            .json(&serde_json::json!({
-                "redirect_uris": [REDIRECT_URI],
-                "client_name": "Longbridge Terminal",
-                "grant_types": ["authorization_code", "refresh_token"],
-                "response_types": ["code"],
-                "token_endpoint_auth_method": "client_secret_basic"
-            }))
-            .send()
-            .await
-            .context("Failed to send registration request")?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response.text().await.unwrap_or_default();
-            return Err(anyhow!(
-                "OAuth registration failed with status {status}: {error_text}"
-            ));
-        }
-
-        let reg_response: RegisterResponse = response
-            .json()
-            .await
-            .context("Failed to parse registration response")?;
-
-        Ok(Self {
-            client_id: reg_response.client_id,
-        })
-    }
-
-    async fn get_or_register() -> Result<Self> {
-        if let Some(creds) = Self::load()? {
-            tracing::debug!("Loaded existing OAuth client from keychain");
-            Ok(creds)
-        } else {
-            let creds = Self::register().await?;
-            creds.save()?;
-            Ok(creds)
-        }
-    }
-
-    fn create_oauth_client(&self) -> BasicClient {
-        BasicClient::new(
-            ClientId::new(self.client_id.clone()),
-            None, // No client secret for public clients
-            AuthUrl::new(format!("{OAUTH_BASE_URL}/oauth2/authorize")).unwrap(),
-            Some(TokenUrl::new(format!("{OAUTH_BASE_URL}/oauth2/token")).unwrap()),
-        )
-        .set_redirect_uri(RedirectUrl::new(REDIRECT_URI.to_string()).unwrap())
-        .set_revocation_uri(RevocationUrl::new(format!("{OAUTH_BASE_URL}/oauth2/revoke")).unwrap())
-    }
 }
 
-// ============================================================================
-// Token Management - Business Logic with Keychain Storage
-// ============================================================================
+fn create_oauth_client(redirect_uri: &str) -> BasicClient {
+    BasicClient::new(
+        ClientId::new(OAUTH_CLIENT_ID.to_string()),
+        None, // No client secret for public clients
+        AuthUrl::new(format!("{OAUTH_BASE_URL}/oauth2/authorize")).unwrap(),
+        Some(TokenUrl::new(format!("{OAUTH_BASE_URL}/oauth2/token")).unwrap()),
+    )
+    .set_redirect_uri(RedirectUrl::new(redirect_uri.to_string()).unwrap())
+    .set_revocation_uri(RevocationUrl::new(format!("{OAUTH_BASE_URL}/oauth2/revoke")).unwrap())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthToken {
@@ -171,14 +112,14 @@ impl OAuthToken {
     }
 
     pub fn save(&self) -> Result<()> {
-        let json = serde_json::to_string(self)?;
-        KeychainStorage::save("oauth_token", &json)?;
-        tracing::debug!("OAuth token saved to keychain");
+        let json = serde_json::to_string_pretty(self)?;
+        FileStorage::save(&json)?;
+        tracing::debug!("OAuth token saved to file");
         Ok(())
     }
 
     pub fn load() -> Result<Option<Self>> {
-        if let Some(json) = KeychainStorage::load("oauth_token")? {
+        if let Some(json) = FileStorage::load()? {
             let token: Self = serde_json::from_str(&json)?;
             Ok(Some(token))
         } else {
@@ -186,7 +127,7 @@ impl OAuthToken {
         }
     }
 
-    async fn refresh_internal(&self, creds: &ClientCredentials) -> Result<Self> {
+    async fn refresh_internal(&self) -> Result<Self> {
         let refresh_token = self
             .refresh_token
             .as_ref()
@@ -194,7 +135,9 @@ impl OAuthToken {
 
         tracing::debug!("Refreshing OAuth token using oauth2 library");
 
-        let client = creds.create_oauth_client();
+        // For refresh token flow, redirect_uri is not used, but we still need to provide one
+        // Use a placeholder that matches one of the registered redirect URIs
+        let client = create_oauth_client("http://localhost:60355/callback");
         let token_response = client
             .exchange_refresh_token(&RefreshToken::new(refresh_token.clone()))
             .request_async(async_http_client)
@@ -212,12 +155,16 @@ impl OAuthToken {
     }
 }
 
-// ============================================================================
-// Authorization Flow - Using oauth2 library with local callback server
-// ============================================================================
+async fn start_authorization_flow() -> Result<OAuthToken> {
+    // Bind callback server first to get the actual port
+    let listener = bind_callback_server()?;
+    let port = listener.local_addr()?.port();
+    let redirect_uri = format!("http://localhost:{port}/callback");
 
-async fn start_authorization_flow(creds: ClientCredentials) -> Result<OAuthToken> {
-    let client = creds.create_oauth_client();
+    tracing::debug!("Callback server listening on port {port}");
+    tracing::debug!("Redirect URI: {redirect_uri}");
+
+    let client = create_oauth_client(&redirect_uri);
 
     // Generate authorization URL using oauth2 library
     let (auth_url, csrf_token) = client
@@ -236,7 +183,7 @@ async fn start_authorization_flow(creds: ClientCredentials) -> Result<OAuthToken
     }
 
     // Start local callback server and wait for authorization code
-    let (code, state) = wait_for_callback().await?;
+    let (code, state) = wait_for_callback(listener).await?;
 
     // Verify CSRF token
     if state != *csrf_token.secret() {
@@ -255,8 +202,7 @@ async fn start_authorization_flow(creds: ClientCredentials) -> Result<OAuthToken
 }
 
 #[allow(clippy::items_after_statements)]
-async fn wait_for_callback() -> Result<(String, String)> {
-    let listener = bind_callback_server()?;
+async fn wait_for_callback(listener: TcpListener) -> Result<(String, String)> {
     let addr = listener.local_addr()?;
     tracing::debug!("Callback server listening on {addr}");
 
@@ -302,8 +248,7 @@ async fn wait_for_callback() -> Result<(String, String)> {
                         }
                     }
 
-                    const STYLE: &str =
-                        "<style>html { \
+                    const STYLE: &str = "<style>html { \
                         font-family: system-ui, -apple-system, BlinkMacSystemFont, \
                         sans-serif; font-size: 16px; color: #e0e0e0; background: #202020; \
                         padding: 2rem; text-align: center; } </style>";
@@ -370,30 +315,12 @@ async fn wait_for_callback() -> Result<(String, String)> {
 }
 
 fn bind_callback_server() -> Result<TcpListener> {
-    // Try to bind to port 8877, then fallback to 8878-8880
-    for port in 8877..=8880 {
-        match TcpListener::bind(format!("127.0.0.1:{port}")) {
-            Ok(listener) => {
-                tracing::debug!("Bound callback server to port {port}");
-                return Ok(listener);
-            }
-            Err(e) => {
-                tracing::warn!("Failed to bind to port {port}: {e}");
-            }
-        }
-    }
-    Err(anyhow!(
-        "Failed to bind callback server to any port (8877-8880)"
-    ))
+    TcpListener::bind("127.0.0.1:60355")
+        .with_context(|| "Failed to bind callback server on 127.0.0.1:60355")
 }
 
-// ============================================================================
-// Public API
-// ============================================================================
-
 pub async fn authorize() -> Result<OAuthToken> {
-    let creds = ClientCredentials::get_or_register().await?;
-    let token = start_authorization_flow(creds).await?;
+    let token = start_authorization_flow().await?;
     token.save()?;
     Ok(token)
 }
@@ -411,8 +338,7 @@ pub async fn refresh_token_if_needed() -> Result<()> {
             .as_secs();
         if token.expires_at.saturating_sub(now) < 3600 {
             tracing::debug!("Token expires soon, refreshing...");
-            let creds = ClientCredentials::get_or_register().await?;
-            let new_token = token.refresh_internal(&creds).await?;
+            let new_token = token.refresh_internal().await?;
             new_token.save()?;
         }
     }
@@ -420,27 +346,8 @@ pub async fn refresh_token_if_needed() -> Result<()> {
 }
 
 pub fn clear_token() -> Result<()> {
-    tracing::debug!("Clearing OAuth token and client credentials from keychain");
-
-    // Try to delete token
-    if let Ok(Some(_)) = KeychainStorage::load("oauth_token") {
-        let entry = keyring::Entry::new(KEYCHAIN_SERVICE, "oauth_token")
-            .context("Failed to create keychain entry for token")?;
-        entry
-            .delete_password()
-            .context("Failed to delete token from keychain")?;
-        tracing::debug!("OAuth token deleted from keychain");
-    }
-
-    // Try to delete client credentials
-    if let Ok(Some(_)) = KeychainStorage::load("oauth_client_id") {
-        let entry = keyring::Entry::new(KEYCHAIN_SERVICE, "oauth_client_id")
-            .context("Failed to create keychain entry for client_id")?;
-        entry
-            .delete_password()
-            .context("Failed to delete client_id from keychain")?;
-        tracing::debug!("OAuth client_id deleted from keychain");
-    }
-
+    tracing::debug!("Clearing OAuth token from file");
+    FileStorage::delete()?;
+    tracing::debug!("OAuth token deleted");
     Ok(())
 }
