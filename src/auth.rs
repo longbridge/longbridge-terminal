@@ -16,8 +16,8 @@ use tokio::time::timeout;
 
 const AUTH_TIMEOUT: Duration = Duration::from_secs(300); // 5 minutes
 
-const OAUTH_BASE_URL: &str = "https://openapi.longportapp.cn";
-const OAUTH_CLIENT_ID: &str = "fd52fbc5-02a9-47f5-ad30-0842c841aae9";
+const OAUTH_BASE_URL: &str = "https://openapi.longportapp.com";
+pub const OAUTH_CLIENT_ID: &str = "fd52fbc5-02a9-47f5-ad30-0842c841aae9";
 
 fn session_file_path() -> Result<PathBuf> {
     Ok(dirs::home_dir()
@@ -197,6 +197,13 @@ async fn start_authorization_flow() -> Result<OAuthToken> {
         .request_async(oauth2::reqwest::async_http_client)
         .await
         .context("Failed to exchange code for token")?;
+
+    // Debug: log the token response details
+    tracing::debug!("Access token: {}", token_response.access_token().secret());
+    tracing::debug!("Refresh token: {:?}", token_response.refresh_token().map(|t| t.secret()));
+    tracing::debug!("Token type: {:?}", token_response.token_type());
+    tracing::debug!("Expires in: {:?}", token_response.expires_in());
+    tracing::debug!("Scopes: {:?}", token_response.scopes());
 
     Ok(OAuthToken::from_oauth2_response(&token_response))
 }

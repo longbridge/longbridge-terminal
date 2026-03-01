@@ -59,11 +59,14 @@ async fn init_contexts_with_token(
     std::env::set_var("LONGPORT_LANGUAGE", get_api_language());
     std::env::set_var("LONGPORT_PRINT_QUOTE_PACKAGES", "false");
 
-    // Construct Config with OAuth token
+    // For OAuth 2.0, the client_id acts as app_key
+    // The access_token should be prefixed with "Bearer "
+    let bearer_token = format!("Bearer {}", access_token);
+
     let config = Arc::new(longport::Config::new(
-        "", // app_key not needed with OAuth
-        "", // app_secret not needed with OAuth
-        access_token,
+        "fd52fbc5-02a9-47f5-ad30-0842c841aae9", // OAuth client_id as app_key
+        "", // app_secret not needed for OAuth Bearer tokens
+        bearer_token,
     ));
 
     // Create QuoteContext and TradeContext
