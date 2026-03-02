@@ -200,7 +200,10 @@ async fn start_authorization_flow() -> Result<OAuthToken> {
 
     // Debug: log the token response details
     tracing::debug!("Access token: {}", token_response.access_token().secret());
-    tracing::debug!("Refresh token: {:?}", token_response.refresh_token().map(|t| t.secret()));
+    tracing::debug!(
+        "Refresh token: {:?}",
+        token_response.refresh_token().map(|t| t.secret())
+    );
     tracing::debug!("Token type: {:?}", token_response.token_type());
     tracing::debug!("Expires in: {:?}", token_response.expires_in());
     tracing::debug!("Scopes: {:?}", token_response.scopes());

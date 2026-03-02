@@ -59,7 +59,7 @@ async fn init_contexts_with_token(
     let config = Arc::new(
         longport::Config::from_oauth(
             "fd52fbc5-02a9-47f5-ad30-0842c841aae9", // OAuth client_id
-            access_token,                            // OAuth access_token (Bearer prefix added automatically)
+            access_token, // OAuth access_token (Bearer prefix added automatically)
         )
         .language(match get_api_language() {
             "zh-CN" => longport::Language::ZH_CN,

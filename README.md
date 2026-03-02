@@ -19,7 +19,8 @@ A Rust-based TUI (Terminal User Interface) for monitoring market data and managi
 ## System Requirements
 
 - macOS or Linux
-- Longbridge OpenAPI credentials (free to obtain)
+- Internet connection and browser access (for OAuth authentication)
+- Longbridge account (free to register at [open.longbridge.com](https://open.longbridge.com))
 
 ## Installation
 
@@ -35,49 +36,63 @@ This will install the `longbridge` command in your terminal.
 
 ## Configuration
 
-Before running the app, you need to configure your Longbridge OpenAPI credentials:
+The app uses **OAuth2.1** for authentication. No manual configuration is required!
 
-1. **Get API Credentials**: Visit [Longbridge Open Platform](https://open.longbridge.com) to create an application and obtain:
-   - `APP_KEY`
-   - `APP_SECRET`
-   - `ACCESS_TOKEN`
+### First Time Setup
 
-2. **Configure Environment Variables**:
+1. **Create a Longbridge Account**: If you don't have one, register at [Longbridge Open Platform](https://open.longbridge.com)
 
-   Create a `.env` file in the project root:
-
-   ```bash
-   cp .env.example .env
-   ```
-
-   Edit `.env` and add your credentials:
-
-   ```bash
-   LONGPORT_APP_KEY=your_app_key
-   LONGPORT_APP_SECRET=your_app_secret
-   LONGPORT_ACCESS_TOKEN=your_access_token
-   ```
-
-   Alternatively, export them as environment variables:
-
-   ```bash
-   export LONGPORT_APP_KEY=your_app_key
-   export LONGPORT_APP_SECRET=your_app_secret
-   export LONGPORT_ACCESS_TOKEN=your_access_token
-   ```
-
-3. **Run the App**:
+2. **Run the App**:
 
    ```bash
    longbridge
    ```
+
+3. **Automatic OAuth Flow**:
+   - The app will automatically register an OAuth client with Longbridge
+   - Your default browser will open for authorization
+   - After you approve, the app will receive an access token
+   - The token is securely saved to your system keychain
+
+That's it! On subsequent runs, the app will automatically use the saved token.
+
+### Token Storage
+
+Access tokens are stored securely in your system's credential manager:
+
+- **macOS**: Keychain Access
+- **Windows**: Credential Manager
+- **Linux**: Secret Service (libsecret)
+
+Service name: `com.longbridge.terminal`
+
+### Token Refresh
+
+Access tokens are automatically refreshed when they expire. No manual intervention needed.
+
+### Troubleshooting
+
+If you encounter authentication issues:
+
+```bash
+# View detailed OAuth flow logs
+RUST_LOG=debug longbridge
+
+# The app listens on localhost:8877 for OAuth callback
+# If this port is in use, it will try ports 8878-8880
+```
+
+**Requirements:**
+- Internet connection
+- Browser access
+- Active Longbridge account
 
 ## API Rate Limits
 
 The Longbridge OpenAPI has rate limiting:
 
 - Maximum 10 API calls per second
-- Access tokens expire every 3 months and need to be renewed
+- Access tokens are automatically refreshed when expired
 
 ## Documentation
 
