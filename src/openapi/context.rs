@@ -55,19 +55,19 @@ pub async fn init_contexts(
 async fn init_contexts_with_token(
     access_token: String,
 ) -> Result<impl tokio_stream::Stream<Item = longport::quote::PushEvent> + Send + Unpin> {
-    // Set language based on current UI locale
-    std::env::set_var("LONGPORT_LANGUAGE", get_api_language());
-    std::env::set_var("LONGPORT_PRINT_QUOTE_PACKAGES", "false");
-
-    // For OAuth 2.0, the client_id acts as app_key
-    // The access_token should be prefixed with "Bearer "
-    let bearer_token = format!("Bearer {}", access_token);
-
-    let config = Arc::new(longport::Config::new(
-        "fd52fbc5-02a9-47f5-ad30-0842c841aae9", // OAuth client_id as app_key
-        "", // app_secret not needed for OAuth Bearer tokens
-        bearer_token,
-    ));
+    // Create Config using OAuth 2.0 method (recommended)
+    let config = Arc::new(
+        longport::Config::from_oauth(
+            "fd52fbc5-02a9-47f5-ad30-0842c841aae9", // OAuth client_id
+            access_token,                            // OAuth access_token (Bearer prefix added automatically)
+        )
+        .language(match get_api_language() {
+            "zh-CN" => longport::Language::ZH_CN,
+            "zh-HK" => longport::Language::ZH_HK,
+            _ => longport::Language::EN,
+        })
+        .dont_print_quote_packages(),
+    );
 
     // Create QuoteContext and TradeContext
     let (quote_ctx, quote_receiver) =
