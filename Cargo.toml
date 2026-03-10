@@ -23,9 +23,8 @@ cli-candlestick-chart = { version = "0.4.1", path = "crates/cli-candlestick-char
 crossterm = { version = "0.27", features = ["event-stream"] }
 dashmap = "6.1"
 dirs = "5.0"
-longport = { git = "https://github.com/longportapp/openapi" }
+longbridge-sdk = { package = "longbridge", version = "4.0.0" }
 futures = "0.3.28"
-oauth2 = "4.4"
 open = "5"
 reqwest = { version = "0.12", features = ["json"] }
 url = "2.5"

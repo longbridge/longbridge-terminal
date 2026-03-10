@@ -398,7 +398,7 @@ pub async fn fetch_watchlist(
             let mut counters = Vec::new();
 
             for group in watchlist {
-                let group_id_u64 = group.id.cast_unsigned();
+                let group_id_u64 = group.id.unsigned_abs();
 
                 // Add group info with translated name
                 groups.push(crate::data::WatchlistGroup {

@@ -150,26 +150,26 @@ impl KlineStore {
 
         // Convert KlineType to longport Period
         let period = match kline_type {
-            KlineType::PerMinute => longport::quote::Period::OneMinute,
-            KlineType::PerFiveMinutes => longport::quote::Period::FiveMinute,
-            KlineType::PerFifteenMinutes => longport::quote::Period::FifteenMinute,
-            KlineType::PerThirtyMinutes => longport::quote::Period::ThirtyMinute,
-            KlineType::PerHour => longport::quote::Period::SixtyMinute,
-            KlineType::PerDay => longport::quote::Period::Day,
-            KlineType::PerWeek => longport::quote::Period::Week,
-            KlineType::PerMonth => longport::quote::Period::Month,
-            KlineType::PerYear => longport::quote::Period::Year,
+            KlineType::PerMinute => longbridge_sdk::quote::Period::OneMinute,
+            KlineType::PerFiveMinutes => longbridge_sdk::quote::Period::FiveMinute,
+            KlineType::PerFifteenMinutes => longbridge_sdk::quote::Period::FifteenMinute,
+            KlineType::PerThirtyMinutes => longbridge_sdk::quote::Period::ThirtyMinute,
+            KlineType::PerHour => longbridge_sdk::quote::Period::SixtyMinute,
+            KlineType::PerDay => longbridge_sdk::quote::Period::Day,
+            KlineType::PerWeek => longbridge_sdk::quote::Period::Week,
+            KlineType::PerMonth => longbridge_sdk::quote::Period::Month,
+            KlineType::PerYear => longbridge_sdk::quote::Period::Year,
         };
 
         // Convert AdjustType to longport AdjustType
         let adjust = match adjust_type {
-            AdjustType::NoAdjust => longport::quote::AdjustType::NoAdjust,
-            AdjustType::ForwardAdjust => longport::quote::AdjustType::ForwardAdjust,
+            AdjustType::NoAdjust => longbridge_sdk::quote::AdjustType::NoAdjust,
+            AdjustType::ForwardAdjust => longbridge_sdk::quote::AdjustType::ForwardAdjust,
         };
 
         // Select appropriate trading session based on period type
         // For all periods, use All to get complete data
-        let trade_session = longport::quote::TradeSessions::All;
+        let trade_session = longbridge_sdk::quote::TradeSessions::All;
 
         tracing::info!(
             "Requesting candlestick data: counter={}, period={:?}, count={}, adjust={:?}",
@@ -199,7 +199,7 @@ impl KlineStore {
                         high: c.high,
                         low: c.low,
                         close: c.close,
-                        amount: c.volume.cast_unsigned(),
+                        amount: c.volume.unsigned_abs(),
                         balance: c.turnover,
                         factor_a: Decimal::ONE,
                         factor_b: Decimal::ZERO,

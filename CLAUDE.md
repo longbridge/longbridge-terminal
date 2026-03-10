@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A Rust-based TUI (Terminal User Interface) stock trading terminal using the Longport OpenAPI SDK for market data and trading operations.
+A Rust-based TUI (Terminal User Interface) stock trading terminal using the Longbridge OpenAPI SDK for market data and trading operations.
 
 ## Core Architecture
 
@@ -13,20 +13,16 @@ A Rust-based TUI (Terminal User Interface) stock trading terminal using the Long
 - **UI Framework**: Ratatui (v0.24.0) - TUI rendering
 - **Async Runtime**: Tokio (v1.33.0) - Async I/O
 - **ECS Framework**: Bevy ECS (v0.11) - Entity-Component-System architecture
-- **Market SDK**: longport (v3.0.7) - Longport OpenAPI Rust SDK
+- **Market SDK**: longbridge (v4.0.0) - Longbridge OpenAPI Rust SDK (dependency alias: `longbridge-sdk`)
 - **State Management**: DashMap, Atomic, RwLock - Thread-safe global state
 
 ### Key Modules
 
-#### 1. `src/oauth2.rs` - OAuth2.1 Authentication
+#### 1. `src/auth.rs` - Auth utilities
 
-- Handles OAuth2.1 authorization code flow
-- `authorize()` - Start OAuth flow (register client, open browser, wait for callback, exchange token)
-- `load_token()` - Load existing token from system keychain
-- `refresh_token_if_needed()` - Refresh token if expiring soon
-- Token storage: System keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service)
-- Auto-registration: Automatically registers OAuth client on first run
-- Local callback server: Listens on `localhost:8877` (fallback to 8878-8880)
+- `clear_token()` - Clear stored OAuth token (logout). Deletes token file used by the SDK.
+- OAuth and token refresh are handled by the longbridge SDK: use `longbridge_sdk::oauth::OAuthBuilder` in `openapi::context::init_contexts()`. Token is loaded from `~/.longbridge-openapi/tokens/<client_id>` or browser flow is started; the SDK auto-refreshes the token.
+- Local callback server: default port `60355` (configurable via `OAuthBuilder::callback_port()`)
 
 #### 2. `src/openapi/` - OpenAPI Integration Layer
 
@@ -43,8 +39,8 @@ A Rust-based TUI (Terminal User Interface) stock trading terminal using the Long
   - `TradeStatus`, `Currency`, `Market` - Enum types
   - `QuoteData`, `Candlestick`, `Depth` - Market data structures
 - `stock.rs` - Stock data structure
-  - `update_from_quote()` - Update from longport quote
-  - `update_from_depth()` - Update from longport depth
+  - `update_from_quote()` - Update from longbridge quote
+  - `update_from_depth()` - Update from longbridge depth
 - `stocks.rs` - Global stock cache (based on `DashMap`)
   - `STOCKS` - Global singleton, provides `get()`, `mget()`, `insert()`, `modify()` methods
 
@@ -77,9 +73,9 @@ A Rust-based TUI (Terminal User Interface) stock trading terminal using the Long
 
 ### Data Flow
 
-1. **Authentication**: `main.rs` → `oauth2::authorize()` → OAuth2 flow → Token saved to keychain
-2. **Initialization**: `main.rs` → `openapi::init_contexts()` → Initialize with OAuth token → Get WebSocket receiver
-3. **Subscribe Quotes**: `app.rs` → `openapi::quote().subscribe()` → longport SDK
+1. **Authentication**: `main.rs` → `openapi::init_contexts()` → `longbridge_sdk::oauth::OAuthBuilder::build()` (loads token from disk or browser flow) → `Config::from_oauth(oauth)` → SDK handles token refresh automatically
+2. **Initialization**: `main.rs` → `openapi::init_contexts()` → QuoteContext and TradeContext created with config → Get WebSocket receiver
+3. **Subscribe Quotes**: `app.rs` → `openapi::quote().subscribe()` → longbridge SDK
 4. **Receive Push**: WebSocket receiver → Parse `PushEvent` → Update `STOCKS` cache
 5. **UI Rendering**: Bevy ECS systems → Read `STOCKS` → Ratatui rendering
 
@@ -110,13 +106,12 @@ cargo fmt
 
 ### Configuration
 
-**Authentication Method: OAuth2.1**
+**Authentication Method: OAuth 2.0 (longbridge SDK)**
 
-The application uses OAuth2.1 for authentication. On first run:
+The application uses the longbridge SDK's built-in OAuth. On first run:
 
-1. OAuth client is automatically registered with Longbridge
-2. Browser opens for user authorization
-3. Access token is saved securely to system keychain
+1. `OAuthBuilder::build()` loads token from `~/.longbridge-openapi/tokens/<client_id>` or starts browser authorization
+2. Token is persisted by the SDK; refresh is automatic (no manual expiry check)
 
 **No environment variables or manual configuration required!**
 
@@ -125,19 +120,12 @@ Requirements:
 - Browser access
 - Longbridge account (register at https://open.longbridge.com)
 
-**Token Storage:**
-- macOS: Keychain Access
-- Windows: Credential Manager
-- Linux: Secret Service (libsecret)
+**Token storage:** `~/.longbridge-openapi/tokens/<client_id>` (JSON file). Use `--logout` to clear.
 
 **Troubleshooting:**
 ```bash
 # View detailed OAuth flow logs
 RUST_LOG=debug cargo run
-
-# Token location in keychain
-# Service: "com.longbridge.terminal"
-# Entries: oauth_client_id, oauth_client_secret, oauth_token
 ```
 
 ## Code Style
@@ -178,11 +166,11 @@ Project uses strict `clippy::pedantic` rules with the following exceptions:
   // let status = "交易中";  // Never hardcode Chinese strings
   ```
 
-## Longport SDK Reference
+## Longbridge SDK Reference
 
 ### Documentation
 
-- Rust SDK Docs: https://longportapp.github.io/openapi/rust/longport/
+- Rust SDK (crates.io): longbridge 4.0.0
 - OpenAPI Full Docs: https://open.longbridge.com/llms-full.txt
 - Developer Portal: https://open.longbridge.com
 
@@ -194,19 +182,19 @@ let ctx = crate::openapi::quote();
 let quotes = ctx.quote(vec!["700.HK", "AAPL.US"]).await?;
 
 // Subscribe to real-time quotes
-ctx.subscribe(&symbols, longport::quote::SubFlags::QUOTE).await?;
+ctx.subscribe(&symbols, longbridge_sdk::quote::SubFlags::QUOTE).await?;
 
 // Query candlesticks
-let klines = ctx.candlesticks("AAPL.US", longport::quote::Period::Day, 100, None).await?;
+let klines = ctx.candlesticks("AAPL.US", longbridge_sdk::quote::Period::Day, 100, None).await?;
 
 // Submit order
 let ctx = crate::openapi::trade();
-let opts = longport::trade::SubmitOrderOptions::new(
-    "700.HK",
-    longport::trade::OrderType::LO,
-    longport::trade::OrderSide::Buy,
-    decimal!(500),
-    longport::trade::TimeInForceType::Day,
+let opts = longbridge_sdk::trade::SubmitOrderOptions::new(
+ "700.HK",
+ longbridge_sdk::trade::OrderType::LO,
+ longbridge_sdk::trade::OrderSide::Buy,
+ decimal!(500),
+ longbridge_sdk::trade::TimeInForceType::Day,
 );
 let order = ctx.submit_order(opts).await?;
 ```
@@ -214,7 +202,7 @@ let order = ctx.submit_order(opts).await?;
 ## Important Notes
 
 1. **Rate Limiting**: Longport API limits to "no more than 10 calls per second"
-2. **Token Expiration**: Access Token expires every 3 months, requires manual renewal
+2. **Token Expiration**: The SDK automatically refreshes the access token when needed
 3. **Market Support**: Supports Hong Kong, US, and China A-share markets
 4. **Testing**: Per user instructions, update flow has no test coverage
 5. **Logging**: Uses `tracing` library, log files configured via `logger::init()`
