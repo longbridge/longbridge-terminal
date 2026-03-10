@@ -118,7 +118,9 @@ impl Stock {
                     longbridge_sdk::quote::TradeDirection::Neutral => {
                         super::types::TradeDirection::Neutral
                     }
-                    longbridge_sdk::quote::TradeDirection::Down => super::types::TradeDirection::Down,
+                    longbridge_sdk::quote::TradeDirection::Down => {
+                        super::types::TradeDirection::Down
+                    }
                     longbridge_sdk::quote::TradeDirection::Up => super::types::TradeDirection::Up,
                 },
             })

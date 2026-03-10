@@ -4,7 +4,10 @@ use crate::openapi::{quote_limited, trade_limited};
 use anyhow::Result;
 
 /// Subscribe to quotes with automatic rate limiting
-pub async fn subscribe_quotes<I, T>(symbols: I, sub_types: longbridge_sdk::quote::SubFlags) -> Result<()>
+pub async fn subscribe_quotes<I, T>(
+    symbols: I,
+    sub_types: longbridge_sdk::quote::SubFlags,
+) -> Result<()>
 where
     I: IntoIterator<Item = T>,
     T: Into<String>,
@@ -71,7 +74,9 @@ where
 }
 
 /// Get static info with automatic rate limiting
-pub async fn get_static_info<I, T>(symbols: I) -> Result<Vec<longbridge_sdk::quote::SecurityStaticInfo>>
+pub async fn get_static_info<I, T>(
+    symbols: I,
+) -> Result<Vec<longbridge_sdk::quote::SecurityStaticInfo>>
 where
     I: IntoIterator<Item = T>,
     T: Into<String>,
