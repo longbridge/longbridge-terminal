@@ -70,6 +70,10 @@ jobs:
             ~/.cargo/git/db/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Install OpenSSL dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+
       - name: Install Musl Tool
         if: matrix.target == 'x86_64-unknown-linux-musl' || matrix.target == 'aarch64-unknown-linux-musl'
         run: |
