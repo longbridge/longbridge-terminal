@@ -21,7 +21,7 @@ impl RateLimiter {
     /// Create a new rate limiter
     ///
     /// # Arguments
-    /// * `tokens_per_second` - Maximum requests per second (10 for Longbridge OpenAPI)
+    /// * `tokens_per_second` - Maximum requests per second (10 for Longbridge API)
     /// * `max_tokens` - Maximum burst capacity (20 allows short bursts)
     pub fn new(tokens_per_second: u32, max_tokens: u32) -> Self {
         Self {
