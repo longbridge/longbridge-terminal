@@ -56,7 +56,7 @@ impl WsManager {
             .map(std::string::ToString::to_string)
             .collect();
         let _ = ctx
-            .subscribe(&symbol_strings, longport::quote::SubFlags::QUOTE)
+            .subscribe(&symbol_strings, longbridge_sdk::quote::SubFlags::QUOTE)
             .await;
         Ok(())
     }
@@ -70,7 +70,7 @@ impl WsManager {
         let _ = ctx
             .subscribe(
                 &symbol_strings,
-                longport::quote::SubFlags::QUOTE | longport::quote::SubFlags::DEPTH,
+                longbridge_sdk::quote::SubFlags::QUOTE | longbridge_sdk::quote::SubFlags::DEPTH,
             )
             .await;
         Ok(())
@@ -83,7 +83,7 @@ impl WsManager {
             .map(std::string::ToString::to_string)
             .collect();
         let _ = ctx
-            .subscribe(&symbol_strings, longport::quote::SubFlags::TRADE)
+            .subscribe(&symbol_strings, longbridge_sdk::quote::SubFlags::TRADE)
             .await;
         Ok(())
     }

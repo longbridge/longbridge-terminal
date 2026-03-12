@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A Rust-based TUI (Terminal User Interface) stock trading terminal using the Longport OpenAPI SDK for market data and trading operations.
+A Rust-based TUI (Terminal User Interface) stock trading terminal using the Longbridge OpenAPI SDK for market data and trading operations.
 
 ## Core Architecture
 
@@ -13,51 +13,57 @@ A Rust-based TUI (Terminal User Interface) stock trading terminal using the Long
 - **UI Framework**: Ratatui (v0.24.0) - TUI rendering
 - **Async Runtime**: Tokio (v1.33.0) - Async I/O
 - **ECS Framework**: Bevy ECS (v0.11) - Entity-Component-System architecture
-- **Market SDK**: longport (v3.0.7) - Longport OpenAPI Rust SDK
+- **Market SDK**: longbridge (v4.0.0) - Longbridge OpenAPI Rust SDK (dependency alias: `longbridge-sdk`)
 - **State Management**: DashMap, Atomic, RwLock - Thread-safe global state
 
 ### Key Modules
 
-#### 1. `src/openapi/` - OpenAPI Integration Layer
+#### 1. `src/auth.rs` - Auth utilities
+
+- `clear_token()` - Clear stored OAuth token (logout). Deletes token file used by the SDK.
+- OAuth and token refresh are handled by the longbridge SDK: use `longbridge_sdk::oauth::OAuthBuilder` in `openapi::context::init_contexts()`. Token is loaded from `~/.longbridge-openapi/tokens/<client_id>` or browser flow is started; the SDK auto-refreshes the token.
+- Local callback server: default port `60355` (configurable via `OAuthBuilder::callback_port()`)
+
+#### 2. `src/openapi/` - OpenAPI Integration Layer
 
 - `context.rs` - Global context management
-  - `init_contexts()` - Initialize QuoteContext and TradeContext, returns WebSocket receiver
+  - `init_contexts()` - Initialize QuoteContext and TradeContext with OAuth token, returns WebSocket receiver
   - `quote()` - Get global QuoteContext (for quotes, subscriptions)
   - `trade()` - Get global TradeContext (for trading operations)
   - Uses `OnceLock` for global singleton
 
-#### 2. `src/data/` - Data Layer
+#### 3. `src/data/` - Data Layer
 
 - `types.rs` - Base type definitions
   - `Counter` - Stock identifier (format: `700.HK`, `AAPL.US`)
   - `TradeStatus`, `Currency`, `Market` - Enum types
   - `QuoteData`, `Candlestick`, `Depth` - Market data structures
 - `stock.rs` - Stock data structure
-  - `update_from_quote()` - Update from longport quote
-  - `update_from_depth()` - Update from longport depth
+  - `update_from_quote()` - Update from longbridge quote
+  - `update_from_depth()` - Update from longbridge depth
 - `stocks.rs` - Global stock cache (based on `DashMap`)
   - `STOCKS` - Global singleton, provides `get()`, `mget()`, `insert()`, `modify()` methods
 
-#### 3. `src/app.rs` - Application Main Loop
+#### 4. `src/app.rs` - Application Main Loop
 
 - Uses Bevy ECS to manage app state (`AppState`)
 - Handles UI updates via `mpsc::unbounded_channel`
 - Subscribes to index quotes (HSI, DJI, Shanghai Composite, etc.)
 - Integrates search, selection, popup components
 
-#### 4. `src/system.rs` - System Logic and UI Rendering
+#### 5. `src/system.rs` - System Logic and UI Rendering
 
 - Contains rendering logic for pages (Watchlist, Stock, Portfolio, etc.)
 - Handles user input and state transitions
 
-#### 5. `src/api/` - API Call Layer
+#### 6. `src/api/` - API Call Layer
 
 - `search.rs` - Stock search
 - `quote.rs` - Quote queries
 - `account.rs` - Account information
 - Uses `openapi::quote()` and `openapi::trade()`
 
-#### 6. `src/widgets/` and `src/views/` - UI Components
+#### 7. `src/widgets/` and `src/views/` - UI Components
 
 - `Terminal` - Terminal management
 - `Search`, `LocalSearch` - Search components
@@ -67,10 +73,11 @@ A Rust-based TUI (Terminal User Interface) stock trading terminal using the Long
 
 ### Data Flow
 
-1. **Initialization**: `main.rs` → `openapi::init_contexts()` → Get WebSocket receiver
-2. **Subscribe Quotes**: `app.rs` → `openapi::quote().subscribe()` → longport SDK
-3. **Receive Push**: WebSocket receiver → Parse `PushEvent` → Update `STOCKS` cache
-4. **UI Rendering**: Bevy ECS systems → Read `STOCKS` → Ratatui rendering
+1. **Authentication**: `main.rs` → `openapi::init_contexts()` → `longbridge_sdk::oauth::OAuthBuilder::build()` (loads token from disk or browser flow) → `Config::from_oauth(oauth)` → SDK handles token refresh automatically
+2. **Initialization**: `main.rs` → `openapi::init_contexts()` → QuoteContext and TradeContext created with config → Get WebSocket receiver
+3. **Subscribe Quotes**: `app.rs` → `openapi::quote().subscribe()` → longbridge SDK
+4. **Receive Push**: WebSocket receiver → Parse `PushEvent` → Update `STOCKS` cache
+5. **UI Rendering**: Bevy ECS systems → Read `STOCKS` → Ratatui rendering
 
 ## Development Commands
 
@@ -99,16 +106,26 @@ cargo fmt
 
 ### Configuration
 
-Requires Longport OpenAPI credentials via environment variables or `.env` file:
+**Authentication Method: OAuth 2.0 (longbridge SDK)**
 
+The application uses the longbridge SDK's built-in OAuth. On first run:
+
+1. `OAuthBuilder::build()` loads token from `~/.longbridge-openapi/tokens/<client_id>` or starts browser authorization
+2. Token is persisted by the SDK; refresh is automatic (no manual expiry check)
+
+**No environment variables or manual configuration required!**
+
+Requirements:
+- Internet connection
+- Browser access
+- Longbridge account (register at https://open.longbridge.com)
+
+**Token storage:** `~/.longbridge-openapi/tokens/<client_id>` (JSON file). Use `--logout` to clear.
+
+**Troubleshooting:**
 ```bash
-# Copy example config
-cp .env.example .env
-
-# Edit config (get credentials from https://open.longbridge.com)
-# LONGPORT_APP_KEY=...
-# LONGPORT_APP_SECRET=...
-# LONGPORT_ACCESS_TOKEN=...
+# View detailed OAuth flow logs
+RUST_LOG=debug cargo run
 ```
 
 ## Code Style
@@ -149,11 +166,11 @@ Project uses strict `clippy::pedantic` rules with the following exceptions:
   // let status = "交易中";  // Never hardcode Chinese strings
   ```
 
-## Longport SDK Reference
+## Longbridge SDK Reference
 
 ### Documentation
 
-- Rust SDK Docs: https://longportapp.github.io/openapi/rust/longport/
+- Rust SDK (crates.io): longbridge 4.0.0
 - OpenAPI Full Docs: https://open.longbridge.com/llms-full.txt
 - Developer Portal: https://open.longbridge.com
 
@@ -165,19 +182,19 @@ let ctx = crate::openapi::quote();
 let quotes = ctx.quote(vec!["700.HK", "AAPL.US"]).await?;
 
 // Subscribe to real-time quotes
-ctx.subscribe(&symbols, longport::quote::SubFlags::QUOTE).await?;
+ctx.subscribe(&symbols, longbridge_sdk::quote::SubFlags::QUOTE).await?;
 
 // Query candlesticks
-let klines = ctx.candlesticks("AAPL.US", longport::quote::Period::Day, 100, None).await?;
+let klines = ctx.candlesticks("AAPL.US", longbridge_sdk::quote::Period::Day, 100, None).await?;
 
 // Submit order
 let ctx = crate::openapi::trade();
-let opts = longport::trade::SubmitOrderOptions::new(
-    "700.HK",
-    longport::trade::OrderType::LO,
-    longport::trade::OrderSide::Buy,
-    decimal!(500),
-    longport::trade::TimeInForceType::Day,
+let opts = longbridge_sdk::trade::SubmitOrderOptions::new(
+ "700.HK",
+ longbridge_sdk::trade::OrderType::LO,
+ longbridge_sdk::trade::OrderSide::Buy,
+ decimal!(500),
+ longbridge_sdk::trade::TimeInForceType::Day,
 );
 let order = ctx.submit_order(opts).await?;
 ```
@@ -185,7 +202,7 @@ let order = ctx.submit_order(opts).await?;
 ## Important Notes
 
 1. **Rate Limiting**: Longport API limits to "no more than 10 calls per second"
-2. **Token Expiration**: Access Token expires every 3 months, requires manual renewal
+2. **Token Expiration**: The SDK automatically refreshes the access token when needed
 3. **Market Support**: Supports Hong Kong, US, and China A-share markets
 4. **Testing**: Per user instructions, update flow has no test coverage
 5. **Logging**: Uses `tracing` library, log files configured via `logger::init()`

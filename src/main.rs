@@ -5,6 +5,7 @@ use std::io::Write;
 mod macros;
 
 pub mod app;
+pub mod auth;
 pub mod data;
 pub mod kline;
 pub mod logger;
@@ -24,8 +25,8 @@ mod views;
 extern crate rust_i18n;
 i18n!("locales");
 
-/// Simplified command line arguments (temporary)
-#[derive(Clone, Debug, Default)]
+/// Command line arguments
+#[derive(Clone, Debug)]
 pub struct Args {
     pub logout: bool,
 }
@@ -37,14 +38,47 @@ async fn main() {
 
     // Initialize logger
     let _guard = logger::init();
+
+    // Parse command line arguments
+    let matches = clap::Command::new("Longbridge Terminal")
+        .version(env!("CARGO_PKG_VERSION"))
+        .about("A TUI stock trading terminal")
+        .arg(
+            clap::Arg::new("logout")
+                .long("logout")
+                .help("Clear stored OAuth token and exit")
+                .takes_value(false),
+        )
+        .get_matches();
+
+    let args = Args {
+        logout: matches.is_present("logout"),
+    };
+
+    // Handle logout command
+    if args.logout {
+        match auth::clear_token() {
+            Ok(()) => {
+                println!("✓ Successfully logged out.");
+                tracing::info!("User logged out, credentials cleared");
+            }
+            Err(e) => {
+                eprintln!("Failed to clear credentials: {e}");
+                tracing::error!("Failed to clear credentials: {e}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
     tracing::info!("App started");
 
     // Initialize OpenAPI first (before entering fullscreen mode, so SDK outputs stay in main screen)
     let quote_receiver = match openapi::init_contexts().await {
         Ok(receiver) => receiver,
         Err(e) => {
-            openapi::print_config_guide();
-            eprintln!("\nError details: {e}");
+            eprintln!("OAuth2 authentication failed: {e}");
+            eprintln!();
             return;
         }
     };
@@ -65,7 +99,6 @@ async fn main() {
 
     // Now enter fullscreen mode (SDK is initialized, alternate screen is clean)
     Terminal::enter_full_screen();
-    let args = Args::default();
     app::run(args, quote_receiver).await;
     Terminal::exit_full_screen();
 }

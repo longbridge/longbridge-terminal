@@ -49,13 +49,13 @@ impl Stock {
         }
     }
 
-    /// Update quote data (from longport SDK `PushQuote`, for WebSocket push)
-    pub fn update_from_push_quote(&mut self, quote: &longport::quote::PushQuote) {
+    /// Update quote data (from longbridge SDK `PushQuote`, for WebSocket push)
+    pub fn update_from_push_quote(&mut self, quote: &longbridge_sdk::quote::PushQuote) {
         self.quote.last_done = Some(quote.last_done);
         self.quote.open = Some(quote.open);
         self.quote.high = Some(quote.high);
         self.quote.low = Some(quote.low);
-        self.quote.volume = quote.volume.cast_unsigned();
+        self.quote.volume = quote.volume.unsigned_abs();
         self.quote.turnover = quote.turnover;
         self.quote.timestamp = quote.timestamp.unix_timestamp();
 
@@ -65,13 +65,13 @@ impl Stock {
     }
 
     /// Update from `SecurityQuote` (full quote data from API, includes `prev_close` but NO `trade_session`)
-    pub fn update_from_security_quote(&mut self, quote: &longport::quote::SecurityQuote) {
+    pub fn update_from_security_quote(&mut self, quote: &longbridge_sdk::quote::SecurityQuote) {
         self.quote.last_done = Some(quote.last_done);
         self.quote.prev_close = Some(quote.prev_close);
         self.quote.open = Some(quote.open);
         self.quote.high = Some(quote.high);
         self.quote.low = Some(quote.low);
-        self.quote.volume = quote.volume.cast_unsigned();
+        self.quote.volume = quote.volume.unsigned_abs();
         self.quote.turnover = quote.turnover;
         self.quote.timestamp = quote.timestamp.unix_timestamp();
 
@@ -80,8 +80,8 @@ impl Stock {
         // trade_session will be updated from WebSocket PushQuote or calculated from market hours
     }
 
-    /// Update depth data (from longport SDK)
-    pub fn update_from_depth(&mut self, depth: &longport::quote::SecurityDepth) {
+    /// Update depth data (from longbridge SDK)
+    pub fn update_from_depth(&mut self, depth: &longbridge_sdk::quote::SecurityDepth) {
         self.depth.asks = depth
             .asks
             .iter()
@@ -105,8 +105,8 @@ impl Stock {
             .collect();
     }
 
-    /// Update trades data (from longport SDK)
-    pub fn update_from_trades(&mut self, trades: &[longport::quote::Trade]) {
+    /// Update trades data (from longbridge SDK)
+    pub fn update_from_trades(&mut self, trades: &[longbridge_sdk::quote::Trade]) {
         self.trades = trades
             .iter()
             .map(|t| TradeData {
@@ -115,18 +115,20 @@ impl Stock {
                 timestamp: t.timestamp.unix_timestamp(),
                 trade_type: t.trade_type.clone(),
                 direction: match t.direction {
-                    longport::quote::TradeDirection::Neutral => {
+                    longbridge_sdk::quote::TradeDirection::Neutral => {
                         super::types::TradeDirection::Neutral
                     }
-                    longport::quote::TradeDirection::Down => super::types::TradeDirection::Down,
-                    longport::quote::TradeDirection::Up => super::types::TradeDirection::Up,
+                    longbridge_sdk::quote::TradeDirection::Down => {
+                        super::types::TradeDirection::Down
+                    }
+                    longbridge_sdk::quote::TradeDirection::Up => super::types::TradeDirection::Up,
                 },
             })
             .collect();
     }
 
-    /// Update static info (from longport SDK)
-    pub fn update_from_static_info(&mut self, info: &longport::quote::SecurityStaticInfo) {
+    /// Update static info (from longbridge SDK)
+    pub fn update_from_static_info(&mut self, info: &longbridge_sdk::quote::SecurityStaticInfo) {
         self.static_info = Some(StaticInfo {
             symbol: info.symbol.clone(),
             name_cn: info.name_cn.clone(),

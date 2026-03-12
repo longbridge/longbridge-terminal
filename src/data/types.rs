@@ -70,7 +70,7 @@ impl From<String> for Counter {
 }
 
 /// Re-export `TradeStatus` and `TradeSession` from Longport SDK
-pub use longport::quote::{TradeSession, TradeStatus};
+pub use longbridge_sdk::quote::{TradeSession, TradeStatus};
 
 /// Extension trait for `TradeSession` to provide helper methods
 pub trait TradeSessionExt {

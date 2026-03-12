@@ -35,20 +35,39 @@ impl RateLimiter {
     /// Acquire a token (wait if necessary)
     /// Returns immediately if token is available, otherwise waits
     pub async fn acquire(&self) {
-        // Refill tokens based on elapsed time
-        self.refill_tokens().await;
+        loop {
+            // Refill tokens based on elapsed time
+            self.refill_tokens().await;
 
-        // Acquire a permit (will wait if none available)
-        let permit = self.semaphore.acquire().await.expect("Semaphore closed");
+            // Try to acquire a permit without blocking
+            if let Ok(permit) = self.semaphore.try_acquire() {
+                // Release permit immediately after acquisition
+                // The delay is handled by refill_tokens()
+                permit.forget();
 
-        // Release permit immediately after acquisition
-        // The delay is handled by refill_tokens()
-        permit.forget();
+                debug!(
+                    "Rate limiter: token acquired, available permits: {}",
+                    self.semaphore.available_permits()
+                );
+                return;
+            }
 
-        debug!(
-            "Rate limiter: token acquired, available permits: {}",
-            self.semaphore.available_permits()
-        );
+            // No tokens available, calculate wait time for next token
+            let last_refill = *self.last_refill.lock().await;
+            let now = Instant::now();
+            let elapsed = now.duration_since(last_refill);
+            let time_per_token = Duration::from_secs_f64(1.0 / f64::from(self.tokens_per_second));
+            let wait_time = time_per_token.saturating_sub(elapsed);
+
+            // Wait for at least 1ms to avoid busy loop
+            let wait_time = wait_time.max(Duration::from_millis(1));
+
+            debug!(
+                "Rate limiter: no tokens available, waiting {:?} for refill",
+                wait_time
+            );
+            sleep(wait_time).await;
+        }
     }
 
     /// Refill tokens based on elapsed time since last refill

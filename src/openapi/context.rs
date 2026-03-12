@@ -4,10 +4,10 @@ use std::sync::{Arc, OnceLock};
 use super::wrapper::{RateLimitedQuoteContext, RateLimitedTradeContext};
 
 /// Global `QuoteContext`
-pub static QUOTE_CTX: OnceLock<longport::quote::QuoteContext> = OnceLock::new();
+pub static QUOTE_CTX: OnceLock<longbridge_sdk::quote::QuoteContext> = OnceLock::new();
 
 /// Global `TradeContext`
-pub static TRADE_CTX: OnceLock<longport::trade::TradeContext> = OnceLock::new();
+pub static TRADE_CTX: OnceLock<longbridge_sdk::trade::TradeContext> = OnceLock::new();
 
 /// Global rate-limited `QuoteContext` wrapper
 pub static RATE_LIMITED_QUOTE_CTX: OnceLock<RateLimitedQuoteContext> = OnceLock::new();
@@ -18,30 +18,62 @@ pub static RATE_LIMITED_TRADE_CTX: OnceLock<RateLimitedTradeContext> = OnceLock:
 /// Get API language based on current UI locale
 /// Maps UI locale to API-supported languages: en, zh-CN, zh-HK
 /// Defaults to "en" if locale is not supported
-fn get_api_language() -> &'static str {
+fn get_api_language() -> longbridge_sdk::Language {
     match rust_i18n::locale().as_str() {
-        "zh-CN" => "zh-CN",
-        "zh-HK" => "zh-HK",
-        _ => "en", // Default to English
+        "zh-CN" => longbridge_sdk::Language::ZH_CN,
+        "zh-HK" => longbridge_sdk::Language::ZH_HK,
+        _ => longbridge_sdk::Language::EN,
     }
 }
 
-/// Initialize contexts (should be called once at app startup)
-/// Returns quote receiver for caller to handle WebSocket events
+/// Initialize contexts (should be called once at app startup).
+/// Uses longbridge SDK OAuth: loads token from disk or runs browser flow, auto-refreshes token.
+/// Returns quote receiver for caller to handle WebSocket events.
 pub async fn init_contexts(
-) -> Result<impl tokio_stream::Stream<Item = longport::quote::PushEvent> + Send + Unpin> {
-    // Set language based on current UI locale
-    std::env::set_var("LONGPORT_LANGUAGE", get_api_language());
-    std::env::set_var("LONGPORT_PRINT_QUOTE_PACKAGES", "false");
+) -> Result<impl tokio_stream::Stream<Item = longbridge_sdk::quote::PushEvent> + Send + Unpin> {
+    // Build OAuth client: loads token from ~/.longbridge-openapi/tokens/<client_id>
+    // or starts browser authorization. Token refresh is automatic inside the SDK.
+    let oauth = longbridge_sdk::oauth::OAuthBuilder::new(crate::auth::OAUTH_CLIENT_ID)
+        .callback_port(60355)
+        .build(|url| {
+            println!("Opening browser for Longbridge OpenAPI authorization...");
+            println!("If the browser doesn't open, please visit:\n{url}");
+            if let Err(e) = open::that(url) {
+                tracing::warn!("Failed to open browser: {e}");
+            }
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("OAuth failed: {e}"))?;
 
-    // Load config from environment variables
-    let config = Arc::new(longport::Config::from_env()?);
+    let config = Arc::new(
+        longbridge_sdk::Config::from_oauth(oauth)
+            .language(get_api_language())
+            .dont_print_quote_packages(),
+    );
 
     // Create QuoteContext and TradeContext
-    let (quote_ctx, quote_receiver) =
-        longport::quote::QuoteContext::try_new(Arc::clone(&config)).await?;
+    let quote_result = longbridge_sdk::quote::QuoteContext::try_new(Arc::clone(&config)).await;
+    let (quote_ctx, quote_receiver) = match quote_result {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            let error_msg = e.to_string();
+            if error_msg.contains("401")
+                || error_msg.contains("Unauthorized")
+                || error_msg.contains("authentication")
+            {
+                tracing::error!("Token validation failed, clearing stored credentials");
+                if let Err(clear_err) = crate::auth::clear_token() {
+                    tracing::error!("Failed to clear token: {clear_err}");
+                }
+                return Err(anyhow::anyhow!(
+                    "Token validation failed. Please restart the application to re-authenticate."
+                ));
+            }
+            return Err(e.into());
+        }
+    };
     let (trade_ctx, _trade_receiver) =
-        longport::trade::TradeContext::try_new(Arc::clone(&config)).await?;
+        longbridge_sdk::trade::TradeContext::try_new(Arc::clone(&config)).await?;
 
     // Store in global variables
     QUOTE_CTX
@@ -64,21 +96,20 @@ pub async fn init_contexts(
 
     tracing::info!("Rate limiter initialized: 10 requests/second, burst capacity: 20");
 
-    // Wrap as Stream
     Ok(tokio_stream::wrappers::UnboundedReceiverStream::new(
         quote_receiver,
     ))
 }
 
 /// Get global `QuoteContext`
-pub fn quote() -> &'static longport::quote::QuoteContext {
+pub fn quote() -> &'static longbridge_sdk::quote::QuoteContext {
     QUOTE_CTX
         .get()
         .expect("QuoteContext not initialized, please call init_contexts() first")
 }
 
 /// Get global `TradeContext`
-pub fn trade() -> &'static longport::trade::TradeContext {
+pub fn trade() -> &'static longbridge_sdk::trade::TradeContext {
     TRADE_CTX
         .get()
         .expect("TradeContext not initialized, please call init_contexts() first")
@@ -96,20 +127,4 @@ pub fn trade_limited() -> &'static RateLimitedTradeContext {
     RATE_LIMITED_TRADE_CTX
         .get()
         .expect("RateLimitedTradeContext not initialized, please call init_contexts() first")
-}
-
-/// Display config guide (when config loading fails)
-pub fn print_config_guide() {
-    eprintln!("Configuration Error: Missing required environment variables");
-    eprintln!();
-    eprintln!("Please configure the following environment variables:");
-    eprintln!("  LONGPORT_APP_KEY=<your_app_key>");
-    eprintln!("  LONGPORT_APP_SECRET=<your_app_secret>");
-    eprintln!("  LONGPORT_ACCESS_TOKEN=<your_access_token>");
-    eprintln!();
-    eprintln!("You can also specify custom server addresses via LONGPORT_HTTP_URL and LONGPORT_QUOTE_WS_URL");
-    eprintln!();
-    eprintln!("Get Token: https://open.longbridge.com");
-    eprintln!();
-    eprintln!("Tip: You can create a .env file to configure these variables");
 }
