@@ -52,26 +52,26 @@ pub async fn init_contexts(
     );
 
     // Create QuoteContext and TradeContext
-    let (quote_ctx, quote_receiver) =
-        match longbridge_sdk::quote::QuoteContext::try_new(Arc::clone(&config)).await {
-            Ok(ctx) => ctx,
-            Err(e) => {
-                let error_msg = e.to_string();
-                if error_msg.contains("401")
-                    || error_msg.contains("Unauthorized")
-                    || error_msg.contains("authentication")
-                {
-                    tracing::error!("Token validation failed, clearing stored credentials");
-                    if let Err(clear_err) = crate::auth::clear_token() {
-                        tracing::error!("Failed to clear token: {clear_err}");
-                    }
-                    return Err(anyhow::anyhow!(
-                        "Token validation failed. Please restart the application to re-authenticate."
-                    ));
+    let quote_result = longbridge_sdk::quote::QuoteContext::try_new(Arc::clone(&config)).await;
+    let (quote_ctx, quote_receiver) = match quote_result {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            let error_msg = e.to_string();
+            if error_msg.contains("401")
+                || error_msg.contains("Unauthorized")
+                || error_msg.contains("authentication")
+            {
+                tracing::error!("Token validation failed, clearing stored credentials");
+                if let Err(clear_err) = crate::auth::clear_token() {
+                    tracing::error!("Failed to clear token: {clear_err}");
                 }
-                return Err(e.into());
+                return Err(anyhow::anyhow!(
+                    "Token validation failed. Please restart the application to re-authenticate."
+                ));
             }
-        };
+            return Err(e.into());
+        }
+    };
     let (trade_ctx, _trade_receiver) =
         longbridge_sdk::trade::TradeContext::try_new(Arc::clone(&config)).await?;
 
