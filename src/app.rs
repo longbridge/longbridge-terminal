@@ -47,7 +47,7 @@ pub enum AppState {
 #[allow(clippy::too_many_lines)]
 pub async fn run(
     _args: crate::Args,
-    mut quote_receiver: impl tokio_stream::Stream<Item = longbridge_sdk::quote::PushEvent> + Unpin,
+    mut quote_receiver: impl tokio_stream::Stream<Item = longbridge::quote::PushEvent> + Unpin,
 ) {
     let (update_tx, mut update_rx) = mpsc::unbounded_channel();
 
@@ -84,7 +84,7 @@ pub async fn run(
 
             // Then subscribe for real-time updates
             if let Err(e) = ctx
-                .subscribe(&symbols, longbridge_sdk::quote::SubFlags::QUOTE)
+                .subscribe(&symbols, longbridge::quote::SubFlags::QUOTE)
                 .await
             {
                 tracing::error!("Failed to subscribe indexes: {}", e);
@@ -362,7 +362,7 @@ pub async fn run(
             Some(push_event) = tokio_stream::StreamExt::next(&mut quote_receiver) => {
                 // Handle WebSocket push events
                 // PushEvent contains symbol and detail
-                use longbridge_sdk::quote::PushEventDetail;
+                use longbridge::quote::PushEventDetail;
 
                 let symbol = push_event.symbol;
                 let counter = Counter::new(&symbol);

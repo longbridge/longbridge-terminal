@@ -6,7 +6,7 @@ use anyhow::Result;
 /// Subscribe to quotes with automatic rate limiting
 pub async fn subscribe_quotes<I, T>(
     symbols: I,
-    sub_types: longbridge_sdk::quote::SubFlags,
+    sub_types: longbridge::quote::SubFlags,
 ) -> Result<()>
 where
     I: IntoIterator<Item = T>,
@@ -32,7 +32,7 @@ where
 /// Unsubscribe from quotes with automatic rate limiting
 pub async fn unsubscribe_quotes<I, T>(
     symbols: I,
-    sub_types: longbridge_sdk::quote::SubFlags,
+    sub_types: longbridge::quote::SubFlags,
 ) -> Result<()>
 where
     I: IntoIterator<Item = T>,
@@ -56,7 +56,7 @@ where
 }
 
 /// Get quotes with automatic rate limiting
-pub async fn get_quotes<I, T>(symbols: I) -> Result<Vec<longbridge_sdk::quote::SecurityQuote>>
+pub async fn get_quotes<I, T>(symbols: I) -> Result<Vec<longbridge::quote::SecurityQuote>>
 where
     I: IntoIterator<Item = T>,
     T: Into<String>,
@@ -74,9 +74,7 @@ where
 }
 
 /// Get static info with automatic rate limiting
-pub async fn get_static_info<I, T>(
-    symbols: I,
-) -> Result<Vec<longbridge_sdk::quote::SecurityStaticInfo>>
+pub async fn get_static_info<I, T>(symbols: I) -> Result<Vec<longbridge::quote::SecurityStaticInfo>>
 where
     I: IntoIterator<Item = T>,
     T: Into<String>,
@@ -99,7 +97,7 @@ where
 }
 
 /// Get trades with automatic rate limiting
-pub async fn get_trades(symbol: &str, count: usize) -> Result<Vec<longbridge_sdk::quote::Trade>> {
+pub async fn get_trades(symbol: &str, count: usize) -> Result<Vec<longbridge::quote::Trade>> {
     let ctx = quote_limited();
     let symbol = symbol.to_string();
 
@@ -117,7 +115,7 @@ pub async fn get_trades(symbol: &str, count: usize) -> Result<Vec<longbridge_sdk
 }
 
 /// Get watchlist with automatic rate limiting
-pub async fn get_watchlist() -> Result<Vec<longbridge_sdk::quote::WatchlistGroup>> {
+pub async fn get_watchlist() -> Result<Vec<longbridge::quote::WatchlistGroup>> {
     let ctx = quote_limited();
 
     ctx.execute("watchlist", || {
@@ -130,7 +128,7 @@ pub async fn get_watchlist() -> Result<Vec<longbridge_sdk::quote::WatchlistGroup
 /// Get account balance with automatic rate limiting
 pub async fn get_account_balance(
     currency: Option<&str>,
-) -> Result<Vec<longbridge_sdk::trade::AccountBalance>> {
+) -> Result<Vec<longbridge::trade::AccountBalance>> {
     let ctx = trade_limited();
 
     ctx.execute("account_balance", || {
@@ -147,7 +145,7 @@ pub async fn get_account_balance(
 }
 
 /// Get stock positions with automatic rate limiting
-pub async fn get_stock_positions() -> Result<longbridge_sdk::trade::StockPositionsResponse> {
+pub async fn get_stock_positions() -> Result<longbridge::trade::StockPositionsResponse> {
     let ctx = trade_limited();
 
     ctx.execute("stock_positions", || {

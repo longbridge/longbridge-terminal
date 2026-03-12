@@ -4,10 +4,10 @@ use std::sync::{Arc, OnceLock};
 use super::wrapper::{RateLimitedQuoteContext, RateLimitedTradeContext};
 
 /// Global `QuoteContext`
-pub static QUOTE_CTX: OnceLock<longbridge_sdk::quote::QuoteContext> = OnceLock::new();
+pub static QUOTE_CTX: OnceLock<longbridge::quote::QuoteContext> = OnceLock::new();
 
 /// Global `TradeContext`
-pub static TRADE_CTX: OnceLock<longbridge_sdk::trade::TradeContext> = OnceLock::new();
+pub static TRADE_CTX: OnceLock<longbridge::trade::TradeContext> = OnceLock::new();
 
 /// Global rate-limited `QuoteContext` wrapper
 pub static RATE_LIMITED_QUOTE_CTX: OnceLock<RateLimitedQuoteContext> = OnceLock::new();
@@ -18,11 +18,11 @@ pub static RATE_LIMITED_TRADE_CTX: OnceLock<RateLimitedTradeContext> = OnceLock:
 /// Get API language based on current UI locale
 /// Maps UI locale to API-supported languages: en, zh-CN, zh-HK
 /// Defaults to "en" if locale is not supported
-fn get_api_language() -> longbridge_sdk::Language {
+fn get_api_language() -> longbridge::Language {
     match rust_i18n::locale().as_str() {
-        "zh-CN" => longbridge_sdk::Language::ZH_CN,
-        "zh-HK" => longbridge_sdk::Language::ZH_HK,
-        _ => longbridge_sdk::Language::EN,
+        "zh-CN" => longbridge::Language::ZH_CN,
+        "zh-HK" => longbridge::Language::ZH_HK,
+        _ => longbridge::Language::EN,
     }
 }
 
@@ -30,10 +30,10 @@ fn get_api_language() -> longbridge_sdk::Language {
 /// Uses longbridge SDK OAuth: loads token from disk or runs browser flow, auto-refreshes token.
 /// Returns quote receiver for caller to handle WebSocket events.
 pub async fn init_contexts(
-) -> Result<impl tokio_stream::Stream<Item = longbridge_sdk::quote::PushEvent> + Send + Unpin> {
+) -> Result<impl tokio_stream::Stream<Item = longbridge::quote::PushEvent> + Send + Unpin> {
     // Build OAuth client: loads token from ~/.longbridge-openapi/tokens/<client_id>
     // or starts browser authorization. Token refresh is automatic inside the SDK.
-    let oauth = longbridge_sdk::oauth::OAuthBuilder::new(crate::auth::OAUTH_CLIENT_ID)
+    let oauth = longbridge::oauth::OAuthBuilder::new(crate::auth::OAUTH_CLIENT_ID)
         .callback_port(60355)
         .build(|url| {
             println!("Opening browser for Longbridge OpenAPI authorization...");
@@ -46,13 +46,13 @@ pub async fn init_contexts(
         .map_err(|e| anyhow::anyhow!("OAuth failed: {e}"))?;
 
     let config = Arc::new(
-        longbridge_sdk::Config::from_oauth(oauth)
+        longbridge::Config::from_oauth(oauth)
             .language(get_api_language())
             .dont_print_quote_packages(),
     );
 
     // Create QuoteContext and TradeContext
-    let quote_result = longbridge_sdk::quote::QuoteContext::try_new(Arc::clone(&config)).await;
+    let quote_result = longbridge::quote::QuoteContext::try_new(Arc::clone(&config)).await;
     let (quote_ctx, quote_receiver) = match quote_result {
         Ok(ctx) => ctx,
         Err(e) => {
@@ -73,7 +73,7 @@ pub async fn init_contexts(
         }
     };
     let (trade_ctx, _trade_receiver) =
-        longbridge_sdk::trade::TradeContext::try_new(Arc::clone(&config)).await?;
+        longbridge::trade::TradeContext::try_new(Arc::clone(&config)).await?;
 
     // Store in global variables
     QUOTE_CTX
@@ -102,14 +102,14 @@ pub async fn init_contexts(
 }
 
 /// Get global `QuoteContext`
-pub fn quote() -> &'static longbridge_sdk::quote::QuoteContext {
+pub fn quote() -> &'static longbridge::quote::QuoteContext {
     QUOTE_CTX
         .get()
         .expect("QuoteContext not initialized, please call init_contexts() first")
 }
 
 /// Get global `TradeContext`
-pub fn trade() -> &'static longbridge_sdk::trade::TradeContext {
+pub fn trade() -> &'static longbridge::trade::TradeContext {
     TRADE_CTX
         .get()
         .expect("TradeContext not initialized, please call init_contexts() first")

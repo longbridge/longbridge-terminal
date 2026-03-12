@@ -367,7 +367,7 @@ pub fn exit_watchlist_common() {
     });
 }
 
-// Watchlist API - uses longport SDK
+// Watchlist API - uses Longbridge SDK
 pub async fn fetch_watchlist(
     group_id: Option<u64>,
 ) -> anyhow::Result<(Vec<Counter>, Vec<crate::data::WatchlistGroup>)> {

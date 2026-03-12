@@ -503,7 +503,7 @@ pub async fn fetch_portfolio_data() -> anyhow::Result<(Vec<PositionInfo>, Decima
 
                 // Get cost price from STOCKS cache (if available)
                 if let Some(_stock) = STOCKS.get(&pos.symbol) {
-                    // Note: longport SDK may not directly provide cost price
+                    // Note: Longbridge SDK may not directly provide cost price
                     // We try to get it from static info or other sources
                     // Temporarily use open price as reference
                     pos.cost_price = quote.open;

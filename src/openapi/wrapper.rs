@@ -3,13 +3,13 @@ use anyhow::Result;
 /// Wrapper for `QuoteContext` with rate limiting
 /// Provides access to inner context while tracking rate limits
 pub struct RateLimitedQuoteContext {
-    inner: &'static longbridge_sdk::quote::QuoteContext,
+    inner: &'static longbridge::quote::QuoteContext,
     limiter: &'static crate::openapi::rate_limiter::RateLimiter,
 }
 
 impl RateLimitedQuoteContext {
     /// Create a new rate-limited quote context wrapper
-    pub fn new(inner: &'static longbridge_sdk::quote::QuoteContext) -> Self {
+    pub fn new(inner: &'static longbridge::quote::QuoteContext) -> Self {
         Self {
             inner,
             limiter: crate::openapi::rate_limiter::global_rate_limiter(),
@@ -18,7 +18,7 @@ impl RateLimitedQuoteContext {
 
     /// Get reference to inner context
     /// Use this for direct API calls that will be rate-limited by `execute()`
-    pub fn inner(&self) -> &'static longbridge_sdk::quote::QuoteContext {
+    pub fn inner(&self) -> &'static longbridge::quote::QuoteContext {
         self.inner
     }
 
@@ -40,13 +40,13 @@ impl RateLimitedQuoteContext {
 /// Wrapper for `TradeContext` with rate limiting
 /// Provides access to inner context while tracking rate limits
 pub struct RateLimitedTradeContext {
-    inner: &'static longbridge_sdk::trade::TradeContext,
+    inner: &'static longbridge::trade::TradeContext,
     limiter: &'static crate::openapi::rate_limiter::RateLimiter,
 }
 
 impl RateLimitedTradeContext {
     /// Create a new rate-limited trade context wrapper
-    pub fn new(inner: &'static longbridge_sdk::trade::TradeContext) -> Self {
+    pub fn new(inner: &'static longbridge::trade::TradeContext) -> Self {
         Self {
             inner,
             limiter: crate::openapi::rate_limiter::global_rate_limiter(),
@@ -55,7 +55,7 @@ impl RateLimitedTradeContext {
 
     /// Get reference to inner context
     /// Use this for direct API calls that will be rate-limited by `execute()`
-    pub fn inner(&self) -> &'static longbridge_sdk::trade::TradeContext {
+    pub fn inner(&self) -> &'static longbridge::trade::TradeContext {
         self.inner
     }
 

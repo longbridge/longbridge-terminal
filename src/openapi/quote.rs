@@ -7,7 +7,7 @@ use anyhow::Result;
 /// Fetch stock static information
 pub async fn fetch_static_info(
     symbols: &[String],
-) -> Result<Vec<longbridge_sdk::quote::SecurityStaticInfo>> {
+) -> Result<Vec<longbridge::quote::SecurityStaticInfo>> {
     let ctx = QUOTE_CTX
         .get()
         .ok_or_else(|| anyhow::anyhow!("QuoteContext not initialized"))?;
@@ -18,7 +18,7 @@ pub async fn fetch_static_info(
 }
 
 /// Fetch recent trades for a symbol
-pub async fn fetch_trades(symbol: &str, count: usize) -> Result<Vec<longbridge_sdk::quote::Trade>> {
+pub async fn fetch_trades(symbol: &str, count: usize) -> Result<Vec<longbridge::quote::Trade>> {
     let ctx = QUOTE_CTX
         .get()
         .ok_or_else(|| anyhow::anyhow!("QuoteContext not initialized"))?;

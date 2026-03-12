@@ -49,7 +49,7 @@ pub struct StockQuery {
 pub async fn fetch_stock(query: &StockQuery) -> Result<StockResult> {
     let ctx = openapi::quote();
 
-    // Use longport SDK search functionality
+    // Use Longbridge SDK search functionality
     let symbols = ctx.static_info([&query.keyword]).await?;
 
     let product_list = symbols
@@ -66,7 +66,7 @@ pub async fn fetch_stock(query: &StockQuery) -> Result<StockResult> {
             StockItem {
                 code: code.clone(),
                 counter_id: Counter::new(&info.symbol),
-                currency: String::new(), // longport's static_info may not provide currency
+                currency: String::new(), // Longbridge's static_info may not provide currency
                 market,
                 name: info.name_cn.clone(),
                 product: String::new(),

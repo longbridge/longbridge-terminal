@@ -21,7 +21,7 @@ impl RateLimiter {
     /// Create a new rate limiter
     ///
     /// # Arguments
-    /// * `tokens_per_second` - Maximum requests per second (10 for Longport API)
+    /// * `tokens_per_second` - Maximum requests per second (10 for Longbridge OpenAPI)
     /// * `max_tokens` - Maximum burst capacity (20 allows short bursts)
     pub fn new(tokens_per_second: u32, max_tokens: u32) -> Self {
         Self {
@@ -177,7 +177,7 @@ static RATE_LIMITER: std::sync::OnceLock<RateLimiter> = std::sync::OnceLock::new
 /// Get or initialize the global rate limiter
 pub fn global_rate_limiter() -> &'static RateLimiter {
     RATE_LIMITER.get_or_init(|| {
-        // Longport API limit: 10 requests per second
+        // Longbridge OpenAPI limit: 10 requests per second
         // Max burst: 20 tokens (allows short bursts without throttling)
         RateLimiter::new(10, 20)
     })

@@ -145,31 +145,31 @@ impl KlineStore {
         _before: i64,
         count: usize,
     ) {
-        // Use longport SDK to request candlestick data
+        // Use Longbridge SDK to request candlestick data
         let ctx = crate::openapi::quote();
 
-        // Convert KlineType to longport Period
+        // Convert KlineType to Longbridge Period
         let period = match kline_type {
-            KlineType::PerMinute => longbridge_sdk::quote::Period::OneMinute,
-            KlineType::PerFiveMinutes => longbridge_sdk::quote::Period::FiveMinute,
-            KlineType::PerFifteenMinutes => longbridge_sdk::quote::Period::FifteenMinute,
-            KlineType::PerThirtyMinutes => longbridge_sdk::quote::Period::ThirtyMinute,
-            KlineType::PerHour => longbridge_sdk::quote::Period::SixtyMinute,
-            KlineType::PerDay => longbridge_sdk::quote::Period::Day,
-            KlineType::PerWeek => longbridge_sdk::quote::Period::Week,
-            KlineType::PerMonth => longbridge_sdk::quote::Period::Month,
-            KlineType::PerYear => longbridge_sdk::quote::Period::Year,
+            KlineType::PerMinute => longbridge::quote::Period::OneMinute,
+            KlineType::PerFiveMinutes => longbridge::quote::Period::FiveMinute,
+            KlineType::PerFifteenMinutes => longbridge::quote::Period::FifteenMinute,
+            KlineType::PerThirtyMinutes => longbridge::quote::Period::ThirtyMinute,
+            KlineType::PerHour => longbridge::quote::Period::SixtyMinute,
+            KlineType::PerDay => longbridge::quote::Period::Day,
+            KlineType::PerWeek => longbridge::quote::Period::Week,
+            KlineType::PerMonth => longbridge::quote::Period::Month,
+            KlineType::PerYear => longbridge::quote::Period::Year,
         };
 
-        // Convert AdjustType to longport AdjustType
+        // Convert AdjustType to Longbridge AdjustType
         let adjust = match adjust_type {
-            AdjustType::NoAdjust => longbridge_sdk::quote::AdjustType::NoAdjust,
-            AdjustType::ForwardAdjust => longbridge_sdk::quote::AdjustType::ForwardAdjust,
+            AdjustType::NoAdjust => longbridge::quote::AdjustType::NoAdjust,
+            AdjustType::ForwardAdjust => longbridge::quote::AdjustType::ForwardAdjust,
         };
 
         // Select appropriate trading session based on period type
         // For all periods, use All to get complete data
-        let trade_session = longbridge_sdk::quote::TradeSessions::All;
+        let trade_session = longbridge::quote::TradeSessions::All;
 
         tracing::info!(
             "Requesting candlestick data: counter={}, period={:?}, count={}, adjust={:?}",

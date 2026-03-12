@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document describes the rate limiting system implemented to comply with Longport API's "no more than 10 calls per second" limit.
+This document describes the rate limiting system implemented to comply with Longbridge OpenAPI's "no more than 10 calls per second" limit.
 
 ## Architecture
 
@@ -34,7 +34,7 @@ use crate::openapi::helpers;
 // Subscribe to quotes
 helpers::subscribe_quotes(
     vec!["700.HK", "AAPL.US"],
-    longport::quote::SubFlags::QUOTE
+    longbridge::quote::SubFlags::QUOTE
 ).await?;
 
 // Get quotes
@@ -87,7 +87,7 @@ RateLimiter::new(
 
 ### Parameters
 
-- **tokens_per_second**: 10 (Longport API limit)
+- **tokens_per_second**: 10 (Longbridge OpenAPI limit)
 - **max_tokens**: 20 (allows short bursts without throttling)
 
 ## Features
@@ -160,6 +160,7 @@ cargo test --lib rate_limiter
 Monitor rate limiting in action:
 
 1. Enable debug logging:
+
    ```bash
    export RUST_LOG=debug
    ```
@@ -209,6 +210,6 @@ cargo run
 
 ## References
 
-- Longport API Documentation: https://open.longbridge.com
+- Longbridge OpenAPI Documentation: https://open.longbridge.com
 - Token Bucket Algorithm: https://en.wikipedia.org/wiki/Token_bucket
 - Tokio Semaphore: https://docs.rs/tokio/latest/tokio/sync/struct.Semaphore.html

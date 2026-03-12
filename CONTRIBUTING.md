@@ -7,21 +7,23 @@ Thank you for your interest in contributing to Longbridge Terminal! This documen
 ### Prerequisites
 
 - Rust toolchain (latest stable version)
-- Longport OpenAPI credentials ([Get them here](https://open.longbridge.com))
+- Longbridge OpenAPI credentials ([Get them here](https://open.longbridge.com))
 - macOS or Linux
 
 ### Setup Development Environment
 
 1. **Clone the repository**:
+
    ```bash
    git clone https://github.com/longbridge/longbridge-terminal.git
    cd longbridge-terminal
    ```
 
 2. **Configure API credentials**:
+
    ```bash
    cp .env.example .env
-   # Edit .env with your Longport OpenAPI credentials
+   # Edit .env with your Longbridge OpenAPI credentials
    ```
 
 3. **Build and run**:
@@ -41,6 +43,7 @@ Thank you for your interest in contributing to Longbridge Terminal! This documen
 - ✅ All locale strings must be defined in `locales/*.yml` files
 
 **Example**:
+
 ```rust
 // ✅ Good: English comment with i18n
 let status = t!("TradeStatus.Normal");
@@ -64,6 +67,7 @@ cargo clippy --all-targets --all-features
 ```
 
 The following pedantic rules are allowed (you don't need to fix them):
+
 - `cast_possible_truncation`
 - `ignored_unit_patterns`
 - `implicit_hasher`
@@ -91,6 +95,7 @@ When adding new user-facing text:
    - `locales/zh-HK.yml` (Traditional Chinese)
 
 2. **Use the `t!` macro in code**:
+
    ```rust
    use rust_i18n::t;
 
@@ -117,7 +122,7 @@ Portfolio:
 
 ### Key Components
 
-- **`src/openapi/`**: Longport OpenAPI integration layer
+- **`src/openapi/`**: Longbridge OpenAPI integration layer
   - `context.rs`: Global QuoteContext and TradeContext management
 - **`src/data/`**: Data models and global state
   - `stocks.rs`: Global stock cache using DashMap
@@ -136,6 +141,7 @@ For more details, see [CLAUDE.md](./CLAUDE.md).
 ## Pull Request Process
 
 1. **Fork the repository** and create a new branch:
+
    ```bash
    git checkout -b feature/your-feature-name
    ```
@@ -143,6 +149,7 @@ For more details, see [CLAUDE.md](./CLAUDE.md).
 2. **Make your changes** following the code style guidelines
 
 3. **Run checks**:
+
    ```bash
    cargo fmt
    cargo clippy --all-targets --all-features
@@ -165,23 +172,26 @@ For more details, see [CLAUDE.md](./CLAUDE.md).
 ### Using Ratatui
 
 This project uses [Ratatui](https://ratatui.rs/) for the TUI. For Ratatui-specific questions, refer to:
+
 - [Ratatui Documentation](https://ratatui.rs/)
 - [Ratatui Examples](https://github.com/ratatui-org/ratatui/tree/main/examples)
 
-### Longport API
+### Longbridge API
 
 - **Rate Limit**: Maximum 10 API calls per second
 - **Token Expiration**: Access tokens expire every 3 months
-- **Documentation**: [Longport OpenAPI Docs](https://open.longbridge.com)
-- **Rust SDK**: [SDK Documentation](https://longportapp.github.io/openapi/rust/longport/)
+- **Documentation**: [Longbridge OpenAPI Docs](https://open.longbridge.com)
+- **Rust SDK**: [SDK Documentation](https://longbridge.github.io/openapi/rust/longbridge/)
 
 ### Debugging
 
 Logs are written to:
+
 - macOS: `~/Library/Logs/longbridge-terminal/`
 - Linux: `~/.local/share/longbridge-terminal/logs/`
 
 Enable debug logging:
+
 ```bash
 RUST_LOG=debug cargo run
 ```

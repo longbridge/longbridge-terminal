@@ -11,7 +11,7 @@ use std::collections::HashMap;
 pub async fn fetch_account_list() -> Result<AccountList> {
     let ctx = openapi::trade();
 
-    // longport SDK's account_balance returns current account balance info
+    // Longbridge SDK's account_balance returns current account balance info
     // For simplicity, we return a default account
     // Note: This call may fail (if Access Token lacks trading permission), but should not block app startup
     match ctx.account_balance(None).await {
@@ -118,7 +118,7 @@ pub fn currencies(account_channel: &str) -> Result<Vec<CurrencyInfo>> {
     ])
 }
 
-/// Fetch account balance from Longport SDK
+/// Fetch account balance from Longbridge SDK
 pub async fn fetch_account_balance() -> Result<AccountBalance> {
     let ctx = openapi::trade();
     let balances = ctx.account_balance(None).await?;
@@ -129,7 +129,7 @@ pub async fn fetch_account_balance() -> Result<AccountBalance> {
         .next()
         .ok_or_else(|| anyhow::anyhow!("No account balance found"))?;
 
-    // Map longport response to our AccountBalance structure
+    // Map Longbridge response to our AccountBalance structure
     let mut cash_infos = Vec::new();
     for cash_info in &response.cash_infos {
         cash_infos.push(CashInfo {
@@ -157,7 +157,7 @@ pub async fn fetch_account_balance() -> Result<AccountBalance> {
     })
 }
 
-/// Fetch stock holdings from Longport SDK
+/// Fetch stock holdings from Longbridge SDK
 pub async fn fetch_stock_holdings() -> Result<Vec<Holding>> {
     let ctx = openapi::trade();
     let response = ctx.stock_positions(None).await?;

@@ -83,6 +83,7 @@ RUST_LOG=debug longbridge
 ```
 
 **Requirements:**
+
 - Internet connection
 - Browser access
 - Active Longbridge account
@@ -97,7 +98,7 @@ The Longbridge OpenAPI has rate limiting:
 ## Documentation
 
 - [Longbridge OpenAPI Documentation](https://open.longbridge.com)
-- [Rust SDK Documentation](https://longportapp.github.io/openapi/rust/longport/)
+- [Rust SDK Documentation](https://longbridge.github.io/openapi/rust/longbridge/)
 
 ## License
 
