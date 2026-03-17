@@ -51,16 +51,6 @@ curl -sSL https://github.com/longbridge/longbridge-terminal/raw/main/install | s
 
 Installs the `longbridge` binary to `/usr/local/bin`.
 
-## Claude Code Skill
-
-Install the skill to give Claude Code full knowledge of all `longbridge` CLI commands:
-
-```bash
-npx skills add longbridge/longbridge-terminal
-```
-
-Once installed, Claude can query market data, run technical analysis, and manage trades directly from your AI workflow.
-
 ## Authentication
 
 Uses **OAuth 2.0** via the Longbridge SDK — no manual token management required.
@@ -157,6 +147,46 @@ longbridge max-qty TSLA.US --side buy --price 250      # Estimate maximum buy or
 ```
 
 Markets: `HK` (Hong Kong) · `US` (United States) · `CN` / `SH` / `SZ` (China A-share) · `SG` (Singapore)
+
+## Skill
+
+Install the skill to give your AI tools full knowledge of all `longbridge` CLI commands:
+
+```bash
+npx skills add longbridge/longbridge-terminal
+```
+
+Once installed, Claude can query market data, run technical analysis, and manage trades directly from your AI workflow.
+
+```bash
+claude> Show me recent 5 days performance of NVDA and TSLA
+
+⏺ Bash(longbridge kline TSLA.US --period day --count 5 & longbridge kline NVDA.US --period day --count 5 & wait)
+  ⎿  Authentication failed: oauth error: failed to refresh token: Failed to parse server response
+     +---------------------+---------+---------+---------+---------+----------+-----------------+
+     | Time                | Open    | High    | Low     | Close   | Volume   | Turnover        |
+     … +11 lines (ctrl+o to expand)
+
+⏺ It seems NVDA failed to authenticate (token refresh issue). TSLA data loaded fine. Here's what we have:
+
+  TSLA.US — Last 5 Days
+
+  ┌────────┬────────┬────────┬────────┬────────┬──────────┐
+  │  Date  │  Open  │  High  │  Low   │ Close  │  Change  │
+  ├────────┼────────┼────────┼────────┼────────┼──────────┤
+  │ Mar 10 │ 402.22 │ 406.59 │ 398.19 │ 399.24 │ —        │
+  ├────────┼────────┼────────┼────────┼────────┼──────────┤
+  │ Mar 11 │ 402.28 │ 416.38 │ 402.15 │ 407.82 │ ▲ +2.15% │
+  ├────────┼────────┼────────┼────────┼────────┼──────────┤
+  │ Mar 12 │ 405.18 │ 406.50 │ 394.65 │ 395.01 │ ▼ -3.14% │
+  ├────────┼────────┼────────┼────────┼────────┼──────────┤
+  │ Mar 13 │ 399.17 │ 400.20 │ 389.95 │ 391.20 │ ▼ -0.96% │
+  ├────────┼────────┼────────┼────────┼────────┼──────────┤
+  │ Mar 16 │ 396.22 │ 403.73 │ 394.42 │ 395.56 │ ▲ +1.11% │
+  └────────┴────────┴────────┴────────┴────────┴──────────┘
+
+  5-day return: -0.92% | Range: $389.95 – $416.38
+```
 
 ## TUI
 
