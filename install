@@ -12,7 +12,7 @@ get_latest_release() {
 
 bin_name='longbridge'
 package_name='longbridge-cli'
-version='v0.7.0'
+version='v0.7.0-preview2'
 
 platform="$(uname | tr "[A-Z]" "[a-z]")"  # Linux => linux
 arch="$(uname -m)"  # x86_64, arm64, aarch64, etc.
