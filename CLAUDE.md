@@ -213,3 +213,14 @@ let order = ctx.submit_order(opts).await?;
 ## Skills
 
 For Ratatui-specific questions or when working with TUI components, use the `rs-ratatui-crate` skill.
+
+## Keeping Docs in Sync
+
+When adding, removing, or modifying any CLI command (in `src/cli/`), always update all of the following in the same PR:
+
+1. **`README.md`** — the `<!-- COMMANDS_START -->` / `<!-- COMMANDS_END -->` block
+2. **`skills/longbridge/SKILL.md`** — quick reference section if the command is common enough
+3. **`skills/longbridge/references/`** — the relevant reference file:
+   - `quote-commands.md` for quote/market-data commands
+   - `trade-commands.md` for trading/account commands
+   - `watchlist-commands.md` for watchlist commands
