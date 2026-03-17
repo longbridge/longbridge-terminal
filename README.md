@@ -5,7 +5,7 @@ AI-native CLI for the [Longbridge](https://longbridge.com) trading platform — 
 Covers every Longbridge OpenAPI endpoint: real-time quotes, depth, K-lines, options, and warrants for market data; account balances, stock and fund positions for portfolio management; and order submission, modification, cancellation, and execution history for trading. Designed for scripting, AI-agent tool-calling, and daily trading workflows from the terminal.
 
 ```bash
-$ longbridge quote TSLA.US NVDA.US
+$ longbridge static NVDA.US
 | Symbol  | Last    | Prev Close | Open    | High    | Low     | Volume    | Turnover        | Status |
 |---------|---------|------------|---------|---------|---------|-----------|-----------------|--------|
 | TSLA.US | 395.560 | 391.200    | 396.220 | 403.730 | 394.420 | 58068343  | 23138752546.000 | Normal |
@@ -90,74 +90,79 @@ longbridge positions --format json | jq '.[] | {symbol, quantity}'
 ### Diagnostics
 
 ```bash
-longbridge check                                              # Shows token status, cached region, and latency to both Global and CN API endpoints
-longbridge check --format json                                # Shows token status, cached region, and latency to both Global and CN API endpoints
+longbridge check   # Check token validity, and API connectivity
 ```
 
-### Quote
+### Quotes
 
 ```bash
-longbridge quote TSLA.US 700.HK                               # Returns: symbol, `last_done`, `prev_close`, open, high, low, volume, turnover, `trade_status`
-longbridge depth TSLA.US                                      # Returns up to 10 price levels of asks and bids with price, volume, `order_num`
-longbridge brokers 700.HK                                     # Returns which broker IDs are present at each ask/bid level
-longbridge trades TSLA.US --count 10                          # Returns: timestamp, price, volume, direction (up/down/neutral), `trade_type`
-longbridge intraday TSLA.US                                   # Returns: timestamp, price, volume, turnover, `avg_price`
-longbridge kline TSLA.US --period day --count 10              # Returns: timestamp, open, high, low, close, volume, turnover
-longbridge kline TSLA.US --period 1h --count 10               # Returns: timestamp, open, high, low, close, volume, turnover
-longbridge kline-history TSLA.US --start 2024-01-01 --end 2024-03-31 # Both --start and --end must be provided together; if either is omitted the most recent 100 candles are returned (offset-based, ignores the other flag)
-longbridge static TSLA.US 700.HK                              # Returns: name, exchange, currency, `lot_size`, `total_shares`, `circulating_shares`, EPS, BPS, `dividend_yield`
-longbridge calc-index TSLA.US --index pe,pb,eps               # Full index list: `last_done`  `change_value`  `change_rate`  volume  turnover  `ytd_change_rate` `turnover_rate`  `total_market_value`  `capital_flow`  amplitude  `volume_ratio` pe (alias: `pe_ttm`)  pb  eps (alias: `dividend_yield`) `five_day_change_rate`  `ten_day_change_rate`  `half_year_change_rate`  `five_minutes_change_rate` `implied_volatility`  delta  gamma  theta  vega  rho  `open_interest` `expiry_date`  `strike_price`  `upper_strike_price`  `lower_strike_price` `outstanding_qty`  `outstanding_ratio`  premium  `itm_otm` `warrant_delta`  `call_price`  `to_call_price`  `effective_leverage` `leverage_ratio`  `conversion_ratio`  `balance_point` Example: longbridge calc-index TSLA.US AAPL.US --index pe,pb,`turnover_rate`
-longbridge capital-flow TSLA.US                               # Returns a time series of inflow values for today's session
-longbridge capital-dist TSLA.US                               # Returns total inflow/outflow broken down by order size for the current session
-longbridge market-temp HK                                     # Use --history to get a time series instead of the current snapshot
-longbridge market-temp US                                     # Use --history to get a time series instead of the current snapshot
-longbridge trading-session                                    # Returns: market, session type (intraday/pre/post/overnight), `begin_time`, `end_time`
-longbridge trading-days HK                                    # Defaults to today + 30 days if no dates are provided
-longbridge security-list HK                                   # Returns: symbol, `name_en`, `name_cn` for every listed security
-longbridge participants                                       # Use these IDs to interpret results from the `brokers` command
-longbridge subscriptions                                      # Returns: symbol, `sub_types` (quote/depth/trade), subscribed candlestick periods
-```
-
-### Options & Warrants
-
-```bash
-longbridge option-chain AAPL.US                               # Without --date: returns all available expiry dates
-longbridge option-chain AAPL.US --date <expiry>               # Without --date: returns all available expiry dates
-longbridge option-quote <symbol>                              # Returns standard quote fields plus `implied_volatility`, delta, `strike_price`, `expiry_date`, `contract_type`
-longbridge warrant-list 700.HK                                # Returns: symbol, name, `last_done`, `leverage_ratio`, `expiry_date`, `warrant_type`
-longbridge warrant-quote <symbol>                             # Returns: `last_done`, `prev_close`, `implied_volatility`, `leverage_ratio`, `expiry_date`, category
-longbridge warrant-issuers                                    # Returns: `issuer_id`, `name_en`, `name_cn`
+longbridge quote TSLA.US 700.HK                     # Real-time quotes for one or more symbols
+longbridge depth TSLA.US                            # Level 2 order book depth (bid/ask ladder)
+longbridge brokers 700.HK                           # Broker queue at each price level (HK market)
+longbridge trades TSLA.US [--count 50]              # Recent tick-by-tick trades
+longbridge intraday TSLA.US                         # Intraday minute-by-minute price and volume lines for today
+longbridge kline TSLA.US [--period day]             # OHLCV candlestick (K-line) data
+longbridge kline-history TSLA.US --start 2024-01-01 # Historical OHLCV candlestick data within a date range
+longbridge static TSLA.US                           # Static reference info for one or more symbols
+longbridge calc-index TSLA.US --index pe,pb,eps     # Calculated financial indexes (PE, PB, EPS, turnover rate, etc.)
+longbridge capital-flow TSLA.US                     # Intraday capital flow time series (large/medium/small money in vs out)
+longbridge capital-dist TSLA.US                     # Capital distribution snapshot (large/medium/small inflow and outflow)
+longbridge market-temp [HK|US|CN|SG]                # Market sentiment temperature index (0–100, higher = more bullish)
+longbridge trading-session                          # Trading session schedule (open/close times) for all markets
+longbridge trading-days HK                          # Trading days and half-trading days for a market
+longbridge security-list HK                         # Full list of securities available in a market
+longbridge participants                             # Market maker (participant) broker IDs and names
+longbridge subscriptions                            # Active real-time WebSocket subscriptions for this session
 ```
 
 ### News
 
 ```bash
-longbridge news TSLA.US --count 5                             # Returns: id, title, `published_at`, likes, comments
-longbridge news-detail <id>                                   # Fetches the article text from <https://longbridge.com/news>/<id>.md Example: longbridge news-detail 12345678
-longbridge filings AAPL.US --count 5                          # Returns: id, title, `file_name`, `publish_at`, `file_urls`
-longbridge topics TSLA.US --count 5                           # Returns: id, title, description, url, `published_at`, likes, comments, shares
-longbridge topic-detail <id>                                  # Fetches the topic text from <https://longbridge.com/topics>/<id>.md Example: longbridge topic-detail 277062200
+longbridge news TSLA.US [--count 20]        # Latest news articles for a symbol
+longbridge news-detail <id>                 # Full Markdown content of a news article
+longbridge filings AAPL.US [--count 20]     # Regulatory filings and announcements for a symbol
+longbridge topics TSLA.US [--count 20]      # Community discussion topics for a symbol
+longbridge topic-detail <id>               # Full Markdown content of a community topic
+```
+
+### Options & Warrants
+
+```bash
+longbridge option-quote AAPL240119C190000         # Real-time quotes for option contracts
+longbridge option-chain AAPL.US                   # Option chain: list all expiry dates
+longbridge option-chain AAPL.US --date 2024-01-19 # Option chain: strike prices for a given expiry
+longbridge warrant-quote 12345.HK                 # Real-time quotes for warrant contracts
+longbridge warrant-list 700.HK                    # Warrants linked to an underlying security
+longbridge warrant-issuers                        # Warrant issuer list (HK market)
 ```
 
 ### Watchlist
 
 ```bash
-longbridge watchlist                                          # Without a subcommand, lists all groups and their securities
+longbridge watchlist                               # List watchlist groups, or create/update/delete a group
+longbridge watchlist create "My Portfolio"         # Create a new watchlist group
+longbridge watchlist update <id> --add TSLA.US     # Add securities in a group
+longbridge watchlist update <id> --remove AAPL.US  # Remove securities from a group
+longbridge watchlist delete <id>                   # Delete a watchlist group
 ```
 
-### Account
+### Trading
 
 ```bash
-longbridge orders                                             # Returns: `order_id`, symbol, side, `order_type`, status, quantity, price, `executed_qty`, `executed_price`, `submitted_at`
-longbridge orders --history                                   # Returns: `order_id`, symbol, side, `order_type`, status, quantity, price, `executed_qty`, `executed_price`, `submitted_at`
-longbridge executions                                         # Returns: `order_id`, `trade_id`, symbol, price, quantity, `trade_done_at`
-longbridge executions --history                               # Returns: `order_id`, `trade_id`, symbol, price, quantity, `trade_done_at`
-longbridge balance                                            # Returns: currency, `total_cash`, `max_finance_amount`, `remaining_finance_amount`, `risk_level`, `margin_call`
-longbridge cash-flow                                          # Returns: `flow_name`, symbol, `business_type`, balance, currency, `business_time`, description
-longbridge positions                                          # Returns: symbol, name, quantity, `available_quantity`, `cost_price`, currency, market
-longbridge fund-positions                                     # Returns: symbol, name, `current_net_asset_value`, `cost_net_asset_value`, currency, `holding_units`
-longbridge margin-ratio TSLA.US                               # Returns: `im_factor` (initial), `mm_factor` (maintenance), `fm_factor` (forced liquidation)
-longbridge max-qty TSLA.US --side buy --price 200             # Returns: `cash_max_qty` (cash only), `margin_max_qty` (with margin financing)
+longbridge orders                                      # Today's orders, or historical orders with --history
+longbridge orders --history [--start 2024-01-01]       # Historical orders (use --symbol to filter)
+longbridge order <order_id>                            # Full detail for a single order including charges and history
+longbridge executions                                  # Today's trade executions (fills), or historical with --history
+longbridge buy TSLA.US 100 --price 250.00              # Submit a buy order (prompts for confirmation)
+longbridge sell TSLA.US 100 --price 260.00             # Submit a sell order (prompts for confirmation)
+longbridge cancel <order_id>                           # Cancel a pending order (prompts for confirmation)
+longbridge replace <order_id> --qty 200 --price 255.00 # Modify quantity or price of a pending order
+longbridge balance                                     # Account cash balance and financing information
+longbridge cash-flow [--start 2024-01-01]              # Cash flow records (deposits, withdrawals, dividends, settlements)
+longbridge positions                                   # Current stock (equity) positions across all sub-accounts
+longbridge fund-positions                              # Current fund (mutual fund) positions across all sub-accounts
+longbridge margin-ratio TSLA.US                        # Margin ratio requirements for a symbol
+longbridge max-qty TSLA.US --side buy --price 250      # Estimate maximum buy or sell quantity given current account balance
 ```
 
 <!-- COMMANDS_END -->
@@ -193,13 +198,19 @@ claude> Show me recent 5 days performance of NVDA and TSLA
 
   TSLA.US — Last 5 Days
 
+  ┌────────┬────────┬────────┬────────┬────────┬──────────┐
   │  Date  │  Open  │  High  │  Low   │ Close  │  Change  │
-  |--------|--------|--------|--------|--------|----------|
+  ├────────┼────────┼────────┼────────┼────────┼──────────┤
   │ Mar 10 │ 402.22 │ 406.59 │ 398.19 │ 399.24 │ —        │
+  ├────────┼────────┼────────┼────────┼────────┼──────────┤
   │ Mar 11 │ 402.28 │ 416.38 │ 402.15 │ 407.82 │ ▲ +2.15% │
+  ├────────┼────────┼────────┼────────┼────────┼──────────┤
   │ Mar 12 │ 405.18 │ 406.50 │ 394.65 │ 395.01 │ ▼ -3.14% │
+  ├────────┼────────┼────────┼────────┼────────┼──────────┤
   │ Mar 13 │ 399.17 │ 400.20 │ 389.95 │ 391.20 │ ▼ -0.96% │
+  ├────────┼────────┼────────┼────────┼────────┼──────────┤
   │ Mar 16 │ 396.22 │ 403.73 │ 394.42 │ 395.56 │ ▲ +1.11% │
+  └────────┴────────┴────────┴────────┴────────┴──────────┘
 
   5-day return: -0.92% | Range: $389.95 – $416.38
 ```
