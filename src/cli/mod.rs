@@ -350,6 +350,41 @@ pub enum Commands {
         id: String,
     },
 
+    /// Regulatory filings and announcements for a symbol
+    ///
+    /// Returns: id, title, file_name, publish_at, file_urls.
+    /// Example: longbridge filings AAPL.US
+    /// Example: longbridge filings 700.HK --count 5
+    Filings {
+        /// Symbol in <CODE>.<MARKET> format, e.g. AAPL.US 700.HK
+        symbol: String,
+        /// Maximum number of filings to show (default: 20)
+        #[arg(long, default_value = "20")]
+        count: usize,
+    },
+
+    /// Community discussion topics for a symbol
+    ///
+    /// Returns: id, title, description, url, published_at, likes, comments, shares.
+    /// Example: longbridge topics TSLA.US
+    /// Example: longbridge topics 700.HK --count 5
+    Topics {
+        /// Symbol in <CODE>.<MARKET> format, e.g. TSLA.US 700.HK
+        symbol: String,
+        /// Maximum number of topics to show (default: 20)
+        #[arg(long, default_value = "20")]
+        count: usize,
+    },
+
+    /// Full Markdown content of a community topic
+    ///
+    /// Fetches the topic text from https://longbridge.com/topics/<id>.md
+    /// Example: longbridge topic-detail 277062200
+    TopicDetail {
+        /// Topic ID (from `longbridge topics`)
+        id: String,
+    },
+
     // ── Watchlist ───────────────────────────────────────────────────────────────
     /// List watchlist groups, or create/update/delete a group
     ///
@@ -642,6 +677,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
         Commands::WarrantIssuers => quote::cmd_warrant_issuers(format).await,
         Commands::News { symbol, count } => news::cmd_news(symbol, count, format).await,
         Commands::NewsDetail { id } => news::cmd_news_detail(id).await,
+        Commands::Filings { symbol, count } => news::cmd_filings(symbol, count, format).await,
+        Commands::Topics { symbol, count } => news::cmd_topics(symbol, count, format).await,
+        Commands::TopicDetail { id } => news::cmd_topic_detail(id).await,
         Commands::Watchlist { cmd } => watchlist::cmd_watchlist(cmd, format).await,
         Commands::Orders {
             history,

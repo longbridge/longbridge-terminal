@@ -1,6 +1,6 @@
 ---
 name: longbridge
-description: "Longbridge CLI expert for querying US and HK stock market data, executing trades, and managing watchlists via the `longbridge` command. Use when the user wants to: (1) Query real-time or historical stock quotes (TSLA.US, 700.HK, 600519.SH), (2) Get candlestick/kline data for any timeframe, (3) View order book depth, trades, intraday data, (4) Query options/warrants, (5) Submit buy/sell orders, manage positions, check balance, (6) Manage watchlists, (7) Get market info (trading sessions, calendar, market temperature). Triggers on any request involving stock symbols, market data, trading operations, or `longbridge` CLI usage."
+description: "Longbridge CLI expert for querying US and HK stock market data, executing trades, and managing watchlists via the `longbridge` command. Use when the user wants to: (1) Query real-time or historical stock quotes (TSLA.US, 700.HK, 600519.SH), (2) Get candlestick/kline data for any timeframe, (3) View order book depth, trades, intraday data, (4) Query options/warrants, (5) Submit buy/sell orders, manage positions, check balance, (6) Manage watchlists, (7) Get market info (trading sessions, calendar, market temperature), (8) Fetch news, regulatory filings, or community topics for a symbol. Triggers on any request involving stock symbols, market data, trading operations, or `longbridge` CLI usage."
 ---
 
 # Longbridge CLI
@@ -37,6 +37,13 @@ All symbols: `<CODE>.<MARKET>`
 ### Most Common Commands
 
 ```bash
+# News, filings, and community topics
+longbridge news TSLA.US
+longbridge news-detail <id>
+longbridge filings AAPL.US
+longbridge topics TSLA.US
+longbridge topic-detail <id>
+
 # Real-time quote
 longbridge quote TSLA.US 700.HK AAPL.US
 
