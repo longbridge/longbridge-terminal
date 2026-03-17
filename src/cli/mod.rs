@@ -109,40 +109,46 @@ pub enum Commands {
     /// OHLCV candlestick (K-line) data
     ///
     /// Returns: timestamp, open, high, low, close, volume, turnover.
-    /// Periods: 1m 5m 15m 30m 1h day week month year
+    /// Periods: 1m  5m  15m  30m  1h  day  week  month  year
+    ///   (aliases: minute=1m, hour=1h, d/1d=day, w=week, m/1mo=month, y=year)
     /// Example: longbridge kline TSLA.US --period day --count 100
     /// Example: longbridge kline TSLA.US --period 1h --adjust forward_adjust
     Kline {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
         /// Candlestick period: 1m 5m 15m 30m 1h day week month year (default: day)
+        /// Aliases: minute=1m, hour=1h, d/1d=day, w=week, m/1mo=month, y=year
         #[arg(long, default_value = "day")]
         period: String,
         /// Number of candles to return (default: 100)
         #[arg(long, default_value = "100")]
         count: usize,
-        /// Price adjustment: no_adjust (default) or forward_adjust (split/dividend adjusted)
+        /// Price adjustment: no_adjust (default) | forward_adjust
+        /// Aliases: none=no_adjust, forward=forward_adjust
         #[arg(long, default_value = "no_adjust")]
         adjust: String,
     },
 
     /// Historical OHLCV candlestick data within a date range
     ///
-    /// Omit --start/--end to get the most recent 100 candles.
+    /// Both --start and --end must be provided together; if either is omitted the
+    /// most recent 100 candles are returned (offset-based, ignores the other flag).
     /// Example: longbridge kline-history TSLA.US --start 2024-01-01 --end 2024-12-31
     KlineHistory {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
         /// Candlestick period: 1m 5m 15m 30m 1h day week month year (default: day)
+        /// Aliases: minute=1m, hour=1h, d/1d=day, w=week, m/1mo=month, y=year
         #[arg(long, default_value = "day")]
         period: String,
-        /// Start date (YYYY-MM-DD)
+        /// Start date (YYYY-MM-DD). Must be used together with --end.
         #[arg(long)]
         start: Option<String>,
-        /// End date (YYYY-MM-DD)
+        /// End date (YYYY-MM-DD). Must be used together with --start.
         #[arg(long)]
         end: Option<String>,
-        /// Price adjustment: no_adjust (default) or forward_adjust
+        /// Price adjustment: no_adjust (default) | forward_adjust
+        /// Aliases: none=no_adjust, forward=forward_adjust
         #[arg(long, default_value = "no_adjust")]
         adjust: String,
     },
@@ -158,13 +164,22 @@ pub enum Commands {
 
     /// Calculated financial indexes (PE, PB, EPS, turnover rate, etc.)
     ///
-    /// Available indexes: pe pb eps turnover_rate total_market_value amplitude volume_ratio
-    ///   ytd_change_rate capital_flow five_day_change_rate implied_volatility delta open_interest
+    /// Full index list:
+    ///   last_done  change_value  change_rate  volume  turnover  ytd_change_rate
+    ///   turnover_rate  total_market_value  capital_flow  amplitude  volume_ratio
+    ///   pe (alias: pe_ttm)  pb  eps (alias: dividend_yield)
+    ///   five_day_change_rate  ten_day_change_rate  half_year_change_rate  five_minutes_change_rate
+    ///   implied_volatility  delta  gamma  theta  vega  rho  open_interest
+    ///   expiry_date  strike_price  upper_strike_price  lower_strike_price
+    ///   outstanding_qty  outstanding_ratio  premium  itm_otm
+    ///   warrant_delta  call_price  to_call_price  effective_leverage
+    ///   leverage_ratio  conversion_ratio  balance_point
     /// Example: longbridge calc-index TSLA.US AAPL.US --index pe,pb,turnover_rate
     CalcIndex {
         /// One or more symbols in <CODE>.<MARKET> format
         symbols: Vec<String>,
         /// Comma-separated indexes to compute (default: pe,pb,eps,turnover_rate,total_market_value)
+        /// Unknown index names are silently ignored.
         #[arg(
             long,
             value_delimiter = ',',
@@ -197,20 +212,20 @@ pub enum Commands {
     /// Example: longbridge market-temp HK
     /// Example: longbridge market-temp US --history --start 2024-01-01 --end 2024-12-31
     MarketTemp {
-        /// Market: HK US CN SG (default: HK)
+        /// Market: HK | US | CN (aliases: SH SZ) | SG  (case-insensitive, default: HK)
         #[arg(default_value = "HK")]
         market: String,
         /// Return historical records instead of current value
         #[arg(long)]
         history: bool,
-        /// Start date for history (YYYY-MM-DD)
+        /// Start date for history (YYYY-MM-DD). Defaults to today if omitted.
         #[arg(long)]
         start: Option<String>,
-        /// End date for history (YYYY-MM-DD)
+        /// End date for history (YYYY-MM-DD). Defaults to today if omitted.
         #[arg(long)]
         end: Option<String>,
-        /// Granularity for history: daily weekly monthly (default: daily)
-        #[arg(long, default_value = "daily")]
+        /// NOTE: currently unused — the SDK does not expose a granularity parameter.
+        #[arg(long, default_value = "daily", hide = true)]
         granularity: String,
     },
 
@@ -221,10 +236,10 @@ pub enum Commands {
 
     /// Trading days and half-trading days for a market
     ///
-    /// Defaults to the next 30 days if no dates are provided.
+    /// Defaults to today + 30 days if no dates are provided.
     /// Example: longbridge trading-days HK --start 2024-01-01 --end 2024-03-31
     TradingDays {
-        /// Market: HK US CN SG (default: HK)
+        /// Market: HK | US | CN (aliases: SH SZ) | SG  (case-insensitive, default: HK)
         #[arg(default_value = "HK")]
         market: String,
         /// Start date (YYYY-MM-DD), defaults to today
@@ -240,11 +255,11 @@ pub enum Commands {
     /// Returns: symbol, name_en, name_cn for every listed security.
     /// Example: longbridge security-list HK
     SecurityList {
-        /// Market: HK US CN SG (default: HK)
+        /// Market: HK | US | CN (aliases: SH SZ) | SG  (case-insensitive, default: HK)
         #[arg(default_value = "HK")]
         market: String,
-        /// Board category (default: main)
-        #[arg(long, default_value = "main")]
+        /// NOTE: currently unused — the SDK only exposes the Overnight category.
+        #[arg(long, default_value = "main", hide = true)]
         category: String,
     },
 
@@ -272,10 +287,10 @@ pub enum Commands {
     ///
     /// Without --date: returns all available expiry dates.
     /// With --date: returns strike prices and call/put symbols for that expiry.
-    /// Example: longbridge option-chain AAPL
-    /// Example: longbridge option-chain AAPL --date 2024-01-19
+    /// Example: longbridge option-chain AAPL.US
+    /// Example: longbridge option-chain AAPL.US --date 2024-01-19
     OptionChain {
-        /// Underlying symbol (e.g. AAPL or TSLA.US)
+        /// Underlying symbol in <CODE>.<MARKET> format, e.g. AAPL.US
         symbol: String,
         /// Expiry date (YYYY-MM-DD). Omit to list all expiry dates.
         #[arg(long)]
@@ -371,21 +386,23 @@ pub enum Commands {
     /// Submit a buy order (prompts for confirmation)
     ///
     /// Returns order_id on success.
-    /// Order types: LO (limit) MO (market) ELO ALO ODD SLO LIT MIT
+    /// Order types: LO (limit) | MO (market) | ELO | ALO | ODD | SLO | LIT | MIT
+    ///   (case-insensitive)
     /// Example: longbridge buy TSLA.US 100 --price 250.00
     /// Example: longbridge buy 700.HK 1000 --price 300 --order-type ALO
     Buy {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
-        /// Number of shares/units to buy
+        /// Number of shares/units to buy (integer)
         quantity: u64,
-        /// Limit price (required for LO/ELO/ALO; omit for market orders)
+        /// Limit price as a decimal string, e.g. 250.00 (required for LO/ELO/ALO; omit for MO)
         #[arg(long)]
         price: Option<String>,
-        /// Order type: LO MO ELO ALO ODD SLO LIT MIT (default: LO)
+        /// Order type: LO | MO | ELO | ALO | ODD | SLO | LIT | MIT  (case-insensitive, default: LO)
         #[arg(long, default_value = "LO")]
         order_type: String,
-        /// Time in force: Day GoodTilCanceled GoodTilDate (default: Day)
+        /// Time in force: Day | GoodTilCanceled (alias: gtc) | GoodTilDate (alias: gtd)
+        /// (case-insensitive, default: Day)
         #[arg(long, default_value = "Day")]
         tif: String,
     },
@@ -397,15 +414,16 @@ pub enum Commands {
     Sell {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
-        /// Number of shares/units to sell
+        /// Number of shares/units to sell (integer)
         quantity: u64,
-        /// Limit price (required for LO/ELO/ALO; omit for market orders)
+        /// Limit price as a decimal string, e.g. 260.00 (required for LO/ELO/ALO; omit for MO)
         #[arg(long)]
         price: Option<String>,
-        /// Order type: LO MO ELO ALO ODD SLO LIT MIT (default: LO)
+        /// Order type: LO | MO | ELO | ALO | ODD | SLO | LIT | MIT  (case-insensitive, default: LO)
         #[arg(long, default_value = "LO")]
         order_type: String,
-        /// Time in force: Day GoodTilCanceled GoodTilDate (default: Day)
+        /// Time in force: Day | GoodTilCanceled (alias: gtc) | GoodTilDate (alias: gtd)
+        /// (case-insensitive, default: Day)
         #[arg(long, default_value = "Day")]
         tif: String,
     },
@@ -421,15 +439,15 @@ pub enum Commands {
 
     /// Modify quantity or price of a pending order (prompts for confirmation)
     ///
-    /// At least one of --qty or --price must be provided.
+    /// --qty is required. --price is optional (omit to keep current price).
     /// Example: longbridge replace 20240101-123456789 --qty 200 --price 255.00
     Replace {
         /// Order ID to modify
         order_id: String,
-        /// New quantity
+        /// New quantity (REQUIRED — integer number of shares/units)
         #[arg(long)]
         qty: Option<u64>,
-        /// New limit price
+        /// New limit price as a decimal string, e.g. 255.00 (optional)
         #[arg(long)]
         price: Option<String>,
     },
@@ -485,13 +503,13 @@ pub enum Commands {
     MaxQty {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
-        /// Order side: buy or sell
+        /// Order side: buy | sell  (case-insensitive, REQUIRED)
         #[arg(long)]
         side: String,
-        /// Limit price (required for LO orders)
+        /// Limit price as a decimal string, e.g. 250.00 (required for LO orders)
         #[arg(long)]
         price: Option<String>,
-        /// Order type: LO MO ELO ALO (default: LO)
+        /// Order type: LO | MO | ELO | ALO  (case-insensitive, default: LO)
         #[arg(long, default_value = "LO")]
         order_type: String,
     },

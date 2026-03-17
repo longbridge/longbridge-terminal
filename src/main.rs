@@ -106,7 +106,7 @@ async fn main() {
                 std::process::exit(1);
             }
             if let Err(e) = cli::dispatch(cmd, &cli.format).await {
-                eprintln!("Error: {e}");
+                eprintln!("Error: {e:#}");
                 std::process::exit(1);
             }
         }
