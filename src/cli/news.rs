@@ -80,7 +80,10 @@ pub async fn cmd_news(symbol: String, count: usize, format: &OutputFormat) -> Re
                 })
             })
             .collect();
-        println!("{}", serde_json::to_string_pretty(&records).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&records).unwrap_or_default()
+        );
         return Ok(());
     }
 
@@ -148,7 +151,9 @@ pub async fn cmd_filings(symbol: String, count: usize, format: &OutputFormat) ->
 
     let resp = crate::openapi::http_client()
         .request(Method::GET, "/v1/quote/filings")
-        .query_params(Query { symbol: symbol.clone() })
+        .query_params(Query {
+            symbol: symbol.clone(),
+        })
         .response::<Json<Response>>()
         .send()
         .await
@@ -176,7 +181,10 @@ pub async fn cmd_filings(symbol: String, count: usize, format: &OutputFormat) ->
                 })
             })
             .collect();
-        println!("{}", serde_json::to_string_pretty(&records).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&records).unwrap_or_default()
+        );
         return Ok(());
     }
 
@@ -204,7 +212,6 @@ pub async fn cmd_filings(symbol: String, count: usize, format: &OutputFormat) ->
             };
 
             vec![item.id.clone(), title, item.file_name.clone(), dt]
-
         })
         .collect();
 
@@ -264,7 +271,10 @@ pub async fn cmd_topics(symbol: String, count: usize, format: &OutputFormat) -> 
                 })
             })
             .collect();
-        println!("{}", serde_json::to_string_pretty(&records).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&records).unwrap_or_default()
+        );
         return Ok(());
     }
 
