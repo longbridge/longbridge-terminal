@@ -47,6 +47,7 @@ longbridge check
 longbridge news TSLA.US
 longbridge news-detail <id>
 longbridge filings AAPL.US
+longbridge filing-detail AAPL.US <id>
 longbridge topics TSLA.US
 longbridge topic-detail <id>
 

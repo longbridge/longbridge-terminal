@@ -118,11 +118,12 @@ longbridge subscriptions                            # Active real-time WebSocket
 ### News
 
 ```bash
-longbridge news TSLA.US [--count 20]        # Latest news articles for a symbol
-longbridge news-detail <id>                 # Full Markdown content of a news article
-longbridge filings AAPL.US [--count 20]     # Regulatory filings and announcements for a symbol
-longbridge topics TSLA.US [--count 20]      # Community discussion topics for a symbol
-longbridge topic-detail <id>               # Full Markdown content of a community topic
+longbridge news TSLA.US [--count 20]             # Latest news articles for a symbol
+longbridge news-detail <id>                      # Full Markdown content of a news article
+longbridge filings AAPL.US [--count 20]          # Regulatory filings and announcements for a symbol
+longbridge filing-detail AAPL.US <id>            # Full Markdown content of a filing (HTML/TXT)
+longbridge topics TSLA.US [--count 20]           # Community discussion topics for a symbol
+longbridge topic-detail <id>                     # Full Markdown content of a community topic
 ```
 
 ### Options & Warrants

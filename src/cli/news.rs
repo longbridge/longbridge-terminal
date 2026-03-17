@@ -153,7 +153,6 @@ pub async fn cmd_filings(symbol: String, count: usize, format: &OutputFormat) ->
         title: String,
         description: String,
         file_name: String,
-        file_urls: Vec<String>,
         #[serde(deserialize_with = "deserialize_str_or_i64")]
         publish_at: i64,
     }
@@ -195,7 +194,6 @@ pub async fn cmd_filings(symbol: String, count: usize, format: &OutputFormat) ->
                     "title": item.title,
                     "description": item.description,
                     "file_name": item.file_name,
-                    "file_urls": item.file_urls,
                     "publish_at": item.publish_at,
                 })
             })
@@ -221,6 +219,121 @@ pub async fn cmd_filings(symbol: String, count: usize, format: &OutputFormat) ->
         .collect();
 
     print_table(headers, rows, format);
+    Ok(())
+}
+
+const FILING_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
+
+/// Fetch and convert a regulatory filing to Markdown (HTML/TXT only).
+///
+/// Calls the filings list API to resolve the download URL for the given id,
+/// then fetches the document with browser-like headers and converts HTML to
+/// Markdown. TXT files are printed as-is. Unsupported formats (PDF, etc.) or
+/// HTTP errors (e.g. 403 from SEC EDGAR) fall back to printing the raw URL.
+pub async fn cmd_filing_detail(symbol: String, id: String) -> Result<()> {
+    use serde::Serialize;
+
+    #[derive(Debug, Deserialize)]
+    struct FilingItem {
+        id: String,
+        file_urls: Vec<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Response {
+        items: Vec<FilingItem>,
+    }
+
+    #[derive(Debug, Serialize)]
+    struct Query {
+        symbol: String,
+    }
+
+    let resp = crate::openapi::http_client()
+        .request(Method::GET, "/v1/quote/filings")
+        .query_params(Query { symbol })
+        .response::<Json<Response>>()
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let filing = resp
+        .0
+        .items
+        .into_iter()
+        .find(|item| item.id == id)
+        .ok_or_else(|| anyhow::anyhow!("Filing '{id}' not found"))?;
+
+    let url = filing
+        .file_urls
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("No download URL for filing '{id}'"))?;
+
+    let client = reqwest::Client::new();
+    let file_resp = client
+        .get(&url)
+        .header("User-Agent", FILING_UA)
+        .header(
+            "Accept",
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        )
+        .header("Accept-Language", "en-US,en;q=0.9")
+        .header("Accept-Encoding", "gzip, deflate, br")
+        .header("Cache-Control", "max-age=0")
+        .header("Connection", "keep-alive")
+        .header("Upgrade-Insecure-Requests", "1")
+        .header("Sec-Fetch-Dest", "document")
+        .header("Sec-Fetch-Mode", "navigate")
+        .header("Sec-Fetch-Site", "none")
+        .header("Sec-Fetch-User", "?1")
+        .send()
+        .await?;
+
+    if !file_resp.status().is_success() {
+        // Fall back to the raw URL (e.g. 403 from SEC EDGAR) so the caller can handle it.
+        println!("{url}");
+        return Ok(());
+    }
+
+    let content_type = file_resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_lowercase();
+
+    // Use URL path (before query string) for extension detection.
+    let path = url.split('?').next().unwrap_or(&url);
+    let is_text = content_type.contains("html")
+        || content_type.contains("text/plain")
+        || path.ends_with(".html")
+        || path.ends_with(".htm")
+        || path.ends_with(".txt");
+
+    if !is_text {
+        // Unsupported format (e.g. PDF): return the URL so the caller can handle it.
+        println!("{url}");
+        return Ok(());
+    }
+
+    let body = file_resp.text().await?;
+
+    let is_html = content_type.contains("html")
+        || path.ends_with(".html")
+        || path.ends_with(".htm");
+
+    let output = if is_html {
+        sec2md::convert(&body)
+    } else {
+        body
+    };
+
+    print!("{output}");
+
+    // Append the source URL so the caller can reference or verify the original document.
+    println!("\n---\nSource: {url}");
+
     Ok(())
 }
 

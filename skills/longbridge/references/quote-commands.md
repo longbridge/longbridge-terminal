@@ -26,6 +26,7 @@
 - [news](#news) - Latest news articles for a symbol
 - [news-detail](#news-detail) - Full article content
 - [filings](#filings) - Regulatory filings and announcements
+- [filing-detail](#filing-detail) - Full filing content as Markdown
 - [topics](#topics) - Community discussion topics
 - [topic-detail](#topic-detail) - Full topic content
 
@@ -453,12 +454,33 @@ longbridge filings SYMBOL [--count <N>] [--format json]
 
 - `--count`: Max filings to show (default 20)
 
-Returns: `id, title, file_name, publish_at`; JSON also includes `file_urls`
+Returns: `id, title, file_name, publish_at`. Use `filing-detail` to read the full content.
 
 ```bash
 longbridge filings AAPL.US
 longbridge filings 700.HK --count 5
 longbridge filings AAPL.US --format json
+```
+
+---
+
+## filing-detail
+
+Full Markdown content of a regulatory filing (HTML and TXT files only).
+
+Fetches the document via the filing's download URL using browser-like headers to
+bypass collector restrictions (e.g. SEC EDGAR rate limiting), then converts HTML
+to Markdown. TXT files are printed as-is. For unsupported formats (e.g. PDF,
+common in HK and A-share filings), the raw download URL is printed so the caller
+can handle it independently.
+
+```bash
+longbridge filing-detail SYMBOL ID
+```
+
+```bash
+longbridge filing-detail AAPL.US 580265529766123777
+longbridge filing-detail 700.HK abc123
 ```
 
 ---
