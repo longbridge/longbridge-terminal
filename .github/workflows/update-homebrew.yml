@@ -1,0 +1,160 @@
+name: Update Homebrew Tap
+
+on:
+  workflow_run:
+    workflows: ["Release"]
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to use (e.g. v0.7.0)"
+        required: true
+        type: string
+
+jobs:
+  update-homebrew:
+    name: Open PR on homebrew-tap
+    runs-on: ubuntu-latest
+    # For workflow_run: only run after a successful tag release (not branch builds)
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        startsWith(github.event.workflow_run.head_branch, 'v')
+      )
+
+    steps:
+      - name: Resolve release tag
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${{ github.event.workflow_run.head_branch }}"
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Download release artifacts and compute SHA256
+        id: checksums
+        run: |
+          BASE_URL="https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}"
+
+          for PLATFORM in darwin-amd64 darwin-arm64 linux-amd64 linux-arm64; do
+            FILE="longbridge-terminal-${PLATFORM}.tar.gz"
+            URL="${BASE_URL}/${FILE}"
+
+            # Retry up to 5 times; release assets may not be immediately available
+            for i in {1..5}; do
+              if curl -fsSL --retry 3 -o "/tmp/${FILE}" "${URL}"; then
+                break
+              fi
+              echo "Attempt $i failed for ${FILE}, retrying in 15s..."
+              sleep 15
+            done
+
+            SHA=$(sha256sum "/tmp/${FILE}" | awk '{print $1}')
+            KEY="${PLATFORM//-/_}_sha256"
+            echo "${KEY}=${SHA}" >> "$GITHUB_OUTPUT"
+            echo "${PLATFORM}: ${SHA}"
+          done
+
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v4
+        with:
+          repository: longbridge/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update formula
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+          DARWIN_AMD64_SHA256: ${{ steps.checksums.outputs.darwin_amd64_sha256 }}
+          DARWIN_ARM64_SHA256: ${{ steps.checksums.outputs.darwin_arm64_sha256 }}
+          LINUX_AMD64_SHA256: ${{ steps.checksums.outputs.linux_amd64_sha256 }}
+          LINUX_ARM64_SHA256: ${{ steps.checksums.outputs.linux_arm64_sha256 }}
+          REPO: ${{ github.repository }}
+        run: |
+          python3 - <<'PYEOF'
+          import re, os
+
+          formula_path = "homebrew-tap/Formula/longbridge-terminal.rb"
+          version  = os.environ["VERSION"]
+          tag      = os.environ["TAG"]
+          repo     = os.environ["REPO"]
+          base_url = f"https://github.com/{repo}/releases/download/{tag}"
+
+          sha_map = {
+              "darwin-amd64": os.environ["DARWIN_AMD64_SHA256"],
+              "darwin-arm64": os.environ["DARWIN_ARM64_SHA256"],
+              "linux-amd64":  os.environ["LINUX_AMD64_SHA256"],
+              "linux-arm64":  os.environ["LINUX_ARM64_SHA256"],
+          }
+
+          with open(formula_path) as f:
+              content = f.read()
+
+          # Update version line
+          content = re.sub(r'(version\s+")[^"]*(")', rf'\g<1>{version}\g<2>', content)
+
+          for platform, sha in sha_map.items():
+              new_url = f"{base_url}/longbridge-terminal-{platform}.tar.gz"
+              # Replace url containing this platform identifier
+              content = re.sub(
+                  rf'(url\s+")https://[^"]*{re.escape(platform)}[^"]*(")',
+                  rf'\g<1>{new_url}\g<2>',
+                  content,
+              )
+              # Replace sha256 on the line immediately after a matching url
+              content = re.sub(
+                  rf'(url\s+"[^"]*{re.escape(platform)}[^"]*"\n(\s*))sha256\s+"[0-9a-f]{{64}}"',
+                  rf'\g<1>\g<2>sha256 "{sha}"',
+                  content,
+              )
+
+          with open(formula_path, "w") as f:
+              f.write(content)
+
+          print("Formula updated successfully")
+          PYEOF
+
+          echo "--- Updated formula ---"
+          cat homebrew-tap/Formula/longbridge-terminal.rb
+
+      - name: Create pull request
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          cd homebrew-tap
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          BRANCH="bump/longbridge-terminal-${VERSION}"
+          git checkout -b "$BRANCH"
+          git add Formula/longbridge-terminal.rb
+
+          if git diff --cached --quiet; then
+            echo "No changes detected — formula is already up to date"
+            exit 0
+          fi
+
+          git commit -m "chore: bump longbridge-terminal to ${VERSION}"
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --repo longbridge/homebrew-tap \
+            --base main \
+            --head "$BRANCH" \
+            --title "chore: bump longbridge-terminal to ${VERSION}" \
+            --body "Automated version bump triggered by [release workflow](https://github.com/${REPO}/actions/runs/${RUN_ID}).
+
+          **Changes:**
+          - Version: \`${VERSION}\`
+          - Updated download URLs and SHA256 checksums for all platforms"
