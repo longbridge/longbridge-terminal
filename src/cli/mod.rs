@@ -180,7 +180,7 @@ pub enum Commands {
     ///   `outstanding_qty`  `outstanding_ratio`  premium  `itm_otm`
     ///   `warrant_delta`  `call_price`  `to_call_price`  `effective_leverage`
     ///   `leverage_ratio`  `conversion_ratio`  `balance_point`
-    /// Example: longbridge calc-index TSLA.US AAPL.US --index pe,pb,turnover_rate
+    /// Example: longbridge calc-index TSLA.US AAPL.US --index pe,pb,`turnover_rate`
     CalcIndex {
         /// One or more symbols in <CODE>.<MARKET> format
         symbols: Vec<String>,

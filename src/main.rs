@@ -27,7 +27,7 @@ mod views;
 extern crate rust_i18n;
 i18n!("locales");
 
-/// Command line arguments (kept for TUI compatibility via crate::Args)
+/// Command line arguments (kept for TUI compatibility via `crate::Args`)
 #[derive(Clone, Debug)]
 pub struct Args {
     pub logout: bool,

@@ -1,6 +1,6 @@
 # Longbridge Terminal
 
-AI-native CLI for the [Longbridge](https://open.longbridge.com) trading platform — real-time market data, portfolio, and trading.
+AI-native CLI for the [Longbridge](https://longbridge.com) trading platform — real-time market data, portfolio, and trading.
 
 Covers every Longbridge OpenAPI endpoint: real-time quotes, depth, K-lines, options, and warrants for market data; account balances, stock and fund positions for portfolio management; and order submission, modification, cancellation, and execution history for trading. Designed for scripting, AI-agent tool-calling, and daily trading workflows from the terminal.
 
@@ -41,6 +41,7 @@ longbridge positions --format json | jq '.[] | {symbol, quantity}'
 ```
 
 <!-- COMMANDS_START -->
+
 ### Quotes
 
 ```bash
@@ -101,6 +102,7 @@ longbridge fund-positions                              # Current fund (mutual fu
 longbridge margin-ratio TSLA.US                        # Margin ratio requirements for a symbol
 longbridge max-qty TSLA.US --side buy --price 250      # Estimate maximum buy or sell quantity given current account balance
 ```
+
 <!-- COMMANDS_END -->
 
 ### Symbol Format
