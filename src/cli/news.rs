@@ -7,6 +7,32 @@ use super::{output::print_table, OutputFormat};
 
 const NEWS_DETAIL_BASE: &str = "https://longbridge.com/news";
 
+/// Format a Unix timestamp as "YYYY-MM-DD HH:MM", falling back to the raw number on error.
+fn format_timestamp(ts: i64) -> String {
+    OffsetDateTime::from_unix_timestamp(ts).map_or_else(
+        |_| ts.to_string(),
+        |dt| {
+            format!(
+                "{}-{:02}-{:02} {:02}:{:02}",
+                dt.year(),
+                dt.month() as u8,
+                dt.day(),
+                dt.hour(),
+                dt.minute()
+            )
+        },
+    )
+}
+
+/// Return `s` truncated to `max` chars with a trailing `…`, or the original if it fits.
+fn truncate_display(s: &str, max: usize) -> String {
+    if s.chars().count() > max {
+        format!("{}…", s.chars().take(max).collect::<String>())
+    } else {
+        s.to_owned()
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct NewsItem {
     id: String,
@@ -91,31 +117,10 @@ pub async fn cmd_news(symbol: String, count: usize, format: &OutputFormat) -> Re
     let rows = items
         .iter()
         .map(|item| {
-            let dt = OffsetDateTime::from_unix_timestamp(item.published_at)
-                .map_or_else(
-                    |_| item.published_at.to_string(),
-                    |dt| {
-                        format!(
-                            "{}-{:02}-{:02} {:02}:{:02}",
-                            dt.year(),
-                            dt.month() as u8,
-                            dt.day(),
-                            dt.hour(),
-                            dt.minute()
-                        )
-                    },
-                );
-
-            let title = if item.title.chars().count() > 70 {
-                format!("{}…", item.title.chars().take(70).collect::<String>())
-            } else {
-                item.title.clone()
-            };
-
             vec![
                 item.id.clone(),
-                title,
-                dt,
+                truncate_display(&item.title, 70),
+                format_timestamp(item.published_at),
                 item.likes_count.to_string(),
                 item.comments_count.to_string(),
             ]
@@ -194,28 +199,12 @@ pub async fn cmd_filings(symbol: String, count: usize, format: &OutputFormat) ->
     let rows = items
         .iter()
         .map(|item| {
-            let dt = OffsetDateTime::from_unix_timestamp(item.publish_at)
-                .map_or_else(
-                    |_| item.publish_at.to_string(),
-                    |dt| {
-                        format!(
-                            "{}-{:02}-{:02} {:02}:{:02}",
-                            dt.year(),
-                            dt.month() as u8,
-                            dt.day(),
-                            dt.hour(),
-                            dt.minute()
-                        )
-                    },
-                );
-
-            let title = if item.title.chars().count() > 60 {
-                format!("{}…", item.title.chars().take(60).collect::<String>())
-            } else {
-                item.title.clone()
-            };
-
-            vec![item.id.clone(), title, item.file_name.clone(), dt]
+            vec![
+                item.id.clone(),
+                truncate_display(&item.title, 60),
+                item.file_name.clone(),
+                format_timestamp(item.publish_at),
+            ]
         })
         .collect();
 
@@ -286,36 +275,15 @@ pub async fn cmd_topics(symbol: String, count: usize, format: &OutputFormat) -> 
     let rows = items
         .iter()
         .map(|item| {
-            let dt = OffsetDateTime::from_unix_timestamp(item.published_at)
-                .map_or_else(
-                    |_| item.published_at.to_string(),
-                    |dt| {
-                        format!(
-                            "{}-{:02}-{:02} {:02}:{:02}",
-                            dt.year(),
-                            dt.month() as u8,
-                            dt.day(),
-                            dt.hour(),
-                            dt.minute()
-                        )
-                    },
-                );
-
             let display = if item.title.is_empty() {
                 &item.description
             } else {
                 &item.title
             };
-            let title = if display.chars().count() > 60 {
-                format!("{}…", display.chars().take(60).collect::<String>())
-            } else {
-                display.clone()
-            };
-
             vec![
                 item.id.clone(),
-                title,
-                dt,
+                truncate_display(display, 60),
+                format_timestamp(item.published_at),
                 item.likes_count.to_string(),
                 item.comments_count.to_string(),
                 item.shares_count.to_string(),
@@ -363,4 +331,107 @@ pub async fn cmd_news_detail(id: String) -> Result<()> {
     let content = resp.text().await?;
     print!("{content}");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::Deserialize;
+
+    // Helper to drive `deserialize_str_or_i64` through a JSON value.
+    fn deser(json: &str) -> serde_json::Result<i64> {
+        #[derive(Deserialize)]
+        struct Wrapper(#[serde(deserialize_with = "deserialize_str_or_i64")] i64);
+        serde_json::from_str::<Wrapper>(json).map(|w| w.0)
+    }
+
+    // ── deserialize_str_or_i64 ───────────────────────────────────────────────
+
+    #[test]
+    fn deser_integer_literal() {
+        assert_eq!(deser("1700000000").unwrap(), 1_700_000_000);
+    }
+
+    #[test]
+    fn deser_negative_integer() {
+        assert_eq!(deser("-1").unwrap(), -1);
+    }
+
+    #[test]
+    fn deser_string_integer() {
+        assert_eq!(deser(r#""1700000000""#).unwrap(), 1_700_000_000);
+    }
+
+    #[test]
+    fn deser_string_negative() {
+        assert_eq!(deser(r#""-42""#).unwrap(), -42);
+    }
+
+    #[test]
+    fn deser_string_invalid_errors() {
+        assert!(deser(r#""not-a-number""#).is_err());
+    }
+
+    #[test]
+    fn deser_u64_too_large_errors() {
+        // u64::MAX cannot fit in i64.
+        let json = u64::MAX.to_string();
+        assert!(deser(&json).is_err());
+    }
+
+    // ── format_timestamp ────────────────────────────────────────────────────
+
+    #[test]
+    fn format_known_timestamp() {
+        // Unix 0 == 1970-01-01 00:00 UTC
+        assert_eq!(format_timestamp(0), "1970-01-01 00:00");
+    }
+
+    #[test]
+    fn format_realistic_timestamp() {
+        // 2024-01-15 07:50 UTC  →  1705305000
+        assert_eq!(format_timestamp(1_705_305_000), "2024-01-15 07:50");
+    }
+
+    #[test]
+    fn format_invalid_timestamp_falls_back_to_raw() {
+        // Values far outside the valid range produce an error from time::OffsetDateTime.
+        let ts = i64::MAX;
+        assert_eq!(format_timestamp(ts), ts.to_string());
+    }
+
+    // ── truncate_display ────────────────────────────────────────────────────
+
+    #[test]
+    fn truncate_short_string_unchanged() {
+        assert_eq!(truncate_display("hello", 10), "hello");
+    }
+
+    #[test]
+    fn truncate_exact_length_unchanged() {
+        let s = "a".repeat(10);
+        assert_eq!(truncate_display(&s, 10), s);
+    }
+
+    #[test]
+    fn truncate_long_string_adds_ellipsis() {
+        let s = "a".repeat(11);
+        let result = truncate_display(&s, 10);
+        assert!(result.ends_with('…'));
+        assert_eq!(result.chars().count(), 11); // 10 chars + ellipsis
+    }
+
+    #[test]
+    fn truncate_multibyte_chars() {
+        // Each Chinese character is one char but multiple bytes.
+        let s = "中文测试内容标题超过限制的长度"; // 14 chars
+        let result = truncate_display(s, 5);
+        assert!(result.starts_with("中文测试内"));
+        assert!(result.ends_with('…'));
+    }
+
+    #[test]
+    fn truncate_empty_string_unchanged() {
+        assert_eq!(truncate_display("", 5), "");
+    }
 }
