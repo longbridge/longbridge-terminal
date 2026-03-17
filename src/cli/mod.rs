@@ -58,7 +58,7 @@ pub enum Commands {
     /// Next command or TUI launch will trigger re-authentication.
     Logout,
 
-    /// Check session, region cache, and API endpoint connectivity
+    /// Check token validity, and API connectivity
     ///
     /// Shows token status, cached region, and latency to both Global and CN API endpoints.
     /// Does not require authentication.
@@ -266,13 +266,14 @@ pub enum Commands {
         end: Option<String>,
     },
 
-    /// Full list of securities available in a market
+    /// List of US overnight-eligible securities
     ///
-    /// Returns: symbol, `name_en`, `name_cn` for every listed security.
-    /// Example: longbridge security-list HK
+    /// Returns securities that can be traded in the US overnight session.
+    /// Only the US market is supported (Longbridge API limitation).
+    /// Example: longbridge security-list US
     SecurityList {
-        /// Market: HK | US | CN (aliases: SH SZ) | SG  (case-insensitive, default: HK)
-        #[arg(default_value = "HK")]
+        /// Market: only US is supported (overnight category)
+        #[arg(default_value = "US")]
         market: String,
         /// NOTE: currently unused — the SDK only exposes the Overnight category.
         #[arg(long, default_value = "main", hide = true)]
@@ -591,6 +592,15 @@ pub enum Commands {
 
 #[derive(Subcommand)]
 pub enum WatchlistCmd {
+    /// Show securities in a specific watchlist group (by ID or name)
+    ///
+    /// Example: longbridge watchlist show 123
+    /// Example: longbridge watchlist show "Tech Stocks"
+    Show {
+        /// Group ID (numeric) or group name (string)
+        group: String,
+    },
+
     /// Create a new watchlist group
     ///
     /// Returns the new group ID.

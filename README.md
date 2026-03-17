@@ -6,11 +6,10 @@ Covers every Longbridge OpenAPI endpoint: real-time quotes, depth, K-lines, opti
 
 ```bash
 $ longbridge static NVDA.US
-+---------+--------------------+----------+----------+----------+--------------+--------------+--------------------+--------------------+-------------------+----------------+
-| Symbol  | Name (EN)          | Exchange | Currency | Lot Size | Total Shares | Circ. Shares | EPS                | EPS TTM            | BPS               | Dividend Yield |
-+============================================================================================================================================================================+
-| NVDA.US | NVIDIA Corporation | NASD     | USD      | 1        | 24300000000  | 23501828621  | 4.9410288065843621 | 4.9410288065843621 | 6.472962962962963 | 0.04           |
-+---------+--------------------+----------+----------+----------+--------------+--------------+--------------------+--------------------+-------------------+----------------+
+| Symbol  | Last    | Prev Close | Open    | High    | Low     | Volume    | Turnover        | Status |
+|---------|---------|------------|---------|---------|---------|-----------|-----------------|--------|
+| TSLA.US | 395.560 | 391.200    | 396.220 | 403.730 | 394.420 | 58068343  | 23138752546.000 | Normal |
+| NVDA.US | 183.220 | 180.250    | 182.970 | 188.880 | 181.410 | 217307380 | 40023702698.000 | Normal |
 
 $ longbridge quote TSLA.US NVDA.US --format json
 [
@@ -91,29 +90,29 @@ longbridge positions --format json | jq '.[] | {symbol, quantity}'
 ### Diagnostics
 
 ```bash
-longbridge check   # Verify token (via market-temp API), show region cache, and probe Global/CN endpoint latency
+longbridge check   # Check token validity, and API connectivity
 ```
 
 ### Quotes
 
 ```bash
-longbridge quote TSLA.US 700.HK                                       # Real-time quotes for one or more symbols
-longbridge depth TSLA.US                                              # Level 2 order book depth (bid/ask ladder)
-longbridge brokers 700.HK                                             # Broker queue at each price level (HK market)
-longbridge trades TSLA.US [--count 50]                                # Recent tick-by-tick trades
-longbridge intraday TSLA.US                                           # Intraday minute-by-minute price and volume lines for today
-longbridge kline TSLA.US [--period day] [--count 100]                 # OHLCV candlestick (K-line) data
-longbridge kline-history TSLA.US --start 2024-01-01 --end 2024-12-31 # Historical OHLCV candlestick data within a date range
-longbridge static TSLA.US                                             # Static reference info for one or more symbols
-longbridge calc-index TSLA.US --index pe,pb,eps                       # Calculated financial indexes (PE, PB, EPS, turnover rate, etc.)
-longbridge capital-flow TSLA.US                                       # Intraday capital flow time series (large/medium/small money in vs out)
-longbridge capital-dist TSLA.US                                       # Capital distribution snapshot (large/medium/small inflow and outflow)
-longbridge market-temp [HK|US|CN|SG]                                  # Market sentiment temperature index (0–100, higher = more bullish)
-longbridge trading-session                                            # Trading session schedule (open/close times) for all markets
-longbridge trading-days HK                                            # Trading days and half-trading days for a market
-longbridge security-list HK                                           # Full list of securities available in a market
-longbridge participants                                               # Market maker (participant) broker IDs and names
-longbridge subscriptions                                              # Active real-time WebSocket subscriptions for this session
+longbridge quote TSLA.US 700.HK                     # Real-time quotes for one or more symbols
+longbridge depth TSLA.US                            # Level 2 order book depth (bid/ask ladder)
+longbridge brokers 700.HK                           # Broker queue at each price level (HK market)
+longbridge trades TSLA.US [--count 50]              # Recent tick-by-tick trades
+longbridge intraday TSLA.US                         # Intraday minute-by-minute price and volume lines for today
+longbridge kline TSLA.US [--period day]             # OHLCV candlestick (K-line) data
+longbridge kline-history TSLA.US --start 2024-01-01 # Historical OHLCV candlestick data within a date range
+longbridge static TSLA.US                           # Static reference info for one or more symbols
+longbridge calc-index TSLA.US --index pe,pb,eps     # Calculated financial indexes (PE, PB, EPS, turnover rate, etc.)
+longbridge capital-flow TSLA.US                     # Intraday capital flow time series (large/medium/small money in vs out)
+longbridge capital-dist TSLA.US                     # Capital distribution snapshot (large/medium/small inflow and outflow)
+longbridge market-temp [HK|US|CN|SG]                # Market sentiment temperature index (0–100, higher = more bullish)
+longbridge trading-session                          # Trading session schedule (open/close times) for all markets
+longbridge trading-days HK                          # Trading days and half-trading days for a market
+longbridge security-list HK                         # Full list of securities available in a market
+longbridge participants                             # Market maker (participant) broker IDs and names
+longbridge subscriptions                            # Active real-time WebSocket subscriptions for this session
 ```
 
 ### News
@@ -140,10 +139,11 @@ longbridge warrant-issuers                        # Warrant issuer list (HK mark
 ### Watchlist
 
 ```bash
-longbridge watchlist                                             # List watchlist groups, or create/update/delete a group
-longbridge watchlist create "My Portfolio"                       # Create a new watchlist group
-longbridge watchlist update <id> --add TSLA.US --remove AAPL.US  # Add/remove securities in a group, or rename it
-longbridge watchlist delete <id>                                 # Delete a watchlist group
+longbridge watchlist                               # List watchlist groups, or create/update/delete a group
+longbridge watchlist create "My Portfolio"         # Create a new watchlist group
+longbridge watchlist update <id> --add TSLA.US     # Add securities in a group
+longbridge watchlist update <id> --remove AAPL.US  # Remove securities from a group
+longbridge watchlist delete <id>                   # Delete a watchlist group
 ```
 
 ### Trading
@@ -190,8 +190,8 @@ claude> Show me recent 5 days performance of NVDA and TSLA
 
 ⏺ Bash(longbridge kline TSLA.US --period day --count 5 & longbridge kline NVDA.US --period day --count 5 & wait)
   ⎿  Authentication failed: oauth error: failed to refresh token: Failed to parse server response
-     +---------------------+---------+---------+---------+---------+----------+-----------------+
      | Time                | Open    | High    | Low     | Close   | Volume   | Turnover        |
+     |---------------------|---------|---------|---------|---------|----------|-----------------|
      … +11 lines (ctrl+o to expand)
 
 ⏺ It seems NVDA failed to authenticate (token refresh issue). TSLA data loaded fine. Here's what we have:

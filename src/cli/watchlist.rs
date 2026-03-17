@@ -8,6 +8,7 @@ use super::{api::QuoteApi, output::print_table, OutputFormat, WatchlistCmd};
 pub async fn cmd_watchlist(cmd: Option<WatchlistCmd>, format: &OutputFormat) -> Result<()> {
     match cmd {
         None => cmd_list(format).await,
+        Some(WatchlistCmd::Show { group }) => cmd_show(group, format).await,
         Some(WatchlistCmd::Create { name }) => cmd_create(name).await,
         Some(WatchlistCmd::Delete { id, purge }) => cmd_delete(id, purge).await,
         Some(WatchlistCmd::Update {
@@ -53,6 +54,49 @@ async fn cmd_list(format: &OutputFormat) -> Result<()> {
                     .collect();
                 print_table(headers, rows, &OutputFormat::Table);
             }
+        }
+    }
+    Ok(())
+}
+
+async fn cmd_show(group: String, format: &OutputFormat) -> Result<()> {
+    let ctx = crate::openapi::quote();
+    let groups = ctx.watchlist().await?;
+
+    // Match by numeric ID first, then fall back to name (case-insensitive)
+    let matched = if let Ok(id) = group.parse::<i64>() {
+        groups.into_iter().find(|g| g.id == id)
+    } else {
+        let lower = group.to_lowercase();
+        groups.into_iter().find(|g| g.name.to_lowercase() == lower)
+    };
+
+    let Some(g) = matched else {
+        anyhow::bail!("Watchlist group not found: {group}");
+    };
+
+    match format {
+        OutputFormat::Json => {
+            let val = serde_json::json!({
+                "id": g.id,
+                "name": g.name,
+                "securities": g.securities.iter().map(|s| serde_json::json!({
+                    "symbol": s.symbol,
+                    "name": s.name,
+                    "market": format!("{:?}", s.market),
+                })).collect::<Vec<_>>(),
+            });
+            println!("{}", serde_json::to_string_pretty(&val)?);
+        }
+        OutputFormat::Table => {
+            println!("Group: {} (ID: {})", g.name, g.id);
+            let headers = &["Symbol", "Name", "Market"];
+            let rows: Vec<Vec<String>> = g
+                .securities
+                .iter()
+                .map(|s| vec![s.symbol.clone(), s.name.clone(), format!("{:?}", s.market)])
+                .collect();
+            print_table(headers, rows, &OutputFormat::Table);
         }
     }
     Ok(())

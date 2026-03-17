@@ -12,6 +12,24 @@ Returns all groups with their contained securities.
 
 ---
 
+## Show a Specific Watchlist Group
+
+```bash
+longbridge watchlist show <ID|NAME> [--format json]
+```
+
+Filter by numeric group ID or group name (case-insensitive).
+
+```bash
+longbridge watchlist show 123
+longbridge watchlist show "Tech Stocks"
+longbridge watchlist show tech stocks   # case-insensitive name match
+```
+
+Output: the group header and its securities table (or JSON object).
+
+---
+
 ## Create a Watchlist Group
 
 ```bash
