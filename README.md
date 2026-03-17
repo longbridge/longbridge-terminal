@@ -66,9 +66,12 @@ Uses **OAuth 2.0** via the Longbridge SDK — no manual token management require
 ```bash
 longbridge login    # Opens browser for OAuth, saves token to ~/.longbridge/terminal/.openapi-session
 longbridge logout   # Clear saved token
+longbridge check    # Verify token, region, and API endpoint connectivity
 ```
 
 Token is shared between CLI and TUI. After `login`, all commands work without re-authenticating.
+
+The CLI auto-detects China Mainland on each startup by probing `geotest.lbkrs.com` in the background and caches the result. If detected, CN API endpoints are used automatically on the next run.
 
 ## CLI Usage
 
@@ -84,6 +87,12 @@ longbridge positions --format json | jq '.[] | {symbol, quantity}'
 ```
 
 <!-- COMMANDS_START -->
+
+### Diagnostics
+
+```bash
+longbridge check   # Verify token (via market-temp API), show region cache, and probe Global/CN endpoint latency
+```
 
 ### Quotes
 

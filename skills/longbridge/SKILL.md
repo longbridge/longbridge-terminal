@@ -12,7 +12,10 @@ A CLI that wraps all Longbridge OpenAPI endpoints. Supports Hong Kong (HK), US, 
 ```bash
 longbridge login    # Opens browser OAuth flow; token saved to ~/.longbridge/terminal/.openapi-session
 longbridge logout   # Clear token
+longbridge check    # Verify token, region, and API endpoint connectivity (no auth required)
 ```
+
+The CLI auto-detects China Mainland by probing `geotest.lbkrs.com` on each startup (background, non-blocking). The result is cached in `~/.longbridge-openapi/region-cache`; if CN, all API calls use CN endpoints automatically on the next run.
 
 ## Symbol Format
 
@@ -37,6 +40,9 @@ All symbols: `<CODE>.<MARKET>`
 ### Most Common Commands
 
 ```bash
+# Diagnostics
+longbridge check
+
 # News, filings, and community topics
 longbridge news TSLA.US
 longbridge news-detail <id>
