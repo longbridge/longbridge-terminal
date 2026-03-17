@@ -31,7 +31,7 @@ fn get_api_language() -> longbridge::Language {
 /// Returns quote receiver for caller to handle WebSocket events.
 pub async fn init_contexts(
 ) -> Result<impl tokio_stream::Stream<Item = longbridge::quote::PushEvent> + Send + Unpin> {
-    // Build OAuth client: loads token from ~/.longbridge/terminal/session-<client_id>
+    // Build OAuth client: loads token from ~/.longbridge/terminal/.openapi-session
     // or starts browser authorization. Token refresh is automatic inside the SDK.
     let oauth_result = longbridge::oauth::OAuthBuilder::new(crate::auth::OAUTH_CLIENT_ID)
         .callback_port(60355)

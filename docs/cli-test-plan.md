@@ -4,12 +4,12 @@
 
 The CLI layer has **three distinct testing concerns**:
 
-| Layer | What to test | Network required |
-|-------|-------------|-----------------|
-| Argument parsing | `clap` parses flags/args correctly | No |
-| Output formatting | `table`/`json`/`csv` renders mock data correctly | No |
-| Command dispatch | Handler calls the right API method with right args | No (via mock) |
-| Integration | End-to-end with real Longbridge API | Yes |
+| Layer             | What to test                                       | Network required |
+| ----------------- | -------------------------------------------------- | ---------------- |
+| Argument parsing  | `clap` parses flags/args correctly                 | No               |
+| Output formatting | `table`/`json`/`csv` renders mock data correctly   | No               |
+| Command dispatch  | Handler calls the right API method with right args | No (via mock)    |
+| Integration       | End-to-end with real Longbridge API                | Yes              |
 
 100% command coverage is achieved by combining the first three layers. Integration tests are gated behind a `#[cfg(feature = "integration")]` flag and are never run in CI without real credentials.
 
@@ -504,40 +504,40 @@ mod tests {
 
 **Required `render_*` functions** (one per command group):
 
-| Function | Input type | Formats tested |
-|----------|-----------|----------------|
-| `render_quotes` | `QuoteRow` | table, json, csv |
-| `render_depth` | `DepthRow` | table, json, csv |
-| `render_brokers` | `BrokerRow` | table, json, csv |
-| `render_trades` | `TradeRow` | table, json, csv |
-| `render_intraday` | `IntradayRow` | table, json, csv |
-| `render_klines` | `KlineRow` | table, json, csv |
-| `render_static_info` | `StaticInfoRow` | table, json, csv |
-| `render_calc_indexes` | `CalcIndexRow` | table, json, csv |
-| `render_capital_flow` | `CapitalFlowRow` | table, json, csv |
-| `render_capital_dist` | `CapitalDistRow` | table, json, csv |
-| `render_market_temp` | `MarketTempRow` | table, json, csv |
-| `render_trading_session` | `TradingSessionRow` | table, json, csv |
-| `render_trading_days` | `TradingDaysRow` | table, json, csv |
-| `render_security_list` | `SecurityRow` | table, json, csv |
-| `render_participants` | `ParticipantRow` | table, json, csv |
-| `render_subscriptions` | `SubscriptionRow` | table, json, csv |
-| `render_option_quotes` | `OptionQuoteRow` | table, json, csv |
-| `render_option_chain_dates` | `time::Date` | table, json, csv |
-| `render_option_chain_strikes` | `StrikeRow` | table, json, csv |
-| `render_warrant_quotes` | `WarrantQuoteRow` | table, json, csv |
-| `render_warrant_list` | `WarrantRow` | table, json, csv |
-| `render_warrant_issuers` | `IssuerRow` | table, json, csv |
-| `render_watchlist_groups` | `WatchlistGroupRow` | table, json, csv |
-| `render_orders` | `OrderRow` | table, json, csv |
-| `render_order_detail` | `OrderDetailRow` | table, json, csv |
-| `render_executions` | `ExecutionRow` | table, json, csv |
-| `render_balance` | `BalanceRow` | table, json, csv |
-| `render_cash_flow` | `CashFlowRow` | table, json, csv |
-| `render_positions` | `PositionRow` | table, json, csv |
-| `render_fund_positions` | `FundPositionRow` | table, json, csv |
-| `render_margin_ratio` | `MarginRatioRow` | table, json, csv |
-| `render_max_qty` | `MaxQtyRow` | table, json, csv |
+| Function                      | Input type          | Formats tested   |
+| ----------------------------- | ------------------- | ---------------- |
+| `render_quotes`               | `QuoteRow`          | table, json, csv |
+| `render_depth`                | `DepthRow`          | table, json, csv |
+| `render_brokers`              | `BrokerRow`         | table, json, csv |
+| `render_trades`               | `TradeRow`          | table, json, csv |
+| `render_intraday`             | `IntradayRow`       | table, json, csv |
+| `render_klines`               | `KlineRow`          | table, json, csv |
+| `render_static_info`          | `StaticInfoRow`     | table, json, csv |
+| `render_calc_indexes`         | `CalcIndexRow`      | table, json, csv |
+| `render_capital_flow`         | `CapitalFlowRow`    | table, json, csv |
+| `render_capital_dist`         | `CapitalDistRow`    | table, json, csv |
+| `render_market_temp`          | `MarketTempRow`     | table, json, csv |
+| `render_trading_session`      | `TradingSessionRow` | table, json, csv |
+| `render_trading_days`         | `TradingDaysRow`    | table, json, csv |
+| `render_security_list`        | `SecurityRow`       | table, json, csv |
+| `render_participants`         | `ParticipantRow`    | table, json, csv |
+| `render_subscriptions`        | `SubscriptionRow`   | table, json, csv |
+| `render_option_quotes`        | `OptionQuoteRow`    | table, json, csv |
+| `render_option_chain_dates`   | `time::Date`        | table, json, csv |
+| `render_option_chain_strikes` | `StrikeRow`         | table, json, csv |
+| `render_warrant_quotes`       | `WarrantQuoteRow`   | table, json, csv |
+| `render_warrant_list`         | `WarrantRow`        | table, json, csv |
+| `render_warrant_issuers`      | `IssuerRow`         | table, json, csv |
+| `render_watchlist_groups`     | `WatchlistGroupRow` | table, json, csv |
+| `render_orders`               | `OrderRow`          | table, json, csv |
+| `render_order_detail`         | `OrderDetailRow`    | table, json, csv |
+| `render_executions`           | `ExecutionRow`      | table, json, csv |
+| `render_balance`              | `BalanceRow`        | table, json, csv |
+| `render_cash_flow`            | `CashFlowRow`       | table, json, csv |
+| `render_positions`            | `PositionRow`       | table, json, csv |
+| `render_fund_positions`       | `FundPositionRow`   | table, json, csv |
+| `render_margin_ratio`         | `MarginRatioRow`    | table, json, csv |
+| `render_max_qty`              | `MaxQtyRow`         | table, json, csv |
 
 ---
 
@@ -826,7 +826,7 @@ async fn cmd_quote_propagates_api_error() {
 // tests/cli_integration.rs
 #![cfg(feature = "integration")]
 
-// Requires valid token in ~/.longbridge/terminal/session-*
+// Requires valid token in ~/.longbridge/terminal/.openapi-session
 // Run with: cargo test --features integration -- --test-threads=1
 
 #[tokio::test]
@@ -848,55 +848,55 @@ async fn integration_positions_no_panic() {
 
 ## Coverage matrix
 
-| Command | Parse | Format (table/json/csv) | Dispatch (mock) | Error path |
-|---------|-------|------------------------|-----------------|------------|
-| `login` | ✓ | — | — | — |
-| `logout` | ✓ | — | ✓ (file I/O) | ✓ |
-| `quote` | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `depth` | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `brokers` | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `trades` | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `intraday` | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `kline` | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `kline-history` | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `static` | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `calc-index` | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `capital-flow` | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `capital-dist` | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `market-temp` | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `trading-session` | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `trading-days` | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `security-list` | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `participants` | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `subscriptions` | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `option-quote` | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `option-chain` (list) | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `option-chain --date` | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `warrant-quote` | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `warrant-list` | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `warrant-issuers` | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `watchlist` (list) | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `watchlist create` | ✓ | — | ✓ | ✓ |
-| `watchlist delete` | ✓ | — | ✓ | ✓ |
-| `watchlist update` (add) | ✓ | — | ✓ | ✓ |
-| `watchlist update` (remove) | ✓ | — | ✓ | ✓ |
-| `watchlist update` (replace) | ✓ | — | ✓ | ✓ |
-| `orders` (today) | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `orders --history` | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `order <id>` | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `executions` | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `executions --history` | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `buy` | ✓ | — | ✓ | ✓ |
-| `sell` | ✓ | — | ✓ | ✓ |
-| `cancel` | ✓ | — | ✓ | ✓ |
-| `replace` | ✓ | — | ✓ | ✓ |
-| `balance` | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `cash-flow` | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `positions` | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `fund-positions` | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `margin-ratio` | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `max-qty` (buy) | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
-| `max-qty` (sell) | ✓ | ✓ / ✓ / ✓ | ✓ | ✓ |
+| Command                      | Parse | Format (table/json/csv) | Dispatch (mock) | Error path |
+| ---------------------------- | ----- | ----------------------- | --------------- | ---------- |
+| `login`                      | ✓     | —                       | —               | —          |
+| `logout`                     | ✓     | —                       | ✓ (file I/O)    | ✓          |
+| `quote`                      | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `depth`                      | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `brokers`                    | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `trades`                     | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `intraday`                   | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `kline`                      | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `kline-history`              | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `static`                     | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `calc-index`                 | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `capital-flow`               | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `capital-dist`               | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `market-temp`                | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `trading-session`            | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `trading-days`               | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `security-list`              | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `participants`               | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `subscriptions`              | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `option-quote`               | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `option-chain` (list)        | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `option-chain --date`        | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `warrant-quote`              | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `warrant-list`               | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `warrant-issuers`            | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `watchlist` (list)           | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `watchlist create`           | ✓     | —                       | ✓               | ✓          |
+| `watchlist delete`           | ✓     | —                       | ✓               | ✓          |
+| `watchlist update` (add)     | ✓     | —                       | ✓               | ✓          |
+| `watchlist update` (remove)  | ✓     | —                       | ✓               | ✓          |
+| `watchlist update` (replace) | ✓     | —                       | ✓               | ✓          |
+| `orders` (today)             | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `orders --history`           | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `order <id>`                 | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `executions`                 | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `executions --history`       | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `buy`                        | ✓     | —                       | ✓               | ✓          |
+| `sell`                       | ✓     | —                       | ✓               | ✓          |
+| `cancel`                     | ✓     | —                       | ✓               | ✓          |
+| `replace`                    | ✓     | —                       | ✓               | ✓          |
+| `balance`                    | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `cash-flow`                  | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `positions`                  | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `fund-positions`             | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `margin-ratio`               | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `max-qty` (buy)              | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
+| `max-qty` (sell)             | ✓     | ✓ / ✓ / ✓               | ✓               | ✓          |
 
 **Estimated test count**: ~200 tests across all layers (excluding integration).
 

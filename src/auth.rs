@@ -10,13 +10,13 @@ use std::path::PathBuf;
 /// OAuth client ID for the terminal (registered with Longbridge).
 pub const OAUTH_CLIENT_ID: &str = "fd52fbc5-02a9-47f5-ad30-0842c841aae9";
 
-/// Token file path used by longbridge SDK: `~/.longbridge/terminal/session-<client_id>`
+/// Token file path used by longbridge SDK: `~/.longbridge-openapi/tokens/<client_id>`
 fn token_file_path() -> Result<PathBuf> {
     Ok(dirs::home_dir()
         .ok_or_else(|| anyhow::anyhow!("Failed to get home directory"))?
-        .join(".longbridge")
-        .join("terminal")
-        .join(format!("session-{}", OAUTH_CLIENT_ID)))
+        .join(".longbridge-openapi")
+        .join("tokens")
+        .join(OAUTH_CLIENT_ID))
 }
 
 /// Clear the stored OAuth token (logout). Deletes the token file used by the longbridge SDK.

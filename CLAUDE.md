@@ -21,7 +21,7 @@ A Rust-based TUI (Terminal User Interface) stock trading terminal using the Long
 #### 1. `src/auth.rs` - Auth utilities
 
 - `clear_token()` - Clear stored OAuth token (logout). Deletes token file used by the SDK.
-- OAuth and token refresh are handled by the longbridge SDK: use `longbridge::oauth::OAuthBuilder` in `openapi::context::init_contexts()`. Token is loaded from `~/.longbridge/terminal/session-<client_id>` or browser flow is started; the SDK auto-refreshes the token.
+- OAuth and token refresh are handled by the longbridge SDK: use `longbridge::oauth::OAuthBuilder` in `openapi::context::init_contexts()`. Token is loaded from `~/.longbridge/terminal/.openapi-session` or browser flow is started; the SDK auto-refreshes the token.
 - Local callback server: default port `60355` (configurable via `OAuthBuilder::callback_port()`)
 
 #### 2. `src/openapi/` - OpenAPI Integration Layer
@@ -110,7 +110,7 @@ cargo fmt
 
 The application uses the longbridge SDK's built-in OAuth. On first run:
 
-1. `OAuthBuilder::build()` loads token from `~/.longbridge/terminal/session-<client_id>` or starts browser authorization
+1. `OAuthBuilder::build()` loads token from `~/.longbridge/terminal/.openapi-session` or starts browser authorization
 2. Token is persisted by the SDK; refresh is automatic (no manual expiry check)
 
 **No environment variables or manual configuration required!**
@@ -121,7 +121,7 @@ Requirements:
 - Browser access
 - Longbridge account (register at https://open.longbridge.com)
 
-**Token storage:** `~/.longbridge/terminal/session-<client_id>` (JSON file). Use `--logout` to clear.
+**Token storage:** `~/.longbridge/terminal/.openapi-session` (JSON file). Use `--logout` to clear.
 
 **Troubleshooting:**
 

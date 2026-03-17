@@ -25,7 +25,7 @@ AI agent tool-calling.\n\n\
 Symbol format: <CODE>.<MARKET>  e.g. TSLA.US  700.HK  600519.SH\n\
 Markets: HK (Hong Kong)  US (United States)  CN (China A-share)  SG (Singapore)\n\n\
 Authentication is shared between TUI and CLI. Run `longbridge login` once; the token \
-is stored at ~/.longbridge/terminal/session-<client_id> and reused automatically.\n\n\
+is stored at ~/.longbridge/terminal/.openapi-session and reused automatically.\n\n\
 Use --format json on any command for machine-readable output suitable for AI agents:\n\
   longbridge quote TSLA.US --format json\n\
   longbridge positions --format json | jq '.[] | {symbol, quantity}'")]
@@ -48,7 +48,7 @@ pub enum Commands {
     /// Authenticate via browser OAuth and save token for TUI and CLI
     ///
     /// Opens a browser for Longbridge OpenAPI authorization.
-    /// Token is stored at ~/.longbridge/terminal/session-<client_id> and shared with the TUI.
+    /// Token is stored at ~/.longbridge/terminal/.openapi-session and shared with the TUI.
     Login,
 
     /// Clear the locally stored OAuth token
@@ -57,7 +57,6 @@ pub enum Commands {
     Logout,
 
     // ── Quote ──────────────────────────────────────────────────────────────────
-
     /// Real-time quotes for one or more symbols
     ///
     /// Returns: symbol, last_done, prev_close, open, high, low, volume, turnover, trade_status.
@@ -166,7 +165,11 @@ pub enum Commands {
         /// One or more symbols in <CODE>.<MARKET> format
         symbols: Vec<String>,
         /// Comma-separated indexes to compute (default: pe,pb,eps,turnover_rate,total_market_value)
-        #[arg(long, value_delimiter = ',', default_value = "pe,pb,eps,turnover_rate,total_market_value")]
+        #[arg(
+            long,
+            value_delimiter = ',',
+            default_value = "pe,pb,eps,turnover_rate,total_market_value"
+        )]
         index: Vec<String>,
     },
 
@@ -256,7 +259,6 @@ pub enum Commands {
     Subscriptions,
 
     // ── Options & Warrants ──────────────────────────────────────────────────────
-
     /// Real-time quotes for option contracts
     ///
     /// Returns standard quote fields plus implied_volatility, delta, strike_price, expiry_date, contract_type.
@@ -304,7 +306,6 @@ pub enum Commands {
     WarrantIssuers,
 
     // ── Watchlist ───────────────────────────────────────────────────────────────
-
     /// List watchlist groups, or create/update/delete a group
     ///
     /// Without a subcommand, lists all groups and their securities.
@@ -318,7 +319,6 @@ pub enum Commands {
     },
 
     // ── Trade ───────────────────────────────────────────────────────────────────
-
     /// Today's orders, or historical orders with --history
     ///
     /// Returns: order_id, symbol, side, order_type, status, quantity, price,
@@ -577,11 +577,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
             granularity,
         } => quote::cmd_market_temp(&market, history, start, end, &granularity, format).await,
         Commands::TradingSession => quote::cmd_trading_session(format).await,
-        Commands::TradingDays {
-            market,
-            start,
-            end,
-        } => quote::cmd_trading_days(&market, start, end, format).await,
+        Commands::TradingDays { market, start, end } => {
+            quote::cmd_trading_days(&market, start, end, format).await
+        }
         Commands::SecurityList { market, category } => {
             quote::cmd_security_list(&market, &category, format).await
         }
