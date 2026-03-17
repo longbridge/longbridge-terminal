@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 
 pub mod api;
+pub mod check;
 pub mod news;
 pub mod output;
 pub mod quote;
@@ -56,6 +57,14 @@ pub enum Commands {
     ///
     /// Next command or TUI launch will trigger re-authentication.
     Logout,
+
+    /// Check session, region cache, and API endpoint connectivity
+    ///
+    /// Shows token status, cached region, and latency to both Global and CN API endpoints.
+    /// Does not require authentication.
+    /// Example: longbridge check
+    /// Example: longbridge check --format json
+    Check,
 
     /// Launch the interactive full-screen TUI (terminal UI)
     ///
@@ -747,7 +756,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
             price,
             order_type,
         } => trade::cmd_max_qty(symbol, &side, price, &order_type, format).await,
-        Commands::Login | Commands::Logout | Commands::Tui => unreachable!(),
+        Commands::Login | Commands::Logout | Commands::Tui | Commands::Check => unreachable!(),
     }
 }
 
