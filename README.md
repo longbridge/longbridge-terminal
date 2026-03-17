@@ -4,6 +4,41 @@ AI-native CLI for the [Longbridge](https://longbridge.com) trading platform — 
 
 Covers every Longbridge OpenAPI endpoint: real-time quotes, depth, K-lines, options, and warrants for market data; account balances, stock and fund positions for portfolio management; and order submission, modification, cancellation, and execution history for trading. Designed for scripting, AI-agent tool-calling, and daily trading workflows from the terminal.
 
+```bash
+$ longbridge static NVDA.US
++---------+--------------------+----------+----------+----------+--------------+--------------+--------------------+--------------------+-------------------+----------------+
+| Symbol  | Name (EN)          | Exchange | Currency | Lot Size | Total Shares | Circ. Shares | EPS                | EPS TTM            | BPS               | Dividend Yield |
++============================================================================================================================================================================+
+| NVDA.US | NVIDIA Corporation | NASD     | USD      | 1        | 24300000000  | 23501828621  | 4.9410288065843621 | 4.9410288065843621 | 6.472962962962963 | 0.04           |
++---------+--------------------+----------+----------+----------+--------------+--------------+--------------------+--------------------+-------------------+----------------+
+
+$ longbridge quote TSLA.US NVDA.US --format json
+[
+  {
+    "high": "403.730",
+    "last": "395.560",
+    "low": "394.420",
+    "open": "396.220",
+    "prev_close": "391.200",
+    "status": "Normal",
+    "symbol": "TSLA.US",
+    "turnover": "23138752546.000",
+    "volume": "58068343"
+  },
+  {
+    "high": "188.880",
+    "last": "183.220",
+    "low": "181.410",
+    "open": "182.970",
+    "prev_close": "180.250",
+    "status": "Normal",
+    "symbol": "NVDA.US",
+    "turnover": "40023702698.000",
+    "volume": "217307380"
+  }
+]
+```
+
 Also ships a full-screen TUI for interactive monitoring.
 
 [![asciicast](https://asciinema.org/a/785102.svg)](https://asciinema.org/a/785102)
