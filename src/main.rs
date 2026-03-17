@@ -34,7 +34,7 @@ pub struct Args {
 }
 
 fn print_cli_error(e: &anyhow::Error) {
-    use longbridge::{Error as LbError, httpclient::HttpClientError, wsclient::WsClientError};
+    use longbridge::{httpclient::HttpClientError, wsclient::WsClientError, Error as LbError};
 
     if let Some(lb_err) = e.downcast_ref::<LbError>() {
         match lb_err {

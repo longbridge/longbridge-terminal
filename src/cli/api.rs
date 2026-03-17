@@ -4,13 +4,12 @@ use longbridge::quote::{
     AdjustType, CalcIndex, Candlestick, CapitalDistributionResponse, CapitalFlowLine,
     HistoryMarketTemperatureResponse, IssuerInfo, MarketTemperature, MarketTradingDays,
     MarketTradingSession, OptionQuote, ParticipantInfo, Period, RequestUpdateWatchlistGroup,
-    Security, SecurityBrokers, SecurityCalcIndex, SecurityDepth, SecurityQuote,
-    SecurityStaticInfo, StrikePriceInfo, Subscription, Trade, WarrantInfo, WarrantQuote,
-    WatchlistGroup,
+    Security, SecurityBrokers, SecurityCalcIndex, SecurityDepth, SecurityQuote, SecurityStaticInfo,
+    StrikePriceInfo, Subscription, Trade, WarrantInfo, WarrantQuote, WatchlistGroup,
 };
 use longbridge::trade::{
-    AccountBalance, CashFlow, Execution, EstimateMaxPurchaseQuantityOptions,
-    EstimateMaxPurchaseQuantityResponse, FundPositionsResponse, GetCashFlowOptions,
+    AccountBalance, CashFlow, EstimateMaxPurchaseQuantityOptions,
+    EstimateMaxPurchaseQuantityResponse, Execution, FundPositionsResponse, GetCashFlowOptions,
     GetHistoryExecutionsOptions, GetHistoryOrdersOptions, GetTodayExecutionsOptions,
     GetTodayOrdersOptions, MarginRatio, Order, OrderDetail, ReplaceOrderOptions,
     StockPositionsResponse, SubmitOrderOptions, SubmitOrderResponse,
@@ -99,10 +98,8 @@ pub trait TradeApi: Send + Sync {
     async fn history_orders(&self, opts: GetHistoryOrdersOptions) -> Result<Vec<Order>>;
     async fn order_detail(&self, order_id: String) -> Result<OrderDetail>;
     async fn today_executions(&self, opts: GetTodayExecutionsOptions) -> Result<Vec<Execution>>;
-    async fn history_executions(
-        &self,
-        opts: GetHistoryExecutionsOptions,
-    ) -> Result<Vec<Execution>>;
+    async fn history_executions(&self, opts: GetHistoryExecutionsOptions)
+        -> Result<Vec<Execution>>;
     async fn submit_order(&self, opts: SubmitOrderOptions) -> Result<SubmitOrderResponse>;
     async fn cancel_order(&self, order_id: String) -> Result<()>;
     async fn replace_order(&self, opts: ReplaceOrderOptions) -> Result<()>;
@@ -178,7 +175,14 @@ impl QuoteApi for LbQuoteApi {
         use longbridge::quote::TradeSessions;
         Ok(self
             .ctx
-            .history_candlesticks_by_date(symbol, period, adjust, start, end, TradeSessions::Intraday)
+            .history_candlesticks_by_date(
+                symbol,
+                period,
+                adjust,
+                start,
+                end,
+                TradeSessions::Intraday,
+            )
             .await?)
     }
 
@@ -234,7 +238,10 @@ impl QuoteApi for LbQuoteApi {
         start: Date,
         end: Date,
     ) -> Result<HistoryMarketTemperatureResponse> {
-        Ok(self.ctx.history_market_temperature(market, start, end).await?)
+        Ok(self
+            .ctx
+            .history_market_temperature(market, start, end)
+            .await?)
     }
 
     async fn trading_session(&self) -> Result<Vec<MarketTradingSession>> {
@@ -275,7 +282,10 @@ impl QuoteApi for LbQuoteApi {
         symbol: String,
         expiry_date: Date,
     ) -> Result<Vec<StrikePriceInfo>> {
-        Ok(self.ctx.option_chain_info_by_date(symbol, expiry_date).await?)
+        Ok(self
+            .ctx
+            .option_chain_info_by_date(symbol, expiry_date)
+            .await?)
     }
 
     async fn warrant_quote(&self, symbols: Vec<String>) -> Result<Vec<WarrantQuote>> {
@@ -309,7 +319,10 @@ impl QuoteApi for LbQuoteApi {
 
     async fn create_watchlist_group(&self, name: String) -> Result<i64> {
         use longbridge::quote::RequestCreateWatchlistGroup;
-        Ok(self.ctx.create_watchlist_group(RequestCreateWatchlistGroup::new(name)).await?)
+        Ok(self
+            .ctx
+            .create_watchlist_group(RequestCreateWatchlistGroup::new(name))
+            .await?)
     }
 
     async fn delete_watchlist_group(&self, id: i64) -> Result<()> {

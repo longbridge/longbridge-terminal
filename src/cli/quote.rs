@@ -20,9 +20,7 @@ fn parse_period(s: &str) -> Result<Period> {
         "week" | "w" => Ok(Period::Week),
         "month" | "m" | "1mo" => Ok(Period::Month),
         "year" | "y" => Ok(Period::Year),
-        _ => bail!(
-            "Unknown period '{s}'. Use: 1m 5m 15m 30m 1h day week month year"
-        ),
+        _ => bail!("Unknown period '{s}'. Use: 1m 5m 15m 30m 1h day week month year"),
     }
 }
 
@@ -918,17 +916,42 @@ pub async fn cmd_warrant_issuers(format: &OutputFormat) -> Result<()> {
 
 // ─── Testable run_* functions ─────────────────────────────────────────────────
 
-pub async fn run_quote(api: &dyn QuoteApi, symbols: Vec<String>, format: &OutputFormat) -> Result<()> {
+pub async fn run_quote(
+    api: &dyn QuoteApi,
+    symbols: Vec<String>,
+    format: &OutputFormat,
+) -> Result<()> {
     if symbols.is_empty() {
         bail!("At least one symbol is required");
     }
     let quotes = api.quote(symbols).await?;
-    let headers = &["Symbol", "Last", "Prev Close", "Open", "High", "Low", "Volume", "Turnover", "Status"];
-    let rows = quotes.iter().map(|q| vec![
-        q.symbol.clone(), fmt_dec(q.last_done), fmt_dec(q.prev_close),
-        fmt_dec(q.open), fmt_dec(q.high), fmt_dec(q.low),
-        q.volume.to_string(), fmt_dec(q.turnover), format!("{:?}", q.trade_status),
-    ]).collect();
+    let headers = &[
+        "Symbol",
+        "Last",
+        "Prev Close",
+        "Open",
+        "High",
+        "Low",
+        "Volume",
+        "Turnover",
+        "Status",
+    ];
+    let rows = quotes
+        .iter()
+        .map(|q| {
+            vec![
+                q.symbol.clone(),
+                fmt_dec(q.last_done),
+                fmt_dec(q.prev_close),
+                fmt_dec(q.open),
+                fmt_dec(q.high),
+                fmt_dec(q.low),
+                q.volume.to_string(),
+                fmt_dec(q.turnover),
+                format!("{:?}", q.trade_status),
+            ]
+        })
+        .collect();
     print_table(headers, rows, format);
     Ok(())
 }
@@ -946,8 +969,30 @@ pub async fn run_depth(api: &dyn QuoteApi, symbol: String, format: &OutputFormat
         }
         OutputFormat::Table => {
             let headers = &["Position", "Price", "Volume", "Orders"];
-            let ask_rows: Vec<Vec<String>> = depth.asks.iter().map(|d| vec![d.position.to_string(), fmt_decimal(&d.price), d.volume.to_string(), d.order_num.to_string()]).collect();
-            let bid_rows: Vec<Vec<String>> = depth.bids.iter().map(|d| vec![d.position.to_string(), fmt_decimal(&d.price), d.volume.to_string(), d.order_num.to_string()]).collect();
+            let ask_rows: Vec<Vec<String>> = depth
+                .asks
+                .iter()
+                .map(|d| {
+                    vec![
+                        d.position.to_string(),
+                        fmt_decimal(&d.price),
+                        d.volume.to_string(),
+                        d.order_num.to_string(),
+                    ]
+                })
+                .collect();
+            let bid_rows: Vec<Vec<String>> = depth
+                .bids
+                .iter()
+                .map(|d| {
+                    vec![
+                        d.position.to_string(),
+                        fmt_decimal(&d.price),
+                        d.volume.to_string(),
+                        d.order_num.to_string(),
+                    ]
+                })
+                .collect();
             println!("Asks:");
             print_table(headers, ask_rows, &OutputFormat::Table);
             println!("Bids:");
@@ -970,8 +1015,34 @@ pub async fn run_brokers(api: &dyn QuoteApi, symbol: String, format: &OutputForm
         }
         OutputFormat::Table => {
             let headers = &["Position", "Broker IDs"];
-            let ask_rows: Vec<Vec<String>> = brokers.ask_brokers.iter().map(|b| vec![b.position.to_string(), b.broker_ids.iter().map(std::string::ToString::to_string).collect::<Vec<_>>().join(", ")]).collect();
-            let bid_rows: Vec<Vec<String>> = brokers.bid_brokers.iter().map(|b| vec![b.position.to_string(), b.broker_ids.iter().map(std::string::ToString::to_string).collect::<Vec<_>>().join(", ")]).collect();
+            let ask_rows: Vec<Vec<String>> = brokers
+                .ask_brokers
+                .iter()
+                .map(|b| {
+                    vec![
+                        b.position.to_string(),
+                        b.broker_ids
+                            .iter()
+                            .map(std::string::ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    ]
+                })
+                .collect();
+            let bid_rows: Vec<Vec<String>> = brokers
+                .bid_brokers
+                .iter()
+                .map(|b| {
+                    vec![
+                        b.position.to_string(),
+                        b.broker_ids
+                            .iter()
+                            .map(std::string::ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    ]
+                })
+                .collect();
             println!("Ask Brokers:");
             print_table(headers, ask_rows, &OutputFormat::Table);
             println!("Bid Brokers:");
@@ -981,10 +1052,26 @@ pub async fn run_brokers(api: &dyn QuoteApi, symbol: String, format: &OutputForm
     Ok(())
 }
 
-pub async fn run_trades(api: &dyn QuoteApi, symbol: String, count: usize, format: &OutputFormat) -> Result<()> {
+pub async fn run_trades(
+    api: &dyn QuoteApi,
+    symbol: String,
+    count: usize,
+    format: &OutputFormat,
+) -> Result<()> {
     let trades = api.trades(symbol, count).await?;
     let headers = &["Time", "Price", "Volume", "Direction", "Type"];
-    let rows = trades.iter().map(|t| vec![fmt_datetime(t.timestamp), fmt_dec(t.price), t.volume.to_string(), format!("{:?}", t.direction), t.trade_type.clone()]).collect();
+    let rows = trades
+        .iter()
+        .map(|t| {
+            vec![
+                fmt_datetime(t.timestamp),
+                fmt_dec(t.price),
+                t.volume.to_string(),
+                format!("{:?}", t.direction),
+                t.trade_type.clone(),
+            ]
+        })
+        .collect();
     print_table(headers, rows, format);
     Ok(())
 }
@@ -992,73 +1079,183 @@ pub async fn run_trades(api: &dyn QuoteApi, symbol: String, count: usize, format
 pub async fn run_intraday(api: &dyn QuoteApi, symbol: String, format: &OutputFormat) -> Result<()> {
     let lines = api.intraday(symbol).await?;
     let headers = &["Time", "Price", "Volume", "Turnover", "Avg Price"];
-    let rows = lines.iter().map(|l| vec![fmt_datetime(l.timestamp), fmt_dec(l.price), l.volume.to_string(), fmt_dec(l.turnover), fmt_dec(l.avg_price)]).collect();
+    let rows = lines
+        .iter()
+        .map(|l| {
+            vec![
+                fmt_datetime(l.timestamp),
+                fmt_dec(l.price),
+                l.volume.to_string(),
+                fmt_dec(l.turnover),
+                fmt_dec(l.avg_price),
+            ]
+        })
+        .collect();
     print_table(headers, rows, format);
     Ok(())
 }
 
-pub async fn run_kline(api: &dyn QuoteApi, symbol: String, period: Period, count: usize, adjust: AdjustType, format: &OutputFormat) -> Result<()> {
+pub async fn run_kline(
+    api: &dyn QuoteApi,
+    symbol: String,
+    period: Period,
+    count: usize,
+    adjust: AdjustType,
+    format: &OutputFormat,
+) -> Result<()> {
     let candles = api.candlesticks(symbol, period, count, adjust).await?;
     let headers = &["Time", "Open", "High", "Low", "Close", "Volume", "Turnover"];
-    let rows = candles.iter().map(|c| vec![fmt_datetime(c.timestamp), fmt_dec(c.open), fmt_dec(c.high), fmt_dec(c.low), fmt_dec(c.close), c.volume.to_string(), fmt_dec(c.turnover)]).collect();
+    let rows = candles
+        .iter()
+        .map(|c| {
+            vec![
+                fmt_datetime(c.timestamp),
+                fmt_dec(c.open),
+                fmt_dec(c.high),
+                fmt_dec(c.low),
+                fmt_dec(c.close),
+                c.volume.to_string(),
+                fmt_dec(c.turnover),
+            ]
+        })
+        .collect();
     print_table(headers, rows, format);
     Ok(())
 }
 
-pub async fn run_kline_history(api: &dyn QuoteApi, symbol: String, period: Period, adjust: AdjustType, start: Option<Date>, end: Option<Date>, format: &OutputFormat) -> Result<()> {
+pub async fn run_kline_history(
+    api: &dyn QuoteApi,
+    symbol: String,
+    period: Period,
+    adjust: AdjustType,
+    start: Option<Date>,
+    end: Option<Date>,
+    format: &OutputFormat,
+) -> Result<()> {
     let candles = if let (Some(s), Some(e)) = (start, end) {
-        api.history_candlesticks_by_date(symbol, period, adjust, Some(s), Some(e)).await?
+        api.history_candlesticks_by_date(symbol, period, adjust, Some(s), Some(e))
+            .await?
     } else {
-        api.history_candlesticks_by_offset(symbol, period, adjust, 100).await?
+        api.history_candlesticks_by_offset(symbol, period, adjust, 100)
+            .await?
     };
     let headers = &["Time", "Open", "High", "Low", "Close", "Volume", "Turnover"];
-    let rows = candles.iter().map(|c| vec![fmt_datetime(c.timestamp), fmt_dec(c.open), fmt_dec(c.high), fmt_dec(c.low), fmt_dec(c.close), c.volume.to_string(), fmt_dec(c.turnover)]).collect();
+    let rows = candles
+        .iter()
+        .map(|c| {
+            vec![
+                fmt_datetime(c.timestamp),
+                fmt_dec(c.open),
+                fmt_dec(c.high),
+                fmt_dec(c.low),
+                fmt_dec(c.close),
+                c.volume.to_string(),
+                fmt_dec(c.turnover),
+            ]
+        })
+        .collect();
     print_table(headers, rows, format);
     Ok(())
 }
 
-pub async fn run_static(api: &dyn QuoteApi, symbols: Vec<String>, format: &OutputFormat) -> Result<()> {
+pub async fn run_static(
+    api: &dyn QuoteApi,
+    symbols: Vec<String>,
+    format: &OutputFormat,
+) -> Result<()> {
     if symbols.is_empty() {
         bail!("At least one symbol is required");
     }
     let infos = api.static_info(symbols).await?;
     let headers = &["Symbol", "Name", "Exchange", "Currency", "Lot Size"];
-    let rows = infos.iter().map(|i| vec![i.symbol.clone(), i.name_en.clone(), i.exchange.clone(), i.currency.clone(), i.lot_size.to_string()]).collect();
+    let rows = infos
+        .iter()
+        .map(|i| {
+            vec![
+                i.symbol.clone(),
+                i.name_en.clone(),
+                i.exchange.clone(),
+                i.currency.clone(),
+                i.lot_size.to_string(),
+            ]
+        })
+        .collect();
     print_table(headers, rows, format);
     Ok(())
 }
 
-pub async fn run_calc_index(api: &dyn QuoteApi, symbols: Vec<String>, indexes: Vec<CalcIndex>, format: &OutputFormat) -> Result<()> {
+pub async fn run_calc_index(
+    api: &dyn QuoteApi,
+    symbols: Vec<String>,
+    indexes: Vec<CalcIndex>,
+    format: &OutputFormat,
+) -> Result<()> {
     if symbols.is_empty() {
         bail!("At least one symbol is required");
     }
     let results = api.calc_indexes(symbols, indexes).await?;
     let headers = &["Symbol", "Last Done", "Change Rate", "PE TTM", "PB"];
-    let rows = results.iter().map(|r| vec![r.symbol.clone(), fmt_decimal(&r.last_done), fmt_decimal(&r.change_rate), fmt_decimal(&r.pe_ttm_ratio), fmt_decimal(&r.pb_ratio)]).collect();
+    let rows = results
+        .iter()
+        .map(|r| {
+            vec![
+                r.symbol.clone(),
+                fmt_decimal(&r.last_done),
+                fmt_decimal(&r.change_rate),
+                fmt_decimal(&r.pe_ttm_ratio),
+                fmt_decimal(&r.pb_ratio),
+            ]
+        })
+        .collect();
     print_table(headers, rows, format);
     Ok(())
 }
 
-pub async fn run_capital_flow(api: &dyn QuoteApi, symbol: String, format: &OutputFormat) -> Result<()> {
+pub async fn run_capital_flow(
+    api: &dyn QuoteApi,
+    symbol: String,
+    format: &OutputFormat,
+) -> Result<()> {
     let flows = api.capital_flow(symbol).await?;
     let headers = &["Time", "Inflow"];
-    let rows = flows.iter().map(|f| vec![fmt_datetime(f.timestamp), fmt_dec(f.inflow)]).collect();
+    let rows = flows
+        .iter()
+        .map(|f| vec![fmt_datetime(f.timestamp), fmt_dec(f.inflow)])
+        .collect();
     print_table(headers, rows, format);
     Ok(())
 }
 
-pub async fn run_capital_dist(api: &dyn QuoteApi, symbol: String, format: &OutputFormat) -> Result<()> {
+pub async fn run_capital_dist(
+    api: &dyn QuoteApi,
+    symbol: String,
+    format: &OutputFormat,
+) -> Result<()> {
     let dist = api.capital_distribution(symbol).await?;
     let headers = &["Direction", "Large", "Medium", "Small"];
     let rows = vec![
-        vec!["Inflow".to_string(), fmt_dec(dist.capital_in.large), fmt_dec(dist.capital_in.medium), fmt_dec(dist.capital_in.small)],
-        vec!["Outflow".to_string(), fmt_dec(dist.capital_out.large), fmt_dec(dist.capital_out.medium), fmt_dec(dist.capital_out.small)],
+        vec![
+            "Inflow".to_string(),
+            fmt_dec(dist.capital_in.large),
+            fmt_dec(dist.capital_in.medium),
+            fmt_dec(dist.capital_in.small),
+        ],
+        vec![
+            "Outflow".to_string(),
+            fmt_dec(dist.capital_out.large),
+            fmt_dec(dist.capital_out.medium),
+            fmt_dec(dist.capital_out.small),
+        ],
     ];
     print_table(headers, rows, format);
     Ok(())
 }
 
-pub async fn run_market_temp_current(api: &dyn QuoteApi, market: Market, format: &OutputFormat) -> Result<()> {
+pub async fn run_market_temp_current(
+    api: &dyn QuoteApi,
+    market: Market,
+    format: &OutputFormat,
+) -> Result<()> {
     let temp = api.market_temperature(market).await?;
     let headers = &["Field", "Value"];
     let rows = vec![
@@ -1071,10 +1268,34 @@ pub async fn run_market_temp_current(api: &dyn QuoteApi, market: Market, format:
     Ok(())
 }
 
-pub async fn run_market_temp_history(api: &dyn QuoteApi, market: Market, start: Date, end: Date, format: &OutputFormat) -> Result<()> {
+pub async fn run_market_temp_history(
+    api: &dyn QuoteApi,
+    market: Market,
+    start: Date,
+    end: Date,
+    format: &OutputFormat,
+) -> Result<()> {
     let resp = api.history_market_temperature(market, start, end).await?;
-    let headers = &["Time", "Temperature", "Valuation", "Sentiment", "Description"];
-    let rows = resp.records.iter().map(|t| vec![fmt_datetime(t.timestamp), t.temperature.to_string(), t.valuation.to_string(), t.sentiment.to_string(), t.description.clone()]).collect();
+    let headers = &[
+        "Time",
+        "Temperature",
+        "Valuation",
+        "Sentiment",
+        "Description",
+    ];
+    let rows = resp
+        .records
+        .iter()
+        .map(|t| {
+            vec![
+                fmt_datetime(t.timestamp),
+                t.temperature.to_string(),
+                t.valuation.to_string(),
+                t.sentiment.to_string(),
+                t.description.clone(),
+            ]
+        })
+        .collect();
     print_table(headers, rows, format);
     Ok(())
 }
@@ -1085,28 +1306,54 @@ pub async fn run_trading_session(api: &dyn QuoteApi, format: &OutputFormat) -> R
     let mut rows = vec![];
     for s in &sessions {
         for ts in &s.trade_sessions {
-            rows.push(vec![format!("{:?}", s.market), format!("{:?}", ts.trade_session), ts.begin_time.to_string(), ts.end_time.to_string()]);
+            rows.push(vec![
+                format!("{:?}", s.market),
+                format!("{:?}", ts.trade_session),
+                ts.begin_time.to_string(),
+                ts.end_time.to_string(),
+            ]);
         }
     }
     print_table(headers, rows, format);
     Ok(())
 }
 
-pub async fn run_trading_days(api: &dyn QuoteApi, market: Market, start: Date, end: Date, format: &OutputFormat) -> Result<()> {
+pub async fn run_trading_days(
+    api: &dyn QuoteApi,
+    market: Market,
+    start: Date,
+    end: Date,
+    format: &OutputFormat,
+) -> Result<()> {
     let days = api.trading_days(market, start, end).await?;
     let headers = &["Trading Days", "Half Trading Days"];
     let rows = vec![vec![
-        days.trading_days.iter().map(|d| fmt_date(*d)).collect::<Vec<_>>().join(", "),
-        days.half_trading_days.iter().map(|d| fmt_date(*d)).collect::<Vec<_>>().join(", "),
+        days.trading_days
+            .iter()
+            .map(|d| fmt_date(*d))
+            .collect::<Vec<_>>()
+            .join(", "),
+        days.half_trading_days
+            .iter()
+            .map(|d| fmt_date(*d))
+            .collect::<Vec<_>>()
+            .join(", "),
     ]];
     print_table(headers, rows, format);
     Ok(())
 }
 
-pub async fn run_security_list(api: &dyn QuoteApi, market: Market, format: &OutputFormat) -> Result<()> {
+pub async fn run_security_list(
+    api: &dyn QuoteApi,
+    market: Market,
+    format: &OutputFormat,
+) -> Result<()> {
     let securities = api.security_list(market).await?;
     let headers = &["Symbol", "Name (EN)", "Name (CN)"];
-    let rows = securities.iter().map(|s| vec![s.symbol.clone(), s.name_en.clone(), s.name_cn.clone()]).collect();
+    let rows = securities
+        .iter()
+        .map(|s| vec![s.symbol.clone(), s.name_en.clone(), s.name_cn.clone()])
+        .collect();
     print_table(headers, rows, format);
     Ok(())
 }
@@ -1114,7 +1361,20 @@ pub async fn run_security_list(api: &dyn QuoteApi, market: Market, format: &Outp
 pub async fn run_participants(api: &dyn QuoteApi, format: &OutputFormat) -> Result<()> {
     let participants = api.participants().await?;
     let headers = &["Broker ID", "Name (EN)", "Name (CN)"];
-    let rows = participants.iter().map(|p| vec![p.broker_ids.iter().map(std::string::ToString::to_string).collect::<Vec<_>>().join(", "), p.name_en.clone(), p.name_cn.clone()]).collect();
+    let rows = participants
+        .iter()
+        .map(|p| {
+            vec![
+                p.broker_ids
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                p.name_en.clone(),
+                p.name_cn.clone(),
+            ]
+        })
+        .collect();
     print_table(headers, rows, format);
     Ok(())
 }
@@ -1122,23 +1382,55 @@ pub async fn run_participants(api: &dyn QuoteApi, format: &OutputFormat) -> Resu
 pub async fn run_subscriptions(api: &dyn QuoteApi, format: &OutputFormat) -> Result<()> {
     let subs = api.subscriptions().await?;
     let headers = &["Symbol", "Sub Types", "Candlestick Periods"];
-    let rows = subs.iter().map(|s| vec![s.symbol.clone(), format!("{:?}", s.sub_types), s.candlesticks.iter().map(|p| format!("{p:?}")).collect::<Vec<_>>().join(", ")]).collect();
+    let rows = subs
+        .iter()
+        .map(|s| {
+            vec![
+                s.symbol.clone(),
+                format!("{:?}", s.sub_types),
+                s.candlesticks
+                    .iter()
+                    .map(|p| format!("{p:?}"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            ]
+        })
+        .collect();
     print_table(headers, rows, format);
     Ok(())
 }
 
-pub async fn run_option_quote(api: &dyn QuoteApi, symbols: Vec<String>, format: &OutputFormat) -> Result<()> {
+pub async fn run_option_quote(
+    api: &dyn QuoteApi,
+    symbols: Vec<String>,
+    format: &OutputFormat,
+) -> Result<()> {
     if symbols.is_empty() {
         bail!("At least one symbol is required");
     }
     let quotes = api.option_quote(symbols).await?;
     let headers = &["Symbol", "Last", "Strike", "Expiry", "Type"];
-    let rows = quotes.iter().map(|q| vec![q.symbol.clone(), fmt_dec(q.last_done), fmt_dec(q.strike_price), fmt_date(q.expiry_date), format!("{:?}", q.contract_type)]).collect();
+    let rows = quotes
+        .iter()
+        .map(|q| {
+            vec![
+                q.symbol.clone(),
+                fmt_dec(q.last_done),
+                fmt_dec(q.strike_price),
+                fmt_date(q.expiry_date),
+                format!("{:?}", q.contract_type),
+            ]
+        })
+        .collect();
     print_table(headers, rows, format);
     Ok(())
 }
 
-pub async fn run_option_chain_dates(api: &dyn QuoteApi, symbol: String, format: &OutputFormat) -> Result<()> {
+pub async fn run_option_chain_dates(
+    api: &dyn QuoteApi,
+    symbol: String,
+    format: &OutputFormat,
+) -> Result<()> {
     let dates = api.option_chain_expiry_date_list(symbol).await?;
     let headers = &["Expiry Date"];
     let rows = dates.iter().map(|d| vec![fmt_date(*d)]).collect();
@@ -1146,29 +1438,83 @@ pub async fn run_option_chain_dates(api: &dyn QuoteApi, symbol: String, format: 
     Ok(())
 }
 
-pub async fn run_option_chain_strikes(api: &dyn QuoteApi, symbol: String, expiry_date: Date, format: &OutputFormat) -> Result<()> {
+pub async fn run_option_chain_strikes(
+    api: &dyn QuoteApi,
+    symbol: String,
+    expiry_date: Date,
+    format: &OutputFormat,
+) -> Result<()> {
     let strikes = api.option_chain_info_by_date(symbol, expiry_date).await?;
     let headers = &["Strike", "Call Symbol", "Put Symbol", "Standard"];
-    let rows = strikes.iter().map(|s| vec![fmt_dec(s.price), s.call_symbol.clone(), s.put_symbol.clone(), s.standard.to_string()]).collect();
+    let rows = strikes
+        .iter()
+        .map(|s| {
+            vec![
+                fmt_dec(s.price),
+                s.call_symbol.clone(),
+                s.put_symbol.clone(),
+                s.standard.to_string(),
+            ]
+        })
+        .collect();
     print_table(headers, rows, format);
     Ok(())
 }
 
-pub async fn run_warrant_quote(api: &dyn QuoteApi, symbols: Vec<String>, format: &OutputFormat) -> Result<()> {
+pub async fn run_warrant_quote(
+    api: &dyn QuoteApi,
+    symbols: Vec<String>,
+    format: &OutputFormat,
+) -> Result<()> {
     if symbols.is_empty() {
         bail!("At least one symbol is required");
     }
     let quotes = api.warrant_quote(symbols).await?;
-    let headers = &["Symbol", "Last", "Prev Close", "Implied Vol", "Expiry", "Type"];
-    let rows = quotes.iter().map(|q| vec![q.symbol.clone(), fmt_dec(q.last_done), fmt_dec(q.prev_close), fmt_dec(q.implied_volatility), fmt_date(q.expiry_date), format!("{:?}", q.category)]).collect();
+    let headers = &[
+        "Symbol",
+        "Last",
+        "Prev Close",
+        "Implied Vol",
+        "Expiry",
+        "Type",
+    ];
+    let rows = quotes
+        .iter()
+        .map(|q| {
+            vec![
+                q.symbol.clone(),
+                fmt_dec(q.last_done),
+                fmt_dec(q.prev_close),
+                fmt_dec(q.implied_volatility),
+                fmt_date(q.expiry_date),
+                format!("{:?}", q.category),
+            ]
+        })
+        .collect();
     print_table(headers, rows, format);
     Ok(())
 }
 
-pub async fn run_warrant_list(api: &dyn QuoteApi, symbol: String, format: &OutputFormat) -> Result<()> {
+pub async fn run_warrant_list(
+    api: &dyn QuoteApi,
+    symbol: String,
+    format: &OutputFormat,
+) -> Result<()> {
     let warrants = api.warrant_list(symbol).await?;
     let headers = &["Symbol", "Name", "Last", "Leverage Ratio", "Expiry", "Type"];
-    let rows = warrants.iter().map(|w| vec![w.symbol.clone(), w.name.clone(), fmt_dec(w.last_done), fmt_dec(w.leverage_ratio), fmt_date(w.expiry_date), format!("{:?}", w.warrant_type)]).collect();
+    let rows = warrants
+        .iter()
+        .map(|w| {
+            vec![
+                w.symbol.clone(),
+                w.name.clone(),
+                fmt_dec(w.last_done),
+                fmt_dec(w.leverage_ratio),
+                fmt_date(w.expiry_date),
+                format!("{:?}", w.warrant_type),
+            ]
+        })
+        .collect();
     print_table(headers, rows, format);
     Ok(())
 }
@@ -1176,7 +1522,16 @@ pub async fn run_warrant_list(api: &dyn QuoteApi, symbol: String, format: &Outpu
 pub async fn run_warrant_issuers(api: &dyn QuoteApi, format: &OutputFormat) -> Result<()> {
     let issuers = api.warrant_issuers().await?;
     let headers = &["ID", "Name (EN)", "Name (CN)"];
-    let rows = issuers.iter().map(|i| vec![i.issuer_id.to_string(), i.name_en.clone(), i.name_cn.clone()]).collect();
+    let rows = issuers
+        .iter()
+        .map(|i| {
+            vec![
+                i.issuer_id.to_string(),
+                i.name_en.clone(),
+                i.name_cn.clone(),
+            ]
+        })
+        .collect();
     print_table(headers, rows, format);
     Ok(())
 }
@@ -1193,7 +1548,9 @@ mod tests {
             .with(mockall::predicate::eq(vec!["TSLA.US".to_string()]))
             .times(1)
             .returning(|_| Ok(vec![]));
-        run_quote(&mock, vec!["TSLA.US".to_string()], &OutputFormat::Table).await.unwrap();
+        run_quote(&mock, vec!["TSLA.US".to_string()], &OutputFormat::Table)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -1209,8 +1566,15 @@ mod tests {
         mock.expect_depth()
             .with(mockall::predicate::eq("700.HK".to_string()))
             .times(1)
-            .returning(|_| Ok(longbridge::quote::SecurityDepth { asks: vec![], bids: vec![] }));
-        run_depth(&mock, "700.HK".to_string(), &OutputFormat::Table).await.unwrap();
+            .returning(|_| {
+                Ok(longbridge::quote::SecurityDepth {
+                    asks: vec![],
+                    bids: vec![],
+                })
+            });
+        run_depth(&mock, "700.HK".to_string(), &OutputFormat::Table)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -1219,18 +1583,30 @@ mod tests {
         mock.expect_brokers()
             .with(mockall::predicate::eq("700.HK".to_string()))
             .times(1)
-            .returning(|_| Ok(longbridge::quote::SecurityBrokers { ask_brokers: vec![], bid_brokers: vec![] }));
-        run_brokers(&mock, "700.HK".to_string(), &OutputFormat::Table).await.unwrap();
+            .returning(|_| {
+                Ok(longbridge::quote::SecurityBrokers {
+                    ask_brokers: vec![],
+                    bid_brokers: vec![],
+                })
+            });
+        run_brokers(&mock, "700.HK".to_string(), &OutputFormat::Table)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
     async fn test_run_trades_dispatches() {
         let mut mock = MockQuoteApi::new();
         mock.expect_trades()
-            .with(mockall::predicate::eq("AAPL.US".to_string()), mockall::predicate::eq(20_usize))
+            .with(
+                mockall::predicate::eq("AAPL.US".to_string()),
+                mockall::predicate::eq(20_usize),
+            )
             .times(1)
             .returning(|_, _| Ok(vec![]));
-        run_trades(&mock, "AAPL.US".to_string(), 20, &OutputFormat::Table).await.unwrap();
+        run_trades(&mock, "AAPL.US".to_string(), 20, &OutputFormat::Table)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -1240,7 +1616,9 @@ mod tests {
             .with(mockall::predicate::eq("TSLA.US".to_string()))
             .times(1)
             .returning(|_| Ok(vec![]));
-        run_intraday(&mock, "TSLA.US".to_string(), &OutputFormat::Table).await.unwrap();
+        run_intraday(&mock, "TSLA.US".to_string(), &OutputFormat::Table)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -1255,18 +1633,37 @@ mod tests {
             )
             .times(1)
             .returning(|_, _, _, _| Ok(vec![]));
-        run_kline(&mock, "TSLA.US".to_string(), Period::Day, 100, AdjustType::NoAdjust, &OutputFormat::Table).await.unwrap();
+        run_kline(
+            &mock,
+            "TSLA.US".to_string(),
+            Period::Day,
+            100,
+            AdjustType::NoAdjust,
+            &OutputFormat::Table,
+        )
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
     async fn test_run_kline_history_by_date() {
         let mut mock = MockQuoteApi::new();
-        let start = time::macros::date!(2024-01-01);
-        let end = time::macros::date!(2024-12-31);
+        let start = time::macros::date!(2024 - 01 - 01);
+        let end = time::macros::date!(2024 - 12 - 31);
         mock.expect_history_candlesticks_by_date()
             .times(1)
             .returning(|_, _, _, _, _| Ok(vec![]));
-        run_kline_history(&mock, "TSLA.US".to_string(), Period::Day, AdjustType::NoAdjust, Some(start), Some(end), &OutputFormat::Table).await.unwrap();
+        run_kline_history(
+            &mock,
+            "TSLA.US".to_string(),
+            Period::Day,
+            AdjustType::NoAdjust,
+            Some(start),
+            Some(end),
+            &OutputFormat::Table,
+        )
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -1275,7 +1672,17 @@ mod tests {
         mock.expect_history_candlesticks_by_offset()
             .times(1)
             .returning(|_, _, _, _| Ok(vec![]));
-        run_kline_history(&mock, "TSLA.US".to_string(), Period::Day, AdjustType::NoAdjust, None, None, &OutputFormat::Table).await.unwrap();
+        run_kline_history(
+            &mock,
+            "TSLA.US".to_string(),
+            Period::Day,
+            AdjustType::NoAdjust,
+            None,
+            None,
+            &OutputFormat::Table,
+        )
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -1285,7 +1692,9 @@ mod tests {
             .with(mockall::predicate::eq(vec!["TSLA.US".to_string()]))
             .times(1)
             .returning(|_| Ok(vec![]));
-        run_static(&mock, vec!["TSLA.US".to_string()], &OutputFormat::Table).await.unwrap();
+        run_static(&mock, vec!["TSLA.US".to_string()], &OutputFormat::Table)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -1295,7 +1704,9 @@ mod tests {
             .with(mockall::predicate::eq("TSLA.US".to_string()))
             .times(1)
             .returning(|_| Ok(vec![]));
-        run_capital_flow(&mock, "TSLA.US".to_string(), &OutputFormat::Table).await.unwrap();
+        run_capital_flow(&mock, "TSLA.US".to_string(), &OutputFormat::Table)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -1305,12 +1716,24 @@ mod tests {
         mock.expect_capital_distribution()
             .with(mockall::predicate::eq("TSLA.US".to_string()))
             .times(1)
-            .returning(|_| Ok(longbridge::quote::CapitalDistributionResponse {
-                timestamp: time::OffsetDateTime::UNIX_EPOCH,
-                capital_in: longbridge::quote::CapitalDistribution { large: Decimal::ZERO, medium: Decimal::ZERO, small: Decimal::ZERO },
-                capital_out: longbridge::quote::CapitalDistribution { large: Decimal::ZERO, medium: Decimal::ZERO, small: Decimal::ZERO },
-            }));
-        run_capital_dist(&mock, "TSLA.US".to_string(), &OutputFormat::Table).await.unwrap();
+            .returning(|_| {
+                Ok(longbridge::quote::CapitalDistributionResponse {
+                    timestamp: time::OffsetDateTime::UNIX_EPOCH,
+                    capital_in: longbridge::quote::CapitalDistribution {
+                        large: Decimal::ZERO,
+                        medium: Decimal::ZERO,
+                        small: Decimal::ZERO,
+                    },
+                    capital_out: longbridge::quote::CapitalDistribution {
+                        large: Decimal::ZERO,
+                        medium: Decimal::ZERO,
+                        small: Decimal::ZERO,
+                    },
+                })
+            });
+        run_capital_dist(&mock, "TSLA.US".to_string(), &OutputFormat::Table)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -1319,7 +1742,9 @@ mod tests {
         mock.expect_trading_session()
             .times(1)
             .returning(|| Ok(vec![]));
-        run_trading_session(&mock, &OutputFormat::Table).await.unwrap();
+        run_trading_session(&mock, &OutputFormat::Table)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -1329,15 +1754,15 @@ mod tests {
             .with(mockall::predicate::eq(longbridge::Market::HK))
             .times(1)
             .returning(|_| Ok(vec![]));
-        run_security_list(&mock, longbridge::Market::HK, &OutputFormat::Table).await.unwrap();
+        run_security_list(&mock, longbridge::Market::HK, &OutputFormat::Table)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
     async fn test_run_participants_dispatches() {
         let mut mock = MockQuoteApi::new();
-        mock.expect_participants()
-            .times(1)
-            .returning(|| Ok(vec![]));
+        mock.expect_participants().times(1).returning(|| Ok(vec![]));
         run_participants(&mock, &OutputFormat::Table).await.unwrap();
     }
 
@@ -1347,17 +1772,27 @@ mod tests {
         mock.expect_subscriptions()
             .times(1)
             .returning(|| Ok(vec![]));
-        run_subscriptions(&mock, &OutputFormat::Table).await.unwrap();
+        run_subscriptions(&mock, &OutputFormat::Table)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
     async fn test_run_option_quote_dispatches() {
         let mut mock = MockQuoteApi::new();
         mock.expect_option_quote()
-            .with(mockall::predicate::eq(vec!["AAPL240119C190000".to_string()]))
+            .with(mockall::predicate::eq(
+                vec!["AAPL240119C190000".to_string()],
+            ))
             .times(1)
             .returning(|_| Ok(vec![]));
-        run_option_quote(&mock, vec!["AAPL240119C190000".to_string()], &OutputFormat::Table).await.unwrap();
+        run_option_quote(
+            &mock,
+            vec!["AAPL240119C190000".to_string()],
+            &OutputFormat::Table,
+        )
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -1367,18 +1802,25 @@ mod tests {
             .with(mockall::predicate::eq("AAPL.US".to_string()))
             .times(1)
             .returning(|_| Ok(vec![]));
-        run_option_chain_dates(&mock, "AAPL.US".to_string(), &OutputFormat::Table).await.unwrap();
+        run_option_chain_dates(&mock, "AAPL.US".to_string(), &OutputFormat::Table)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
     async fn test_run_option_chain_strikes_dispatches() {
         let mut mock = MockQuoteApi::new();
-        let date = time::macros::date!(2024-01-19);
+        let date = time::macros::date!(2024 - 01 - 19);
         mock.expect_option_chain_info_by_date()
-            .with(mockall::predicate::eq("AAPL.US".to_string()), mockall::predicate::eq(date))
+            .with(
+                mockall::predicate::eq("AAPL.US".to_string()),
+                mockall::predicate::eq(date),
+            )
             .times(1)
             .returning(|_, _| Ok(vec![]));
-        run_option_chain_strikes(&mock, "AAPL.US".to_string(), date, &OutputFormat::Table).await.unwrap();
+        run_option_chain_strikes(&mock, "AAPL.US".to_string(), date, &OutputFormat::Table)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -1387,7 +1829,9 @@ mod tests {
         mock.expect_warrant_quote()
             .times(1)
             .returning(|_| Ok(vec![]));
-        run_warrant_quote(&mock, vec!["12345.HK".to_string()], &OutputFormat::Table).await.unwrap();
+        run_warrant_quote(&mock, vec!["12345.HK".to_string()], &OutputFormat::Table)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -1397,7 +1841,9 @@ mod tests {
             .with(mockall::predicate::eq("700.HK".to_string()))
             .times(1)
             .returning(|_| Ok(vec![]));
-        run_warrant_list(&mock, "700.HK".to_string(), &OutputFormat::Table).await.unwrap();
+        run_warrant_list(&mock, "700.HK".to_string(), &OutputFormat::Table)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -1406,7 +1852,9 @@ mod tests {
         mock.expect_warrant_issuers()
             .times(1)
             .returning(|| Ok(vec![]));
-        run_warrant_issuers(&mock, &OutputFormat::Table).await.unwrap();
+        run_warrant_issuers(&mock, &OutputFormat::Table)
+            .await
+            .unwrap();
     }
 
     #[test]

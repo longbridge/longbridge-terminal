@@ -140,7 +140,11 @@ pub async fn run_watchlist_list(api: &dyn QuoteApi, format: &OutputFormat) -> Re
             for group in &groups {
                 println!("\nGroup: {} (ID: {})", group.name, group.id);
                 let headers = &["Symbol", "Name", "Market"];
-                let rows: Vec<Vec<String>> = group.securities.iter().map(|s| vec![s.symbol.clone(), s.name.clone(), format!("{:?}", s.market)]).collect();
+                let rows: Vec<Vec<String>> = group
+                    .securities
+                    .iter()
+                    .map(|s| vec![s.symbol.clone(), s.name.clone(), format!("{:?}", s.market)])
+                    .collect();
                 print_table(headers, rows, &OutputFormat::Table);
             }
         }
@@ -160,7 +164,10 @@ pub async fn run_watchlist_delete(api: &dyn QuoteApi, id: i64, _purge: bool) -> 
     Ok(())
 }
 
-pub async fn run_watchlist_update(api: &dyn QuoteApi, req: RequestUpdateWatchlistGroup) -> Result<()> {
+pub async fn run_watchlist_update(
+    api: &dyn QuoteApi,
+    req: RequestUpdateWatchlistGroup,
+) -> Result<()> {
     let id = req.id;
     api.update_watchlist_group(req).await?;
     println!("Watchlist group {id} updated.");
@@ -175,10 +182,10 @@ mod tests {
     #[tokio::test]
     async fn test_run_watchlist_list_dispatches() {
         let mut mock = MockQuoteApi::new();
-        mock.expect_watchlist()
-            .times(1)
-            .returning(|| Ok(vec![]));
-        run_watchlist_list(&mock, &OutputFormat::Table).await.unwrap();
+        mock.expect_watchlist().times(1).returning(|| Ok(vec![]));
+        run_watchlist_list(&mock, &OutputFormat::Table)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -188,7 +195,9 @@ mod tests {
             .with(mockall::predicate::eq("Tech Stocks".to_string()))
             .times(1)
             .returning(|_| Ok(123_i64));
-        let id = run_watchlist_create(&mock, "Tech Stocks".to_string()).await.unwrap();
+        let id = run_watchlist_create(&mock, "Tech Stocks".to_string())
+            .await
+            .unwrap();
         assert_eq!(id, 123);
     }
 
@@ -220,9 +229,9 @@ mod tests {
     #[tokio::test]
     async fn test_run_watchlist_list_json_format() {
         let mut mock = MockQuoteApi::new();
-        mock.expect_watchlist()
-            .times(1)
-            .returning(|| Ok(vec![]));
-        run_watchlist_list(&mock, &OutputFormat::Json).await.unwrap();
+        mock.expect_watchlist().times(1).returning(|| Ok(vec![]));
+        run_watchlist_list(&mock, &OutputFormat::Json)
+            .await
+            .unwrap();
     }
 }

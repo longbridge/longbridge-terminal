@@ -23,9 +23,7 @@ fn parse_order_type(s: &str) -> Result<OrderType> {
         "SLO" => Ok(OrderType::SLO),
         "LIT" => Ok(OrderType::LIT),
         "MIT" => Ok(OrderType::MIT),
-        _ => bail!(
-            "Unknown order type '{s}'. Use: LO MO ELO ALO ODD SLO LIT MIT"
-        ),
+        _ => bail!("Unknown order type '{s}'. Use: LO MO ELO ALO ODD SLO LIT MIT"),
     }
 }
 
@@ -34,9 +32,7 @@ fn parse_tif(s: &str) -> Result<TimeInForceType> {
         "day" => Ok(TimeInForceType::Day),
         "gtc" | "goodtilcanceled" => Ok(TimeInForceType::GoodTilCanceled),
         "gtd" | "goodtildate" => Ok(TimeInForceType::GoodTilDate),
-        _ => bail!(
-            "Unknown time in force '{s}'. Use: Day GoodTilCanceled GoodTilDate"
-        ),
+        _ => bail!("Unknown time in force '{s}'. Use: Day GoodTilCanceled GoodTilDate"),
     }
 }
 
@@ -227,8 +223,7 @@ pub async fn cmd_submit_order(
 
     let mut opts = SubmitOrderOptions::new(symbol.clone(), ot, side, qty, tif_val);
     if let Some(ref p) = price {
-        let price_dec =
-            Decimal::from_str(p).map_err(|_| anyhow::anyhow!("Invalid price: {p}"))?;
+        let price_dec = Decimal::from_str(p).map_err(|_| anyhow::anyhow!("Invalid price: {p}"))?;
         opts = opts.submitted_price(price_dec);
     }
 
@@ -293,8 +288,7 @@ pub async fn cmd_replace_order(
 
     let mut opts = ReplaceOrderOptions::new(order_id.clone(), qty_dec);
     if let Some(p) = price {
-        let price_dec =
-            Decimal::from_str(&p).map_err(|_| anyhow::anyhow!("Invalid price: {p}"))?;
+        let price_dec = Decimal::from_str(&p).map_err(|_| anyhow::anyhow!("Invalid price: {p}"))?;
         opts = opts.price(price_dec);
     }
 
@@ -526,23 +520,81 @@ pub async fn cmd_max_qty(
 
 // ─── Testable run_* functions ─────────────────────────────────────────────────
 
-pub async fn run_today_orders(api: &dyn TradeApi, opts: GetTodayOrdersOptions, format: &OutputFormat) -> Result<()> {
+pub async fn run_today_orders(
+    api: &dyn TradeApi,
+    opts: GetTodayOrdersOptions,
+    format: &OutputFormat,
+) -> Result<()> {
     let orders = api.today_orders(opts).await?;
-    let headers = &["Order ID", "Symbol", "Side", "Type", "Status", "Qty", "Price", "Created At"];
-    let rows = orders.iter().map(|o| vec![o.order_id.clone(), o.symbol.clone(), format!("{:?}", o.side), format!("{:?}", o.order_type), format!("{:?}", o.status), o.quantity.to_string(), fmt_decimal(&o.price), fmt_datetime(o.submitted_at)]).collect();
+    let headers = &[
+        "Order ID",
+        "Symbol",
+        "Side",
+        "Type",
+        "Status",
+        "Qty",
+        "Price",
+        "Created At",
+    ];
+    let rows = orders
+        .iter()
+        .map(|o| {
+            vec![
+                o.order_id.clone(),
+                o.symbol.clone(),
+                format!("{:?}", o.side),
+                format!("{:?}", o.order_type),
+                format!("{:?}", o.status),
+                o.quantity.to_string(),
+                fmt_decimal(&o.price),
+                fmt_datetime(o.submitted_at),
+            ]
+        })
+        .collect();
     print_table(headers, rows, format);
     Ok(())
 }
 
-pub async fn run_history_orders(api: &dyn TradeApi, opts: GetHistoryOrdersOptions, format: &OutputFormat) -> Result<()> {
+pub async fn run_history_orders(
+    api: &dyn TradeApi,
+    opts: GetHistoryOrdersOptions,
+    format: &OutputFormat,
+) -> Result<()> {
     let orders = api.history_orders(opts).await?;
-    let headers = &["Order ID", "Symbol", "Side", "Type", "Status", "Qty", "Price", "Created At"];
-    let rows = orders.iter().map(|o| vec![o.order_id.clone(), o.symbol.clone(), format!("{:?}", o.side), format!("{:?}", o.order_type), format!("{:?}", o.status), o.quantity.to_string(), fmt_decimal(&o.price), fmt_datetime(o.submitted_at)]).collect();
+    let headers = &[
+        "Order ID",
+        "Symbol",
+        "Side",
+        "Type",
+        "Status",
+        "Qty",
+        "Price",
+        "Created At",
+    ];
+    let rows = orders
+        .iter()
+        .map(|o| {
+            vec![
+                o.order_id.clone(),
+                o.symbol.clone(),
+                format!("{:?}", o.side),
+                format!("{:?}", o.order_type),
+                format!("{:?}", o.status),
+                o.quantity.to_string(),
+                fmt_decimal(&o.price),
+                fmt_datetime(o.submitted_at),
+            ]
+        })
+        .collect();
     print_table(headers, rows, format);
     Ok(())
 }
 
-pub async fn run_order_detail(api: &dyn TradeApi, order_id: String, format: &OutputFormat) -> Result<()> {
+pub async fn run_order_detail(
+    api: &dyn TradeApi,
+    order_id: String,
+    format: &OutputFormat,
+) -> Result<()> {
     let detail = api.order_detail(order_id).await?;
     match format {
         OutputFormat::Json => {
@@ -563,27 +615,70 @@ pub async fn run_order_detail(api: &dyn TradeApi, order_id: String, format: &Out
     Ok(())
 }
 
-pub async fn run_today_executions(api: &dyn TradeApi, opts: GetTodayExecutionsOptions, format: &OutputFormat) -> Result<()> {
+pub async fn run_today_executions(
+    api: &dyn TradeApi,
+    opts: GetTodayExecutionsOptions,
+    format: &OutputFormat,
+) -> Result<()> {
     let executions = api.today_executions(opts).await?;
-    let headers = &["Order ID", "Trade ID", "Symbol", "Price", "Quantity", "Time"];
-    let rows = executions.iter().map(|e| vec![e.order_id.clone(), e.trade_id.clone(), e.symbol.clone(), e.price.to_string(), e.quantity.to_string(), fmt_datetime(e.trade_done_at)]).collect();
+    let headers = &[
+        "Order ID", "Trade ID", "Symbol", "Price", "Quantity", "Time",
+    ];
+    let rows = executions
+        .iter()
+        .map(|e| {
+            vec![
+                e.order_id.clone(),
+                e.trade_id.clone(),
+                e.symbol.clone(),
+                e.price.to_string(),
+                e.quantity.to_string(),
+                fmt_datetime(e.trade_done_at),
+            ]
+        })
+        .collect();
     print_table(headers, rows, format);
     Ok(())
 }
 
-pub async fn run_history_executions(api: &dyn TradeApi, opts: GetHistoryExecutionsOptions, format: &OutputFormat) -> Result<()> {
+pub async fn run_history_executions(
+    api: &dyn TradeApi,
+    opts: GetHistoryExecutionsOptions,
+    format: &OutputFormat,
+) -> Result<()> {
     let executions = api.history_executions(opts).await?;
-    let headers = &["Order ID", "Trade ID", "Symbol", "Price", "Quantity", "Time"];
-    let rows = executions.iter().map(|e| vec![e.order_id.clone(), e.trade_id.clone(), e.symbol.clone(), e.price.to_string(), e.quantity.to_string(), fmt_datetime(e.trade_done_at)]).collect();
+    let headers = &[
+        "Order ID", "Trade ID", "Symbol", "Price", "Quantity", "Time",
+    ];
+    let rows = executions
+        .iter()
+        .map(|e| {
+            vec![
+                e.order_id.clone(),
+                e.trade_id.clone(),
+                e.symbol.clone(),
+                e.price.to_string(),
+                e.quantity.to_string(),
+                fmt_datetime(e.trade_done_at),
+            ]
+        })
+        .collect();
     print_table(headers, rows, format);
     Ok(())
 }
 
-pub async fn run_submit_order(api: &dyn TradeApi, opts: SubmitOrderOptions, format: &OutputFormat) -> Result<()> {
+pub async fn run_submit_order(
+    api: &dyn TradeApi,
+    opts: SubmitOrderOptions,
+    format: &OutputFormat,
+) -> Result<()> {
     let resp = api.submit_order(opts).await?;
     match format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&serde_json::json!({"order_id": resp.order_id}))?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({"order_id": resp.order_id}))?
+            );
         }
         OutputFormat::Table => println!("Order ID: {}", resp.order_id),
     }
@@ -600,29 +695,91 @@ pub async fn run_replace_order(api: &dyn TradeApi, opts: ReplaceOrderOptions) ->
     Ok(())
 }
 
-pub async fn run_balance(api: &dyn TradeApi, currency: Option<String>, format: &OutputFormat) -> Result<()> {
+pub async fn run_balance(
+    api: &dyn TradeApi,
+    currency: Option<String>,
+    format: &OutputFormat,
+) -> Result<()> {
     let balances = api.account_balance(currency).await?;
-    let headers = &["Currency", "Total Cash", "Max Finance Amount", "Remaining Finance", "Risk Level", "Margin Call"];
-    let rows = balances.iter().map(|b| vec![b.currency.clone(), b.total_cash.to_string(), b.max_finance_amount.to_string(), b.remaining_finance_amount.to_string(), b.risk_level.to_string(), b.margin_call.to_string()]).collect();
+    let headers = &[
+        "Currency",
+        "Total Cash",
+        "Max Finance Amount",
+        "Remaining Finance",
+        "Risk Level",
+        "Margin Call",
+    ];
+    let rows = balances
+        .iter()
+        .map(|b| {
+            vec![
+                b.currency.clone(),
+                b.total_cash.to_string(),
+                b.max_finance_amount.to_string(),
+                b.remaining_finance_amount.to_string(),
+                b.risk_level.to_string(),
+                b.margin_call.to_string(),
+            ]
+        })
+        .collect();
     print_table(headers, rows, format);
     Ok(())
 }
 
-pub async fn run_cash_flow(api: &dyn TradeApi, opts: GetCashFlowOptions, format: &OutputFormat) -> Result<()> {
+pub async fn run_cash_flow(
+    api: &dyn TradeApi,
+    opts: GetCashFlowOptions,
+    format: &OutputFormat,
+) -> Result<()> {
     let flows = api.cash_flow(opts).await?;
-    let headers = &["Flow Name", "Symbol", "Business Type", "Balance", "Currency", "Time"];
-    let rows = flows.iter().map(|f| vec![f.transaction_flow_name.clone(), f.symbol.clone().unwrap_or_default(), format!("{:?}", f.business_type), f.balance.to_string(), f.currency.clone(), fmt_datetime(f.business_time)]).collect();
+    let headers = &[
+        "Flow Name",
+        "Symbol",
+        "Business Type",
+        "Balance",
+        "Currency",
+        "Time",
+    ];
+    let rows = flows
+        .iter()
+        .map(|f| {
+            vec![
+                f.transaction_flow_name.clone(),
+                f.symbol.clone().unwrap_or_default(),
+                format!("{:?}", f.business_type),
+                f.balance.to_string(),
+                f.currency.clone(),
+                fmt_datetime(f.business_time),
+            ]
+        })
+        .collect();
     print_table(headers, rows, format);
     Ok(())
 }
 
 pub async fn run_positions(api: &dyn TradeApi, format: &OutputFormat) -> Result<()> {
     let resp = api.stock_positions().await?;
-    let headers = &["Symbol", "Name", "Quantity", "Available", "Cost Price", "Currency", "Market"];
+    let headers = &[
+        "Symbol",
+        "Name",
+        "Quantity",
+        "Available",
+        "Cost Price",
+        "Currency",
+        "Market",
+    ];
     let mut rows = vec![];
     for channel in &resp.channels {
         for pos in &channel.positions {
-            rows.push(vec![pos.symbol.clone(), pos.symbol_name.clone(), pos.quantity.to_string(), pos.available_quantity.to_string(), pos.cost_price.to_string(), pos.currency.clone(), format!("{:?}", pos.market)]);
+            rows.push(vec![
+                pos.symbol.clone(),
+                pos.symbol_name.clone(),
+                pos.quantity.to_string(),
+                pos.available_quantity.to_string(),
+                pos.cost_price.to_string(),
+                pos.currency.clone(),
+                format!("{:?}", pos.market),
+            ]);
         }
     }
     print_table(headers, rows, format);
@@ -631,37 +788,72 @@ pub async fn run_positions(api: &dyn TradeApi, format: &OutputFormat) -> Result<
 
 pub async fn run_fund_positions(api: &dyn TradeApi, format: &OutputFormat) -> Result<()> {
     let resp = api.fund_positions().await?;
-    let headers = &["Symbol", "Name", "Net Asset Value", "Cost NAV", "Currency", "Holding Units"];
+    let headers = &[
+        "Symbol",
+        "Name",
+        "Net Asset Value",
+        "Cost NAV",
+        "Currency",
+        "Holding Units",
+    ];
     let mut rows = vec![];
     for channel in &resp.channels {
         for pos in &channel.positions {
-            rows.push(vec![pos.symbol.clone(), pos.symbol_name.clone(), pos.current_net_asset_value.to_string(), pos.cost_net_asset_value.to_string(), pos.currency.clone(), pos.holding_units.to_string()]);
+            rows.push(vec![
+                pos.symbol.clone(),
+                pos.symbol_name.clone(),
+                pos.current_net_asset_value.to_string(),
+                pos.cost_net_asset_value.to_string(),
+                pos.currency.clone(),
+                pos.holding_units.to_string(),
+            ]);
         }
     }
     print_table(headers, rows, format);
     Ok(())
 }
 
-pub async fn run_margin_ratio(api: &dyn TradeApi, symbol: String, format: &OutputFormat) -> Result<()> {
+pub async fn run_margin_ratio(
+    api: &dyn TradeApi,
+    symbol: String,
+    format: &OutputFormat,
+) -> Result<()> {
     let ratio = api.margin_ratio(symbol.clone()).await?;
     let headers = &["Field", "Value"];
     let rows = vec![
         vec!["Symbol".to_string(), symbol],
-        vec!["Initial Margin Ratio".to_string(), ratio.im_factor.to_string()],
-        vec!["Maintenance Margin Ratio".to_string(), ratio.mm_factor.to_string()],
-        vec!["Forced Liquidation Ratio".to_string(), ratio.fm_factor.to_string()],
+        vec![
+            "Initial Margin Ratio".to_string(),
+            ratio.im_factor.to_string(),
+        ],
+        vec![
+            "Maintenance Margin Ratio".to_string(),
+            ratio.mm_factor.to_string(),
+        ],
+        vec![
+            "Forced Liquidation Ratio".to_string(),
+            ratio.fm_factor.to_string(),
+        ],
     ];
     print_table(headers, rows, format);
     Ok(())
 }
 
-pub async fn run_max_qty(api: &dyn TradeApi, opts: EstimateMaxPurchaseQuantityOptions, symbol: String, format: &OutputFormat) -> Result<()> {
+pub async fn run_max_qty(
+    api: &dyn TradeApi,
+    opts: EstimateMaxPurchaseQuantityOptions,
+    symbol: String,
+    format: &OutputFormat,
+) -> Result<()> {
     let resp = api.estimate_max_purchase_quantity(opts).await?;
     let headers = &["Field", "Value"];
     let rows = vec![
         vec!["Symbol".to_string(), symbol],
         vec!["Cash Max Qty".to_string(), resp.cash_max_qty.to_string()],
-        vec!["Margin Max Qty".to_string(), resp.margin_max_qty.to_string()],
+        vec![
+            "Margin Max Qty".to_string(),
+            resp.margin_max_qty.to_string(),
+        ],
     ];
     print_table(headers, rows, format);
     Ok(())
@@ -688,7 +880,9 @@ mod tests {
         mock.expect_today_orders()
             .times(1)
             .returning(|_| Ok(vec![]));
-        run_today_orders(&mock, GetTodayOrdersOptions::new(), &OutputFormat::Table).await.unwrap();
+        run_today_orders(&mock, GetTodayOrdersOptions::new(), &OutputFormat::Table)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -697,7 +891,9 @@ mod tests {
         mock.expect_history_orders()
             .times(1)
             .returning(|_| Ok(vec![]));
-        run_history_orders(&mock, GetHistoryOrdersOptions::new(), &OutputFormat::Table).await.unwrap();
+        run_history_orders(&mock, GetHistoryOrdersOptions::new(), &OutputFormat::Table)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -706,7 +902,13 @@ mod tests {
         mock.expect_today_executions()
             .times(1)
             .returning(|_| Ok(vec![]));
-        run_today_executions(&mock, GetTodayExecutionsOptions::new(), &OutputFormat::Table).await.unwrap();
+        run_today_executions(
+            &mock,
+            GetTodayExecutionsOptions::new(),
+            &OutputFormat::Table,
+        )
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -715,16 +917,26 @@ mod tests {
         mock.expect_history_executions()
             .times(1)
             .returning(|_| Ok(vec![]));
-        run_history_executions(&mock, GetHistoryExecutionsOptions::new(), &OutputFormat::Table).await.unwrap();
+        run_history_executions(
+            &mock,
+            GetHistoryExecutionsOptions::new(),
+            &OutputFormat::Table,
+        )
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
     async fn test_run_submit_order_dispatches() {
         let mut mock = MockTradeApi::new();
-        mock.expect_submit_order()
-            .times(1)
-            .returning(|_| Ok(longbridge::trade::SubmitOrderResponse { order_id: "order-1".to_string() }));
-        run_submit_order(&mock, make_submit_opts(), &OutputFormat::Table).await.unwrap();
+        mock.expect_submit_order().times(1).returning(|_| {
+            Ok(longbridge::trade::SubmitOrderResponse {
+                order_id: "order-1".to_string(),
+            })
+        });
+        run_submit_order(&mock, make_submit_opts(), &OutputFormat::Table)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -734,15 +946,15 @@ mod tests {
             .with(mockall::predicate::eq("order-1".to_string()))
             .times(1)
             .returning(|_| Ok(()));
-        run_cancel_order(&mock, "order-1".to_string()).await.unwrap();
+        run_cancel_order(&mock, "order-1".to_string())
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
     async fn test_run_replace_order_dispatches() {
         let mut mock = MockTradeApi::new();
-        mock.expect_replace_order()
-            .times(1)
-            .returning(|_| Ok(()));
+        mock.expect_replace_order().times(1).returning(|_| Ok(()));
         let opts = ReplaceOrderOptions::new("order-1", Decimal::from(200u64));
         run_replace_order(&mock, opts).await.unwrap();
     }
@@ -754,7 +966,9 @@ mod tests {
             .with(mockall::predicate::eq(None::<String>))
             .times(1)
             .returning(|_| Ok(vec![]));
-        run_balance(&mock, None, &OutputFormat::Table).await.unwrap();
+        run_balance(&mock, None, &OutputFormat::Table)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -774,7 +988,9 @@ mod tests {
         mock.expect_fund_positions()
             .times(1)
             .returning(|| Ok(FundPositionsResponse { channels: vec![] }));
-        run_fund_positions(&mock, &OutputFormat::Table).await.unwrap();
+        run_fund_positions(&mock, &OutputFormat::Table)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -784,8 +1000,16 @@ mod tests {
         mock.expect_margin_ratio()
             .with(mockall::predicate::eq("TSLA.US".to_string()))
             .times(1)
-            .returning(|_| Ok(MarginRatio { im_factor: Decimal::ZERO, mm_factor: Decimal::ZERO, fm_factor: Decimal::ZERO }));
-        run_margin_ratio(&mock, "TSLA.US".to_string(), &OutputFormat::Table).await.unwrap();
+            .returning(|_| {
+                Ok(MarginRatio {
+                    im_factor: Decimal::ZERO,
+                    mm_factor: Decimal::ZERO,
+                    fm_factor: Decimal::ZERO,
+                })
+            });
+        run_margin_ratio(&mock, "TSLA.US".to_string(), &OutputFormat::Table)
+            .await
+            .unwrap();
     }
 
     #[test]

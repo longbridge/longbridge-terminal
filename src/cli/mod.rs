@@ -16,7 +16,9 @@ pub enum OutputFormat {
 
 #[derive(Parser)]
 #[command(name = "longbridge")]
-#[command(about = "AI-native CLI for the Longbridge trading platform — real-time market data, portfolio, and trading")]
+#[command(
+    about = "AI-native CLI for the Longbridge trading platform — real-time market data, portfolio, and trading"
+)]
 #[command(long_about = "\
 AI-native CLI for the Longbridge trading platform — real-time market data, portfolio, and trading.\n\n\
 Symbol format: <CODE>.<MARKET>  e.g. TSLA.US  700.HK  600519.SH\n\
@@ -792,7 +794,13 @@ mod tests {
     #[test]
     fn test_kline_defaults() {
         let cli = parse(&["longbridge", "kline", "TSLA.US"]).unwrap();
-        if let Some(Commands::Kline { symbol, period, count, adjust }) = cli.command {
+        if let Some(Commands::Kline {
+            symbol,
+            period,
+            count,
+            adjust,
+        }) = cli.command
+        {
             assert_eq!(symbol, "TSLA.US");
             assert_eq!(period, "day");
             assert_eq!(count, 100);
@@ -804,7 +812,16 @@ mod tests {
 
     #[test]
     fn test_kline_custom_period() {
-        let cli = parse(&["longbridge", "kline", "TSLA.US", "--period", "1h", "--count", "200"]).unwrap();
+        let cli = parse(&[
+            "longbridge",
+            "kline",
+            "TSLA.US",
+            "--period",
+            "1h",
+            "--count",
+            "200",
+        ])
+        .unwrap();
         if let Some(Commands::Kline { period, count, .. }) = cli.command {
             assert_eq!(period, "1h");
             assert_eq!(count, 200);
@@ -815,8 +832,20 @@ mod tests {
 
     #[test]
     fn test_kline_history_with_dates() {
-        let cli = parse(&["longbridge", "kline-history", "TSLA.US", "--start", "2024-01-01", "--end", "2024-12-31"]).unwrap();
-        if let Some(Commands::KlineHistory { symbol, start, end, .. }) = cli.command {
+        let cli = parse(&[
+            "longbridge",
+            "kline-history",
+            "TSLA.US",
+            "--start",
+            "2024-01-01",
+            "--end",
+            "2024-12-31",
+        ])
+        .unwrap();
+        if let Some(Commands::KlineHistory {
+            symbol, start, end, ..
+        }) = cli.command
+        {
             assert_eq!(symbol, "TSLA.US");
             assert_eq!(start, Some("2024-01-01".to_string()));
             assert_eq!(end, Some("2024-12-31".to_string()));
@@ -848,7 +877,14 @@ mod tests {
 
     #[test]
     fn test_calc_index_custom_indexes() {
-        let cli = parse(&["longbridge", "calc-index", "TSLA.US", "--index", "pe,pb,eps"]).unwrap();
+        let cli = parse(&[
+            "longbridge",
+            "calc-index",
+            "TSLA.US",
+            "--index",
+            "pe,pb,eps",
+        ])
+        .unwrap();
         if let Some(Commands::CalcIndex { index, .. }) = cli.command {
             assert_eq!(index, vec!["pe", "pb", "eps"]);
         } else {
@@ -859,19 +895,26 @@ mod tests {
     #[test]
     fn test_capital_flow_subcommand() {
         let cli = parse(&["longbridge", "capital-flow", "TSLA.US"]).unwrap();
-        assert!(matches!(cli.command, Some(Commands::CapitalFlow { symbol }) if symbol == "TSLA.US"));
+        assert!(
+            matches!(cli.command, Some(Commands::CapitalFlow { symbol }) if symbol == "TSLA.US")
+        );
     }
 
     #[test]
     fn test_capital_dist_subcommand() {
         let cli = parse(&["longbridge", "capital-dist", "TSLA.US"]).unwrap();
-        assert!(matches!(cli.command, Some(Commands::CapitalDist { symbol }) if symbol == "TSLA.US"));
+        assert!(
+            matches!(cli.command, Some(Commands::CapitalDist { symbol }) if symbol == "TSLA.US")
+        );
     }
 
     #[test]
     fn test_market_temp_default() {
         let cli = parse(&["longbridge", "market-temp"]).unwrap();
-        if let Some(Commands::MarketTemp { market, history, .. }) = cli.command {
+        if let Some(Commands::MarketTemp {
+            market, history, ..
+        }) = cli.command
+        {
             assert_eq!(market, "HK");
             assert!(!history);
         } else {
@@ -881,8 +924,22 @@ mod tests {
 
     #[test]
     fn test_market_temp_history_flag() {
-        let cli = parse(&["longbridge", "market-temp", "US", "--history", "--start", "2024-01-01"]).unwrap();
-        if let Some(Commands::MarketTemp { market, history, start, .. }) = cli.command {
+        let cli = parse(&[
+            "longbridge",
+            "market-temp",
+            "US",
+            "--history",
+            "--start",
+            "2024-01-01",
+        ])
+        .unwrap();
+        if let Some(Commands::MarketTemp {
+            market,
+            history,
+            start,
+            ..
+        }) = cli.command
+        {
             assert_eq!(market, "US");
             assert!(history);
             assert_eq!(start, Some("2024-01-01".to_string()));
@@ -954,7 +1011,14 @@ mod tests {
 
     #[test]
     fn test_option_chain_with_date() {
-        let cli = parse(&["longbridge", "option-chain", "AAPL.US", "--date", "2024-01-19"]).unwrap();
+        let cli = parse(&[
+            "longbridge",
+            "option-chain",
+            "AAPL.US",
+            "--date",
+            "2024-01-19",
+        ])
+        .unwrap();
         if let Some(Commands::OptionChain { date, .. }) = cli.command {
             assert_eq!(date, Some("2024-01-19".to_string()));
         } else {
@@ -975,7 +1039,9 @@ mod tests {
     #[test]
     fn test_warrant_list_subcommand() {
         let cli = parse(&["longbridge", "warrant-list", "700.HK"]).unwrap();
-        assert!(matches!(cli.command, Some(Commands::WarrantList { symbol }) if symbol == "700.HK"));
+        assert!(
+            matches!(cli.command, Some(Commands::WarrantList { symbol }) if symbol == "700.HK")
+        );
     }
 
     #[test]
@@ -999,7 +1065,10 @@ mod tests {
     #[test]
     fn test_watchlist_create() {
         let cli = parse(&["longbridge", "watchlist", "create", "Tech Stocks"]).unwrap();
-        if let Some(Commands::Watchlist { cmd: Some(WatchlistCmd::Create { name }) }) = cli.command {
+        if let Some(Commands::Watchlist {
+            cmd: Some(WatchlistCmd::Create { name }),
+        }) = cli.command
+        {
             assert_eq!(name, "Tech Stocks");
         } else {
             panic!("expected Watchlist Create command");
@@ -1009,7 +1078,10 @@ mod tests {
     #[test]
     fn test_watchlist_delete() {
         let cli = parse(&["longbridge", "watchlist", "delete", "123"]).unwrap();
-        if let Some(Commands::Watchlist { cmd: Some(WatchlistCmd::Delete { id, purge }) }) = cli.command {
+        if let Some(Commands::Watchlist {
+            cmd: Some(WatchlistCmd::Delete { id, purge }),
+        }) = cli.command
+        {
             assert_eq!(id, 123);
             assert!(!purge);
         } else {
@@ -1020,7 +1092,10 @@ mod tests {
     #[test]
     fn test_watchlist_delete_purge() {
         let cli = parse(&["longbridge", "watchlist", "delete", "123", "--purge"]).unwrap();
-        if let Some(Commands::Watchlist { cmd: Some(WatchlistCmd::Delete { purge, .. }) }) = cli.command {
+        if let Some(Commands::Watchlist {
+            cmd: Some(WatchlistCmd::Delete { purge, .. }),
+        }) = cli.command
+        {
             assert!(purge);
         } else {
             panic!("expected Watchlist Delete command");
@@ -1029,8 +1104,21 @@ mod tests {
 
     #[test]
     fn test_watchlist_update_add() {
-        let cli = parse(&["longbridge", "watchlist", "update", "123", "--add", "TSLA.US", "--add", "AAPL.US"]).unwrap();
-        if let Some(Commands::Watchlist { cmd: Some(WatchlistCmd::Update { id, add, .. }) }) = cli.command {
+        let cli = parse(&[
+            "longbridge",
+            "watchlist",
+            "update",
+            "123",
+            "--add",
+            "TSLA.US",
+            "--add",
+            "AAPL.US",
+        ])
+        .unwrap();
+        if let Some(Commands::Watchlist {
+            cmd: Some(WatchlistCmd::Update { id, add, .. }),
+        }) = cli.command
+        {
             assert_eq!(id, 123);
             assert_eq!(add, vec!["TSLA.US", "AAPL.US"]);
         } else {
@@ -1040,8 +1128,19 @@ mod tests {
 
     #[test]
     fn test_watchlist_update_remove() {
-        let cli = parse(&["longbridge", "watchlist", "update", "456", "--remove", "700.HK"]).unwrap();
-        if let Some(Commands::Watchlist { cmd: Some(WatchlistCmd::Update { id, remove, .. }) }) = cli.command {
+        let cli = parse(&[
+            "longbridge",
+            "watchlist",
+            "update",
+            "456",
+            "--remove",
+            "700.HK",
+        ])
+        .unwrap();
+        if let Some(Commands::Watchlist {
+            cmd: Some(WatchlistCmd::Update { id, remove, .. }),
+        }) = cli.command
+        {
             assert_eq!(id, 456);
             assert_eq!(remove, vec!["700.HK"]);
         } else {
@@ -1054,7 +1153,13 @@ mod tests {
     #[test]
     fn test_orders_defaults() {
         let cli = parse(&["longbridge", "orders"]).unwrap();
-        if let Some(Commands::Orders { history, start, end, symbol }) = cli.command {
+        if let Some(Commands::Orders {
+            history,
+            start,
+            end,
+            symbol,
+        }) = cli.command
+        {
             assert!(!history);
             assert!(start.is_none());
             assert!(end.is_none());
@@ -1066,8 +1171,23 @@ mod tests {
 
     #[test]
     fn test_orders_history_with_filters() {
-        let cli = parse(&["longbridge", "orders", "--history", "--start", "2024-01-01", "--symbol", "TSLA.US"]).unwrap();
-        if let Some(Commands::Orders { history, start, symbol, .. }) = cli.command {
+        let cli = parse(&[
+            "longbridge",
+            "orders",
+            "--history",
+            "--start",
+            "2024-01-01",
+            "--symbol",
+            "TSLA.US",
+        ])
+        .unwrap();
+        if let Some(Commands::Orders {
+            history,
+            start,
+            symbol,
+            ..
+        }) = cli.command
+        {
             assert!(history);
             assert_eq!(start, Some("2024-01-01".to_string()));
             assert_eq!(symbol, Some("TSLA.US".to_string()));
@@ -1079,7 +1199,9 @@ mod tests {
     #[test]
     fn test_order_detail_subcommand() {
         let cli = parse(&["longbridge", "order", "order-123"]).unwrap();
-        assert!(matches!(cli.command, Some(Commands::Order { order_id }) if order_id == "order-123"));
+        assert!(
+            matches!(cli.command, Some(Commands::Order { order_id }) if order_id == "order-123")
+        );
     }
 
     #[test]
@@ -1095,7 +1217,14 @@ mod tests {
     #[test]
     fn test_buy_subcommand() {
         let cli = parse(&["longbridge", "buy", "TSLA.US", "100", "--price", "250.00"]).unwrap();
-        if let Some(Commands::Buy { symbol, quantity, price, order_type, tif }) = cli.command {
+        if let Some(Commands::Buy {
+            symbol,
+            quantity,
+            price,
+            order_type,
+            tif,
+        }) = cli.command
+        {
             assert_eq!(symbol, "TSLA.US");
             assert_eq!(quantity, 100);
             assert_eq!(price, Some("250.00".to_string()));
@@ -1109,7 +1238,13 @@ mod tests {
     #[test]
     fn test_sell_subcommand() {
         let cli = parse(&["longbridge", "sell", "TSLA.US", "50", "--price", "260.00"]).unwrap();
-        if let Some(Commands::Sell { symbol, quantity, price, .. }) = cli.command {
+        if let Some(Commands::Sell {
+            symbol,
+            quantity,
+            price,
+            ..
+        }) = cli.command
+        {
             assert_eq!(symbol, "TSLA.US");
             assert_eq!(quantity, 50);
             assert_eq!(price, Some("260.00".to_string()));
@@ -1121,13 +1256,29 @@ mod tests {
     #[test]
     fn test_cancel_subcommand() {
         let cli = parse(&["longbridge", "cancel", "order-456"]).unwrap();
-        assert!(matches!(cli.command, Some(Commands::Cancel { order_id }) if order_id == "order-456"));
+        assert!(
+            matches!(cli.command, Some(Commands::Cancel { order_id }) if order_id == "order-456")
+        );
     }
 
     #[test]
     fn test_replace_subcommand() {
-        let cli = parse(&["longbridge", "replace", "order-789", "--qty", "200", "--price", "255.00"]).unwrap();
-        if let Some(Commands::Replace { order_id, qty, price }) = cli.command {
+        let cli = parse(&[
+            "longbridge",
+            "replace",
+            "order-789",
+            "--qty",
+            "200",
+            "--price",
+            "255.00",
+        ])
+        .unwrap();
+        if let Some(Commands::Replace {
+            order_id,
+            qty,
+            price,
+        }) = cli.command
+        {
             assert_eq!(order_id, "order-789");
             assert_eq!(qty, Some(200));
             assert_eq!(price, Some("255.00".to_string()));
@@ -1158,7 +1309,15 @@ mod tests {
 
     #[test]
     fn test_cash_flow_subcommand() {
-        let cli = parse(&["longbridge", "cash-flow", "--start", "2024-01-01", "--end", "2024-03-31"]).unwrap();
+        let cli = parse(&[
+            "longbridge",
+            "cash-flow",
+            "--start",
+            "2024-01-01",
+            "--end",
+            "2024-03-31",
+        ])
+        .unwrap();
         if let Some(Commands::CashFlow { start, end }) = cli.command {
             assert_eq!(start, Some("2024-01-01".to_string()));
             assert_eq!(end, Some("2024-03-31".to_string()));
@@ -1182,13 +1341,30 @@ mod tests {
     #[test]
     fn test_margin_ratio_subcommand() {
         let cli = parse(&["longbridge", "margin-ratio", "TSLA.US"]).unwrap();
-        assert!(matches!(cli.command, Some(Commands::MarginRatio { symbol }) if symbol == "TSLA.US"));
+        assert!(
+            matches!(cli.command, Some(Commands::MarginRatio { symbol }) if symbol == "TSLA.US")
+        );
     }
 
     #[test]
     fn test_max_qty_subcommand() {
-        let cli = parse(&["longbridge", "max-qty", "TSLA.US", "--side", "buy", "--price", "250"]).unwrap();
-        if let Some(Commands::MaxQty { symbol, side, price, order_type }) = cli.command {
+        let cli = parse(&[
+            "longbridge",
+            "max-qty",
+            "TSLA.US",
+            "--side",
+            "buy",
+            "--price",
+            "250",
+        ])
+        .unwrap();
+        if let Some(Commands::MaxQty {
+            symbol,
+            side,
+            price,
+            order_type,
+        }) = cli.command
+        {
             assert_eq!(symbol, "TSLA.US");
             assert_eq!(side, "buy");
             assert_eq!(price, Some("250".to_string()));
