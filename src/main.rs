@@ -12,10 +12,10 @@ pub mod data;
 pub mod kline;
 pub mod logger;
 pub mod openapi;
-pub mod region;
 #[cfg_attr(target_family = "windows", path = "os/windows.rs")]
 #[cfg_attr(target_family = "unix", path = "os/unix.rs")]
 pub mod os;
+pub mod region;
 pub mod render;
 pub mod systems;
 pub mod ui;
