@@ -5,14 +5,22 @@ type curl > /dev/null || { echo "curl: not found"; exit 1; }
 repo='longbridge/longbridge-terminal'
 
 get_latest_release() {
-  curl --silent "https://api.github.com/repos/$repo/releases/latest" | # Get latest release from GitHub api
-    grep '"tag_name":' |                                               # Get tag line
-    sed -E 's/.*"([^"]+)".*/\1/'                                       # Pluck JSON value
+  url=$(curl --silent -o /dev/null -w "%{url_effective}" -L "https://github.com/$repo/releases/latest")
+  tag=$(echo "$url" | sed -E 's|.*/tag/||')
+  if [ -z "$tag" ] || [ "$tag" = "$url" ]; then
+    echo "Failed to fetch the latest release. Redirect URL: $url" >&2
+    return 1
+  fi
+  echo "$tag"
 }
+
+version=$(get_latest_release) || exit 1
+
+echo "Latest release: $version"
 
 bin_name='longbridge'
 package_name='longbridge-terminal'
-version='v0.7.0-preview2'
+
 
 platform="$(uname | tr "[A-Z]" "[a-z]")"  # Linux => linux
 arch="$(uname -m)"  # x86_64, arm64, aarch64, etc.
@@ -40,7 +48,7 @@ if [ "$platform" = "linux" ]; then
   fi
 fi
 
-download_url=https://github.com/$repo/releases/download/$version/$package_name-$platform$libc-$arch.tar.gz
+download_url=https://github.com/longbridge/longbridge-terminal/releases/download/$version/$package_name-$platform$libc-$arch.tar.gz
 echo $download_url
 
 curl -Lo $bin_name.tar.gz $download_url

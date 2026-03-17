@@ -330,7 +330,7 @@ pub enum Commands {
     // ── News ────────────────────────────────────────────────────────────────────
     /// Latest news articles for a symbol
     ///
-    /// Returns: id, title, published_at, likes, comments.
+    /// Returns: id, title, `published_at`, likes, comments.
     /// Example: longbridge news TSLA.US
     /// Example: longbridge news 700.HK --count 5
     News {
@@ -343,7 +343,7 @@ pub enum Commands {
 
     /// Full Markdown content of a news article
     ///
-    /// Fetches the article text from https://longbridge.com/news/<id>.md
+    /// Fetches the article text from <https://longbridge.com/news>/<id>.md
     /// Example: longbridge news-detail 12345678
     NewsDetail {
         /// News article ID (from `longbridge news`)
@@ -352,7 +352,7 @@ pub enum Commands {
 
     /// Regulatory filings and announcements for a symbol
     ///
-    /// Returns: id, title, file_name, publish_at, file_urls.
+    /// Returns: id, title, `file_name`, `publish_at`, `file_urls`.
     /// Example: longbridge filings AAPL.US
     /// Example: longbridge filings 700.HK --count 5
     Filings {
@@ -365,7 +365,7 @@ pub enum Commands {
 
     /// Community discussion topics for a symbol
     ///
-    /// Returns: id, title, description, url, published_at, likes, comments, shares.
+    /// Returns: id, title, description, url, `published_at`, likes, comments, shares.
     /// Example: longbridge topics TSLA.US
     /// Example: longbridge topics 700.HK --count 5
     Topics {
@@ -378,7 +378,7 @@ pub enum Commands {
 
     /// Full Markdown content of a community topic
     ///
-    /// Fetches the topic text from https://longbridge.com/topics/<id>.md
+    /// Fetches the topic text from <https://longbridge.com/topics>/<id>.md
     /// Example: longbridge topic-detail 277062200
     TopicDetail {
         /// Topic ID (from `longbridge topics`)

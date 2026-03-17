@@ -24,7 +24,7 @@ where
     use serde::de::{self, Visitor};
 
     struct StrOrI64;
-    impl<'de> Visitor<'de> for StrOrI64 {
+    impl Visitor<'_> for StrOrI64 {
         type Value = i64;
         fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             f.write_str("i64 or string containing i64")
@@ -321,7 +321,7 @@ pub async fn cmd_topics(symbol: String, count: usize, format: &OutputFormat) -> 
     Ok(())
 }
 
-/// Fetch full topic content as Markdown: GET https://longbridge.com/topics/{id}.md
+/// Fetch full topic content as Markdown: GET <https://longbridge.com/topics/{id}.md>
 pub async fn cmd_topic_detail(id: String) -> Result<()> {
     let url = format!("https://longbridge.com/topics/{id}.md");
     let client = reqwest::Client::new();
@@ -340,7 +340,7 @@ pub async fn cmd_topic_detail(id: String) -> Result<()> {
     Ok(())
 }
 
-/// Fetch full news article as Markdown: GET https://longbridge.com/news/{id}.md
+/// Fetch full news article as Markdown: GET <https://longbridge.com/news/{id}.md>
 pub async fn cmd_news_detail(id: String) -> Result<()> {
     let url = format!("{NEWS_DETAIL_BASE}/{id}.md");
     let client = reqwest::Client::new();

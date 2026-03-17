@@ -9,7 +9,7 @@ pub static QUOTE_CTX: OnceLock<longbridge::quote::QuoteContext> = OnceLock::new(
 /// Global `TradeContext`
 pub static TRADE_CTX: OnceLock<longbridge::trade::TradeContext> = OnceLock::new();
 
-/// Global `HttpClient` for making authenticated requests to the Longbridge OpenAPI
+/// Global `HttpClient` for making authenticated requests to the Longbridge `OpenAPI`
 pub static HTTP_CLIENT: OnceLock<longbridge::httpclient::HttpClient> = OnceLock::new();
 
 /// Global rate-limited `QuoteContext` wrapper
@@ -146,7 +146,7 @@ pub fn quote_limited() -> &'static RateLimitedQuoteContext {
         .expect("RateLimitedQuoteContext not initialized, please call init_contexts() first")
 }
 
-/// Get the global authenticated `HttpClient` for direct OpenAPI requests
+/// Get the global authenticated `HttpClient` for direct `OpenAPI` requests
 pub fn http_client() -> &'static longbridge::httpclient::HttpClient {
     HTTP_CLIENT
         .get()
