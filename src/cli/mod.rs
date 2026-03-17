@@ -720,9 +720,12 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
         Commands::News { symbol, count } => news::cmd_news(symbol, count, format).await,
         Commands::NewsDetail { id } => news::cmd_news_detail(id).await,
         Commands::Filings { symbol, count } => news::cmd_filings(symbol, count, format).await,
-        Commands::FilingDetail { symbol, id, list_files, file_index } => {
-            news::cmd_filing_detail(symbol, id, list_files, file_index).await
-        }
+        Commands::FilingDetail {
+            symbol,
+            id,
+            list_files,
+            file_index,
+        } => news::cmd_filing_detail(symbol, id, list_files, file_index).await,
         Commands::Topics { symbol, count } => news::cmd_topics(symbol, count, format).await,
         Commands::TopicDetail { id } => news::cmd_topic_detail(id).await,
         Commands::Watchlist { cmd } => watchlist::cmd_watchlist(cmd, format).await,
