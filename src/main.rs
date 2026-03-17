@@ -33,6 +33,47 @@ pub struct Args {
     pub logout: bool,
 }
 
+fn print_cli_error(e: &anyhow::Error) {
+    use longbridge::{Error as LbError, httpclient::HttpClientError, wsclient::WsClientError};
+
+    if let Some(lb_err) = e.downcast_ref::<LbError>() {
+        match lb_err {
+            LbError::HttpClient(HttpClientError::OpenApi {
+                code,
+                message,
+                trace_id,
+            }) => {
+                eprintln!("Error: API error (code {code}): {message}");
+                if !trace_id.is_empty() {
+                    eprintln!("  trace_id: {trace_id}");
+                }
+                return;
+            }
+            LbError::WsClient(WsClientError::ResponseError {
+                status,
+                detail: Some(detail),
+            }) => {
+                eprintln!(
+                    "Error: WebSocket error (status={status}, code={}): {}",
+                    detail.code, detail.msg
+                );
+                return;
+            }
+            LbError::WsClient(WsClientError::ConnectionClosed {
+                reason: Some(reason),
+            }) => {
+                eprintln!(
+                    "Error: Connection closed ({:?}): {}",
+                    reason.code, reason.message
+                );
+                return;
+            }
+            _ => {}
+        }
+    }
+    eprintln!("Error: {e:#}");
+}
+
 #[tokio::main]
 async fn main() {
     rust_i18n::set_locale("en");
@@ -102,7 +143,7 @@ async fn main() {
                 std::process::exit(1);
             }
             if let Err(e) = cli::dispatch(cmd, &cli.format).await {
-                eprintln!("Error: {e:#}");
+                print_cli_error(&e);
                 std::process::exit(1);
             }
         }

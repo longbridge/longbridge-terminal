@@ -16,37 +16,37 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            name: longbridge-terminal-linux-amd64.tar.gz
+            name: longbridge-cli-linux-amd64.tar.gz
             arch: x86_64
 
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
-            name: longbridge-terminal-linux-arm64.tar.gz
+            name: longbridge-cli-linux-arm64.tar.gz
             arch: aarch64
 
           - target: x86_64-apple-darwin
             os: macOS-latest
-            name: longbridge-terminal-darwin-amd64.tar.gz
+            name: longbridge-cli-darwin-amd64.tar.gz
             arch: x86_64
 
           - target: aarch64-apple-darwin
             os: macOS-latest
-            name: longbridge-terminal-darwin-arm64.tar.gz
+            name: longbridge-cli-darwin-arm64.tar.gz
             arch: aarch64
 
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            name: longbridge-terminal-windows-amd64.zip
+            name: longbridge-cli-windows-amd64.zip
             arch: x86_64
 
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
-            name: longbridge-terminal-linux-musl-amd64.tar.gz
+            name: longbridge-cli-linux-musl-amd64.tar.gz
             arch: x86_64
 
           - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
-            name: longbridge-terminal-linux-musl-arm64.tar.gz
+            name: longbridge-cli-linux-musl-arm64.tar.gz
             arch: aarch64
 
     runs-on: ${{ matrix.os }}

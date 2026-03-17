@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A Rust-based TUI (Terminal User Interface) stock trading terminal using the Longbridge OpenAPI SDK for market data and trading operations.
+A Rust-based CLI (`longbridge`) that wraps every Longbridge OpenAPI endpoint for scripting, AI-agent tool-calling, and daily trading workflows. Also ships a full-screen TUI for interactive market monitoring. The CLI is the primary product; the TUI is secondary.
 
 ## Core Architecture
 

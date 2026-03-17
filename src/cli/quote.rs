@@ -1,7 +1,10 @@
 use anyhow::{bail, Result};
 use longbridge::quote::{AdjustType, CalcIndex, Period, SecurityListCategory, TradeSessions};
+use longbridge::Market;
+use time::Date;
 
 use super::{
+    api::QuoteApi,
     output::{fmt_date, fmt_datetime, fmt_dec, fmt_decimal, parse_date, print_table},
     OutputFormat,
 };
@@ -914,4 +917,541 @@ pub async fn cmd_warrant_issuers(format: &OutputFormat) -> Result<()> {
 
     print_table(headers, rows, format);
     Ok(())
+}
+
+// ─── Testable run_* functions ─────────────────────────────────────────────────
+
+pub async fn run_quote(api: &dyn QuoteApi, symbols: Vec<String>, format: &OutputFormat) -> Result<()> {
+    if symbols.is_empty() {
+        bail!("At least one symbol is required");
+    }
+    let quotes = api.quote(symbols).await?;
+    let headers = &["Symbol", "Last", "Prev Close", "Open", "High", "Low", "Volume", "Turnover", "Status"];
+    let rows = quotes.iter().map(|q| vec![
+        q.symbol.clone(), fmt_dec(q.last_done), fmt_dec(q.prev_close),
+        fmt_dec(q.open), fmt_dec(q.high), fmt_dec(q.low),
+        q.volume.to_string(), fmt_dec(q.turnover), format!("{:?}", q.trade_status),
+    ]).collect();
+    print_table(headers, rows, format);
+    Ok(())
+}
+
+pub async fn run_depth(api: &dyn QuoteApi, symbol: String, format: &OutputFormat) -> Result<()> {
+    let depth = api.depth(symbol.clone()).await?;
+    match format {
+        OutputFormat::Json => {
+            let val = serde_json::json!({
+                "symbol": symbol,
+                "asks": depth.asks.iter().map(|d| serde_json::json!({"position": d.position, "price": fmt_decimal(&d.price), "volume": d.volume})).collect::<Vec<_>>(),
+                "bids": depth.bids.iter().map(|d| serde_json::json!({"position": d.position, "price": fmt_decimal(&d.price), "volume": d.volume})).collect::<Vec<_>>(),
+            });
+            println!("{}", serde_json::to_string_pretty(&val)?);
+        }
+        OutputFormat::Table => {
+            let headers = &["Position", "Price", "Volume", "Orders"];
+            let ask_rows: Vec<Vec<String>> = depth.asks.iter().map(|d| vec![d.position.to_string(), fmt_decimal(&d.price), d.volume.to_string(), d.order_num.to_string()]).collect();
+            let bid_rows: Vec<Vec<String>> = depth.bids.iter().map(|d| vec![d.position.to_string(), fmt_decimal(&d.price), d.volume.to_string(), d.order_num.to_string()]).collect();
+            println!("Asks:");
+            print_table(headers, ask_rows, &OutputFormat::Table);
+            println!("Bids:");
+            print_table(headers, bid_rows, &OutputFormat::Table);
+        }
+    }
+    Ok(())
+}
+
+pub async fn run_brokers(api: &dyn QuoteApi, symbol: String, format: &OutputFormat) -> Result<()> {
+    let brokers = api.brokers(symbol.clone()).await?;
+    match format {
+        OutputFormat::Json => {
+            let val = serde_json::json!({
+                "symbol": symbol,
+                "asks": brokers.ask_brokers.iter().map(|b| serde_json::json!({"position": b.position, "broker_ids": b.broker_ids})).collect::<Vec<_>>(),
+                "bids": brokers.bid_brokers.iter().map(|b| serde_json::json!({"position": b.position, "broker_ids": b.broker_ids})).collect::<Vec<_>>(),
+            });
+            println!("{}", serde_json::to_string_pretty(&val)?);
+        }
+        OutputFormat::Table => {
+            let headers = &["Position", "Broker IDs"];
+            let ask_rows: Vec<Vec<String>> = brokers.ask_brokers.iter().map(|b| vec![b.position.to_string(), b.broker_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(", ")]).collect();
+            let bid_rows: Vec<Vec<String>> = brokers.bid_brokers.iter().map(|b| vec![b.position.to_string(), b.broker_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(", ")]).collect();
+            println!("Ask Brokers:");
+            print_table(headers, ask_rows, &OutputFormat::Table);
+            println!("Bid Brokers:");
+            print_table(headers, bid_rows, &OutputFormat::Table);
+        }
+    }
+    Ok(())
+}
+
+pub async fn run_trades(api: &dyn QuoteApi, symbol: String, count: usize, format: &OutputFormat) -> Result<()> {
+    let trades = api.trades(symbol, count).await?;
+    let headers = &["Time", "Price", "Volume", "Direction", "Type"];
+    let rows = trades.iter().map(|t| vec![fmt_datetime(t.timestamp), fmt_dec(t.price), t.volume.to_string(), format!("{:?}", t.direction), t.trade_type.clone()]).collect();
+    print_table(headers, rows, format);
+    Ok(())
+}
+
+pub async fn run_intraday(api: &dyn QuoteApi, symbol: String, format: &OutputFormat) -> Result<()> {
+    let lines = api.intraday(symbol).await?;
+    let headers = &["Time", "Price", "Volume", "Turnover", "Avg Price"];
+    let rows = lines.iter().map(|l| vec![fmt_datetime(l.timestamp), fmt_dec(l.price), l.volume.to_string(), fmt_dec(l.turnover), fmt_dec(l.avg_price)]).collect();
+    print_table(headers, rows, format);
+    Ok(())
+}
+
+pub async fn run_kline(api: &dyn QuoteApi, symbol: String, period: Period, count: usize, adjust: AdjustType, format: &OutputFormat) -> Result<()> {
+    let candles = api.candlesticks(symbol, period, count, adjust).await?;
+    let headers = &["Time", "Open", "High", "Low", "Close", "Volume", "Turnover"];
+    let rows = candles.iter().map(|c| vec![fmt_datetime(c.timestamp), fmt_dec(c.open), fmt_dec(c.high), fmt_dec(c.low), fmt_dec(c.close), c.volume.to_string(), fmt_dec(c.turnover)]).collect();
+    print_table(headers, rows, format);
+    Ok(())
+}
+
+pub async fn run_kline_history(api: &dyn QuoteApi, symbol: String, period: Period, adjust: AdjustType, start: Option<Date>, end: Option<Date>, format: &OutputFormat) -> Result<()> {
+    let candles = if let (Some(s), Some(e)) = (start, end) {
+        api.history_candlesticks_by_date(symbol, period, adjust, Some(s), Some(e)).await?
+    } else {
+        api.history_candlesticks_by_offset(symbol, period, adjust, 100).await?
+    };
+    let headers = &["Time", "Open", "High", "Low", "Close", "Volume", "Turnover"];
+    let rows = candles.iter().map(|c| vec![fmt_datetime(c.timestamp), fmt_dec(c.open), fmt_dec(c.high), fmt_dec(c.low), fmt_dec(c.close), c.volume.to_string(), fmt_dec(c.turnover)]).collect();
+    print_table(headers, rows, format);
+    Ok(())
+}
+
+pub async fn run_static(api: &dyn QuoteApi, symbols: Vec<String>, format: &OutputFormat) -> Result<()> {
+    if symbols.is_empty() {
+        bail!("At least one symbol is required");
+    }
+    let infos = api.static_info(symbols).await?;
+    let headers = &["Symbol", "Name", "Exchange", "Currency", "Lot Size"];
+    let rows = infos.iter().map(|i| vec![i.symbol.clone(), i.name_en.clone(), i.exchange.clone(), i.currency.clone(), i.lot_size.to_string()]).collect();
+    print_table(headers, rows, format);
+    Ok(())
+}
+
+pub async fn run_calc_index(api: &dyn QuoteApi, symbols: Vec<String>, indexes: Vec<CalcIndex>, format: &OutputFormat) -> Result<()> {
+    if symbols.is_empty() {
+        bail!("At least one symbol is required");
+    }
+    let results = api.calc_indexes(symbols, indexes).await?;
+    let headers = &["Symbol", "Last Done", "Change Rate", "PE TTM", "PB"];
+    let rows = results.iter().map(|r| vec![r.symbol.clone(), fmt_decimal(&r.last_done), fmt_decimal(&r.change_rate), fmt_decimal(&r.pe_ttm_ratio), fmt_decimal(&r.pb_ratio)]).collect();
+    print_table(headers, rows, format);
+    Ok(())
+}
+
+pub async fn run_capital_flow(api: &dyn QuoteApi, symbol: String, format: &OutputFormat) -> Result<()> {
+    let flows = api.capital_flow(symbol).await?;
+    let headers = &["Time", "Inflow"];
+    let rows = flows.iter().map(|f| vec![fmt_datetime(f.timestamp), fmt_dec(f.inflow)]).collect();
+    print_table(headers, rows, format);
+    Ok(())
+}
+
+pub async fn run_capital_dist(api: &dyn QuoteApi, symbol: String, format: &OutputFormat) -> Result<()> {
+    let dist = api.capital_distribution(symbol).await?;
+    let headers = &["Direction", "Large", "Medium", "Small"];
+    let rows = vec![
+        vec!["Inflow".to_string(), fmt_dec(dist.capital_in.large), fmt_dec(dist.capital_in.medium), fmt_dec(dist.capital_in.small)],
+        vec!["Outflow".to_string(), fmt_dec(dist.capital_out.large), fmt_dec(dist.capital_out.medium), fmt_dec(dist.capital_out.small)],
+    ];
+    print_table(headers, rows, format);
+    Ok(())
+}
+
+pub async fn run_market_temp_current(api: &dyn QuoteApi, market: Market, format: &OutputFormat) -> Result<()> {
+    let temp = api.market_temperature(market).await?;
+    let headers = &["Field", "Value"];
+    let rows = vec![
+        vec!["Temperature".to_string(), temp.temperature.to_string()],
+        vec!["Description".to_string(), temp.description.clone()],
+        vec!["Valuation".to_string(), temp.valuation.to_string()],
+        vec!["Sentiment".to_string(), temp.sentiment.to_string()],
+    ];
+    print_table(headers, rows, format);
+    Ok(())
+}
+
+pub async fn run_market_temp_history(api: &dyn QuoteApi, market: Market, start: Date, end: Date, format: &OutputFormat) -> Result<()> {
+    let resp = api.history_market_temperature(market, start, end).await?;
+    let headers = &["Time", "Temperature", "Valuation", "Sentiment", "Description"];
+    let rows = resp.records.iter().map(|t| vec![fmt_datetime(t.timestamp), t.temperature.to_string(), t.valuation.to_string(), t.sentiment.to_string(), t.description.clone()]).collect();
+    print_table(headers, rows, format);
+    Ok(())
+}
+
+pub async fn run_trading_session(api: &dyn QuoteApi, format: &OutputFormat) -> Result<()> {
+    let sessions = api.trading_session().await?;
+    let headers = &["Market", "Session", "Open", "Close"];
+    let mut rows = vec![];
+    for s in &sessions {
+        for ts in &s.trade_sessions {
+            rows.push(vec![format!("{:?}", s.market), format!("{:?}", ts.trade_session), ts.begin_time.to_string(), ts.end_time.to_string()]);
+        }
+    }
+    print_table(headers, rows, format);
+    Ok(())
+}
+
+pub async fn run_trading_days(api: &dyn QuoteApi, market: Market, start: Date, end: Date, format: &OutputFormat) -> Result<()> {
+    let days = api.trading_days(market, start, end).await?;
+    let headers = &["Trading Days", "Half Trading Days"];
+    let rows = vec![vec![
+        days.trading_days.iter().map(|d| fmt_date(*d)).collect::<Vec<_>>().join(", "),
+        days.half_trading_days.iter().map(|d| fmt_date(*d)).collect::<Vec<_>>().join(", "),
+    ]];
+    print_table(headers, rows, format);
+    Ok(())
+}
+
+pub async fn run_security_list(api: &dyn QuoteApi, market: Market, format: &OutputFormat) -> Result<()> {
+    let securities = api.security_list(market).await?;
+    let headers = &["Symbol", "Name (EN)", "Name (CN)"];
+    let rows = securities.iter().map(|s| vec![s.symbol.clone(), s.name_en.clone(), s.name_cn.clone()]).collect();
+    print_table(headers, rows, format);
+    Ok(())
+}
+
+pub async fn run_participants(api: &dyn QuoteApi, format: &OutputFormat) -> Result<()> {
+    let participants = api.participants().await?;
+    let headers = &["Broker ID", "Name (EN)", "Name (CN)"];
+    let rows = participants.iter().map(|p| vec![p.broker_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(", "), p.name_en.clone(), p.name_cn.clone()]).collect();
+    print_table(headers, rows, format);
+    Ok(())
+}
+
+pub async fn run_subscriptions(api: &dyn QuoteApi, format: &OutputFormat) -> Result<()> {
+    let subs = api.subscriptions().await?;
+    let headers = &["Symbol", "Sub Types", "Candlestick Periods"];
+    let rows = subs.iter().map(|s| vec![s.symbol.clone(), format!("{:?}", s.sub_types), s.candlesticks.iter().map(|p| format!("{p:?}")).collect::<Vec<_>>().join(", ")]).collect();
+    print_table(headers, rows, format);
+    Ok(())
+}
+
+pub async fn run_option_quote(api: &dyn QuoteApi, symbols: Vec<String>, format: &OutputFormat) -> Result<()> {
+    if symbols.is_empty() {
+        bail!("At least one symbol is required");
+    }
+    let quotes = api.option_quote(symbols).await?;
+    let headers = &["Symbol", "Last", "Strike", "Expiry", "Type"];
+    let rows = quotes.iter().map(|q| vec![q.symbol.clone(), fmt_dec(q.last_done), fmt_dec(q.strike_price), fmt_date(q.expiry_date), format!("{:?}", q.contract_type)]).collect();
+    print_table(headers, rows, format);
+    Ok(())
+}
+
+pub async fn run_option_chain_dates(api: &dyn QuoteApi, symbol: String, format: &OutputFormat) -> Result<()> {
+    let dates = api.option_chain_expiry_date_list(symbol).await?;
+    let headers = &["Expiry Date"];
+    let rows = dates.iter().map(|d| vec![fmt_date(*d)]).collect();
+    print_table(headers, rows, format);
+    Ok(())
+}
+
+pub async fn run_option_chain_strikes(api: &dyn QuoteApi, symbol: String, expiry_date: Date, format: &OutputFormat) -> Result<()> {
+    let strikes = api.option_chain_info_by_date(symbol, expiry_date).await?;
+    let headers = &["Strike", "Call Symbol", "Put Symbol", "Standard"];
+    let rows = strikes.iter().map(|s| vec![fmt_dec(s.price), s.call_symbol.clone(), s.put_symbol.clone(), s.standard.to_string()]).collect();
+    print_table(headers, rows, format);
+    Ok(())
+}
+
+pub async fn run_warrant_quote(api: &dyn QuoteApi, symbols: Vec<String>, format: &OutputFormat) -> Result<()> {
+    if symbols.is_empty() {
+        bail!("At least one symbol is required");
+    }
+    let quotes = api.warrant_quote(symbols).await?;
+    let headers = &["Symbol", "Last", "Prev Close", "Implied Vol", "Expiry", "Type"];
+    let rows = quotes.iter().map(|q| vec![q.symbol.clone(), fmt_dec(q.last_done), fmt_dec(q.prev_close), fmt_dec(q.implied_volatility), fmt_date(q.expiry_date), format!("{:?}", q.category)]).collect();
+    print_table(headers, rows, format);
+    Ok(())
+}
+
+pub async fn run_warrant_list(api: &dyn QuoteApi, symbol: String, format: &OutputFormat) -> Result<()> {
+    let warrants = api.warrant_list(symbol).await?;
+    let headers = &["Symbol", "Name", "Last", "Leverage Ratio", "Expiry", "Type"];
+    let rows = warrants.iter().map(|w| vec![w.symbol.clone(), w.name.clone(), fmt_dec(w.last_done), fmt_dec(w.leverage_ratio), fmt_date(w.expiry_date), format!("{:?}", w.warrant_type)]).collect();
+    print_table(headers, rows, format);
+    Ok(())
+}
+
+pub async fn run_warrant_issuers(api: &dyn QuoteApi, format: &OutputFormat) -> Result<()> {
+    let issuers = api.warrant_issuers().await?;
+    let headers = &["ID", "Name (EN)", "Name (CN)"];
+    let rows = issuers.iter().map(|i| vec![i.issuer_id.to_string(), i.name_en.clone(), i.name_cn.clone()]).collect();
+    print_table(headers, rows, format);
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::api::MockQuoteApi;
+
+    #[tokio::test]
+    async fn test_run_quote_dispatches() {
+        let mut mock = MockQuoteApi::new();
+        mock.expect_quote()
+            .with(mockall::predicate::eq(vec!["TSLA.US".to_string()]))
+            .times(1)
+            .returning(|_| Ok(vec![]));
+        run_quote(&mock, vec!["TSLA.US".to_string()], &OutputFormat::Table).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_run_quote_empty_symbols_errors() {
+        let mock = MockQuoteApi::new();
+        let result = run_quote(&mock, vec![], &OutputFormat::Table).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_run_depth_dispatches() {
+        let mut mock = MockQuoteApi::new();
+        mock.expect_depth()
+            .with(mockall::predicate::eq("700.HK".to_string()))
+            .times(1)
+            .returning(|_| Ok(longbridge::quote::SecurityDepth { asks: vec![], bids: vec![] }));
+        run_depth(&mock, "700.HK".to_string(), &OutputFormat::Table).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_run_brokers_dispatches() {
+        let mut mock = MockQuoteApi::new();
+        mock.expect_brokers()
+            .with(mockall::predicate::eq("700.HK".to_string()))
+            .times(1)
+            .returning(|_| Ok(longbridge::quote::SecurityBrokers { ask_brokers: vec![], bid_brokers: vec![] }));
+        run_brokers(&mock, "700.HK".to_string(), &OutputFormat::Table).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_run_trades_dispatches() {
+        let mut mock = MockQuoteApi::new();
+        mock.expect_trades()
+            .with(mockall::predicate::eq("AAPL.US".to_string()), mockall::predicate::eq(20_usize))
+            .times(1)
+            .returning(|_, _| Ok(vec![]));
+        run_trades(&mock, "AAPL.US".to_string(), 20, &OutputFormat::Table).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_run_intraday_dispatches() {
+        let mut mock = MockQuoteApi::new();
+        mock.expect_intraday()
+            .with(mockall::predicate::eq("TSLA.US".to_string()))
+            .times(1)
+            .returning(|_| Ok(vec![]));
+        run_intraday(&mock, "TSLA.US".to_string(), &OutputFormat::Table).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_run_kline_dispatches() {
+        let mut mock = MockQuoteApi::new();
+        mock.expect_candlesticks()
+            .with(
+                mockall::predicate::eq("TSLA.US".to_string()),
+                mockall::predicate::eq(Period::Day),
+                mockall::predicate::eq(100_usize),
+                mockall::predicate::eq(AdjustType::NoAdjust),
+            )
+            .times(1)
+            .returning(|_, _, _, _| Ok(vec![]));
+        run_kline(&mock, "TSLA.US".to_string(), Period::Day, 100, AdjustType::NoAdjust, &OutputFormat::Table).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_run_kline_history_by_date() {
+        let mut mock = MockQuoteApi::new();
+        let start = time::macros::date!(2024-01-01);
+        let end = time::macros::date!(2024-12-31);
+        mock.expect_history_candlesticks_by_date()
+            .times(1)
+            .returning(|_, _, _, _, _| Ok(vec![]));
+        run_kline_history(&mock, "TSLA.US".to_string(), Period::Day, AdjustType::NoAdjust, Some(start), Some(end), &OutputFormat::Table).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_run_kline_history_by_offset() {
+        let mut mock = MockQuoteApi::new();
+        mock.expect_history_candlesticks_by_offset()
+            .times(1)
+            .returning(|_, _, _, _| Ok(vec![]));
+        run_kline_history(&mock, "TSLA.US".to_string(), Period::Day, AdjustType::NoAdjust, None, None, &OutputFormat::Table).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_run_static_dispatches() {
+        let mut mock = MockQuoteApi::new();
+        mock.expect_static_info()
+            .with(mockall::predicate::eq(vec!["TSLA.US".to_string()]))
+            .times(1)
+            .returning(|_| Ok(vec![]));
+        run_static(&mock, vec!["TSLA.US".to_string()], &OutputFormat::Table).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_run_capital_flow_dispatches() {
+        let mut mock = MockQuoteApi::new();
+        mock.expect_capital_flow()
+            .with(mockall::predicate::eq("TSLA.US".to_string()))
+            .times(1)
+            .returning(|_| Ok(vec![]));
+        run_capital_flow(&mock, "TSLA.US".to_string(), &OutputFormat::Table).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_run_capital_dist_dispatches() {
+        use rust_decimal::Decimal;
+        let mut mock = MockQuoteApi::new();
+        mock.expect_capital_distribution()
+            .with(mockall::predicate::eq("TSLA.US".to_string()))
+            .times(1)
+            .returning(|_| Ok(longbridge::quote::CapitalDistributionResponse {
+                timestamp: time::OffsetDateTime::UNIX_EPOCH,
+                capital_in: longbridge::quote::CapitalDistribution { large: Decimal::ZERO, medium: Decimal::ZERO, small: Decimal::ZERO },
+                capital_out: longbridge::quote::CapitalDistribution { large: Decimal::ZERO, medium: Decimal::ZERO, small: Decimal::ZERO },
+            }));
+        run_capital_dist(&mock, "TSLA.US".to_string(), &OutputFormat::Table).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_run_trading_session_dispatches() {
+        let mut mock = MockQuoteApi::new();
+        mock.expect_trading_session()
+            .times(1)
+            .returning(|| Ok(vec![]));
+        run_trading_session(&mock, &OutputFormat::Table).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_run_security_list_dispatches() {
+        let mut mock = MockQuoteApi::new();
+        mock.expect_security_list()
+            .with(mockall::predicate::eq(longbridge::Market::HK))
+            .times(1)
+            .returning(|_| Ok(vec![]));
+        run_security_list(&mock, longbridge::Market::HK, &OutputFormat::Table).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_run_participants_dispatches() {
+        let mut mock = MockQuoteApi::new();
+        mock.expect_participants()
+            .times(1)
+            .returning(|| Ok(vec![]));
+        run_participants(&mock, &OutputFormat::Table).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_run_subscriptions_dispatches() {
+        let mut mock = MockQuoteApi::new();
+        mock.expect_subscriptions()
+            .times(1)
+            .returning(|| Ok(vec![]));
+        run_subscriptions(&mock, &OutputFormat::Table).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_run_option_quote_dispatches() {
+        let mut mock = MockQuoteApi::new();
+        mock.expect_option_quote()
+            .with(mockall::predicate::eq(vec!["AAPL240119C190000".to_string()]))
+            .times(1)
+            .returning(|_| Ok(vec![]));
+        run_option_quote(&mock, vec!["AAPL240119C190000".to_string()], &OutputFormat::Table).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_run_option_chain_dates_dispatches() {
+        let mut mock = MockQuoteApi::new();
+        mock.expect_option_chain_expiry_date_list()
+            .with(mockall::predicate::eq("AAPL.US".to_string()))
+            .times(1)
+            .returning(|_| Ok(vec![]));
+        run_option_chain_dates(&mock, "AAPL.US".to_string(), &OutputFormat::Table).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_run_option_chain_strikes_dispatches() {
+        let mut mock = MockQuoteApi::new();
+        let date = time::macros::date!(2024-01-19);
+        mock.expect_option_chain_info_by_date()
+            .with(mockall::predicate::eq("AAPL.US".to_string()), mockall::predicate::eq(date))
+            .times(1)
+            .returning(|_, _| Ok(vec![]));
+        run_option_chain_strikes(&mock, "AAPL.US".to_string(), date, &OutputFormat::Table).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_run_warrant_quote_dispatches() {
+        let mut mock = MockQuoteApi::new();
+        mock.expect_warrant_quote()
+            .times(1)
+            .returning(|_| Ok(vec![]));
+        run_warrant_quote(&mock, vec!["12345.HK".to_string()], &OutputFormat::Table).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_run_warrant_list_dispatches() {
+        let mut mock = MockQuoteApi::new();
+        mock.expect_warrant_list()
+            .with(mockall::predicate::eq("700.HK".to_string()))
+            .times(1)
+            .returning(|_| Ok(vec![]));
+        run_warrant_list(&mock, "700.HK".to_string(), &OutputFormat::Table).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_run_warrant_issuers_dispatches() {
+        let mut mock = MockQuoteApi::new();
+        mock.expect_warrant_issuers()
+            .times(1)
+            .returning(|| Ok(vec![]));
+        run_warrant_issuers(&mock, &OutputFormat::Table).await.unwrap();
+    }
+
+    #[test]
+    fn test_parse_period_valid() {
+        assert!(parse_period("day").is_ok());
+        assert!(parse_period("1m").is_ok());
+        assert!(parse_period("1h").is_ok());
+        assert!(parse_period("week").is_ok());
+        assert!(parse_period("month").is_ok());
+    }
+
+    #[test]
+    fn test_parse_period_invalid() {
+        assert!(parse_period("invalid").is_err());
+        assert!(parse_period("2h").is_err());
+    }
+
+    #[test]
+    fn test_parse_adjust_valid() {
+        assert!(parse_adjust("no_adjust").is_ok());
+        assert!(parse_adjust("none").is_ok());
+        assert!(parse_adjust("forward_adjust").is_ok());
+        assert!(parse_adjust("forward").is_ok());
+    }
+
+    #[test]
+    fn test_parse_adjust_invalid() {
+        assert!(parse_adjust("backward").is_err());
+    }
+
+    #[test]
+    fn test_parse_market_valid() {
+        assert!(parse_market("HK").is_ok());
+        assert!(parse_market("hk").is_ok());
+        assert!(parse_market("US").is_ok());
+        assert!(parse_market("CN").is_ok());
+        assert!(parse_market("SH").is_ok());
+        assert!(parse_market("SZ").is_ok());
+    }
+
+    #[test]
+    fn test_parse_market_invalid() {
+        assert!(parse_market("XX").is_err());
+    }
 }

@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 
+pub mod api;
 pub mod output;
 pub mod quote;
 pub mod trade;
@@ -678,5 +679,532 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
             order_type,
         } => trade::cmd_max_qty(symbol, &side, price, &order_type, format).await,
         Commands::Login | Commands::Logout => unreachable!(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
+        Cli::try_parse_from(args)
+    }
+
+    // ─── Format flag ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_format_default_is_table() {
+        let cli = parse(&["longbridge", "quote", "TSLA.US"]).unwrap();
+        assert!(matches!(cli.format, OutputFormat::Table));
+    }
+
+    #[test]
+    fn test_format_json_flag() {
+        let cli = parse(&["longbridge", "quote", "TSLA.US", "--format", "json"]).unwrap();
+        assert!(matches!(cli.format, OutputFormat::Json));
+    }
+
+    // ─── Auth ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_login_subcommand() {
+        let cli = parse(&["longbridge", "login"]).unwrap();
+        assert!(matches!(cli.command, Some(Commands::Login)));
+    }
+
+    #[test]
+    fn test_logout_subcommand() {
+        let cli = parse(&["longbridge", "logout"]).unwrap();
+        assert!(matches!(cli.command, Some(Commands::Logout)));
+    }
+
+    #[test]
+    fn test_logout_flag() {
+        let cli = parse(&["longbridge", "--logout"]).unwrap();
+        assert!(cli.logout);
+    }
+
+    // ─── Quote commands ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_quote_single_symbol() {
+        let cli = parse(&["longbridge", "quote", "TSLA.US"]).unwrap();
+        if let Some(Commands::Quote { symbols }) = cli.command {
+            assert_eq!(symbols, vec!["TSLA.US"]);
+        } else {
+            panic!("expected Quote command");
+        }
+    }
+
+    #[test]
+    fn test_quote_multiple_symbols() {
+        let cli = parse(&["longbridge", "quote", "TSLA.US", "700.HK", "AAPL.US"]).unwrap();
+        if let Some(Commands::Quote { symbols }) = cli.command {
+            assert_eq!(symbols.len(), 3);
+        } else {
+            panic!("expected Quote command");
+        }
+    }
+
+    #[test]
+    fn test_depth_subcommand() {
+        let cli = parse(&["longbridge", "depth", "700.HK"]).unwrap();
+        assert!(matches!(cli.command, Some(Commands::Depth { symbol }) if symbol == "700.HK"));
+    }
+
+    #[test]
+    fn test_brokers_subcommand() {
+        let cli = parse(&["longbridge", "brokers", "700.HK"]).unwrap();
+        assert!(matches!(cli.command, Some(Commands::Brokers { symbol }) if symbol == "700.HK"));
+    }
+
+    #[test]
+    fn test_trades_default_count() {
+        let cli = parse(&["longbridge", "trades", "TSLA.US"]).unwrap();
+        if let Some(Commands::Trades { symbol, count }) = cli.command {
+            assert_eq!(symbol, "TSLA.US");
+            assert_eq!(count, 20);
+        } else {
+            panic!("expected Trades command");
+        }
+    }
+
+    #[test]
+    fn test_trades_custom_count() {
+        let cli = parse(&["longbridge", "trades", "TSLA.US", "--count", "50"]).unwrap();
+        if let Some(Commands::Trades { count, .. }) = cli.command {
+            assert_eq!(count, 50);
+        } else {
+            panic!("expected Trades command");
+        }
+    }
+
+    #[test]
+    fn test_intraday_subcommand() {
+        let cli = parse(&["longbridge", "intraday", "TSLA.US"]).unwrap();
+        assert!(matches!(cli.command, Some(Commands::Intraday { symbol }) if symbol == "TSLA.US"));
+    }
+
+    #[test]
+    fn test_kline_defaults() {
+        let cli = parse(&["longbridge", "kline", "TSLA.US"]).unwrap();
+        if let Some(Commands::Kline { symbol, period, count, adjust }) = cli.command {
+            assert_eq!(symbol, "TSLA.US");
+            assert_eq!(period, "day");
+            assert_eq!(count, 100);
+            assert_eq!(adjust, "no_adjust");
+        } else {
+            panic!("expected Kline command");
+        }
+    }
+
+    #[test]
+    fn test_kline_custom_period() {
+        let cli = parse(&["longbridge", "kline", "TSLA.US", "--period", "1h", "--count", "200"]).unwrap();
+        if let Some(Commands::Kline { period, count, .. }) = cli.command {
+            assert_eq!(period, "1h");
+            assert_eq!(count, 200);
+        } else {
+            panic!("expected Kline command");
+        }
+    }
+
+    #[test]
+    fn test_kline_history_with_dates() {
+        let cli = parse(&["longbridge", "kline-history", "TSLA.US", "--start", "2024-01-01", "--end", "2024-12-31"]).unwrap();
+        if let Some(Commands::KlineHistory { symbol, start, end, .. }) = cli.command {
+            assert_eq!(symbol, "TSLA.US");
+            assert_eq!(start, Some("2024-01-01".to_string()));
+            assert_eq!(end, Some("2024-12-31".to_string()));
+        } else {
+            panic!("expected KlineHistory command");
+        }
+    }
+
+    #[test]
+    fn test_static_subcommand() {
+        let cli = parse(&["longbridge", "static", "TSLA.US", "700.HK"]).unwrap();
+        if let Some(Commands::Static { symbols }) = cli.command {
+            assert_eq!(symbols.len(), 2);
+        } else {
+            panic!("expected Static command");
+        }
+    }
+
+    #[test]
+    fn test_calc_index_default_indexes() {
+        let cli = parse(&["longbridge", "calc-index", "TSLA.US"]).unwrap();
+        if let Some(Commands::CalcIndex { symbols, index }) = cli.command {
+            assert_eq!(symbols, vec!["TSLA.US"]);
+            assert!(index.contains(&"pe".to_string()));
+        } else {
+            panic!("expected CalcIndex command");
+        }
+    }
+
+    #[test]
+    fn test_calc_index_custom_indexes() {
+        let cli = parse(&["longbridge", "calc-index", "TSLA.US", "--index", "pe,pb,eps"]).unwrap();
+        if let Some(Commands::CalcIndex { index, .. }) = cli.command {
+            assert_eq!(index, vec!["pe", "pb", "eps"]);
+        } else {
+            panic!("expected CalcIndex command");
+        }
+    }
+
+    #[test]
+    fn test_capital_flow_subcommand() {
+        let cli = parse(&["longbridge", "capital-flow", "TSLA.US"]).unwrap();
+        assert!(matches!(cli.command, Some(Commands::CapitalFlow { symbol }) if symbol == "TSLA.US"));
+    }
+
+    #[test]
+    fn test_capital_dist_subcommand() {
+        let cli = parse(&["longbridge", "capital-dist", "TSLA.US"]).unwrap();
+        assert!(matches!(cli.command, Some(Commands::CapitalDist { symbol }) if symbol == "TSLA.US"));
+    }
+
+    #[test]
+    fn test_market_temp_default() {
+        let cli = parse(&["longbridge", "market-temp"]).unwrap();
+        if let Some(Commands::MarketTemp { market, history, .. }) = cli.command {
+            assert_eq!(market, "HK");
+            assert!(!history);
+        } else {
+            panic!("expected MarketTemp command");
+        }
+    }
+
+    #[test]
+    fn test_market_temp_history_flag() {
+        let cli = parse(&["longbridge", "market-temp", "US", "--history", "--start", "2024-01-01"]).unwrap();
+        if let Some(Commands::MarketTemp { market, history, start, .. }) = cli.command {
+            assert_eq!(market, "US");
+            assert!(history);
+            assert_eq!(start, Some("2024-01-01".to_string()));
+        } else {
+            panic!("expected MarketTemp command");
+        }
+    }
+
+    #[test]
+    fn test_trading_session_subcommand() {
+        let cli = parse(&["longbridge", "trading-session"]).unwrap();
+        assert!(matches!(cli.command, Some(Commands::TradingSession)));
+    }
+
+    #[test]
+    fn test_trading_days_default_market() {
+        let cli = parse(&["longbridge", "trading-days"]).unwrap();
+        if let Some(Commands::TradingDays { market, .. }) = cli.command {
+            assert_eq!(market, "HK");
+        } else {
+            panic!("expected TradingDays command");
+        }
+    }
+
+    #[test]
+    fn test_security_list_subcommand() {
+        let cli = parse(&["longbridge", "security-list", "US"]).unwrap();
+        if let Some(Commands::SecurityList { market, .. }) = cli.command {
+            assert_eq!(market, "US");
+        } else {
+            panic!("expected SecurityList command");
+        }
+    }
+
+    #[test]
+    fn test_participants_subcommand() {
+        let cli = parse(&["longbridge", "participants"]).unwrap();
+        assert!(matches!(cli.command, Some(Commands::Participants)));
+    }
+
+    #[test]
+    fn test_subscriptions_subcommand() {
+        let cli = parse(&["longbridge", "subscriptions"]).unwrap();
+        assert!(matches!(cli.command, Some(Commands::Subscriptions)));
+    }
+
+    // ─── Options & Warrants ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_option_quote_subcommand() {
+        let cli = parse(&["longbridge", "option-quote", "AAPL240119C190000"]).unwrap();
+        if let Some(Commands::OptionQuote { symbols }) = cli.command {
+            assert_eq!(symbols, vec!["AAPL240119C190000"]);
+        } else {
+            panic!("expected OptionQuote command");
+        }
+    }
+
+    #[test]
+    fn test_option_chain_no_date() {
+        let cli = parse(&["longbridge", "option-chain", "AAPL.US"]).unwrap();
+        if let Some(Commands::OptionChain { symbol, date }) = cli.command {
+            assert_eq!(symbol, "AAPL.US");
+            assert!(date.is_none());
+        } else {
+            panic!("expected OptionChain command");
+        }
+    }
+
+    #[test]
+    fn test_option_chain_with_date() {
+        let cli = parse(&["longbridge", "option-chain", "AAPL.US", "--date", "2024-01-19"]).unwrap();
+        if let Some(Commands::OptionChain { date, .. }) = cli.command {
+            assert_eq!(date, Some("2024-01-19".to_string()));
+        } else {
+            panic!("expected OptionChain command");
+        }
+    }
+
+    #[test]
+    fn test_warrant_quote_subcommand() {
+        let cli = parse(&["longbridge", "warrant-quote", "12345.HK"]).unwrap();
+        if let Some(Commands::WarrantQuote { symbols }) = cli.command {
+            assert_eq!(symbols, vec!["12345.HK"]);
+        } else {
+            panic!("expected WarrantQuote command");
+        }
+    }
+
+    #[test]
+    fn test_warrant_list_subcommand() {
+        let cli = parse(&["longbridge", "warrant-list", "700.HK"]).unwrap();
+        assert!(matches!(cli.command, Some(Commands::WarrantList { symbol }) if symbol == "700.HK"));
+    }
+
+    #[test]
+    fn test_warrant_issuers_subcommand() {
+        let cli = parse(&["longbridge", "warrant-issuers"]).unwrap();
+        assert!(matches!(cli.command, Some(Commands::WarrantIssuers)));
+    }
+
+    // ─── Watchlist ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_watchlist_no_subcommand() {
+        let cli = parse(&["longbridge", "watchlist"]).unwrap();
+        if let Some(Commands::Watchlist { cmd }) = cli.command {
+            assert!(cmd.is_none());
+        } else {
+            panic!("expected Watchlist command");
+        }
+    }
+
+    #[test]
+    fn test_watchlist_create() {
+        let cli = parse(&["longbridge", "watchlist", "create", "Tech Stocks"]).unwrap();
+        if let Some(Commands::Watchlist { cmd: Some(WatchlistCmd::Create { name }) }) = cli.command {
+            assert_eq!(name, "Tech Stocks");
+        } else {
+            panic!("expected Watchlist Create command");
+        }
+    }
+
+    #[test]
+    fn test_watchlist_delete() {
+        let cli = parse(&["longbridge", "watchlist", "delete", "123"]).unwrap();
+        if let Some(Commands::Watchlist { cmd: Some(WatchlistCmd::Delete { id, purge }) }) = cli.command {
+            assert_eq!(id, 123);
+            assert!(!purge);
+        } else {
+            panic!("expected Watchlist Delete command");
+        }
+    }
+
+    #[test]
+    fn test_watchlist_delete_purge() {
+        let cli = parse(&["longbridge", "watchlist", "delete", "123", "--purge"]).unwrap();
+        if let Some(Commands::Watchlist { cmd: Some(WatchlistCmd::Delete { purge, .. }) }) = cli.command {
+            assert!(purge);
+        } else {
+            panic!("expected Watchlist Delete command");
+        }
+    }
+
+    #[test]
+    fn test_watchlist_update_add() {
+        let cli = parse(&["longbridge", "watchlist", "update", "123", "--add", "TSLA.US", "--add", "AAPL.US"]).unwrap();
+        if let Some(Commands::Watchlist { cmd: Some(WatchlistCmd::Update { id, add, .. }) }) = cli.command {
+            assert_eq!(id, 123);
+            assert_eq!(add, vec!["TSLA.US", "AAPL.US"]);
+        } else {
+            panic!("expected Watchlist Update command");
+        }
+    }
+
+    #[test]
+    fn test_watchlist_update_remove() {
+        let cli = parse(&["longbridge", "watchlist", "update", "456", "--remove", "700.HK"]).unwrap();
+        if let Some(Commands::Watchlist { cmd: Some(WatchlistCmd::Update { id, remove, .. }) }) = cli.command {
+            assert_eq!(id, 456);
+            assert_eq!(remove, vec!["700.HK"]);
+        } else {
+            panic!("expected Watchlist Update command");
+        }
+    }
+
+    // ─── Trade commands ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_orders_defaults() {
+        let cli = parse(&["longbridge", "orders"]).unwrap();
+        if let Some(Commands::Orders { history, start, end, symbol }) = cli.command {
+            assert!(!history);
+            assert!(start.is_none());
+            assert!(end.is_none());
+            assert!(symbol.is_none());
+        } else {
+            panic!("expected Orders command");
+        }
+    }
+
+    #[test]
+    fn test_orders_history_with_filters() {
+        let cli = parse(&["longbridge", "orders", "--history", "--start", "2024-01-01", "--symbol", "TSLA.US"]).unwrap();
+        if let Some(Commands::Orders { history, start, symbol, .. }) = cli.command {
+            assert!(history);
+            assert_eq!(start, Some("2024-01-01".to_string()));
+            assert_eq!(symbol, Some("TSLA.US".to_string()));
+        } else {
+            panic!("expected Orders command");
+        }
+    }
+
+    #[test]
+    fn test_order_detail_subcommand() {
+        let cli = parse(&["longbridge", "order", "order-123"]).unwrap();
+        assert!(matches!(cli.command, Some(Commands::Order { order_id }) if order_id == "order-123"));
+    }
+
+    #[test]
+    fn test_executions_subcommand() {
+        let cli = parse(&["longbridge", "executions"]).unwrap();
+        if let Some(Commands::Executions { history, .. }) = cli.command {
+            assert!(!history);
+        } else {
+            panic!("expected Executions command");
+        }
+    }
+
+    #[test]
+    fn test_buy_subcommand() {
+        let cli = parse(&["longbridge", "buy", "TSLA.US", "100", "--price", "250.00"]).unwrap();
+        if let Some(Commands::Buy { symbol, quantity, price, order_type, tif }) = cli.command {
+            assert_eq!(symbol, "TSLA.US");
+            assert_eq!(quantity, 100);
+            assert_eq!(price, Some("250.00".to_string()));
+            assert_eq!(order_type, "LO");
+            assert_eq!(tif, "Day");
+        } else {
+            panic!("expected Buy command");
+        }
+    }
+
+    #[test]
+    fn test_sell_subcommand() {
+        let cli = parse(&["longbridge", "sell", "TSLA.US", "50", "--price", "260.00"]).unwrap();
+        if let Some(Commands::Sell { symbol, quantity, price, .. }) = cli.command {
+            assert_eq!(symbol, "TSLA.US");
+            assert_eq!(quantity, 50);
+            assert_eq!(price, Some("260.00".to_string()));
+        } else {
+            panic!("expected Sell command");
+        }
+    }
+
+    #[test]
+    fn test_cancel_subcommand() {
+        let cli = parse(&["longbridge", "cancel", "order-456"]).unwrap();
+        assert!(matches!(cli.command, Some(Commands::Cancel { order_id }) if order_id == "order-456"));
+    }
+
+    #[test]
+    fn test_replace_subcommand() {
+        let cli = parse(&["longbridge", "replace", "order-789", "--qty", "200", "--price", "255.00"]).unwrap();
+        if let Some(Commands::Replace { order_id, qty, price }) = cli.command {
+            assert_eq!(order_id, "order-789");
+            assert_eq!(qty, Some(200));
+            assert_eq!(price, Some("255.00".to_string()));
+        } else {
+            panic!("expected Replace command");
+        }
+    }
+
+    #[test]
+    fn test_balance_no_currency() {
+        let cli = parse(&["longbridge", "balance"]).unwrap();
+        if let Some(Commands::Balance { currency }) = cli.command {
+            assert!(currency.is_none());
+        } else {
+            panic!("expected Balance command");
+        }
+    }
+
+    #[test]
+    fn test_balance_with_currency() {
+        let cli = parse(&["longbridge", "balance", "--currency", "USD"]).unwrap();
+        if let Some(Commands::Balance { currency }) = cli.command {
+            assert_eq!(currency, Some("USD".to_string()));
+        } else {
+            panic!("expected Balance command");
+        }
+    }
+
+    #[test]
+    fn test_cash_flow_subcommand() {
+        let cli = parse(&["longbridge", "cash-flow", "--start", "2024-01-01", "--end", "2024-03-31"]).unwrap();
+        if let Some(Commands::CashFlow { start, end }) = cli.command {
+            assert_eq!(start, Some("2024-01-01".to_string()));
+            assert_eq!(end, Some("2024-03-31".to_string()));
+        } else {
+            panic!("expected CashFlow command");
+        }
+    }
+
+    #[test]
+    fn test_positions_subcommand() {
+        let cli = parse(&["longbridge", "positions"]).unwrap();
+        assert!(matches!(cli.command, Some(Commands::Positions)));
+    }
+
+    #[test]
+    fn test_fund_positions_subcommand() {
+        let cli = parse(&["longbridge", "fund-positions"]).unwrap();
+        assert!(matches!(cli.command, Some(Commands::FundPositions)));
+    }
+
+    #[test]
+    fn test_margin_ratio_subcommand() {
+        let cli = parse(&["longbridge", "margin-ratio", "TSLA.US"]).unwrap();
+        assert!(matches!(cli.command, Some(Commands::MarginRatio { symbol }) if symbol == "TSLA.US"));
+    }
+
+    #[test]
+    fn test_max_qty_subcommand() {
+        let cli = parse(&["longbridge", "max-qty", "TSLA.US", "--side", "buy", "--price", "250"]).unwrap();
+        if let Some(Commands::MaxQty { symbol, side, price, order_type }) = cli.command {
+            assert_eq!(symbol, "TSLA.US");
+            assert_eq!(side, "buy");
+            assert_eq!(price, Some("250".to_string()));
+            assert_eq!(order_type, "LO");
+        } else {
+            panic!("expected MaxQty command");
+        }
+    }
+
+    // ─── Error cases ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_unknown_subcommand_fails() {
+        assert!(parse(&["longbridge", "nonexistent"]).is_err());
+    }
+
+    #[test]
+    fn test_no_subcommand_is_valid() {
+        let cli = parse(&["longbridge"]).unwrap();
+        assert!(cli.command.is_none());
     }
 }

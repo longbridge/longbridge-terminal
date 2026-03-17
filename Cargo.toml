@@ -1,6 +1,6 @@
 [package]
 edition = "2021"
-name = "longbridge-terminal"
+name = "longbridge-cli"
 version = "0.7.0-preview1"
 
 [[bin]]
@@ -60,6 +60,14 @@ tracing-subscriber = { version = "0.3.17", features = [
 tui-input = "0.8"
 unicode-width = "0.1.11"
 bitflags = "2.10.0"
+async-trait = "0.1"
+
+[dev-dependencies]
+mockall = "0.13"
+tempfile = "3"
+
+[features]
+integration = []
 
 [target.'cfg(target_family = "unix")'.dependencies]
 nix = { version = "0.27", default-features = false, features = ["fs"] }
