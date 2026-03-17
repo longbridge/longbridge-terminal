@@ -16,6 +16,16 @@ curl -sSL https://github.com/longbridge/longbridge-terminal/raw/main/install | s
 
 Installs the `longbridge` binary to `/usr/local/bin`.
 
+## Claude Code Skill
+
+Install the skill to give Claude Code full knowledge of all `longbridge` CLI commands:
+
+```bash
+npx skills add longbridge/longbridge-terminal
+```
+
+Once installed, Claude can query market data, run technical analysis, and manage trades directly from your AI workflow.
+
 ## Authentication
 
 Uses **OAuth 2.0** via the Longbridge SDK — no manual token management required.
