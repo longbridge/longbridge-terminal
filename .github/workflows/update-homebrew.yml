@@ -67,6 +67,16 @@ jobs:
             echo "${PLATFORM}: ${SHA}"
           done
 
+      - name: Check HOMEBREW_TAP_TOKEN secret
+        env:
+          TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error::HOMEBREW_TAP_TOKEN secret is not configured."
+            echo "::error::Go to Settings → Secrets and add a PAT with write access to longbridge/homebrew-tap."
+            exit 1
+          fi
+
       - name: Checkout homebrew-tap
         uses: actions/checkout@v4
         with:
