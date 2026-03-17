@@ -8,8 +8,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to use (e.g. v0.7.0)"
-        required: true
+        description: "Release tag (e.g. v0.8.0). Leave empty to use the latest release."
+        required: false
         type: string
 
 jobs:
@@ -27,9 +27,15 @@ jobs:
     steps:
       - name: Resolve release tag
         id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="${{ inputs.tag }}"
+            if [ -n "${{ inputs.tag }}" ]; then
+              TAG="${{ inputs.tag }}"
+            else
+              TAG=$(gh release view --repo "${{ github.repository }}" --json tagName -q .tagName)
+            fi
           else
             TAG="${{ github.event.workflow_run.head_branch }}"
           fi
