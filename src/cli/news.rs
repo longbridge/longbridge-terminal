@@ -33,7 +33,7 @@ where
             Ok(v)
         }
         fn visit_u64<E: de::Error>(self, v: u64) -> Result<i64, E> {
-            Ok(v as i64)
+            i64::try_from(v).map_err(de::Error::custom)
         }
         fn visit_str<E: de::Error>(self, v: &str) -> Result<i64, E> {
             v.parse().map_err(de::Error::custom)
@@ -92,17 +92,19 @@ pub async fn cmd_news(symbol: String, count: usize, format: &OutputFormat) -> Re
         .iter()
         .map(|item| {
             let dt = OffsetDateTime::from_unix_timestamp(item.published_at)
-                .map(|dt| {
-                    format!(
-                        "{}-{:02}-{:02} {:02}:{:02}",
-                        dt.year(),
-                        dt.month() as u8,
-                        dt.day(),
-                        dt.hour(),
-                        dt.minute()
-                    )
-                })
-                .unwrap_or_else(|_| item.published_at.to_string());
+                .map_or_else(
+                    |_| item.published_at.to_string(),
+                    |dt| {
+                        format!(
+                            "{}-{:02}-{:02} {:02}:{:02}",
+                            dt.year(),
+                            dt.month() as u8,
+                            dt.day(),
+                            dt.hour(),
+                            dt.minute()
+                        )
+                    },
+                );
 
             let title = if item.title.chars().count() > 70 {
                 format!("{}…", item.title.chars().take(70).collect::<String>())
@@ -193,17 +195,19 @@ pub async fn cmd_filings(symbol: String, count: usize, format: &OutputFormat) ->
         .iter()
         .map(|item| {
             let dt = OffsetDateTime::from_unix_timestamp(item.publish_at)
-                .map(|dt| {
-                    format!(
-                        "{}-{:02}-{:02} {:02}:{:02}",
-                        dt.year(),
-                        dt.month() as u8,
-                        dt.day(),
-                        dt.hour(),
-                        dt.minute()
-                    )
-                })
-                .unwrap_or_else(|_| item.publish_at.to_string());
+                .map_or_else(
+                    |_| item.publish_at.to_string(),
+                    |dt| {
+                        format!(
+                            "{}-{:02}-{:02} {:02}:{:02}",
+                            dt.year(),
+                            dt.month() as u8,
+                            dt.day(),
+                            dt.hour(),
+                            dt.minute()
+                        )
+                    },
+                );
 
             let title = if item.title.chars().count() > 60 {
                 format!("{}…", item.title.chars().take(60).collect::<String>())
@@ -283,17 +287,19 @@ pub async fn cmd_topics(symbol: String, count: usize, format: &OutputFormat) -> 
         .iter()
         .map(|item| {
             let dt = OffsetDateTime::from_unix_timestamp(item.published_at)
-                .map(|dt| {
-                    format!(
-                        "{}-{:02}-{:02} {:02}:{:02}",
-                        dt.year(),
-                        dt.month() as u8,
-                        dt.day(),
-                        dt.hour(),
-                        dt.minute()
-                    )
-                })
-                .unwrap_or_else(|_| item.published_at.to_string());
+                .map_or_else(
+                    |_| item.published_at.to_string(),
+                    |dt| {
+                        format!(
+                            "{}-{:02}-{:02} {:02}:{:02}",
+                            dt.year(),
+                            dt.month() as u8,
+                            dt.day(),
+                            dt.hour(),
+                            dt.minute()
+                        )
+                    },
+                );
 
             let display = if item.title.is_empty() {
                 &item.description
