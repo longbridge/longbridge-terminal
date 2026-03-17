@@ -155,6 +155,8 @@ pub async fn cmd_filings(symbol: String, count: usize, format: &OutputFormat) ->
         file_name: String,
         #[serde(deserialize_with = "deserialize_str_or_i64")]
         publish_at: i64,
+        #[serde(default)]
+        file_urls: Vec<String>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -195,6 +197,8 @@ pub async fn cmd_filings(symbol: String, count: usize, format: &OutputFormat) ->
                     "description": item.description,
                     "file_name": item.file_name,
                     "publish_at": item.publish_at,
+                    "file_count": item.file_urls.len(),
+                    "file_urls": item.file_urls,
                 })
             })
             .collect();
@@ -205,7 +209,7 @@ pub async fn cmd_filings(symbol: String, count: usize, format: &OutputFormat) ->
         return Ok(());
     }
 
-    let headers = &["id", "title", "file_name", "publish_at"];
+    let headers = &["id", "title", "file_name", "files", "publish_at"];
     let rows = items
         .iter()
         .map(|item| {
@@ -213,6 +217,7 @@ pub async fn cmd_filings(symbol: String, count: usize, format: &OutputFormat) ->
                 item.id.clone(),
                 truncate_display(&item.title, 60),
                 item.file_name.clone(),
+                item.file_urls.len().to_string(),
                 format_timestamp(item.publish_at),
             ]
         })
@@ -230,7 +235,12 @@ const FILING_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWe
 /// then fetches the document with browser-like headers and converts HTML to
 /// Markdown. TXT files are printed as-is. Unsupported formats (PDF, etc.) or
 /// HTTP errors (e.g. 403 from SEC EDGAR) fall back to printing the raw URL.
-pub async fn cmd_filing_detail(symbol: String, id: String) -> Result<()> {
+pub async fn cmd_filing_detail(
+    symbol: String,
+    id: String,
+    list_files: bool,
+    file_index: usize,
+) -> Result<()> {
     use serde::Serialize;
 
     #[derive(Debug, Deserialize)]
@@ -251,7 +261,9 @@ pub async fn cmd_filing_detail(symbol: String, id: String) -> Result<()> {
 
     let resp = crate::openapi::http_client()
         .request(Method::GET, "/v1/quote/filings")
-        .query_params(Query { symbol })
+        .query_params(Query {
+            symbol: symbol.clone(),
+        })
         .response::<Json<Response>>()
         .send()
         .await
@@ -264,11 +276,26 @@ pub async fn cmd_filing_detail(symbol: String, id: String) -> Result<()> {
         .find(|item| item.id == id)
         .ok_or_else(|| anyhow::anyhow!("Filing '{id}' not found"))?;
 
+    if list_files {
+        for (i, url) in filing.file_urls.iter().enumerate() {
+            println!("{i}: {url}");
+        }
+        println!("\n> Usage: longbridge filing-detail {symbol} {id} --file-index <N>");
+        return Ok(());
+    }
+
     let url = filing
         .file_urls
-        .into_iter()
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("No download URL for filing '{id}'"))?;
+        .get(file_index)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "File index {file_index} out of range (filing has {} file(s))",
+                filing.file_urls.len()
+            )
+        })?
+        .clone();
+
+    let total_files = filing.file_urls.len();
 
     let client = reqwest::Client::new();
     let file_resp = client
@@ -337,6 +364,12 @@ pub async fn cmd_filing_detail(symbol: String, id: String) -> Result<()> {
 
     // Append the source URL so the caller can reference or verify the original document.
     println!("\n---\nSource: {url}");
+    if total_files > 1 && file_index == 0 {
+        println!(
+            "Note: this filing has {total_files} files. Use --file-index N (0..{}) to fetch others.",
+            total_files - 1
+        );
+    }
 
     Ok(())
 }

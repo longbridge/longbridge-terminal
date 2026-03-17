@@ -454,13 +454,17 @@ longbridge filings SYMBOL [--count <N>] [--format json]
 
 - `--count`: Max filings to show (default 20)
 
-Returns: `id, title, file_name, publish_at`. Use `filing-detail` to read the full content.
+Returns: `id, title, file_name, files, publish_at`. The `files` column shows how many
+files the filing contains (some filings like 8-K have multiple: cover page + exhibits).
+Use `filing-detail` to read the full content.
 
 ```bash
 longbridge filings AAPL.US
 longbridge filings 700.HK --count 5
 longbridge filings AAPL.US --format json
 ```
+
+JSON output includes `file_count` and `file_urls` for all files.
 
 ---
 
@@ -474,12 +478,17 @@ to Markdown. TXT files are printed as-is. For unsupported formats (e.g. PDF,
 common in HK and A-share filings), the raw download URL is printed so the caller
 can handle it independently.
 
+Some filings contain multiple files (e.g. 8-K cover page + Exhibit 99.1 earnings release).
+The `filings` command shows the file count. Use `--file-index N` to fetch a specific file.
+
 ```bash
-longbridge filing-detail SYMBOL ID
+longbridge filing-detail SYMBOL ID [--file-index N] [--list-files]
 ```
 
 ```bash
-longbridge filing-detail AAPL.US 580265529766123777
+longbridge filing-detail AAPL.US 580265529766123777           # fetch file 0 (default)
+longbridge filing-detail AAPL.US 580265529766123777 --file-index 1  # fetch exhibit
+longbridge filing-detail AAPL.US 580265529766123777 --list-files    # list all file URLs
 longbridge filing-detail 700.HK abc123
 ```
 

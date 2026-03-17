@@ -46,8 +46,10 @@ longbridge check
 # News, filings, and community topics
 longbridge news TSLA.US
 longbridge news-detail <id>
-longbridge filings AAPL.US
-longbridge filing-detail AAPL.US <id>
+longbridge filings AAPL.US                          # shows file count per filing
+longbridge filing-detail AAPL.US <id>               # default: file 0
+longbridge filing-detail AAPL.US <id> --file-index 1 # e.g. Exhibit 99.1 of an 8-K
+longbridge filing-detail AAPL.US <id> --list-files   # list all file URLs
 longbridge topics TSLA.US
 longbridge topic-detail <id>
 
