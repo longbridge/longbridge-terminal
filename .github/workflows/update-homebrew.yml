@@ -87,7 +87,7 @@ jobs:
           python3 - <<'PYEOF'
           import re, os
 
-          formula_path = "homebrew-tap/Formula/longbridge-terminal.rb"
+          formula_path = "homebrew-tap/Casks/longbridge-terminal.rb"
           version  = os.environ["VERSION"]
           tag      = os.environ["TAG"]
           repo     = os.environ["REPO"]
@@ -128,7 +128,7 @@ jobs:
           PYEOF
 
           echo "--- Updated formula ---"
-          cat homebrew-tap/Formula/longbridge-terminal.rb
+          cat homebrew-tap/Casks/longbridge-terminal.rb
 
       - name: Create pull request
         env:
@@ -144,7 +144,7 @@ jobs:
 
           BRANCH="bump/longbridge-terminal-${VERSION}"
           git checkout -b "$BRANCH"
-          git add Formula/longbridge-terminal.rb
+          git add Casks/longbridge-terminal.rb
 
           if git diff --cached --quiet; then
             echo "No changes detected — formula is already up to date"

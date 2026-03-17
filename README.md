@@ -48,7 +48,7 @@ Also ships a full-screen TUI for interactive monitoring.
 **Homebrew (macOS / Linux)**
 
 ```bash
-brew install longbridge/tap/longbridge-terminal
+brew install --cask longbridge/tap/longbridge-terminal
 ```
 
 **Install script**
