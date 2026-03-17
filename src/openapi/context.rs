@@ -69,11 +69,20 @@ pub async fn init_contexts(
         .set(http_client)
         .map_err(|_| anyhow::anyhow!("HttpClient already initialized"))?;
 
-    let config = Arc::new(
-        longbridge::Config::from_oauth(oauth)
-            .language(get_api_language())
-            .dont_print_quote_packages(),
-    );
+    let mut config_builder = longbridge::Config::from_oauth(oauth)
+        .language(get_api_language())
+        .dont_print_quote_packages();
+
+    // If last geotest indicated China Mainland, use CN endpoints directly.
+    if crate::region::is_cn_cached() {
+        tracing::debug!("Using CN region endpoints (cached)");
+        config_builder = config_builder
+            .http_url(crate::region::HTTP_URL_CN)
+            .quote_ws_url(crate::region::QUOTE_WS_URL_CN)
+            .trade_ws_url(crate::region::TRADE_WS_URL_CN);
+    }
+
+    let config = Arc::new(config_builder);
 
     // Create QuoteContext and TradeContext
     let quote_result = longbridge::quote::QuoteContext::try_new(Arc::clone(&config)).await;

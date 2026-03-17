@@ -12,6 +12,7 @@ pub mod data;
 pub mod kline;
 pub mod logger;
 pub mod openapi;
+pub mod region;
 #[cfg_attr(target_family = "windows", path = "os/windows.rs")]
 #[cfg_attr(target_family = "unix", path = "os/unix.rs")]
 pub mod os;
@@ -93,6 +94,9 @@ async fn main() {
         return;
     }
 
+    // Kick off background geotest check to refresh the region cache for the next run.
+    region::spawn_region_update();
+
     match cli.command {
         None => {
             // No subcommand: print help and exit
@@ -124,6 +128,13 @@ async fn main() {
             Terminal::enter_full_screen();
             app::run(Args { logout: false }, quote_receiver).await;
             Terminal::exit_full_screen();
+        }
+
+        Some(cli::Commands::Check) => {
+            if let Err(e) = cli::check::cmd_check(&cli.format).await {
+                print_cli_error(&e);
+                std::process::exit(1);
+            }
         }
 
         Some(cli::Commands::Login) => match openapi::init_contexts().await {
