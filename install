@@ -2,7 +2,7 @@
 set -u
 type curl > /dev/null || { echo "curl: not found"; exit 1; }
 
-repo='longbridge/longbridge-terminal'
+repo='longbridge/longbridge-cli'
 
 get_latest_release() {
   curl --silent "https://api.github.com/repos/$repo/releases/latest" | # Get latest release from GitHub api
@@ -11,8 +11,8 @@ get_latest_release() {
 }
 
 bin_name='longbridge'
-package_name='longbridge-terminal'
-version='v0.7.0-preview1'
+package_name='longbridge-cli'
+version='v0.7.0-preview2'
 
 platform="$(uname | tr "[A-Z]" "[a-z]")"  # Linux => linux
 arch="$(uname -m)"  # x86_64, arm64, aarch64, etc.
@@ -53,7 +53,7 @@ else
 fi
 
 rm $bin_name.tar.gz
-echo "Longbridge Terminal $version has installed successfully."
+echo "Longbridge CLI $version has installed successfully."
 echo ""
 echo "You can use \`longbridge -h\` to get help."
 echo ""

@@ -1,6 +1,6 @@
-# Contributing to Longbridge Terminal
+# Contributing to Longbridge CLI
 
-Thank you for your interest in contributing to Longbridge Terminal! This document provides guidelines and instructions for contributing.
+Thank you for your interest in contributing to Longbridge CLI! This document provides guidelines and instructions for contributing.
 
 ## Getting Started
 
@@ -15,8 +15,8 @@ Thank you for your interest in contributing to Longbridge Terminal! This documen
 1. **Clone the repository**:
 
    ```bash
-   git clone https://github.com/longbridge/longbridge-terminal.git
-   cd longbridge-terminal
+   git clone https://github.com/longbridge/longbridge-cli.git
+   cd longbridge-cli
    ```
 
 2. **Configure API credentials**:
@@ -187,8 +187,8 @@ This project uses [Ratatui](https://ratatui.rs/) for the TUI. For Ratatui-specif
 
 Logs are written to:
 
-- macOS: `~/Library/Logs/longbridge-terminal/`
-- Linux: `~/.local/share/longbridge-terminal/logs/`
+- macOS: `~/Library/Logs/longbridge-cli/`
+- Linux: `~/.local/share/longbridge-cli/logs/`
 
 Enable debug logging:
 

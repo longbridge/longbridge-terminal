@@ -1,4 +1,5 @@
 use crate::widgets::Terminal;
+use clap::Parser;
 use std::io::Write;
 
 #[macro_use]
@@ -6,6 +7,7 @@ mod macros;
 
 pub mod app;
 pub mod auth;
+pub mod cli;
 pub mod data;
 pub mod kline;
 pub mod logger;
@@ -25,80 +27,131 @@ mod views;
 extern crate rust_i18n;
 i18n!("locales");
 
-/// Command line arguments
+/// Command line arguments (kept for TUI compatibility via `crate::Args`)
 #[derive(Clone, Debug)]
 pub struct Args {
     pub logout: bool,
 }
 
+fn print_cli_error(e: &anyhow::Error) {
+    use longbridge::{httpclient::HttpClientError, wsclient::WsClientError, Error as LbError};
+
+    if let Some(lb_err) = e.downcast_ref::<LbError>() {
+        match lb_err {
+            LbError::HttpClient(HttpClientError::OpenApi {
+                code,
+                message,
+                trace_id,
+            }) => {
+                eprintln!("Error: API error (code {code}): {message}");
+                if !trace_id.is_empty() {
+                    eprintln!("  trace_id: {trace_id}");
+                }
+                return;
+            }
+            LbError::WsClient(WsClientError::ResponseError {
+                status,
+                detail: Some(detail),
+            }) => {
+                eprintln!(
+                    "Error: WebSocket error (status={status}, code={}): {}",
+                    detail.code, detail.msg
+                );
+                return;
+            }
+            LbError::WsClient(WsClientError::ConnectionClosed {
+                reason: Some(reason),
+            }) => {
+                eprintln!(
+                    "Error: Connection closed ({:?}): {}",
+                    reason.code, reason.message
+                );
+                return;
+            }
+            _ => {}
+        }
+    }
+    eprintln!("Error: {e:#}");
+}
+
 #[tokio::main]
 async fn main() {
-    // Set default locale to English
     rust_i18n::set_locale("en");
-
-    // Initialize logger
     let _guard = logger::init();
 
-    // Parse command line arguments
-    let matches = clap::Command::new("Longbridge Terminal")
-        .version(env!("CARGO_PKG_VERSION"))
-        .about("A TUI stock trading terminal")
-        .arg(
-            clap::Arg::new("logout")
-                .long("logout")
-                .help("Clear stored OAuth token and exit")
-                .takes_value(false),
-        )
-        .get_matches();
+    let cli = cli::Cli::parse();
 
-    let args = Args {
-        logout: matches.is_present("logout"),
-    };
-
-    // Handle logout command
-    if args.logout {
+    // Handle legacy --logout flag
+    if cli.logout {
         match auth::clear_token() {
-            Ok(()) => {
-                println!("✓ Successfully logged out.");
-                tracing::info!("User logged out, credentials cleared");
-            }
+            Ok(()) => println!("Successfully logged out."),
             Err(e) => {
                 eprintln!("Failed to clear credentials: {e}");
-                tracing::error!("Failed to clear credentials: {e}");
                 std::process::exit(1);
             }
         }
         return;
     }
 
-    tracing::info!("App started");
-
-    // Initialize OpenAPI first (before entering fullscreen mode, so SDK outputs stay in main screen)
-    let quote_receiver = match openapi::init_contexts().await {
-        Ok(receiver) => receiver,
-        Err(e) => {
-            eprintln!("OAuth2 authentication failed: {e}");
-            eprintln!();
-            return;
+    match cli.command {
+        None => {
+            // No subcommand: print help and exit
+            use clap::CommandFactory;
+            cli::Cli::command().print_help().unwrap();
+            println!();
         }
-    };
 
-    tracing::info!("OpenAPI initialized successfully");
+        Some(cli::Commands::Tui) => {
+            tracing::info!("App started");
+            let quote_receiver = match openapi::init_contexts().await {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("OAuth2 authentication failed: {e}");
+                    return;
+                }
+            };
+            tracing::info!("OpenAPI initialized successfully");
 
-    // Set up panic hook to restore terminal
-    let hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        Terminal::exit_full_screen();
-        hook(info);
-    }));
+            let hook = std::panic::take_hook();
+            std::panic::set_hook(Box::new(move |info| {
+                Terminal::exit_full_screen();
+                hook(info);
+            }));
 
-    // Clean terminal state to ensure no residual output
+            let _ = std::io::stdout().write_all(b"\n");
+            let _ = std::io::stdout().flush();
 
-    let _ = std::io::stdout().write_all(b"\n");
-    let _ = std::io::stdout().flush();
+            Terminal::enter_full_screen();
+            app::run(Args { logout: false }, quote_receiver).await;
+            Terminal::exit_full_screen();
+        }
 
-    // Now enter fullscreen mode (SDK is initialized, alternate screen is clean)
-    Terminal::enter_full_screen();
-    app::run(args, quote_receiver).await;
-    Terminal::exit_full_screen();
+        Some(cli::Commands::Login) => match openapi::init_contexts().await {
+            Ok(_) => println!("Successfully authenticated."),
+            Err(e) => {
+                eprintln!("Authentication failed: {e}");
+                std::process::exit(1);
+            }
+        },
+
+        Some(cli::Commands::Logout) => match auth::clear_token() {
+            Ok(()) => println!("Successfully logged out."),
+            Err(e) => {
+                eprintln!("Failed to clear credentials: {e}");
+                std::process::exit(1);
+            }
+        },
+
+        Some(cmd) => {
+            // CLI mode: init contexts (auth), then dispatch
+            if let Err(e) = openapi::init_contexts().await {
+                eprintln!("Authentication failed: {e}");
+                std::process::exit(1);
+            }
+            if let Err(e) = cli::dispatch(cmd, &cli.format).await {
+                print_cli_error(&e);
+                std::process::exit(1);
+            }
+        }
+    }
 }

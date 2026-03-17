@@ -1,104 +1,147 @@
 # Longbridge Terminal
 
-An _experimental_ terminal-based stock trading app built with [Longbridge OpenAPI](https://open.longbridge.com).
+AI-native CLI for the [Longbridge](https://longbridge.com) trading platform — real-time market data, portfolio, and trading.
 
-A Rust-based TUI (Terminal User Interface) for monitoring market data and managing stock portfolios. Built to showcase the capabilities of the Longbridge OpenAPI SDK.
+Covers every Longbridge OpenAPI endpoint: real-time quotes, depth, K-lines, options, and warrants for market data; account balances, stock and fund positions for portfolio management; and order submission, modification, cancellation, and execution history for trading. Designed for scripting, AI-agent tool-calling, and daily trading workflows from the terminal.
+
+Also ships a full-screen TUI for interactive monitoring.
 
 [![asciicast](https://asciinema.org/a/785102.svg)](https://asciinema.org/a/785102)
 
-## Features
-
-- Real-time watchlist with live market data
-- Portfolio management
-- Stock search and quotes
-- Candlestick charts
-- Multi-market support (Hong Kong, US, China A-share)
-- Built on Rust + Ratatui
-- Vim-like keybindings
-
-## System Requirements
-
-- macOS or Linux
-- Internet connection and browser access (for OAuth authentication)
-- Longbridge account (free to register at [open.longbridge.com](https://open.longbridge.com))
-
 ## Installation
-
-### From Binary
-
-If you're on macOS or Linux, run the following command in your terminal:
 
 ```bash
 curl -sSL https://github.com/longbridge/longbridge-terminal/raw/main/install | sh
 ```
 
-This will install the `longbridge` command in your terminal.
+Installs the `longbridge` binary to `/usr/local/bin`.
 
-## Configuration
+## Authentication
 
-The app uses **OAuth2.1** for authentication. No manual configuration is required!
-
-### First Time Setup
-
-1. **Create a Longbridge Account**: If you don't have one, register at [Longbridge Open Platform](https://open.longbridge.com)
-
-2. **Run the App**:
-
-   ```bash
-   longbridge
-   ```
-
-3. **Automatic OAuth Flow**:
-   - The app will automatically register an OAuth client with Longbridge
-   - Your default browser will open for authorization
-   - After you approve, the app will receive an access token
-   - The token is securely saved to your system keychain
-
-That's it! On subsequent runs, the app will automatically use the saved token.
-
-### Token Storage
-
-Access tokens are stored securely in your system's credential manager:
-
-- **macOS**: Keychain Access
-- **Windows**: Credential Manager
-- **Linux**: Secret Service (libsecret)
-
-Service name: `com.longbridge.terminal`
-
-### Token Refresh
-
-Access tokens are automatically refreshed when they expire. No manual intervention needed.
-
-### Troubleshooting
-
-If you encounter authentication issues:
+Uses **OAuth 2.0** via the Longbridge SDK — no manual token management required.
 
 ```bash
-# View detailed OAuth flow logs
-RUST_LOG=debug longbridge
-
-# The app listens on localhost:8877 for OAuth callback
-# If this port is in use, it will try ports 8878-8880
+longbridge login    # Opens browser for OAuth, saves token to ~/.longbridge/terminal/.openapi-session
+longbridge logout   # Clear saved token
 ```
 
-**Requirements:**
+Token is shared between CLI and TUI. After `login`, all commands work without re-authenticating.
 
-- Internet connection
-- Browser access
-- Active Longbridge account
+## CLI Usage
 
-## API Rate Limits
+```
+longbridge <command> [options]
+```
 
-The Longbridge OpenAPI has rate limiting:
+All commands support `--format json` for machine-readable output:
 
-- Maximum 10 API calls per second
-- Access tokens are automatically refreshed when expired
+```bash
+longbridge quote TSLA.US --format json
+longbridge positions --format json | jq '.[] | {symbol, quantity}'
+```
+
+<!-- COMMANDS_START -->
+
+### Quotes
+
+```bash
+longbridge quote TSLA.US 700.HK                                       # Real-time quotes for one or more symbols
+longbridge depth TSLA.US                                              # Level 2 order book depth (bid/ask ladder)
+longbridge brokers 700.HK                                             # Broker queue at each price level (HK market)
+longbridge trades TSLA.US [--count 50]                                # Recent tick-by-tick trades
+longbridge intraday TSLA.US                                           # Intraday minute-by-minute price and volume lines for today
+longbridge kline TSLA.US [--period day] [--count 100]                 # OHLCV candlestick (K-line) data
+longbridge kline-history TSLA.US --start 2024-01-01 --end 2024-12-31 # Historical OHLCV candlestick data within a date range
+longbridge static TSLA.US                                             # Static reference info for one or more symbols
+longbridge calc-index TSLA.US --index pe,pb,eps                       # Calculated financial indexes (PE, PB, EPS, turnover rate, etc.)
+longbridge capital-flow TSLA.US                                       # Intraday capital flow time series (large/medium/small money in vs out)
+longbridge capital-dist TSLA.US                                       # Capital distribution snapshot (large/medium/small inflow and outflow)
+longbridge market-temp [HK|US|CN|SG]                                  # Market sentiment temperature index (0–100, higher = more bullish)
+longbridge trading-session                                            # Trading session schedule (open/close times) for all markets
+longbridge trading-days HK                                            # Trading days and half-trading days for a market
+longbridge security-list HK                                           # Full list of securities available in a market
+longbridge participants                                               # Market maker (participant) broker IDs and names
+longbridge subscriptions                                              # Active real-time WebSocket subscriptions for this session
+```
+
+### Options & Warrants
+
+```bash
+longbridge option-quote AAPL240119C190000         # Real-time quotes for option contracts
+longbridge option-chain AAPL.US                   # Option chain: list all expiry dates
+longbridge option-chain AAPL.US --date 2024-01-19 # Option chain: strike prices for a given expiry
+longbridge warrant-quote 12345.HK                 # Real-time quotes for warrant contracts
+longbridge warrant-list 700.HK                    # Warrants linked to an underlying security
+longbridge warrant-issuers                        # Warrant issuer list (HK market)
+```
+
+### Watchlist
+
+```bash
+longbridge watchlist                                             # List watchlist groups, or create/update/delete a group
+longbridge watchlist create "My Portfolio"                       # Create a new watchlist group
+longbridge watchlist update <id> --add TSLA.US --remove AAPL.US  # Add/remove securities in a group, or rename it
+longbridge watchlist delete <id>                                 # Delete a watchlist group
+```
+
+### Trading
+
+```bash
+longbridge orders                                      # Today's orders, or historical orders with --history
+longbridge orders --history [--start 2024-01-01]       # Historical orders (use --symbol to filter)
+longbridge order <order_id>                            # Full detail for a single order including charges and history
+longbridge executions                                  # Today's trade executions (fills), or historical with --history
+longbridge buy TSLA.US 100 --price 250.00              # Submit a buy order (prompts for confirmation)
+longbridge sell TSLA.US 100 --price 260.00             # Submit a sell order (prompts for confirmation)
+longbridge cancel <order_id>                           # Cancel a pending order (prompts for confirmation)
+longbridge replace <order_id> --qty 200 --price 255.00 # Modify quantity or price of a pending order
+longbridge balance                                     # Account cash balance and financing information
+longbridge cash-flow [--start 2024-01-01]              # Cash flow records (deposits, withdrawals, dividends, settlements)
+longbridge positions                                   # Current stock (equity) positions across all sub-accounts
+longbridge fund-positions                              # Current fund (mutual fund) positions across all sub-accounts
+longbridge margin-ratio TSLA.US                        # Margin ratio requirements for a symbol
+longbridge max-qty TSLA.US --side buy --price 250      # Estimate maximum buy or sell quantity given current account balance
+```
+
+<!-- COMMANDS_END -->
+
+### Symbol Format
+
+```
+<CODE>.<MARKET>   e.g.  TSLA.US   700.HK   600519.SH
+```
+
+Markets: `HK` (Hong Kong) · `US` (United States) · `CN` / `SH` / `SZ` (China A-share) · `SG` (Singapore)
+
+## TUI
+
+```bash
+longbridge tui
+```
+
+Features: real-time watchlist, candlestick charts, portfolio view, stock search, Vim-like keybindings.
+
+## Output Format
+
+```bash
+--format table   # Human-readable ASCII table (default)
+--format json    # Machine-readable JSON, suitable for AI agents and piping
+```
+
+## Rate Limits
+
+Longbridge OpenAPI: maximum 10 calls per second. The SDK auto-refreshes OAuth tokens.
+
+## Requirements
+
+- macOS or Linux
+- Internet connection and browser access (for initial OAuth)
+- [Longbridge account](https://open.longbridge.com)
 
 ## Documentation
 
-- [Longbridge OpenAPI Documentation](https://open.longbridge.com)
-- [Rust SDK Documentation](https://longbridge.github.io/openapi/rust/longbridge/)
+- [Longbridge OpenAPI Docs](https://open.longbridge.com)
+- [Rust SDK](https://longbridge.github.io/openapi/rust/longbridge/)
 
 ## License
 

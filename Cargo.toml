@@ -1,6 +1,6 @@
 [package]
 edition = "2021"
-name = "longbridge-terminal"
+name = "longbridge-cli"
 version = "0.7.0-preview1"
 
 [[bin]]
@@ -22,7 +22,8 @@ atomic = "0.6.0"
 bevy_app = "0.11"
 bevy_ecs = "0.11"
 bytemuck = { version = "1.14", features = ["derive"] }
-clap = "3"
+clap = { version = "4", features = ["derive"] }
+comfy-table = "7"
 cli-candlestick-chart = { version = "0.4.1", path = "crates/cli-candlestick-chart", default-features = false }
 crossterm = { version = "0.27", features = ["event-stream"] }
 dashmap = "6.1"
@@ -59,6 +60,14 @@ tracing-subscriber = { version = "0.3.17", features = [
 tui-input = "0.8"
 unicode-width = "0.1.11"
 bitflags = "2.10.0"
+async-trait = "0.1"
+
+[dev-dependencies]
+mockall = "0.13"
+tempfile = "3"
+
+[features]
+integration = []
 
 [target.'cfg(target_family = "unix")'.dependencies]
 nix = { version = "0.27", default-features = false, features = ["fs"] }
