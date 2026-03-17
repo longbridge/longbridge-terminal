@@ -687,6 +687,9 @@ pub async fn cmd_trading_days(
 }
 
 pub async fn cmd_security_list(market: &str, category: &str, format: &OutputFormat) -> Result<()> {
+    if !matches!(market.to_uppercase().as_str(), "US") {
+        bail!("Only US market is supported for security-list (Longbridge API only exposes the Overnight category)");
+    }
     let ctx = crate::openapi::quote();
     let m = parse_market(market)?;
     let cat = parse_security_list_category(category);
