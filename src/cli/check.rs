@@ -51,7 +51,7 @@ fn probe_line(label: &str, r: &ProbeResult, url: &str) -> String {
     } else {
         (
             format!("{RED}FAIL{RESET}"),
-            format!("{RED}timeout (>{}s){RESET}", CONNECT_TIMEOUT_SECS),
+            format!("{RED}timeout (>{CONNECT_TIMEOUT_SECS}s){RESET}"),
         )
     };
     format!("  {label:<8} {icon}  {status:<28}  {DIM}{url}{RESET}")
@@ -61,34 +61,29 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
     // ── Region cache ─────────────────────────────────────────────────────────
     let region_cached = dirs::home_dir()
         .map(|h| h.join(".longbridge-openapi").join("region-cache"))
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .map(|s| s.trim().to_lowercase())
-        .unwrap_or_else(|| "none".to_string());
+        .and_then(|p| std::fs::read_to_string(p).ok()).map_or_else(|| "none".to_string(), |s| s.trim().to_lowercase());
     let is_cn = region_cached == "cn";
 
     // ── Token verification via market temperature API ─────────────────────────
     let token_ok: bool;
     let token_detail: String;
 
-    match crate::openapi::init_contexts().await {
-        Err(e) => {
-            token_ok = false;
-            token_detail = e.to_string();
-        }
-        Ok(_) => {
-            let ctx = crate::openapi::quote();
-            match ctx.market_temperature(longbridge::Market::HK).await {
-                Ok(temp) => {
-                    token_ok = true;
-                    token_detail = format!(
-                        "market temp HK: {} ({})",
-                        temp.temperature, temp.description
-                    );
-                }
-                Err(e) => {
-                    token_ok = true;
-                    token_detail = format!("api error: {e}");
-                }
+    if let Err(e) = crate::openapi::init_contexts().await {
+        token_ok = false;
+        token_detail = e.to_string();
+    } else {
+        let ctx = crate::openapi::quote();
+        match ctx.market_temperature(longbridge::Market::HK).await {
+            Ok(temp) => {
+                token_ok = true;
+                token_detail = format!(
+                    "market temp HK: {} ({})",
+                    temp.temperature, temp.description
+                );
+            }
+            Err(e) => {
+                token_ok = true;
+                token_detail = format!("api error: {e}");
             }
         }
     }

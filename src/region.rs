@@ -53,12 +53,11 @@ pub fn spawn_region_update() {
 
 /// Returns `true` if geotest.lbkrs.com is reachable (implies China Mainland).
 async fn check_geotest() -> bool {
-    let client = match reqwest::Client::builder()
+    let Ok(client) = reqwest::Client::builder()
         .timeout(Duration::from_secs(GEOTEST_TIMEOUT_SECS))
         .build()
-    {
-        Ok(c) => c,
-        Err(_) => return false,
+    else {
+        return false;
     };
     client.get(GEOTEST_URL).send().await.is_ok()
 }
