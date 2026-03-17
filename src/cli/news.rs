@@ -233,8 +233,8 @@ const FILING_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWe
 ///
 /// Calls the filings list API to resolve the download URL for the given id,
 /// then fetches the document with browser-like headers and converts HTML to
-/// Markdown. TXT files are printed as-is. Unsupported formats (PDF, etc.) or
-/// HTTP errors (e.g. 403 from SEC EDGAR) fall back to printing the raw URL.
+/// Markdown. TXT files are printed as-is. Returns an error for HTTP failures
+/// (e.g. 403 from SEC EDGAR) or unsupported formats (e.g. PDF).
 pub async fn cmd_filing_detail(
     symbol: String,
     id: String,
@@ -318,9 +318,8 @@ pub async fn cmd_filing_detail(
         .await?;
 
     if !file_resp.status().is_success() {
-        // Fall back to the raw URL (e.g. 403 from SEC EDGAR) so the caller can handle it.
-        println!("{url}");
-        return Ok(());
+        let status = file_resp.status();
+        return Err(anyhow::anyhow!("failed to fetch {url} (HTTP {status})"));
     }
 
     let content_type = file_resp
@@ -345,9 +344,9 @@ pub async fn cmd_filing_detail(
         || ext == "txt";
 
     if !is_text {
-        // Unsupported format (e.g. PDF): return the URL so the caller can handle it.
-        println!("{url}");
-        return Ok(());
+        return Err(anyhow::anyhow!(
+            "unsupported format for {url} (content-type: {content_type})"
+        ));
     }
 
     let body = file_resp.text().await?;
