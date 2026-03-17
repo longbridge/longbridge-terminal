@@ -37,6 +37,8 @@ fn truncate_display(s: &str, max: usize) -> String {
 struct NewsItem {
     id: String,
     title: String,
+    #[serde(default)]
+    description: String,
     #[serde(deserialize_with = "deserialize_str_or_i64")]
     published_at: i64,
     comments_count: i64,
@@ -96,9 +98,14 @@ pub async fn cmd_news(symbol: String, count: usize, format: &OutputFormat) -> Re
         let records: Vec<serde_json::Value> = items
             .iter()
             .map(|item| {
+                let title = if item.title.is_empty() {
+                    truncate_display(&item.description, 70)
+                } else {
+                    item.title.clone()
+                };
                 serde_json::json!({
                     "id": item.id,
-                    "title": item.title,
+                    "title": title,
                     "published_at": item.published_at,
                     "likes_count": item.likes_count,
                     "comments_count": item.comments_count,
@@ -117,9 +124,14 @@ pub async fn cmd_news(symbol: String, count: usize, format: &OutputFormat) -> Re
     let rows = items
         .iter()
         .map(|item| {
+            let display = if item.title.is_empty() {
+                &item.description
+            } else {
+                &item.title
+            };
             vec![
                 item.id.clone(),
-                truncate_display(&item.title, 70),
+                truncate_display(display, 70),
                 format_timestamp(item.published_at),
                 item.likes_count.to_string(),
                 item.comments_count.to_string(),

@@ -1,6 +1,15 @@
-use comfy_table::{Cell, ContentArrangement, Table};
+use tabled::{builder::Builder, settings::Style};
 
 use super::OutputFormat;
+
+fn print_markdown_table(headers: &[&str], rows: &[Vec<String>]) {
+    let mut builder = Builder::default();
+    builder.push_record(headers.iter().copied());
+    for row in rows {
+        builder.push_record(row.iter().map(String::as_str));
+    }
+    println!("{}", builder.build().with(Style::markdown()));
+}
 
 /// Print data as table or JSON depending on format
 pub fn print_table(headers: &[&str], rows: Vec<Vec<String>>, format: &OutputFormat) {
@@ -25,14 +34,7 @@ pub fn print_table(headers: &[&str], rows: Vec<Vec<String>>, format: &OutputForm
             );
         }
         OutputFormat::Table => {
-            let mut table = Table::new();
-            table
-                .set_content_arrangement(ContentArrangement::Dynamic)
-                .set_header(headers.iter().map(Cell::new));
-            for row in rows {
-                table.add_row(row);
-            }
-            println!("{table}");
+            print_markdown_table(headers, &rows);
         }
     }
 }
@@ -47,21 +49,19 @@ pub fn print_json_value(value: &serde_json::Value, format: &OutputFormat) {
             );
         }
         OutputFormat::Table => {
-            // For single objects, print as key-value table
             if let serde_json::Value::Object(map) = value {
-                let mut table = Table::new();
-                table
-                    .set_content_arrangement(ContentArrangement::Dynamic)
-                    .set_header(["Field", "Value"]);
-                for (k, v) in map {
-                    let val = match v {
-                        serde_json::Value::String(s) => s.clone(),
-                        serde_json::Value::Null => "-".to_string(),
-                        other => other.to_string(),
-                    };
-                    table.add_row([k.as_str(), val.as_str()]);
-                }
-                println!("{table}");
+                let rows: Vec<Vec<String>> = map
+                    .iter()
+                    .map(|(k, v)| {
+                        let val = match v {
+                            serde_json::Value::String(s) => s.clone(),
+                            serde_json::Value::Null => "-".to_string(),
+                            other => other.to_string(),
+                        };
+                        vec![k.clone(), val]
+                    })
+                    .collect();
+                print_markdown_table(&["Field", "Value"], &rows);
             } else {
                 println!(
                     "{}",
