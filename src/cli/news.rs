@@ -305,11 +305,17 @@ pub async fn cmd_filing_detail(symbol: String, id: String) -> Result<()> {
 
     // Use URL path (before query string) for extension detection.
     let path = url.split('?').next().unwrap_or(&url);
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase);
+    let ext = ext.as_deref().unwrap_or("");
     let is_text = content_type.contains("html")
         || content_type.contains("text/plain")
-        || path.ends_with(".html")
-        || path.ends_with(".htm")
-        || path.ends_with(".txt");
+        || ext == "html"
+        || ext == "htm"
+        || ext == "xml"
+        || ext == "txt";
 
     if !is_text {
         // Unsupported format (e.g. PDF): return the URL so the caller can handle it.
@@ -319,8 +325,7 @@ pub async fn cmd_filing_detail(symbol: String, id: String) -> Result<()> {
 
     let body = file_resp.text().await?;
 
-    let is_html =
-        content_type.contains("html") || path.ends_with(".html") || path.ends_with(".htm");
+    let is_html = content_type.contains("html") || ext == "html" || ext == "htm" || ext == "xml";
 
     let output = if is_html {
         sec2md::convert(&body)
