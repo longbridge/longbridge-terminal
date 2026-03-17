@@ -57,6 +57,7 @@ const COMMANDS: Command[] = [
   { section: "News", example: "news TSLA.US --count 5" },
   { section: "News", example: "news-detail <id>", dynamic: "news-detail" },
   { section: "News", example: "filings AAPL.US --count 5" },
+  { section: "News", example: "filing-detail AAPL.US <id>", dynamic: "filing-detail-id" },
   { section: "News", example: "topics TSLA.US --count 5" },
   { section: "News", example: "topic-detail <id>", dynamic: "topic-detail" },
 
@@ -142,6 +143,11 @@ async function resolve(key: string): Promise<string> {
     }
     case "topic-detail": {
       const data = await runJson(["topics", "TSLA.US", "--count", "1"]);
+      val = Array.isArray(data) ? String(data[0]?.id ?? "") : "";
+      break;
+    }
+    case "filing-detail-id": {
+      const data = await runJson(["filings", "AAPL.US", "--count", "1"]);
       val = Array.isArray(data) ? String(data[0]?.id ?? "") : "";
       break;
     }

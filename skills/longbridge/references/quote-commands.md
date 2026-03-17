@@ -26,6 +26,7 @@
 - [news](#news) - Latest news articles for a symbol
 - [news-detail](#news-detail) - Full article content
 - [filings](#filings) - Regulatory filings and announcements
+- [filing-detail](#filing-detail) - Full filing content as Markdown
 - [topics](#topics) - Community discussion topics
 - [topic-detail](#topic-detail) - Full topic content
 
@@ -453,12 +454,42 @@ longbridge filings SYMBOL [--count <N>] [--format json]
 
 - `--count`: Max filings to show (default 20)
 
-Returns: `id, title, file_name, publish_at`; JSON also includes `file_urls`
+Returns: `id, title, file_name, files, publish_at`. The `files` column shows how many
+files the filing contains (some filings like 8-K have multiple: cover page + exhibits).
+Use `filing-detail` to read the full content.
 
 ```bash
 longbridge filings AAPL.US
 longbridge filings 700.HK --count 5
 longbridge filings AAPL.US --format json
+```
+
+JSON output includes `file_count` and `file_urls` for all files.
+
+---
+
+## filing-detail
+
+Full Markdown content of a regulatory filing (HTML and TXT files only).
+
+Fetches the document via the filing's download URL using browser-like headers to
+bypass collector restrictions (e.g. SEC EDGAR rate limiting), then converts HTML
+to Markdown. TXT files are printed as-is. For unsupported formats (e.g. PDF,
+common in HK and A-share filings), the raw download URL is printed so the caller
+can handle it independently.
+
+Some filings contain multiple files (e.g. 8-K cover page + Exhibit 99.1 earnings release).
+The `filings` command shows the file count. Use `--file-index N` to fetch a specific file.
+
+```bash
+longbridge filing-detail SYMBOL ID [--file-index N] [--list-files]
+```
+
+```bash
+longbridge filing-detail AAPL.US 580265529766123777           # fetch file 0 (default)
+longbridge filing-detail AAPL.US 580265529766123777 --file-index 1  # fetch exhibit
+longbridge filing-detail AAPL.US 580265529766123777 --list-files    # list all file URLs
+longbridge filing-detail 700.HK abc123
 ```
 
 ---

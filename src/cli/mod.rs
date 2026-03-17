@@ -362,7 +362,8 @@ pub enum Commands {
 
     /// Regulatory filings and announcements for a symbol
     ///
-    /// Returns: id, title, `file_name`, `publish_at`, `file_urls`.
+    /// Returns: id, title, `file_name`, `publish_at`.
+    /// Use `filing-detail` to read the full content.
     /// Example: longbridge filings AAPL.US
     /// Example: longbridge filings 700.HK --count 5
     Filings {
@@ -371,6 +372,28 @@ pub enum Commands {
         /// Maximum number of filings to show (default: 20)
         #[arg(long, default_value = "20")]
         count: usize,
+    },
+
+    /// Full Markdown content of a regulatory filing (HTML and TXT only)
+    ///
+    /// Fetches and converts the filing document to Markdown.
+    /// Get the symbol and id from `longbridge filings`.
+    /// Some filings contain multiple files (e.g. 8-K cover + Exhibit 99.1).
+    /// Use --list-files to see all available files, then --file-index N to fetch a specific one.
+    /// Example: longbridge filing-detail AAPL.US 580265529766123777
+    /// Example: longbridge filing-detail AAPL.US 580265529766123777 --list-files
+    /// Example: longbridge filing-detail AAPL.US 580265529766123777 --file-index 1
+    FilingDetail {
+        /// Symbol in <CODE>.<MARKET> format, e.g. AAPL.US 700.HK
+        symbol: String,
+        /// Filing ID (from `longbridge filings`)
+        id: String,
+        /// List all available file URLs without fetching content
+        #[arg(long)]
+        list_files: bool,
+        /// Index of the file to fetch (0-based, default 0)
+        #[arg(long, default_value = "0")]
+        file_index: usize,
     },
 
     /// Community discussion topics for a symbol
@@ -697,6 +720,12 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
         Commands::News { symbol, count } => news::cmd_news(symbol, count, format).await,
         Commands::NewsDetail { id } => news::cmd_news_detail(id).await,
         Commands::Filings { symbol, count } => news::cmd_filings(symbol, count, format).await,
+        Commands::FilingDetail {
+            symbol,
+            id,
+            list_files,
+            file_index,
+        } => news::cmd_filing_detail(symbol, id, list_files, file_index).await,
         Commands::Topics { symbol, count } => news::cmd_topics(symbol, count, format).await,
         Commands::TopicDetail { id } => news::cmd_topic_detail(id).await,
         Commands::Watchlist { cmd } => watchlist::cmd_watchlist(cmd, format).await,
