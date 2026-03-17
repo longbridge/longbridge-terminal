@@ -319,9 +319,8 @@ pub async fn cmd_filing_detail(symbol: String, id: String) -> Result<()> {
 
     let body = file_resp.text().await?;
 
-    let is_html = content_type.contains("html")
-        || path.ends_with(".html")
-        || path.ends_with(".htm");
+    let is_html =
+        content_type.contains("html") || path.ends_with(".html") || path.ends_with(".htm");
 
     let output = if is_html {
         sec2md::convert(&body)
