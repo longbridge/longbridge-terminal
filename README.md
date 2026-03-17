@@ -1,8 +1,10 @@
 # Longbridge Terminal
 
-An AI-native CLI that wraps every [Longbridge OpenAPI](https://open.longbridge.com) endpoints — real-time quotes, order management, watchlists, options, warrants, and more. Designed for scripting, AI-agent tool-calling, and daily trading workflows from the terminal.
+AI-native CLI for the [Longbridge](https://open.longbridge.com) trading platform — real-time market data, portfolio, and trading.
 
-Also ships a full-screen TUI for interactive market monitoring.
+Covers every Longbridge OpenAPI endpoint: real-time quotes, depth, K-lines, options, and warrants for market data; account balances, stock and fund positions for portfolio management; and order submission, modification, cancellation, and execution history for trading. Designed for scripting, AI-agent tool-calling, and daily trading workflows from the terminal.
+
+Also ships a full-screen TUI for interactive monitoring.
 
 [![asciicast](https://asciinema.org/a/785102.svg)](https://asciinema.org/a/785102)
 

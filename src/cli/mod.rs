@@ -16,10 +16,9 @@ pub enum OutputFormat {
 
 #[derive(Parser)]
 #[command(name = "longbridge")]
-#[command(about = "Longbridge CLI - AI-native CLI for Longbridge OpenAPI")]
+#[command(about = "AI-native CLI for the Longbridge trading platform — real-time market data, portfolio, and trading")]
 #[command(long_about = "\
-An AI-native CLI that wraps every Longbridge OpenAPI endpoint — real-time quotes, \
-order management, watchlists, options, warrants, and more.\n\n\
+AI-native CLI for the Longbridge trading platform — real-time market data, portfolio, and trading.\n\n\
 Symbol format: <CODE>.<MARKET>  e.g. TSLA.US  700.HK  600519.SH\n\
 Markets: HK (Hong Kong)  US (United States)  CN (China A-share)  SG (Singapore)\n\n\
 Authentication: run `longbridge login` once; the token is stored at \
