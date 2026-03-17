@@ -9,7 +9,7 @@ Also ships a full-screen TUI for interactive market monitoring.
 ## Installation
 
 ```bash
-curl -sSL https://github.com/longbridge/longbridge-cli/raw/main/install | sh
+curl -sSL https://github.com/longbridge/longbridge-terminal/raw/main/install | sh
 ```
 
 Installs the `longbridge` binary to `/usr/local/bin`.
@@ -29,7 +29,6 @@ Token is shared between CLI and TUI. After `login`, all commands work without re
 
 ```
 longbridge <command> [options]
-longbridge           # Launch TUI (no subcommand)
 ```
 
 All commands support `--format json` for machine-readable output:
