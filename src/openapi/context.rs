@@ -9,6 +9,9 @@ pub static QUOTE_CTX: OnceLock<longbridge::quote::QuoteContext> = OnceLock::new(
 /// Global `TradeContext`
 pub static TRADE_CTX: OnceLock<longbridge::trade::TradeContext> = OnceLock::new();
 
+/// Global `HttpClient` for making authenticated requests to the Longbridge OpenAPI
+pub static HTTP_CLIENT: OnceLock<longbridge::httpclient::HttpClient> = OnceLock::new();
+
 /// Global rate-limited `QuoteContext` wrapper
 pub static RATE_LIMITED_QUOTE_CTX: OnceLock<RateLimitedQuoteContext> = OnceLock::new();
 
@@ -58,6 +61,13 @@ pub async fn init_contexts(
             return Err(anyhow::anyhow!("OAuth failed: {e}"));
         }
     };
+
+    let http_client = longbridge::httpclient::HttpClient::new(
+        longbridge::httpclient::HttpClientConfig::from_oauth(oauth.clone()),
+    );
+    HTTP_CLIENT
+        .set(http_client)
+        .map_err(|_| anyhow::anyhow!("HttpClient already initialized"))?;
 
     let config = Arc::new(
         longbridge::Config::from_oauth(oauth)
@@ -134,6 +144,13 @@ pub fn quote_limited() -> &'static RateLimitedQuoteContext {
     RATE_LIMITED_QUOTE_CTX
         .get()
         .expect("RateLimitedQuoteContext not initialized, please call init_contexts() first")
+}
+
+/// Get the global authenticated `HttpClient` for direct OpenAPI requests
+pub fn http_client() -> &'static longbridge::httpclient::HttpClient {
+    HTTP_CLIENT
+        .get()
+        .expect("HttpClient not initialized, please call init_contexts() first")
 }
 
 /// Get rate-limited `TradeContext` (recommended for all API calls)

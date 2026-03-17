@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 
 pub mod api;
+pub mod news;
 pub mod output;
 pub mod quote;
 pub mod trade;
@@ -326,6 +327,29 @@ pub enum Commands {
     /// Returns: `issuer_id`, `name_en`, `name_cn`.
     WarrantIssuers,
 
+    // ── News ────────────────────────────────────────────────────────────────────
+    /// Latest news articles for a symbol
+    ///
+    /// Returns: id, title, published_at, likes, comments.
+    /// Example: longbridge news TSLA.US
+    /// Example: longbridge news 700.HK --count 5
+    News {
+        /// Symbol in <CODE>.<MARKET> format, e.g. TSLA.US 700.HK
+        symbol: String,
+        /// Maximum number of articles to show (default: 20)
+        #[arg(long, default_value = "20")]
+        count: usize,
+    },
+
+    /// Full Markdown content of a news article
+    ///
+    /// Fetches the article text from https://longbridge.com/news/<id>.md
+    /// Example: longbridge news-detail 12345678
+    NewsDetail {
+        /// News article ID (from `longbridge news`)
+        id: String,
+    },
+
     // ── Watchlist ───────────────────────────────────────────────────────────────
     /// List watchlist groups, or create/update/delete a group
     ///
@@ -616,6 +640,8 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
         Commands::WarrantQuote { symbols } => quote::cmd_warrant_quote(symbols, format).await,
         Commands::WarrantList { symbol } => quote::cmd_warrant_list(symbol, format).await,
         Commands::WarrantIssuers => quote::cmd_warrant_issuers(format).await,
+        Commands::News { symbol, count } => news::cmd_news(symbol, count, format).await,
+        Commands::NewsDetail { id } => news::cmd_news_detail(id).await,
         Commands::Watchlist { cmd } => watchlist::cmd_watchlist(cmd, format).await,
         Commands::Orders {
             history,

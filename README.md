@@ -109,6 +109,13 @@ longbridge participants                                               # Market m
 longbridge subscriptions                                              # Active real-time WebSocket subscriptions for this session
 ```
 
+### News
+
+```bash
+longbridge news TSLA.US [--count 20]        # Latest news articles for a symbol
+longbridge news-detail <id>                 # Full Markdown content of a news article
+```
+
 ### Options & Warrants
 
 ```bash

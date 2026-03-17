@@ -23,6 +23,8 @@
 - [warrant-quote](#warrant-quote) - Warrant quotes
 - [warrant-list](#warrant-list) - Warrants for a security
 - [warrant-issuers](#warrant-issuers) - Warrant issuers
+- [news](#news) - Latest news articles for a symbol
+- [news-detail](#news-detail) - Full article content
 
 ---
 
@@ -401,3 +403,37 @@ longbridge warrant-issuers --format json
 ```
 
 Returns: `issuer_id, name_en, name_cn`
+
+---
+
+## news
+
+Latest news articles for a symbol.
+
+```bash
+longbridge news SYMBOL [--count <N>] [--format json]
+```
+
+- `--count`: Max articles to show (default 20)
+
+Returns: `id, title, published_at, likes, comments`
+
+```bash
+longbridge news TSLA.US
+longbridge news 700.HK --count 5
+longbridge news AAPL.US --format json
+```
+
+---
+
+## news-detail
+
+Full Markdown content of a news article. Fetches from `https://longbridge.com/news/<id>.md`.
+
+```bash
+longbridge news-detail <ID>
+```
+
+```bash
+longbridge news-detail 12345678
+```
