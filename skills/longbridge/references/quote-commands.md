@@ -23,6 +23,11 @@
 - [warrant-quote](#warrant-quote) - Warrant quotes
 - [warrant-list](#warrant-list) - Warrants for a security
 - [warrant-issuers](#warrant-issuers) - Warrant issuers
+- [news](#news) - Latest news articles for a symbol
+- [news-detail](#news-detail) - Full article content
+- [filings](#filings) - Regulatory filings and announcements
+- [topics](#topics) - Community discussion topics
+- [topic-detail](#topic-detail) - Full topic content
 
 ---
 
@@ -401,3 +406,91 @@ longbridge warrant-issuers --format json
 ```
 
 Returns: `issuer_id, name_en, name_cn`
+
+---
+
+## news
+
+Latest news articles for a symbol.
+
+```bash
+longbridge news SYMBOL [--count <N>] [--format json]
+```
+
+- `--count`: Max articles to show (default 20)
+
+Returns: `id, title, published_at, likes, comments`
+
+```bash
+longbridge news TSLA.US
+longbridge news 700.HK --count 5
+longbridge news AAPL.US --format json
+```
+
+---
+
+## news-detail
+
+Full Markdown content of a news article. Fetches from `https://longbridge.com/news/<id>.md`.
+
+```bash
+longbridge news-detail <ID>
+```
+
+```bash
+longbridge news-detail 12345678
+```
+
+---
+
+## filings
+
+Regulatory filings and announcements for a symbol.
+
+```bash
+longbridge filings SYMBOL [--count <N>] [--format json]
+```
+
+- `--count`: Max filings to show (default 20)
+
+Returns: `id, title, file_name, publish_at`; JSON also includes `file_urls`
+
+```bash
+longbridge filings AAPL.US
+longbridge filings 700.HK --count 5
+longbridge filings AAPL.US --format json
+```
+
+---
+
+## topics
+
+Community discussion topics for a symbol.
+
+```bash
+longbridge topics SYMBOL [--count <N>] [--format json]
+```
+
+- `--count`: Max topics to show (default 20)
+
+Returns: `id, title, published_at, likes, comments, shares`
+
+```bash
+longbridge topics TSLA.US
+longbridge topics 700.HK --count 5
+longbridge topics AAPL.US --format json
+```
+
+---
+
+## topic-detail
+
+Full Markdown content of a community topic. Fetches from `https://longbridge.com/topics/<id>.md`.
+
+```bash
+longbridge topic-detail <ID>
+```
+
+```bash
+longbridge topic-detail 277062200
+```

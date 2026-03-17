@@ -1,6 +1,6 @@
 [package]
 edition = "2021"
-name = "longbridge-cli"
+name = "longbridge-terminal"
 version = "0.7.0-preview1"
 
 [[bin]]
