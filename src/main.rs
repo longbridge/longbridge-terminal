@@ -79,25 +79,21 @@ async fn main() {
             Terminal::exit_full_screen();
         }
 
-        Some(cli::Commands::Login) => {
-            match openapi::init_contexts().await {
-                Ok(_) => println!("Successfully authenticated."),
-                Err(e) => {
-                    eprintln!("Authentication failed: {e}");
-                    std::process::exit(1);
-                }
+        Some(cli::Commands::Login) => match openapi::init_contexts().await {
+            Ok(_) => println!("Successfully authenticated."),
+            Err(e) => {
+                eprintln!("Authentication failed: {e}");
+                std::process::exit(1);
             }
-        }
+        },
 
-        Some(cli::Commands::Logout) => {
-            match auth::clear_token() {
-                Ok(()) => println!("Successfully logged out."),
-                Err(e) => {
-                    eprintln!("Failed to clear credentials: {e}");
-                    std::process::exit(1);
-                }
+        Some(cli::Commands::Logout) => match auth::clear_token() {
+            Ok(()) => println!("Successfully logged out."),
+            Err(e) => {
+                eprintln!("Failed to clear credentials: {e}");
+                std::process::exit(1);
             }
-        }
+        },
 
         Some(cmd) => {
             // CLI mode: init contexts (auth), then dispatch

@@ -19,7 +19,10 @@ pub fn print_table(headers: &[&str], rows: Vec<Vec<String>>, format: &OutputForm
                     serde_json::Value::Object(map)
                 })
                 .collect();
-            println!("{}", serde_json::to_string_pretty(&records).unwrap_or_default());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&records).unwrap_or_default()
+            );
         }
         OutputFormat::Table => {
             let mut table = Table::new();
@@ -38,7 +41,10 @@ pub fn print_table(headers: &[&str], rows: Vec<Vec<String>>, format: &OutputForm
 pub fn print_json_value(value: &serde_json::Value, format: &OutputFormat) {
     match format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(value).unwrap_or_default());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(value).unwrap_or_default()
+            );
         }
         OutputFormat::Table => {
             // For single objects, print as key-value table
@@ -57,7 +63,10 @@ pub fn print_json_value(value: &serde_json::Value, format: &OutputFormat) {
                 }
                 println!("{table}");
             } else {
-                println!("{}", serde_json::to_string_pretty(value).unwrap_or_default());
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(value).unwrap_or_default()
+                );
             }
         }
     }

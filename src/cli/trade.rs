@@ -190,7 +190,9 @@ pub async fn cmd_executions(
         ctx.today_executions(opts).await?
     };
 
-    let headers = &["Order ID", "Trade ID", "Symbol", "Price", "Quantity", "Time"];
+    let headers = &[
+        "Order ID", "Trade ID", "Symbol", "Price", "Quantity", "Time",
+    ];
     let rows = executions
         .iter()
         .map(|e| {
@@ -511,10 +513,7 @@ pub async fn cmd_max_qty(
     let headers = &["Field", "Value"];
     let rows = vec![
         vec!["Symbol".to_string(), symbol],
-        vec![
-            "Cash Max Qty".to_string(),
-            resp.cash_max_qty.to_string(),
-        ],
+        vec!["Cash Max Qty".to_string(), resp.cash_max_qty.to_string()],
         vec![
             "Margin Max Qty".to_string(),
             resp.margin_max_qty.to_string(),

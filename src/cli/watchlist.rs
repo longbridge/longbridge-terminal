@@ -49,13 +49,7 @@ async fn cmd_list(format: &OutputFormat) -> Result<()> {
                 let rows: Vec<Vec<String>> = group
                     .securities
                     .iter()
-                    .map(|s| {
-                        vec![
-                            s.symbol.clone(),
-                            s.name.clone(),
-                            format!("{:?}", s.market),
-                        ]
-                    })
+                    .map(|s| vec![s.symbol.clone(), s.name.clone(), format!("{:?}", s.market)])
                     .collect();
                 print_table(headers, rows, &OutputFormat::Table);
             }

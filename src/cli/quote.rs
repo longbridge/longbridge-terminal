@@ -17,7 +17,10 @@ fn parse_period(s: &str) -> Result<Period> {
         "week" | "w" => Ok(Period::Week),
         "month" | "m" | "1mo" => Ok(Period::Month),
         "year" | "y" => Ok(Period::Year),
-        _ => bail!("Unknown period '{}'. Use: 1m 5m 15m 30m 1h day week month year", s),
+        _ => bail!(
+            "Unknown period '{}'. Use: 1m 5m 15m 30m 1h day week month year",
+            s
+        ),
     }
 }
 
@@ -101,7 +104,15 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
     let quotes = ctx.quote(symbols).await?;
 
     let headers = &[
-        "Symbol", "Last", "Prev Close", "Open", "High", "Low", "Volume", "Turnover", "Status",
+        "Symbol",
+        "Last",
+        "Prev Close",
+        "Open",
+        "High",
+        "Low",
+        "Volume",
+        "Turnover",
+        "Status",
     ];
     let rows = quotes
         .iter()
@@ -298,7 +309,9 @@ pub async fn cmd_kline(
     let ctx = crate::openapi::quote();
     let p = parse_period(period)?;
     let adj = parse_adjust(adjust)?;
-    let candles = ctx.candlesticks(symbol, p, count, adj, TradeSessions::Intraday).await?;
+    let candles = ctx
+        .candlesticks(symbol, p, count, adj, TradeSessions::Intraday)
+        .await?;
 
     let headers = &["Time", "Open", "High", "Low", "Close", "Volume", "Turnover"];
     let rows = candles
@@ -335,11 +348,26 @@ pub async fn cmd_kline_history(
     let candles = if let (Some(s), Some(e)) = (start, end) {
         let start_date = parse_date(&s)?;
         let end_date = parse_date(&e)?;
-        ctx.history_candlesticks_by_date(symbol, p, adj, Some(start_date), Some(end_date), TradeSessions::Intraday)
-            .await?
+        ctx.history_candlesticks_by_date(
+            symbol,
+            p,
+            adj,
+            Some(start_date),
+            Some(end_date),
+            TradeSessions::Intraday,
+        )
+        .await?
     } else {
-        ctx.history_candlesticks_by_offset(symbol, p, adj, false, None, 100, TradeSessions::Intraday)
-            .await?
+        ctx.history_candlesticks_by_offset(
+            symbol,
+            p,
+            adj,
+            false,
+            None,
+            100,
+            TradeSessions::Intraday,
+        )
+        .await?
     };
 
     let headers = &["Time", "Open", "High", "Low", "Close", "Volume", "Turnover"];
@@ -490,11 +518,7 @@ pub async fn cmd_capital_dist(symbol: String, format: &OutputFormat) -> Result<(
             println!("{}", serde_json::to_string_pretty(&val)?);
         }
         OutputFormat::Table => {
-            println!(
-                "Symbol: {}  Time: {}",
-                symbol,
-                fmt_datetime(dist.timestamp)
-            );
+            println!("Symbol: {}  Time: {}", symbol, fmt_datetime(dist.timestamp));
             let headers = &["Direction", "Large", "Medium", "Small"];
             let rows = vec![
                 vec![
@@ -534,7 +558,13 @@ pub async fn cmd_market_temp(
         let resp = ctx
             .history_market_temperature(m, start_date, end_date)
             .await?;
-        let headers = &["Time", "Temperature", "Valuation", "Sentiment", "Description"];
+        let headers = &[
+            "Time",
+            "Temperature",
+            "Valuation",
+            "Sentiment",
+            "Description",
+        ];
         let rows = resp
             .records
             .iter()
@@ -873,7 +903,13 @@ pub async fn cmd_warrant_issuers(format: &OutputFormat) -> Result<()> {
     let headers = &["ID", "Name (EN)", "Name (CN)"];
     let rows = issuers
         .iter()
-        .map(|i| vec![i.issuer_id.to_string(), i.name_en.clone(), i.name_cn.clone()])
+        .map(|i| {
+            vec![
+                i.issuer_id.to_string(),
+                i.name_en.clone(),
+                i.name_cn.clone(),
+            ]
+        })
         .collect();
 
     print_table(headers, rows, format);
