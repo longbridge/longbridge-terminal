@@ -5,12 +5,11 @@ AI-native CLI for the [Longbridge](https://longbridge.com) trading platform — 
 Covers every Longbridge OpenAPI endpoint: real-time quotes, depth, K-lines, options, and warrants for market data; account balances, stock and fund positions for portfolio management; and order submission, modification, cancellation, and execution history for trading. Designed for scripting, AI-agent tool-calling, and daily trading workflows from the terminal.
 
 ```bash
-$ longbridge static NVDA.US
-+---------+--------------------+----------+----------+----------+--------------+--------------+--------------------+--------------------+-------------------+----------------+
-| Symbol  | Name (EN)          | Exchange | Currency | Lot Size | Total Shares | Circ. Shares | EPS                | EPS TTM            | BPS               | Dividend Yield |
-+============================================================================================================================================================================+
-| NVDA.US | NVIDIA Corporation | NASD     | USD      | 1        | 24300000000  | 23501828621  | 4.9410288065843621 | 4.9410288065843621 | 6.472962962962963 | 0.04           |
-+---------+--------------------+----------+----------+----------+--------------+--------------+--------------------+--------------------+-------------------+----------------+
+$ longbridge quote TSLA.US NVDA.US
+| Symbol  | Last    | Prev Close | Open    | High    | Low     | Volume    | Turnover        | Status |
+|---------|---------|------------|---------|---------|---------|-----------|-----------------|--------|
+| TSLA.US | 395.560 | 391.200    | 396.220 | 403.730 | 394.420 | 58068343  | 23138752546.000 | Normal |
+| NVDA.US | 183.220 | 180.250    | 182.970 | 188.880 | 181.410 | 217307380 | 40023702698.000 | Normal |
 
 $ longbridge quote TSLA.US NVDA.US --format json
 [
@@ -87,6 +86,7 @@ longbridge positions --format json | jq '.[] | {symbol, quantity}'
 ```
 
 <!-- COMMANDS_START -->
+
 ### Diagnostics
 
 ```bash
@@ -159,6 +159,7 @@ longbridge fund-positions                                     # Returns: symbol,
 longbridge margin-ratio TSLA.US                               # Returns: `im_factor` (initial), `mm_factor` (maintenance), `fm_factor` (forced liquidation)
 longbridge max-qty TSLA.US --side buy --price 200             # Returns: `cash_max_qty` (cash only), `margin_max_qty` (with margin financing)
 ```
+
 <!-- COMMANDS_END -->
 
 ### Symbol Format
@@ -184,27 +185,21 @@ claude> Show me recent 5 days performance of NVDA and TSLA
 
 ⏺ Bash(longbridge kline TSLA.US --period day --count 5 & longbridge kline NVDA.US --period day --count 5 & wait)
   ⎿  Authentication failed: oauth error: failed to refresh token: Failed to parse server response
-     +---------------------+---------+---------+---------+---------+----------+-----------------+
      | Time                | Open    | High    | Low     | Close   | Volume   | Turnover        |
+     |---------------------|---------|---------|---------|---------|----------|-----------------|
      … +11 lines (ctrl+o to expand)
 
 ⏺ It seems NVDA failed to authenticate (token refresh issue). TSLA data loaded fine. Here's what we have:
 
   TSLA.US — Last 5 Days
 
-  ┌────────┬────────┬────────┬────────┬────────┬──────────┐
   │  Date  │  Open  │  High  │  Low   │ Close  │  Change  │
-  ├────────┼────────┼────────┼────────┼────────┼──────────┤
+  |--------|--------|--------|--------|--------|----------|
   │ Mar 10 │ 402.22 │ 406.59 │ 398.19 │ 399.24 │ —        │
-  ├────────┼────────┼────────┼────────┼────────┼──────────┤
   │ Mar 11 │ 402.28 │ 416.38 │ 402.15 │ 407.82 │ ▲ +2.15% │
-  ├────────┼────────┼────────┼────────┼────────┼──────────┤
   │ Mar 12 │ 405.18 │ 406.50 │ 394.65 │ 395.01 │ ▼ -3.14% │
-  ├────────┼────────┼────────┼────────┼────────┼──────────┤
   │ Mar 13 │ 399.17 │ 400.20 │ 389.95 │ 391.20 │ ▼ -0.96% │
-  ├────────┼────────┼────────┼────────┼────────┼──────────┤
   │ Mar 16 │ 396.22 │ 403.73 │ 394.42 │ 395.56 │ ▲ +1.11% │
-  └────────┴────────┴────────┴────────┴────────┴──────────┘
 
   5-day return: -0.92% | Range: $389.95 – $416.38
 ```
