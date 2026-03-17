@@ -8,6 +8,8 @@ A Rust-based TUI (Terminal User Interface) for monitoring market data and managi
 
 ## Features
 
+- TUI with real-time market data and portfolio management
+- CLI wrapper for all Longbridge OpenAPI endpoints for AI-native integration.
 - Real-time watchlist with live market data
 - Portfolio management
 - Stock search and quotes
@@ -87,6 +89,98 @@ RUST_LOG=debug longbridge
 - Internet connection
 - Browser access
 - Active Longbridge account
+
+## CLI
+
+In addition to the TUI, `longbridge` exposes every Longbridge OpenAPI endpoint as a CLI command. The same OAuth token is shared between TUI and CLI — run `longbridge login` once and both modes work.
+
+### Authentication
+
+```bash
+longbridge login    # OAuth browser flow, saves token
+longbridge logout   # Clear saved token
+```
+
+### Use Cases
+
+```bash
+longbridge quote TSLA.US
+longbridge kline AAPL.US --period day
+```
+
+### Output Format
+
+All commands support `--format table` (default) or `--format json` for AI-agent / pipe use:
+
+```bash
+longbridge quote TSLA.US AAPL.US --format json | jq '.[] | {symbol, last_done}'
+longbridge positions --format json
+longbridge orders --format csv > orders.csv
+```
+
+### Commands
+
+Use `longbridge -h` or `longbridge <command> -h` for detailed usage of each command.
+
+**Quotes**
+
+| Command                                                                    | Description                                           |
+| -------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `longbridge quote TSLA.US 700.HK`                                          | Real-time quotes                                      |
+| `longbridge depth TSLA.US`                                                 | Order book depth                                      |
+| `longbridge brokers TSLA.US`                                               | Broker queue                                          |
+| `longbridge trades TSLA.US [--count 50]`                                   | Recent trades                                         |
+| `longbridge intraday TSLA.US`                                              | Intraday lines                                        |
+| `longbridge kline TSLA.US [--period day]`                                  | Candlesticks (`1m 5m 15m 30m 1h day week month year`) |
+| `longbridge kline-history TSLA.US [--start 2024-01-01] [--end 2024-12-31]` | History candlesticks                                  |
+| `longbridge static TSLA.US`                                                | Static info (name, lot size, currency)                |
+| `longbridge calc-index TSLA.US`                                            | Calculated indexes (PE, PB, EPS…)                     |
+| `longbridge capital-flow TSLA.US`                                          | Capital flow                                          |
+| `longbridge capital-dist TSLA.US`                                          | Capital distribution                                  |
+| `longbridge market-temp [HK\|US\|CN\|SG]`                                  | Market temperature                                    |
+| `longbridge trading-session`                                               | Trading sessions                                      |
+| `longbridge trading-days HK`                                               | Trading calendar                                      |
+| `longbridge security-list HK`                                              | Security list                                         |
+| `longbridge participants`                                                  | Market maker list                                     |
+
+**Options & Warrants**
+
+| Command                                          | Description               |
+| ------------------------------------------------ | ------------------------- |
+| `longbridge option-quote AAPL240119C190000`      | Option quotes             |
+| `longbridge option-chain AAPL`                   | Option chain expiry dates |
+| `longbridge option-chain AAPL --date 2024-01-19` | Strike prices for a date  |
+| `longbridge warrant-quote 12345.HK`              | Warrant quotes            |
+| `longbridge warrant-list 700.HK`                 | Warrants for a security   |
+| `longbridge warrant-issuers`                     | Warrant issuer list       |
+
+**Watchlist**
+
+| Command                                                           | Description     |
+| ----------------------------------------------------------------- | --------------- |
+| `longbridge watchlist`                                            | List all groups |
+| `longbridge watchlist create "My Portfolio"`                      | Create group    |
+| `longbridge watchlist update <id> --add TSLA.US --remove AAPL.US` | Update group    |
+| `longbridge watchlist delete <id>`                                | Delete group    |
+
+**Trading**
+
+| Command                                               | Description                                 |
+| ----------------------------------------------------- | ------------------------------------------- |
+| `longbridge orders`                                   | Today's orders                              |
+| `longbridge orders --history [--start 2024-01-01]`    | History orders                              |
+| `longbridge order <order_id>`                         | Order detail                                |
+| `longbridge executions`                               | Today's executions                          |
+| `longbridge buy TSLA.US 100 --price 250`              | Submit buy order (prompts for confirmation) |
+| `longbridge sell TSLA.US 100 --price 260`             | Submit sell order                           |
+| `longbridge cancel <order_id>`                        | Cancel order                                |
+| `longbridge replace <order_id> --qty 200 --price 255` | Modify order                                |
+| `longbridge balance`                                  | Account balance                             |
+| `longbridge cash-flow [--start 2024-01-01]`           | Cash flow records                           |
+| `longbridge positions`                                | Stock positions                             |
+| `longbridge fund-positions`                           | Fund positions                              |
+| `longbridge margin-ratio TSLA.US`                     | Margin ratio                                |
+| `longbridge max-qty TSLA.US --side buy --price 250`   | Max purchase quantity                       |
 
 ## API Rate Limits
 
