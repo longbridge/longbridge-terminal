@@ -9,7 +9,6 @@ Extend the existing `longbridge` binary — **no subcommand launches TUI, subcom
 ## Command Structure
 
 ```
-longbridge                          # Launch TUI (existing behavior)
 longbridge login                    # OAuth authentication (shared token)
 longbridge logout                   # Clear token
 
@@ -62,6 +61,8 @@ longbridge positions                        # Stock positions
 longbridge fund-positions                   # Fund positions
 longbridge margin-ratio TSLA.US            # Margin ratio
 longbridge max-qty TSLA.US --side buy --price 250  # Max purchase quantity
+
+longbridge tui                           # Launch TUI (existing behavior)
 ```
 
 ---

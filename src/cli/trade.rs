@@ -24,8 +24,7 @@ fn parse_order_type(s: &str) -> Result<OrderType> {
         "LIT" => Ok(OrderType::LIT),
         "MIT" => Ok(OrderType::MIT),
         _ => bail!(
-            "Unknown order type '{}'. Use: LO MO ELO ALO ODD SLO LIT MIT",
-            s
+            "Unknown order type '{s}'. Use: LO MO ELO ALO ODD SLO LIT MIT"
         ),
     }
 }
@@ -36,8 +35,7 @@ fn parse_tif(s: &str) -> Result<TimeInForceType> {
         "gtc" | "goodtilcanceled" => Ok(TimeInForceType::GoodTilCanceled),
         "gtd" | "goodtildate" => Ok(TimeInForceType::GoodTilDate),
         _ => bail!(
-            "Unknown time in force '{}'. Use: Day GoodTilCanceled GoodTilDate",
-            s
+            "Unknown time in force '{s}'. Use: Day GoodTilCanceled GoodTilDate"
         ),
     }
 }
@@ -222,6 +220,7 @@ pub async fn cmd_submit_order(
     side: OrderSide,
     format: &OutputFormat,
 ) -> Result<()> {
+    use std::io::Write;
     let ot = parse_order_type(&order_type)?;
     let tif_val = parse_tif(&tif)?;
     let qty = Decimal::from(quantity);
@@ -229,7 +228,7 @@ pub async fn cmd_submit_order(
     let mut opts = SubmitOrderOptions::new(symbol.clone(), ot, side, qty, tif_val);
     if let Some(ref p) = price {
         let price_dec =
-            Decimal::from_str(p).map_err(|_| anyhow::anyhow!("Invalid price: {}", p))?;
+            Decimal::from_str(p).map_err(|_| anyhow::anyhow!("Invalid price: {p}"))?;
         opts = opts.submitted_price(price_dec);
     }
 
@@ -242,7 +241,6 @@ pub async fn cmd_submit_order(
         price.as_deref().unwrap_or("market")
     );
     print!("Confirm? [y/N] ");
-    use std::io::Write;
     std::io::stdout().flush()?;
     let mut input = String::new();
     std::io::stdin().read_line(&mut input)?;
@@ -268,8 +266,8 @@ pub async fn cmd_submit_order(
 }
 
 pub async fn cmd_cancel_order(order_id: String) -> Result<()> {
-    print!("Cancel order {}? [y/N] ", order_id);
     use std::io::Write;
+    print!("Cancel order {order_id}? [y/N] ");
     std::io::stdout().flush()?;
     let mut input = String::new();
     std::io::stdin().read_line(&mut input)?;
@@ -280,7 +278,7 @@ pub async fn cmd_cancel_order(order_id: String) -> Result<()> {
 
     let ctx = crate::openapi::trade();
     ctx.cancel_order(order_id.clone()).await?;
-    println!("Order {} cancelled.", order_id);
+    println!("Order {order_id} cancelled.");
     Ok(())
 }
 
@@ -289,18 +287,18 @@ pub async fn cmd_replace_order(
     qty: Option<u64>,
     price: Option<String>,
 ) -> Result<()> {
+    use std::io::Write;
     let quantity = qty.ok_or_else(|| anyhow::anyhow!("--qty is required"))?;
     let qty_dec = Decimal::from(quantity);
 
     let mut opts = ReplaceOrderOptions::new(order_id.clone(), qty_dec);
     if let Some(p) = price {
         let price_dec =
-            Decimal::from_str(&p).map_err(|_| anyhow::anyhow!("Invalid price: {}", p))?;
+            Decimal::from_str(&p).map_err(|_| anyhow::anyhow!("Invalid price: {p}"))?;
         opts = opts.price(price_dec);
     }
 
-    print!("Modify order {}? [y/N] ", order_id);
-    use std::io::Write;
+    print!("Modify order {order_id}? [y/N] ");
     std::io::stdout().flush()?;
     let mut input = String::new();
     std::io::stdin().read_line(&mut input)?;
@@ -311,7 +309,7 @@ pub async fn cmd_replace_order(
 
     let ctx = crate::openapi::trade();
     ctx.replace_order(opts).await?;
-    println!("Order {} modified.", order_id);
+    println!("Order {order_id} modified.");
     Ok(())
 }
 
@@ -493,13 +491,13 @@ pub async fn cmd_max_qty(
     let side_val = match side.to_lowercase().as_str() {
         "buy" => OrderSide::Buy,
         "sell" => OrderSide::Sell,
-        _ => bail!("Unknown side '{}'. Use: Buy Sell", side),
+        _ => bail!("Unknown side '{side}'. Use: Buy Sell"),
     };
     let ot = parse_order_type(order_type)?;
 
     let price_dec = price
         .as_deref()
-        .map(|p| Decimal::from_str(p).map_err(|_| anyhow::anyhow!("Invalid price: {}", p)))
+        .map(|p| Decimal::from_str(p).map_err(|_| anyhow::anyhow!("Invalid price: {p}")))
         .transpose()?;
 
     let opts =

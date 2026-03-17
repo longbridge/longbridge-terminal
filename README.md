@@ -38,66 +38,68 @@ longbridge quote TSLA.US --format json
 longbridge positions --format json | jq '.[] | {symbol, quantity}'
 ```
 
+<!-- COMMANDS_START -->
 ### Quotes
 
-| Command                                                                | Description                                                 |
-| ---------------------------------------------------------------------- | ----------------------------------------------------------- |
-| `longbridge quote TSLA.US 700.HK`                                      | Real-time quotes                                            |
-| `longbridge depth TSLA.US`                                             | Level 2 order book (bid/ask)                                |
-| `longbridge brokers 700.HK`                                            | Broker queue at each price level                            |
-| `longbridge trades TSLA.US [--count 50]`                               | Recent tick-by-tick trades                                  |
-| `longbridge intraday TSLA.US`                                          | Intraday minute-by-minute lines                             |
-| `longbridge kline TSLA.US [--period day] [--count 100]`                | OHLCV candlesticks (`1m 5m 15m 30m 1h day week month year`) |
-| `longbridge kline-history TSLA.US --start 2024-01-01 --end 2024-12-31` | Historical candlesticks by date range                       |
-| `longbridge static TSLA.US`                                            | Reference info (name, lot size, currency, shares)           |
-| `longbridge calc-index TSLA.US --index pe,pb,eps`                      | Calculated indexes (PE, PB, EPS, turnover rate…)            |
-| `longbridge capital-flow TSLA.US`                                      | Intraday capital flow time series                           |
-| `longbridge capital-dist TSLA.US`                                      | Capital distribution (large/medium/small)                   |
-| `longbridge market-temp [HK\|US\|CN\|SG]`                              | Market sentiment temperature (0–100)                        |
-| `longbridge trading-session`                                           | Trading session schedule for all markets                    |
-| `longbridge trading-days HK`                                           | Trading calendar                                            |
-| `longbridge security-list HK`                                          | Full security list for a market                             |
-| `longbridge participants`                                              | Market maker broker list                                    |
-| `longbridge subscriptions`                                             | Active WebSocket subscriptions                              |
+```bash
+longbridge quote TSLA.US 700.HK                                       # Real-time quotes for one or more symbols
+longbridge depth TSLA.US                                              # Level 2 order book depth (bid/ask ladder)
+longbridge brokers 700.HK                                             # Broker queue at each price level (HK market)
+longbridge trades TSLA.US [--count 50]                                # Recent tick-by-tick trades
+longbridge intraday TSLA.US                                           # Intraday minute-by-minute price and volume lines for today
+longbridge kline TSLA.US [--period day] [--count 100]                 # OHLCV candlestick (K-line) data
+longbridge kline-history TSLA.US --start 2024-01-01 --end 2024-12-31 # Historical OHLCV candlestick data within a date range
+longbridge static TSLA.US                                             # Static reference info for one or more symbols
+longbridge calc-index TSLA.US --index pe,pb,eps                       # Calculated financial indexes (PE, PB, EPS, turnover rate, etc.)
+longbridge capital-flow TSLA.US                                       # Intraday capital flow time series (large/medium/small money in vs out)
+longbridge capital-dist TSLA.US                                       # Capital distribution snapshot (large/medium/small inflow and outflow)
+longbridge market-temp [HK|US|CN|SG]                                  # Market sentiment temperature index (0–100, higher = more bullish)
+longbridge trading-session                                            # Trading session schedule (open/close times) for all markets
+longbridge trading-days HK                                            # Trading days and half-trading days for a market
+longbridge security-list HK                                           # Full list of securities available in a market
+longbridge participants                                               # Market maker (participant) broker IDs and names
+longbridge subscriptions                                              # Active real-time WebSocket subscriptions for this session
+```
 
 ### Options & Warrants
 
-| Command                                             | Description                         |
-| --------------------------------------------------- | ----------------------------------- |
-| `longbridge option-quote AAPL240119C190000`         | Option contract quotes              |
-| `longbridge option-chain AAPL.US`                   | Option chain expiry dates           |
-| `longbridge option-chain AAPL.US --date 2024-01-19` | Strike prices for a specific expiry |
-| `longbridge warrant-quote 12345.HK`                 | Warrant quotes                      |
-| `longbridge warrant-list 700.HK`                    | Warrants linked to an underlying    |
-| `longbridge warrant-issuers`                        | Warrant issuer list                 |
+```bash
+longbridge option-quote AAPL240119C190000         # Real-time quotes for option contracts
+longbridge option-chain AAPL.US                   # Option chain: list all expiry dates
+longbridge option-chain AAPL.US --date 2024-01-19 # Option chain: strike prices for a given expiry
+longbridge warrant-quote 12345.HK                 # Real-time quotes for warrant contracts
+longbridge warrant-list 700.HK                    # Warrants linked to an underlying security
+longbridge warrant-issuers                        # Warrant issuer list (HK market)
+```
 
 ### Watchlist
 
-| Command                                                           | Description                          |
-| ----------------------------------------------------------------- | ------------------------------------ |
-| `longbridge watchlist`                                            | List all groups and their securities |
-| `longbridge watchlist create "My Portfolio"`                      | Create a group                       |
-| `longbridge watchlist update <id> --add TSLA.US --remove AAPL.US` | Add/remove securities                |
-| `longbridge watchlist delete <id>`                                | Delete a group                       |
+```bash
+longbridge watchlist                                             # List watchlist groups, or create/update/delete a group
+longbridge watchlist create "My Portfolio"                       # Create a new watchlist group
+longbridge watchlist update <id> --add TSLA.US --remove AAPL.US  # Add/remove securities in a group, or rename it
+longbridge watchlist delete <id>                                 # Delete a watchlist group
+```
 
 ### Trading
 
-| Command                                                  | Description                                 |
-| -------------------------------------------------------- | ------------------------------------------- |
-| `longbridge orders`                                      | Today's orders                              |
-| `longbridge orders --history [--start 2024-01-01]`       | Historical orders                           |
-| `longbridge order <order_id>`                            | Full order detail                           |
-| `longbridge executions`                                  | Today's fills                               |
-| `longbridge buy TSLA.US 100 --price 250.00`              | Submit buy order (prompts for confirmation) |
-| `longbridge sell TSLA.US 100 --price 260.00`             | Submit sell order                           |
-| `longbridge cancel <order_id>`                           | Cancel a pending order                      |
-| `longbridge replace <order_id> --qty 200 --price 255.00` | Modify a pending order                      |
-| `longbridge balance`                                     | Account cash balance                        |
-| `longbridge cash-flow [--start 2024-01-01]`              | Cash flow records                           |
-| `longbridge positions`                                   | Stock positions                             |
-| `longbridge fund-positions`                              | Fund positions                              |
-| `longbridge margin-ratio TSLA.US`                        | Margin ratio requirements                   |
-| `longbridge max-qty TSLA.US --side buy --price 250`      | Estimate max buy/sell quantity              |
+```bash
+longbridge orders                                      # Today's orders, or historical orders with --history
+longbridge orders --history [--start 2024-01-01]       # Historical orders (use --symbol to filter)
+longbridge order <order_id>                            # Full detail for a single order including charges and history
+longbridge executions                                  # Today's trade executions (fills), or historical with --history
+longbridge buy TSLA.US 100 --price 250.00              # Submit a buy order (prompts for confirmation)
+longbridge sell TSLA.US 100 --price 260.00             # Submit a sell order (prompts for confirmation)
+longbridge cancel <order_id>                           # Cancel a pending order (prompts for confirmation)
+longbridge replace <order_id> --qty 200 --price 255.00 # Modify quantity or price of a pending order
+longbridge balance                                     # Account cash balance and financing information
+longbridge cash-flow [--start 2024-01-01]              # Cash flow records (deposits, withdrawals, dividends, settlements)
+longbridge positions                                   # Current stock (equity) positions across all sub-accounts
+longbridge fund-positions                              # Current fund (mutual fund) positions across all sub-accounts
+longbridge margin-ratio TSLA.US                        # Margin ratio requirements for a symbol
+longbridge max-qty TSLA.US --side buy --price 250      # Estimate maximum buy or sell quantity given current account balance
+```
+<!-- COMMANDS_END -->
 
 ### Symbol Format
 

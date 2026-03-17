@@ -228,7 +228,7 @@ pub async fn cmd_brokers(symbol: String, format: &OutputFormat) -> Result<()> {
                         b.position.to_string(),
                         b.broker_ids
                             .iter()
-                            .map(|id| id.to_string())
+                            .map(std::string::ToString::to_string)
                             .collect::<Vec<_>>()
                             .join(", "),
                     ]
@@ -245,7 +245,7 @@ pub async fn cmd_brokers(symbol: String, format: &OutputFormat) -> Result<()> {
                         b.position.to_string(),
                         b.broker_ids
                             .iter()
-                            .map(|id| id.to_string())
+                            .map(std::string::ToString::to_string)
                             .collect::<Vec<_>>()
                             .join(", "),
                     ]
@@ -467,9 +467,7 @@ pub async fn cmd_calc_index(
                 fmt_decimal(&r.last_done),
                 fmt_decimal(&r.change_rate),
                 fmt_decimal(&r.change_value),
-                r.volume
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|| "-".to_string()),
+                r.volume.map_or_else(|| "-".to_string(), |v| v.to_string()),
                 fmt_decimal(&r.turnover),
                 fmt_decimal(&r.turnover_rate),
                 fmt_decimal(&r.total_market_value),
@@ -717,7 +715,7 @@ pub async fn cmd_participants(format: &OutputFormat) -> Result<()> {
             vec![
                 p.broker_ids
                     .iter()
-                    .map(|id| id.to_string())
+                    .map(std::string::ToString::to_string)
                     .collect::<Vec<_>>()
                     .join(", "),
                 p.name_en.clone(),
@@ -972,8 +970,8 @@ pub async fn run_brokers(api: &dyn QuoteApi, symbol: String, format: &OutputForm
         }
         OutputFormat::Table => {
             let headers = &["Position", "Broker IDs"];
-            let ask_rows: Vec<Vec<String>> = brokers.ask_brokers.iter().map(|b| vec![b.position.to_string(), b.broker_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(", ")]).collect();
-            let bid_rows: Vec<Vec<String>> = brokers.bid_brokers.iter().map(|b| vec![b.position.to_string(), b.broker_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(", ")]).collect();
+            let ask_rows: Vec<Vec<String>> = brokers.ask_brokers.iter().map(|b| vec![b.position.to_string(), b.broker_ids.iter().map(std::string::ToString::to_string).collect::<Vec<_>>().join(", ")]).collect();
+            let bid_rows: Vec<Vec<String>> = brokers.bid_brokers.iter().map(|b| vec![b.position.to_string(), b.broker_ids.iter().map(std::string::ToString::to_string).collect::<Vec<_>>().join(", ")]).collect();
             println!("Ask Brokers:");
             print_table(headers, ask_rows, &OutputFormat::Table);
             println!("Bid Brokers:");
@@ -1116,7 +1114,7 @@ pub async fn run_security_list(api: &dyn QuoteApi, market: Market, format: &Outp
 pub async fn run_participants(api: &dyn QuoteApi, format: &OutputFormat) -> Result<()> {
     let participants = api.participants().await?;
     let headers = &["Broker ID", "Name (EN)", "Name (CN)"];
-    let rows = participants.iter().map(|p| vec![p.broker_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(", "), p.name_en.clone(), p.name_cn.clone()]).collect();
+    let rows = participants.iter().map(|p| vec![p.broker_ids.iter().map(std::string::ToString::to_string).collect::<Vec<_>>().join(", "), p.name_en.clone(), p.name_cn.clone()]).collect();
     print_table(headers, rows, format);
     Ok(())
 }

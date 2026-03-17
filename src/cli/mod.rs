@@ -46,7 +46,7 @@ pub struct Cli {
 pub enum Commands {
     /// Authenticate via browser OAuth and save token for CLI and TUI
     ///
-    /// Opens a browser for Longbridge OpenAPI authorization.
+    /// Opens a browser for Longbridge `OpenAPI` authorization.
     /// Token is stored at ~/.longbridge/terminal/.openapi-session and shared with the TUI.
     Login,
 
@@ -64,7 +64,7 @@ pub enum Commands {
     // ── Quote ──────────────────────────────────────────────────────────────────
     /// Real-time quotes for one or more symbols
     ///
-    /// Returns: symbol, last_done, prev_close, open, high, low, volume, turnover, trade_status.
+    /// Returns: symbol, `last_done`, `prev_close`, open, high, low, volume, turnover, `trade_status`.
     /// Example: longbridge quote TSLA.US 700.HK AAPL.US
     Quote {
         /// Symbols in <CODE>.<MARKET> format, e.g. TSLA.US 700.HK 600519.SH
@@ -73,7 +73,7 @@ pub enum Commands {
 
     /// Level 2 order book depth (bid/ask ladder)
     ///
-    /// Returns up to 10 price levels of asks and bids with price, volume, order_num.
+    /// Returns up to 10 price levels of asks and bids with price, volume, `order_num`.
     /// Example: longbridge depth TSLA.US
     Depth {
         /// Symbol in <CODE>.<MARKET> format
@@ -92,7 +92,7 @@ pub enum Commands {
 
     /// Recent tick-by-tick trades
     ///
-    /// Returns: timestamp, price, volume, direction (up/down/neutral), trade_type.
+    /// Returns: timestamp, price, volume, direction (up/down/neutral), `trade_type`.
     /// Example: longbridge trades TSLA.US --count 50
     Trades {
         /// Symbol in <CODE>.<MARKET> format
@@ -104,7 +104,7 @@ pub enum Commands {
 
     /// Intraday minute-by-minute price and volume lines for today
     ///
-    /// Returns: timestamp, price, volume, turnover, avg_price.
+    /// Returns: timestamp, price, volume, turnover, `avg_price`.
     /// Example: longbridge intraday TSLA.US
     Intraday {
         /// Symbol in <CODE>.<MARKET> format
@@ -117,7 +117,7 @@ pub enum Commands {
     /// Periods: 1m  5m  15m  30m  1h  day  week  month  year
     ///   (aliases: minute=1m, hour=1h, d/1d=day, w=week, m/1mo=month, y=year)
     /// Example: longbridge kline TSLA.US --period day --count 100
-    /// Example: longbridge kline TSLA.US --period 1h --adjust forward_adjust
+    /// Example: longbridge kline TSLA.US --period 1h --adjust `forward_adjust`
     Kline {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -128,8 +128,8 @@ pub enum Commands {
         /// Number of candles to return (default: 100)
         #[arg(long, default_value = "100")]
         count: usize,
-        /// Price adjustment: no_adjust (default) | forward_adjust
-        /// Aliases: none=no_adjust, forward=forward_adjust
+        /// Price adjustment: `no_adjust` (default) | `forward_adjust`
+        /// Aliases: none=`no_adjust`, forward=`forward_adjust`
         #[arg(long, default_value = "no_adjust")]
         adjust: String,
     },
@@ -152,15 +152,15 @@ pub enum Commands {
         /// End date (YYYY-MM-DD). Must be used together with --start.
         #[arg(long)]
         end: Option<String>,
-        /// Price adjustment: no_adjust (default) | forward_adjust
-        /// Aliases: none=no_adjust, forward=forward_adjust
+        /// Price adjustment: `no_adjust` (default) | `forward_adjust`
+        /// Aliases: none=`no_adjust`, forward=`forward_adjust`
         #[arg(long, default_value = "no_adjust")]
         adjust: String,
     },
 
     /// Static reference info for one or more symbols
     ///
-    /// Returns: name, exchange, currency, lot_size, total_shares, circulating_shares, EPS, BPS, dividend_yield.
+    /// Returns: name, exchange, currency, `lot_size`, `total_shares`, `circulating_shares`, EPS, BPS, `dividend_yield`.
     /// Example: longbridge static TSLA.US 700.HK
     Static {
         /// One or more symbols in <CODE>.<MARKET> format
@@ -170,20 +170,20 @@ pub enum Commands {
     /// Calculated financial indexes (PE, PB, EPS, turnover rate, etc.)
     ///
     /// Full index list:
-    ///   last_done  change_value  change_rate  volume  turnover  ytd_change_rate
-    ///   turnover_rate  total_market_value  capital_flow  amplitude  volume_ratio
-    ///   pe (alias: pe_ttm)  pb  eps (alias: dividend_yield)
-    ///   five_day_change_rate  ten_day_change_rate  half_year_change_rate  five_minutes_change_rate
-    ///   implied_volatility  delta  gamma  theta  vega  rho  open_interest
-    ///   expiry_date  strike_price  upper_strike_price  lower_strike_price
-    ///   outstanding_qty  outstanding_ratio  premium  itm_otm
-    ///   warrant_delta  call_price  to_call_price  effective_leverage
-    ///   leverage_ratio  conversion_ratio  balance_point
+    ///   `last_done`  `change_value`  `change_rate`  volume  turnover  `ytd_change_rate`
+    ///   `turnover_rate`  `total_market_value`  `capital_flow`  amplitude  `volume_ratio`
+    ///   pe (alias: `pe_ttm`)  pb  eps (alias: `dividend_yield`)
+    ///   `five_day_change_rate`  `ten_day_change_rate`  `half_year_change_rate`  `five_minutes_change_rate`
+    ///   `implied_volatility`  delta  gamma  theta  vega  rho  `open_interest`
+    ///   `expiry_date`  `strike_price`  `upper_strike_price`  `lower_strike_price`
+    ///   `outstanding_qty`  `outstanding_ratio`  premium  `itm_otm`
+    ///   `warrant_delta`  `call_price`  `to_call_price`  `effective_leverage`
+    ///   `leverage_ratio`  `conversion_ratio`  `balance_point`
     /// Example: longbridge calc-index TSLA.US AAPL.US --index pe,pb,turnover_rate
     CalcIndex {
         /// One or more symbols in <CODE>.<MARKET> format
         symbols: Vec<String>,
-        /// Comma-separated indexes to compute (default: pe,pb,eps,turnover_rate,total_market_value)
+        /// Comma-separated indexes to compute (default: pe,pb,eps,`turnover_rate`,`total_market_value`)
         /// Unknown index names are silently ignored.
         #[arg(
             long,
@@ -236,7 +236,7 @@ pub enum Commands {
 
     /// Trading session schedule (open/close times) for all markets
     ///
-    /// Returns: market, session type (intraday/pre/post/overnight), begin_time, end_time.
+    /// Returns: market, session type (intraday/pre/post/overnight), `begin_time`, `end_time`.
     TradingSession,
 
     /// Trading days and half-trading days for a market
@@ -257,7 +257,7 @@ pub enum Commands {
 
     /// Full list of securities available in a market
     ///
-    /// Returns: symbol, name_en, name_cn for every listed security.
+    /// Returns: symbol, `name_en`, `name_cn` for every listed security.
     /// Example: longbridge security-list HK
     SecurityList {
         /// Market: HK | US | CN (aliases: SH SZ) | SG  (case-insensitive, default: HK)
@@ -275,13 +275,13 @@ pub enum Commands {
 
     /// Active real-time WebSocket subscriptions for this session
     ///
-    /// Returns: symbol, sub_types (quote/depth/trade), subscribed candlestick periods.
+    /// Returns: symbol, `sub_types` (quote/depth/trade), subscribed candlestick periods.
     Subscriptions,
 
     // ── Options & Warrants ──────────────────────────────────────────────────────
     /// Real-time quotes for option contracts
     ///
-    /// Returns standard quote fields plus implied_volatility, delta, strike_price, expiry_date, contract_type.
+    /// Returns standard quote fields plus `implied_volatility`, delta, `strike_price`, `expiry_date`, `contract_type`.
     /// Example: longbridge option-quote AAPL240119C190000
     OptionQuote {
         /// Option contract symbols (OCC format for US, e.g. AAPL240119C190000)
@@ -304,7 +304,7 @@ pub enum Commands {
 
     /// Real-time quotes for warrant contracts
     ///
-    /// Returns: last_done, prev_close, implied_volatility, leverage_ratio, expiry_date, category.
+    /// Returns: `last_done`, `prev_close`, `implied_volatility`, `leverage_ratio`, `expiry_date`, category.
     /// Example: longbridge warrant-quote 12345.HK
     WarrantQuote {
         /// Warrant symbols (e.g. 12345.HK)
@@ -313,7 +313,7 @@ pub enum Commands {
 
     /// Warrants linked to an underlying security
     ///
-    /// Returns: symbol, name, last_done, leverage_ratio, expiry_date, warrant_type.
+    /// Returns: symbol, name, `last_done`, `leverage_ratio`, `expiry_date`, `warrant_type`.
     /// Example: longbridge warrant-list 700.HK
     WarrantList {
         /// Underlying symbol (e.g. 700.HK)
@@ -322,7 +322,7 @@ pub enum Commands {
 
     /// Warrant issuer list (HK market)
     ///
-    /// Returns: issuer_id, name_en, name_cn.
+    /// Returns: `issuer_id`, `name_en`, `name_cn`.
     WarrantIssuers,
 
     // ── Watchlist ───────────────────────────────────────────────────────────────
@@ -341,8 +341,8 @@ pub enum Commands {
     // ── Trade ───────────────────────────────────────────────────────────────────
     /// Today's orders, or historical orders with --history
     ///
-    /// Returns: order_id, symbol, side, order_type, status, quantity, price,
-    ///   executed_qty, executed_price, submitted_at.
+    /// Returns: `order_id`, symbol, side, `order_type`, status, quantity, price,
+    ///   `executed_qty`, `executed_price`, `submitted_at`.
     /// Example: longbridge orders
     /// Example: longbridge orders --history --start 2024-01-01 --symbol TSLA.US
     Orders {
@@ -362,7 +362,7 @@ pub enum Commands {
 
     /// Full detail for a single order including charges and history
     ///
-    /// Returns all fields from `orders` plus charge_detail, history_details, msg.
+    /// Returns all fields from `orders` plus `charge_detail`, `history_details`, msg.
     /// Example: longbridge order 20240101-123456789
     Order {
         /// Order ID (from `orders` or returned by `buy`/`sell`)
@@ -371,7 +371,7 @@ pub enum Commands {
 
     /// Today's trade executions (fills), or historical with --history
     ///
-    /// Returns: order_id, trade_id, symbol, price, quantity, trade_done_at.
+    /// Returns: `order_id`, `trade_id`, symbol, price, quantity, `trade_done_at`.
     /// Example: longbridge executions --history --start 2024-01-01
     Executions {
         /// Return historical executions instead of today's
@@ -390,7 +390,7 @@ pub enum Commands {
 
     /// Submit a buy order (prompts for confirmation)
     ///
-    /// Returns order_id on success.
+    /// Returns `order_id` on success.
     /// Order types: LO (limit) | MO (market) | ELO | ALO | ODD | SLO | LIT | MIT
     ///   (case-insensitive)
     /// Example: longbridge buy TSLA.US 100 --price 250.00
@@ -406,7 +406,7 @@ pub enum Commands {
         /// Order type: LO | MO | ELO | ALO | ODD | SLO | LIT | MIT  (case-insensitive, default: LO)
         #[arg(long, default_value = "LO")]
         order_type: String,
-        /// Time in force: Day | GoodTilCanceled (alias: gtc) | GoodTilDate (alias: gtd)
+        /// Time in force: Day | `GoodTilCanceled` (alias: gtc) | `GoodTilDate` (alias: gtd)
         /// (case-insensitive, default: Day)
         #[arg(long, default_value = "Day")]
         tif: String,
@@ -414,7 +414,7 @@ pub enum Commands {
 
     /// Submit a sell order (prompts for confirmation)
     ///
-    /// Returns order_id on success.
+    /// Returns `order_id` on success.
     /// Example: longbridge sell TSLA.US 100 --price 260.00
     Sell {
         /// Symbol in <CODE>.<MARKET> format
@@ -427,7 +427,7 @@ pub enum Commands {
         /// Order type: LO | MO | ELO | ALO | ODD | SLO | LIT | MIT  (case-insensitive, default: LO)
         #[arg(long, default_value = "LO")]
         order_type: String,
-        /// Time in force: Day | GoodTilCanceled (alias: gtc) | GoodTilDate (alias: gtd)
+        /// Time in force: Day | `GoodTilCanceled` (alias: gtc) | `GoodTilDate` (alias: gtd)
         /// (case-insensitive, default: Day)
         #[arg(long, default_value = "Day")]
         tif: String,
@@ -435,7 +435,7 @@ pub enum Commands {
 
     /// Cancel a pending order (prompts for confirmation)
     ///
-    /// Only cancellable states (New, PartialFilled, etc.) are accepted.
+    /// Only cancellable states (New, `PartialFilled`, etc.) are accepted.
     /// Example: longbridge cancel 20240101-123456789
     Cancel {
         /// Order ID to cancel
@@ -459,7 +459,7 @@ pub enum Commands {
 
     /// Account cash balance and financing information
     ///
-    /// Returns: currency, total_cash, max_finance_amount, remaining_finance_amount, risk_level, margin_call.
+    /// Returns: currency, `total_cash`, `max_finance_amount`, `remaining_finance_amount`, `risk_level`, `margin_call`.
     /// Example: longbridge balance --currency USD
     Balance {
         /// Filter by currency (e.g. USD HKD CNY SGD); returns all if omitted
@@ -469,7 +469,7 @@ pub enum Commands {
 
     /// Cash flow records (deposits, withdrawals, dividends, settlements)
     ///
-    /// Returns: flow_name, symbol, business_type, balance, currency, business_time, description.
+    /// Returns: `flow_name`, symbol, `business_type`, balance, currency, `business_time`, description.
     /// Defaults to last 30 days if no dates provided.
     /// Example: longbridge cash-flow --start 2024-01-01 --end 2024-03-31
     CashFlow {
@@ -483,18 +483,18 @@ pub enum Commands {
 
     /// Current stock (equity) positions across all sub-accounts
     ///
-    /// Returns: symbol, name, quantity, available_quantity, cost_price, currency, market.
+    /// Returns: symbol, name, quantity, `available_quantity`, `cost_price`, currency, market.
     /// Example: longbridge positions --format json
     Positions,
 
     /// Current fund (mutual fund) positions across all sub-accounts
     ///
-    /// Returns: symbol, name, current_net_asset_value, cost_net_asset_value, currency, holding_units.
+    /// Returns: symbol, name, `current_net_asset_value`, `cost_net_asset_value`, currency, `holding_units`.
     FundPositions,
 
     /// Margin ratio requirements for a symbol
     ///
-    /// Returns: im_factor (initial), mm_factor (maintenance), fm_factor (forced liquidation).
+    /// Returns: `im_factor` (initial), `mm_factor` (maintenance), `fm_factor` (forced liquidation).
     /// Example: longbridge margin-ratio TSLA.US
     MarginRatio {
         /// Symbol in <CODE>.<MARKET> format
@@ -503,7 +503,7 @@ pub enum Commands {
 
     /// Estimate maximum buy or sell quantity given current account balance
     ///
-    /// Returns: cash_max_qty (cash only), margin_max_qty (with margin financing).
+    /// Returns: `cash_max_qty` (cash only), `margin_max_qty` (with margin financing).
     /// Example: longbridge max-qty TSLA.US --side buy --price 250
     MaxQty {
         /// Symbol in <CODE>.<MARKET> format

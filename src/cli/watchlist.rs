@@ -65,13 +65,13 @@ async fn cmd_create(name: String) -> Result<()> {
         securities: None,
     };
     let id = ctx.create_watchlist_group(req).await?;
-    println!("Created watchlist group '{}' with ID: {}", name, id);
+    println!("Created watchlist group '{name}' with ID: {id}");
     Ok(())
 }
 
 async fn cmd_delete(id: i64, purge: bool) -> Result<()> {
-    print!("Delete watchlist group {}? [y/N] ", id);
     use std::io::Write;
+    print!("Delete watchlist group {id}? [y/N] ");
     std::io::stdout().flush()?;
     let mut input = String::new();
     std::io::stdin().read_line(&mut input)?;
@@ -82,7 +82,7 @@ async fn cmd_delete(id: i64, purge: bool) -> Result<()> {
 
     let ctx = crate::openapi::quote();
     ctx.delete_watchlist_group(id, purge).await?;
-    println!("Deleted watchlist group {}.", id);
+    println!("Deleted watchlist group {id}.");
     Ok(())
 }
 
@@ -97,16 +97,15 @@ async fn cmd_update(
     let ctx = crate::openapi::quote();
 
     let update_mode = match mode {
-        "add" => SecuritiesUpdateMode::Add,
         "remove" => SecuritiesUpdateMode::Remove,
         "replace" => SecuritiesUpdateMode::Replace,
         _ => SecuritiesUpdateMode::Add,
     };
 
-    let securities = if !remove.is_empty() {
-        remove
-    } else {
+    let securities = if remove.is_empty() {
         add.clone()
+    } else {
+        remove
     };
 
     let req = RequestUpdateWatchlistGroup {
@@ -120,7 +119,7 @@ async fn cmd_update(
         mode: update_mode,
     };
     ctx.update_watchlist_group(req).await?;
-    println!("Watchlist group {} updated.", id);
+    println!("Watchlist group {id} updated.");
     Ok(())
 }
 
@@ -151,20 +150,20 @@ pub async fn run_watchlist_list(api: &dyn QuoteApi, format: &OutputFormat) -> Re
 
 pub async fn run_watchlist_create(api: &dyn QuoteApi, name: String) -> Result<i64> {
     let id = api.create_watchlist_group(name.clone()).await?;
-    println!("Created watchlist group '{}' with ID: {}", name, id);
+    println!("Created watchlist group '{name}' with ID: {id}");
     Ok(id)
 }
 
 pub async fn run_watchlist_delete(api: &dyn QuoteApi, id: i64, _purge: bool) -> Result<()> {
     api.delete_watchlist_group(id).await?;
-    println!("Deleted watchlist group {}.", id);
+    println!("Deleted watchlist group {id}.");
     Ok(())
 }
 
 pub async fn run_watchlist_update(api: &dyn QuoteApi, req: RequestUpdateWatchlistGroup) -> Result<()> {
     let id = req.id;
     api.update_watchlist_group(req).await?;
-    println!("Watchlist group {} updated.", id);
+    println!("Watchlist group {id} updated.");
     Ok(())
 }
 
