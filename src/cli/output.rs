@@ -28,7 +28,7 @@ pub fn print_table(headers: &[&str], rows: Vec<Vec<String>>, format: &OutputForm
             let mut table = Table::new();
             table
                 .set_content_arrangement(ContentArrangement::Dynamic)
-                .set_header(headers.iter().map(|h| Cell::new(h)));
+                .set_header(headers.iter().map(Cell::new));
             for row in rows {
                 table.add_row(row);
             }
@@ -82,26 +82,26 @@ pub fn fmt_dec(v: rust_decimal::Decimal) -> String {
     v.to_string()
 }
 
-/// Parse a date string (YYYY-MM-DD) into time::Date
+/// Parse a date string (YYYY-MM-DD) into `time::Date`
 pub fn parse_date(s: &str) -> anyhow::Result<time::Date> {
     let fmt = time::macros::format_description!("[year]-[month]-[day]");
-    time::Date::parse(s, &fmt).map_err(|e| anyhow::anyhow!("Invalid date '{}': {}", s, e))
+    time::Date::parse(s, &fmt).map_err(|e| anyhow::anyhow!("Invalid date '{s}': {e}"))
 }
 
-/// Parse a date string into OffsetDateTime at start of day UTC
+/// Parse a date string into `OffsetDateTime` at start of day UTC
 pub fn parse_datetime_start(s: &str) -> anyhow::Result<time::OffsetDateTime> {
     let date = parse_date(s)?;
     Ok(date.with_time(time::Time::MIDNIGHT).assume_utc())
 }
 
-/// Parse a date string into OffsetDateTime at end of day UTC
+/// Parse a date string into `OffsetDateTime` at end of day UTC
 pub fn parse_datetime_end(s: &str) -> anyhow::Result<time::OffsetDateTime> {
     let date = parse_date(s)?;
     let end_time = time::Time::from_hms(23, 59, 59).unwrap();
     Ok(date.with_time(end_time).assume_utc())
 }
 
-/// Format an OffsetDateTime as a readable string
+/// Format an `OffsetDateTime` as a readable string
 pub fn fmt_datetime(dt: time::OffsetDateTime) -> String {
     let fmt = time::macros::format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
     dt.format(&fmt).unwrap_or_else(|_| dt.to_string())

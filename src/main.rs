@@ -95,7 +95,13 @@ async fn main() {
 
     match cli.command {
         None => {
-            // No subcommand: launch TUI
+            // No subcommand: print help and exit
+            use clap::CommandFactory;
+            cli::Cli::command().print_help().unwrap();
+            println!();
+        }
+
+        Some(cli::Commands::Tui) => {
             tracing::info!("App started");
             let quote_receiver = match openapi::init_contexts().await {
                 Ok(r) => r,

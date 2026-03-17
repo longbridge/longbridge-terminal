@@ -16,20 +16,18 @@ pub enum OutputFormat {
 
 #[derive(Parser)]
 #[command(name = "longbridge")]
-#[command(about = "Longbridge CLI - CLI for Longbridge OpenAPI")]
+#[command(about = "Longbridge CLI - AI-native CLI for Longbridge OpenAPI")]
 #[command(long_about = "\
-Longbridge Terminal combines a full-screen TUI (terminal UI) and an AI-native CLI \
-that wraps every Longbridge OpenAPI endpoint.\n\n\
-When called without a subcommand the TUI launches. When called with a subcommand \
-the result is printed to stdout and the process exits — suitable for scripting and \
-AI agent tool-calling.\n\n\
+An AI-native CLI that wraps every Longbridge OpenAPI endpoint — real-time quotes, \
+order management, watchlists, options, warrants, and more.\n\n\
 Symbol format: <CODE>.<MARKET>  e.g. TSLA.US  700.HK  600519.SH\n\
 Markets: HK (Hong Kong)  US (United States)  CN (China A-share)  SG (Singapore)\n\n\
-Authentication is shared between TUI and CLI. Run `longbridge login` once; the token \
-is stored at ~/.longbridge/terminal/.openapi-session and reused automatically.\n\n\
+Authentication: run `longbridge login` once; the token is stored at \
+~/.longbridge/terminal/.openapi-session and reused automatically by all commands.\n\n\
 Use --format json on any command for machine-readable output suitable for AI agents:\n\
   longbridge quote TSLA.US --format json\n\
-  longbridge positions --format json | jq '.[] | {symbol, quantity}'")]
+  longbridge positions --format json | jq '.[] | {symbol, quantity}'\n\n\
+Use `longbridge tui` to launch the interactive full-screen terminal UI.")]
 #[command(version)]
 pub struct Cli {
     #[command(subcommand)]
@@ -46,7 +44,7 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Authenticate via browser OAuth and save token for TUI and CLI
+    /// Authenticate via browser OAuth and save token for CLI and TUI
     ///
     /// Opens a browser for Longbridge OpenAPI authorization.
     /// Token is stored at ~/.longbridge/terminal/.openapi-session and shared with the TUI.
@@ -56,6 +54,12 @@ pub enum Commands {
     ///
     /// Next command or TUI launch will trigger re-authentication.
     Logout,
+
+    /// Launch the interactive full-screen TUI (terminal UI)
+    ///
+    /// Real-time watchlist, candlestick charts, portfolio view, stock search, Vim-like keybindings.
+    /// Example: longbridge tui
+    Tui,
 
     // ── Quote ──────────────────────────────────────────────────────────────────
     /// Real-time quotes for one or more symbols
@@ -678,7 +682,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
             price,
             order_type,
         } => trade::cmd_max_qty(symbol, &side, price, &order_type, format).await,
-        Commands::Login | Commands::Logout => unreachable!(),
+        Commands::Login | Commands::Logout | Commands::Tui => unreachable!(),
     }
 }
 

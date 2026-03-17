@@ -21,8 +21,7 @@ fn parse_period(s: &str) -> Result<Period> {
         "month" | "m" | "1mo" => Ok(Period::Month),
         "year" | "y" => Ok(Period::Year),
         _ => bail!(
-            "Unknown period '{}'. Use: 1m 5m 15m 30m 1h day week month year",
-            s
+            "Unknown period '{s}'. Use: 1m 5m 15m 30m 1h day week month year"
         ),
     }
 }
@@ -31,7 +30,7 @@ fn parse_adjust(s: &str) -> Result<AdjustType> {
     match s {
         "no_adjust" | "none" => Ok(AdjustType::NoAdjust),
         "forward_adjust" | "forward" => Ok(AdjustType::ForwardAdjust),
-        _ => bail!("Unknown adjust type '{}'. Use: no_adjust forward_adjust", s),
+        _ => bail!("Unknown adjust type '{s}'. Use: no_adjust forward_adjust"),
     }
 }
 
@@ -90,13 +89,13 @@ fn parse_market(s: &str) -> Result<longbridge::Market> {
         "US" => Ok(longbridge::Market::US),
         "CN" | "SH" | "SZ" => Ok(longbridge::Market::CN),
         "SG" => Ok(longbridge::Market::SG),
-        _ => bail!("Unknown market '{}'. Use: HK US CN SG", s),
+        _ => bail!("Unknown market '{s}'. Use: HK US CN SG"),
     }
 }
 
-fn parse_security_list_category(_s: &str) -> Result<SecurityListCategory> {
+fn parse_security_list_category(_s: &str) -> SecurityListCategory {
     // Currently only Overnight is supported; expand as the SDK exposes more variants
-    Ok(SecurityListCategory::Overnight)
+    SecurityListCategory::Overnight
 }
 
 pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()> {
@@ -694,7 +693,7 @@ pub async fn cmd_trading_days(
 pub async fn cmd_security_list(market: &str, category: &str, format: &OutputFormat) -> Result<()> {
     let ctx = crate::openapi::quote();
     let m = parse_market(market)?;
-    let cat = parse_security_list_category(category)?;
+    let cat = parse_security_list_category(category);
     let securities = ctx.security_list(m, cat).await?;
 
     let headers = &["Symbol", "Name (EN)", "Name (CN)"];
