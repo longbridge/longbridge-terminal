@@ -9,6 +9,9 @@ pub static QUOTE_CTX: OnceLock<longbridge::quote::QuoteContext> = OnceLock::new(
 /// Global `TradeContext`
 pub static TRADE_CTX: OnceLock<longbridge::trade::TradeContext> = OnceLock::new();
 
+/// Global `ContentContext` for news and topics
+pub static CONTENT_CTX: OnceLock<longbridge::ContentContext> = OnceLock::new();
+
 /// Global `HttpClient` for making authenticated requests to the Longbridge `OpenAPI`
 pub static HTTP_CLIENT: OnceLock<longbridge::httpclient::HttpClient> = OnceLock::new();
 
@@ -29,23 +32,6 @@ fn get_api_language() -> longbridge::Language {
     }
 }
 
-/// Check if API key credentials are available via environment variables.
-/// Returns (app_key, app_secret, access_token) if all three are set.
-fn api_key_creds_from_env() -> Option<(String, String, String)> {
-    fn env(suffix: &str) -> Option<String> {
-        std::env::var(format!("LONGBRIDGE_{suffix}"))
-            .ok()
-            .or_else(|| std::env::var(format!("LONGPORT_{suffix}")).ok())
-    }
-    let app_key = env("APP_KEY")?;
-    let app_secret = env("APP_SECRET")?;
-    let access_token = env("ACCESS_TOKEN")?;
-    if app_key.is_empty() || app_secret.is_empty() || access_token.is_empty() {
-        return None;
-    }
-    Some((app_key, app_secret, access_token))
-}
-
 /// Initialize contexts (should be called once at app startup).
 /// If LONGBRIDGE_APP_KEY, LONGBRIDGE_APP_SECRET, and LONGBRIDGE_ACCESS_TOKEN
 /// are all set, uses API key authentication (no browser needed).
@@ -53,61 +39,54 @@ fn api_key_creds_from_env() -> Option<(String, String, String)> {
 /// Returns quote receiver for caller to handle WebSocket events.
 pub async fn init_contexts(
 ) -> Result<impl tokio_stream::Stream<Item = longbridge::quote::PushEvent> + Send + Unpin> {
-    let (config_builder, http_client_config) = if let Some((app_key, app_secret, access_token)) =
-        api_key_creds_from_env()
-    {
-        tracing::info!("Using API key authentication (env vars)");
-        let config_builder = longbridge::Config::from_apikey(
-            app_key.clone(),
-            app_secret.clone(),
-            access_token.clone(),
-        )
-        .language(get_api_language())
-        .dont_print_quote_packages();
-        let http_client_config = longbridge::httpclient::HttpClientConfig::from_apikey(
-            app_key,
-            app_secret,
-            access_token,
-        );
-        (config_builder, http_client_config)
-    } else {
-        tracing::info!("No API key env vars found, using OAuth authentication");
-        // Build OAuth client: loads token from ~/.longbridge/terminal/.openapi-session
-        // or starts browser authorization. Token refresh is automatic inside the SDK.
-        let oauth_result = longbridge::oauth::OAuthBuilder::new(crate::auth::OAUTH_CLIENT_ID)
-            .callback_port(60355)
-            .build(|url| {
-                println!("Opening browser for Longbridge OpenAPI authorization...");
-                println!("If the browser doesn't open, please visit:\n{url}");
-                if let Err(e) = open::that(url) {
-                    tracing::warn!("Failed to open browser: {e}");
-                }
-            })
-            .await;
+    let (config_builder, http_client_config) =
+        if let (Ok(config), Ok(http_config)) = (
+            longbridge::Config::from_apikey_env(),
+            longbridge::httpclient::HttpClientConfig::from_apikey_env(),
+        ) {
+            tracing::info!("Using API key authentication (env vars)");
+            (
+                config.language(get_api_language()).dont_print_quote_packages(),
+                http_config,
+            )
+        } else {
+            tracing::info!("No API key env vars found, using OAuth authentication");
+            // Build OAuth client: loads token from ~/.longbridge/terminal/.openapi-session
+            // or starts browser authorization. Token refresh is automatic inside the SDK.
+            let oauth_result = longbridge::oauth::OAuthBuilder::new(crate::auth::OAUTH_CLIENT_ID)
+                .callback_port(60355)
+                .build(|url| {
+                    println!("Opening browser for Longbridge OpenAPI authorization...");
+                    println!("If the browser doesn't open, please visit:\n{url}");
+                    if let Err(e) = open::that(url) {
+                        tracing::warn!("Failed to open browser: {e}");
+                    }
+                })
+                .await;
 
-        let oauth = match oauth_result {
-            Ok(o) => o,
-            Err(e) => {
-                let msg = e.to_string();
-                if msg.contains("refresh token") || msg.contains("parse server response") {
-                    tracing::warn!("Token refresh failed, clearing stale token: {msg}");
-                    let _ = crate::auth::clear_token();
-                    return Err(anyhow::anyhow!(
-                        "Stored token is invalid or expired. Please run 'longbridge login' to re-authenticate."
-                    ));
+            let oauth = match oauth_result {
+                Ok(o) => o,
+                Err(e) => {
+                    let msg = e.to_string();
+                    if msg.contains("refresh token") || msg.contains("parse server response") {
+                        tracing::warn!("Token refresh failed, clearing stale token: {msg}");
+                        let _ = crate::auth::clear_token();
+                        return Err(anyhow::anyhow!(
+                            "Stored token is invalid or expired. Please run 'longbridge login' to re-authenticate."
+                        ));
+                    }
+                    return Err(anyhow::anyhow!("OAuth failed: {e}"));
                 }
-                return Err(anyhow::anyhow!("OAuth failed: {e}"));
-            }
+            };
+
+            let config_builder = longbridge::Config::from_oauth(oauth.clone())
+                .language(get_api_language())
+                .dont_print_quote_packages();
+
+            let http_client_config =
+                longbridge::httpclient::HttpClientConfig::from_oauth(oauth.clone());
+            (config_builder, http_client_config)
         };
-
-        let config_builder = longbridge::Config::from_oauth(oauth.clone())
-            .language(get_api_language())
-            .dont_print_quote_packages();
-
-        let http_client_config =
-            longbridge::httpclient::HttpClientConfig::from_oauth(oauth.clone());
-        (config_builder, http_client_config)
-    };
 
     let mut config_builder = config_builder;
     let mut http_client_config = http_client_config;
@@ -123,6 +102,11 @@ pub async fn init_contexts(
     }
 
     let config = Arc::new(config_builder);
+
+    let content_ctx = longbridge::ContentContext::try_new(Arc::clone(&config))?;
+    CONTENT_CTX
+        .set(content_ctx)
+        .map_err(|_| anyhow::anyhow!("ContentContext already initialized"))?;
 
     let http_client = longbridge::httpclient::HttpClient::new(http_client_config);
     HTTP_CLIENT
@@ -198,6 +182,13 @@ pub fn quote_limited() -> &'static RateLimitedQuoteContext {
     RATE_LIMITED_QUOTE_CTX
         .get()
         .expect("RateLimitedQuoteContext not initialized, please call init_contexts() first")
+}
+
+/// Get global `ContentContext` for news and topics
+pub fn content() -> &'static longbridge::ContentContext {
+    CONTENT_CTX
+        .get()
+        .expect("ContentContext not initialized, please call init_contexts() first")
 }
 
 /// Get the global authenticated `HttpClient` for direct `OpenAPI` requests
