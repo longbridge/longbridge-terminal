@@ -1,26 +1,19 @@
 use anyhow::{bail, Result};
-use longbridge::httpclient::{Json, Method};
-use serde::Deserialize;
 use time::OffsetDateTime;
 
 use super::{output::print_table, OutputFormat};
 
 const NEWS_DETAIL_BASE: &str = "https://longbridge.com/news";
 
-/// Format a Unix timestamp as "YYYY-MM-DD HH:MM", falling back to the raw number on error.
-fn format_timestamp(ts: i64) -> String {
-    OffsetDateTime::from_unix_timestamp(ts).map_or_else(
-        |_| ts.to_string(),
-        |dt| {
-            format!(
-                "{}-{:02}-{:02} {:02}:{:02}",
-                dt.year(),
-                dt.month() as u8,
-                dt.day(),
-                dt.hour(),
-                dt.minute()
-            )
-        },
+/// Format an `OffsetDateTime` as "YYYY-MM-DD HH:MM".
+fn format_datetime(dt: OffsetDateTime) -> String {
+    format!(
+        "{}-{:02}-{:02} {:02}:{:02}",
+        dt.year(),
+        dt.month() as u8,
+        dt.day(),
+        dt.hour(),
+        dt.minute()
     )
 }
 
@@ -33,66 +26,16 @@ fn truncate_display(s: &str, max: usize) -> String {
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct NewsItem {
-    id: String,
-    title: String,
-    #[serde(default)]
-    description: String,
-    #[serde(deserialize_with = "deserialize_str_or_i64")]
-    published_at: i64,
-    comments_count: i64,
-    likes_count: i64,
-}
-
-fn deserialize_str_or_i64<'de, D>(deserializer: D) -> Result<i64, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    use serde::de::{self, Visitor};
-
-    struct StrOrI64;
-    impl Visitor<'_> for StrOrI64 {
-        type Value = i64;
-        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            f.write_str("i64 or string containing i64")
-        }
-        fn visit_i64<E: de::Error>(self, v: i64) -> Result<i64, E> {
-            Ok(v)
-        }
-        fn visit_u64<E: de::Error>(self, v: u64) -> Result<i64, E> {
-            i64::try_from(v).map_err(de::Error::custom)
-        }
-        fn visit_str<E: de::Error>(self, v: &str) -> Result<i64, E> {
-            v.parse().map_err(de::Error::custom)
-        }
-    }
-    deserializer.deserialize_any(StrOrI64)
-}
-
-/// Fetch news articles for a symbol: GET /v1/content/{symbol}/news
+/// Fetch news articles for a symbol.
 pub async fn cmd_news(symbol: String, count: usize, format: &OutputFormat) -> Result<()> {
-    // SDK unwraps the {"code":0,"data":{...}} envelope; Response maps to the data field.
-    #[derive(Debug, Deserialize)]
-    struct Response {
-        items: Vec<NewsItem>,
-    }
+    let items = crate::openapi::content().news(&symbol).await?;
 
-    let path = format!("/v1/content/{symbol}/news");
-    let resp = crate::openapi::http_client()
-        .request(Method::GET, path)
-        .response::<Json<Response>>()
-        .send()
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-
-    let items = resp.0.items;
     if items.is_empty() {
         println!("No news found for {symbol}.");
         return Ok(());
     }
 
-    let items: Vec<&NewsItem> = items.iter().take(count).collect();
+    let items: Vec<_> = items.into_iter().take(count).collect();
 
     if matches!(format, OutputFormat::Json) {
         let records: Vec<serde_json::Value> = items
@@ -106,10 +49,10 @@ pub async fn cmd_news(symbol: String, count: usize, format: &OutputFormat) -> Re
                 serde_json::json!({
                     "id": item.id,
                     "title": title,
-                    "published_at": item.published_at,
+                    "url": item.url,
+                    "published_at": item.published_at.unix_timestamp(),
                     "likes_count": item.likes_count,
                     "comments_count": item.comments_count,
-                    "url": format!("{NEWS_DETAIL_BASE}/{}.md", item.id),
                 })
             })
             .collect();
@@ -132,7 +75,7 @@ pub async fn cmd_news(symbol: String, count: usize, format: &OutputFormat) -> Re
             vec![
                 item.id.clone(),
                 truncate_display(display, 70),
-                format_timestamp(item.published_at),
+                format_datetime(item.published_at),
                 item.likes_count.to_string(),
                 item.comments_count.to_string(),
             ]
@@ -143,49 +86,16 @@ pub async fn cmd_news(symbol: String, count: usize, format: &OutputFormat) -> Re
     Ok(())
 }
 
-/// Fetch regulatory filings for a symbol: GET /v1/quote/filings?symbol=AAPL.US
+/// Fetch regulatory filings for a symbol.
 pub async fn cmd_filings(symbol: String, count: usize, format: &OutputFormat) -> Result<()> {
-    use serde::Serialize;
+    let items = crate::openapi::quote().filings(&symbol).await?;
 
-    #[derive(Debug, Deserialize)]
-    struct FilingItem {
-        id: String,
-        title: String,
-        description: String,
-        file_name: String,
-        #[serde(deserialize_with = "deserialize_str_or_i64")]
-        publish_at: i64,
-        #[serde(default)]
-        file_urls: Vec<String>,
-    }
-
-    #[derive(Debug, Deserialize)]
-    struct Response {
-        items: Vec<FilingItem>,
-    }
-
-    #[derive(Debug, Serialize)]
-    struct Query {
-        symbol: String,
-    }
-
-    let resp = crate::openapi::http_client()
-        .request(Method::GET, "/v1/quote/filings")
-        .query_params(Query {
-            symbol: symbol.clone(),
-        })
-        .response::<Json<Response>>()
-        .send()
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-
-    let items = resp.0.items;
     if items.is_empty() {
         println!("No filings found for {symbol}.");
         return Ok(());
     }
 
-    let items: Vec<&FilingItem> = items.iter().take(count).collect();
+    let items: Vec<_> = items.into_iter().take(count).collect();
 
     if matches!(format, OutputFormat::Json) {
         let records: Vec<serde_json::Value> = items
@@ -196,7 +106,7 @@ pub async fn cmd_filings(symbol: String, count: usize, format: &OutputFormat) ->
                     "title": item.title,
                     "description": item.description,
                     "file_name": item.file_name,
-                    "publish_at": item.publish_at,
+                    "publish_at": item.published_at.unix_timestamp(),
                     "file_count": item.file_urls.len(),
                     "file_urls": item.file_urls,
                 })
@@ -218,7 +128,7 @@ pub async fn cmd_filings(symbol: String, count: usize, format: &OutputFormat) ->
                 truncate_display(&item.title, 60),
                 item.file_name.clone(),
                 item.file_urls.len().to_string(),
-                format_timestamp(item.publish_at),
+                format_datetime(item.published_at),
             ]
         })
         .collect();
@@ -241,37 +151,9 @@ pub async fn cmd_filing_detail(
     list_files: bool,
     file_index: usize,
 ) -> Result<()> {
-    use serde::Serialize;
+    let items = crate::openapi::quote().filings(&symbol).await?;
 
-    #[derive(Debug, Deserialize)]
-    struct FilingItem {
-        id: String,
-        file_urls: Vec<String>,
-    }
-
-    #[derive(Debug, Deserialize)]
-    struct Response {
-        items: Vec<FilingItem>,
-    }
-
-    #[derive(Debug, Serialize)]
-    struct Query {
-        symbol: String,
-    }
-
-    let resp = crate::openapi::http_client()
-        .request(Method::GET, "/v1/quote/filings")
-        .query_params(Query {
-            symbol: symbol.clone(),
-        })
-        .response::<Json<Response>>()
-        .send()
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-
-    let filing = resp
-        .0
-        .items
+    let filing = items
         .into_iter()
         .find(|item| item.id == id)
         .ok_or_else(|| anyhow::anyhow!("Filing '{id}' not found"))?;
@@ -329,7 +211,6 @@ pub async fn cmd_filing_detail(
         .unwrap_or("")
         .to_lowercase();
 
-    // Use URL path (before query string) for extension detection.
     let path = url.split('?').next().unwrap_or(&url);
     let ext = std::path::Path::new(path)
         .extension()
@@ -361,7 +242,6 @@ pub async fn cmd_filing_detail(
 
     print!("{output}");
 
-    // Append the source URL so the caller can reference or verify the original document.
     println!("\n---\nSource: {url}");
     if total_files > 1 && file_index == 0 {
         println!(
@@ -373,41 +253,16 @@ pub async fn cmd_filing_detail(
     Ok(())
 }
 
-/// Fetch community discussion topics for a symbol: GET /v1/content/{symbol}/topics
+/// Fetch community discussion topics for a symbol.
 pub async fn cmd_topics(symbol: String, count: usize, format: &OutputFormat) -> Result<()> {
-    #[derive(Debug, Deserialize)]
-    struct TopicItem {
-        id: String,
-        title: String,
-        description: String,
-        url: String,
-        #[serde(deserialize_with = "deserialize_str_or_i64")]
-        published_at: i64,
-        comments_count: i64,
-        likes_count: i64,
-        shares_count: i64,
-    }
+    let items = crate::openapi::content().topics(&symbol).await?;
 
-    #[derive(Debug, Deserialize)]
-    struct Response {
-        items: Vec<TopicItem>,
-    }
-
-    let path = format!("/v1/content/{symbol}/topics");
-    let resp = crate::openapi::http_client()
-        .request(Method::GET, path)
-        .response::<Json<Response>>()
-        .send()
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-
-    let items = resp.0.items;
     if items.is_empty() {
         println!("No topics found for {symbol}.");
         return Ok(());
     }
 
-    let items: Vec<&TopicItem> = items.iter().take(count).collect();
+    let items: Vec<_> = items.into_iter().take(count).collect();
 
     if matches!(format, OutputFormat::Json) {
         let records: Vec<serde_json::Value> = items
@@ -418,7 +273,7 @@ pub async fn cmd_topics(symbol: String, count: usize, format: &OutputFormat) -> 
                     "title": item.title,
                     "description": item.description,
                     "url": item.url,
-                    "published_at": item.published_at,
+                    "published_at": item.published_at.unix_timestamp(),
                     "likes_count": item.likes_count,
                     "comments_count": item.comments_count,
                     "shares_count": item.shares_count,
@@ -444,7 +299,7 @@ pub async fn cmd_topics(symbol: String, count: usize, format: &OutputFormat) -> 
             vec![
                 item.id.clone(),
                 truncate_display(display, 60),
-                format_timestamp(item.published_at),
+                format_datetime(item.published_at),
                 item.likes_count.to_string(),
                 item.comments_count.to_string(),
                 item.shares_count.to_string(),
@@ -497,71 +352,18 @@ pub async fn cmd_news_detail(id: String) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde::Deserialize;
-
-    // Helper to drive `deserialize_str_or_i64` through a JSON value.
-    fn deser(json: &str) -> serde_json::Result<i64> {
-        #[derive(Deserialize)]
-        struct Wrapper(#[serde(deserialize_with = "deserialize_str_or_i64")] i64);
-        serde_json::from_str::<Wrapper>(json).map(|w| w.0)
-    }
-
-    // ── deserialize_str_or_i64 ───────────────────────────────────────────────
-
-    #[test]
-    fn deser_integer_literal() {
-        assert_eq!(deser("1700000000").unwrap(), 1_700_000_000);
-    }
-
-    #[test]
-    fn deser_negative_integer() {
-        assert_eq!(deser("-1").unwrap(), -1);
-    }
-
-    #[test]
-    fn deser_string_integer() {
-        assert_eq!(deser(r#""1700000000""#).unwrap(), 1_700_000_000);
-    }
-
-    #[test]
-    fn deser_string_negative() {
-        assert_eq!(deser(r#""-42""#).unwrap(), -42);
-    }
-
-    #[test]
-    fn deser_string_invalid_errors() {
-        assert!(deser(r#""not-a-number""#).is_err());
-    }
-
-    #[test]
-    fn deser_u64_too_large_errors() {
-        // u64::MAX cannot fit in i64.
-        let json = u64::MAX.to_string();
-        assert!(deser(&json).is_err());
-    }
-
-    // ── format_timestamp ────────────────────────────────────────────────────
 
     #[test]
     fn format_known_timestamp() {
-        // Unix 0 == 1970-01-01 00:00 UTC
-        assert_eq!(format_timestamp(0), "1970-01-01 00:00");
+        let dt = OffsetDateTime::from_unix_timestamp(0).unwrap();
+        assert_eq!(format_datetime(dt), "1970-01-01 00:00");
     }
 
     #[test]
     fn format_realistic_timestamp() {
-        // 2024-01-15 07:50 UTC  →  1705305000
-        assert_eq!(format_timestamp(1_705_305_000), "2024-01-15 07:50");
+        let dt = OffsetDateTime::from_unix_timestamp(1_705_305_000).unwrap();
+        assert_eq!(format_datetime(dt), "2024-01-15 07:50");
     }
-
-    #[test]
-    fn format_invalid_timestamp_falls_back_to_raw() {
-        // Values far outside the valid range produce an error from time::OffsetDateTime.
-        let ts = i64::MAX;
-        assert_eq!(format_timestamp(ts), ts.to_string());
-    }
-
-    // ── truncate_display ────────────────────────────────────────────────────
 
     #[test]
     fn truncate_short_string_unchanged() {
@@ -584,7 +386,6 @@ mod tests {
 
     #[test]
     fn truncate_multibyte_chars() {
-        // Each Chinese character is one char but multiple bytes.
         let s = "中文测试内容标题超过限制的长度"; // 14 chars
         let result = truncate_display(s, 5);
         assert!(result.starts_with("中文测试内"));
