@@ -33,13 +33,13 @@ fn get_api_language() -> longbridge::Language {
 }
 
 /// Initialize contexts (should be called once at app startup).
-/// If LONGBRIDGE_APP_KEY, LONGBRIDGE_APP_SECRET, and LONGBRIDGE_ACCESS_TOKEN
+/// If `LONGBRIDGE_APP_KEY`, `LONGBRIDGE_APP_SECRET`, and `LONGBRIDGE_ACCESS_TOKEN`
 /// are all set, uses API key authentication (no browser needed).
 /// Otherwise falls back to OAuth: loads token from disk or runs browser flow.
 /// Returns quote receiver for caller to handle WebSocket events.
 pub async fn init_contexts(
 ) -> Result<impl tokio_stream::Stream<Item = longbridge::quote::PushEvent> + Send + Unpin> {
-    let (config_builder, http_client_config) =
+    let (config_builder, http_client_config, using_api_key) =
         if let (Ok(config), Ok(http_config)) = (
             longbridge::Config::from_apikey_env(),
             longbridge::httpclient::HttpClientConfig::from_apikey_env(),
@@ -48,6 +48,7 @@ pub async fn init_contexts(
             (
                 config.language(get_api_language()).dont_print_quote_packages(),
                 http_config,
+                true,
             )
         } else {
             tracing::info!("No API key env vars found, using OAuth authentication");
@@ -85,7 +86,7 @@ pub async fn init_contexts(
 
             let http_client_config =
                 longbridge::httpclient::HttpClientConfig::from_oauth(oauth.clone());
-            (config_builder, http_client_config)
+            (config_builder, http_client_config, false)
         };
 
     let mut config_builder = config_builder;
@@ -118,6 +119,15 @@ pub async fn init_contexts(
     let (quote_ctx, quote_receiver) = match quote_result {
         Ok(ctx) => ctx,
         Err(e) => {
+            if using_api_key {
+                tracing::error!("API key authentication failed: {e}");
+                return Err(anyhow::anyhow!(
+                    "API key authentication failed: {e}\n\n\
+                    You are currently using environment variable authentication.\n\
+                    Please check that LONGBRIDGE_APP_KEY, LONGBRIDGE_APP_SECRET, and LONGBRIDGE_ACCESS_TOKEN are valid.\n\
+                    To switch to OAuth instead, unset these environment variables and restart."
+                ));
+            }
             let error_msg = e.to_string();
             if error_msg.contains("401")
                 || error_msg.contains("Unauthorized")
