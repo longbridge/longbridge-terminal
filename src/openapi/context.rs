@@ -53,7 +53,7 @@ pub async fn init_contexts(
         )
     } else {
         tracing::info!("No API key env vars found, using OAuth authentication");
-        // Build OAuth client: loads token from ~/.longbridge/terminal/.openapi-session
+        // Build OAuth client: loads token from ~/.longbridge/openapi/tokens/<client_id>
         // or starts browser authorization. Token refresh is automatic inside the SDK.
         let oauth_result = longbridge::oauth::OAuthBuilder::new(crate::auth::OAUTH_CLIENT_ID)
             .callback_port(60355)
