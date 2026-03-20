@@ -11,7 +11,7 @@ use std::path::PathBuf;
 /// OAuth client ID for the terminal (registered with Longbridge).
 pub const OAUTH_CLIENT_ID: &str = "fd52fbc5-02a9-47f5-ad30-0842c841aae9";
 
-const OAUTH_BASE_URL: &str = "https://openapi.longbridgeapp.com/oauth2";
+const OAUTH_BASE_URL: &str = "https://openapi.longbridge.com/oauth2";
 const CALLBACK_REDIRECT_URI: &str = "http://localhost:60355/callback";
 
 /// Token file path used by longbridge SDK: `~/.longbridge-openapi/tokens/<client_id>`
