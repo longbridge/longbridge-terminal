@@ -137,7 +137,14 @@ async fn main() {
             }
         }
 
-        Some(cli::Commands::Login) => match openapi::init_contexts().await {
+        Some(cli::Commands::Login { headless: true }) => {
+            if let Err(e) = auth::headless_login().await {
+                eprintln!("Authentication failed: {e}");
+                std::process::exit(1);
+            }
+        }
+
+        Some(cli::Commands::Login { headless: false }) => match openapi::init_contexts().await {
             Ok(_) => println!("Successfully authenticated."),
             Err(e) => {
                 eprintln!("Authentication failed: {e}");
