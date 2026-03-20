@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-set -u
+set -eu
 type curl > /dev/null || { echo "curl: not found"; exit 1; }
 
 repo='longbridge/longbridge-terminal'
@@ -51,16 +51,17 @@ fi
 download_url=https://github.com/longbridge/longbridge-terminal/releases/download/$version/$package_name-$platform$libc-$arch.tar.gz
 echo $download_url
 
-curl -Lo $bin_name.tar.gz $download_url
-tar zxf $bin_name.tar.gz
+tmp_dir=$(mktemp -d)
+trap 'rm -rf "$tmp_dir"' EXIT
+
+curl -Lo "$tmp_dir/$bin_name.tar.gz" $download_url
+tar zxf "$tmp_dir/$bin_name.tar.gz" -C "$tmp_dir"
 
 if test $(id -u) -eq 0; then
-  mv $bin_name /usr/local/bin/$bin_name
+  mv "$tmp_dir/$bin_name" /usr/local/bin/$bin_name
 else
-  sudo mv $bin_name /usr/local/bin/$bin_name
+  sudo mv "$tmp_dir/$bin_name" /usr/local/bin/$bin_name
 fi
-
-rm $bin_name.tar.gz
 echo "Longbridge CLI $version has installed successfully."
 echo ""
 echo "You can use \`longbridge -h\` to get help."
