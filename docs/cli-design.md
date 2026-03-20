@@ -108,11 +108,11 @@ src/
 ```
 longbridge login
   └─ calls openapi::init_contexts() (existing OAuth flow)
-     └─ token written to ~/.longbridge/openapi/tokens/<client_id>
-        └─ both TUI and CLI read from the same location (managed by SDK)
+     └─ token persisted by the longbridge SDK
+        └─ both TUI and CLI read from the same location
 ```
 
-Token storage path: `~/.longbridge/openapi/tokens/<client_id>` (managed by SDK).
+Token storage is managed internally by the `longbridge-oauth` SDK crate.
 
 In CLI mode, no persistent WebSocket connection is needed: create Context → call HTTP API → output → exit.
 

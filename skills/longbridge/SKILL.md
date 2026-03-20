@@ -10,7 +10,7 @@ A CLI that wraps all Longbridge OpenAPI endpoints. Supports Hong Kong (HK), US, 
 ## Authentication
 
 ```bash
-longbridge login    # Opens browser OAuth flow; token saved to ~/.longbridge/openapi/tokens/<client_id>
+longbridge login    # Opens browser OAuth flow; token persisted by SDK
 longbridge logout   # Clear token
 longbridge check    # Verify token, region, and API endpoint connectivity (no auth required)
 ```

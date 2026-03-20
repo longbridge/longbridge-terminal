@@ -826,7 +826,7 @@ async fn cmd_quote_propagates_api_error() {
 // tests/cli_integration.rs
 #![cfg(feature = "integration")]
 
-// Requires valid token in ~/.longbridge/openapi/tokens/<client_id>
+// Requires valid token (run `longbridge login` first)
 // Run with: cargo test --features integration -- --test-threads=1
 
 #[tokio::test]
