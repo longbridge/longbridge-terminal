@@ -61,7 +61,7 @@ pub enum Commands {
     /// Opens a browser for Longbridge `OpenAPI` authorization.
     /// Token is stored at ~/.longbridge/terminal/.openapi-session and shared with the TUI.
     ///
-    /// For remote or headless environments (e.g. SSH, OpenClaw), use `--headless`:
+    /// For remote or headless environments (e.g. SSH, `OpenClaw`), use `--headless`:
     /// prints the auth URL; after authorizing in a local browser, paste the
     /// redirect URL from the address bar back into the terminal.
     Login {

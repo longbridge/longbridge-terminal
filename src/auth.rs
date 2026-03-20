@@ -25,10 +25,10 @@ fn token_file_path() -> Result<PathBuf> {
 
 /// Generate a random hex state string for CSRF protection.
 fn random_state() -> String {
+    use std::fmt::Write as _;
     use std::io::Read;
     let mut bytes = [0u8; 16];
     let _ = fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut bytes));
-    use std::fmt::Write as _;
     let mut s = String::with_capacity(32);
     for b in bytes {
         let _ = write!(s, "{b:02x}");
