@@ -848,7 +848,7 @@ mod tests {
     #[test]
     fn test_login_subcommand() {
         let cli = parse(&["longbridge", "login"]).unwrap();
-        assert!(matches!(cli.command, Some(Commands::Login)));
+        assert!(matches!(cli.command, Some(Commands::Login { .. })));
     }
 
     #[test]
