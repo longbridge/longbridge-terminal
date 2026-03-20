@@ -6,7 +6,7 @@
 //! and pastes it into the terminal.
 
 use anyhow::{Context, Result};
-use percent_encoding::{NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
+use percent_encoding::{percent_decode_str, utf8_percent_encode, NON_ALPHANUMERIC};
 use std::fs;
 use std::path::PathBuf;
 
@@ -157,9 +157,7 @@ fn parse_callback_url(url: &str) -> Result<(String, String)> {
 
 fn find_query_param(query: &str, key: &str) -> Option<String> {
     query.split('&').find_map(|pair| {
-        let mut it = pair.splitn(2, '=');
-        let k = it.next()?;
-        let v = it.next()?;
+        let (k, v) = pair.split_once('=')?;
         if k == key {
             Some(percent_decode_str(v).decode_utf8_lossy().into_owned())
         } else {
@@ -167,4 +165,3 @@ fn find_query_param(query: &str, key: &str) -> Option<String> {
         }
     })
 }
-
