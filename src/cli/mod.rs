@@ -23,8 +23,17 @@ pub enum OutputFormat {
 )]
 #[command(long_about = "\
 AI-native CLI for the Longbridge trading platform — real-time market data, portfolio, and trading.\n\n\
-Symbol format: <CODE>.<MARKET>  e.g. TSLA.US  700.HK  600519.SH\n\
-Markets: HK (Hong Kong)  US (United States)  CN (China A-share)  SG (Singapore)\n\n\
+Symbol format: <CODE>.<MARKET>\n\
+  700.HK       Hong Kong (HK)\n\
+  TSLA.US      United States (US)\n\
+  D05.SG       Singapore (SG)\n\
+  600519.SH    China A-share Shanghai (SH)\n\
+  000568.SZ    China A-share Shenzhen (SZ)\n\
+  BTCUSD.HAS   Crypto — Longbridge-specific suffix (.HAS); not available to all accounts\n\
+  ETHBTC.HAS   Crypto pair (e.g. ETH priced in BTC)\n\n\
+Note: crypto symbols use the .HAS suffix (Longbridge-specific). If a .HAS symbol returns no\n\
+data, crypto market access may not be enabled for this account — the data exists but is\n\
+restricted by account type.\n\n\
 Authentication: run `longbridge login` once; the token is stored at \
 ~/.longbridge/terminal/.openapi-session and reused automatically by all commands.\n\n\
 Use --format json on any command for machine-readable output suitable for AI agents:\n\
