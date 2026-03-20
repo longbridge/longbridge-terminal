@@ -61,7 +61,7 @@ pub enum Commands {
     /// Opens a browser for Longbridge `OpenAPI` authorization.
     /// Token is stored at ~/.longbridge/terminal/.openapi-session and shared with the TUI.
     ///
-    /// For remote or headless environments (e.g. SSH, OpenClaw), use --headless:
+    /// For remote or headless environments (e.g. SSH, OpenClaw), use `--headless`:
     /// prints the auth URL; after authorizing in a local browser, paste the
     /// redirect URL from the address bar back into the terminal.
     Login {
@@ -814,7 +814,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
             price,
             order_type,
         } => trade::cmd_max_qty(symbol, &side, price, &order_type, format).await,
-        Commands::Login { .. } | Commands::Logout | Commands::Tui | Commands::Check => unreachable!(),
+        Commands::Login { .. } | Commands::Logout | Commands::Tui | Commands::Check => {
+            unreachable!()
+        }
     }
 }
 

@@ -28,7 +28,12 @@ fn random_state() -> String {
     use std::io::Read;
     let mut bytes = [0u8; 16];
     let _ = fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut bytes));
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    use std::fmt::Write as _;
+    let mut s = String::with_capacity(32);
+    for b in bytes {
+        let _ = write!(s, "{b:02x}");
+    }
+    s
 }
 
 /// Headless OAuth login for remote environments (SSH, cloud agents, etc.).
@@ -51,7 +56,9 @@ pub async fn headless_login() -> Result<()> {
     println!("After authorizing, the browser will redirect to a localhost URL that will");
     println!("fail to load. Copy the full URL from the address bar and paste it here:");
     print!("> ");
-    std::io::stdout().flush().context("Failed to flush stdout")?;
+    std::io::stdout()
+        .flush()
+        .context("Failed to flush stdout")?;
 
     let mut pasted = String::new();
     std::io::stdin()
