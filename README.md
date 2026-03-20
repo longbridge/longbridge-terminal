@@ -63,7 +63,7 @@ Installs the `longbridge` binary to `/usr/local/bin`.
 Uses **OAuth 2.0** via the Longbridge SDK — no manual token management required.
 
 ```bash
-longbridge login    # Opens browser for OAuth, saves token to ~/.longbridge/terminal/.openapi-session
+longbridge login    # Opens browser for OAuth and saves token (managed by SDK)
 longbridge logout   # Clear saved token
 longbridge check    # Verify token, region, and API endpoint connectivity
 ```

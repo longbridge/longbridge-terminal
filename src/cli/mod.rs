@@ -35,7 +35,7 @@ Note: crypto symbols use the .HAS suffix (Longbridge-specific). If a .HAS symbol
 data, crypto market access may not be enabled for this account — the data exists but is\n\
 restricted by account type.\n\n\
 Authentication: run `longbridge login` once; the token is stored at \
-~/.longbridge/terminal/.openapi-session and reused automatically by all commands.\n\n\
+~/.longbridge/openapi/tokens/<client_id> and reused automatically by all commands.\n\n\
 Use --format json on any command for machine-readable output suitable for AI agents:\n\
   longbridge quote TSLA.US --format json\n\
   longbridge positions --format json | jq '.[] | {symbol, quantity}'\n\n\
@@ -59,7 +59,7 @@ pub enum Commands {
     /// Authenticate via browser OAuth and save token for CLI and TUI
     ///
     /// Opens a browser for Longbridge `OpenAPI` authorization.
-    /// Token is stored at ~/.longbridge/terminal/.openapi-session and shared with the TUI.
+    /// Token is stored at `~/.longbridge/openapi/tokens/<client_id>` and shared with the TUI.
     ///
     /// For remote or headless environments (e.g. SSH, `OpenClaw`), use `--headless`:
     /// prints the auth URL; after authorizing in a local browser, paste the

@@ -9,12 +9,12 @@ const GEOTEST_URL: &str = "https://geotest.lbkrs.com";
 const GEOTEST_TIMEOUT_SECS: u64 = 3;
 
 // CN endpoint URLs
-pub const HTTP_URL_CN: &str = "https://openapi.longportapp.cn";
-pub const QUOTE_WS_URL_CN: &str = "wss://openapi-quote.longportapp.cn/v2";
-pub const TRADE_WS_URL_CN: &str = "wss://openapi-trade.longportapp.cn/v2";
+pub const HTTP_URL_CN: &str = "https://openapi.longbridge.cn";
+pub const QUOTE_WS_URL_CN: &str = "wss://openapi-quote.longbridge.cn/v2";
+pub const TRADE_WS_URL_CN: &str = "wss://openapi-trade.longbridge.cn/v2";
 
 fn cache_file_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".longbridge-openapi").join("region-cache"))
+    dirs::home_dir().map(|h| h.join(".longbridge").join("openapi").join("region-cache"))
 }
 
 /// Returns `true` if the cached region from the last geotest check was CN.

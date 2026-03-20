@@ -60,7 +60,7 @@ fn probe_line(label: &str, r: &ProbeResult, url: &str) -> String {
 pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
     // ── Region cache ─────────────────────────────────────────────────────────
     let region_cached = dirs::home_dir()
-        .map(|h| h.join(".longbridge-openapi").join("region-cache"))
+        .map(|h| h.join(".longbridge").join("openapi").join("region-cache"))
         .and_then(|p| std::fs::read_to_string(p).ok())
         .map_or_else(|| "none".to_string(), |s| s.trim().to_lowercase());
     let is_cn = region_cached == "cn";
