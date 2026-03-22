@@ -7,7 +7,10 @@ use super::OutputFormat;
 use crate::region;
 
 const CONNECT_TIMEOUT_SECS: u64 = 5;
+const PROBE_COUNT: usize = 10;
 const GLOBAL_HTTP_URL: &str = "https://openapi.longbridge.com";
+const GLOBAL_PROBE_URL: &str = "https://openapi.longbridge.com";
+const CN_PROBE_URL: &str = "https://openapi.longbridge.cn";
 
 // ANSI colors
 const GREEN: &str = "\x1b[32m";
@@ -16,31 +19,33 @@ const RED: &str = "\x1b[31m";
 const DIM: &str = "\x1b[2m";
 const RESET: &str = "\x1b[0m";
 
-struct ProbeResult {
+struct ProbeStats {
     ok: bool,
-    latency_ms: u64,
+    ms: u64,
 }
 
-/// Measures HTTPS round-trip latency.
-///
-/// Sends a HEAD request twice: the first warms up DNS + TCP + TLS so the
-/// second request travels over the keep-alive connection and reflects only
-/// the actual HTTP round-trip to the server (not CDN-edge TCP latency).
-async fn probe(url: &str) -> ProbeResult {
-    let Ok(client) = reqwest::Client::builder()
-        .timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
-        .build()
-    else {
-        return ProbeResult { ok: false, latency_ms: 0 };
-    };
-    // Warm-up: establish DNS + TCP + TLS connection.
-    let warm = client.head(url).send().await;
-    let start = Instant::now();
-    let ok = client.head(url).send().await.is_ok();
-    ProbeResult {
-        ok: warm.is_ok() || ok,
-        latency_ms: start.elapsed().as_millis() as u64,
+/// Measures HTTPS cold-connection latency with PROBE_COUNT independent requests.
+/// Drops the fastest and slowest sample, then averages the remainder.
+async fn probe(url: &str) -> ProbeStats {
+    let mut samples = Vec::with_capacity(PROBE_COUNT);
+    for _ in 0..PROBE_COUNT {
+        let Ok(client) = reqwest::Client::builder()
+            .timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
+            .pool_max_idle_per_host(0)
+            .build()
+        else {
+            return ProbeStats { ok: false, ms: 0 };
+        };
+        let start = Instant::now();
+        if client.head(url).send().await.is_err() {
+            return ProbeStats { ok: false, ms: 0 };
+        }
+        samples.push(start.elapsed().as_millis() as u64);
     }
+    samples.sort_unstable();
+    let trimmed = &samples[1..samples.len() - 1];
+    let ms = trimmed.iter().sum::<u64>() / trimmed.len() as u64;
+    ProbeStats { ok: true, ms }
 }
 
 fn latency_colored(ms: u64) -> String {
@@ -54,16 +59,16 @@ fn latency_colored(ms: u64) -> String {
     format!("{color}{ms}ms{RESET}")
 }
 
-fn probe_line(label: &str, r: &ProbeResult, url: &str) -> String {
+fn probe_line(label: &str, r: &ProbeStats, url: &str) -> String {
     let (icon, status) = if r.ok {
-        (format!("{GREEN}OK{RESET}"), latency_colored(r.latency_ms))
+        (format!("{GREEN}OK{RESET}"), latency_colored(r.ms))
     } else {
         (
             format!("{RED}FAIL{RESET}"),
             format!("{RED}timeout (>{CONNECT_TIMEOUT_SECS}s){RESET}"),
         )
     };
-    format!("  {label:<8} {icon}  {status:<28}  {DIM}{url}{RESET}")
+    format!("  {label:<8} {icon}  {status:<10}  {DIM}{url}{RESET}")
 }
 
 pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
@@ -99,7 +104,7 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
     }
 
     // ── Connectivity (concurrent) ─────────────────────────────────────────────
-    let (global, cn) = tokio::join!(probe(GLOBAL_HTTP_URL), probe(region::HTTP_URL_CN),);
+    let (global, cn) = tokio::join!(probe(GLOBAL_PROBE_URL), probe(CN_PROBE_URL),);
 
     match format {
         OutputFormat::Json => {
@@ -113,8 +118,8 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
                     "active": if is_cn { "CN" } else { "Global" },
                 },
                 "connectivity": {
-                    "global": { "url": GLOBAL_HTTP_URL, "ok": global.ok, "latency_ms": global.latency_ms },
-                    "cn":     { "url": region::HTTP_URL_CN, "ok": cn.ok, "latency_ms": cn.latency_ms },
+                    "global": { "url": GLOBAL_HTTP_URL, "ok": global.ok, "ms": global.ms },
+                    "cn":     { "url": region::HTTP_URL_CN, "ok": cn.ok, "ms": cn.ms },
                 },
             });
             println!("{}", serde_json::to_string_pretty(&value)?);
@@ -145,7 +150,7 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
             );
 
             println!();
-            println!("Connectivity");
+            println!("Connectivity {DIM}(avg of {PROBE_COUNT}){RESET}");
             println!("{}", probe_line("global", &global, GLOBAL_HTTP_URL));
             println!("{}", probe_line("cn", &cn, region::HTTP_URL_CN));
         }
