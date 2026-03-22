@@ -1,6 +1,7 @@
 use crate::widgets::Terminal;
 use clap::Parser;
 use std::io::Write;
+use std::time::Instant;
 
 #[macro_use]
 mod macros;
@@ -81,6 +82,7 @@ async fn main() {
     let _guard = logger::init();
 
     let cli = cli::Cli::parse();
+    let verbose = cli.verbose;
 
     // Handle legacy --logout flag
     if cli.logout {
@@ -161,6 +163,15 @@ async fn main() {
         },
 
         Some(cmd) => {
+            let host = if region::is_cn_cached() {
+                "openapi.longbridge.cn"
+            } else {
+                "openapi.longbridge.com"
+            };
+            if verbose {
+                eprintln!("* Host: https://{host}");
+            }
+            let start = verbose.then(Instant::now);
             // CLI mode: init contexts (auth), then dispatch
             if let Err(e) = openapi::init_contexts().await {
                 eprintln!("Authentication failed: {e}");
@@ -169,6 +180,10 @@ async fn main() {
             if let Err(e) = cli::dispatch(cmd, &cli.format).await {
                 print_cli_error(&e);
                 std::process::exit(1);
+            }
+            if let Some(t) = start {
+                let _ = std::io::stdout().flush();
+                eprintln!("* Elapsed: {:.3}s", t.elapsed().as_secs_f64());
             }
         }
     }
