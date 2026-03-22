@@ -24,7 +24,7 @@ struct ProbeStats {
     ms: u64,
 }
 
-/// Measures HTTPS cold-connection latency with PROBE_COUNT independent requests.
+/// Measures HTTPS cold-connection latency with `PROBE_COUNT` independent requests.
 /// Drops the fastest and slowest sample, then averages the remainder.
 async fn probe(url: &str) -> ProbeStats {
     let mut samples = Vec::with_capacity(PROBE_COUNT);
