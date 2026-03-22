@@ -24,18 +24,22 @@ struct ProbeStats {
     ms: u64,
 }
 
-/// Measures HTTPS cold-connection latency with `PROBE_COUNT` independent requests.
-/// Drops the fastest and slowest sample, then averages the remainder.
+/// Measures HTTPS warm-connection latency with `PROBE_COUNT` requests.
+/// Sends one warm-up request first to establish the connection, then
+/// drops the fastest and slowest sample from the measured runs and averages the rest.
 async fn probe(url: &str) -> ProbeStats {
+    let Ok(client) = reqwest::Client::builder()
+        .timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
+        .build()
+    else {
+        return ProbeStats { ok: false, ms: 0 };
+    };
+    // Warm-up: establish connection, result not counted
+    if client.head(url).send().await.is_err() {
+        return ProbeStats { ok: false, ms: 0 };
+    }
     let mut samples = Vec::with_capacity(PROBE_COUNT);
     for _ in 0..PROBE_COUNT {
-        let Ok(client) = reqwest::Client::builder()
-            .timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
-            .pool_max_idle_per_host(0)
-            .build()
-        else {
-            return ProbeStats { ok: false, ms: 0 };
-        };
         let start = Instant::now();
         if client.head(url).send().await.is_err() {
             return ProbeStats { ok: false, ms: 0 };
