@@ -52,6 +52,10 @@ pub struct Cli {
     /// Clear stored OAuth token and exit (same as `longbridge logout`)
     #[arg(long)]
     pub logout: bool,
+
+    /// Print verbose request info (host, elapsed) to stderr, prefixed with `*` like curl -v
+    #[arg(long, short = 'v', global = true)]
+    pub verbose: bool,
 }
 
 #[derive(Subcommand)]
