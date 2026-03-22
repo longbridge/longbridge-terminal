@@ -21,15 +21,24 @@ struct ProbeResult {
     latency_ms: u64,
 }
 
+/// Measures HTTPS round-trip latency.
+///
+/// Sends a HEAD request twice: the first warms up DNS + TCP + TLS so the
+/// second request travels over the keep-alive connection and reflects only
+/// the actual HTTP round-trip to the server (not CDN-edge TCP latency).
 async fn probe(url: &str) -> ProbeResult {
-    let client = reqwest::Client::builder()
+    let Ok(client) = reqwest::Client::builder()
         .timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
         .build()
-        .expect("reqwest client");
+    else {
+        return ProbeResult { ok: false, latency_ms: 0 };
+    };
+    // Warm-up: establish DNS + TCP + TLS connection.
+    let warm = client.head(url).send().await;
     let start = Instant::now();
-    let ok = client.get(url).send().await.is_ok();
+    let ok = client.head(url).send().await.is_ok();
     ProbeResult {
-        ok,
+        ok: warm.is_ok() || ok,
         latency_ms: start.elapsed().as_millis() as u64,
     }
 }
