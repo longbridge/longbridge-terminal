@@ -691,7 +691,6 @@ pub enum WatchlistCmd {
     },
 }
 
-
 pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
     match cmd {
         Commands::Quote { symbols } => quote::cmd_quote(symbols, format).await,
