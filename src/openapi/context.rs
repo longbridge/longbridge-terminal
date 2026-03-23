@@ -37,16 +37,14 @@ fn get_api_language() -> longbridge::Language {
 /// are all set, uses API key authentication (no browser needed).
 /// Otherwise falls back to OAuth: loads token from disk or runs browser flow.
 /// Returns quote receiver for caller to handle WebSocket events.
-pub async fn init_contexts(
-) -> Result<(
+pub async fn init_contexts() -> Result<(
     impl tokio_stream::Stream<Item = longbridge::quote::PushEvent> + Send + Unpin,
     bool,
 )> {
-    let (config_builder, http_client_config, using_api_key) = if let (Ok(config), Ok(http_config)) =
-        (
-            longbridge::Config::from_apikey_env(),
-            longbridge::httpclient::HttpClientConfig::from_apikey_env(),
-        ) {
+    let (config_builder, http_client_config, using_api_key) = if let (Ok(config), Ok(http_config)) = (
+        longbridge::Config::from_apikey_env(),
+        longbridge::httpclient::HttpClientConfig::from_apikey_env(),
+    ) {
         tracing::info!("Using API key authentication (env vars)");
         (
             config
@@ -122,10 +120,8 @@ pub async fn init_contexts(
     // Create QuoteContext and TradeContext.
     // new() is synchronous and infallible in the new SDK; connection and auth errors
     // will surface naturally on the first real API call made by the caller.
-    let (quote_ctx, quote_receiver) =
-        longbridge::quote::QuoteContext::new(Arc::clone(&config));
-    let (trade_ctx, _trade_receiver) =
-        longbridge::trade::TradeContext::new(Arc::clone(&config));
+    let (quote_ctx, quote_receiver) = longbridge::quote::QuoteContext::new(Arc::clone(&config));
+    let (trade_ctx, _trade_receiver) = longbridge::trade::TradeContext::new(Arc::clone(&config));
 
     // Store in global variables
     QUOTE_CTX
