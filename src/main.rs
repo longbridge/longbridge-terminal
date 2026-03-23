@@ -35,7 +35,7 @@ pub struct Args {
     pub logout: bool,
 }
 
-fn print_cli_error(e: &anyhow::Error, using_api_key: bool) {
+fn print_cli_error(e: &anyhow::Error) {
     use longbridge::{httpclient::HttpClientError, wsclient::WsClientError, Error as LbError};
 
     if let Some(lb_err) = e.downcast_ref::<LbError>() {
@@ -48,13 +48,6 @@ fn print_cli_error(e: &anyhow::Error, using_api_key: bool) {
                 eprintln!("Error: API error (code {code}): {message}");
                 if !trace_id.is_empty() {
                     eprintln!("  trace_id: {trace_id}");
-                }
-                if using_api_key && *code == 401003 {
-                    eprintln!(
-                        "\nYou are currently using environment variable authentication.\n\
-                        Please check that LONGBRIDGE_APP_KEY, LONGBRIDGE_APP_SECRET, and LONGBRIDGE_ACCESS_TOKEN are valid.\n\
-                        To switch to OAuth instead, unset these environment variables and restart."
-                    );
                 }
                 return;
             }
@@ -116,17 +109,13 @@ async fn main() {
 
         Some(cli::Commands::Tui) => {
             tracing::info!("App started");
-            let (quote_receiver, using_api_key) = match openapi::init_contexts().await {
+            let quote_receiver = match openapi::init_contexts().await {
                 Ok(r) => r,
                 Err(e) => {
                     eprintln!("OAuth2 authentication failed: {e}");
                     return;
                 }
             };
-            if let Err(e) = openapi::quote().member_id().await {
-                print_cli_error(&anyhow::anyhow!(e), using_api_key);
-                return;
-            }
             tracing::info!("OpenAPI initialized successfully");
 
             let hook = std::panic::take_hook();
@@ -145,7 +134,7 @@ async fn main() {
 
         Some(cli::Commands::Check) => {
             if let Err(e) = cli::check::cmd_check(&cli.format).await {
-                print_cli_error(&e, false);
+                print_cli_error(&e);
                 std::process::exit(1);
             }
         }
@@ -184,15 +173,12 @@ async fn main() {
             }
             let start = verbose.then(Instant::now);
             // CLI mode: init contexts (auth), then dispatch
-            let using_api_key = match openapi::init_contexts().await {
-                Ok((_, using_api_key)) => using_api_key,
-                Err(e) => {
-                    eprintln!("Authentication failed: {e}");
-                    std::process::exit(1);
-                }
-            };
+            if let Err(e) = openapi::init_contexts().await {
+                eprintln!("Authentication failed: {e}");
+                std::process::exit(1);
+            }
             if let Err(e) = cli::dispatch(cmd, &cli.format).await {
-                print_cli_error(&e, using_api_key);
+                print_cli_error(&e);
                 std::process::exit(1);
             }
             if let Some(t) = start {

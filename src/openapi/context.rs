@@ -38,15 +38,11 @@ fn get_api_language() -> longbridge::Language {
 /// Otherwise falls back to OAuth: loads token from disk or runs browser flow.
 /// Returns quote receiver for caller to handle WebSocket events.
 pub async fn init_contexts(
-) -> Result<(
-    impl tokio_stream::Stream<Item = longbridge::quote::PushEvent> + Send + Unpin,
-    bool,
-)> {
-    let (config_builder, http_client_config, using_api_key) = if let (Ok(config), Ok(http_config)) =
-        (
-            longbridge::Config::from_apikey_env(),
-            longbridge::httpclient::HttpClientConfig::from_apikey_env(),
-        ) {
+) -> Result<impl tokio_stream::Stream<Item = longbridge::quote::PushEvent> + Send + Unpin> {
+    let (config_builder, http_client_config, using_api_key) = if let (Ok(config), Ok(http_config)) = (
+        longbridge::Config::from_apikey_env(),
+        longbridge::httpclient::HttpClientConfig::from_apikey_env(),
+    ) {
         tracing::info!("Using API key authentication (env vars)");
         (
             config
@@ -119,13 +115,38 @@ pub async fn init_contexts(
         .set(http_client)
         .map_err(|_| anyhow::anyhow!("HttpClient already initialized"))?;
 
-    // Create QuoteContext and TradeContext.
-    // new() is synchronous and infallible in the new SDK; connection and auth errors
-    // will surface naturally on the first real API call made by the caller.
-    let (quote_ctx, quote_receiver) =
-        longbridge::quote::QuoteContext::new(Arc::clone(&config));
+    // Create QuoteContext and TradeContext
+    let quote_result = longbridge::quote::QuoteContext::try_new(Arc::clone(&config)).await;
+    let (quote_ctx, quote_receiver) = match quote_result {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            if using_api_key {
+                tracing::error!("API key authentication failed: {e}");
+                return Err(anyhow::anyhow!(
+                    "API key authentication failed: {e}\n\n\
+                    You are currently using environment variable authentication.\n\
+                    Please check that LONGBRIDGE_APP_KEY, LONGBRIDGE_APP_SECRET, and LONGBRIDGE_ACCESS_TOKEN are valid.\n\
+                    To switch to OAuth instead, unset these environment variables and restart."
+                ));
+            }
+            let error_msg = e.to_string();
+            if error_msg.contains("401")
+                || error_msg.contains("Unauthorized")
+                || error_msg.contains("authentication")
+            {
+                tracing::error!("Token validation failed, clearing stored credentials");
+                if let Err(clear_err) = crate::auth::clear_token() {
+                    tracing::error!("Failed to clear token: {clear_err}");
+                }
+                return Err(anyhow::anyhow!(
+                    "Token validation failed. Please restart the application to re-authenticate."
+                ));
+            }
+            return Err(e.into());
+        }
+    };
     let (trade_ctx, _trade_receiver) =
-        longbridge::trade::TradeContext::new(Arc::clone(&config));
+        longbridge::trade::TradeContext::try_new(Arc::clone(&config)).await?;
 
     // Store in global variables
     QUOTE_CTX
@@ -148,9 +169,8 @@ pub async fn init_contexts(
 
     tracing::info!("Rate limiter initialized: 10 requests/second, burst capacity: 20");
 
-    Ok((
-        tokio_stream::wrappers::UnboundedReceiverStream::new(quote_receiver),
-        using_api_key,
+    Ok(tokio_stream::wrappers::UnboundedReceiverStream::new(
+        quote_receiver,
     ))
 }
 
