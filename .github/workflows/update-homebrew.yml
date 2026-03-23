@@ -14,7 +14,7 @@ on:
 
 jobs:
   update-homebrew:
-    name: Open PR on homebrew-tap
+    name: Push to homebrew-tap main
     runs-on: ubuntu-latest
     # For workflow_run: only run after a successful tag release (not branch builds)
     if: >
@@ -130,9 +130,8 @@ jobs:
           echo "--- Updated formula ---"
           cat homebrew-tap/Casks/longbridge-terminal.rb
 
-      - name: Create pull request
+      - name: Commit and push to main
         env:
-          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
@@ -142,8 +141,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          BRANCH="bump/longbridge-terminal-${VERSION}"
-          git checkout -b "$BRANCH"
           git add Casks/longbridge-terminal.rb
 
           if git diff --cached --quiet; then
@@ -151,16 +148,7 @@ jobs:
             exit 0
           fi
 
-          git commit -m "chore: bump longbridge-terminal to ${VERSION}"
-          git push origin "$BRANCH"
+          git commit -m "chore: bump longbridge-terminal to ${VERSION}
 
-          gh pr create \
-            --repo longbridge/homebrew-tap \
-            --base main \
-            --head "$BRANCH" \
-            --title "chore: bump longbridge-terminal to ${VERSION}" \
-            --body "Automated version bump triggered by [release workflow](https://github.com/${REPO}/actions/runs/${RUN_ID}).
-
-          **Changes:**
-          - Version: \`${VERSION}\`
-          - Updated download URLs and SHA256 checksums for all platforms"
+Automated version bump triggered by https://github.com/${REPO}/actions/runs/${RUN_ID}"
+          git push origin main
