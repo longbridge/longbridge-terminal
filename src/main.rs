@@ -49,7 +49,7 @@ fn print_cli_error(e: &anyhow::Error, using_api_key: bool) {
                 if !trace_id.is_empty() {
                     eprintln!("  trace_id: {trace_id}");
                 }
-                if using_api_key && *code == 401003 {
+                if using_api_key && *code == 401_003 {
                     eprintln!(
                         "\nYou are currently using environment variable authentication.\n\
                         Please check that LONGBRIDGE_APP_KEY, LONGBRIDGE_APP_SECRET, and LONGBRIDGE_ACCESS_TOKEN are valid.\n\
