@@ -107,7 +107,7 @@ pub async fn init_contexts() -> Result<(
 
     let config = Arc::new(config_builder);
 
-    let content_ctx = longbridge::ContentContext::try_new(Arc::clone(&config))?;
+    let content_ctx = longbridge::ContentContext::new(Arc::clone(&config));
     CONTENT_CTX
         .set(content_ctx)
         .map_err(|_| anyhow::anyhow!("ContentContext already initialized"))?;
