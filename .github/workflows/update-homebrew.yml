@@ -150,5 +150,5 @@ jobs:
 
           git commit -m "chore: bump longbridge-terminal to ${VERSION}
 
-Automated version bump triggered by https://github.com/${REPO}/actions/runs/${RUN_ID}"
+          Automated version bump triggered by https://github.com/${REPO}/actions/runs/${RUN_ID}"
           git push origin main
