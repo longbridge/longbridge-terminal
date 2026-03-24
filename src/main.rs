@@ -13,6 +13,7 @@ pub mod data;
 pub mod kline;
 pub mod logger;
 pub mod openapi;
+pub mod update;
 #[cfg_attr(target_family = "windows", path = "os/windows.rs")]
 #[cfg_attr(target_family = "unix", path = "os/unix.rs")]
 pub mod os;
@@ -103,8 +104,14 @@ async fn main() {
         return;
     }
 
+    // Show cached update notification before running any command.
+    update::notify_if_update_available();
+
     // Kick off background geotest check to refresh the region cache for the next run.
     region::spawn_region_update();
+
+    // Kick off background version check to refresh the update cache for the next run.
+    update::spawn_version_check();
 
     match cli.command {
         None => {
@@ -146,6 +153,13 @@ async fn main() {
         Some(cli::Commands::Check) => {
             if let Err(e) = cli::check::cmd_check(&cli.format).await {
                 print_cli_error(&e, false);
+                std::process::exit(1);
+            }
+        }
+
+        Some(cli::Commands::Update) => {
+            if let Err(e) = update::cmd_update().await {
+                eprintln!("Error: {e}");
                 std::process::exit(1);
             }
         }

@@ -89,6 +89,12 @@ pub enum Commands {
     /// Example: longbridge check --format json
     Check,
 
+    /// Update longbridge to the latest version
+    ///
+    /// Downloads and runs the official install script to replace the current binary.
+    /// Example: longbridge update
+    Update,
+
     /// Launch the interactive full-screen TUI (terminal UI)
     ///
     /// Real-time watchlist, candlestick charts, portfolio view, stock search, Vim-like keybindings.
@@ -851,7 +857,11 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
             price,
             order_type,
         } => trade::cmd_max_qty(symbol, &side, price, &order_type, format).await,
-        Commands::Login { .. } | Commands::Logout | Commands::Tui | Commands::Check => {
+        Commands::Login { .. }
+        | Commands::Logout
+        | Commands::Tui
+        | Commands::Check
+        | Commands::Update => {
             unreachable!()
         }
     }
