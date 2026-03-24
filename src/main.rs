@@ -20,6 +20,7 @@ pub mod region;
 pub mod render;
 pub mod systems;
 pub mod ui;
+pub mod update;
 pub mod utils;
 pub mod widgets;
 
@@ -106,6 +107,9 @@ async fn main() {
     // Kick off background geotest check to refresh the region cache for the next run.
     region::spawn_region_update();
 
+    // Kick off background version check to refresh the update cache for the next run.
+    update::spawn_version_check();
+
     match cli.command {
         None => {
             // No subcommand: print help and exit
@@ -141,6 +145,7 @@ async fn main() {
             Terminal::enter_full_screen();
             app::run(Args { logout: false }, quote_receiver).await;
             Terminal::exit_full_screen();
+            return;
         }
 
         Some(cli::Commands::Check) => {
@@ -148,6 +153,14 @@ async fn main() {
                 print_cli_error(&e, false);
                 std::process::exit(1);
             }
+        }
+
+        Some(cli::Commands::Update) => {
+            if let Err(e) = update::cmd_update().await {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+            return;
         }
 
         Some(cli::Commands::Login { headless: true }) => {
@@ -201,4 +214,6 @@ async fn main() {
             }
         }
     }
+
+    update::notify_if_update_available();
 }
