@@ -229,7 +229,8 @@ pub async fn cmd_submit_order(
         opts = opts.submitted_price(price_dec);
     }
     if let Some(ref tp) = trigger_price {
-        let tp_dec = Decimal::from_str(tp).map_err(|_| anyhow::anyhow!("Invalid trigger price: {tp}"))?;
+        let tp_dec =
+            Decimal::from_str(tp).map_err(|_| anyhow::anyhow!("Invalid trigger price: {tp}"))?;
         opts = opts.trigger_price(tp_dec);
     }
 
@@ -240,10 +241,7 @@ pub async fn cmd_submit_order(
         (None, Some(tp)) => format!("market (trigger: {tp})"),
         (None, None) => "market".to_string(),
     };
-    println!(
-        "Submitting {:?} order: {} {} @ {}",
-        side, quantity, symbol, price_display
-    );
+    println!("Submitting {side:?} order: {quantity} {symbol} @ {price_display}");
     if !yes {
         print!("Confirm? [y/N] ");
         std::io::stdout().flush()?;
