@@ -10,7 +10,7 @@ pub async fn cmd_watchlist(cmd: Option<WatchlistCmd>, format: &OutputFormat) -> 
         None => cmd_list(format).await,
         Some(WatchlistCmd::Show { group }) => cmd_show(group, format).await,
         Some(WatchlistCmd::Create { name }) => cmd_create(name).await,
-        Some(WatchlistCmd::Delete { id, purge }) => cmd_delete(id, purge).await,
+        Some(WatchlistCmd::Delete { id, purge, yes }) => cmd_delete(id, purge, yes).await,
         Some(WatchlistCmd::Update {
             id,
             name,
@@ -113,15 +113,17 @@ async fn cmd_create(name: String) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_delete(id: i64, purge: bool) -> Result<()> {
+async fn cmd_delete(id: i64, purge: bool, yes: bool) -> Result<()> {
     use std::io::Write;
-    print!("Delete watchlist group {id}? [y/N] ");
-    std::io::stdout().flush()?;
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    if input.trim().to_lowercase() != "y" {
-        println!("Cancelled.");
-        return Ok(());
+    if !yes {
+        print!("Delete watchlist group {id}? [y/N] ");
+        std::io::stdout().flush()?;
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        if input.trim().to_lowercase() != "y" {
+            println!("Cancelled.");
+            return Ok(());
+        }
     }
 
     let ctx = crate::openapi::quote();

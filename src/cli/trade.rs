@@ -211,9 +211,11 @@ pub async fn cmd_submit_order(
     symbol: String,
     quantity: u64,
     price: Option<String>,
+    trigger_price: Option<String>,
     order_type: String,
     tif: String,
     side: OrderSide,
+    yes: bool,
     format: &OutputFormat,
 ) -> Result<()> {
     use std::io::Write;
@@ -226,22 +228,29 @@ pub async fn cmd_submit_order(
         let price_dec = Decimal::from_str(p).map_err(|_| anyhow::anyhow!("Invalid price: {p}"))?;
         opts = opts.submitted_price(price_dec);
     }
+    if let Some(ref tp) = trigger_price {
+        let tp_dec =
+            Decimal::from_str(tp).map_err(|_| anyhow::anyhow!("Invalid trigger price: {tp}"))?;
+        opts = opts.trigger_price(tp_dec);
+    }
 
     // Confirm before submitting
-    println!(
-        "Submitting {:?} order: {} {} @ {}",
-        side,
-        quantity,
-        symbol,
-        price.as_deref().unwrap_or("market")
-    );
-    print!("Confirm? [y/N] ");
-    std::io::stdout().flush()?;
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    if input.trim().to_lowercase() != "y" {
-        println!("Cancelled.");
-        return Ok(());
+    let price_display = match (price.as_deref(), trigger_price.as_deref()) {
+        (Some(p), Some(tp)) => format!("{p} (trigger: {tp})"),
+        (Some(p), None) => p.to_string(),
+        (None, Some(tp)) => format!("market (trigger: {tp})"),
+        (None, None) => "market".to_string(),
+    };
+    println!("Submitting {side:?} order: {quantity} {symbol} @ {price_display}");
+    if !yes {
+        print!("Confirm? [y/N] ");
+        std::io::stdout().flush()?;
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        if input.trim().to_lowercase() != "y" {
+            println!("Cancelled.");
+            return Ok(());
+        }
     }
 
     let ctx = crate::openapi::trade();
@@ -260,15 +269,17 @@ pub async fn cmd_submit_order(
     Ok(())
 }
 
-pub async fn cmd_cancel_order(order_id: String) -> Result<()> {
+pub async fn cmd_cancel_order(order_id: String, yes: bool) -> Result<()> {
     use std::io::Write;
-    print!("Cancel order {order_id}? [y/N] ");
-    std::io::stdout().flush()?;
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    if input.trim().to_lowercase() != "y" {
-        println!("Cancelled.");
-        return Ok(());
+    if !yes {
+        print!("Cancel order {order_id}? [y/N] ");
+        std::io::stdout().flush()?;
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        if input.trim().to_lowercase() != "y" {
+            println!("Cancelled.");
+            return Ok(());
+        }
     }
 
     let ctx = crate::openapi::trade();
@@ -281,6 +292,7 @@ pub async fn cmd_replace_order(
     order_id: String,
     qty: Option<u64>,
     price: Option<String>,
+    yes: bool,
 ) -> Result<()> {
     use std::io::Write;
     let quantity = qty.ok_or_else(|| anyhow::anyhow!("--qty is required"))?;
@@ -292,13 +304,15 @@ pub async fn cmd_replace_order(
         opts = opts.price(price_dec);
     }
 
-    print!("Modify order {order_id}? [y/N] ");
-    std::io::stdout().flush()?;
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    if input.trim().to_lowercase() != "y" {
-        println!("Cancelled.");
-        return Ok(());
+    if !yes {
+        print!("Modify order {order_id}? [y/N] ");
+        std::io::stdout().flush()?;
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        if input.trim().to_lowercase() != "y" {
+            println!("Cancelled.");
+            return Ok(());
+        }
     }
 
     let ctx = crate::openapi::trade();
