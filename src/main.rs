@@ -104,9 +104,6 @@ async fn main() {
         return;
     }
 
-    // Show cached update notification before running any command.
-    update::notify_if_update_available();
-
     // Kick off background geotest check to refresh the region cache for the next run.
     region::spawn_region_update();
 
@@ -148,6 +145,7 @@ async fn main() {
             Terminal::enter_full_screen();
             app::run(Args { logout: false }, quote_receiver).await;
             Terminal::exit_full_screen();
+            return;
         }
 
         Some(cli::Commands::Check) => {
@@ -162,6 +160,7 @@ async fn main() {
                 eprintln!("Error: {e}");
                 std::process::exit(1);
             }
+            return;
         }
 
         Some(cli::Commands::Login { headless: true }) => {
@@ -215,4 +214,6 @@ async fn main() {
             }
         }
     }
+
+    update::notify_if_update_available();
 }

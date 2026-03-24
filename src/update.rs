@@ -75,12 +75,9 @@ pub fn notify_if_update_available() {
         return;
     };
     if is_newer(CURRENT_VERSION, &latest) {
-        eprintln!();
-        eprintln!("  A new version of longbridge is available: {CURRENT_VERSION} → {latest}");
-        eprintln!("  Upgrade:");
-        eprintln!("    brew upgrade --cask longbridge/tap/longbridge-terminal");
-        eprintln!("    # or: curl -sSL https://github.com/longbridge/longbridge-terminal/raw/main/install | sh");
-        eprintln!();
+        let green = "\x1b[32m";
+        let reset = "\x1b[0m";
+        eprintln!("\nNew version {latest} is available, run `{green}longbridge update{reset}` to update.\n");
     }
 }
 
@@ -90,12 +87,15 @@ pub fn spawn_version_check() {
     if cache_is_fresh() {
         return;
     }
+    // Write a placeholder synchronously before spawning so the mtime is
+    // updated immediately.  Fast CLI commands often exit before the async
+    // task completes; without this the file would never be written and every
+    // startup would trigger a new GitHub request.
+    write_cached_version(CURRENT_VERSION);
     tokio::spawn(async move {
         if let Some(version) = fetch_latest_version().await {
             tracing::debug!("Latest release from GitHub: {version}");
             write_cached_version(&version);
-        } else {
-            tracing::debug!("Version check: could not fetch latest release");
         }
     });
 }
@@ -147,9 +147,7 @@ pub async fn cmd_update() -> anyhow::Result<()> {
         .text()
         .await?;
 
-    let mut child = Command::new("sh")
-        .stdin(Stdio::piped())
-        .spawn()?;
+    let mut child = Command::new("sh").stdin(Stdio::piped()).spawn()?;
 
     if let Some(stdin) = child.stdin.as_mut() {
         stdin.write_all(script.as_bytes())?;
@@ -164,10 +162,7 @@ pub async fn cmd_update() -> anyhow::Result<()> {
             let _ = std::fs::remove_file(path);
         }
     } else {
-        anyhow::bail!(
-            "update failed (exit code: {})",
-            status.code().unwrap_or(-1)
-        );
+        anyhow::bail!("update failed (exit code: {})", status.code().unwrap_or(-1));
     }
     Ok(())
 }
