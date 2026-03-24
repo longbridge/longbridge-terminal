@@ -526,6 +526,9 @@ pub enum Commands {
         /// (case-insensitive, default: Day)
         #[arg(long, default_value = "Day")]
         tif: String,
+        /// Skip confirmation prompt (useful for scripting and AI agents)
+        #[arg(long, short = 'y')]
+        yes: bool,
     },
 
     /// Submit a sell order (prompts for confirmation)
@@ -547,6 +550,9 @@ pub enum Commands {
         /// (case-insensitive, default: Day)
         #[arg(long, default_value = "Day")]
         tif: String,
+        /// Skip confirmation prompt (useful for scripting and AI agents)
+        #[arg(long, short = 'y')]
+        yes: bool,
     },
 
     /// Cancel a pending order (prompts for confirmation)
@@ -556,6 +562,9 @@ pub enum Commands {
     Cancel {
         /// Order ID to cancel
         order_id: String,
+        /// Skip confirmation prompt (useful for scripting and AI agents)
+        #[arg(long, short = 'y')]
+        yes: bool,
     },
 
     /// Modify quantity or price of a pending order (prompts for confirmation)
@@ -571,6 +580,9 @@ pub enum Commands {
         /// New limit price as a decimal string, e.g. 255.00 (optional)
         #[arg(long)]
         price: Option<String>,
+        /// Skip confirmation prompt (useful for scripting and AI agents)
+        #[arg(long, short = 'y')]
+        yes: bool,
     },
 
     /// Account cash balance and financing information
@@ -666,6 +678,9 @@ pub enum WatchlistCmd {
         /// Also remove all securities inside the group
         #[arg(long)]
         purge: bool,
+        /// Skip confirmation prompt (useful for scripting and AI agents)
+        #[arg(long, short = 'y')]
+        yes: bool,
     },
 
     /// Add/remove securities in a group, or rename it
@@ -771,6 +786,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
             price,
             order_type,
             tif,
+            yes,
         } => {
             trade::cmd_submit_order(
                 symbol,
@@ -779,6 +795,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
                 order_type,
                 tif,
                 longbridge::trade::OrderSide::Buy,
+                yes,
                 format,
             )
             .await
@@ -789,6 +806,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
             price,
             order_type,
             tif,
+            yes,
         } => {
             trade::cmd_submit_order(
                 symbol,
@@ -797,16 +815,18 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
                 order_type,
                 tif,
                 longbridge::trade::OrderSide::Sell,
+                yes,
                 format,
             )
             .await
         }
-        Commands::Cancel { order_id } => trade::cmd_cancel_order(order_id).await,
+        Commands::Cancel { order_id, yes } => trade::cmd_cancel_order(order_id, yes).await,
         Commands::Replace {
             order_id,
             qty,
             price,
-        } => trade::cmd_replace_order(order_id, qty, price).await,
+            yes,
+        } => trade::cmd_replace_order(order_id, qty, price, yes).await,
         Commands::Balance { currency } => trade::cmd_balance(currency, format).await,
         Commands::CashFlow { start, end } => trade::cmd_cash_flow(start, end, format).await,
         Commands::Positions => trade::cmd_positions(format).await,
@@ -1216,7 +1236,7 @@ mod tests {
     fn test_watchlist_delete() {
         let cli = parse(&["longbridge", "watchlist", "delete", "123"]).unwrap();
         if let Some(Commands::Watchlist {
-            cmd: Some(WatchlistCmd::Delete { id, purge }),
+            cmd: Some(WatchlistCmd::Delete { id, purge, .. }),
         }) = cli.command
         {
             assert_eq!(id, 123);
@@ -1360,6 +1380,7 @@ mod tests {
             price,
             order_type,
             tif,
+            ..
         }) = cli.command
         {
             assert_eq!(symbol, "TSLA.US");
@@ -1394,7 +1415,7 @@ mod tests {
     fn test_cancel_subcommand() {
         let cli = parse(&["longbridge", "cancel", "order-456"]).unwrap();
         assert!(
-            matches!(cli.command, Some(Commands::Cancel { order_id }) if order_id == "order-456")
+            matches!(cli.command, Some(Commands::Cancel { order_id, .. }) if order_id == "order-456")
         );
     }
 
@@ -1414,6 +1435,7 @@ mod tests {
             order_id,
             qty,
             price,
+            ..
         }) = cli.command
         {
             assert_eq!(order_id, "order-789");
