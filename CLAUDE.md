@@ -104,6 +104,12 @@ cargo clippy
 cargo fmt
 ```
 
+**Before every `git push` or `gh pr create`, always run both and fix all issues:**
+
+```bash
+cargo fmt && cargo clippy
+```
+
 ### Configuration
 
 **Authentication Method: OAuth 2.0 (longbridge SDK)**
