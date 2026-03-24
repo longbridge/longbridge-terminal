@@ -511,14 +511,19 @@ pub enum Commands {
     ///   (case-insensitive)
     /// Example: longbridge buy TSLA.US 100 --price 250.00
     /// Example: longbridge buy 700.HK 1000 --price 300 --order-type ALO
+    /// Example: longbridge buy NVDA.US 10 --order-type MIT --trigger-price 177.89 --tif Day
+    /// Example: longbridge buy NVDA.US 10 --order-type LIT --trigger-price 177.89 --price 178.00 --tif Day
     Buy {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
         /// Number of shares/units to buy (integer)
         quantity: u64,
-        /// Limit price as a decimal string, e.g. 250.00 (required for LO/ELO/ALO; omit for MO)
+        /// Limit price as a decimal string, e.g. 250.00 (required for LO/ELO/ALO/LIT; omit for MO/MIT)
         #[arg(long)]
         price: Option<String>,
+        /// Trigger price for conditional orders (required for MIT/LIT)
+        #[arg(long)]
+        trigger_price: Option<String>,
         /// Order type: LO | MO | ELO | ALO | ODD | SLO | LIT | MIT  (case-insensitive, default: LO)
         #[arg(long, default_value = "LO")]
         order_type: String,
@@ -535,14 +540,18 @@ pub enum Commands {
     ///
     /// Returns `order_id` on success.
     /// Example: longbridge sell TSLA.US 100 --price 260.00
+    /// Example: longbridge sell NVDA.US 10 --order-type MIT --trigger-price 177.89 --tif Day
     Sell {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
         /// Number of shares/units to sell (integer)
         quantity: u64,
-        /// Limit price as a decimal string, e.g. 260.00 (required for LO/ELO/ALO; omit for MO)
+        /// Limit price as a decimal string, e.g. 260.00 (required for LO/ELO/ALO/LIT; omit for MO/MIT)
         #[arg(long)]
         price: Option<String>,
+        /// Trigger price for conditional orders (required for MIT/LIT)
+        #[arg(long)]
+        trigger_price: Option<String>,
         /// Order type: LO | MO | ELO | ALO | ODD | SLO | LIT | MIT  (case-insensitive, default: LO)
         #[arg(long, default_value = "LO")]
         order_type: String,
@@ -784,6 +793,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
             symbol,
             quantity,
             price,
+            trigger_price,
             order_type,
             tif,
             yes,
@@ -792,6 +802,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
                 symbol,
                 quantity,
                 price,
+                trigger_price,
                 order_type,
                 tif,
                 longbridge::trade::OrderSide::Buy,
@@ -804,6 +815,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
             symbol,
             quantity,
             price,
+            trigger_price,
             order_type,
             tif,
             yes,
@@ -812,6 +824,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
                 symbol,
                 quantity,
                 price,
+                trigger_price,
                 order_type,
                 tif,
                 longbridge::trade::OrderSide::Sell,

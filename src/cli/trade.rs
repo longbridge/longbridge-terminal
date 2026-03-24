@@ -211,6 +211,7 @@ pub async fn cmd_submit_order(
     symbol: String,
     quantity: u64,
     price: Option<String>,
+    trigger_price: Option<String>,
     order_type: String,
     tif: String,
     side: OrderSide,
@@ -227,14 +228,21 @@ pub async fn cmd_submit_order(
         let price_dec = Decimal::from_str(p).map_err(|_| anyhow::anyhow!("Invalid price: {p}"))?;
         opts = opts.submitted_price(price_dec);
     }
+    if let Some(ref tp) = trigger_price {
+        let tp_dec = Decimal::from_str(tp).map_err(|_| anyhow::anyhow!("Invalid trigger price: {tp}"))?;
+        opts = opts.trigger_price(tp_dec);
+    }
 
     // Confirm before submitting
+    let price_display = match (price.as_deref(), trigger_price.as_deref()) {
+        (Some(p), Some(tp)) => format!("{p} (trigger: {tp})"),
+        (Some(p), None) => p.to_string(),
+        (None, Some(tp)) => format!("market (trigger: {tp})"),
+        (None, None) => "market".to_string(),
+    };
     println!(
         "Submitting {:?} order: {} {} @ {}",
-        side,
-        quantity,
-        symbol,
-        price.as_deref().unwrap_or("market")
+        side, quantity, symbol, price_display
     );
     if !yes {
         print!("Confirm? [y/N] ");
