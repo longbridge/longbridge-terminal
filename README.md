@@ -124,6 +124,8 @@ longbridge filings AAPL.US [--count 20]          # Regulatory filings and announ
 longbridge filing-detail AAPL.US <id>            # Full Markdown content of a filing; --file-index N for multi-file filings (e.g. 8-K exhibit)
 longbridge topics TSLA.US [--count 20]           # Community discussion topics for a symbol
 longbridge topic-detail <id>                     # Full Markdown content of a community topic
+longbridge my-topics [--type article]            # Topics created by the authenticated user
+longbridge create-topic --body "…"               # Publish a new community discussion topic (--title optional)
 ```
 
 ### Options & Warrants

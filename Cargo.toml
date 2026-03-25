@@ -61,6 +61,7 @@ tui-input = "0.8"
 unicode-width = "0.1.11"
 bitflags = "2.10.0"
 async-trait = "0.1"
+regex = "1.12.3"
 
 [dev-dependencies]
 mockall = "0.13"

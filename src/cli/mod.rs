@@ -6,6 +6,7 @@ pub mod check;
 pub mod news;
 pub mod output;
 pub mod quote;
+pub mod topic;
 pub mod trade;
 pub mod watchlist;
 
@@ -447,6 +448,58 @@ pub enum Commands {
         id: String,
     },
 
+    /// Topics created by the authenticated user
+    ///
+    /// Returns: id, title/excerpt, type, created_at, likes, comments, views.
+    /// Example: longbridge my-topics
+    /// Example: longbridge my-topics --type article --size 10
+    MyTopics {
+        /// Page number (default: 1)
+        #[arg(long, default_value = "1")]
+        page: i32,
+        /// Records per page, 1–500 (default: 50)
+        #[arg(long, default_value = "50")]
+        size: i32,
+        /// Filter by content type: `article` | `post` (omit for all)
+        #[arg(long = "type")]
+        post_type: Option<String>,
+    },
+
+    /// Publish a new community discussion topic
+    ///
+    /// Two content types, with different body requirements:
+    ///
+    ///   --type post (default)
+    ///     Plain text only, like a tweet. Line breaks with \n are preserved.
+    ///     Markdown syntax is NOT rendered — asterisks, headers, tables etc.
+    ///     will appear as literal characters. No title required.
+    ///     Example: longbridge create-topic --body "Bullish on 700.HK today"
+    ///
+    ///   --type article
+    ///     Full Markdown body. The server converts it to HTML for storage and
+    ///     display. Supports headers, tables, bold, code blocks, etc.
+    ///     Title is required for articles.
+    ///     Example: longbridge create-topic --title "My Analysis" --body "$(cat post.md)" --type article
+    CreateTopic {
+        /// Article title. Required for --type article; omit for --type post.
+        #[arg(long)]
+        title: Option<String>,
+        /// Body text. Format depends on --type:
+        ///   post (default): plain text only. Line breaks with \n are preserved.
+        ///     Markdown and HTML tags appear as literal characters (like a tweet).
+        ///     A warning is printed if Markdown or HTML syntax is detected.
+        ///   article: Markdown supported. The server converts it to HTML for
+        ///     storage and display (headers, tables, bold, code blocks, etc.).
+        #[arg(long)]
+        body: String,
+        /// Content type: post (plain text, default) | article (Markdown → HTML)
+        #[arg(long = "type")]
+        post_type: Option<String>,
+        /// Related stock tickers, comma-separated, e.g. 700.HK,TSLA.US (max 10)
+        #[arg(long, value_delimiter = ',')]
+        tickers: Vec<String>,
+    },
+
     // ── Watchlist ───────────────────────────────────────────────────────────────
     /// List watchlist groups, or create/update/delete a group
     ///
@@ -781,6 +834,17 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
         } => news::cmd_filing_detail(symbol, id, list_files, file_index).await,
         Commands::Topics { symbol, count } => news::cmd_topics(symbol, count, format).await,
         Commands::TopicDetail { id } => news::cmd_topic_detail(id).await,
+        Commands::MyTopics {
+            page,
+            size,
+            post_type,
+        } => topic::cmd_topics_mine(page, size, post_type, format).await,
+        Commands::CreateTopic {
+            title,
+            body,
+            post_type,
+            tickers,
+        } => topic::cmd_create_topic(title, body, post_type, tickers, format).await,
         Commands::Watchlist { cmd } => watchlist::cmd_watchlist(cmd, format).await,
         Commands::Orders {
             history,
