@@ -450,7 +450,7 @@ pub enum Commands {
 
     /// Topics created by the authenticated user
     ///
-    /// Returns: id, title/excerpt, type, created_at, likes, comments, views.
+    /// Returns: id, title/excerpt, type, `created_at`, likes, comments, views.
     /// Example: longbridge my-topics
     /// Example: longbridge my-topics --type article --size 10
     MyTopics {
