@@ -467,18 +467,32 @@ pub enum Commands {
 
     /// Publish a new community discussion topic
     ///
-    /// Creates a topic on the Longbridge community. Body supports Markdown.
-    /// Short posts (--type post) do not require a title.
-    /// Example: longbridge create-topic --body "Bullish on 700.HK today"
-    /// Example: longbridge create-topic --title "My Analysis" --body "$(cat post.md)" --tickers 700.HK,9988.HK --type article
+    /// Two content types, with different body requirements:
+    ///
+    ///   --type post (default)
+    ///     Plain text only, like a tweet. Line breaks with \n are preserved.
+    ///     Markdown syntax is NOT rendered — asterisks, headers, tables etc.
+    ///     will appear as literal characters. No title required.
+    ///     Example: longbridge create-topic --body "Bullish on 700.HK today"
+    ///
+    ///   --type article
+    ///     Full Markdown body. The server converts it to HTML for storage and
+    ///     display. Supports headers, tables, bold, code blocks, etc.
+    ///     Title is required for articles.
+    ///     Example: longbridge create-topic --title "My Analysis" --body "$(cat post.md)" --type article
     CreateTopic {
-        /// Topic title (optional for `post` type, required for `article` type)
+        /// Article title. Required for --type article; omit for --type post.
         #[arg(long)]
         title: Option<String>,
-        /// Topic body in Markdown format (required)
+        /// Body text. Format depends on --type:
+        ///   post (default): plain text only. Line breaks with \n are preserved.
+        ///     Markdown and HTML tags appear as literal characters (like a tweet).
+        ///     A warning is printed if Markdown or HTML syntax is detected.
+        ///   article: Markdown supported. The server converts it to HTML for
+        ///     storage and display (headers, tables, bold, code blocks, etc.).
         #[arg(long)]
         body: String,
-        /// Content type: `article` (long-form, `title` required) | `post` (short, default)
+        /// Content type: post (plain text, default) | article (Markdown → HTML)
         #[arg(long = "type")]
         post_type: Option<String>,
         /// Related stock tickers, comma-separated, e.g. 700.HK,TSLA.US (max 10)

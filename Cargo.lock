@@ -2178,6 +2178,7 @@ dependencies = [
  "prost 0.12.6",
  "qrcode",
  "ratatui",
+ "regex",
  "reqwest 0.12.28",
  "rust-i18n",
  "rust_decimal",

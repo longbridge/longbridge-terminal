@@ -1,5 +1,6 @@
 use anyhow::Result;
 use longbridge::content::{CreateTopicOptions, ListMyTopicsOptions, OwnedTopic};
+use regex::Regex;
 use time::OffsetDateTime;
 
 use super::{output::print_table, OutputFormat};
@@ -94,6 +95,22 @@ pub async fn cmd_topics_mine(
     Ok(())
 }
 
+/// Returns true if the text contains Markdown or HTML that won't render in a plain-text post.
+fn has_rich_markup(text: &str) -> bool {
+    // Markdown
+    if text.contains("**")
+        || text.contains("##")
+        || text.contains("| ")
+        || text.contains("```")
+        || text.contains("- [")
+        || text.contains("![")
+    {
+        return true;
+    }
+    // HTML tags: <tag>, <tag attr>, </tag>
+    Regex::new(r"<.+?>").is_ok_and(|re| re.is_match(text))
+}
+
 /// Publish a new community discussion topic.
 pub async fn cmd_create_topic(
     title: Option<String>,
@@ -102,6 +119,14 @@ pub async fn cmd_create_topic(
     tickers: Vec<String>,
     format: &OutputFormat,
 ) -> Result<()> {
+    let is_post = post_type.as_deref().unwrap_or("post") == "post";
+    if is_post && has_rich_markup(&body) {
+        eprintln!(
+            "Warning: --type post is plain text only. Markdown and HTML (**, ##, <b>, etc.) \
+             will appear as literal characters. Use --type article for rich formatting."
+        );
+    }
+
     let opts = CreateTopicOptions {
         title: title.unwrap_or_default(),
         body,
