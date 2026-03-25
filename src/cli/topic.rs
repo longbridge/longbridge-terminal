@@ -139,19 +139,18 @@ pub async fn cmd_create_topic(
         hashtags: None,
         license: None,
     };
-    let item = crate::openapi::content().create_topic(opts).await?;
+    let id = crate::openapi::content().create_topic(opts).await?;
 
     if matches!(format, OutputFormat::Json) {
         println!(
             "{}",
-            serde_json::to_string_pretty(&owned_topic_to_json(&item)).unwrap_or_default()
+            serde_json::to_string_pretty(&serde_json::json!({ "id": id })).unwrap_or_default()
         );
         return Ok(());
     }
 
     println!("Topic created successfully.");
-    println!("  ID:   {}", item.id);
-    println!("  URL:  https://longbridge.com/topics/{}", item.id);
-    println!("  Type: {}", item.topic_type);
+    println!("  ID:   {id}");
+    println!("  URL:  https://longbridge.com/topics/{id}");
     Ok(())
 }
