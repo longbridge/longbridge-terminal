@@ -6,6 +6,7 @@ pub mod check;
 pub mod news;
 pub mod output;
 pub mod quote;
+pub mod topic;
 pub mod trade;
 pub mod watchlist;
 
@@ -447,6 +448,44 @@ pub enum Commands {
         id: String,
     },
 
+    /// Topics created by the authenticated user
+    ///
+    /// Returns: id, title/excerpt, type, created_at, likes, comments, views.
+    /// Example: longbridge my-topics
+    /// Example: longbridge my-topics --type article --size 10
+    MyTopics {
+        /// Page number (default: 1)
+        #[arg(long, default_value = "1")]
+        page: i32,
+        /// Records per page, 1–500 (default: 50)
+        #[arg(long, default_value = "50")]
+        size: i32,
+        /// Filter by content type: `article` | `post` (omit for all)
+        #[arg(long = "type")]
+        post_type: Option<String>,
+    },
+
+    /// Publish a new community discussion topic
+    ///
+    /// Creates a topic on the Longbridge community. Body supports Markdown.
+    /// Short posts (--type post) do not require a title.
+    /// Example: longbridge create-topic --body "Bullish on 700.HK today"
+    /// Example: longbridge create-topic --title "My Analysis" --body "$(cat post.md)" --tickers 700.HK,9988.HK --type article
+    CreateTopic {
+        /// Topic title (optional for `post` type, required for `article` type)
+        #[arg(long)]
+        title: Option<String>,
+        /// Topic body in Markdown format (required)
+        #[arg(long)]
+        body: String,
+        /// Content type: `article` (long-form, `title` required) | `post` (short, default)
+        #[arg(long = "type")]
+        post_type: Option<String>,
+        /// Related stock tickers, comma-separated, e.g. 700.HK,TSLA.US (max 10)
+        #[arg(long, value_delimiter = ',')]
+        tickers: Vec<String>,
+    },
+
     // ── Watchlist ───────────────────────────────────────────────────────────────
     /// List watchlist groups, or create/update/delete a group
     ///
@@ -781,6 +820,17 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
         } => news::cmd_filing_detail(symbol, id, list_files, file_index).await,
         Commands::Topics { symbol, count } => news::cmd_topics(symbol, count, format).await,
         Commands::TopicDetail { id } => news::cmd_topic_detail(id).await,
+        Commands::MyTopics {
+            page,
+            size,
+            post_type,
+        } => topic::cmd_topics_mine(page, size, post_type, format).await,
+        Commands::CreateTopic {
+            title,
+            body,
+            post_type,
+            tickers,
+        } => topic::cmd_create_topic(title, body, post_type, tickers, format).await,
         Commands::Watchlist { cmd } => watchlist::cmd_watchlist(cmd, format).await,
         Commands::Orders {
             history,
