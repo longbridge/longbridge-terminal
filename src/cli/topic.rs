@@ -27,7 +27,7 @@ fn owned_topic_to_json(item: &OwnedTopic) -> serde_json::Value {
         "views_count": item.views_count,
         "shares_count": item.shares_count,
         "license": item.license,
-        "detail_url": item.detail_url,
+        "url": format!("https://longbridge.com/topics/{}", item.id),
         "created_at": item.created_at.unix_timestamp(),
         "updated_at": item.updated_at.unix_timestamp(),
     })
@@ -126,7 +126,7 @@ pub async fn cmd_create_topic(
 
     println!("Topic created successfully.");
     println!("  ID:   {}", item.id);
-    println!("  URL:  {}", item.detail_url);
+    println!("  URL:  https://longbridge.com/topics/{}", item.id);
     println!("  Type: {}", item.topic_type);
     Ok(())
 }
