@@ -73,6 +73,7 @@ longbridge statement download --file-key abc123 \
 
 | Value                      | Description                                | CSV Columns |
 |----------------------------|--------------------------------------------|-------------|
+| `asset`                    | Account asset overview (single row)        | currency, ledger_amount, outstanding_amount, debit_amount, nav_margin, warning_value, total, market_value, im_margin, mm_margin, total_suspend, market_value_suspend, margin_limit, im_margin_suspend, mm_margin_suspend |
 | `equity_holdings`          | Equity/stock holdings summary              | equity_type, market, currency, code, name, begin_quantity, change_quantity, ledger_quantity, close_price, market_value, margin_rate, margin_value, cost_price, income_amount |
 | `account_balance_changes`  | Account balance change records             | currency, date, type, amount, remark, biz_code |
 | `stock_trades`             | Stock trade records                        | market, currency, trade_date, settle_date, contract_no, direction, code, name, trade_quantity, trade_price, trade_amount, clear_amount |
@@ -92,7 +93,9 @@ longbridge statement download --file-key abc123 \
 
 | User intent | Recommended sections | Description |
 |-------------|---------------------|-------------|
+| Check account asset overview | `asset` | Single-row summary: total market value, ledger amount, margins, and other account-level figures |
 | Check current holdings / positions | `equity_holdings` | Shows all equity positions with quantity, market value, cost price, and P&L |
+| Analyze holdings as percentage of total assets | `asset` `equity_holdings` | Combine account-level totals with per-position market values to calculate each holding's weight in the portfolio |
 | Review recent asset changes | `account_balance_changes` `equity_holding_changes` | Balance changes show cash movements (deposits, withdrawals, fees); holding changes show stock quantity movements (transfers, corporate actions) |
 | Check recent order / trade history | `stock_trades` `fund_trades` `ipo_trades` `virtual_trades` | Covers all trade types — stock, fund, IPO subscriptions, and virtual asset trades. Pick the relevant ones or use all four for a complete picture |
 | Check margin interest / financing costs | `interests` | Shows daily interest charges with rate, fine interest, and totals by currency |
@@ -103,37 +106,48 @@ longbridge statement download --file-key abc123 \
 ### Examples by scenario
 
 ```bash
-# 1. "What are my current holdings?"
+# 1. "What's my account summary?"
+longbridge statement download --file-key <KEY> \
+  --section asset -o asset.csv
+
+# 2. "What are my current holdings?"
 longbridge statement list
 longbridge statement download --file-key <KEY> \
   --section equity_holdings -o holdings.csv
 
-# 2. "What asset changes happened recently?"
+# 3. "What percentage of my total assets does each holding represent?"
+longbridge statement download --file-key <KEY> \
+  --section asset equity_holdings \
+  -o ./portfolio-weight/
+# asset.csv has total market_value; equity_holdings.csv has per-position market_value
+# → holding weight = position market_value / asset total
+
+# 4. "What asset changes happened recently?"
 longbridge statement download --file-key <KEY> \
   --section account_balance_changes equity_holding_changes \
   -o ./asset-changes/
 
-# 3. "Show me my recent trades / orders"
+# 5. "Show me my recent trades / orders"
 longbridge statement download --file-key <KEY> \
   --section stock_trades fund_trades ipo_trades virtual_trades \
   -o ./trades/
 
-# 4. "How much margin interest am I paying?"
+# 6. "How much margin interest am I paying?"
 longbridge statement download --file-key <KEY> \
   --section interests -o interests.csv
 
-# 5. "Give me all fees and costs"
+# 7. "Give me all fees and costs"
 longbridge statement download --file-key <KEY> \
   --section interests lending_fees custodian_fees \
   -o ./fees/
 
-# 6. "Any corporate actions on my holdings?"
+# 8. "Any corporate actions on my holdings?"
 longbridge statement download --file-key <KEY> \
   --section corps -o corps.csv
 
-# 7. Full daily export
+# 9. Full daily export
 longbridge statement download --file-key <KEY> \
-  --section equity_holdings account_balance_changes stock_trades \
+  --section asset equity_holdings account_balance_changes stock_trades \
     equity_holding_changes account_balance_locks equity_holding_locks \
     option_trades fund_trades ipo_trades virtual_trades \
     interests lending_fees custodian_fees corps \
@@ -143,10 +157,10 @@ longbridge statement download --file-key <KEY> \
 ## Common Recipes
 
 ```bash
-# Quick daily workflow: list → download holdings + trades
+# Quick daily workflow: list → download asset overview + holdings + trades
 longbridge statement list
 longbridge statement download --file-key <KEY> \
-  --section equity_holdings stock_trades account_balance_changes \
+  --section asset equity_holdings stock_trades account_balance_changes \
   -o ./daily-report/
 
 # Export only interest and fee sections from a monthly statement

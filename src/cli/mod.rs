@@ -793,6 +793,8 @@ pub enum WatchlistCmd {
 
 #[derive(ValueEnum, Clone, Debug)]
 pub enum StatementSection {
+    #[value(name = "asset")]
+    Asset,
     #[value(name = "equity_holdings")]
     EquityHoldingSums,
     #[value(name = "account_balance_changes")]

@@ -10,9 +10,9 @@ pub async fn cmd_statement(cmd: StatementCmd, format: &OutputFormat) -> Result<(
     match cmd {
         StatementCmd::List {
             statement_type,
-            start_date: page,
-            limit: page_size,
-        } => cmd_list( &statement_type, page, page_size, format).await,
+            start_date   ,
+            limit ,
+        } => cmd_list(&statement_type, start_date, limit, format).await,
         StatementCmd::Download {
             file_key,
             section: sections,
@@ -34,7 +34,7 @@ async fn cmd_list(
     };
 
     let ctx = crate::openapi::statement();
-    let options = GetStatementDataListOptions::new( st)
+    let options = GetStatementDataListOptions::new(st)
         .page(page)
         .page_size(page_size);
     let resp = ctx.statement_data_list(options).await?;
@@ -87,6 +87,7 @@ async fn cmd_download(
 /// Map a `StatementSection` variant to a file-name-friendly string.
 fn section_file_name(section: &StatementSection) -> &'static str {
     match section {
+        StatementSection::Asset => "asset",
         StatementSection::EquityHoldingSums => "equity_holdings",
         StatementSection::AccountBalanceChangeSums => "account_balance_changes",
         StatementSection::StockTradeSums => "stock_trades",
@@ -106,6 +107,45 @@ fn section_file_name(section: &StatementSection) -> &'static str {
 
 fn section_to_csv(content: &CommonStatementContent, section: &StatementSection) -> Result<String> {
     match section {
+        StatementSection::Asset => {
+            let mut wtr = csv::Writer::from_writer(vec![]);
+            wtr.write_record([
+                "currency",
+                "ledger_amount",
+                "outstanding_amount",
+                "debit_amount",
+                "nav_margin",
+                "warning_value",
+                "total",
+                "market_value",
+                "im_margin",
+                "mm_margin",
+                "total_suspend",
+                "market_value_suspend",
+                "margin_limit",
+                "im_margin_suspend",
+                "mm_margin_suspend",
+            ])?;
+            let a = &content.asset;
+            wtr.write_record([
+                &a.currency,
+                &a.ledger_amount,
+                &a.outstanding_amount,
+                &a.debit_amount,
+                &a.nav_margin,
+                &a.warning_value,
+                &a.total,
+                &a.market_value,
+                &a.im_margin,
+                &a.mm_margin,
+                &a.total_suspend,
+                &a.market_value_suspend,
+                &a.margin_limit,
+                &a.im_margin_suspend,
+                &a.mm_margin_suspend,
+            ])?;
+            Ok(String::from_utf8(wtr.into_inner()?)?)
+        }
         StatementSection::EquityHoldingSums => {
             let mut wtr = csv::Writer::from_writer(vec![]);
             wtr.write_record([
