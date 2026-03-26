@@ -825,6 +825,14 @@ pub enum StatementSection {
     Corps,
 }
 
+#[derive(ValueEnum, Clone, Debug)]
+pub enum ExportFormat {
+    #[value(name = "csv")]
+    Csv,
+    #[value(name = "md")]
+    Md,
+}
+
 #[derive(Subcommand)]
 pub enum StatementCmd {
     /// List available statements for an account
@@ -844,23 +852,33 @@ pub enum StatementCmd {
         limit: i32,
     },
 
-    /// Download a statement and export a section as CSV
+    /// Export statement sections as CSV files or markdown
     ///
-    /// Fetches the statement JSON by `file_key`, extracts the specified section,
-    /// and writes it as a CSV file.
-    /// Example: longbridge statement download --file-key KEY --section `equity_holding_sums` -o holdings.csv
-    Download {
+    /// Fetches the statement JSON by `file_key`, extracts the specified sections,
+    /// and either saves them as files or prints to stdout.
+    ///
+    /// When `-o` is provided, defaults to CSV format and saves to file(s).
+    /// When `-o` is omitted, defaults to markdown format and prints to stdout.
+    ///
+    /// Example: longbridge statement export --file-key KEY --section `equity_holdings`
+    /// Example: longbridge statement export --file-key KEY --section `equity_holdings` -o holdings.csv
+    Export {
         /// File key from `longbridge statement list`
         #[arg(long)]
         file_key: String,
-        /// Sections to export as CSV (can specify multiple)
+        /// Sections to export (can specify multiple)
         #[arg(long, num_args = 1..)]
         section: Vec<StatementSection>,
-        /// Output directory or file path (CSV).
+        /// Export format: csv | md.
+        /// Defaults to `md` when `-o` is omitted, `csv` when `-o` is provided.
+        #[arg(long = "format")]
+        export_format: Option<ExportFormat>,
+        /// Output directory or file path.
         /// When multiple sections are specified, this is treated as a directory
-        /// and each section is saved as `<section_name>.csv` inside it.
+        /// and each section is saved as a separate file inside it.
+        /// Omit to print to stdout.
         #[arg(long, short = 'o')]
-        output: String,
+        output: Option<String>,
     },
 }
 

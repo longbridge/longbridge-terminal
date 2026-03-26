@@ -1,11 +1,11 @@
 # Statement Commands
 
-Query and download account statements (daily or monthly) as CSV.
+Query and export account statements (daily or monthly) as CSV or markdown.
 
 ## Workflow
 
 1. **List** statements to get available `file_key` values
-2. **Download** a statement by `file_key`, selecting one or more sections to export
+2. **Export** a statement by `file_key`, selecting one or more sections to output
 
 ## Commands
 
@@ -25,7 +25,7 @@ longbridge statement list [--type daily|monthly] [--start-date <YYYYMMDD>] [--li
 
 ```bash
 # List recent 5 daily statements
-longbridge statement list 
+longbridge statement list
 
 # List monthly statements
 longbridge statement list  --type monthly
@@ -39,28 +39,35 @@ longbridge statement list  --format csv
 
 **Output columns:** `Date`, `File Key`
 
-### `statement download` — Download and export sections as CSV
+### `statement export` — Export statement sections
 
 ```bash
-longbridge statement download --file-key <KEY> --section <SECTION>... -o <OUTPUT>
+longbridge statement export --file-key <KEY> --section <SECTION>... [--format csv|md] [-o <OUTPUT>]
 ```
 
 | Flag           | Required | Description                                                       |
 |----------------|----------|-------------------------------------------------------------------|
 | `--file-key`   | Yes      | File key obtained from `statement list`                           |
 | `--section`    | Yes      | One or more sections to export (see table below)                  |
-| `-o, --output` | Yes      | Output path. Single section: file path. Multiple sections: directory. |
+| `--format`     | No       | `csv` or `md`. Defaults to `md` when `-o` is omitted, `csv` when `-o` is provided. |
+| `-o, --output` | No       | Output path. Omit to print to stdout. Single section: file path. Multiple sections: directory. |
 
-**Single section** — writes one CSV file:
+**Print markdown to stdout (default without `-o`):**
 
 ```bash
-longbridge statement download --file-key abc123 --section stock_trades -o trades.csv
+longbridge statement export --file-key abc123 --section equity_holdings
 ```
 
-**Multiple sections** — creates a directory with one CSV per section:
+**Save as CSV file:**
 
 ```bash
-longbridge statement download --file-key abc123 \
+longbridge statement export --file-key abc123 --section stock_trades -o trades.csv
+```
+
+**Multiple sections to directory:**
+
+```bash
+longbridge statement export --file-key abc123 \
   --section equity_holdings stock_trades interests \
   -o ./statement-2025-03/
 # produces:
@@ -69,10 +76,16 @@ longbridge statement download --file-key abc123 \
 #   ./statement-2025-03/interests.csv
 ```
 
+**Force markdown format to file:**
+
+```bash
+longbridge statement export --file-key abc123 --section asset --format md -o asset.md
+```
+
 ## StatementSection Reference
 
-| Value                      | Description                                | CSV Columns |
-|----------------------------|--------------------------------------------|-------------|
+| Value                      | Description                                | Columns |
+|----------------------------|--------------------------------------------|---------|
 | `asset`                    | Account asset overview (single row)        | currency, ledger_amount, outstanding_amount, debit_amount, nav_margin, warning_value, total, market_value, im_margin, mm_margin, total_suspend, market_value_suspend, margin_limit, im_margin_suspend, mm_margin_suspend |
 | `equity_holdings`          | Equity/stock holdings summary              | equity_type, market, currency, code, name, begin_quantity, change_quantity, ledger_quantity, close_price, market_value, margin_rate, margin_value, cost_price, income_amount |
 | `account_balance_changes`  | Account balance change records             | currency, date, type, amount, remark, biz_code |
@@ -101,52 +114,41 @@ longbridge statement download --file-key abc123 \
 | Check margin interest / financing costs | `interests` | Shows daily interest charges with rate, fine interest, and totals by currency |
 | Review lending and custody costs | `lending_fees` `custodian_fees` | Lending fees for borrowed securities; custodian fees for asset custody |
 | Check corporate actions (dividends, splits) | `corps` | Dividend payouts, stock splits, name changes, and other corporate events |
-| Full statement export | all sections | Download every section into a directory for archival or analysis |
+| Full statement export | all sections | Export every section into a directory for archival or analysis |
 
 ### Examples by scenario
 
 ```bash
-# 1. "What's my account summary?"
-longbridge statement download --file-key <KEY> \
-  --section asset -o asset.csv
+# 1. "What's my account summary?" (prints markdown to stdout for AI)
+longbridge statement export --file-key <KEY> --section asset
 
 # 2. "What are my current holdings?"
-longbridge statement list
-longbridge statement download --file-key <KEY> \
-  --section equity_holdings -o holdings.csv
+longbridge statement export --file-key <KEY> --section equity_holdings
 
 # 3. "What percentage of my total assets does each holding represent?"
-longbridge statement download --file-key <KEY> \
-  --section asset equity_holdings \
-  -o ./portfolio-weight/
-# asset.csv has total market_value; equity_holdings.csv has per-position market_value
-# → holding weight = position market_value / asset total
+longbridge statement export --file-key <KEY> \
+  --section asset equity_holdings
 
 # 4. "What asset changes happened recently?"
-longbridge statement download --file-key <KEY> \
-  --section account_balance_changes equity_holding_changes \
-  -o ./asset-changes/
+longbridge statement export --file-key <KEY> \
+  --section account_balance_changes equity_holding_changes
 
 # 5. "Show me my recent trades / orders"
-longbridge statement download --file-key <KEY> \
-  --section stock_trades fund_trades ipo_trades virtual_trades \
-  -o ./trades/
+longbridge statement export --file-key <KEY> \
+  --section stock_trades fund_trades ipo_trades virtual_trades
 
 # 6. "How much margin interest am I paying?"
-longbridge statement download --file-key <KEY> \
-  --section interests -o interests.csv
+longbridge statement export --file-key <KEY> --section interests
 
 # 7. "Give me all fees and costs"
-longbridge statement download --file-key <KEY> \
-  --section interests lending_fees custodian_fees \
-  -o ./fees/
+longbridge statement export --file-key <KEY> \
+  --section interests lending_fees custodian_fees
 
 # 8. "Any corporate actions on my holdings?"
-longbridge statement download --file-key <KEY> \
-  --section corps -o corps.csv
+longbridge statement export --file-key <KEY> --section corps
 
-# 9. Full daily export
-longbridge statement download --file-key <KEY> \
+# 9. Full daily export to CSV files
+longbridge statement export --file-key <KEY> \
   --section asset equity_holdings account_balance_changes stock_trades \
     equity_holding_changes account_balance_locks equity_holding_locks \
     option_trades fund_trades ipo_trades virtual_trades \
@@ -157,18 +159,22 @@ longbridge statement download --file-key <KEY> \
 ## Common Recipes
 
 ```bash
-# Quick daily workflow: list → download asset overview + holdings + trades
+# Quick daily workflow: list → export to stdout for AI analysis
 longbridge statement list
-longbridge statement download --file-key <KEY> \
+longbridge statement export --file-key <KEY> \
+  --section asset equity_holdings stock_trades account_balance_changes
+
+# Save daily report as CSV files
+longbridge statement export --file-key <KEY> \
   --section asset equity_holdings stock_trades account_balance_changes \
   -o ./daily-report/
 
 # Export only interest and fee sections from a monthly statement
 longbridge statement list --type monthly
-longbridge statement download --file-key <KEY> \
+longbridge statement export --file-key <KEY> \
   --section interests lending_fees custodian_fees \
   -o ./monthly-fees/
 
 # Single section to a specific file
-longbridge statement download --file-key <KEY> --section corps -o corps.csv
+longbridge statement export --file-key <KEY> --section corps -o corps.csv
 ```

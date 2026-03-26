@@ -4,20 +4,21 @@ use longbridge::statement::{
     StatementType,
 };
 
-use super::{output::print_table, OutputFormat, StatementCmd, StatementSection};
+use super::{output::print_table, ExportFormat, OutputFormat, StatementCmd, StatementSection};
 
 pub async fn cmd_statement(cmd: StatementCmd, format: &OutputFormat) -> Result<()> {
     match cmd {
         StatementCmd::List {
             statement_type,
-            start_date   ,
-            limit ,
+            start_date,
+            limit,
         } => cmd_list(&statement_type, start_date, limit, format).await,
-        StatementCmd::Download {
+        StatementCmd::Export {
             file_key,
             section: sections,
+            export_format,
             output,
-        } => cmd_download(&file_key, &sections, &output).await,
+        } => cmd_export(&file_key, &sections, export_format, output.as_deref()).await,
     }
 }
 
@@ -49,39 +50,563 @@ async fn cmd_list(
     Ok(())
 }
 
-// TODO: 补充 Asset 段落转成 Csv 的功能，只有一行 csv，表头是 Asset 的每个段落
-async fn cmd_download(
+async fn cmd_export(
     file_key: &str,
     sections: &[StatementSection],
-    output_path: &str,
+    explicit_format: Option<ExportFormat>,
+    output_path: Option<&str>,
 ) -> Result<()> {
     let ctx = crate::openapi::statement();
     let options = GetStatementDataDownloadUrlOptions::new(file_key);
     let resp = ctx.statement_data_download_url(options).await?;
 
-    // Download the JSON file
+    // Fetch the statement JSON
     let client = reqwest::Client::new();
     let body = client.get(&resp.url).send().await?.text().await?;
     let content: CommonStatementContent = serde_json::from_str(&body)?;
 
-    if sections.len() == 1 {
-        // Single section: write directly to the output path
-        let csv_data = section_to_csv(&content, &sections[0])?;
-        std::fs::write(output_path, csv_data)?;
-        println!("Saved {:?} to {output_path}", sections[0]);
+    // Resolve format: explicit flag wins, otherwise csv when -o is given, md when not.
+    let format = explicit_format.unwrap_or(if output_path.is_some() {
+        ExportFormat::Csv
     } else {
-        // Multiple sections: treat output_path as a directory
-        let dir = std::path::Path::new(output_path);
-        std::fs::create_dir_all(dir)?;
-        for section in sections {
-            let file_name = format!("{}.csv", section_file_name(section));
-            let file_path = dir.join(&file_name);
-            let csv_data = section_to_csv(&content, section)?;
-            std::fs::write(&file_path, csv_data)?;
-            println!("Saved {section:?} to {}", file_path.display());
+        ExportFormat::Md
+    });
+
+    let ext = match format {
+        ExportFormat::Csv => "csv",
+        ExportFormat::Md => "md",
+    };
+
+    match output_path {
+        Some(path) => {
+            if sections.len() == 1 {
+                let data = section_to_format(&content, &sections[0], &format)?;
+                std::fs::write(path, data)?;
+                println!("Saved {:?} to {path}", sections[0]);
+            } else {
+                let dir = std::path::Path::new(path);
+                std::fs::create_dir_all(dir)?;
+                for section in sections {
+                    let file_name = format!("{}.{ext}", section_file_name(section));
+                    let file_path = dir.join(&file_name);
+                    let data = section_to_format(&content, section, &format)?;
+                    std::fs::write(&file_path, data)?;
+                    println!("Saved {section:?} to {}", file_path.display());
+                }
+            }
+        }
+        None => {
+            // Print to stdout
+            for section in sections {
+                let data = section_to_format(&content, section, &format)?;
+                print!("{data}");
+            }
         }
     }
     Ok(())
+}
+
+struct SectionData<'a> {
+    title: &'static str,
+    headers: &'static [&'static str],
+    rows: Vec<Vec<&'a str>>,
+}
+
+fn section_data<'a>(
+    content: &'a CommonStatementContent,
+    section: &StatementSection,
+) -> SectionData<'a> {
+    match section {
+        StatementSection::Asset => {
+            let a = &content.asset;
+            SectionData {
+                title: "Asset",
+                headers: &[
+                    "currency",
+                    "ledger_amount",
+                    "outstanding_amount",
+                    "debit_amount",
+                    "nav_margin",
+                    "warning_value",
+                    "total",
+                    "market_value",
+                    "im_margin",
+                    "mm_margin",
+                    "total_suspend",
+                    "market_value_suspend",
+                    "margin_limit",
+                    "im_margin_suspend",
+                    "mm_margin_suspend",
+                ],
+                rows: vec![vec![
+                    &a.currency,
+                    &a.ledger_amount,
+                    &a.outstanding_amount,
+                    &a.debit_amount,
+                    &a.nav_margin,
+                    &a.warning_value,
+                    &a.total,
+                    &a.market_value,
+                    &a.im_margin,
+                    &a.mm_margin,
+                    &a.total_suspend,
+                    &a.market_value_suspend,
+                    &a.margin_limit,
+                    &a.im_margin_suspend,
+                    &a.mm_margin_suspend,
+                ]],
+            }
+        }
+        StatementSection::EquityHoldingSums => SectionData {
+            title: "Equity Holdings",
+            headers: &[
+                "equity_type",
+                "market",
+                "currency",
+                "code",
+                "name",
+                "begin_quantity",
+                "change_quantity",
+                "ledger_quantity",
+                "close_price",
+                "market_value",
+                "margin_rate",
+                "margin_value",
+                "cost_price",
+                "income_amount",
+            ],
+            rows: content
+                .equity_holding_sums
+                .iter()
+                .flat_map(|sum| {
+                    sum.equity_holdings.iter().map(move |h| {
+                        vec![
+                            sum.equity_type.as_str(),
+                            sum.market.as_str(),
+                            sum.currency.as_str(),
+                            h.code.as_str(),
+                            h.name.as_str(),
+                            h.begin_quantity.as_str(),
+                            h.change_quantity.as_str(),
+                            h.ledger_quantity.as_str(),
+                            h.close_price.as_str(),
+                            h.market_value.as_str(),
+                            h.margin_rate.as_str(),
+                            h.margin_value.as_str(),
+                            h.cost_price.as_str(),
+                            h.income_amount.as_str(),
+                        ]
+                    })
+                })
+                .collect(),
+        },
+        StatementSection::AccountBalanceChangeSums => SectionData {
+            title: "Account Balance Changes",
+            headers: &["currency", "date", "type", "amount", "remark", "biz_code"],
+            rows: content
+                .account_balance_change_sums
+                .iter()
+                .flat_map(|sum| {
+                    sum.account_balance_changes.iter().map(move |c| {
+                        vec![
+                            sum.currency.as_str(),
+                            c.date.as_str(),
+                            c.r#type.as_str(),
+                            c.amount.as_str(),
+                            c.remark.as_str(),
+                            c.biz_code.as_str(),
+                        ]
+                    })
+                })
+                .collect(),
+        },
+        StatementSection::StockTradeSums => SectionData {
+            title: "Stock Trades",
+            headers: &[
+                "market",
+                "currency",
+                "trade_date",
+                "settle_date",
+                "contract_no",
+                "direction",
+                "code",
+                "name",
+                "trade_quantity",
+                "trade_price",
+                "trade_amount",
+                "clear_amount",
+            ],
+            rows: content
+                .stock_trade_sums
+                .iter()
+                .flat_map(|sum| {
+                    sum.trades.iter().map(move |t| {
+                        vec![
+                            sum.market.as_str(),
+                            sum.currency.as_str(),
+                            t.trade_date.as_str(),
+                            t.settle_date.as_str(),
+                            t.contract_no.as_str(),
+                            t.direction.as_str(),
+                            t.code.as_str(),
+                            t.name.as_str(),
+                            t.trade_quantity.as_str(),
+                            t.trade_price.as_str(),
+                            t.trade_amount.as_str(),
+                            t.clear_amount.as_str(),
+                        ]
+                    })
+                })
+                .collect(),
+        },
+        StatementSection::EquityHoldingChangeSums => SectionData {
+            title: "Equity Holding Changes",
+            headers: &["market", "date", "code", "name", "type", "quantity"],
+            rows: content
+                .equity_holding_change_sums
+                .iter()
+                .flat_map(|sum| {
+                    sum.equity_holding_changes.iter().map(move |c| {
+                        vec![
+                            sum.market.as_str(),
+                            c.date.as_str(),
+                            c.code.as_str(),
+                            c.name.as_str(),
+                            c.r#type.as_str(),
+                            c.quantity.as_str(),
+                        ]
+                    })
+                })
+                .collect(),
+        },
+        StatementSection::AccountBalanceLockSums => SectionData {
+            title: "Account Balance Locks",
+            headers: &[
+                "currency",
+                "date",
+                "expire_date",
+                "amount",
+                "remark",
+                "ref_no",
+            ],
+            rows: content
+                .account_balance_lock_sums
+                .iter()
+                .flat_map(|sum| {
+                    sum.account_balance_locks.iter().map(move |l| {
+                        vec![
+                            sum.currency.as_str(),
+                            l.date.as_str(),
+                            l.expire_date.as_str(),
+                            l.amount.as_str(),
+                            l.remark.as_str(),
+                            l.ref_no.as_str(),
+                        ]
+                    })
+                })
+                .collect(),
+        },
+        StatementSection::EquityHoldingLockSums => SectionData {
+            title: "Equity Holding Locks",
+            headers: &[
+                "market",
+                "date",
+                "expire_date",
+                "code",
+                "name",
+                "quantity",
+                "remark",
+                "ref_no",
+            ],
+            rows: content
+                .equity_holding_lock_sums
+                .iter()
+                .flat_map(|sum| {
+                    sum.equity_holding_locks.iter().map(move |l| {
+                        vec![
+                            sum.market.as_str(),
+                            l.date.as_str(),
+                            l.expire_date.as_str(),
+                            l.code.as_str(),
+                            l.name.as_str(),
+                            l.quantity.as_str(),
+                            l.remark.as_str(),
+                            l.ref_no.as_str(),
+                        ]
+                    })
+                })
+                .collect(),
+        },
+        StatementSection::OptionTradeSums => SectionData {
+            title: "Option Trades",
+            headers: &[
+                "market",
+                "currency",
+                "trade_date",
+                "settle_date",
+                "contract_no",
+                "direction",
+                "code",
+                "name",
+                "trade_quantity",
+                "trade_price",
+                "trade_amount",
+                "clear_amount",
+            ],
+            rows: content
+                .option_trade_sums
+                .iter()
+                .flat_map(|sum| {
+                    sum.trades.iter().map(move |t| {
+                        vec![
+                            sum.market.as_str(),
+                            sum.currency.as_str(),
+                            t.trade_date.as_str(),
+                            t.settle_date.as_str(),
+                            t.contract_no.as_str(),
+                            t.direction.as_str(),
+                            t.code.as_str(),
+                            t.name.as_str(),
+                            t.trade_quantity.as_str(),
+                            t.trade_price.as_str(),
+                            t.trade_amount.as_str(),
+                            t.clear_amount.as_str(),
+                        ]
+                    })
+                })
+                .collect(),
+        },
+        StatementSection::FundTradeSums => SectionData {
+            title: "Fund Trades",
+            headers: &[
+                "currency",
+                "equity_type",
+                "order_date",
+                "confirm_date",
+                "status",
+                "contract_no",
+                "code",
+                "name",
+                "direction",
+                "trade_amount",
+                "trade_quantity",
+                "price",
+            ],
+            rows: content
+                .fund_trade_sums
+                .iter()
+                .flat_map(|sum| {
+                    sum.trades.iter().map(move |t| {
+                        vec![
+                            sum.currency.as_str(),
+                            sum.equity_type.as_str(),
+                            t.order_date.as_str(),
+                            t.confirm_date.as_str(),
+                            t.status.as_str(),
+                            t.contract_no.as_str(),
+                            t.code.as_str(),
+                            t.name.as_str(),
+                            t.direction.as_str(),
+                            t.trade_amount.as_str(),
+                            t.trade_quantity.as_str(),
+                            t.price.as_str(),
+                        ]
+                    })
+                })
+                .collect(),
+        },
+        StatementSection::IpoTradeSums => SectionData {
+            title: "IPO Trades",
+            headers: &[
+                "market",
+                "sub_date",
+                "code",
+                "name",
+                "sub_method",
+                "sub_quantity",
+                "sub_amount",
+            ],
+            rows: content
+                .ipo_trade_sums
+                .iter()
+                .flat_map(|sum| {
+                    sum.trades.iter().map(move |t| {
+                        vec![
+                            sum.market.as_str(),
+                            t.sub_date.as_str(),
+                            t.code.as_str(),
+                            t.name.as_str(),
+                            t.sub_method.as_str(),
+                            t.sub_quantity.as_str(),
+                            t.sub_amount.as_str(),
+                        ]
+                    })
+                })
+                .collect(),
+        },
+        StatementSection::VirtualTradeSums => SectionData {
+            title: "Virtual Trades",
+            headers: &[
+                "market",
+                "currency",
+                "trade_date",
+                "settle_date",
+                "contract_no",
+                "direction",
+                "code",
+                "name",
+                "trade_quantity",
+                "trade_price",
+                "trade_amount",
+                "clear_amount",
+            ],
+            rows: content
+                .virtual_trade_sums
+                .iter()
+                .flat_map(|sum| {
+                    sum.trades.iter().map(move |t| {
+                        vec![
+                            sum.market.as_str(),
+                            sum.currency.as_str(),
+                            t.trade_date.as_str(),
+                            t.settle_date.as_str(),
+                            t.contract_no.as_str(),
+                            t.direction.as_str(),
+                            t.code.as_str(),
+                            t.name.as_str(),
+                            t.trade_quantity.as_str(),
+                            t.trade_price.as_str(),
+                            t.trade_amount.as_str(),
+                            t.clear_amount.as_str(),
+                        ]
+                    })
+                })
+                .collect(),
+        },
+        StatementSection::Interests => SectionData {
+            title: "Interests",
+            headers: &[
+                "date",
+                "currency",
+                "rate",
+                "fine_interest",
+                "interest",
+                "total",
+            ],
+            rows: content
+                .interests
+                .iter()
+                .map(|i| {
+                    vec![
+                        i.date.as_str(),
+                        i.currency.as_str(),
+                        i.rate.as_str(),
+                        i.fine_interest.as_str(),
+                        i.interest.as_str(),
+                        i.total.as_str(),
+                    ]
+                })
+                .collect(),
+        },
+        StatementSection::LendingFees => SectionData {
+            title: "Lending Fees",
+            headers: &[
+                "date",
+                "currency",
+                "code",
+                "name",
+                "quantity",
+                "settle_price",
+                "lending_market_value",
+                "rate",
+                "amount",
+            ],
+            rows: content
+                .lending_fees
+                .iter()
+                .map(|f| {
+                    vec![
+                        f.date.as_str(),
+                        f.currency.as_str(),
+                        f.code.as_str(),
+                        f.name.as_str(),
+                        f.quantity.as_str(),
+                        f.settle_price.as_str(),
+                        f.lending_market_value.as_str(),
+                        f.rate.as_str(),
+                        f.amount.as_str(),
+                    ]
+                })
+                .collect(),
+        },
+        StatementSection::CustodianFees => SectionData {
+            title: "Custodian Fees",
+            headers: &["date", "currency", "rate", "fee_amount", "fee", "total"],
+            rows: content
+                .custodian_fees
+                .iter()
+                .map(|f| {
+                    vec![
+                        f.date.as_str(),
+                        f.currency.as_str(),
+                        f.rate.as_str(),
+                        f.fee_amount.as_str(),
+                        f.fee.as_str(),
+                        f.total.as_str(),
+                    ]
+                })
+                .collect(),
+        },
+        StatementSection::Corps => SectionData {
+            title: "Corporate Actions",
+            headers: &[
+                "date",
+                "pay_date",
+                "market",
+                "code",
+                "name",
+                "remark",
+                "quantity",
+                "new_code",
+                "new_name",
+                "new_quantity",
+                "currency",
+                "new_amount",
+            ],
+            rows: content
+                .corps
+                .iter()
+                .map(|c| {
+                    vec![
+                        c.date.as_str(),
+                        c.pay_date.as_str(),
+                        c.market.as_str(),
+                        c.code.as_str(),
+                        c.name.as_str(),
+                        c.remark.as_str(),
+                        c.quantity.as_str(),
+                        c.new_code.as_str(),
+                        c.new_name.as_str(),
+                        c.new_quantity.as_str(),
+                        c.currency.as_str(),
+                        c.new_amount.as_str(),
+                    ]
+                })
+                .collect(),
+        },
+    }
+}
+
+fn section_to_format(
+    content: &CommonStatementContent,
+    section: &StatementSection,
+    format: &ExportFormat,
+) -> Result<String> {
+    let data = section_data(content, section);
+    match format {
+        ExportFormat::Csv => data.to_csv(),
+        ExportFormat::Md => Ok(data.to_markdown()),
+    }
 }
 
 /// Map a `StatementSection` variant to a file-name-friendly string.
@@ -105,441 +630,36 @@ fn section_file_name(section: &StatementSection) -> &'static str {
     }
 }
 
-fn section_to_csv(content: &CommonStatementContent, section: &StatementSection) -> Result<String> {
-    match section {
-        StatementSection::Asset => {
-            let mut wtr = csv::Writer::from_writer(vec![]);
-            wtr.write_record([
-                "currency",
-                "ledger_amount",
-                "outstanding_amount",
-                "debit_amount",
-                "nav_margin",
-                "warning_value",
-                "total",
-                "market_value",
-                "im_margin",
-                "mm_margin",
-                "total_suspend",
-                "market_value_suspend",
-                "margin_limit",
-                "im_margin_suspend",
-                "mm_margin_suspend",
-            ])?;
-            let a = &content.asset;
-            wtr.write_record([
-                &a.currency,
-                &a.ledger_amount,
-                &a.outstanding_amount,
-                &a.debit_amount,
-                &a.nav_margin,
-                &a.warning_value,
-                &a.total,
-                &a.market_value,
-                &a.im_margin,
-                &a.mm_margin,
-                &a.total_suspend,
-                &a.market_value_suspend,
-                &a.margin_limit,
-                &a.im_margin_suspend,
-                &a.mm_margin_suspend,
-            ])?;
-            Ok(String::from_utf8(wtr.into_inner()?)?)
+impl SectionData<'_> {
+    fn to_csv(&self) -> Result<String> {
+        let mut wtr = csv::Writer::from_writer(vec![]);
+        wtr.write_record(self.headers)?;
+        for row in &self.rows {
+            wtr.write_record(row)?;
         }
-        StatementSection::EquityHoldingSums => {
-            let mut wtr = csv::Writer::from_writer(vec![]);
-            wtr.write_record([
-                "equity_type",
-                "market",
-                "currency",
-                "code",
-                "name",
-                "begin_quantity",
-                "change_quantity",
-                "ledger_quantity",
-                "close_price",
-                "market_value",
-                "margin_rate",
-                "margin_value",
-                "cost_price",
-                "income_amount",
-            ])?;
-            for sum in &content.equity_holding_sums {
-                for h in &sum.equity_holdings {
-                    wtr.write_record([
-                        &sum.equity_type,
-                        &sum.market,
-                        &sum.currency,
-                        &h.code,
-                        &h.name,
-                        &h.begin_quantity,
-                        &h.change_quantity,
-                        &h.ledger_quantity,
-                        &h.close_price,
-                        &h.market_value,
-                        &h.margin_rate,
-                        &h.margin_value,
-                        &h.cost_price,
-                        &h.income_amount,
-                    ])?;
-                }
-            }
-            Ok(String::from_utf8(wtr.into_inner()?)?)
+        Ok(String::from_utf8(wtr.into_inner()?)?)
+    }
+
+    fn to_markdown(&self) -> String {
+        let mut out = format!("## {}\n\n", self.title);
+        out.push_str("| ");
+        out.push_str(&self.headers.join(" | "));
+        out.push_str(" |\n| ");
+        out.push_str(
+            &self
+                .headers
+                .iter()
+                .map(|_| "---")
+                .collect::<Vec<_>>()
+                .join(" | "),
+        );
+        out.push_str(" |\n");
+        for row in &self.rows {
+            out.push_str("| ");
+            out.push_str(&row.join(" | "));
+            out.push_str(" |\n");
         }
-        StatementSection::AccountBalanceChangeSums => {
-            let mut wtr = csv::Writer::from_writer(vec![]);
-            wtr.write_record(["currency", "date", "type", "amount", "remark", "biz_code"])?;
-            for sum in &content.account_balance_change_sums {
-                for c in &sum.account_balance_changes {
-                    wtr.write_record([
-                        &sum.currency,
-                        &c.date,
-                        &c.r#type,
-                        &c.amount,
-                        &c.remark,
-                        &c.biz_code,
-                    ])?;
-                }
-            }
-            Ok(String::from_utf8(wtr.into_inner()?)?)
-        }
-        StatementSection::StockTradeSums => {
-            let mut wtr = csv::Writer::from_writer(vec![]);
-            wtr.write_record([
-                "market",
-                "currency",
-                "trade_date",
-                "settle_date",
-                "contract_no",
-                "direction",
-                "code",
-                "name",
-                "trade_quantity",
-                "trade_price",
-                "trade_amount",
-                "clear_amount",
-            ])?;
-            for sum in &content.stock_trade_sums {
-                for t in &sum.trades {
-                    wtr.write_record([
-                        &sum.market,
-                        &sum.currency,
-                        &t.trade_date,
-                        &t.settle_date,
-                        &t.contract_no,
-                        &t.direction,
-                        &t.code,
-                        &t.name,
-                        &t.trade_quantity,
-                        &t.trade_price,
-                        &t.trade_amount,
-                        &t.clear_amount,
-                    ])?;
-                }
-            }
-            Ok(String::from_utf8(wtr.into_inner()?)?)
-        }
-        StatementSection::EquityHoldingChangeSums => {
-            let mut wtr = csv::Writer::from_writer(vec![]);
-            wtr.write_record(["market", "date", "code", "name", "type", "quantity"])?;
-            for sum in &content.equity_holding_change_sums {
-                for c in &sum.equity_holding_changes {
-                    wtr.write_record([
-                        &sum.market,
-                        &c.date,
-                        &c.code,
-                        &c.name,
-                        &c.r#type,
-                        &c.quantity,
-                    ])?;
-                }
-            }
-            Ok(String::from_utf8(wtr.into_inner()?)?)
-        }
-        StatementSection::AccountBalanceLockSums => {
-            let mut wtr = csv::Writer::from_writer(vec![]);
-            wtr.write_record([
-                "currency",
-                "date",
-                "expire_date",
-                "amount",
-                "remark",
-                "ref_no",
-            ])?;
-            for sum in &content.account_balance_lock_sums {
-                for l in &sum.account_balance_locks {
-                    wtr.write_record([
-                        &sum.currency,
-                        &l.date,
-                        &l.expire_date,
-                        &l.amount,
-                        &l.remark,
-                        &l.ref_no,
-                    ])?;
-                }
-            }
-            Ok(String::from_utf8(wtr.into_inner()?)?)
-        }
-        StatementSection::EquityHoldingLockSums => {
-            let mut wtr = csv::Writer::from_writer(vec![]);
-            wtr.write_record([
-                "market",
-                "date",
-                "expire_date",
-                "code",
-                "name",
-                "quantity",
-                "remark",
-                "ref_no",
-            ])?;
-            for sum in &content.equity_holding_lock_sums {
-                for l in &sum.equity_holding_locks {
-                    wtr.write_record([
-                        &sum.market,
-                        &l.date,
-                        &l.expire_date,
-                        &l.code,
-                        &l.name,
-                        &l.quantity,
-                        &l.remark,
-                        &l.ref_no,
-                    ])?;
-                }
-            }
-            Ok(String::from_utf8(wtr.into_inner()?)?)
-        }
-        StatementSection::OptionTradeSums => {
-            let mut wtr = csv::Writer::from_writer(vec![]);
-            wtr.write_record([
-                "market",
-                "currency",
-                "trade_date",
-                "settle_date",
-                "contract_no",
-                "direction",
-                "code",
-                "name",
-                "trade_quantity",
-                "trade_price",
-                "trade_amount",
-                "clear_amount",
-            ])?;
-            for sum in &content.option_trade_sums {
-                for t in &sum.trades {
-                    wtr.write_record([
-                        &sum.market,
-                        &sum.currency,
-                        &t.trade_date,
-                        &t.settle_date,
-                        &t.contract_no,
-                        &t.direction,
-                        &t.code,
-                        &t.name,
-                        &t.trade_quantity,
-                        &t.trade_price,
-                        &t.trade_amount,
-                        &t.clear_amount,
-                    ])?;
-                }
-            }
-            Ok(String::from_utf8(wtr.into_inner()?)?)
-        }
-        StatementSection::FundTradeSums => {
-            let mut wtr = csv::Writer::from_writer(vec![]);
-            wtr.write_record([
-                "currency",
-                "equity_type",
-                "order_date",
-                "confirm_date",
-                "status",
-                "contract_no",
-                "code",
-                "name",
-                "direction",
-                "trade_amount",
-                "trade_quantity",
-                "price",
-            ])?;
-            for sum in &content.fund_trade_sums {
-                for t in &sum.trades {
-                    wtr.write_record([
-                        &sum.currency,
-                        &sum.equity_type,
-                        &t.order_date,
-                        &t.confirm_date,
-                        &t.status,
-                        &t.contract_no,
-                        &t.code,
-                        &t.name,
-                        &t.direction,
-                        &t.trade_amount,
-                        &t.trade_quantity,
-                        &t.price,
-                    ])?;
-                }
-            }
-            Ok(String::from_utf8(wtr.into_inner()?)?)
-        }
-        StatementSection::IpoTradeSums => {
-            let mut wtr = csv::Writer::from_writer(vec![]);
-            wtr.write_record([
-                "market",
-                "sub_date",
-                "code",
-                "name",
-                "sub_method",
-                "sub_quantity",
-                "sub_amount",
-            ])?;
-            for sum in &content.ipo_trade_sums {
-                for t in &sum.trades {
-                    wtr.write_record([
-                        &sum.market,
-                        &t.sub_date,
-                        &t.code,
-                        &t.name,
-                        &t.sub_method,
-                        &t.sub_quantity,
-                        &t.sub_amount,
-                    ])?;
-                }
-            }
-            Ok(String::from_utf8(wtr.into_inner()?)?)
-        }
-        StatementSection::VirtualTradeSums => {
-            let mut wtr = csv::Writer::from_writer(vec![]);
-            wtr.write_record([
-                "market",
-                "currency",
-                "trade_date",
-                "settle_date",
-                "contract_no",
-                "direction",
-                "code",
-                "name",
-                "trade_quantity",
-                "trade_price",
-                "trade_amount",
-                "clear_amount",
-            ])?;
-            for sum in &content.virtual_trade_sums {
-                for t in &sum.trades {
-                    wtr.write_record([
-                        &sum.market,
-                        &sum.currency,
-                        &t.trade_date,
-                        &t.settle_date,
-                        &t.contract_no,
-                        &t.direction,
-                        &t.code,
-                        &t.name,
-                        &t.trade_quantity,
-                        &t.trade_price,
-                        &t.trade_amount,
-                        &t.clear_amount,
-                    ])?;
-                }
-            }
-            Ok(String::from_utf8(wtr.into_inner()?)?)
-        }
-        StatementSection::Interests => {
-            let mut wtr = csv::Writer::from_writer(vec![]);
-            wtr.write_record([
-                "date",
-                "currency",
-                "rate",
-                "fine_interest",
-                "interest",
-                "total",
-            ])?;
-            for i in &content.interests {
-                wtr.write_record([
-                    &i.date,
-                    &i.currency,
-                    &i.rate,
-                    &i.fine_interest,
-                    &i.interest,
-                    &i.total,
-                ])?;
-            }
-            Ok(String::from_utf8(wtr.into_inner()?)?)
-        }
-        StatementSection::LendingFees => {
-            let mut wtr = csv::Writer::from_writer(vec![]);
-            wtr.write_record([
-                "date",
-                "currency",
-                "code",
-                "name",
-                "quantity",
-                "settle_price",
-                "lending_market_value",
-                "rate",
-                "amount",
-            ])?;
-            for f in &content.lending_fees {
-                wtr.write_record([
-                    &f.date,
-                    &f.currency,
-                    &f.code,
-                    &f.name,
-                    &f.quantity,
-                    &f.settle_price,
-                    &f.lending_market_value,
-                    &f.rate,
-                    &f.amount,
-                ])?;
-            }
-            Ok(String::from_utf8(wtr.into_inner()?)?)
-        }
-        StatementSection::CustodianFees => {
-            let mut wtr = csv::Writer::from_writer(vec![]);
-            wtr.write_record(["date", "currency", "rate", "fee_amount", "fee", "total"])?;
-            for f in &content.custodian_fees {
-                wtr.write_record([
-                    &f.date,
-                    &f.currency,
-                    &f.rate,
-                    &f.fee_amount,
-                    &f.fee,
-                    &f.total,
-                ])?;
-            }
-            Ok(String::from_utf8(wtr.into_inner()?)?)
-        }
-        StatementSection::Corps => {
-            let mut wtr = csv::Writer::from_writer(vec![]);
-            wtr.write_record([
-                "date",
-                "pay_date",
-                "market",
-                "code",
-                "name",
-                "remark",
-                "quantity",
-                "new_code",
-                "new_name",
-                "new_quantity",
-                "currency",
-                "new_amount",
-            ])?;
-            for c in &content.corps {
-                wtr.write_record([
-                    &c.date,
-                    &c.pay_date,
-                    &c.market,
-                    &c.code,
-                    &c.name,
-                    &c.remark,
-                    &c.quantity,
-                    &c.new_code,
-                    &c.new_name,
-                    &c.new_quantity,
-                    &c.currency,
-                    &c.new_amount,
-                ])?;
-            }
-            Ok(String::from_utf8(wtr.into_inner()?)?)
-        }
+        out.push('\n');
+        out
     }
 }
