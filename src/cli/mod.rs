@@ -106,7 +106,10 @@ pub enum Commands {
     /// Real-time quotes for one or more symbols
     ///
     /// Returns: symbol, `last_done`, `prev_close`, open, high, low, volume, turnover, `trade_status`.
+    /// Also returns `pre_market_quote`, `post_market_quote`, `overnight_quote` when available (US only).
+    /// In table format an "Extended Hours" section is appended; in JSON these are nested objects.
     /// Example: longbridge quote TSLA.US 700.HK AAPL.US
+    /// Example: longbridge quote TSLA.US NVDA.US --format json
     Quote {
         /// Symbols in <CODE>.<MARKET> format, e.g. TSLA.US 700.HK 600519.SH
         symbols: Vec<String>,
@@ -146,10 +149,15 @@ pub enum Commands {
     /// Intraday minute-by-minute price and volume lines for today
     ///
     /// Returns: timestamp, price, volume, turnover, `avg_price`.
+    /// Use `--session all` to include pre-market and post-market lines.
     /// Example: longbridge intraday TSLA.US
+    /// Example: longbridge intraday TSLA.US --session all
     Intraday {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
+        /// Trade session filter: `intraday` (default) | `all` (includes pre/post market)
+        #[arg(long, default_value = "intraday")]
+        session: String,
     },
 
     /// OHLCV candlestick (K-line) data
@@ -157,8 +165,10 @@ pub enum Commands {
     /// Returns: timestamp, open, high, low, close, volume, turnover.
     /// Periods: 1m  5m  15m  30m  1h  day  week  month  year
     ///   (aliases: minute=1m, hour=1h, d/1d=day, w=week, m/1mo=month, y=year)
+    /// Use `--session all` to include pre/post-market candles (adds a Session column).
     /// Example: longbridge kline TSLA.US --period day --count 100
     /// Example: longbridge kline TSLA.US --period 1h --adjust `forward_adjust`
+    /// Example: longbridge kline TSLA.US --period 1m --session all
     Kline {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -173,13 +183,18 @@ pub enum Commands {
         /// Aliases: none=`no_adjust`, forward=`forward_adjust`
         #[arg(long, default_value = "no_adjust")]
         adjust: String,
+        /// Trade session filter: `intraday` (default) | `all` (includes pre/post market)
+        #[arg(long, default_value = "intraday")]
+        session: String,
     },
 
     /// Historical OHLCV candlestick data within a date range
     ///
     /// Both --start and --end must be provided together; if either is omitted the
     /// most recent 100 candles are returned (offset-based, ignores the other flag).
+    /// Use `--session all` to include pre/post-market candles (adds a Session column).
     /// Example: longbridge kline-history TSLA.US --start 2024-01-01 --end 2024-12-31
+    /// Example: longbridge kline-history TSLA.US --period 1m --session all --start 2024-01-01 --end 2024-01-02
     KlineHistory {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -197,6 +212,9 @@ pub enum Commands {
         /// Aliases: none=`no_adjust`, forward=`forward_adjust`
         #[arg(long, default_value = "no_adjust")]
         adjust: String,
+        /// Trade session filter: `intraday` (default) | `all` (includes pre/post market)
+        #[arg(long, default_value = "intraday")]
+        session: String,
     },
 
     /// Static reference info for one or more symbols
@@ -785,20 +803,24 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
         Commands::Depth { symbol } => quote::cmd_depth(symbol, format).await,
         Commands::Brokers { symbol } => quote::cmd_brokers(symbol, format).await,
         Commands::Trades { symbol, count } => quote::cmd_trades(symbol, count, format).await,
-        Commands::Intraday { symbol } => quote::cmd_intraday(symbol, format).await,
+        Commands::Intraday { symbol, session } => {
+            quote::cmd_intraday(symbol, &session, format).await
+        }
         Commands::Kline {
             symbol,
             period,
             count,
             adjust,
-        } => quote::cmd_kline(symbol, &period, count, &adjust, format).await,
+            session,
+        } => quote::cmd_kline(symbol, &period, count, &adjust, &session, format).await,
         Commands::KlineHistory {
             symbol,
             period,
             start,
             end,
             adjust,
-        } => quote::cmd_kline_history(symbol, &period, start, end, &adjust, format).await,
+            session,
+        } => quote::cmd_kline_history(symbol, &period, start, end, &adjust, &session, format).await,
         Commands::Static { symbols } => quote::cmd_static(symbols, format).await,
         Commands::CalcIndex { symbols, index } => {
             quote::cmd_calc_index(symbols, index, format).await
@@ -1037,7 +1059,9 @@ mod tests {
     #[test]
     fn test_intraday_subcommand() {
         let cli = parse(&["longbridge", "intraday", "TSLA.US"]).unwrap();
-        assert!(matches!(cli.command, Some(Commands::Intraday { symbol }) if symbol == "TSLA.US"));
+        assert!(
+            matches!(cli.command, Some(Commands::Intraday { symbol, .. }) if symbol == "TSLA.US")
+        );
     }
 
     #[test]
@@ -1048,6 +1072,7 @@ mod tests {
             period,
             count,
             adjust,
+            ..
         }) = cli.command
         {
             assert_eq!(symbol, "TSLA.US");

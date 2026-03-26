@@ -225,8 +225,11 @@ For Ratatui-specific questions or when working with TUI components, use the `rs-
 When adding, removing, or modifying any CLI command (in `src/cli/`), always update all of the following in the same PR:
 
 1. **`README.md`** — the `<!-- COMMANDS_START -->` / `<!-- COMMANDS_END -->` block
-2. **`skills/longbridge/SKILL.md`** — quick reference section if the command is common enough
-3. **`skills/longbridge/references/`** — the relevant reference file:
-   - `quote-commands.md` for quote/market-data commands
-   - `trade-commands.md` for trading/account commands
-   - `watchlist-commands.md` for watchlist commands
+2. **`../developers/skills/longbridge/`** — all skill files are maintained in the `developers` repo; this repo no longer has its own `skills/` directory:
+   - `SKILL.md` — quick reference, if the command is common enough to mention
+   - `references/cli/overview.md` — CLI overview (features, patterns, notable flags)
+   - `references/python-sdk/` / `references/rust-sdk/` — corresponding SDK reference
+
+Skill files should stay high-level. Defer to the CLI's built-in `--help` for flag details — do not duplicate help text in skill files.
+
+If `../developers` is not available locally, the repository is https://github.com/longbridge/developers
