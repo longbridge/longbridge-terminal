@@ -1,9 +1,37 @@
 use anyhow::Result;
-use longbridge::content::{CreateTopicOptions, ListMyTopicsOptions, OwnedTopic};
+use longbridge::content::{CreateTopicOptions, MyTopicsOptions, OwnedTopic};
 use regex::Regex;
 use time::OffsetDateTime;
 
 use super::{output::print_table, OutputFormat};
+
+/// Replace `[st]ST/MARKET/SYMBOL#...[/st]` tags in topic text with ticker symbols like `TSLA.US`.
+pub fn replace_stock_tags(text: &str) -> String {
+    let mut result = String::new();
+    let mut remaining = text;
+    while let Some(start) = remaining.find("[st]") {
+        result.push_str(&remaining[..start]);
+        let after_open = &remaining[start + 4..];
+        let Some(end) = after_open.find("[/st]") else {
+            result.push_str("[st]");
+            result.push_str(after_open);
+            return result;
+        };
+        let inner = &after_open[..end];
+        // Format: ST/MARKET/SYMBOL#DisplayName or ST/MARKET/SYMBOL
+        let code = inner.split('#').next().unwrap_or(inner);
+        let parts: Vec<&str> = code.split('/').collect();
+        if parts.len() >= 3 {
+            let ticker = format!("{}.{}", parts[2].to_uppercase(), parts[1].to_uppercase());
+            result.push_str(&ticker);
+        } else {
+            result.push_str(inner);
+        }
+        remaining = &after_open[end + 5..];
+    }
+    result.push_str(remaining);
+    result
+}
 
 fn format_datetime(dt: OffsetDateTime) -> String {
     format!(
@@ -27,7 +55,6 @@ fn owned_topic_to_json(item: &OwnedTopic) -> serde_json::Value {
         "comments_count": item.comments_count,
         "views_count": item.views_count,
         "shares_count": item.shares_count,
-        "license": item.license,
         "url": format!("https://longbridge.com/topics/{}", item.id),
         "created_at": item.created_at.unix_timestamp(),
         "updated_at": item.updated_at.unix_timestamp(),
@@ -41,12 +68,12 @@ pub async fn cmd_topics_mine(
     post_type: Option<String>,
     format: &OutputFormat,
 ) -> Result<()> {
-    let opts = ListMyTopicsOptions {
+    let opts = MyTopicsOptions {
         page: Some(page),
         size: Some(size),
         topic_type: post_type,
     };
-    let items = crate::openapi::content().topics_mine(opts).await?;
+    let items = crate::openapi::content().my_topics(opts).await?;
 
     if items.is_empty() {
         println!("No topics found.");
@@ -74,14 +101,15 @@ pub async fn cmd_topics_mine(
     let rows = items
         .iter()
         .map(|item| {
+            let desc = replace_stock_tags(&item.description);
             let display = if item.title.is_empty() {
-                &item.description
+                desc.clone()
             } else {
-                &item.title
+                item.title.clone()
             };
             vec![
                 item.id.clone(),
-                display.clone(),
+                display,
                 item.topic_type.clone(),
                 format_datetime(item.created_at),
                 item.likes_count.to_string(),
@@ -137,7 +165,6 @@ pub async fn cmd_create_topic(
             Some(tickers)
         },
         hashtags: None,
-        license: None,
     };
     let id = crate::openapi::content().create_topic(opts).await?;
 
