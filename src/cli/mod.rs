@@ -480,6 +480,11 @@ pub enum Commands {
     ///     display. Supports headers, tables, bold, code blocks, etc.
     ///     Title is required for articles.
     ///     Example: longbridge create-topic --title "My Analysis" --body "$(cat post.md)" --type article
+    ///
+    /// Stock associations:
+    ///   Symbols mentioned in the body (e.g. 700.HK, TSLA.US) are automatically
+    ///   recognized and linked as related stocks by the platform. Use --tickers to
+    ///   explicitly associate additional stocks not mentioned in the body.
     CreateTopic {
         /// Article title. Required for --type article; omit for --type post.
         #[arg(long)]
