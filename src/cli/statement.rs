@@ -9,21 +9,19 @@ use super::{output::print_table, OutputFormat, StatementCmd, StatementSection};
 pub async fn cmd_statement(cmd: StatementCmd, format: &OutputFormat) -> Result<()> {
     match cmd {
         StatementCmd::List {
-            aaid,
             statement_type,
-            page,
-            page_size,
-        } => cmd_list(aaid, &statement_type, page, page_size, format).await,
+            start_date: page,
+            limit: page_size,
+        } => cmd_list( &statement_type, page, page_size, format).await,
         StatementCmd::Download {
             file_key,
-            section,
+            section: sections,
             output,
-        } => cmd_download(&file_key, &section, &output).await,
+        } => cmd_download(&file_key, &sections, &output).await,
     }
 }
 
 async fn cmd_list(
-    aaid: i64,
     statement_type: &str,
     page: i32,
     page_size: i32,
@@ -36,7 +34,7 @@ async fn cmd_list(
     };
 
     let ctx = crate::openapi::statement();
-    let options = GetStatementDataListOptions::new(aaid, st)
+    let options = GetStatementDataListOptions::new( st)
         .page(page)
         .page_size(page_size);
     let resp = ctx.statement_data_list(options).await?;
@@ -51,7 +49,12 @@ async fn cmd_list(
     Ok(())
 }
 
-async fn cmd_download(file_key: &str, section: &StatementSection, output_path: &str) -> Result<()> {
+// TODO: 补充 Asset 段落转成 Csv 的功能，只有一行 csv，表头是 Asset 的每个段落
+async fn cmd_download(
+    file_key: &str,
+    sections: &[StatementSection],
+    output_path: &str,
+) -> Result<()> {
     let ctx = crate::openapi::statement();
     let options = GetStatementDataDownloadUrlOptions::new(file_key);
     let resp = ctx.statement_data_download_url(options).await?;
@@ -61,11 +64,44 @@ async fn cmd_download(file_key: &str, section: &StatementSection, output_path: &
     let body = client.get(&resp.url).send().await?.text().await?;
     let content: CommonStatementContent = serde_json::from_str(&body)?;
 
-    // Extract the requested section and write CSV
-    let csv_data = section_to_csv(&content, section)?;
-    std::fs::write(output_path, csv_data)?;
-    println!("Saved {section:?} to {output_path}");
+    if sections.len() == 1 {
+        // Single section: write directly to the output path
+        let csv_data = section_to_csv(&content, &sections[0])?;
+        std::fs::write(output_path, csv_data)?;
+        println!("Saved {:?} to {output_path}", sections[0]);
+    } else {
+        // Multiple sections: treat output_path as a directory
+        let dir = std::path::Path::new(output_path);
+        std::fs::create_dir_all(dir)?;
+        for section in sections {
+            let file_name = format!("{}.csv", section_file_name(section));
+            let file_path = dir.join(&file_name);
+            let csv_data = section_to_csv(&content, section)?;
+            std::fs::write(&file_path, csv_data)?;
+            println!("Saved {section:?} to {}", file_path.display());
+        }
+    }
     Ok(())
+}
+
+/// Map a `StatementSection` variant to a file-name-friendly string.
+fn section_file_name(section: &StatementSection) -> &'static str {
+    match section {
+        StatementSection::EquityHoldingSums => "equity_holdings",
+        StatementSection::AccountBalanceChangeSums => "account_balance_changes",
+        StatementSection::StockTradeSums => "stock_trades",
+        StatementSection::EquityHoldingChangeSums => "equity_holding_changes",
+        StatementSection::AccountBalanceLockSums => "account_balance_locks",
+        StatementSection::EquityHoldingLockSums => "equity_holding_locks",
+        StatementSection::OptionTradeSums => "option_trades",
+        StatementSection::FundTradeSums => "fund_trades",
+        StatementSection::IpoTradeSums => "ipo_trades",
+        StatementSection::VirtualTradeSums => "virtual_trades",
+        StatementSection::Interests => "interests",
+        StatementSection::LendingFees => "lending_fees",
+        StatementSection::CustodianFees => "custodian_fees",
+        StatementSection::Corps => "corps",
+    }
 }
 
 fn section_to_csv(content: &CommonStatementContent, section: &StatementSection) -> Result<String> {

@@ -831,18 +831,15 @@ pub enum StatementCmd {
     /// Example: longbridge statement list --aaid 12345
     /// Example: longbridge statement list --aaid 12345 --type monthly
     List {
-        /// Account AAID (numeric identifier)
-        #[arg(long)]
-        aaid: i64,
         /// Statement type: daily (default) | monthly
         #[arg(long = "type", default_value = "daily")]
         statement_type: String,
-        /// Page number (default: 1)
-        #[arg(long, default_value = "1")]
-        page: i32,
-        /// Page size (default: 20)
-        #[arg(long, default_value = "20")]
-        page_size: i32,
+        /// start date of query
+        #[arg(long)]
+        start_date: i32,
+        /// query limit (default: 5)
+        #[arg(long, default_value = "5")]
+        limit: i32,
     },
 
     /// Download a statement and export a section as CSV
@@ -854,10 +851,12 @@ pub enum StatementCmd {
         /// File key from `longbridge statement list`
         #[arg(long)]
         file_key: String,
-        /// Section to export as CSV
-        #[arg(long)]
-        section: StatementSection,
-        /// Output file path (CSV)
+        /// Sections to export as CSV (can specify multiple)
+        #[arg(long, num_args = 1..)]
+        section: Vec<StatementSection>,
+        /// Output directory or file path (CSV).
+        /// When multiple sections are specified, this is treated as a directory
+        /// and each section is saved as `<section_name>.csv` inside it.
         #[arg(long, short = 'o')]
         output: String,
     },
