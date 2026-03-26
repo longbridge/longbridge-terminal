@@ -4,7 +4,7 @@ use longbridge::statement::{
     StatementType,
 };
 
-use super::{output::print_table, OutputFormat, StatementCmd};
+use super::{output::print_table, OutputFormat, StatementCmd, StatementSection};
 
 pub async fn cmd_statement(cmd: StatementCmd, format: &OutputFormat) -> Result<()> {
     match cmd {
@@ -51,7 +51,7 @@ async fn cmd_list(
     Ok(())
 }
 
-async fn cmd_download(file_key: &str, section: &str, output_path: &str) -> Result<()> {
+async fn cmd_download(file_key: &str, section: &StatementSection, output_path: &str) -> Result<()> {
     let ctx = crate::openapi::statement();
     let options = GetStatementDataDownloadUrlOptions::new(file_key);
     let resp = ctx.statement_data_download_url(options).await?;
@@ -64,13 +64,13 @@ async fn cmd_download(file_key: &str, section: &str, output_path: &str) -> Resul
     // Extract the requested section and write CSV
     let csv_data = section_to_csv(&content, section)?;
     std::fs::write(output_path, csv_data)?;
-    println!("Saved {section} to {output_path}");
+    println!("Saved {section:?} to {output_path}");
     Ok(())
 }
 
-fn section_to_csv(content: &CommonStatementContent, section: &str) -> Result<String> {
+fn section_to_csv(content: &CommonStatementContent, section: &StatementSection) -> Result<String> {
     match section {
-        "equity_holding_sums" => {
+        StatementSection::EquityHoldingSums => {
             let mut wtr = csv::Writer::from_writer(vec![]);
             wtr.write_record([
                 "equity_type",
@@ -110,7 +110,7 @@ fn section_to_csv(content: &CommonStatementContent, section: &str) -> Result<Str
             }
             Ok(String::from_utf8(wtr.into_inner()?)?)
         }
-        "account_balance_change_sums" => {
+        StatementSection::AccountBalanceChangeSums => {
             let mut wtr = csv::Writer::from_writer(vec![]);
             wtr.write_record(["currency", "date", "type", "amount", "remark", "biz_code"])?;
             for sum in &content.account_balance_change_sums {
@@ -127,7 +127,7 @@ fn section_to_csv(content: &CommonStatementContent, section: &str) -> Result<Str
             }
             Ok(String::from_utf8(wtr.into_inner()?)?)
         }
-        "stock_trade_sums" => {
+        StatementSection::StockTradeSums => {
             let mut wtr = csv::Writer::from_writer(vec![]);
             wtr.write_record([
                 "market",
@@ -163,7 +163,7 @@ fn section_to_csv(content: &CommonStatementContent, section: &str) -> Result<Str
             }
             Ok(String::from_utf8(wtr.into_inner()?)?)
         }
-        "equity_holding_change_sums" => {
+        StatementSection::EquityHoldingChangeSums => {
             let mut wtr = csv::Writer::from_writer(vec![]);
             wtr.write_record(["market", "date", "code", "name", "type", "quantity"])?;
             for sum in &content.equity_holding_change_sums {
@@ -180,7 +180,7 @@ fn section_to_csv(content: &CommonStatementContent, section: &str) -> Result<Str
             }
             Ok(String::from_utf8(wtr.into_inner()?)?)
         }
-        "account_balance_lock_sums" => {
+        StatementSection::AccountBalanceLockSums => {
             let mut wtr = csv::Writer::from_writer(vec![]);
             wtr.write_record([
                 "currency",
@@ -204,7 +204,7 @@ fn section_to_csv(content: &CommonStatementContent, section: &str) -> Result<Str
             }
             Ok(String::from_utf8(wtr.into_inner()?)?)
         }
-        "equity_holding_lock_sums" => {
+        StatementSection::EquityHoldingLockSums => {
             let mut wtr = csv::Writer::from_writer(vec![]);
             wtr.write_record([
                 "market",
@@ -232,7 +232,7 @@ fn section_to_csv(content: &CommonStatementContent, section: &str) -> Result<Str
             }
             Ok(String::from_utf8(wtr.into_inner()?)?)
         }
-        "option_trade_sums" => {
+        StatementSection::OptionTradeSums => {
             let mut wtr = csv::Writer::from_writer(vec![]);
             wtr.write_record([
                 "market",
@@ -268,7 +268,7 @@ fn section_to_csv(content: &CommonStatementContent, section: &str) -> Result<Str
             }
             Ok(String::from_utf8(wtr.into_inner()?)?)
         }
-        "fund_trade_sums" => {
+        StatementSection::FundTradeSums => {
             let mut wtr = csv::Writer::from_writer(vec![]);
             wtr.write_record([
                 "currency",
@@ -304,7 +304,7 @@ fn section_to_csv(content: &CommonStatementContent, section: &str) -> Result<Str
             }
             Ok(String::from_utf8(wtr.into_inner()?)?)
         }
-        "ipo_trade_sums" => {
+        StatementSection::IpoTradeSums => {
             let mut wtr = csv::Writer::from_writer(vec![]);
             wtr.write_record([
                 "market",
@@ -330,7 +330,7 @@ fn section_to_csv(content: &CommonStatementContent, section: &str) -> Result<Str
             }
             Ok(String::from_utf8(wtr.into_inner()?)?)
         }
-        "virtual_trade_sums" => {
+        StatementSection::VirtualTradeSums => {
             let mut wtr = csv::Writer::from_writer(vec![]);
             wtr.write_record([
                 "market",
@@ -366,7 +366,7 @@ fn section_to_csv(content: &CommonStatementContent, section: &str) -> Result<Str
             }
             Ok(String::from_utf8(wtr.into_inner()?)?)
         }
-        "interests" => {
+        StatementSection::Interests => {
             let mut wtr = csv::Writer::from_writer(vec![]);
             wtr.write_record([
                 "date",
@@ -388,7 +388,7 @@ fn section_to_csv(content: &CommonStatementContent, section: &str) -> Result<Str
             }
             Ok(String::from_utf8(wtr.into_inner()?)?)
         }
-        "lending_fees" => {
+        StatementSection::LendingFees => {
             let mut wtr = csv::Writer::from_writer(vec![]);
             wtr.write_record([
                 "date",
@@ -416,7 +416,7 @@ fn section_to_csv(content: &CommonStatementContent, section: &str) -> Result<Str
             }
             Ok(String::from_utf8(wtr.into_inner()?)?)
         }
-        "custodian_fees" => {
+        StatementSection::CustodianFees => {
             let mut wtr = csv::Writer::from_writer(vec![]);
             wtr.write_record(["date", "currency", "rate", "fee_amount", "fee", "total"])?;
             for f in &content.custodian_fees {
@@ -431,7 +431,7 @@ fn section_to_csv(content: &CommonStatementContent, section: &str) -> Result<Str
             }
             Ok(String::from_utf8(wtr.into_inner()?)?)
         }
-        "corps" => {
+        StatementSection::Corps => {
             let mut wtr = csv::Writer::from_writer(vec![]);
             wtr.write_record([
                 "date",
@@ -464,15 +464,6 @@ fn section_to_csv(content: &CommonStatementContent, section: &str) -> Result<Str
                 ])?;
             }
             Ok(String::from_utf8(wtr.into_inner()?)?)
-        }
-        other => {
-            anyhow::bail!(
-                "Unknown section '{other}'. Available sections: \
-                equity_holding_sums, account_balance_change_sums, stock_trade_sums, \
-                equity_holding_change_sums, account_balance_lock_sums, equity_holding_lock_sums, \
-                option_trade_sums, fund_trade_sums, ipo_trade_sums, virtual_trade_sums, \
-                interests, lending_fees, custodian_fees, corps"
-            );
         }
     }
 }

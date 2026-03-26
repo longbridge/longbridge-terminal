@@ -791,6 +791,38 @@ pub enum WatchlistCmd {
     },
 }
 
+#[derive(ValueEnum, Clone, Debug)]
+pub enum StatementSection {
+    #[value(name = "equity_holdings")]
+    EquityHoldingSums,
+    #[value(name = "account_balance_changes")]
+    AccountBalanceChangeSums,
+    #[value(name = "stock_trades")]
+    StockTradeSums,
+    #[value(name = "equity_holding_changes")]
+    EquityHoldingChangeSums,
+    #[value(name = "account_balance_locks")]
+    AccountBalanceLockSums,
+    #[value(name = "equity_holding_locks")]
+    EquityHoldingLockSums,
+    #[value(name = "option_trades")]
+    OptionTradeSums,
+    #[value(name = "fund_trades")]
+    FundTradeSums,
+    #[value(name = "ipo_trades")]
+    IpoTradeSums,
+    #[value(name = "virtual_trades")]
+    VirtualTradeSums,
+    #[value(name = "interests")]
+    Interests,
+    #[value(name = "lending_fees")]
+    LendingFees,
+    #[value(name = "custodian_fees")]
+    CustodianFees,
+    #[value(name = "corps")]
+    Corps,
+}
+
 #[derive(Subcommand)]
 pub enum StatementCmd {
     /// List available statements for an account
@@ -822,9 +854,9 @@ pub enum StatementCmd {
         /// File key from `longbridge statement list`
         #[arg(long)]
         file_key: String,
-        /// Section to export as CSV (e.g. `equity_holding_sums`, `stock_trade_sums`, `account_balance_change_sums`)
+        /// Section to export as CSV
         #[arg(long)]
-        section: String,
+        section: StatementSection,
         /// Output file path (CSV)
         #[arg(long, short = 'o')]
         output: String,
