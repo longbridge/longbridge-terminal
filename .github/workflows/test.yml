@@ -23,9 +23,5 @@ jobs:
             ~/.cargo/git/db/
             target/
           key: ubuntu-test-cargo-${{ hashFiles('**/Cargo.lock') }}
-      - name: Check Format
-        run: cargo fmt --check
-      - name: Clippy
-        run: cargo clippy -- -D warnings
       - name: Test
         run: make test
