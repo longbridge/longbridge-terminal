@@ -5,8 +5,8 @@ use time::OffsetDateTime;
 
 use super::{output::print_table, OutputFormat};
 
-/// Replace `[st]ST/MARKET/SYMBOL#...[/st]` tags in topic text with ticker symbols like `TSLA.US`.
-pub fn replace_stock_tags(text: &str) -> String {
+/// Format topic content by replacing `[st]ST/MARKET/SYMBOL#...[/st]` tags with ticker symbols like `TSLA.US`.
+pub fn format_topic_contents(text: &str) -> String {
     let mut result = String::new();
     let mut remaining = text;
     while let Some(start) = remaining.find("[st]") {
@@ -101,7 +101,7 @@ pub async fn cmd_topics_mine(
     let rows = items
         .iter()
         .map(|item| {
-            let desc = replace_stock_tags(&item.description);
+            let desc = format_topic_contents(&item.description);
             let display = if item.title.is_empty() {
                 desc.clone()
             } else {
@@ -180,4 +180,49 @@ pub async fn cmd_create_topic(
     println!("  ID:   {id}");
     println!("  URL:  https://longbridge.com/topics/{id}");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_topic_contents;
+
+    #[test]
+    fn test_single_stock_tag() {
+        assert_eq!(
+            format_topic_contents("[st]ST/US/TSLA#Tesla.US[/st]"),
+            "TSLA.US"
+        );
+    }
+
+    #[test]
+    fn test_stock_tag_with_surrounding_text() {
+        assert_eq!(
+            format_topic_contents("Bullish on [st]ST/US/TSLA#Tesla.US[/st] today"),
+            "Bullish on TSLA.US today"
+        );
+    }
+
+    #[test]
+    fn test_multiple_stock_tags() {
+        assert_eq!(
+            format_topic_contents("[st]ST/HK/700#Tencent.HK[/st] and [st]ST/US/AAPL#Apple.US[/st]"),
+            "700.HK and AAPL.US"
+        );
+    }
+
+    #[test]
+    fn test_no_stock_tags() {
+        assert_eq!(
+            format_topic_contents("Plain text with no tags"),
+            "Plain text with no tags"
+        );
+    }
+
+    #[test]
+    fn test_uppercase_output() {
+        assert_eq!(
+            format_topic_contents("[st]st/us/tsla#Tesla.US[/st]"),
+            "TSLA.US"
+        );
+    }
 }
