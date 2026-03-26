@@ -1,6 +1,6 @@
 use anyhow::Result;
 use longbridge::content::{
-    CreateTopicOptions, CreateTopicReplyOptions, ListTopicRepliesOptions, MyTopicsOptions,
+    CreateTopicOptions, CreateReplyOptions, ListTopicRepliesOptions, MyTopicsOptions,
     OwnedTopic, TopicReply,
 };
 use regex::Regex;
@@ -237,21 +237,21 @@ pub async fn cmd_create_reply(
     reply_to_id: Option<String>,
     format: &OutputFormat,
 ) -> Result<()> {
-    let opts = CreateTopicReplyOptions { body, reply_to_id };
-    let id = crate::openapi::content()
+    let opts = CreateReplyOptions { body, reply_to_id };
+    let reply = crate::openapi::content()
         .create_topic_reply(topic_id, opts)
         .await?;
 
     if matches!(format, OutputFormat::Json) {
         println!(
             "{}",
-            serde_json::to_string_pretty(&serde_json::json!({ "id": id })).unwrap_or_default()
+            serde_json::to_string_pretty(&topic_reply_to_json(&reply)).unwrap_or_default()
         );
         return Ok(());
     }
 
     println!("Reply created successfully.");
-    println!("  ID: {id}");
+    println!("  ID: {}", reply.id);
     Ok(())
 }
 
