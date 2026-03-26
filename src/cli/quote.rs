@@ -1,5 +1,7 @@
 use anyhow::{bail, Result};
-use longbridge::quote::{AdjustType, CalcIndex, Period, SecurityListCategory, TradeSessions};
+use longbridge::quote::{
+    AdjustType, CalcIndex, Period, PrePostQuote, SecurityListCategory, TradeSession, TradeSessions,
+};
 use longbridge::Market;
 use time::Date;
 
@@ -30,6 +32,35 @@ fn parse_adjust(s: &str) -> Result<AdjustType> {
         "forward_adjust" | "forward" => Ok(AdjustType::ForwardAdjust),
         _ => bail!("Unknown adjust type '{s}'. Use: no_adjust forward_adjust"),
     }
+}
+
+fn parse_trade_sessions(s: &str) -> Result<TradeSessions> {
+    match s {
+        "intraday" => Ok(TradeSessions::Intraday),
+        "all" => Ok(TradeSessions::All),
+        _ => bail!("Unknown session '{s}'. Use: intraday all"),
+    }
+}
+
+fn fmt_trade_session(s: &TradeSession) -> &'static str {
+    match s {
+        TradeSession::Intraday => "Intraday",
+        TradeSession::Pre => "Pre",
+        TradeSession::Post => "Post",
+        TradeSession::Overnight => "Overnight",
+    }
+}
+
+fn pre_post_quote_to_json(q: &PrePostQuote) -> serde_json::Value {
+    serde_json::json!({
+        "last": q.last_done.to_string(),
+        "timestamp": fmt_datetime(q.timestamp),
+        "high": q.high.to_string(),
+        "low": q.low.to_string(),
+        "volume": q.volume,
+        "turnover": q.turnover.to_string(),
+        "prev_close": q.prev_close.to_string(),
+    })
 }
 
 fn parse_calc_indexes(indexes: &[String]) -> Vec<CalcIndex> {
@@ -103,35 +134,97 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
     let ctx = crate::openapi::quote();
     let quotes = ctx.quote(symbols).await?;
 
-    let headers = &[
-        "Symbol",
-        "Last",
-        "Prev Close",
-        "Open",
-        "High",
-        "Low",
-        "Volume",
-        "Turnover",
-        "Status",
-    ];
-    let rows = quotes
-        .iter()
-        .map(|q| {
-            vec![
-                q.symbol.clone(),
-                fmt_dec(q.last_done),
-                fmt_dec(q.prev_close),
-                fmt_dec(q.open),
-                fmt_dec(q.high),
-                fmt_dec(q.low),
-                q.volume.to_string(),
-                fmt_dec(q.turnover),
-                format!("{:?}", q.trade_status),
-            ]
-        })
-        .collect();
+    match format {
+        OutputFormat::Json => {
+            let records: Vec<serde_json::Value> = quotes
+                .iter()
+                .map(|q| {
+                    serde_json::json!({
+                        "symbol": q.symbol,
+                        "last": q.last_done.to_string(),
+                        "prev_close": q.prev_close.to_string(),
+                        "open": q.open.to_string(),
+                        "high": q.high.to_string(),
+                        "low": q.low.to_string(),
+                        "volume": q.volume,
+                        "turnover": q.turnover.to_string(),
+                        "status": format!("{:?}", q.trade_status),
+                        "pre_market_quote": q.pre_market_quote.as_ref().map(pre_post_quote_to_json),
+                        "post_market_quote": q.post_market_quote.as_ref().map(pre_post_quote_to_json),
+                        "overnight_quote": q.overnight_quote.as_ref().map(pre_post_quote_to_json),
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&records)?);
+        }
+        OutputFormat::Table => {
+            let headers = &[
+                "Symbol",
+                "Last",
+                "Prev Close",
+                "Open",
+                "High",
+                "Low",
+                "Volume",
+                "Turnover",
+                "Status",
+            ];
+            let rows = quotes
+                .iter()
+                .map(|q| {
+                    vec![
+                        q.symbol.clone(),
+                        fmt_dec(q.last_done),
+                        fmt_dec(q.prev_close),
+                        fmt_dec(q.open),
+                        fmt_dec(q.high),
+                        fmt_dec(q.low),
+                        q.volume.to_string(),
+                        fmt_dec(q.turnover),
+                        format!("{:?}", q.trade_status),
+                    ]
+                })
+                .collect();
+            print_table(headers, rows, format);
 
-    print_table(headers, rows, format);
+            // Show extended-hours rows when available
+            let ext_rows: Vec<Vec<String>> = quotes
+                .iter()
+                .flat_map(|q| {
+                    let sessions: &[(&str, &Option<PrePostQuote>)] = &[
+                        ("Pre", &q.pre_market_quote),
+                        ("Post", &q.post_market_quote),
+                        ("Overnight", &q.overnight_quote),
+                    ];
+                    sessions
+                        .iter()
+                        .filter_map(|(label, opt)| {
+                            opt.as_ref().map(|pmq| {
+                                vec![
+                                    q.symbol.clone(),
+                                    label.to_string(),
+                                    fmt_dec(pmq.last_done),
+                                    fmt_dec(pmq.high),
+                                    fmt_dec(pmq.low),
+                                    pmq.volume.to_string(),
+                                    fmt_dec(pmq.prev_close),
+                                    fmt_datetime(pmq.timestamp),
+                                ]
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            if !ext_rows.is_empty() {
+                println!("\nExtended Hours:");
+                print_table(
+                    &["Symbol", "Session", "Last", "High", "Low", "Volume", "Prev Close", "Time"],
+                    ext_rows,
+                    format,
+                );
+            }
+        }
+    }
     Ok(())
 }
 
@@ -277,9 +370,10 @@ pub async fn cmd_trades(symbol: String, count: usize, format: &OutputFormat) -> 
     Ok(())
 }
 
-pub async fn cmd_intraday(symbol: String, format: &OutputFormat) -> Result<()> {
+pub async fn cmd_intraday(symbol: String, session: &str, format: &OutputFormat) -> Result<()> {
     let ctx = crate::openapi::quote();
-    let lines = ctx.intraday(symbol, TradeSessions::Intraday).await?;
+    let trade_sessions = parse_trade_sessions(session)?;
+    let lines = ctx.intraday(symbol, trade_sessions).await?;
 
     let headers = &["Time", "Price", "Volume", "Turnover", "Avg Price"];
     let rows = lines
@@ -304,32 +398,52 @@ pub async fn cmd_kline(
     period: &str,
     count: usize,
     adjust: &str,
+    session: &str,
     format: &OutputFormat,
 ) -> Result<()> {
     let ctx = crate::openapi::quote();
     let p = parse_period(period)?;
     let adj = parse_adjust(adjust)?;
-    let candles = ctx
-        .candlesticks(symbol, p, count, adj, TradeSessions::Intraday)
-        .await?;
+    let trade_sessions = parse_trade_sessions(session)?;
+    let candles = ctx.candlesticks(symbol, p, count, adj, trade_sessions).await?;
 
-    let headers = &["Time", "Open", "High", "Low", "Close", "Volume", "Turnover"];
-    let rows = candles
-        .iter()
-        .map(|c| {
-            vec![
-                fmt_datetime(c.timestamp),
-                fmt_dec(c.open),
-                fmt_dec(c.high),
-                fmt_dec(c.low),
-                fmt_dec(c.close),
-                c.volume.to_string(),
-                fmt_dec(c.turnover),
-            ]
-        })
-        .collect();
-
-    print_table(headers, rows, format);
+    let show_session = matches!(trade_sessions, TradeSessions::All);
+    if show_session {
+        let headers = &["Time", "Session", "Open", "High", "Low", "Close", "Volume", "Turnover"];
+        let rows = candles
+            .iter()
+            .map(|c| {
+                vec![
+                    fmt_datetime(c.timestamp),
+                    fmt_trade_session(&c.trade_session).to_string(),
+                    fmt_dec(c.open),
+                    fmt_dec(c.high),
+                    fmt_dec(c.low),
+                    fmt_dec(c.close),
+                    c.volume.to_string(),
+                    fmt_dec(c.turnover),
+                ]
+            })
+            .collect();
+        print_table(headers, rows, format);
+    } else {
+        let headers = &["Time", "Open", "High", "Low", "Close", "Volume", "Turnover"];
+        let rows = candles
+            .iter()
+            .map(|c| {
+                vec![
+                    fmt_datetime(c.timestamp),
+                    fmt_dec(c.open),
+                    fmt_dec(c.high),
+                    fmt_dec(c.low),
+                    fmt_dec(c.close),
+                    c.volume.to_string(),
+                    fmt_dec(c.turnover),
+                ]
+            })
+            .collect();
+        print_table(headers, rows, format);
+    }
     Ok(())
 }
 
@@ -339,11 +453,13 @@ pub async fn cmd_kline_history(
     start: Option<String>,
     end: Option<String>,
     adjust: &str,
+    session: &str,
     format: &OutputFormat,
 ) -> Result<()> {
     let ctx = crate::openapi::quote();
     let p = parse_period(period)?;
     let adj = parse_adjust(adjust)?;
+    let trade_sessions = parse_trade_sessions(session)?;
 
     let candles = if let (Some(s), Some(e)) = (start, end) {
         let start_date = parse_date(&s)?;
@@ -354,39 +470,51 @@ pub async fn cmd_kline_history(
             adj,
             Some(start_date),
             Some(end_date),
-            TradeSessions::Intraday,
+            trade_sessions,
         )
         .await?
     } else {
-        ctx.history_candlesticks_by_offset(
-            symbol,
-            p,
-            adj,
-            false,
-            None,
-            100,
-            TradeSessions::Intraday,
-        )
-        .await?
+        ctx.history_candlesticks_by_offset(symbol, p, adj, false, None, 100, trade_sessions)
+            .await?
     };
 
-    let headers = &["Time", "Open", "High", "Low", "Close", "Volume", "Turnover"];
-    let rows = candles
-        .iter()
-        .map(|c| {
-            vec![
-                fmt_datetime(c.timestamp),
-                fmt_dec(c.open),
-                fmt_dec(c.high),
-                fmt_dec(c.low),
-                fmt_dec(c.close),
-                c.volume.to_string(),
-                fmt_dec(c.turnover),
-            ]
-        })
-        .collect();
-
-    print_table(headers, rows, format);
+    let show_session = matches!(trade_sessions, TradeSessions::All);
+    if show_session {
+        let headers = &["Time", "Session", "Open", "High", "Low", "Close", "Volume", "Turnover"];
+        let rows = candles
+            .iter()
+            .map(|c| {
+                vec![
+                    fmt_datetime(c.timestamp),
+                    fmt_trade_session(&c.trade_session).to_string(),
+                    fmt_dec(c.open),
+                    fmt_dec(c.high),
+                    fmt_dec(c.low),
+                    fmt_dec(c.close),
+                    c.volume.to_string(),
+                    fmt_dec(c.turnover),
+                ]
+            })
+            .collect();
+        print_table(headers, rows, format);
+    } else {
+        let headers = &["Time", "Open", "High", "Low", "Close", "Volume", "Turnover"];
+        let rows = candles
+            .iter()
+            .map(|c| {
+                vec![
+                    fmt_datetime(c.timestamp),
+                    fmt_dec(c.open),
+                    fmt_dec(c.high),
+                    fmt_dec(c.low),
+                    fmt_dec(c.close),
+                    c.volume.to_string(),
+                    fmt_dec(c.turnover),
+                ]
+            })
+            .collect();
+        print_table(headers, rows, format);
+    }
     Ok(())
 }
 
