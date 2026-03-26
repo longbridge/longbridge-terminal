@@ -127,7 +127,7 @@ longbridge topic-detail <id>                     # Full details of a community t
 longbridge topic-replies <id> [--page 1]         # Paginated list of replies for a topic (--size 1–50)
 longbridge my-topics [--type article]            # Topics created by the authenticated user
 longbridge create-topic --body "…"               # Publish a new community discussion topic (--title optional)
-longbridge create-reply <id> --body "…"          # Post a reply to a topic (--reply-to <reply_id> for nested replies)
+longbridge create-topic-reply <id> --body "…"    # Post a reply to a topic (--reply-to <reply_id> for nested replies)
 ```
 
 ### Options & Warrants

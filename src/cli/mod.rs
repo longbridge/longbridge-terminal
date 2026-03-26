@@ -560,9 +560,9 @@ pub enum Commands {
     /// 4th=3s, 5th=5s, 6th=8s, 7th=13s, 8th=21s, 9th=34s, 10th+=55s (cap).
     /// Returns 429 when exceeded. Thresholds are for reference and may change.
     ///
-    /// Example: longbridge create-reply 6993508780031016960 --body "Great post!"
-    /// Example: longbridge create-reply 6993508780031016960 --body "Agreed!" --reply-to 7001234567890123456
-    CreateReply {
+    /// Example: longbridge create-topic-reply 6993508780031016960 --body "Great post!"
+    /// Example: longbridge create-topic-reply 6993508780031016960 --body "Agreed!" --reply-to 7001234567890123456
+    CreateTopicReply {
         /// Topic ID to reply to (e.g. 6993508780031016960)
         topic_id: String,
         /// Reply body — plain text only; Markdown/HTML are NOT rendered.
@@ -925,7 +925,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
             page,
             size,
         } => topic::cmd_topic_replies(topic_id, page, size, format).await,
-        Commands::CreateReply {
+        Commands::CreateTopicReply {
             topic_id,
             body,
             reply_to_id,
