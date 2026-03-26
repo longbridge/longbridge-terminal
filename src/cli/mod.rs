@@ -42,7 +42,7 @@ Use --format json on any command for machine-readable output suitable for AI age
   longbridge positions --format json | jq '.[] | {symbol, quantity}'\n\n\
 Use `longbridge tui` to launch the interactive full-screen terminal UI.")]
 #[command(version)]
-#[command(after_help = "Run any command with --help (not -h) for full descriptions and examples.")]
+#[command(after_help = "Each command has two help levels:\n  longbridge <command> -h       brief summary (options only)\n  longbridge <command> --help   full detail: constraints, rate limits, return fields, examples")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -473,7 +473,7 @@ pub enum Commands {
 
     /// Publish a new community discussion topic
     ///
-    /// Requirements: user must have a Longbridge account with assets; returns 403 otherwise.
+    /// Only users who have opened a Longbridge account and hold assets are allowed.
     ///
     /// Rate limit: max 3 topics per user per minute, 10 per 24 hours. Returns 429 when exceeded.
     ///
@@ -543,7 +543,7 @@ pub enum Commands {
     ///
     /// Returns the new reply ID on success.
     ///
-    /// Requirements: user must have a Longbridge account with assets; returns 403 otherwise.
+    /// Only users who have opened a Longbridge account and hold assets are allowed.
     ///
     /// Body format: plain text only — HTML and Markdown are NOT rendered; they appear as literal
     /// characters. Symbols mentioned in the body (e.g. TSLA.US, 700.HK) are automatically
