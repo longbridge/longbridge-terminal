@@ -41,7 +41,6 @@ pub fn format_topic_contents(text: &str) -> String {
     result
 }
 
-
 fn owned_topic_to_json(item: &OwnedTopic) -> serde_json::Value {
     serde_json::json!({
         "id": item.id,
@@ -207,32 +206,27 @@ pub async fn cmd_topic_replies(
         return Ok(());
     }
 
-    let headers = &["id", "author", "body", "reply_to", "created_at", "likes"];
-    let rows = items
-        .iter()
-        .map(|item| {
-            let body = if item.body.len() > 60 {
-                format!("{}...", &item.body[..60])
-            } else {
-                item.body.clone()
-            };
-            let reply_to = if item.reply_to_id == "0" {
-                String::new()
-            } else {
-                item.reply_to_id.clone()
-            };
-            vec![
-                item.id.clone(),
-                item.author.name.clone(),
-                body,
-                reply_to,
-                format_datetime(item.created_at),
-                item.likes_count.to_string(),
-            ]
-        })
-        .collect();
-
-    print_table(headers, rows, format);
+    for (i, item) in items.iter().enumerate() {
+        if i > 0 {
+            println!("{}", "-".repeat(60));
+            println!();
+        }
+        println!("ID:      {}", item.id);
+        println!("Author:  {}", item.author.name);
+        if item.reply_to_id != "0" {
+            println!("Reply to: {}", item.reply_to_id);
+        }
+        println!(
+            "Stats:   {} likes  {} replies",
+            item.likes_count, item.comments_count
+        );
+        println!("Created: {}", format_datetime(item.created_at));
+        let body = format_topic_contents(&item.body);
+        if !body.is_empty() {
+            println!("\n{body}");
+        }
+        println!();
+    }
     Ok(())
 }
 

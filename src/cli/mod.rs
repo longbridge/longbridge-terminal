@@ -472,6 +472,10 @@ pub enum Commands {
 
     /// Publish a new community discussion topic
     ///
+    /// Requirements: user must have a Longbridge account with assets; returns 403 otherwise.
+    ///
+    /// Rate limit: max 3 topics per user per minute, 10 per 24 hours. Returns 429 when exceeded.
+    ///
     /// Two content types, with different body requirements:
     ///
     ///   --type post (default)
@@ -490,22 +494,19 @@ pub enum Commands {
     ///   Symbols mentioned in the body (e.g. 700.HK, TSLA.US) are automatically
     ///   recognized and linked as related stocks by the platform. Use --tickers to
     ///   explicitly associate additional stocks not mentioned in the body.
+    ///   Do NOT abuse symbol linking to associate unrelated stocks — moderation may
+    ///   restrict publishing or mute the account.
     CreateTopic {
-        /// Article title. Required for --type article; omit for --type post.
+        /// Topic title. Required for --type article; optional for --type post.
         #[arg(long)]
         title: Option<String>,
-        /// Body text. Format depends on --type:
-        ///   post (default): plain text only. Line breaks with \n are preserved.
-        ///     Markdown and HTML tags appear as literal characters (like a tweet).
-        ///     A warning is printed if Markdown or HTML syntax is detected.
-        ///   article: Markdown supported. The server converts it to HTML for
-        ///     storage and display (headers, tables, bold, code blocks, etc.).
+        /// Topic body. Plain text for post type; Markdown for article type.
         #[arg(long)]
         body: String,
-        /// Content type: post (plain text, default) | article (Markdown → HTML)
+        /// Content type: post (plain text, default) | article (Markdown)
         #[arg(long = "type")]
         post_type: Option<String>,
-        /// Related stock tickers, comma-separated, e.g. 700.HK,TSLA.US (max 10)
+        /// Additional stock tickers to associate, comma-separated, e.g. 700.HK,TSLA.US (max 10)
         #[arg(long, value_delimiter = ',')]
         tickers: Vec<String>,
     },
@@ -537,16 +538,15 @@ pub enum Commands {
     ///
     /// Returns the new reply ID on success.
     ///
-    /// Only users who have opened a **Longbridge account and hold assets** are allowed.
+    /// Requirements: user must have a Longbridge account with assets; returns 403 otherwise.
     ///
-    /// Plain text only — HTML and Markdown are **not** rendered.
+    /// Body format: plain text only — HTML and Markdown are NOT rendered; they appear as literal
+    /// characters. Symbols mentioned in the body (e.g. TSLA.US, 700.HK) are automatically
+    /// recognized and linked as related stocks. Do NOT abuse symbol linking to associate
+    /// unrelated stocks — moderation may restrict publishing or mute the account.
     ///
-    /// Symbols mentioned in the body (e.g. `TSLA.US`, `700.HK`) are automatically recognized
-    /// and linked as related stocks. Use `tickers` to associate additional symbols not explicitly
-    /// mentioned in the body.
-    ///
-    /// Nested reply: use `--reply-to <reply_id>` to nest under an existing reply.
-    /// Top-level reply: omit --reply-to.
+    /// Nested reply: use `--reply-to <reply_id>` to nest under an existing reply (get reply IDs
+    /// via topic-replies). Omit --reply-to for a top-level reply.
     ///
     /// Rate limit: first 3 replies per user per topic have no wait requirement.
     /// After that, each subsequent reply must wait an incrementally longer interval:
