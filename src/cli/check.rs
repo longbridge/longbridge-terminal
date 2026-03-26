@@ -9,8 +9,8 @@ use crate::region;
 const CONNECT_TIMEOUT_SECS: u64 = 5;
 const PROBE_COUNT: usize = 10;
 const GLOBAL_HTTP_URL: &str = "https://openapi.longbridge.com";
-const GLOBAL_PROBE_URL: &str = "https://openapi.longbridge.com";
-const CN_PROBE_URL: &str = "https://openapi.longbridge.cn";
+const GLOBAL_PROBE_URL: &str = "https://openapi.longbridge.com/health";
+const CN_PROBE_URL: &str = "https://openapi.longbridge.cn/health";
 
 // ANSI colors
 const GREEN: &str = "\x1b[32m";
@@ -35,14 +35,20 @@ async fn probe(url: &str) -> ProbeStats {
         return ProbeStats { ok: false, ms: 0 };
     };
     // Warm-up: establish connection, result not counted
-    if client.head(url).send().await.is_err() {
+    if client.get(url).send().await.is_err() {
         return ProbeStats { ok: false, ms: 0 };
     }
     let mut samples = Vec::with_capacity(PROBE_COUNT);
     for _ in 0..PROBE_COUNT {
         let start = Instant::now();
-        if client.head(url).send().await.is_err() {
-            return ProbeStats { ok: false, ms: 0 };
+        match client.get(url).send().await {
+            Ok(resp) => {
+                let body = resp.text().await.unwrap_or_default();
+                if body.trim() != "success" {
+                    return ProbeStats { ok: false, ms: 0 };
+                }
+            }
+            Err(_) => return ProbeStats { ok: false, ms: 0 },
         }
         samples.push(start.elapsed().as_millis() as u64);
     }
