@@ -98,8 +98,17 @@ pub async fn init_contexts() -> Result<(
     let mut config_builder = config_builder;
     let mut http_client_config = http_client_config;
 
-    // If last geotest indicated China Mainland, use CN endpoints directly.
-    if crate::region::is_cn_cached() {
+    // If LONGBRIDGE_TEST_ENV is set, override all endpoints to test environment.
+    // This takes highest priority over region detection.
+    if std::env::var("LONGBRIDGE_TEST_ENV").is_ok() {
+        tracing::info!("Using TEST environment endpoints (openapi.longbridge.xyz)");
+        config_builder = config_builder
+            .http_url(crate::region::HTTP_URL_TEST)
+            .quote_ws_url(crate::region::QUOTE_WS_URL_TEST)
+            .trade_ws_url(crate::region::TRADE_WS_URL_TEST);
+        http_client_config = http_client_config.http_url(crate::region::HTTP_URL_TEST);
+    } else if crate::region::is_cn_cached() {
+        // If last geotest indicated China Mainland, use CN endpoints directly.
         tracing::debug!("Using CN region endpoints (cached)");
         config_builder = config_builder
             .http_url(crate::region::HTTP_URL_CN)
