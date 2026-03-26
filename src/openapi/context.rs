@@ -6,6 +6,9 @@ use super::wrapper::{RateLimitedQuoteContext, RateLimitedTradeContext};
 /// Global `QuoteContext`
 pub static QUOTE_CTX: OnceLock<longbridge::quote::QuoteContext> = OnceLock::new();
 
+/// Global `StatementContext`
+pub static STATEMENT_CTX: OnceLock<longbridge::StatementContext> = OnceLock::new();
+
 /// Global `TradeContext`
 pub static TRADE_CTX: OnceLock<longbridge::trade::TradeContext> = OnceLock::new();
 
@@ -112,6 +115,11 @@ pub async fn init_contexts() -> Result<(
         .set(content_ctx)
         .map_err(|_| anyhow::anyhow!("ContentContext already initialized"))?;
 
+    let statement_ctx = longbridge::StatementContext::new(Arc::clone(&config));
+    STATEMENT_CTX
+        .set(statement_ctx)
+        .map_err(|_| anyhow::anyhow!("StatementContext already initialized"))?;
+
     let http_client = longbridge::httpclient::HttpClient::new(http_client_config);
     HTTP_CLIENT
         .set(http_client)
@@ -190,4 +198,11 @@ pub fn trade_limited() -> &'static RateLimitedTradeContext {
     RATE_LIMITED_TRADE_CTX
         .get()
         .expect("TradeContext not initialized, please call init_contexts() first")
+}
+
+/// Get global `StatementContext`
+pub fn statement() -> &'static longbridge::StatementContext {
+    STATEMENT_CTX
+        .get()
+        .expect("StatementContext not initialized, please call init_contexts() first")
 }

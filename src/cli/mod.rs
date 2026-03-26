@@ -6,6 +6,7 @@ pub mod check;
 pub mod news;
 pub mod output;
 pub mod quote;
+pub mod statement;
 pub mod topic;
 pub mod trade;
 pub mod watchlist;
@@ -518,6 +519,17 @@ pub enum Commands {
         cmd: Option<WatchlistCmd>,
     },
 
+    // ── Statement ──────────────────────────────────────────────────────────────
+    /// Download and export account statements (daily/monthly)
+    ///
+    /// Subcommands: list  download
+    /// Example: longbridge statement list --aaid 12345
+    /// Example: longbridge statement download --file-key "/path/to/key" --section `equity_holding_sums` -o output.csv
+    Statement {
+        #[command(subcommand)]
+        cmd: StatementCmd,
+    },
+
     // ── Trade ───────────────────────────────────────────────────────────────────
     /// Today's orders, or historical orders with --history
     ///
@@ -779,6 +791,46 @@ pub enum WatchlistCmd {
     },
 }
 
+#[derive(Subcommand)]
+pub enum StatementCmd {
+    /// List available statements for an account
+    ///
+    /// Returns: date (dt), `file_key` for each statement.
+    /// Example: longbridge statement list --aaid 12345
+    /// Example: longbridge statement list --aaid 12345 --type monthly
+    List {
+        /// Account AAID (numeric identifier)
+        #[arg(long)]
+        aaid: i64,
+        /// Statement type: daily (default) | monthly
+        #[arg(long = "type", default_value = "daily")]
+        statement_type: String,
+        /// Page number (default: 1)
+        #[arg(long, default_value = "1")]
+        page: i32,
+        /// Page size (default: 20)
+        #[arg(long, default_value = "20")]
+        page_size: i32,
+    },
+
+    /// Download a statement and export a section as CSV
+    ///
+    /// Fetches the statement JSON by `file_key`, extracts the specified section,
+    /// and writes it as a CSV file.
+    /// Example: longbridge statement download --file-key KEY --section `equity_holding_sums` -o holdings.csv
+    Download {
+        /// File key from `longbridge statement list`
+        #[arg(long)]
+        file_key: String,
+        /// Section to export as CSV (e.g. `equity_holding_sums`, `stock_trade_sums`, `account_balance_change_sums`)
+        #[arg(long)]
+        section: String,
+        /// Output file path (CSV)
+        #[arg(long, short = 'o')]
+        output: String,
+    },
+}
+
 pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
     match cmd {
         Commands::Quote { symbols } => quote::cmd_quote(symbols, format).await,
@@ -851,6 +903,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
             tickers,
         } => topic::cmd_create_topic(title, body, post_type, tickers, format).await,
         Commands::Watchlist { cmd } => watchlist::cmd_watchlist(cmd, format).await,
+        Commands::Statement { cmd } => statement::cmd_statement(cmd, format).await,
         Commands::Orders {
             history,
             start,
