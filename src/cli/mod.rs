@@ -1059,7 +1059,9 @@ mod tests {
     #[test]
     fn test_intraday_subcommand() {
         let cli = parse(&["longbridge", "intraday", "TSLA.US"]).unwrap();
-        assert!(matches!(cli.command, Some(Commands::Intraday { symbol }) if symbol == "TSLA.US"));
+        assert!(
+            matches!(cli.command, Some(Commands::Intraday { symbol, .. }) if symbol == "TSLA.US")
+        );
     }
 
     #[test]
@@ -1070,6 +1072,7 @@ mod tests {
             period,
             count,
             adjust,
+            ..
         }) = cli.command
         {
             assert_eq!(symbol, "TSLA.US");
