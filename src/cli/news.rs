@@ -271,7 +271,7 @@ pub async fn cmd_topics(symbol: String, count: usize, format: &OutputFormat) -> 
                 serde_json::json!({
                     "id": item.id,
                     "title": item.title,
-                    "description": item.description,
+                    "description": crate::cli::topic::replace_stock_tags(&item.description),
                     "url": item.url,
                     "published_at": item.published_at.unix_timestamp(),
                     "likes_count": item.likes_count,
