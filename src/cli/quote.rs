@@ -42,7 +42,7 @@ fn parse_trade_sessions(s: &str) -> Result<TradeSessions> {
     }
 }
 
-fn fmt_trade_session(s: &TradeSession) -> &'static str {
+fn fmt_trade_session(s: TradeSession) -> &'static str {
     match s {
         TradeSession::Intraday => "Intraday",
         TradeSession::Pre => "Pre",
@@ -218,7 +218,16 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
             if !ext_rows.is_empty() {
                 println!("\nExtended Hours:");
                 print_table(
-                    &["Symbol", "Session", "Last", "High", "Low", "Volume", "Prev Close", "Time"],
+                    &[
+                        "Symbol",
+                        "Session",
+                        "Last",
+                        "High",
+                        "Low",
+                        "Volume",
+                        "Prev Close",
+                        "Time",
+                    ],
                     ext_rows,
                     format,
                 );
@@ -405,17 +414,21 @@ pub async fn cmd_kline(
     let p = parse_period(period)?;
     let adj = parse_adjust(adjust)?;
     let trade_sessions = parse_trade_sessions(session)?;
-    let candles = ctx.candlesticks(symbol, p, count, adj, trade_sessions).await?;
+    let candles = ctx
+        .candlesticks(symbol, p, count, adj, trade_sessions)
+        .await?;
 
     let show_session = matches!(trade_sessions, TradeSessions::All);
     if show_session {
-        let headers = &["Time", "Session", "Open", "High", "Low", "Close", "Volume", "Turnover"];
+        let headers = &[
+            "Time", "Session", "Open", "High", "Low", "Close", "Volume", "Turnover",
+        ];
         let rows = candles
             .iter()
             .map(|c| {
                 vec![
                     fmt_datetime(c.timestamp),
-                    fmt_trade_session(&c.trade_session).to_string(),
+                    fmt_trade_session(c.trade_session).to_string(),
                     fmt_dec(c.open),
                     fmt_dec(c.high),
                     fmt_dec(c.low),
@@ -480,13 +493,15 @@ pub async fn cmd_kline_history(
 
     let show_session = matches!(trade_sessions, TradeSessions::All);
     if show_session {
-        let headers = &["Time", "Session", "Open", "High", "Low", "Close", "Volume", "Turnover"];
+        let headers = &[
+            "Time", "Session", "Open", "High", "Low", "Close", "Volume", "Turnover",
+        ];
         let rows = candles
             .iter()
             .map(|c| {
                 vec![
                     fmt_datetime(c.timestamp),
-                    fmt_trade_session(&c.trade_session).to_string(),
+                    fmt_trade_session(c.trade_session).to_string(),
                     fmt_dec(c.open),
                     fmt_dec(c.high),
                     fmt_dec(c.low),
