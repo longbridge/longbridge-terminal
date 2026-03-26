@@ -2140,7 +2140,7 @@ dependencies = [
 
 [[package]]
 name = "longbridge-terminal"
-version = "0.10.1"
+version = "0.10.2"
 dependencies = [
  "ansi-parser",
  "ansi-to-tui",
