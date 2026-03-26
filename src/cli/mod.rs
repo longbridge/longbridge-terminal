@@ -42,6 +42,9 @@ Use --format json on any command for machine-readable output suitable for AI age
   longbridge positions --format json | jq '.[] | {symbol, quantity}'\n\n\
 Use `longbridge tui` to launch the interactive full-screen terminal UI.")]
 #[command(version)]
+#[command(
+    after_help = "Each command has two help levels:\n  longbridge <command> -h       brief summary (options only)\n  longbridge <command> --help   full detail: constraints, rate limits, return fields, examples"
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -457,12 +460,17 @@ pub enum Commands {
         count: usize,
     },
 
-    /// Full Markdown content of a community topic
+    /// Get full details of a community topic by its ID
     ///
-    /// Fetches the topic text from <https://longbridge.com/topics>/<id>.md
-    /// Example: longbridge topic-detail 277062200
+    /// Returns: `id`, `topic_type`, `title`, `description`, `body`, `author` (`member_id`/`name`/`avatar`),
+    /// `tickers`, `hashtags`, `images`, `likes_count`, `comments_count`, `views_count`, `shares_count`,
+    /// `detail_url`, `created_at`, `updated_at`.
+    ///
+    /// `body` is plain text for `post` type, or Markdown for `article` type.
+    ///
+    /// Example: longbridge topic-detail 6993508780031016960
     TopicDetail {
-        /// Topic ID (from `longbridge topics`)
+        /// Topic ID (e.g. 6993508780031016960)
         id: String,
     },
 
@@ -485,6 +493,10 @@ pub enum Commands {
 
     /// Publish a new community discussion topic
     ///
+    /// Only users who have opened a Longbridge account and hold assets are allowed.
+    ///
+    /// Rate limit: max 3 topics per user per minute, 10 per 24 hours. Returns 429 when exceeded.
+    ///
     /// Two content types, with different body requirements:
     ///
     ///   --type post (default)
@@ -503,24 +515,82 @@ pub enum Commands {
     ///   Symbols mentioned in the body (e.g. 700.HK, TSLA.US) are automatically
     ///   recognized and linked as related stocks by the platform. Use --tickers to
     ///   explicitly associate additional stocks not mentioned in the body.
+    ///   Do NOT abuse symbol linking to associate unrelated stocks — moderation may
+    ///   restrict publishing or mute the account.
     CreateTopic {
-        /// Article title. Required for --type article; omit for --type post.
+        /// Topic title. Required for `--type article`; optional for `--type post`.
         #[arg(long)]
         title: Option<String>,
-        /// Body text. Format depends on --type:
-        ///   post (default): plain text only. Line breaks with \n are preserved.
-        ///     Markdown and HTML tags appear as literal characters (like a tweet).
-        ///     A warning is printed if Markdown or HTML syntax is detected.
-        ///   article: Markdown supported. The server converts it to HTML for
-        ///     storage and display (headers, tables, bold, code blocks, etc.).
+        /// Topic body. post (default): plain text, Markdown NOT rendered.
+        /// article: Markdown body, title required.
+        /// Auth: account with assets required (403 otherwise).
+        /// Rate limit: 3/min, 10/24h — returns 429 when exceeded.
         #[arg(long)]
         body: String,
-        /// Content type: post (plain text, default) | article (Markdown → HTML)
+        /// Content type: post (plain text, no Markdown, default) | article (Markdown, title required)
         #[arg(long = "type")]
         post_type: Option<String>,
-        /// Related stock tickers, comma-separated, e.g. 700.HK,TSLA.US (max 10)
+        /// Extra tickers to associate, comma-separated, e.g. 700.HK,TSLA.US (max 10).
+        /// Body symbols are auto-linked; use this for symbols not mentioned in body.
         #[arg(long, value_delimiter = ',')]
         tickers: Vec<String>,
+    },
+
+    /// List replies for a community topic (paginated)
+    ///
+    /// Returns: `id`, `topic_id`, `body` (plain text), `reply_to_id`, `author` (`member_id`/`name`/`avatar`),
+    /// `images`, `likes_count`, `comments_count`, `created_at`.
+    ///
+    /// `reply_to_id` is `"0"` for top-level replies; any other value is the parent reply ID
+    /// (indicating a nested reply under that parent).
+    ///
+    /// Page size is 1–50, default 20.
+    ///
+    /// Example: longbridge topic-replies 6993508780031016960
+    /// Example: longbridge topic-replies 6993508780031016960 --page 2 --size 20
+    TopicReplies {
+        /// Topic ID (e.g. 6993508780031016960)
+        topic_id: String,
+        /// Page number, 1-based (default: 1)
+        #[arg(long, default_value = "1")]
+        page: i32,
+        /// Records per page, 1–50 (default: 20)
+        #[arg(long, default_value = "20")]
+        size: i32,
+    },
+
+    /// Post a reply to a community topic
+    ///
+    /// Returns the new reply ID on success.
+    ///
+    /// Only users who have opened a Longbridge account and hold assets are allowed.
+    ///
+    /// Body format: plain text only — HTML and Markdown are NOT rendered; they appear as literal
+    /// characters. Symbols mentioned in the body (e.g. TSLA.US, 700.HK) are automatically
+    /// recognized and linked as related stocks. Do NOT abuse symbol linking to associate
+    /// unrelated stocks — moderation may restrict publishing or mute the account.
+    ///
+    /// Nested reply: use `--reply-to <reply_id>` to nest under an existing reply (get reply IDs
+    /// via topic-replies). Omit --reply-to for a top-level reply.
+    ///
+    /// Rate limit: first 3 replies per user per topic have no wait requirement.
+    /// After that, each subsequent reply must wait an incrementally longer interval:
+    /// 4th=3s, 5th=5s, 6th=8s, 7th=13s, 8th=21s, 9th=34s, 10th+=55s (cap).
+    /// Returns 429 when exceeded. Thresholds are for reference and may change.
+    ///
+    /// Example: longbridge create-topic-reply 6993508780031016960 --body "Great post!"
+    /// Example: longbridge create-topic-reply 6993508780031016960 --body "Agreed!" --reply-to 7001234567890123456
+    CreateTopicReply {
+        /// Topic ID to reply to (e.g. 6993508780031016960)
+        topic_id: String,
+        /// Reply body — plain text only; Markdown/HTML are NOT rendered.
+        /// Auth: account with assets required (403 otherwise).
+        /// Rate limit: first 3 replies/topic free; 4th=3s, 5th=5s, 6th=8s, ..., 10th+=55s wait (429 if exceeded).
+        #[arg(long)]
+        body: String,
+        /// Nest under this reply ID (get IDs from topic-replies). Omit for a top-level reply.
+        #[arg(long = "reply-to")]
+        reply_to_id: Option<String>,
     },
 
     // ── Watchlist ───────────────────────────────────────────────────────────────
@@ -860,7 +930,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
             file_index,
         } => news::cmd_filing_detail(symbol, id, list_files, file_index).await,
         Commands::Topics { symbol, count } => news::cmd_topics(symbol, count, format).await,
-        Commands::TopicDetail { id } => news::cmd_topic_detail(id).await,
+        Commands::TopicDetail { id } => topic::cmd_topic_detail_api(id, format).await,
         Commands::MyTopics {
             page,
             size,
@@ -872,6 +942,16 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
             post_type,
             tickers,
         } => topic::cmd_create_topic(title, body, post_type, tickers, format).await,
+        Commands::TopicReplies {
+            topic_id,
+            page,
+            size,
+        } => topic::cmd_topic_replies(topic_id, page, size, format).await,
+        Commands::CreateTopicReply {
+            topic_id,
+            body,
+            reply_to_id,
+        } => topic::cmd_create_reply(topic_id, body, reply_to_id, format).await,
         Commands::Watchlist { cmd } => watchlist::cmd_watchlist(cmd, format).await,
         Commands::Orders {
             history,

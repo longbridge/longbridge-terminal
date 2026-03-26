@@ -1,9 +1,17 @@
 use anyhow::Result;
-use longbridge::content::{CreateTopicOptions, MyTopicsOptions, OwnedTopic};
+use longbridge::content::{
+    CreateTopicOptions, CreateReplyOptions, ListTopicRepliesOptions, MyTopicsOptions,
+    OwnedTopic, TopicReply,
+};
 use regex::Regex;
 use time::OffsetDateTime;
 
 use super::{output::print_table, OutputFormat};
+
+fn format_datetime(dt: OffsetDateTime) -> String {
+    dt.format(&time::format_description::well_known::Rfc3339)
+        .unwrap_or_default()
+}
 
 /// Format topic content by replacing `[st]ST/MARKET/SYMBOL#...[/st]` tags with ticker symbols like `TSLA.US`.
 pub fn format_topic_contents(text: &str) -> String {
@@ -31,17 +39,6 @@ pub fn format_topic_contents(text: &str) -> String {
     }
     result.push_str(remaining);
     result
-}
-
-fn format_datetime(dt: OffsetDateTime) -> String {
-    format!(
-        "{}-{:02}-{:02} {:02}:{:02}",
-        dt.year(),
-        dt.month() as u8,
-        dt.day(),
-        dt.hour(),
-        dt.minute()
-    )
 }
 
 fn owned_topic_to_json(item: &OwnedTopic) -> serde_json::Value {
@@ -120,6 +117,141 @@ pub async fn cmd_topics_mine(
         .collect();
 
     print_table(headers, rows, format);
+    Ok(())
+}
+
+fn topic_reply_to_json(item: &TopicReply) -> serde_json::Value {
+    serde_json::json!({
+        "id": item.id,
+        "topic_id": item.topic_id,
+        "body": item.body,
+        "reply_to_id": item.reply_to_id,
+        "author": {
+            "member_id": item.author.member_id,
+            "name": item.author.name,
+        },
+        "likes_count": item.likes_count,
+        "comments_count": item.comments_count,
+        "created_at": item.created_at.unix_timestamp(),
+    })
+}
+
+/// Get full details of a topic by ID via the `OpenAPI` (`GET /v1/content/topics/{id}`).
+pub async fn cmd_topic_detail_api(id: String, format: &OutputFormat) -> Result<()> {
+    let item = crate::openapi::content().topic_detail(id).await?;
+
+    if matches!(format, OutputFormat::Json) {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&item).unwrap_or_default()
+        );
+        return Ok(());
+    }
+
+    println!("ID:       {}", item.id);
+    println!("Type:     {}", item.topic_type);
+    if !item.title.is_empty() {
+        println!("Title:    {}", item.title);
+    }
+    if !item.tickers.is_empty() {
+        println!("Tickers:  {}", item.tickers.join(", "));
+    }
+    if !item.hashtags.is_empty() {
+        println!("Tags:     {}", item.hashtags.join(", "));
+    }
+    println!(
+        "Stats:    {} likes  {} comments  {} views",
+        item.likes_count, item.comments_count, item.views_count
+    );
+    println!("Created:  {}", format_datetime(item.created_at));
+    println!("URL:      {}", item.detail_url);
+    let content = if item.topic_type == "post" {
+        item.description.clone()
+    } else {
+        item.body.clone()
+    };
+
+    if !content.is_empty() {
+        println!("\n{}", format_topic_contents(&content));
+    }
+    Ok(())
+}
+
+/// List replies for a topic.
+pub async fn cmd_topic_replies(
+    topic_id: String,
+    page: i32,
+    size: i32,
+    format: &OutputFormat,
+) -> Result<()> {
+    let opts = ListTopicRepliesOptions {
+        page: Some(page),
+        size: Some(size),
+    };
+    let items = crate::openapi::content()
+        .list_topic_replies(topic_id, opts)
+        .await?;
+
+    if items.is_empty() {
+        println!("No replies found.");
+        return Ok(());
+    }
+
+    if matches!(format, OutputFormat::Json) {
+        let records: Vec<_> = items.iter().map(topic_reply_to_json).collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&records).unwrap_or_default()
+        );
+        return Ok(());
+    }
+
+    for (i, item) in items.iter().enumerate() {
+        if i > 0 {
+            println!("{}", "-".repeat(60));
+            println!();
+        }
+        println!("ID:      {}", item.id);
+        println!("Author:  {}", item.author.name);
+        if item.reply_to_id != "0" {
+            println!("Reply to: {}", item.reply_to_id);
+        }
+        println!(
+            "Stats:   {} likes  {} replies",
+            item.likes_count, item.comments_count
+        );
+        println!("Created: {}", format_datetime(item.created_at));
+        let body = format_topic_contents(&item.body);
+        if !body.is_empty() {
+            println!("\n{body}");
+        }
+        println!();
+    }
+    Ok(())
+}
+
+/// Post a reply to a topic.
+pub async fn cmd_create_reply(
+    topic_id: String,
+    body: String,
+    reply_to_id: Option<String>,
+    format: &OutputFormat,
+) -> Result<()> {
+    let opts = CreateReplyOptions { body, reply_to_id };
+    let reply = crate::openapi::content()
+        .create_topic_reply(topic_id, opts)
+        .await?;
+
+    if matches!(format, OutputFormat::Json) {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&topic_reply_to_json(&reply)).unwrap_or_default()
+        );
+        return Ok(());
+    }
+
+    println!("Reply created successfully.");
+    println!("  ID: {}", reply.id);
     Ok(())
 }
 
