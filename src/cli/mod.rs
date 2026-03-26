@@ -42,6 +42,7 @@ Use --format json on any command for machine-readable output suitable for AI age
   longbridge positions --format json | jq '.[] | {symbol, quantity}'\n\n\
 Use `longbridge tui` to launch the interactive full-screen terminal UI.")]
 #[command(version)]
+#[command(after_help = "Run any command with --help (not -h) for full descriptions and examples.")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -497,16 +498,20 @@ pub enum Commands {
     ///   Do NOT abuse symbol linking to associate unrelated stocks — moderation may
     ///   restrict publishing or mute the account.
     CreateTopic {
-        /// Topic title. Required for --type article; optional for --type post.
+        /// Topic title. Required for `--type article`; optional for `--type post`.
         #[arg(long)]
         title: Option<String>,
-        /// Topic body. Plain text for post type; Markdown for article type.
+        /// Topic body. post (default): plain text, Markdown NOT rendered.
+        /// article: Markdown body, title required.
+        /// Auth: account with assets required (403 otherwise).
+        /// Rate limit: 3/min, 10/24h — returns 429 when exceeded.
         #[arg(long)]
         body: String,
-        /// Content type: post (plain text, default) | article (Markdown)
+        /// Content type: post (plain text, no Markdown, default) | article (Markdown, title required)
         #[arg(long = "type")]
         post_type: Option<String>,
-        /// Additional stock tickers to associate, comma-separated, e.g. 700.HK,TSLA.US (max 10)
+        /// Extra tickers to associate, comma-separated, e.g. 700.HK,TSLA.US (max 10).
+        /// Body symbols are auto-linked; use this for symbols not mentioned in body.
         #[arg(long, value_delimiter = ',')]
         tickers: Vec<String>,
     },
@@ -558,10 +563,12 @@ pub enum Commands {
     CreateReply {
         /// Topic ID to reply to (e.g. 6993508780031016960)
         topic_id: String,
-        /// Reply body — plain text only; Markdown and HTML are not rendered
+        /// Reply body — plain text only; Markdown/HTML are NOT rendered.
+        /// Auth: account with assets required (403 otherwise).
+        /// Rate limit: first 3 replies/topic free; 4th=3s, 5th=5s, 6th=8s, ..., 10th+=55s wait (429 if exceeded).
         #[arg(long)]
         body: String,
-        /// ID of the reply to nest under; omit for a top-level reply
+        /// Nest under this reply ID (get IDs from topic-replies). Omit for a top-level reply.
         #[arg(long = "reply-to")]
         reply_to_id: Option<String>,
     },
