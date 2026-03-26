@@ -42,7 +42,9 @@ Use --format json on any command for machine-readable output suitable for AI age
   longbridge positions --format json | jq '.[] | {symbol, quantity}'\n\n\
 Use `longbridge tui` to launch the interactive full-screen terminal UI.")]
 #[command(version)]
-#[command(after_help = "Each command has two help levels:\n  longbridge <command> -h       brief summary (options only)\n  longbridge <command> --help   full detail: constraints, rate limits, return fields, examples")]
+#[command(
+    after_help = "Each command has two help levels:\n  longbridge <command> -h       brief summary (options only)\n  longbridge <command> --help   full detail: constraints, rate limits, return fields, examples"
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,
