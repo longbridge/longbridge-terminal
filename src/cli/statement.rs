@@ -46,7 +46,7 @@ async fn cmd_list(
     let options = GetStatementListOptions::new(st)
         .page(page)
         .page_size(page_size);
-    let resp = ctx.statement_data_list(options).await?;
+    let resp = ctx.statements(options).await?;
 
     let headers = &["Date", "File Key"];
     let rows: Vec<Vec<String>> = resp
@@ -66,7 +66,7 @@ async fn cmd_export(
 ) -> Result<()> {
     let ctx = crate::openapi::statement();
     let options = GetStatementOptions::new(file_key);
-    let resp = ctx.statement_data_download_url(options).await?;
+    let resp = ctx.statement_download_url(options).await?;
 
     // Fetch the statement JSON
     let client = reqwest::Client::new();
