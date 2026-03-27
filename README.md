@@ -149,6 +149,18 @@ longbridge watchlist update <id> --remove AAPL.US  # Remove securities from a gr
 longbridge watchlist delete <id>                   # Delete a watchlist group
 ```
 
+### Statements
+
+```bash
+longbridge statements                                          # List available statements (daily, last 5)
+longbridge statements --type monthly --limit 3                 # Monthly statements
+longbridge statements --start-date 20250101                    # Statements since a date
+longbridge statement-export <file_key>                         # Export all sections as markdown (stdout)
+longbridge statement-export <file_key> -o report.md            # Export all sections to a markdown file
+longbridge statement-export <file_key> -o ./out/               # Export each section as a CSV in directory
+longbridge statement-export <file_key> --section stock_trades -o trades.csv  # Single section as CSV
+```
+
 ### Trading
 
 ```bash

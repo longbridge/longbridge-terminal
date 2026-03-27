@@ -520,14 +520,46 @@ pub enum Commands {
     },
 
     // ── Statement ──────────────────────────────────────────────────────────────
-    /// Download and export account statements (daily/monthly)
+    /// List available account statements (daily/monthly)
     ///
-    /// Subcommands: list  download
-    /// Example: longbridge statement list --aaid 12345
-    /// Example: longbridge statement download --file-key "/path/to/key" --section `equity_holding_sums` -o output.csv
-    Statement {
-        #[command(subcommand)]
-        cmd: StatementCmd,
+    /// Returns: date, `file_key` for each statement.
+    /// Example: longbridge statements
+    /// Example: longbridge statements --type monthly
+    /// Example: longbridge statements --start-date 20250101 --limit 10
+    Statements {
+        /// Statement type: daily (default) | monthly
+        #[arg(long = "type", default_value = "daily")]
+        statement_type: String,
+        /// Start date for query (YYYYMMDD, e.g. 20250101)
+        #[arg(long)]
+        start_date: Option<i32>,
+        /// Number of results to return
+        #[arg(long, default_value = "5")]
+        limit: i32,
+    },
+
+    /// Export sections from an account statement as markdown or CSV
+    ///
+    /// Fetches the statement JSON by `file_key` and extracts the requested sections.
+    /// Omit --section to export all sections.
+    ///
+    /// With no -o: prints markdown to stdout (good for piping to AI tools).
+    /// With -o <dir/>: saves each section as a separate CSV file in the directory.
+    /// With -o <file.csv>: saves the section as CSV.
+    /// With -o <file.md>: saves as markdown.
+    ///
+    /// Example: longbridge statement-export KEY --section `equity_holdings`
+    /// Example: longbridge statement-export KEY -o ./report/
+    /// Example: longbridge statement-export KEY --section `stock_trades` -o trades.csv
+    StatementExport {
+        /// File key from `longbridge statements`
+        file_key: String,
+        /// Sections to export (omit to export all sections)
+        #[arg(long, num_args = 0..)]
+        section: Vec<StatementSection>,
+        /// Output path: directory or file. Omit to print markdown to stdout.
+        #[arg(long, short = 'o')]
+        output: Option<String>,
     },
 
     // ── Trade ───────────────────────────────────────────────────────────────────
@@ -843,63 +875,6 @@ pub enum StatementSection {
     GstDetails,
 }
 
-#[derive(ValueEnum, Clone, Debug)]
-pub enum ExportFormat {
-    #[value(name = "csv")]
-    Csv,
-    #[value(name = "md")]
-    Md,
-}
-
-#[derive(Subcommand)]
-pub enum StatementCmd {
-    /// List available statements for an account
-    ///
-    /// Returns: date (dt), `file_key` for each statement.
-    /// Example: longbridge statement list --aaid 12345
-    /// Example: longbridge statement list --aaid 12345 --type monthly
-    List {
-        /// Statement type: daily (default) | monthly
-        #[arg(long = "type", default_value = "daily")]
-        statement_type: String,
-        /// start date of query
-        #[arg(long)]
-        start_date: i32,
-        /// query limit (default: 5)
-        #[arg(long, default_value = "5")]
-        limit: i32,
-    },
-
-    /// Export statement sections as CSV files or markdown
-    ///
-    /// Fetches the statement JSON by `file_key`, extracts the specified sections,
-    /// and either saves them as files or prints to stdout.
-    ///
-    /// When `-o` is provided, defaults to CSV format and saves to file(s).
-    /// When `-o` is omitted, defaults to markdown format and prints to stdout.
-    ///
-    /// Example: longbridge statement export --file-key KEY --section `equity_holdings`
-    /// Example: longbridge statement export --file-key KEY --section `equity_holdings` -o holdings.csv
-    Export {
-        /// File key from `longbridge statement list`
-        #[arg(long)]
-        file_key: String,
-        /// Sections to export (can specify multiple)
-        #[arg(long, num_args = 1..)]
-        section: Vec<StatementSection>,
-        /// Export format: csv | md.
-        /// Defaults to `md` when `-o` is omitted, `csv` when `-o` is provided.
-        #[arg(long = "format")]
-        export_format: Option<ExportFormat>,
-        /// Output directory or file path.
-        /// When multiple sections are specified, this is treated as a directory
-        /// and each section is saved as a separate file inside it.
-        /// Omit to print to stdout.
-        #[arg(long, short = 'o')]
-        output: Option<String>,
-    },
-}
-
 pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
     match cmd {
         Commands::Quote { symbols } => quote::cmd_quote(symbols, format).await,
@@ -972,7 +947,16 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
             tickers,
         } => topic::cmd_create_topic(title, body, post_type, tickers, format).await,
         Commands::Watchlist { cmd } => watchlist::cmd_watchlist(cmd, format).await,
-        Commands::Statement { cmd } => statement::cmd_statement(cmd, format).await,
+        Commands::Statements {
+            statement_type,
+            start_date,
+            limit,
+        } => statement::cmd_statements(&statement_type, start_date, limit, format).await,
+        Commands::StatementExport {
+            file_key,
+            section,
+            output,
+        } => statement::cmd_statement_export(&file_key, &section, output.as_deref()).await,
         Commands::Orders {
             history,
             start,

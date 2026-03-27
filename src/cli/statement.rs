@@ -1,9 +1,507 @@
 use anyhow::Result;
-use longbridge::asset::{
-    CommonStatementContent, GetStatementListOptions, GetStatementOptions, StatementType,
-};
+use longbridge::httpclient::{Json, Method};
+use serde::{Deserialize, Serialize};
 
-use super::{output::print_table, ExportFormat, OutputFormat, StatementCmd, StatementSection};
+use super::{output::print_table, OutputFormat, StatementSection};
+
+// ── Local export format ─────────────────────────────────────────────────────
+
+#[derive(Clone, Debug)]
+pub enum ExportFormat {
+    Csv,
+    Md,
+}
+
+/// Detect output format from the output path.
+/// No output path → markdown (stdout).
+/// Path ending in `.md` → markdown.
+/// Everything else (file or directory) → CSV.
+fn detect_format(output: Option<&str>) -> ExportFormat {
+    match output {
+        None => ExportFormat::Md,
+        Some(p)
+            if std::path::Path::new(p)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("md")) =>
+        {
+            ExportFormat::Md
+        }
+        _ => ExportFormat::Csv,
+    }
+}
+
+// ── API request / response types ────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+struct ListQuery<'a> {
+    r#type: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    start_date: Option<i32>,
+    limit: i32,
+}
+
+#[derive(Debug, Serialize)]
+struct DownloadQuery<'a> {
+    file_key: &'a str,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct StatementListItem {
+    dt: i32,
+    file_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct StatementListData {
+    list: Vec<StatementListItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StatementDownloadData {
+    url: String,
+}
+
+// ── Statement content types (PascalCase JSON from the downloaded file) ──────
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct CommonStatementContent {
+    pub asset: AssetInfo,
+    pub account_balance_sum: AccountBalanceSum,
+    pub equity_holding_sums: Vec<EquityHoldingSum>,
+    pub account_balance_change_sums: Vec<AccountBalanceChangeSum>,
+    pub stock_trade_sums: Vec<StockTradeSum>,
+    pub equity_holding_change_sums: Vec<EquityHoldingChangeSum>,
+    pub account_balance_lock_sums: Vec<AccountBalanceLockSum>,
+    pub equity_holding_lock_sums: Vec<EquityHoldingLockSum>,
+    pub option_trade_sums: Vec<OptionTradeSum>,
+    pub fund_trade_sums: Vec<FundTradeSum>,
+    pub ipo_trade_sums: Vec<IpoTradeSum>,
+    pub virtual_trade_sums: Vec<VirtualTradeSum>,
+    pub interests: Vec<Interest>,
+    pub lending_fees: Vec<LendingFee>,
+    pub custodian_fees: Vec<CustodianFee>,
+    pub corps: Vec<Corp>,
+    pub bond_equity_holding_sums: Vec<BondEquityHoldingSum>,
+    pub otc_trade_sums: Vec<OtcTradeSum>,
+    pub outstanding_sums: Vec<OutstandingSum>,
+    pub financing_transaction_sums: Vec<FinancingTransactionSum>,
+    pub interest_deposits: Vec<InterestDeposit>,
+    pub maintenance_fees: Vec<MaintenanceFee>,
+    pub cash_pluses: Vec<CashPlus>,
+    pub gst_details: Vec<GstDetail>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct AssetInfo {
+    pub currency: String,
+    pub ledger_amount: String,
+    pub outstanding_amount: String,
+    pub debit_amount: String,
+    pub nav_margin: String,
+    pub warning_value: String,
+    pub total: String,
+    pub market_value: String,
+    pub im_margin: String,
+    pub mm_margin: String,
+    pub total_suspend: String,
+    pub market_value_suspend: String,
+    pub margin_limit: String,
+    pub im_margin_suspend: String,
+    pub mm_margin_suspend: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct AccountBalanceSum {
+    pub account_balances: Vec<AccountBalance>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct AccountBalance {
+    pub currency_code: String,
+    pub begin_amount: String,
+    pub begin_amount_as_hkd: String,
+    pub change_amount: String,
+    pub change_amount_as_hkd: String,
+    pub ledger_amount: String,
+    pub ledger_amount_as_hkd: String,
+    pub settled_amount: String,
+    pub settled_amount_as_hkd: String,
+    pub outstanding_amount: String,
+    pub outstanding_amount_as_hkd: String,
+    pub accrued_interest: String,
+    pub rate: String,
+    pub standard_currency: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct EquityHoldingSum {
+    pub equity_type: String,
+    pub market: String,
+    pub market_code: String,
+    pub currency: String,
+    pub currency_code: String,
+    pub equity_holdings: Vec<EquityHolding>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct EquityHolding {
+    pub name: String,
+    pub name_en: String,
+    pub name_zh: String,
+    pub name_hk: String,
+    pub market: String,
+    pub market_code: String,
+    pub currency: String,
+    pub currency_code: String,
+    pub code: String,
+    pub begin_quantity: String,
+    pub change_quantity: String,
+    pub ledger_quantity: String,
+    pub close_price: String,
+    pub market_value: String,
+    pub margin_rate: String,
+    pub margin_value: String,
+    pub cost_price: String,
+    pub income_amount: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct AccountBalanceChangeSum {
+    pub currency: String,
+    pub account_balance_changes: Vec<AccountBalanceChange>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct AccountBalanceChange {
+    #[serde(rename = "Type")]
+    pub r#type: String,
+    pub type_en: String,
+    pub type_zh: String,
+    pub type_hk: String,
+    pub remark: String,
+    pub remark_en: String,
+    pub remark_zh: String,
+    pub remark_hk: String,
+    pub date: String,
+    pub amount: String,
+    pub biz_code: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct StockTradeSum {
+    pub market: String,
+    pub currency: String,
+    pub trades: Vec<TradeRecord>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct TradeRecord {
+    pub direction: String,
+    pub direction_code: String,
+    pub name: String,
+    pub name_en: String,
+    pub name_zh: String,
+    pub name_hk: String,
+    pub trade_date: String,
+    pub settle_date: String,
+    pub contract_no: String,
+    pub code: String,
+    pub trade_quantity: String,
+    pub trade_price: String,
+    pub trade_amount: String,
+    pub clear_amount: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct EquityHoldingChangeSum {
+    pub market: String,
+    pub market_code: String,
+    pub equity_holding_changes: Vec<EquityHoldingChange>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct EquityHoldingChange {
+    pub name: String,
+    pub name_en: String,
+    pub name_zh: String,
+    pub name_hk: String,
+    #[serde(rename = "Type")]
+    pub r#type: String,
+    pub type_en: String,
+    pub type_zh: String,
+    pub type_hk: String,
+    pub remark: String,
+    pub remark_en: String,
+    pub remark_zh: String,
+    pub remark_hk: String,
+    pub date: String,
+    pub code: String,
+    pub quantity: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct AccountBalanceLockSum {
+    pub currency: String,
+    pub account_balance_locks: Vec<AccountBalanceLock>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct AccountBalanceLock {
+    pub date: String,
+    pub expire_date: String,
+    pub amount: String,
+    pub remark: String,
+    pub ref_no: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct EquityHoldingLockSum {
+    pub market: String,
+    pub equity_holding_locks: Vec<EquityHoldingLock>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct EquityHoldingLock {
+    pub name: String,
+    pub name_en: String,
+    pub name_zh: String,
+    pub name_hk: String,
+    pub date: String,
+    pub expire_date: String,
+    pub code: String,
+    pub quantity: String,
+    pub remark: String,
+    pub ref_no: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct OptionTradeSum {
+    pub market: String,
+    pub currency: String,
+    pub trades: Vec<TradeRecord>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct FundTradeSum {
+    pub currency: String,
+    pub equity_type: String,
+    pub trades: Vec<FundTrade>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct FundTrade {
+    pub name: String,
+    pub name_en: String,
+    pub name_zh: String,
+    pub name_hk: String,
+    pub direction: String,
+    pub direction_code: String,
+    pub order_date: String,
+    pub confirm_date: String,
+    pub status: String,
+    pub contract_no: String,
+    pub code: String,
+    pub trade_amount: String,
+    pub trade_quantity: String,
+    pub price: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct IpoTradeSum {
+    pub market: String,
+    pub trades: Vec<IpoTrade>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct IpoTrade {
+    pub name: String,
+    pub name_en: String,
+    pub name_zh: String,
+    pub name_hk: String,
+    pub sub_method: String,
+    pub sub_method_code: String,
+    pub sub_date: String,
+    pub code: String,
+    pub sub_quantity: String,
+    pub sub_amount: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct VirtualTradeSum {
+    pub market: String,
+    pub currency: String,
+    pub trades: Vec<TradeRecord>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct Interest {
+    pub date: String,
+    pub currency: String,
+    pub rate: String,
+    pub fine_interest: String,
+    pub interest: String,
+    pub total: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct LendingFee {
+    pub date: String,
+    pub currency: String,
+    pub code: String,
+    pub name: String,
+    pub name_en: String,
+    pub name_zh: String,
+    pub name_hk: String,
+    pub quantity: String,
+    pub settle_price: String,
+    pub lending_market_value: String,
+    pub rate: String,
+    pub amount: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct CustodianFee {
+    pub date: String,
+    pub currency: String,
+    pub rate: String,
+    pub fee_amount: String,
+    pub fee: String,
+    pub total: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct Corp {
+    pub date: String,
+    pub pay_date: String,
+    pub market: String,
+    pub code: String,
+    pub name: String,
+    pub name_en: String,
+    pub name_zh: String,
+    pub name_hk: String,
+    pub remark: String,
+    pub quantity: String,
+    pub new_code: String,
+    pub new_name: String,
+    pub new_name_en: String,
+    pub new_name_zh: String,
+    pub new_name_hk: String,
+    pub new_quantity: String,
+    pub currency: String,
+    pub new_amount: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct BondEquityHoldingSum {
+    pub equity_type: String,
+    pub market: String,
+    pub market_code: String,
+    pub currency: String,
+    pub currency_code: String,
+    pub equity_holdings: Vec<EquityHolding>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct OtcTradeSum {
+    pub market: String,
+    pub currency: String,
+    pub equity_type: String,
+    pub order_type: String,
+    pub trades: Vec<TradeRecord>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct OutstandingSum {
+    pub market: String,
+    pub currency: String,
+    pub equity_type: String,
+    pub outstanding_trades: Vec<TradeRecord>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct FinancingTransactionSum {
+    pub currency: String,
+    pub transaction_details: Vec<AccountBalanceChange>,
+}
+
+pub type InterestDeposit = Interest;
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct MaintenanceFee {
+    pub year_month: String,
+    pub currency_name: String,
+    pub market_name: String,
+    pub fee_rate: String,
+    pub accrued_fee: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct CashPlus {
+    pub date: String,
+    pub currency_name: String,
+    pub latest_balance: String,
+    pub latest_profit_loss: String,
+    pub accum_profit_loss: String,
+    pub apr: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct GstDetail {
+    pub date: String,
+    #[serde(rename = "Ref")]
+    pub r#ref: String,
+    #[serde(rename = "Type")]
+    pub r#type: String,
+    pub type_en: String,
+    pub type_zh: String,
+    pub type_hk: String,
+    pub remark: String,
+    pub remark_en: String,
+    pub remark_zh: String,
+    pub remark_hk: String,
+    pub currency: String,
+    pub amount: String,
+    pub fee_rate: String,
+    pub fee_amount: String,
+    pub total: String,
+    pub fx_rate: String,
+    pub amount_as_hkd: String,
+}
+
+// ── Helper ───────────────────────────────────────────────────────────────────
 
 /// Return the first non-empty string from the candidates, or `""`.
 fn first_non_empty<'a>(candidates: &[&'a str]) -> &'a str {
@@ -14,71 +512,123 @@ fn first_non_empty<'a>(candidates: &[&'a str]) -> &'a str {
         .unwrap_or("")
 }
 
-pub async fn cmd_statement(cmd: StatementCmd, format: &OutputFormat) -> Result<()> {
-    match cmd {
-        StatementCmd::List {
-            statement_type,
-            start_date,
-            limit,
-        } => cmd_list(&statement_type, start_date, limit, format).await,
-        StatementCmd::Export {
-            file_key,
-            section: sections,
-            export_format,
-            output,
-        } => cmd_export(&file_key, &sections, export_format, output.as_deref()).await,
-    }
+/// Format a statement date integer (e.g. 20241231) as "YYYY-MM-DD".
+fn fmt_date(dt: i32) -> String {
+    let d = dt.unsigned_abs();
+    let year = d / 10000;
+    let month = (d % 10000) / 100;
+    let day = d % 100;
+    format!("{year}-{month:02}-{day:02}")
 }
 
-async fn cmd_list(
+fn all_sections() -> Vec<StatementSection> {
+    vec![
+        StatementSection::Asset,
+        StatementSection::AccountBalanceSum,
+        StatementSection::EquityHoldingSums,
+        StatementSection::AccountBalanceChangeSums,
+        StatementSection::StockTradeSums,
+        StatementSection::EquityHoldingChangeSums,
+        StatementSection::AccountBalanceLockSums,
+        StatementSection::EquityHoldingLockSums,
+        StatementSection::OptionTradeSums,
+        StatementSection::FundTradeSums,
+        StatementSection::IpoTradeSums,
+        StatementSection::VirtualTradeSums,
+        StatementSection::Interests,
+        StatementSection::LendingFees,
+        StatementSection::CustodianFees,
+        StatementSection::Corps,
+        StatementSection::BondEquityHoldingSums,
+        StatementSection::OtcTradeSums,
+        StatementSection::OutstandingSums,
+        StatementSection::FinancingTransactionSums,
+        StatementSection::InterestDeposits,
+        StatementSection::MaintenanceFees,
+        StatementSection::CashPluses,
+        StatementSection::GstDetails,
+    ]
+}
+
+// ── Commands ─────────────────────────────────────────────────────────────────
+
+/// List account statements (daily or monthly).
+pub async fn cmd_statements(
     statement_type: &str,
-    page: i32,
-    page_size: i32,
+    start_date: Option<i32>,
+    limit: i32,
     format: &OutputFormat,
 ) -> Result<()> {
-    let st = match statement_type.to_lowercase().as_str() {
-        "daily" | "d" => StatementType::Daily,
-        "monthly" | "m" => StatementType::Monthly,
-        other => anyhow::bail!("Unknown statement type '{other}', expected: daily | monthly"),
+    let type_str = match statement_type.to_lowercase().as_str() {
+        "monthly" | "m" => "monthly",
+        _ => "daily",
     };
 
-    let ctx = crate::openapi::statement();
-    let options = GetStatementListOptions::new(st)
-        .page(page)
-        .page_size(page_size);
-    let resp = ctx.statements(options).await?;
+    let client = crate::openapi::http_client();
+    let resp = client
+        .request(Method::GET, "/v1/asset/statement/list")
+        .query_params(ListQuery {
+            r#type: type_str,
+            start_date,
+            limit,
+        })
+        .response::<Json<StatementListData>>()
+        .send()
+        .await?
+        .0;
 
-    let headers = &["Date", "File Key"];
-    let rows: Vec<Vec<String>> = resp
-        .list
-        .iter()
-        .map(|item| vec![item.dt.to_string(), item.file_key.clone()])
-        .collect();
-    print_table(headers, rows, format);
+    if resp.list.is_empty() {
+        println!("No statements found.");
+        return Ok(());
+    }
+
+    match format {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&resp.list)?);
+        }
+        OutputFormat::Table => {
+            let headers = &["Date", "File Key"];
+            let rows = resp
+                .list
+                .iter()
+                .map(|item| vec![fmt_date(item.dt), item.file_key.clone()])
+                .collect();
+            print_table(headers, rows, format);
+        }
+    }
     Ok(())
 }
 
-async fn cmd_export(
+/// Export sections from a statement identified by `file_key`.
+pub async fn cmd_statement_export(
     file_key: &str,
     sections: &[StatementSection],
-    explicit_format: Option<ExportFormat>,
     output_path: Option<&str>,
 ) -> Result<()> {
-    let ctx = crate::openapi::statement();
-    let options = GetStatementOptions::new(file_key);
-    let resp = ctx.statement_download_url(options).await?;
+    let client = crate::openapi::http_client();
+    let resp = client
+        .request(Method::GET, "/v1/asset/statement/download-url")
+        .query_params(DownloadQuery { file_key })
+        .response::<Json<StatementDownloadData>>()
+        .send()
+        .await?
+        .0;
 
-    // Fetch the statement JSON
-    let client = reqwest::Client::new();
-    let body = client.get(&resp.url).send().await?.text().await?;
+    let body = reqwest::Client::new()
+        .get(&resp.url)
+        .send()
+        .await?
+        .text()
+        .await?;
     let content: CommonStatementContent = serde_json::from_str(&body)?;
 
-    // Resolve format: explicit flag wins, otherwise csv when -o is given, md when not.
-    let format = explicit_format.unwrap_or(if output_path.is_some() {
-        ExportFormat::Csv
+    let sections: Vec<StatementSection> = if sections.is_empty() {
+        all_sections()
     } else {
-        ExportFormat::Md
-    });
+        sections.to_vec()
+    };
+
+    let format = detect_format(output_path);
 
     let ext = match format {
         ExportFormat::Csv => "csv",
@@ -94,7 +644,7 @@ async fn cmd_export(
             } else {
                 let dir = std::path::Path::new(path);
                 std::fs::create_dir_all(dir)?;
-                for section in sections {
+                for section in &sections {
                     let file_name = format!("{}.{ext}", section_file_name(section));
                     let file_path = dir.join(&file_name);
                     let data = section_to_format(&content, section, &format)?;
@@ -104,8 +654,7 @@ async fn cmd_export(
             }
         }
         None => {
-            // Print to stdout
-            for section in sections {
+            for section in &sections {
                 let data = section_to_format(&content, section, &format)?;
                 print!("{data}");
             }
@@ -113,6 +662,8 @@ async fn cmd_export(
     }
     Ok(())
 }
+
+// ── Section rendering ────────────────────────────────────────────────────────
 
 struct SectionData<'a> {
     title: &'static str,
@@ -190,7 +741,7 @@ fn section_data<'a>(
                     .iter()
                     .map(|b| {
                         vec![
-                            b.currency_code.as_str(), // In fact, only this one has a value, so it shows "currency" above, but this uses "currency code"
+                            b.currency_code.as_str(),
                             b.begin_amount.as_str(),
                             b.begin_amount_as_hkd.as_str(),
                             b.change_amount.as_str(),
@@ -274,7 +825,8 @@ fn section_data<'a>(
                 .flat_map(|sum| {
                     sum.account_balance_changes.iter().map(move |c| {
                         let typ = first_non_empty(&[&c.r#type, &c.type_en, &c.type_zh, &c.type_hk]);
-                        let remark = first_non_empty(&[&c.remark_en, &c.remark_zh, &c.remark_hk, &c.remark]);
+                        let remark =
+                            first_non_empty(&[&c.remark_en, &c.remark_zh, &c.remark_hk, &c.remark]);
                         vec![
                             sum.currency.as_str(),
                             c.date.as_str(),
@@ -669,7 +1221,12 @@ fn section_data<'a>(
                 .iter()
                 .map(|c| {
                     let name = first_non_empty(&[&c.name, &c.name_en, &c.name_zh, &c.name_hk]);
-                    let new_name = first_non_empty(&[&c.new_name, &c.new_name_en, &c.new_name_zh, &c.new_name_hk]);
+                    let new_name = first_non_empty(&[
+                        &c.new_name,
+                        &c.new_name_en,
+                        &c.new_name_zh,
+                        &c.new_name_hk,
+                    ]);
                     vec![
                         c.date.as_str(),
                         c.pay_date.as_str(),
@@ -840,7 +1397,8 @@ fn section_data<'a>(
                 .flat_map(|sum| {
                     sum.transaction_details.iter().map(move |d| {
                         let typ = first_non_empty(&[&d.r#type, &d.type_en, &d.type_zh, &d.type_hk]);
-                        let remark = first_non_empty(&[&d.remark_en, &d.remark_zh, &d.remark_hk, &d.remark]);
+                        let remark =
+                            first_non_empty(&[&d.remark_en, &d.remark_zh, &d.remark_hk, &d.remark]);
                         vec![
                             sum.currency.as_str(),
                             d.date.as_str(),
@@ -946,7 +1504,8 @@ fn section_data<'a>(
                 .iter()
                 .map(|g| {
                     let typ = first_non_empty(&[&g.r#type, &g.type_en, &g.type_zh, &g.type_hk]);
-                    let remark = first_non_empty(&[&g.remark_en, &g.remark_zh, &g.remark_hk, &g.remark]);
+                    let remark =
+                        first_non_empty(&[&g.remark_en, &g.remark_zh, &g.remark_hk, &g.remark]);
                     vec![
                         g.date.as_str(),
                         g.r#ref.as_str(),
@@ -1096,16 +1655,31 @@ mod tests {
         )
         .unwrap();
 
-        let csv =
-            section_to_format(&content, &StatementSection::EquityHoldingSums, &ExportFormat::Csv)
-                .unwrap();
+        let csv = section_to_format(
+            &content,
+            &StatementSection::EquityHoldingSums,
+            &ExportFormat::Csv,
+        )
+        .unwrap();
         let record = csv_record(&csv);
 
         assert_eq!(
             record,
             vec![
-                "Stock", "HK", "HKD", "AAPL", "Apple Inc.", "10", "2", "12", "100", "1200",
-                "0.5", "600", "80", "240",
+                "Stock",
+                "HK",
+                "HKD",
+                "AAPL",
+                "Apple Inc.",
+                "10",
+                "2",
+                "12",
+                "100",
+                "1200",
+                "0.5",
+                "600",
+                "80",
+                "240",
             ]
         );
     }

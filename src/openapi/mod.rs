@@ -8,6 +8,6 @@ pub mod search;
 pub mod wrapper;
 
 pub use context::{
-    content, http_client, init_contexts, quote, quote_limited, statement, trade, trade_limited,
+    content, http_client, init_contexts, quote, quote_limited, trade, trade_limited,
 };
 pub use rate_limiter::global_rate_limiter;
