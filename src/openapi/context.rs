@@ -98,7 +98,7 @@ pub async fn init_contexts() -> Result<(
     let mut config_builder = config_builder;
     let mut http_client_config = http_client_config;
 
-    // If LONGBRIDGE_TEST_ENV is set, override all endpoints to test environment.
+    // If LONGBRIDGE_ENV=staging, override all endpoints to test environment.
     // This takes highest priority over region detection.
     if crate::auth::is_test_env() {
         tracing::info!("Using TEST environment endpoints (openapi.longbridge.xyz)");

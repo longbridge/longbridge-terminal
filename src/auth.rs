@@ -18,9 +18,11 @@ const OAUTH_TEST_URL: &str = "https://openapi.longbridge.xyz/oauth2";
 
 const CALLBACK_PORT: u16 = 60355;
 
-/// Whether the test environment is active (`LONGBRIDGE_TEST_ENV` is set).
+/// Whether the staging environment is active (`LONGBRIDGE_ENV=staging`).
 pub fn is_test_env() -> bool {
-    std::env::var("LONGBRIDGE_TEST_ENV").is_ok()
+    std::env::var("LONGBRIDGE_ENV")
+        .map(|v| v == "staging")
+        .unwrap_or(false)
 }
 
 /// Return the OAuth client ID for the current environment.
