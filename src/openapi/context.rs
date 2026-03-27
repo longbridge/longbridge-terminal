@@ -60,7 +60,7 @@ pub async fn init_contexts() -> Result<(
         tracing::info!("No API key env vars found, using OAuth authentication");
         // Build OAuth client: loads token from ~/.longbridge/openapi/tokens/<client_id>
         // or starts browser authorization. Token refresh is automatic inside the SDK.
-        let oauth_result = longbridge::oauth::OAuthBuilder::new(crate::auth::OAUTH_CLIENT_ID)
+        let oauth_result = longbridge::oauth::OAuthBuilder::new(crate::auth::client_id())
             .callback_port(60355)
             .build(|url| {
                 println!("Opening browser for Longbridge OpenAPI authorization...");
@@ -100,7 +100,7 @@ pub async fn init_contexts() -> Result<(
 
     // If LONGBRIDGE_TEST_ENV is set, override all endpoints to test environment.
     // This takes highest priority over region detection.
-    if std::env::var("LONGBRIDGE_TEST_ENV").is_ok() {
+    if crate::auth::is_test_env() {
         tracing::info!("Using TEST environment endpoints (openapi.longbridge.xyz)");
         config_builder = config_builder
             .http_url(crate::region::HTTP_URL_TEST)
