@@ -1,5 +1,5 @@
 use anyhow::Result;
-use longbridge::statement::{
+use longbridge::asset::{
     CommonStatementContent, GetStatementListOptions, GetStatementOptions, StatementType,
 };
 
@@ -163,6 +163,50 @@ fn section_data<'a>(
                     &a.im_margin_suspend,
                     &a.mm_margin_suspend,
                 ]],
+            }
+        }
+        StatementSection::AccountBalanceSum => {
+            let abs = &content.account_balance_sum;
+            SectionData {
+                title: "Account Balances",
+                headers: &[
+                    "currency",
+                    "begin_amount",
+                    "begin_amount_as_hkd",
+                    "change_amount",
+                    "change_amount_as_hkd",
+                    "ledger_amount",
+                    "ledger_amount_as_hkd",
+                    "settled_amount",
+                    "settled_amount_as_hkd",
+                    "outstanding_amount",
+                    "outstanding_amount_as_hkd",
+                    "accrued_interest",
+                    "rate",
+                    "standard_currency",
+                ],
+                rows: abs
+                    .account_balances
+                    .iter()
+                    .map(|b| {
+                        vec![
+                            b.currency_code.as_str(), // In fact, only this one has a value, so it shows "currency" above, but this uses "currency code"
+                            b.begin_amount.as_str(),
+                            b.begin_amount_as_hkd.as_str(),
+                            b.change_amount.as_str(),
+                            b.change_amount_as_hkd.as_str(),
+                            b.ledger_amount.as_str(),
+                            b.ledger_amount_as_hkd.as_str(),
+                            b.settled_amount.as_str(),
+                            b.settled_amount_as_hkd.as_str(),
+                            b.outstanding_amount.as_str(),
+                            b.outstanding_amount_as_hkd.as_str(),
+                            b.accrued_interest.as_str(),
+                            b.rate.as_str(),
+                            b.standard_currency.as_str(),
+                        ]
+                    })
+                    .collect(),
             }
         }
         StatementSection::EquityHoldingSums => SectionData {
@@ -938,6 +982,7 @@ fn section_to_format(
 fn section_file_name(section: &StatementSection) -> &'static str {
     match section {
         StatementSection::Asset => "asset",
+        StatementSection::AccountBalanceSum => "account_balances",
         StatementSection::EquityHoldingSums => "equity_holdings",
         StatementSection::AccountBalanceChangeSums => "account_balance_changes",
         StatementSection::StockTradeSums => "stock_trades",

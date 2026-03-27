@@ -795,9 +795,11 @@ pub enum WatchlistCmd {
 pub enum StatementSection {
     #[value(name = "asset")]
     Asset,
+    #[value(name = "account_balances")]
+    AccountBalanceSum,
     #[value(name = "equity_holdings")]
     EquityHoldingSums,
-    #[value(name = "account_balance_change_sums")]
+    #[value(name = "account_balance_changes")]
     AccountBalanceChangeSums,
     #[value(name = "stock_trades")]
     StockTradeSums,

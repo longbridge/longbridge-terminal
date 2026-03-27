@@ -120,7 +120,7 @@ longbridge statement export --file-key abc123 --section asset --format md -o ass
 
 ```bash
 # 1. "What's my account summary?" (prints markdown to stdout for AI)
-longbridge statement export --file-key <KEY> --section asset
+longbridge statement export --file-key <KEY> --section asset equity_holdings account_balances
 
 # 2. "What are my current holdings?"
 longbridge statement export --file-key <KEY> --section equity_holdings
