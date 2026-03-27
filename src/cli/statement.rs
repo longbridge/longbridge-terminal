@@ -1,10 +1,18 @@
 use anyhow::Result;
 use longbridge::statement::{
-    CommonStatementContent, GetStatementDataDownloadUrlOptions, GetStatementDataListOptions,
-    StatementType,
+    CommonStatementContent, GetStatementListOptions, GetStatementOptions, StatementType,
 };
 
 use super::{output::print_table, ExportFormat, OutputFormat, StatementCmd, StatementSection};
+
+/// Return the first non-empty string from the candidates, or `""`.
+fn first_non_empty<'a>(candidates: &[&'a str]) -> &'a str {
+    candidates
+        .iter()
+        .find(|s| !s.is_empty())
+        .copied()
+        .unwrap_or("")
+}
 
 pub async fn cmd_statement(cmd: StatementCmd, format: &OutputFormat) -> Result<()> {
     match cmd {
@@ -35,7 +43,7 @@ async fn cmd_list(
     };
 
     let ctx = crate::openapi::statement();
-    let options = GetStatementDataListOptions::new(st)
+    let options = GetStatementListOptions::new(st)
         .page(page)
         .page_size(page_size);
     let resp = ctx.statement_data_list(options).await?;
@@ -57,7 +65,7 @@ async fn cmd_export(
     output_path: Option<&str>,
 ) -> Result<()> {
     let ctx = crate::openapi::statement();
-    let options = GetStatementDataDownloadUrlOptions::new(file_key);
+    let options = GetStatementOptions::new(file_key);
     let resp = ctx.statement_data_download_url(options).await?;
 
     // Fetch the statement JSON
@@ -180,12 +188,25 @@ fn section_data<'a>(
                 .iter()
                 .flat_map(|sum| {
                     sum.equity_holdings.iter().map(move |h| {
+                        let name = first_non_empty(&[&h.name, &h.name_en, &h.name_zh, &h.name_hk]);
+                        let market = first_non_empty(&[
+                            h.market.as_str(),
+                            h.market_code.as_str(),
+                            sum.market.as_str(),
+                            sum.market_code.as_str(),
+                        ]);
+                        let currency = first_non_empty(&[
+                            h.currency.as_str(),
+                            h.currency_code.as_str(),
+                            sum.currency.as_str(),
+                            sum.currency_code.as_str(),
+                        ]);
                         vec![
                             sum.equity_type.as_str(),
-                            sum.market.as_str(),
-                            sum.currency.as_str(),
+                            market,
+                            currency,
                             h.code.as_str(),
-                            h.name.as_str(),
+                            name,
                             h.begin_quantity.as_str(),
                             h.change_quantity.as_str(),
                             h.ledger_quantity.as_str(),
@@ -208,12 +229,14 @@ fn section_data<'a>(
                 .iter()
                 .flat_map(|sum| {
                     sum.account_balance_changes.iter().map(move |c| {
+                        let typ = first_non_empty(&[&c.r#type, &c.type_en, &c.type_zh, &c.type_hk]);
+                        let remark = first_non_empty(&[&c.remark_en, &c.remark_zh, &c.remark_hk, &c.remark]);
                         vec![
                             sum.currency.as_str(),
                             c.date.as_str(),
-                            c.r#type.as_str(),
+                            typ,
                             c.amount.as_str(),
-                            c.remark.as_str(),
+                            remark,
                             c.biz_code.as_str(),
                         ]
                     })
@@ -241,15 +264,17 @@ fn section_data<'a>(
                 .iter()
                 .flat_map(|sum| {
                     sum.trades.iter().map(move |t| {
+                        let direction = first_non_empty(&[&t.direction, &t.direction_code]);
+                        let name = first_non_empty(&[&t.name, &t.name_en, &t.name_zh, &t.name_hk]);
                         vec![
                             sum.market.as_str(),
                             sum.currency.as_str(),
                             t.trade_date.as_str(),
                             t.settle_date.as_str(),
                             t.contract_no.as_str(),
-                            t.direction.as_str(),
+                            direction,
                             t.code.as_str(),
-                            t.name.as_str(),
+                            name,
                             t.trade_quantity.as_str(),
                             t.trade_price.as_str(),
                             t.trade_amount.as_str(),
@@ -261,19 +286,31 @@ fn section_data<'a>(
         },
         StatementSection::EquityHoldingChangeSums => SectionData {
             title: "Equity Holding Changes",
-            headers: &["market", "date", "code", "name", "type", "quantity"],
+            headers: &[
+                "market", "date", "code", "name", "type", "quantity", "remark",
+            ],
             rows: content
                 .equity_holding_change_sums
                 .iter()
                 .flat_map(|sum| {
+                    let market = if sum.market.is_empty() {
+                        sum.market_code.as_str()
+                    } else {
+                        sum.market.as_str()
+                    };
                     sum.equity_holding_changes.iter().map(move |c| {
+                        let name = first_non_empty(&[&c.name, &c.name_en, &c.name_zh, &c.name_hk]);
+                        let typ = first_non_empty(&[&c.r#type, &c.type_en, &c.type_zh, &c.type_hk]);
+                        let remark =
+                            first_non_empty(&[&c.remark_en, &c.remark_zh, &c.remark_hk, &c.remark]);
                         vec![
-                            sum.market.as_str(),
+                            market,
                             c.date.as_str(),
                             c.code.as_str(),
-                            c.name.as_str(),
-                            c.r#type.as_str(),
+                            name,
+                            typ,
                             c.quantity.as_str(),
+                            remark,
                         ]
                     })
                 })
@@ -323,12 +360,13 @@ fn section_data<'a>(
                 .iter()
                 .flat_map(|sum| {
                     sum.equity_holding_locks.iter().map(move |l| {
+                        let name = first_non_empty(&[&l.name, &l.name_en, &l.name_zh, &l.name_hk]);
                         vec![
                             sum.market.as_str(),
                             l.date.as_str(),
                             l.expire_date.as_str(),
                             l.code.as_str(),
-                            l.name.as_str(),
+                            name,
                             l.quantity.as_str(),
                             l.remark.as_str(),
                             l.ref_no.as_str(),
@@ -358,15 +396,17 @@ fn section_data<'a>(
                 .iter()
                 .flat_map(|sum| {
                     sum.trades.iter().map(move |t| {
+                        let direction = first_non_empty(&[&t.direction, &t.direction_code]);
+                        let name = first_non_empty(&[&t.name, &t.name_en, &t.name_zh, &t.name_hk]);
                         vec![
                             sum.market.as_str(),
                             sum.currency.as_str(),
                             t.trade_date.as_str(),
                             t.settle_date.as_str(),
                             t.contract_no.as_str(),
-                            t.direction.as_str(),
+                            direction,
                             t.code.as_str(),
-                            t.name.as_str(),
+                            name,
                             t.trade_quantity.as_str(),
                             t.trade_price.as_str(),
                             t.trade_amount.as_str(),
@@ -397,6 +437,8 @@ fn section_data<'a>(
                 .iter()
                 .flat_map(|sum| {
                     sum.trades.iter().map(move |t| {
+                        let name = first_non_empty(&[&t.name, &t.name_en, &t.name_zh, &t.name_hk]);
+                        let direction = first_non_empty(&[&t.direction, &t.direction_code]);
                         vec![
                             sum.currency.as_str(),
                             sum.equity_type.as_str(),
@@ -405,8 +447,8 @@ fn section_data<'a>(
                             t.status.as_str(),
                             t.contract_no.as_str(),
                             t.code.as_str(),
-                            t.name.as_str(),
-                            t.direction.as_str(),
+                            name,
+                            direction,
                             t.trade_amount.as_str(),
                             t.trade_quantity.as_str(),
                             t.price.as_str(),
@@ -431,12 +473,14 @@ fn section_data<'a>(
                 .iter()
                 .flat_map(|sum| {
                     sum.trades.iter().map(move |t| {
+                        let name = first_non_empty(&[&t.name, &t.name_en, &t.name_zh, &t.name_hk]);
+                        let sub_method = first_non_empty(&[&t.sub_method, &t.sub_method_code]);
                         vec![
                             sum.market.as_str(),
                             t.sub_date.as_str(),
                             t.code.as_str(),
-                            t.name.as_str(),
-                            t.sub_method.as_str(),
+                            name,
+                            sub_method,
                             t.sub_quantity.as_str(),
                             t.sub_amount.as_str(),
                         ]
@@ -465,15 +509,17 @@ fn section_data<'a>(
                 .iter()
                 .flat_map(|sum| {
                     sum.trades.iter().map(move |t| {
+                        let direction = first_non_empty(&[&t.direction, &t.direction_code]);
+                        let name = first_non_empty(&[&t.name, &t.name_en, &t.name_zh, &t.name_hk]);
                         vec![
                             sum.market.as_str(),
                             sum.currency.as_str(),
                             t.trade_date.as_str(),
                             t.settle_date.as_str(),
                             t.contract_no.as_str(),
-                            t.direction.as_str(),
+                            direction,
                             t.code.as_str(),
-                            t.name.as_str(),
+                            name,
                             t.trade_quantity.as_str(),
                             t.trade_price.as_str(),
                             t.trade_amount.as_str(),
@@ -525,11 +571,12 @@ fn section_data<'a>(
                 .lending_fees
                 .iter()
                 .map(|f| {
+                    let name = first_non_empty(&[&f.name, &f.name_en, &f.name_zh, &f.name_hk]);
                     vec![
                         f.date.as_str(),
                         f.currency.as_str(),
                         f.code.as_str(),
-                        f.name.as_str(),
+                        name,
                         f.quantity.as_str(),
                         f.settle_price.as_str(),
                         f.lending_market_value.as_str(),
@@ -577,19 +624,297 @@ fn section_data<'a>(
                 .corps
                 .iter()
                 .map(|c| {
+                    let name = first_non_empty(&[&c.name, &c.name_en, &c.name_zh, &c.name_hk]);
+                    let new_name = first_non_empty(&[&c.new_name, &c.new_name_en, &c.new_name_zh, &c.new_name_hk]);
                     vec![
                         c.date.as_str(),
                         c.pay_date.as_str(),
                         c.market.as_str(),
                         c.code.as_str(),
-                        c.name.as_str(),
+                        name,
                         c.remark.as_str(),
                         c.quantity.as_str(),
                         c.new_code.as_str(),
-                        c.new_name.as_str(),
+                        new_name,
                         c.new_quantity.as_str(),
                         c.currency.as_str(),
                         c.new_amount.as_str(),
+                    ]
+                })
+                .collect(),
+        },
+        StatementSection::BondEquityHoldingSums => SectionData {
+            title: "Bond Equity Holdings",
+            headers: &[
+                "equity_type",
+                "market",
+                "currency",
+                "code",
+                "name",
+                "begin_quantity",
+                "change_quantity",
+                "ledger_quantity",
+                "close_price",
+                "market_value",
+                "margin_rate",
+                "margin_value",
+                "cost_price",
+                "income_amount",
+            ],
+            rows: content
+                .bond_equity_holding_sums
+                .iter()
+                .flat_map(|sum| {
+                    sum.equity_holdings.iter().map(move |h| {
+                        let name = first_non_empty(&[&h.name, &h.name_en, &h.name_zh, &h.name_hk]);
+                        let market = first_non_empty(&[
+                            h.market.as_str(),
+                            h.market_code.as_str(),
+                            sum.market.as_str(),
+                            sum.market_code.as_str(),
+                        ]);
+                        let currency = first_non_empty(&[
+                            h.currency.as_str(),
+                            h.currency_code.as_str(),
+                            sum.currency.as_str(),
+                            sum.currency_code.as_str(),
+                        ]);
+                        vec![
+                            sum.equity_type.as_str(),
+                            market,
+                            currency,
+                            h.code.as_str(),
+                            name,
+                            h.begin_quantity.as_str(),
+                            h.change_quantity.as_str(),
+                            h.ledger_quantity.as_str(),
+                            h.close_price.as_str(),
+                            h.market_value.as_str(),
+                            h.margin_rate.as_str(),
+                            h.margin_value.as_str(),
+                            h.cost_price.as_str(),
+                            h.income_amount.as_str(),
+                        ]
+                    })
+                })
+                .collect(),
+        },
+        StatementSection::OtcTradeSums => SectionData {
+            title: "OTC Trades",
+            headers: &[
+                "market",
+                "currency",
+                "equity_type",
+                "order_type",
+                "trade_date",
+                "settle_date",
+                "contract_no",
+                "direction",
+                "code",
+                "name",
+                "trade_quantity",
+                "trade_price",
+                "trade_amount",
+                "clear_amount",
+            ],
+            rows: content
+                .otc_trade_sums
+                .iter()
+                .flat_map(|sum| {
+                    sum.trades.iter().map(move |t| {
+                        let direction = first_non_empty(&[&t.direction, &t.direction_code]);
+                        let name = first_non_empty(&[&t.name, &t.name_en, &t.name_zh, &t.name_hk]);
+                        vec![
+                            sum.market.as_str(),
+                            sum.currency.as_str(),
+                            sum.equity_type.as_str(),
+                            sum.order_type.as_str(),
+                            t.trade_date.as_str(),
+                            t.settle_date.as_str(),
+                            t.contract_no.as_str(),
+                            direction,
+                            t.code.as_str(),
+                            name,
+                            t.trade_quantity.as_str(),
+                            t.trade_price.as_str(),
+                            t.trade_amount.as_str(),
+                            t.clear_amount.as_str(),
+                        ]
+                    })
+                })
+                .collect(),
+        },
+        StatementSection::OutstandingSums => SectionData {
+            title: "Outstandings",
+            headers: &[
+                "market",
+                "currency",
+                "equity_type",
+                "trade_date",
+                "settle_date",
+                "contract_no",
+                "direction",
+                "code",
+                "name",
+                "trade_quantity",
+                "trade_price",
+                "trade_amount",
+                "clear_amount",
+            ],
+            rows: content
+                .outstanding_sums
+                .iter()
+                .flat_map(|sum| {
+                    sum.outstanding_trades.iter().map(move |t| {
+                        let direction = first_non_empty(&[&t.direction, &t.direction_code]);
+                        let name = first_non_empty(&[&t.name, &t.name_en, &t.name_zh, &t.name_hk]);
+                        vec![
+                            sum.market.as_str(),
+                            sum.currency.as_str(),
+                            sum.equity_type.as_str(),
+                            t.trade_date.as_str(),
+                            t.settle_date.as_str(),
+                            t.contract_no.as_str(),
+                            direction,
+                            t.code.as_str(),
+                            name,
+                            t.trade_quantity.as_str(),
+                            t.trade_price.as_str(),
+                            t.trade_amount.as_str(),
+                            t.clear_amount.as_str(),
+                        ]
+                    })
+                })
+                .collect(),
+        },
+        StatementSection::FinancingTransactionSums => SectionData {
+            title: "Financing Transactions",
+            headers: &["currency", "date", "type", "amount", "remark", "biz_code"],
+            rows: content
+                .financing_transaction_sums
+                .iter()
+                .flat_map(|sum| {
+                    sum.transaction_details.iter().map(move |d| {
+                        let typ = first_non_empty(&[&d.r#type, &d.type_en, &d.type_zh, &d.type_hk]);
+                        let remark = first_non_empty(&[&d.remark_en, &d.remark_zh, &d.remark_hk, &d.remark]);
+                        vec![
+                            sum.currency.as_str(),
+                            d.date.as_str(),
+                            typ,
+                            d.amount.as_str(),
+                            remark,
+                            d.biz_code.as_str(),
+                        ]
+                    })
+                })
+                .collect(),
+        },
+        StatementSection::InterestDeposits => SectionData {
+            title: "Interest Deposits",
+            headers: &[
+                "date",
+                "currency",
+                "rate",
+                "fine_interest",
+                "interest",
+                "total",
+            ],
+            rows: content
+                .interest_deposits
+                .iter()
+                .map(|i| {
+                    vec![
+                        i.date.as_str(),
+                        i.currency.as_str(),
+                        i.rate.as_str(),
+                        i.fine_interest.as_str(),
+                        i.interest.as_str(),
+                        i.total.as_str(),
+                    ]
+                })
+                .collect(),
+        },
+        StatementSection::MaintenanceFees => SectionData {
+            title: "Maintenance Fees",
+            headers: &[
+                "year_month",
+                "currency",
+                "market",
+                "fee_rate",
+                "accrued_fee",
+            ],
+            rows: content
+                .maintenance_fees
+                .iter()
+                .map(|f| {
+                    vec![
+                        f.year_month.as_str(),
+                        f.currency_name.as_str(),
+                        f.market_name.as_str(),
+                        f.fee_rate.as_str(),
+                        f.accrued_fee.as_str(),
+                    ]
+                })
+                .collect(),
+        },
+        StatementSection::CashPluses => SectionData {
+            title: "Cash Plus",
+            headers: &[
+                "date",
+                "currency",
+                "latest_balance",
+                "latest_profit_loss",
+                "accum_profit_loss",
+                "apr",
+            ],
+            rows: content
+                .cash_pluses
+                .iter()
+                .map(|c| {
+                    vec![
+                        c.date.as_str(),
+                        c.currency_name.as_str(),
+                        c.latest_balance.as_str(),
+                        c.latest_profit_loss.as_str(),
+                        c.accum_profit_loss.as_str(),
+                        c.apr.as_str(),
+                    ]
+                })
+                .collect(),
+        },
+        StatementSection::GstDetails => SectionData {
+            title: "GST Details",
+            headers: &[
+                "date",
+                "ref",
+                "type",
+                "remark",
+                "currency",
+                "amount",
+                "fee_rate",
+                "fee_amount",
+                "total",
+                "fx_rate",
+                "amount_as_hkd",
+            ],
+            rows: content
+                .gst_details
+                .iter()
+                .map(|g| {
+                    let typ = first_non_empty(&[&g.r#type, &g.type_en, &g.type_zh, &g.type_hk]);
+                    let remark = first_non_empty(&[&g.remark_en, &g.remark_zh, &g.remark_hk, &g.remark]);
+                    vec![
+                        g.date.as_str(),
+                        g.r#ref.as_str(),
+                        typ,
+                        remark,
+                        g.currency.as_str(),
+                        g.amount.as_str(),
+                        g.fee_rate.as_str(),
+                        g.fee_amount.as_str(),
+                        g.total.as_str(),
+                        g.fx_rate.as_str(),
+                        g.amount_as_hkd.as_str(),
                     ]
                 })
                 .collect(),
@@ -627,6 +952,14 @@ fn section_file_name(section: &StatementSection) -> &'static str {
         StatementSection::LendingFees => "lending_fees",
         StatementSection::CustodianFees => "custodian_fees",
         StatementSection::Corps => "corps",
+        StatementSection::BondEquityHoldingSums => "bond_equity_holdings",
+        StatementSection::OtcTradeSums => "otc_trades",
+        StatementSection::OutstandingSums => "outstandings",
+        StatementSection::FinancingTransactionSums => "financing_transactions",
+        StatementSection::InterestDeposits => "interest_deposits",
+        StatementSection::MaintenanceFees => "maintenance_fees",
+        StatementSection::CashPluses => "cash_pluses",
+        StatementSection::GstDetails => "gst_details",
     }
 }
 
@@ -661,5 +994,122 @@ impl SectionData<'_> {
         }
         out.push('\n');
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn csv_record(data: &str) -> Vec<String> {
+        let mut reader = csv::Reader::from_reader(data.as_bytes());
+        reader
+            .records()
+            .next()
+            .unwrap()
+            .unwrap()
+            .iter()
+            .map(ToString::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn equity_holdings_fall_back_to_market_code_and_currency_code() {
+        let content: CommonStatementContent = serde_json::from_str(
+            r#"
+            {
+                "EquityHoldingSums": [
+                    {
+                        "EquityType": "Stock",
+                        "Market": "",
+                        "MarketCode": "HK",
+                        "Currency": "",
+                        "CurrencyCode": "HKD",
+                        "EquityHoldings": [
+                            {
+                                "Code": "AAPL",
+                                "NameEn": "Apple Inc.",
+                                "Market": "",
+                                "MarketCode": "HK",
+                                "Currency": "",
+                                "CurrencyCode": "HKD",
+                                "BeginQuantity": "10",
+                                "ChangeQuantity": "2",
+                                "LedgerQuantity": "12",
+                                "ClosePrice": "100",
+                                "MarketValue": "1200",
+                                "MarginRate": "0.5",
+                                "MarginValue": "600",
+                                "CostPrice": "80",
+                                "IncomeAmount": "240"
+                            }
+                        ]
+                    }
+                ]
+            }
+            "#,
+        )
+        .unwrap();
+
+        let csv =
+            section_to_format(&content, &StatementSection::EquityHoldingSums, &ExportFormat::Csv)
+                .unwrap();
+        let record = csv_record(&csv);
+
+        assert_eq!(
+            record,
+            vec![
+                "Stock", "HK", "HKD", "AAPL", "Apple Inc.", "10", "2", "12", "100", "1200",
+                "0.5", "600", "80", "240",
+            ]
+        );
+    }
+
+    #[test]
+    fn bond_equity_holdings_prefer_item_market_and_currency_when_present() {
+        let content: CommonStatementContent = serde_json::from_str(
+            r#"
+            {
+                "BondEquityHoldingSums": [
+                    {
+                        "EquityType": "Bond",
+                        "Market": "HK",
+                        "Currency": "HKD",
+                        "EquityHoldings": [
+                            {
+                                "Code": "BOND1",
+                                "NameEn": "Bond One",
+                                "Market": "US",
+                                "Currency": "USD",
+                                "BeginQuantity": "1",
+                                "ChangeQuantity": "0",
+                                "LedgerQuantity": "1",
+                                "ClosePrice": "99",
+                                "MarketValue": "99",
+                                "MarginRate": "0.1",
+                                "MarginValue": "9.9",
+                                "CostPrice": "100",
+                                "IncomeAmount": "-1"
+                            }
+                        ]
+                    }
+                ]
+            }
+            "#,
+        )
+        .unwrap();
+
+        let csv = section_to_format(
+            &content,
+            &StatementSection::BondEquityHoldingSums,
+            &ExportFormat::Csv,
+        )
+        .unwrap();
+        let record = csv_record(&csv);
+
+        assert_eq!(record[0], "Bond");
+        assert_eq!(record[1], "US");
+        assert_eq!(record[2], "USD");
+        assert_eq!(record[3], "BOND1");
     }
 }

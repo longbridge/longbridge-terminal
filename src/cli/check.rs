@@ -90,7 +90,7 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
         .and_then(|p| std::fs::read_to_string(p).ok())
         .map_or_else(|| "none".to_string(), |s| s.trim().to_lowercase());
     let is_cn = region_cached == "cn";
-    let is_test_env = std::env::var("LONGBRIDGE_TEST_ENV").is_ok();
+    let is_test_env = crate::auth::is_test_env();
 
     // ── Token verification via market temperature API ─────────────────────────
     let token_ok: bool;

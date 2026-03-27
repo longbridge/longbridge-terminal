@@ -797,7 +797,7 @@ pub enum StatementSection {
     Asset,
     #[value(name = "equity_holdings")]
     EquityHoldingSums,
-    #[value(name = "account_balance_changes")]
+    #[value(name = "account_balance_change_sums")]
     AccountBalanceChangeSums,
     #[value(name = "stock_trades")]
     StockTradeSums,
@@ -823,6 +823,22 @@ pub enum StatementSection {
     CustodianFees,
     #[value(name = "corps")]
     Corps,
+    #[value(name = "bond_equity_holdings")]
+    BondEquityHoldingSums,
+    #[value(name = "otc_trades")]
+    OtcTradeSums,
+    #[value(name = "outstandings")]
+    OutstandingSums,
+    #[value(name = "financing_transactions")]
+    FinancingTransactionSums,
+    #[value(name = "interest_deposits")]
+    InterestDeposits,
+    #[value(name = "maintenance_fees")]
+    MaintenanceFees,
+    #[value(name = "cash_pluses")]
+    CashPluses,
+    #[value(name = "gst_details")]
+    GstDetails,
 }
 
 #[derive(ValueEnum, Clone, Debug)]
