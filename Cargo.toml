@@ -29,6 +29,7 @@ sec2md = { version = "0.1.0", path = "crates/sec2md" }
 crossterm = { version = "0.27", features = ["event-stream"] }
 dashmap = "6.1"
 dirs = "5.0"
+csv = "1"
 longbridge = { git = "https://github.com/longbridge/openapi.git", branch = "main" }
 futures = "0.3.28"
 open = "5"
