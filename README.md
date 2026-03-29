@@ -173,6 +173,7 @@ longbridge max-qty TSLA.US --side buy --price 250      # Estimate maximum buy or
 ```bash
 longbridge statement list [--type daily|monthly]                        # List available account statements (daily or monthly)
 longbridge statement export --file-key <KEY> --section equity_holdings  # Export statement sections as CSV or Markdown
+longbridge statement export --file-key <KEY> --all                     # Export all non-empty sections
 ```
 
 <!-- COMMANDS_END -->

@@ -1,7 +1,11 @@
+use std::borrow::Cow;
+
 use anyhow::Result;
 use longbridge::asset::{
     CommonStatementContent, GetStatementListOptions, GetStatementOptions, StatementType,
 };
+use serde_json::Value;
+use unicode_width::UnicodeWidthStr;
 
 use super::{output::print_table, ExportFormat, OutputFormat, StatementCmd, StatementSection};
 
@@ -24,9 +28,10 @@ pub async fn cmd_statement(cmd: StatementCmd, format: &OutputFormat) -> Result<(
         StatementCmd::Export {
             file_key,
             section: sections,
+            all,
             export_format,
             output,
-        } => cmd_export(&file_key, &sections, export_format, output.as_deref()).await,
+        } => cmd_export(&file_key, &sections, all, export_format, output.as_deref()).await,
     }
 }
 
@@ -58,12 +63,48 @@ async fn cmd_list(
     Ok(())
 }
 
+const ALL_SECTIONS: &[StatementSection] = &[
+    StatementSection::Asset,
+    StatementSection::AccountBalanceSum,
+    StatementSection::EquityHoldingSums,
+    StatementSection::AccountBalanceChangeSums,
+    StatementSection::StockTradeSums,
+    StatementSection::EquityHoldingChangeSums,
+    StatementSection::AccountBalanceLockSums,
+    StatementSection::EquityHoldingLockSums,
+    StatementSection::OptionTradeSums,
+    StatementSection::FundTradeSums,
+    StatementSection::IpoTradeSums,
+    StatementSection::VirtualTradeSums,
+    StatementSection::Interests,
+    StatementSection::LendingFees,
+    StatementSection::CustodianFees,
+    StatementSection::Corps,
+    StatementSection::BondEquityHoldingSums,
+    StatementSection::OtcTradeSums,
+    StatementSection::OutstandingSums,
+    StatementSection::FinancingTransactionSums,
+    StatementSection::InterestDeposits,
+    StatementSection::MaintenanceFees,
+    StatementSection::CashPluses,
+    StatementSection::GstDetails,
+];
+
 async fn cmd_export(
     file_key: &str,
     sections: &[StatementSection],
+    all: bool,
     explicit_format: Option<ExportFormat>,
     output_path: Option<&str>,
 ) -> Result<()> {
+    let sections = if all {
+        ALL_SECTIONS
+    } else if sections.is_empty() {
+        anyhow::bail!("Specify --section or --all");
+    } else {
+        sections
+    };
+
     let ctx = crate::openapi::statement();
     let options = GetStatementOptions::new(file_key);
     let resp = ctx.statement_download_url(options).await?;
@@ -71,7 +112,9 @@ async fn cmd_export(
     // Fetch the statement JSON
     let client = reqwest::Client::new();
     let body = client.get(&resp.url).send().await?.text().await?;
-    let content: CommonStatementContent = serde_json::from_str(&body)?;
+    // println!("{body}");
+    let value: Value = serde_json::from_str(&body)?;
+    let content: CommonStatementContent = serde_json::from_value(value)?;
 
     // Resolve format: explicit flag wins, otherwise csv when -o is given, md when not.
     let format = explicit_format.unwrap_or(if output_path.is_some() {
@@ -87,7 +130,7 @@ async fn cmd_export(
 
     match output_path {
         Some(path) => {
-            if sections.len() == 1 {
+            if sections.len() == 1 && !all {
                 let data = section_to_format(&content, &sections[0], &format)?;
                 std::fs::write(path, data)?;
                 println!("Saved {:?} to {path}", sections[0]);
@@ -95,19 +138,32 @@ async fn cmd_export(
                 let dir = std::path::Path::new(path);
                 std::fs::create_dir_all(dir)?;
                 for section in sections {
+                    let data = section_data(&content, section);
+                    if data.rows.is_empty() {
+                        continue;
+                    }
+                    let formatted = match format {
+                        ExportFormat::Csv => data.to_csv()?,
+                        ExportFormat::Md => data.to_markdown(),
+                    };
                     let file_name = format!("{}.{ext}", section_file_name(section));
                     let file_path = dir.join(&file_name);
-                    let data = section_to_format(&content, section, &format)?;
-                    std::fs::write(&file_path, data)?;
+                    std::fs::write(&file_path, formatted)?;
                     println!("Saved {section:?} to {}", file_path.display());
                 }
             }
         }
         None => {
-            // Print to stdout
             for section in sections {
-                let data = section_to_format(&content, section, &format)?;
-                print!("{data}");
+                let data = section_data(&content, section);
+                if data.rows.is_empty() {
+                    continue;
+                }
+                let formatted = match format {
+                    ExportFormat::Csv => data.to_csv()?,
+                    ExportFormat::Md => data.to_markdown(),
+                };
+                print!("{formatted}");
             }
         }
     }
@@ -274,7 +330,8 @@ fn section_data<'a>(
                 .flat_map(|sum| {
                     sum.account_balance_changes.iter().map(move |c| {
                         let typ = first_non_empty(&[&c.r#type, &c.type_en, &c.type_zh, &c.type_hk]);
-                        let remark = first_non_empty(&[&c.remark_en, &c.remark_zh, &c.remark_hk, &c.remark]);
+                        let remark =
+                            first_non_empty(&[&c.remark_en, &c.remark_zh, &c.remark_hk, &c.remark]);
                         vec![
                             sum.currency.as_str(),
                             c.date.as_str(),
@@ -669,7 +726,12 @@ fn section_data<'a>(
                 .iter()
                 .map(|c| {
                     let name = first_non_empty(&[&c.name, &c.name_en, &c.name_zh, &c.name_hk]);
-                    let new_name = first_non_empty(&[&c.new_name, &c.new_name_en, &c.new_name_zh, &c.new_name_hk]);
+                    let new_name = first_non_empty(&[
+                        &c.new_name,
+                        &c.new_name_en,
+                        &c.new_name_zh,
+                        &c.new_name_hk,
+                    ]);
                     vec![
                         c.date.as_str(),
                         c.pay_date.as_str(),
@@ -840,7 +902,8 @@ fn section_data<'a>(
                 .flat_map(|sum| {
                     sum.transaction_details.iter().map(move |d| {
                         let typ = first_non_empty(&[&d.r#type, &d.type_en, &d.type_zh, &d.type_hk]);
-                        let remark = first_non_empty(&[&d.remark_en, &d.remark_zh, &d.remark_hk, &d.remark]);
+                        let remark =
+                            first_non_empty(&[&d.remark_en, &d.remark_zh, &d.remark_hk, &d.remark]);
                         vec![
                             sum.currency.as_str(),
                             d.date.as_str(),
@@ -946,7 +1009,8 @@ fn section_data<'a>(
                 .iter()
                 .map(|g| {
                     let typ = first_non_empty(&[&g.r#type, &g.type_en, &g.type_zh, &g.type_hk]);
-                    let remark = first_non_empty(&[&g.remark_en, &g.remark_zh, &g.remark_hk, &g.remark]);
+                    let remark =
+                        first_non_empty(&[&g.remark_en, &g.remark_zh, &g.remark_hk, &g.remark]);
                     vec![
                         g.date.as_str(),
                         g.r#ref.as_str(),
@@ -1020,26 +1084,75 @@ impl SectionData<'_> {
 
     fn to_markdown(&self) -> String {
         let mut out = format!("## {}\n\n", self.title);
-        out.push_str("| ");
-        out.push_str(&self.headers.join(" | "));
-        out.push_str(" |\n| ");
-        out.push_str(
-            &self
-                .headers
-                .iter()
-                .map(|_| "---")
-                .collect::<Vec<_>>()
-                .join(" | "),
-        );
-        out.push_str(" |\n");
+        let widths = self.markdown_column_widths();
+        self.push_markdown_row(&mut out, self.headers.iter().copied(), &widths);
+        self.push_markdown_separator(&mut out, &widths);
         for row in &self.rows {
-            out.push_str("| ");
-            out.push_str(&row.join(" | "));
-            out.push_str(" |\n");
+            debug_assert_eq!(row.len(), self.headers.len());
+            self.push_markdown_row(&mut out, row.iter().copied(), &widths);
         }
         out.push('\n');
         out
     }
+
+    fn markdown_column_widths(&self) -> Vec<usize> {
+        let mut widths = self
+            .headers
+            .iter()
+            .map(|header| markdown_cell_width(header).max(3))
+            .collect::<Vec<_>>();
+
+        for row in &self.rows {
+            debug_assert_eq!(row.len(), self.headers.len());
+            for (width, cell) in widths.iter_mut().zip(row.iter()) {
+                *width = (*width).max(markdown_cell_width(cell));
+            }
+        }
+
+        widths
+    }
+
+    fn push_markdown_row<'a>(
+        &self,
+        out: &mut String,
+        cells: impl IntoIterator<Item = &'a str>,
+        widths: &[usize],
+    ) {
+        out.push('|');
+        for (cell, width) in cells.into_iter().zip(widths.iter().copied()) {
+            let escaped = escape_markdown_cell(cell);
+            let padding = width.saturating_sub(UnicodeWidthStr::width(escaped.as_ref()));
+            out.push(' ');
+            out.push_str(escaped.as_ref());
+            out.push_str(&" ".repeat(padding));
+            out.push(' ');
+            out.push('|');
+        }
+        out.push('\n');
+    }
+
+    fn push_markdown_separator(&self, out: &mut String, widths: &[usize]) {
+        out.push('|');
+        for width in widths {
+            out.push(' ');
+            out.push_str(&"-".repeat(*width));
+            out.push(' ');
+            out.push('|');
+        }
+        out.push('\n');
+    }
+}
+
+fn escape_markdown_cell(cell: &str) -> Cow<'_, str> {
+    if cell.contains('|') {
+        Cow::Owned(cell.replace('|', "\\|"))
+    } else {
+        Cow::Borrowed(cell)
+    }
+}
+
+fn markdown_cell_width(cell: &str) -> usize {
+    UnicodeWidthStr::width(escape_markdown_cell(cell).as_ref())
 }
 
 #[cfg(test)]
@@ -1096,16 +1209,31 @@ mod tests {
         )
         .unwrap();
 
-        let csv =
-            section_to_format(&content, &StatementSection::EquityHoldingSums, &ExportFormat::Csv)
-                .unwrap();
+        let csv = section_to_format(
+            &content,
+            &StatementSection::EquityHoldingSums,
+            &ExportFormat::Csv,
+        )
+        .unwrap();
         let record = csv_record(&csv);
 
         assert_eq!(
             record,
             vec![
-                "Stock", "HK", "HKD", "AAPL", "Apple Inc.", "10", "2", "12", "100", "1200",
-                "0.5", "600", "80", "240",
+                "Stock",
+                "HK",
+                "HKD",
+                "AAPL",
+                "Apple Inc.",
+                "10",
+                "2",
+                "12",
+                "100",
+                "1200",
+                "0.5",
+                "600",
+                "80",
+                "240",
             ]
         );
     }
@@ -1156,5 +1284,38 @@ mod tests {
         assert_eq!(record[1], "US");
         assert_eq!(record[2], "USD");
         assert_eq!(record[3], "BOND1");
+    }
+
+    #[test]
+    fn markdown_output_pads_empty_cells_to_column_width() {
+        let data = SectionData {
+            title: "Test",
+            headers: &["alpha", "beta", "gamma"],
+            rows: vec![vec!["1", "", "333"], vec!["long", "22", ""]],
+        };
+
+        assert_eq!(
+            data.to_markdown(),
+            concat!(
+                "## Test\n\n",
+                "| alpha | beta | gamma |\n",
+                "| ----- | ---- | ----- |\n",
+                "| 1     |      | 333   |\n",
+                "| long  | 22   |       |\n\n",
+            )
+        );
+    }
+
+    #[test]
+    fn markdown_output_escapes_pipe_characters_in_cells() {
+        let data = SectionData {
+            title: "Test",
+            headers: &["name", "remark"],
+            rows: vec![vec!["A|B", "x"]],
+        };
+
+        let markdown = data.to_markdown();
+
+        assert!(markdown.contains("| A\\|B | x      |\n"));
     }
 }

@@ -885,11 +885,14 @@ pub enum StatementCmd {
         #[arg(long)]
         file_key: String,
         /// Sections to export (can specify multiple)
-        #[arg(long, num_args = 1..)]
+        #[arg(long, num_args = 1.., conflicts_with = "all")]
         section: Vec<StatementSection>,
+        /// Export all sections (empty sections are skipped)
+        #[arg(long)]
+        all: bool,
         /// Export format: csv | md.
         /// Defaults to `md` when `-o` is omitted, `csv` when `-o` is provided.
-        #[arg(long = "format")]
+        #[arg(long = "export-format")]
         export_format: Option<ExportFormat>,
         /// Output directory or file path.
         /// When multiple sections are specified, this is treated as a directory
