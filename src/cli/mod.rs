@@ -412,14 +412,19 @@ pub enum Commands {
     },
 
     // ── Trade ───────────────────────────────────────────────────────────────────
-    /// Today's orders, or historical orders with --history
+    /// Order management: list, detail, buy, sell, cancel, replace, executions
     ///
-    /// Returns: `order_id`, symbol, side, `order_type`, status, quantity, price,
-    ///   `executed_qty`, `executed_price`, `submitted_at`.
-    /// Example: longbridge orders
-    /// Example: longbridge orders --history --start 2024-01-01 --symbol TSLA.US
-    Orders {
-        /// Return historical orders instead of today's
+    /// Without a subcommand, lists today's orders (or historical with --history).
+    /// Example: longbridge order
+    /// Example: longbridge order --history --start 2024-01-01 --symbol TSLA.US
+    /// Example: longbridge order detail 20240101-123456789
+    /// Example: longbridge order buy TSLA.US 100 --price 250.00
+    /// Example: longbridge order sell TSLA.US 100 --price 260.00
+    /// Example: longbridge order cancel 20240101-123456789
+    /// Example: longbridge order replace 20240101-123456789 --qty 200 --price 255.00
+    /// Example: longbridge order executions --history --start 2024-01-01
+    Order {
+        /// Return historical orders instead of today's (list mode only)
         #[arg(long)]
         history: bool,
         /// Filter start date (YYYY-MM-DD)
@@ -431,124 +436,8 @@ pub enum Commands {
         /// Filter by symbol (e.g. TSLA.US)
         #[arg(long)]
         symbol: Option<String>,
-    },
-
-    /// Full detail for a single order including charges and history
-    ///
-    /// Returns all fields from `orders` plus `charge_detail`, `history_details`, msg.
-    /// Example: longbridge order 20240101-123456789
-    Order {
-        /// Order ID (from `orders` or returned by `buy`/`sell`)
-        order_id: String,
-    },
-
-    /// Today's trade executions (fills), or historical with --history
-    ///
-    /// Returns: `order_id`, `trade_id`, symbol, price, quantity, `trade_done_at`.
-    /// Example: longbridge executions --history --start 2024-01-01
-    Executions {
-        /// Return historical executions instead of today's
-        #[arg(long)]
-        history: bool,
-        /// Filter start date (YYYY-MM-DD)
-        #[arg(long)]
-        start: Option<String>,
-        /// Filter end date (YYYY-MM-DD)
-        #[arg(long)]
-        end: Option<String>,
-        /// Filter by symbol
-        #[arg(long)]
-        symbol: Option<String>,
-    },
-
-    /// Submit a buy order (prompts for confirmation)
-    ///
-    /// Returns `order_id` on success.
-    /// Order types: LO (limit) | MO (market) | ELO | ALO | ODD | SLO | LIT | MIT
-    ///   (case-insensitive)
-    /// Example: longbridge buy TSLA.US 100 --price 250.00
-    /// Example: longbridge buy 700.HK 1000 --price 300 --order-type ALO
-    /// Example: longbridge buy NVDA.US 10 --order-type MIT --trigger-price 177.89 --tif Day
-    /// Example: longbridge buy NVDA.US 10 --order-type LIT --trigger-price 177.89 --price 178.00 --tif Day
-    Buy {
-        /// Symbol in <CODE>.<MARKET> format
-        symbol: String,
-        /// Number of shares/units to buy (integer)
-        quantity: u64,
-        /// Limit price as a decimal string, e.g. 250.00 (required for LO/ELO/ALO/LIT; omit for MO/MIT)
-        #[arg(long)]
-        price: Option<String>,
-        /// Trigger price for conditional orders (required for MIT/LIT)
-        #[arg(long)]
-        trigger_price: Option<String>,
-        /// Order type: LO | MO | ELO | ALO | ODD | SLO | LIT | MIT  (case-insensitive, default: LO)
-        #[arg(long, default_value = "LO")]
-        order_type: String,
-        /// Time in force: Day | `GoodTilCanceled` (alias: gtc) | `GoodTilDate` (alias: gtd)
-        /// (case-insensitive, default: Day)
-        #[arg(long, default_value = "Day")]
-        tif: String,
-        /// Skip confirmation prompt (useful for scripting and AI agents)
-        #[arg(long, short = 'y')]
-        yes: bool,
-    },
-
-    /// Submit a sell order (prompts for confirmation)
-    ///
-    /// Returns `order_id` on success.
-    /// Example: longbridge sell TSLA.US 100 --price 260.00
-    /// Example: longbridge sell NVDA.US 10 --order-type MIT --trigger-price 177.89 --tif Day
-    Sell {
-        /// Symbol in <CODE>.<MARKET> format
-        symbol: String,
-        /// Number of shares/units to sell (integer)
-        quantity: u64,
-        /// Limit price as a decimal string, e.g. 260.00 (required for LO/ELO/ALO/LIT; omit for MO/MIT)
-        #[arg(long)]
-        price: Option<String>,
-        /// Trigger price for conditional orders (required for MIT/LIT)
-        #[arg(long)]
-        trigger_price: Option<String>,
-        /// Order type: LO | MO | ELO | ALO | ODD | SLO | LIT | MIT  (case-insensitive, default: LO)
-        #[arg(long, default_value = "LO")]
-        order_type: String,
-        /// Time in force: Day | `GoodTilCanceled` (alias: gtc) | `GoodTilDate` (alias: gtd)
-        /// (case-insensitive, default: Day)
-        #[arg(long, default_value = "Day")]
-        tif: String,
-        /// Skip confirmation prompt (useful for scripting and AI agents)
-        #[arg(long, short = 'y')]
-        yes: bool,
-    },
-
-    /// Cancel a pending order (prompts for confirmation)
-    ///
-    /// Only cancellable states (New, `PartialFilled`, etc.) are accepted.
-    /// Example: longbridge cancel 20240101-123456789
-    Cancel {
-        /// Order ID to cancel
-        order_id: String,
-        /// Skip confirmation prompt (useful for scripting and AI agents)
-        #[arg(long, short = 'y')]
-        yes: bool,
-    },
-
-    /// Modify quantity or price of a pending order (prompts for confirmation)
-    ///
-    /// --qty is required. --price is optional (omit to keep current price).
-    /// Example: longbridge replace 20240101-123456789 --qty 200 --price 255.00
-    Replace {
-        /// Order ID to modify
-        order_id: String,
-        /// New quantity (REQUIRED — integer number of shares/units)
-        #[arg(long)]
-        qty: Option<u64>,
-        /// New limit price as a decimal string, e.g. 255.00 (optional)
-        #[arg(long)]
-        price: Option<String>,
-        /// Skip confirmation prompt (useful for scripting and AI agents)
-        #[arg(long, short = 'y')]
-        yes: bool,
+        #[command(subcommand)]
+        cmd: Option<OrderCmd>,
     },
 
     /// Account cash balance and financing information
@@ -781,6 +670,127 @@ pub enum StatementCmd {
         /// Omit to print to stdout.
         #[arg(long, short = 'o')]
         output: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum OrderCmd {
+    /// Full detail for a single order including charges and history
+    ///
+    /// Returns all fields from `order` plus `charge_detail`, `history_details`, msg.
+    /// Example: longbridge order detail 20240101-123456789
+    Detail {
+        /// Order ID (from `longbridge order` or returned by `order buy`/`order sell`)
+        order_id: String,
+    },
+
+    /// Today's trade executions (fills), or historical with --history
+    ///
+    /// Returns: `order_id`, `trade_id`, symbol, price, quantity, `trade_done_at`.
+    /// Example: longbridge order executions
+    /// Example: longbridge order executions --history --start 2024-01-01
+    Executions {
+        /// Return historical executions instead of today's
+        #[arg(long)]
+        history: bool,
+        /// Filter start date (YYYY-MM-DD)
+        #[arg(long)]
+        start: Option<String>,
+        /// Filter end date (YYYY-MM-DD)
+        #[arg(long)]
+        end: Option<String>,
+        /// Filter by symbol
+        #[arg(long)]
+        symbol: Option<String>,
+    },
+
+    /// Submit a buy order (prompts for confirmation)
+    ///
+    /// Returns `order_id` on success.
+    /// Order types: LO (limit) | MO (market) | ELO | ALO | ODD | SLO | LIT | MIT
+    ///   (case-insensitive)
+    /// Example: longbridge order buy TSLA.US 100 --price 250.00
+    /// Example: longbridge order buy 700.HK 1000 --price 300 --order-type ALO
+    /// Example: longbridge order buy NVDA.US 10 --order-type MIT --trigger-price 177.89 --tif Day
+    Buy {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+        /// Number of shares/units to buy (integer)
+        quantity: u64,
+        /// Limit price as a decimal string, e.g. 250.00 (required for LO/ELO/ALO/LIT; omit for MO/MIT)
+        #[arg(long)]
+        price: Option<String>,
+        /// Trigger price for conditional orders (required for MIT/LIT)
+        #[arg(long)]
+        trigger_price: Option<String>,
+        /// Order type: LO | MO | ELO | ALO | ODD | SLO | LIT | MIT  (case-insensitive, default: LO)
+        #[arg(long, default_value = "LO")]
+        order_type: String,
+        /// Time in force: Day | `GoodTilCanceled` (alias: gtc) | `GoodTilDate` (alias: gtd)
+        /// (case-insensitive, default: Day)
+        #[arg(long, default_value = "Day")]
+        tif: String,
+        /// Skip confirmation prompt (useful for scripting and AI agents)
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
+
+    /// Submit a sell order (prompts for confirmation)
+    ///
+    /// Returns `order_id` on success.
+    /// Example: longbridge order sell TSLA.US 100 --price 260.00
+    /// Example: longbridge order sell NVDA.US 10 --order-type MIT --trigger-price 177.89 --tif Day
+    Sell {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+        /// Number of shares/units to sell (integer)
+        quantity: u64,
+        /// Limit price as a decimal string, e.g. 260.00 (required for LO/ELO/ALO/LIT; omit for MO/MIT)
+        #[arg(long)]
+        price: Option<String>,
+        /// Trigger price for conditional orders (required for MIT/LIT)
+        #[arg(long)]
+        trigger_price: Option<String>,
+        /// Order type: LO | MO | ELO | ALO | ODD | SLO | LIT | MIT  (case-insensitive, default: LO)
+        #[arg(long, default_value = "LO")]
+        order_type: String,
+        /// Time in force: Day | `GoodTilCanceled` (alias: gtc) | `GoodTilDate` (alias: gtd)
+        /// (case-insensitive, default: Day)
+        #[arg(long, default_value = "Day")]
+        tif: String,
+        /// Skip confirmation prompt (useful for scripting and AI agents)
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
+
+    /// Cancel a pending order (prompts for confirmation)
+    ///
+    /// Only cancellable states (New, `PartialFilled`, etc.) are accepted.
+    /// Example: longbridge order cancel 20240101-123456789
+    Cancel {
+        /// Order ID to cancel
+        order_id: String,
+        /// Skip confirmation prompt (useful for scripting and AI agents)
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
+
+    /// Modify quantity or price of a pending order (prompts for confirmation)
+    ///
+    /// --qty is required. --price is optional (omit to keep current price).
+    /// Example: longbridge order replace 20240101-123456789 --qty 200 --price 255.00
+    Replace {
+        /// Order ID to modify
+        order_id: String,
+        /// New quantity (REQUIRED — integer number of shares/units)
+        #[arg(long)]
+        qty: Option<u64>,
+        /// New limit price as a decimal string, e.g. 255.00 (optional)
+        #[arg(long)]
+        price: Option<String>,
+        /// Skip confirmation prompt (useful for scripting and AI agents)
+        #[arg(long, short = 'y')]
+        yes: bool,
     },
 }
 
@@ -1178,70 +1188,75 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
                 .await
             }
         },
-        Commands::Orders {
+        Commands::Order {
             history,
             start,
             end,
             symbol,
-        } => trade::cmd_orders(history, start, end, symbol, format).await,
-        Commands::Order { order_id } => trade::cmd_order_detail(order_id, format).await,
-        Commands::Executions {
-            history,
-            start,
-            end,
-            symbol,
-        } => trade::cmd_executions(history, start, end, symbol, format).await,
-        Commands::Buy {
-            symbol,
-            quantity,
-            price,
-            trigger_price,
-            order_type,
-            tif,
-            yes,
-        } => {
-            trade::cmd_submit_order(
+            cmd,
+        } => match cmd {
+            Some(OrderCmd::Detail { order_id }) => trade::cmd_order_detail(order_id, format).await,
+            Some(OrderCmd::Executions {
+                history: h,
+                start: s,
+                end: e,
+                symbol: sy,
+            }) => trade::cmd_executions(h, s, e, sy, format).await,
+            Some(OrderCmd::Buy {
                 symbol,
                 quantity,
                 price,
                 trigger_price,
                 order_type,
                 tif,
-                longbridge::trade::OrderSide::Buy,
                 yes,
-                format,
-            )
-            .await
-        }
-        Commands::Sell {
-            symbol,
-            quantity,
-            price,
-            trigger_price,
-            order_type,
-            tif,
-            yes,
-        } => {
-            trade::cmd_submit_order(
+            }) => {
+                trade::cmd_submit_order(
+                    symbol,
+                    quantity,
+                    price,
+                    trigger_price,
+                    order_type,
+                    tif,
+                    longbridge::trade::OrderSide::Buy,
+                    yes,
+                    format,
+                )
+                .await
+            }
+            Some(OrderCmd::Sell {
                 symbol,
                 quantity,
                 price,
                 trigger_price,
                 order_type,
                 tif,
-                longbridge::trade::OrderSide::Sell,
                 yes,
-                format,
-            )
-            .await
-        }
-        Commands::Cancel { order_id, yes } => trade::cmd_cancel_order(order_id, yes).await,
-        Commands::Replace {
-            order_id,
-            qty,
-            price,
-            yes,
-        } => trade::cmd_replace_order(order_id, qty, price, yes).await,
+            }) => {
+                trade::cmd_submit_order(
+                    symbol,
+                    quantity,
+                    price,
+                    trigger_price,
+                    order_type,
+                    tif,
+                    longbridge::trade::OrderSide::Sell,
+                    yes,
+                    format,
+                )
+                .await
+            }
+            Some(OrderCmd::Cancel { order_id, yes }) => {
+                trade::cmd_cancel_order(order_id, yes).await
+            }
+            Some(OrderCmd::Replace {
+                order_id,
+                qty,
+                price,
+                yes,
+            }) => trade::cmd_replace_order(order_id, qty, price, yes).await,
+            None => trade::cmd_orders(history, start, end, symbol, format).await,
+        },
         Commands::Balance { currency } => trade::cmd_balance(currency, format).await,
         Commands::CashFlow { start, end } => trade::cmd_cash_flow(start, end, format).await,
         Commands::Positions => trade::cmd_positions(format).await,
@@ -1764,13 +1779,14 @@ mod tests {
     // ─── Trade commands ───────────────────────────────────────────────────────
 
     #[test]
-    fn test_orders_defaults() {
-        let cli = parse(&["longbridge", "orders"]).unwrap();
-        if let Some(Commands::Orders {
+    fn test_order_list_defaults() {
+        let cli = parse(&["longbridge", "order"]).unwrap();
+        if let Some(Commands::Order {
             history,
             start,
             end,
             symbol,
+            cmd: None,
         }) = cli.command
         {
             assert!(!history);
@@ -1778,15 +1794,15 @@ mod tests {
             assert!(end.is_none());
             assert!(symbol.is_none());
         } else {
-            panic!("expected Orders command");
+            panic!("expected Order list command");
         }
     }
 
     #[test]
-    fn test_orders_history_with_filters() {
+    fn test_order_list_history_with_filters() {
         let cli = parse(&[
             "longbridge",
-            "orders",
+            "order",
             "--history",
             "--start",
             "2024-01-01",
@@ -1794,10 +1810,11 @@ mod tests {
             "TSLA.US",
         ])
         .unwrap();
-        if let Some(Commands::Orders {
+        if let Some(Commands::Order {
             history,
             start,
             symbol,
+            cmd: None,
             ..
         }) = cli.command
         {
@@ -1805,37 +1822,58 @@ mod tests {
             assert_eq!(start, Some("2024-01-01".to_string()));
             assert_eq!(symbol, Some("TSLA.US".to_string()));
         } else {
-            panic!("expected Orders command");
+            panic!("expected Order list command");
         }
     }
 
     #[test]
     fn test_order_detail_subcommand() {
-        let cli = parse(&["longbridge", "order", "order-123"]).unwrap();
-        assert!(
-            matches!(cli.command, Some(Commands::Order { order_id }) if order_id == "order-123")
-        );
+        let cli = parse(&["longbridge", "order", "detail", "order-123"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Order {
+                cmd: Some(OrderCmd::Detail { order_id }),
+                ..
+            }) if order_id == "order-123"
+        ));
     }
 
     #[test]
-    fn test_executions_subcommand() {
-        let cli = parse(&["longbridge", "executions"]).unwrap();
-        if let Some(Commands::Executions { history, .. }) = cli.command {
+    fn test_order_executions_subcommand() {
+        let cli = parse(&["longbridge", "order", "executions"]).unwrap();
+        if let Some(Commands::Order {
+            cmd: Some(OrderCmd::Executions { history, .. }),
+            ..
+        }) = cli.command
+        {
             assert!(!history);
         } else {
-            panic!("expected Executions command");
+            panic!("expected Order Executions command");
         }
     }
 
     #[test]
-    fn test_buy_subcommand() {
-        let cli = parse(&["longbridge", "buy", "TSLA.US", "100", "--price", "250.00"]).unwrap();
-        if let Some(Commands::Buy {
-            symbol,
-            quantity,
-            price,
-            order_type,
-            tif,
+    fn test_order_buy_subcommand() {
+        let cli = parse(&[
+            "longbridge",
+            "order",
+            "buy",
+            "TSLA.US",
+            "100",
+            "--price",
+            "250.00",
+        ])
+        .unwrap();
+        if let Some(Commands::Order {
+            cmd:
+                Some(OrderCmd::Buy {
+                    symbol,
+                    quantity,
+                    price,
+                    order_type,
+                    tif,
+                    ..
+                }),
             ..
         }) = cli.command
         {
@@ -1845,17 +1883,30 @@ mod tests {
             assert_eq!(order_type, "LO");
             assert_eq!(tif, "Day");
         } else {
-            panic!("expected Buy command");
+            panic!("expected Order Buy command");
         }
     }
 
     #[test]
-    fn test_sell_subcommand() {
-        let cli = parse(&["longbridge", "sell", "TSLA.US", "50", "--price", "260.00"]).unwrap();
-        if let Some(Commands::Sell {
-            symbol,
-            quantity,
-            price,
+    fn test_order_sell_subcommand() {
+        let cli = parse(&[
+            "longbridge",
+            "order",
+            "sell",
+            "TSLA.US",
+            "50",
+            "--price",
+            "260.00",
+        ])
+        .unwrap();
+        if let Some(Commands::Order {
+            cmd:
+                Some(OrderCmd::Sell {
+                    symbol,
+                    quantity,
+                    price,
+                    ..
+                }),
             ..
         }) = cli.command
         {
@@ -1863,22 +1914,27 @@ mod tests {
             assert_eq!(quantity, 50);
             assert_eq!(price, Some("260.00".to_string()));
         } else {
-            panic!("expected Sell command");
+            panic!("expected Order Sell command");
         }
     }
 
     #[test]
-    fn test_cancel_subcommand() {
-        let cli = parse(&["longbridge", "cancel", "order-456"]).unwrap();
-        assert!(
-            matches!(cli.command, Some(Commands::Cancel { order_id, .. }) if order_id == "order-456")
-        );
+    fn test_order_cancel_subcommand() {
+        let cli = parse(&["longbridge", "order", "cancel", "order-456"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Order {
+                cmd: Some(OrderCmd::Cancel { order_id, .. }),
+                ..
+            }) if order_id == "order-456"
+        ));
     }
 
     #[test]
-    fn test_replace_subcommand() {
+    fn test_order_replace_subcommand() {
         let cli = parse(&[
             "longbridge",
+            "order",
             "replace",
             "order-789",
             "--qty",
@@ -1887,10 +1943,14 @@ mod tests {
             "255.00",
         ])
         .unwrap();
-        if let Some(Commands::Replace {
-            order_id,
-            qty,
-            price,
+        if let Some(Commands::Order {
+            cmd:
+                Some(OrderCmd::Replace {
+                    order_id,
+                    qty,
+                    price,
+                    ..
+                }),
             ..
         }) = cli.command
         {
@@ -1898,7 +1958,7 @@ mod tests {
             assert_eq!(qty, Some(200));
             assert_eq!(price, Some("255.00".to_string()));
         } else {
-            panic!("expected Replace command");
+            panic!("expected Order Replace command");
         }
     }
 
