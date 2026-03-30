@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 pub mod api;
 pub mod check;
+pub mod image;
 pub mod news;
 pub mod output;
 pub mod quote;
@@ -357,6 +358,17 @@ pub enum Commands {
         count: usize,
         #[command(subcommand)]
         cmd: Option<FilingCmd>,
+    },
+
+    // ── Image ──────────────────────────────────────────────────────────────────
+    /// Upload images for use in community posts
+    ///
+    /// Images are uploaded anonymously to Imgur (https://imgur.com).
+    /// The returned URL can be embedded in a topic body with Markdown: ![](URL)
+    /// Example: longbridge image upload ./chart.png
+    Image {
+        #[command(subcommand)]
+        cmd: ImageCmd,
     },
 
     /// Community discussion topics
@@ -830,6 +842,19 @@ pub enum FilingCmd {
 }
 
 #[derive(Subcommand)]
+pub enum ImageCmd {
+    /// Upload a local image file to Imgur (https://imgur.com) anonymously
+    ///
+    /// Prints the public Imgur URL on success. Images are not tied to any account.
+    /// Use the URL in a topic body with Markdown syntax: ![](URL)
+    /// Example: longbridge image upload ./chart.png
+    Upload {
+        /// Path to the image file (PNG, JPEG, GIF, or WebP)
+        path: std::path::PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
 pub enum TopicCmd {
     /// Get full details of a community topic by its ID
     ///
@@ -1137,6 +1162,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
                 })?;
                 news::cmd_filings(sym, count, format).await
             }
+        },
+        Commands::Image { cmd } => match cmd {
+            ImageCmd::Upload { path } => image::cmd_image_upload(path).await,
         },
         Commands::Topic { symbol, count, cmd } => match cmd {
             Some(TopicCmd::Detail { id }) => topic::cmd_topic_detail_api(id, format).await,
