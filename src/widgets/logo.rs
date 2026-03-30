@@ -24,7 +24,7 @@ impl Widget for Logo {
         // Make vertical center
         let area = if area.height > BANNER_HEIGHT {
             let margin = (area.height - BANNER_HEIGHT) / 2;
-            area.inner(&Margin {
+            area.inner(Margin {
                 vertical: margin,
                 horizontal: 0,
             })

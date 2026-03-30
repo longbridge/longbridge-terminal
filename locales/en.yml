@@ -203,7 +203,8 @@ HelpTips: |-
 
     G                               Switch watchlist group
     t                               Toggle stock detail view
-    j, Up Arrow, k, Down Arrow      Switch watching selection
+    n                               Toggle news view (in stock detail panel)
+    j, Up Arrow, k, Down Arrow      Switch watching selection / scroll news
 
   - Portfolio  -------------------------------------------------------------------------------
 
@@ -211,6 +212,15 @@ HelpTips: |-
     c                               Switch currency
     j, Up Arrow, k, Down Arrow      Switch holding selection
 
+Tab:
+  Quote: "Quote"
+  News: "News [n]"
+News:
+  Title: "News"
+  Empty: "No news available"
+  Detail: "Article"
+  DetailEmpty: "Select an article to read"
+  DetailHint: "↑↓ switch article  PgUp/PgDn scroll  o browser  q back"
 Error.KlineDataFormat: "Invalid K-line data format"
 Currency.HKD: "Hong Kong Dollar"
 Currency.USD: "US Dollar"

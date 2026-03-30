@@ -43,7 +43,7 @@ pub fn render_portfolio(
     mut log_panel: Local<crate::widgets::LogPanel>,
 ) {
     _ = terminal.draw(|frame| {
-        let rect = frame.size();
+        let rect = frame.area();
 
         let top = Rect { height: 1, ..rect };
         crate::views::navbar::render(frame, top, *state.get());
@@ -324,9 +324,9 @@ pub fn render_portfolio(
                     height: block_inner.height,
                 };
 
-                let table = Table::new(rows)
-                    .header(header)
-                    .widths(&[
+                let table = Table::new(
+                    rows,
+                    [
                         Constraint::Percentage(10), // Code
                         Constraint::Percentage(10), // Name
                         Constraint::Percentage(8),  // Quantity
@@ -335,8 +335,10 @@ pub fn render_portfolio(
                         Constraint::Percentage(16), // Market Value (with currency)
                         Constraint::Percentage(10), // P/L
                         Constraint::Percentage(10), // P/L%
-                    ])
-                    .column_spacing(1);
+                    ],
+                )
+                .header(header)
+                .column_spacing(1);
 
                 frame.render_widget(table, table_area);
             }

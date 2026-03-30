@@ -20,6 +20,7 @@ use crate::{
 mod common;
 mod portfolio;
 mod stock_detail;
+mod stock_news;
 mod watchlist;
 mod watchlist_stock;
 
@@ -27,6 +28,7 @@ mod watchlist_stock;
 pub use common::*;
 pub use portfolio::*;
 pub use stock_detail::*;
+pub use stock_news::*;
 pub use watchlist::*;
 pub use watchlist_stock::*;
 
@@ -140,6 +142,10 @@ pub enum Key {
     Tab,
     BackTab,
     Enter,
+    NewsToggle,
+    NewsScrollUp,
+    NewsScrollDown,
+    NewsOpen,
 }
 
 // Shared resource types

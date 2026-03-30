@@ -4,7 +4,12 @@ use bevy_ecs::{
     prelude::*,
     system::{CommandQueue, InsertResource},
 };
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::{
+    layout::{Constraint, Direction, Layout, Rect},
+    style::Modifier,
+    text::Line,
+    widgets::Tabs,
+};
 
 use crate::{
     app::{AppState, WATCHLIST},
@@ -13,8 +18,14 @@ use crate::{
 };
 
 use super::{
-    stock_detail::stock_detail, watchlist::watch, Command, Key, NavFooter, PopUp, StockDetail,
-    KLINE_INDEX, KLINE_TYPE, WATCHLIST_TABLE,
+    stock_detail::stock_detail,
+    stock_news::{
+        fetch_news, fetch_news_detail, news_detail_scroll_down, news_detail_scroll_up,
+        news_list_down, news_list_up, render_news_detail_view, render_news_list_view,
+        selected_news_id, selected_news_url, NewsView, NEWS_VIEW,
+    },
+    watchlist::watch,
+    Command, Key, NavFooter, PopUp, StockDetail, KLINE_INDEX, KLINE_TYPE, WATCHLIST_TABLE,
 };
 
 pub fn render_watchlist_stock(
@@ -36,101 +47,163 @@ pub fn render_watchlist_stock(
     }
 
     for event in &mut events {
+        let news_view = NEWS_VIEW.load(Ordering::Relaxed);
+
         match event {
-            Key::Up => {
-                let watchlist = WATCHLIST.read().expect("poison");
-                let len = watchlist.counters().len();
-                let mut table = WATCHLIST_TABLE.lock().expect("poison");
-                let idx = table.selected();
-                let new_idx = cycle::prev(idx, len);
-                table.select(new_idx);
-                drop(table);
+            Key::Up => match news_view {
+                NewsView::Quote => {
+                    let watchlist = WATCHLIST.read().expect("poison");
+                    let len = watchlist.counters().len();
+                    let mut table = WATCHLIST_TABLE.lock().expect("poison");
+                    let idx = table.selected();
+                    let new_idx = cycle::prev(idx, len);
+                    table.select(new_idx);
+                    drop(table);
 
-                // Immediately update stock detail
-                if let Some(idx) = new_idx {
-                    if let Some(counter) = watchlist.counters().get(idx).cloned() {
+                    if let Some(idx) = new_idx {
+                        if let Some(counter) = watchlist.counters().get(idx).cloned() {
+                            _ = command.0.send({
+                                let mut queue = CommandQueue::default();
+                                queue.push(InsertResource {
+                                    resource: StockDetail(counter),
+                                });
+                                queue
+                            });
+                        }
+                    }
+                }
+                NewsView::List => news_list_up(),
+                NewsView::Detail => {
+                    news_list_up();
+                    if let Some(id) = selected_news_id() {
+                        fetch_news_detail(id, command.0.clone());
+                    }
+                }
+            },
+
+            Key::Down => match news_view {
+                NewsView::Quote => {
+                    let watchlist = WATCHLIST.read().expect("poison");
+                    let len = watchlist.counters().len();
+                    let mut table = WATCHLIST_TABLE.lock().expect("poison");
+                    let idx = table.selected();
+                    let new_idx = cycle::next(idx, len);
+                    table.select(new_idx);
+                    drop(table);
+
+                    if let Some(idx) = new_idx {
+                        if let Some(counter) = watchlist.counters().get(idx).cloned() {
+                            _ = command.0.send({
+                                let mut queue = CommandQueue::default();
+                                queue.push(InsertResource {
+                                    resource: StockDetail(counter),
+                                });
+                                queue
+                            });
+                        }
+                    }
+                }
+                NewsView::List => news_list_down(),
+                NewsView::Detail => {
+                    news_list_down();
+                    if let Some(id) = selected_news_id() {
+                        fetch_news_detail(id, command.0.clone());
+                    }
+                }
+            },
+
+            Key::Enter => match news_view {
+                NewsView::Quote => {
+                    let Some(idx) = WATCHLIST_TABLE.lock().expect("poison").selected() else {
+                        continue;
+                    };
+                    let counter = WATCHLIST
+                        .read()
+                        .expect("poison")
+                        .counters()
+                        .get(idx)
+                        .cloned();
+                    if let Some(counter) = counter {
                         _ = command.0.send({
                             let mut queue = CommandQueue::default();
                             queue.push(InsertResource {
                                 resource: StockDetail(counter),
                             });
-                            queue
-                        });
-                    }
-                }
-            }
-            Key::Down => {
-                let watchlist = WATCHLIST.read().expect("poison");
-                let len = watchlist.counters().len();
-                let mut table = WATCHLIST_TABLE.lock().expect("poison");
-                let idx = table.selected();
-                let new_idx = cycle::next(idx, len);
-                table.select(new_idx);
-                drop(table);
-
-                // Immediately update stock detail
-                if let Some(idx) = new_idx {
-                    if let Some(counter) = watchlist.counters().get(idx).cloned() {
-                        _ = command.0.send({
-                            let mut queue = CommandQueue::default();
                             queue.push(InsertResource {
-                                resource: StockDetail(counter),
+                                resource: NextState(Some(AppState::WatchlistStock)),
                             });
                             queue
                         });
                     }
                 }
-            }
+                NewsView::List => {
+                    if let Some(id) = selected_news_id() {
+                        fetch_news_detail(id, command.0.clone());
+                        NEWS_VIEW.store(NewsView::Detail, Ordering::Relaxed);
+                    }
+                }
+                NewsView::Detail => {}
+            },
+
             Key::Left => {
-                _ = KLINE_INDEX.fetch_update(Ordering::Acquire, Ordering::Relaxed, |old| {
-                    Some(old.saturating_add(1))
-                });
+                if news_view == NewsView::Quote {
+                    _ = KLINE_INDEX.fetch_update(Ordering::Acquire, Ordering::Relaxed, |old| {
+                        Some(old.saturating_add(1))
+                    });
+                }
             }
             Key::Right => {
-                _ = KLINE_INDEX.fetch_update(Ordering::Acquire, Ordering::Relaxed, |old| {
-                    Some(old.saturating_sub(1))
-                });
+                if news_view == NewsView::Quote {
+                    _ = KLINE_INDEX.fetch_update(Ordering::Acquire, Ordering::Relaxed, |old| {
+                        Some(old.saturating_sub(1))
+                    });
+                }
             }
             Key::Tab => {
-                KLINE_INDEX.store(0, Ordering::Relaxed);
-                _ = KLINE_TYPE.fetch_update(Ordering::Acquire, Ordering::Relaxed, |kline_type| {
-                    Some(kline_type.next())
-                });
+                if news_view == NewsView::Quote {
+                    KLINE_INDEX.store(0, Ordering::Relaxed);
+                    _ = KLINE_TYPE.fetch_update(
+                        Ordering::Acquire,
+                        Ordering::Relaxed,
+                        |kline_type| Some(kline_type.next()),
+                    );
+                }
             }
             Key::BackTab => {
-                KLINE_INDEX.store(0, Ordering::Relaxed);
-                _ = KLINE_TYPE.fetch_update(Ordering::Acquire, Ordering::Relaxed, |kline_type| {
-                    Some(kline_type.prev())
-                });
+                if news_view == NewsView::Quote {
+                    KLINE_INDEX.store(0, Ordering::Relaxed);
+                    _ = KLINE_TYPE.fetch_update(
+                        Ordering::Acquire,
+                        Ordering::Relaxed,
+                        |kline_type| Some(kline_type.prev()),
+                    );
+                }
             }
-            Key::Enter => {
-                let Some(idx) = WATCHLIST_TABLE.lock().expect("poison").selected() else {
-                    continue;
-                };
-                let counter = WATCHLIST
-                    .read()
-                    .expect("poison")
-                    .counters()
-                    .get(idx)
-                    .cloned();
-                if let Some(counter) = counter {
-                    _ = command.0.send({
-                        let mut queue = CommandQueue::default();
-                        queue.push(InsertResource {
-                            resource: StockDetail(counter),
-                        });
-                        queue.push(InsertResource {
-                            resource: NextState(Some(AppState::WatchlistStock)),
-                        });
-                        queue
-                    });
+
+            Key::NewsToggle => {
+                let current = NEWS_VIEW.load(Ordering::Relaxed);
+                match current {
+                    NewsView::Quote => {
+                        NEWS_VIEW.store(NewsView::List, Ordering::Relaxed);
+                        fetch_news(stock.0.clone(), command.0.clone());
+                    }
+                    _ => {
+                        NEWS_VIEW.store(NewsView::Quote, Ordering::Relaxed);
+                    }
+                }
+            }
+            Key::NewsScrollUp => news_detail_scroll_up(),
+            Key::NewsScrollDown => news_detail_scroll_down(),
+            Key::NewsOpen => {
+                if let Some(url) = selected_news_url() {
+                    let _ = open::that(url);
                 }
             }
         }
     }
 
     _ = terminal.draw(|frame| {
-        let rect = frame.size();
+        let rect = frame.area();
         let top = Rect { height: 1, ..rect };
         crate::views::navbar::render(frame, top, *state.get());
 
@@ -151,13 +224,46 @@ pub fn render_watchlist_stock(
             .direction(Direction::Horizontal)
             .split(rect);
         watch(frame, chunks[0], false);
-        stock_detail(
-            frame,
-            chunks[1],
-            &stock.0,
-            KLINE_TYPE.load(Ordering::Relaxed),
-            KLINE_INDEX.load(Ordering::Relaxed),
-        );
+
+        let news_view = NEWS_VIEW.load(Ordering::Relaxed);
+
+        // Split the right panel: 1-line tab bar + content
+        let right_chunks = Layout::default()
+            .constraints([Constraint::Length(1), Constraint::Min(0)])
+            .direction(Direction::Vertical)
+            .split(chunks[1]);
+
+        let tab_titles = vec![
+            Line::from(t!("Tab.Quote").to_string()),
+            Line::from(t!("Tab.News").to_string()),
+        ];
+        let selected_tab = match news_view {
+            NewsView::Quote => 0,
+            NewsView::List | NewsView::Detail => 1,
+        };
+        let tabs = Tabs::new(tab_titles)
+            .select(selected_tab)
+            .highlight_style(crate::ui::styles::primary().add_modifier(Modifier::BOLD))
+            .divider(" ");
+        frame.render_widget(tabs, right_chunks[0]);
+
+        match news_view {
+            NewsView::Quote => {
+                stock_detail(
+                    frame,
+                    right_chunks[1],
+                    &stock.0,
+                    KLINE_TYPE.load(Ordering::Relaxed),
+                    KLINE_INDEX.load(Ordering::Relaxed),
+                );
+            }
+            NewsView::List => {
+                render_news_list_view(frame, right_chunks[1]);
+            }
+            NewsView::Detail => {
+                render_news_detail_view(frame, right_chunks[1]);
+            }
+        }
 
         crate::views::popup::render(
             frame,

@@ -54,12 +54,12 @@ fn switch_account(frame: &mut Frame, rect: Rect, account: &mut LocalSearch<crate
             .title(t!("SwitchAccount.title")),
     );
     frame.render_widget(paragraph, chunks[0]);
-    frame.set_cursor(
+    frame.set_cursor_position((
         // Put cursor past the end of the input text
         chunks[0].x + u16::try_from(input.visual_cursor()).unwrap() + 1,
         // Move one line down, from the border to the input line
         chunks[0].y + 1,
-    );
+    ));
 
     let column_widths = [12, 34];
 
@@ -76,14 +76,13 @@ fn switch_account(frame: &mut Frame, rect: Rect, account: &mut LocalSearch<crate
 
     let column_constraints = column_widths.map(|w| Constraint::Length(u16::try_from(w).unwrap()));
 
-    let table = Table::new(rows)
+    let table = Table::new(rows, column_constraints)
         .block(
             Block::default()
                 .borders(Borders::all())
                 .border_style(styles::border()),
         )
-        .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-        .widths(&column_constraints)
+        .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
         .column_spacing(2);
 
     frame.render_stateful_widget(table, chunks[1], &mut account.table);
@@ -113,12 +112,12 @@ fn switch_currency(
             .title(t!("SwitchCurrency.title")),
     );
     frame.render_widget(paragraph, chunks[0]);
-    frame.set_cursor(
+    frame.set_cursor_position((
         // Put cursor past the end of the input text
         chunks[0].x + u16::try_from(input.visual_cursor()).unwrap() + 1,
         // Move one line down, from the border to the input line
         chunks[0].y + 1,
-    );
+    ));
 
     let column_widths = [12, 34];
 
@@ -135,14 +134,13 @@ fn switch_currency(
 
     let column_constraints = column_widths.map(|w| Constraint::Length(u16::try_from(w).unwrap()));
 
-    let table = Table::new(rows)
+    let table = Table::new(rows, column_constraints)
         .block(
             Block::default()
                 .borders(Borders::all())
                 .border_style(styles::border()),
         )
-        .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-        .widths(&column_constraints)
+        .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
         .column_spacing(2);
 
     frame.render_stateful_widget(table, chunks[1], &mut currency.table);
@@ -172,12 +170,12 @@ fn switch_watchlist(
             .title(t!("SwitchWatchlist.title")),
     );
     frame.render_widget(paragraph, chunks[0]);
-    frame.set_cursor(
+    frame.set_cursor_position((
         // Put cursor past the end of the input text
         chunks[0].x + u16::try_from(input.visual_cursor()).unwrap() + 1,
         // Move one line down, from the border to the input line
         chunks[0].y + 1,
-    );
+    ));
 
     let column_widths = [12, 34];
 
@@ -194,14 +192,13 @@ fn switch_watchlist(
 
     let column_constraints = column_widths.map(|w| Constraint::Length(u16::try_from(w).unwrap()));
 
-    let table = Table::new(rows)
+    let table = Table::new(rows, column_constraints)
         .block(
             Block::default()
                 .borders(Borders::all())
                 .border_style(styles::border()),
         )
-        .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-        .widths(&column_constraints)
+        .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
         .column_spacing(2);
 
     frame.render_stateful_widget(table, chunks[1], &mut groups.table);
@@ -227,12 +224,12 @@ fn searching(frame: &mut Frame, rect: Rect, search: &mut Search<openapi::search:
             .title(t!("SearchStock.title")),
     );
     frame.render_widget(paragraph, chunks[0]);
-    frame.set_cursor(
+    frame.set_cursor_position((
         // Put cursor past the end of the input text
         chunks[0].x + u16::try_from(input.visual_cursor()).unwrap() + 1,
         // Move one line down, from the border to the input line
         chunks[0].y + 1,
-    );
+    ));
 
     let column_widths = [12, 34];
 
@@ -254,14 +251,13 @@ fn searching(frame: &mut Frame, rect: Rect, search: &mut Search<openapi::search:
 
     let column_constraints = column_widths.map(|w| Constraint::Length(u16::try_from(w).unwrap()));
 
-    let table = Table::new(rows)
+    let table = Table::new(rows, column_constraints)
         .block(
             Block::default()
                 .borders(Borders::all())
                 .border_style(styles::border()),
         )
-        .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-        .widths(&column_constraints)
+        .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
         .column_spacing(2);
 
     frame.render_stateful_widget(table, chunks[1], &mut search.table);

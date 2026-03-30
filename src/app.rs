@@ -29,7 +29,6 @@ pub const POPUP_ACCOUNT: u8 = 0b100;
 pub const POPUP_CURRENCY: u8 = 0b1000;
 pub const POPUP_WATCHLIST: u8 = 0b10000;
 
-
 #[derive(
     Clone, Copy, PartialEq, Eq, Hash, Debug, Default, States, strum::EnumIter, bytemuck::NoUninit,
 )]
@@ -704,7 +703,80 @@ fn handle_global_keys(
             render_state.mark_dirty(DirtyFlags::POPUP_HELP);
         }
         key!('q') => {
-            crate::widgets::Terminal::graceful_exit(0);
+            if state == AppState::WatchlistStock {
+                let news_view = systems::NEWS_VIEW.load(std::sync::atomic::Ordering::Relaxed);
+                match news_view {
+                    systems::NewsView::Detail => {
+                        systems::NEWS_VIEW.store(
+                            systems::NewsView::List,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        render_state.mark_dirty(DirtyFlags::ALL);
+                    }
+                    systems::NewsView::List => {
+                        systems::NEWS_VIEW.store(
+                            systems::NewsView::Quote,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        render_state.mark_dirty(DirtyFlags::ALL);
+                    }
+                    systems::NewsView::Quote => {
+                        app.world
+                            .insert_resource(NextState(Some(AppState::Watchlist)));
+                        render_state.mark_dirty(DirtyFlags::ALL);
+                    }
+                }
+            } else {
+                crate::widgets::Terminal::graceful_exit(0);
+            }
+        }
+        ::crossterm::event::KeyEvent {
+            code: ::crossterm::event::KeyCode::Char('n'),
+            modifiers: ::crossterm::event::KeyModifiers::NONE,
+            kind: ::crossterm::event::KeyEventKind::Press,
+            state: ::crossterm::event::KeyEventState::NONE,
+        } if state == AppState::WatchlistStock => {
+            send_evt(systems::Key::NewsToggle, &mut app.world);
+            render_state.mark_dirty(DirtyFlags::ALL);
+        }
+        ::crossterm::event::KeyEvent {
+            code: ::crossterm::event::KeyCode::PageUp,
+            modifiers: ::crossterm::event::KeyModifiers::NONE,
+            kind: ::crossterm::event::KeyEventKind::Press,
+            state: ::crossterm::event::KeyEventState::NONE,
+        }
+        | ::crossterm::event::KeyEvent {
+            code: ::crossterm::event::KeyCode::Char('K'),
+            modifiers: ::crossterm::event::KeyModifiers::SHIFT,
+            kind: ::crossterm::event::KeyEventKind::Press,
+            state: ::crossterm::event::KeyEventState::NONE,
+        } if state == AppState::WatchlistStock => {
+            send_evt(systems::Key::NewsScrollUp, &mut app.world);
+            render_state.mark_dirty(DirtyFlags::ALL);
+        }
+        ::crossterm::event::KeyEvent {
+            code: ::crossterm::event::KeyCode::PageDown,
+            modifiers: ::crossterm::event::KeyModifiers::NONE,
+            kind: ::crossterm::event::KeyEventKind::Press,
+            state: ::crossterm::event::KeyEventState::NONE,
+        }
+        | ::crossterm::event::KeyEvent {
+            code: ::crossterm::event::KeyCode::Char('J'),
+            modifiers: ::crossterm::event::KeyModifiers::SHIFT,
+            kind: ::crossterm::event::KeyEventKind::Press,
+            state: ::crossterm::event::KeyEventState::NONE,
+        } if state == AppState::WatchlistStock => {
+            send_evt(systems::Key::NewsScrollDown, &mut app.world);
+            render_state.mark_dirty(DirtyFlags::ALL);
+        }
+        ::crossterm::event::KeyEvent {
+            code: ::crossterm::event::KeyCode::Char('o'),
+            modifiers: ::crossterm::event::KeyModifiers::NONE,
+            kind: ::crossterm::event::KeyEventKind::Press,
+            state: ::crossterm::event::KeyEventState::NONE,
+        } if state == AppState::WatchlistStock => {
+            send_evt(systems::Key::NewsOpen, &mut app.world);
+            render_state.mark_dirty(DirtyFlags::ALL);
         }
         ::crossterm::event::KeyEvent {
             code: ::crossterm::event::KeyCode::Esc,
@@ -712,7 +784,30 @@ fn handle_global_keys(
             kind: ::crossterm::event::KeyEventKind::Press,
             state: ::crossterm::event::KeyEventState::NONE,
         } => {
-            if matches!(state, AppState::Stock | AppState::WatchlistStock) {
+            if state == AppState::WatchlistStock {
+                let news_view = systems::NEWS_VIEW.load(std::sync::atomic::Ordering::Relaxed);
+                match news_view {
+                    systems::NewsView::Detail => {
+                        systems::NEWS_VIEW.store(
+                            systems::NewsView::List,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        render_state.mark_dirty(DirtyFlags::ALL);
+                    }
+                    systems::NewsView::List => {
+                        systems::NEWS_VIEW.store(
+                            systems::NewsView::Quote,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        render_state.mark_dirty(DirtyFlags::ALL);
+                    }
+                    systems::NewsView::Quote => {
+                        app.world
+                            .insert_resource(NextState(Some(AppState::Watchlist)));
+                        render_state.mark_dirty(DirtyFlags::ALL);
+                    }
+                }
+            } else if state == AppState::Stock {
                 app.world
                     .insert_resource(NextState(Some(AppState::Watchlist)));
                 render_state.mark_dirty(DirtyFlags::ALL);
