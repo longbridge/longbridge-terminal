@@ -193,8 +193,10 @@ Markets: `HK` (Hong Kong) · `US` (United States) · `CN` / `SH` / `SZ` (China A
 Install the skill to give your AI tools full knowledge of all `longbridge` CLI commands:
 
 ```bash
-npx skills add longbridge/longbridge-terminal
+npx skills add longbridge/developers
 ```
+
+More about Longbridge Skill, please visit: https://open.longbridge.com/skill/
 
 Once installed, Claude can query market data, run technical analysis, and manage trades directly from your AI workflow.
 
