@@ -25,9 +25,11 @@ impl<'a> Content<'a> {
         let anykey = Span::styled(t!("exit.any_key"), crate::ui::styles::gray());
         self.content.lines.push(Line::from(anykey));
 
-        terminal.draw(|frame| {
-            frame.render_widget(self, frame.size());
-        })?;
+        terminal
+            .draw(|frame| {
+                frame.render_widget(self, frame.area());
+            })
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
         crossterm::event::read()?;
         Ok(())
     }
@@ -42,7 +44,7 @@ impl Widget for Content<'_> {
             .height
             .checked_sub(heading_len + content_len + 2)
             .map_or(rect, |h| {
-                rect.inner(&Margin {
+                rect.inner(Margin {
                     vertical: h / 2,
                     horizontal: 0,
                 })

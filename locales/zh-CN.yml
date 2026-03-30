@@ -204,7 +204,8 @@ HelpTips: |-
 
     G                               切换关注列表分组
     t                               展示或隐藏个股详情视图
-    j, Up Arrow, k, Down Arrow      上下切换关注列表中的项目
+    n                               切换新闻视图（在个股详情面板中）
+    j, Up Arrow, k, Down Arrow      上下切换关注列表项目 / 滚动新闻
 
   - 资产总览 -----------------------------------------------------------------------------
 
@@ -212,6 +213,15 @@ HelpTips: |-
     c                               切换展示币种
     j, Up Arrow, k, Down Arrow      上下切换持仓列表或其他列表的选中项
 
+Tab:
+  Quote: "行情"
+  News: "新闻 [n]"
+News:
+  Title: "新闻"
+  Empty: "暂无新闻"
+  Detail: "文章"
+  DetailEmpty: "选择一篇文章来阅读"
+  DetailHint: "↑↓ 切换文章  PgUp/PgDn 滚动  o 浏览器打开  q 返回"
 Error.KlineDataFormat: "K 线数据格式错误"
 Currency.HKD: "港币"
 Currency.USD: "美元"

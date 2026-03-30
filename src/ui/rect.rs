@@ -11,7 +11,7 @@ pub fn centered(width: u16, height: u16, r: Rect) -> Rect {
     } else {
         r.height.saturating_sub(height) / 2
     };
-    r.inner(&Margin {
+    r.inner(Margin {
         horizontal,
         vertical,
     })

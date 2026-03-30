@@ -91,12 +91,18 @@ pub fn render_stock(
                     Some(kline_type.prev())
                 });
             }
-            Key::Enter | Key::Up | Key::Down => {}
+            Key::Enter
+            | Key::Up
+            | Key::Down
+            | Key::NewsToggle
+            | Key::NewsScrollUp
+            | Key::NewsScrollDown
+            | Key::NewsOpen => {}
         }
     }
 
     _ = terminal.draw(|frame| {
-        let rect = frame.size();
+        let rect = frame.area();
         let top = Rect { height: 1, ..rect };
         crate::views::navbar::render(frame, top, *state.get());
 
@@ -372,7 +378,7 @@ pub(crate) fn stock_detail(
     let column_height = column0.len().max(column1.len()).max(column2.len()) as u16;
 
     // Split into upper and lower sections with a divider
-    let block_inner = rect.inner(&Margin {
+    let block_inner = rect.inner(Margin {
         vertical: 1,
         horizontal: 0,
     });
@@ -542,9 +548,7 @@ pub(crate) fn stock_detail(
             ]
         };
 
-        let asks_table = Table::new(asks_rows)
-            .widths(&table_widths)
-            .column_spacing(1);
+        let asks_table = Table::new(asks_rows, table_widths.clone()).column_spacing(1);
 
         frame.render_widget(asks_table, depth_layout[1]);
 
@@ -598,9 +602,7 @@ pub(crate) fn stock_detail(
         frame.render_widget(Paragraph::new(ratio_line), depth_layout[2]);
 
         // Bids table (borderless, column-aligned)
-        let bids_table = Table::new(bids_rows)
-            .widths(&table_widths)
-            .column_spacing(1);
+        let bids_table = Table::new(bids_rows, table_widths).column_spacing(1);
 
         frame.render_widget(bids_table, depth_layout[3]);
     }
@@ -632,7 +634,7 @@ pub(crate) fn stock_detail(
                         Span::raw(" "),
                     ])
                 })
-                .collect(),
+                .collect::<Vec<_>>(),
         )
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
         .select(selected_type_index);
@@ -841,7 +843,7 @@ pub(crate) fn stock_detail(
                 Constraint::Length(8),
                 Constraint::Length(volume_width as u16),
             ];
-            let table = Table::new(trade_rows).widths(&widths).column_spacing(1);
+            let table = Table::new(trade_rows, widths).column_spacing(1);
 
             frame.render_widget(table, inner_area);
         }
@@ -875,7 +877,6 @@ pub fn refresh_stock_debounced(counter: Counter) {
             tracing::debug!("Starting refresh for {}", counter);
 
             // Execute the actual refresh
-            KLINES.clear();
             let _ = WS
                 .quote_detail("stock_detail", std::slice::from_ref(&counter))
                 .await;
@@ -930,7 +931,7 @@ pub fn enter_stock(counter: Res<StockDetail>) {
 }
 
 pub fn exit_stock() {
-    KLINES.clear();
+    crate::systems::stock_news::reset_news_view();
     RT.get().unwrap().spawn(async move {
         _ = WS.unmount("stock_detail").await;
     });

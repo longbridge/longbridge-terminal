@@ -48,7 +48,14 @@ pub fn render_watchlist(
                 let idx = table.selected();
                 table.select(cycle::next(idx, len));
             }
-            Key::Left | Key::Right | Key::Tab | Key::BackTab => (),
+            Key::Left
+            | Key::Right
+            | Key::Tab
+            | Key::BackTab
+            | Key::NewsToggle
+            | Key::NewsScrollUp
+            | Key::NewsScrollDown
+            | Key::NewsOpen => (),
             Key::Enter => {
                 let Some(idx) = WATCHLIST_TABLE.lock().expect("poison").selected() else {
                     continue;
@@ -76,7 +83,7 @@ pub fn render_watchlist(
     }
 
     _ = terminal.draw(|frame| {
-        let rect = frame.size();
+        let rect = frame.area();
         let top = Rect { height: 1, ..rect };
         crate::views::navbar::render(frame, top, *state.get());
 
@@ -149,7 +156,7 @@ pub fn watch(frame: &mut Frame, rect: Rect, full_mode: bool) {
     let mut table_state = WATCHLIST_TABLE.lock().expect("poison");
     let selected = table_state.selected();
     // Use asymmetric margin: left 2 for spacing, right 1
-    let block_inner = rect.inner(&Margin {
+    let block_inner = rect.inner(Margin {
         vertical: 2,
         horizontal: 0,
     });
@@ -346,10 +353,9 @@ pub fn watch_group_table(
         })
         .unwrap_or_default();
 
-    Table::new(rows)
+    Table::new(rows, COLUMN_WIDTHS2)
         .header(header)
-        .highlight_style(highlight_style)
-        .widths(&COLUMN_WIDTHS2)
+        .row_highlight_style(highlight_style)
         .column_spacing(1)
 }
 
