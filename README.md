@@ -102,14 +102,14 @@ longbridge brokers 700.HK                           # Broker queue at each price
 longbridge trades TSLA.US [--count 50]              # Recent tick-by-tick trades
 longbridge intraday TSLA.US                         # Intraday minute-by-minute price and volume lines for today
 longbridge kline TSLA.US [--period day]             # OHLCV candlestick (K-line) data
-longbridge kline-history TSLA.US --start 2024-01-01 # Historical OHLCV candlestick data within a date range
+longbridge kline history TSLA.US --start 2024-01-01 # Historical OHLCV candlestick data within a date range
 longbridge static TSLA.US                           # Static reference info for one or more symbols
 longbridge calc-index TSLA.US --index pe,pb,eps     # Calculated financial indexes (PE, PB, EPS, turnover rate, etc.)
-longbridge capital-flow TSLA.US                     # Intraday capital flow time series (large/medium/small money in vs out)
-longbridge capital-dist TSLA.US                     # Capital distribution snapshot (large/medium/small inflow and outflow)
+longbridge capital flow TSLA.US                     # Intraday capital flow time series (large/medium/small money in vs out)
+longbridge capital dist TSLA.US                     # Capital distribution snapshot (large/medium/small inflow and outflow)
 longbridge market-temp [HK|US|CN|SG]                # Market sentiment temperature index (0–100, higher = more bullish)
-longbridge trading-session                          # Trading session schedule (open/close times) for all markets
-longbridge trading-days HK                          # Trading days and half-trading days for a market
+longbridge trading session                          # Trading session schedule (open/close times) for all markets
+longbridge trading days HK                          # Trading days and half-trading days for a market
 longbridge security-list HK                         # Full list of securities available in a market
 longbridge participants                             # Market maker (participant) broker IDs and names
 longbridge subscriptions                            # Active real-time WebSocket subscriptions for this session
@@ -119,26 +119,26 @@ longbridge subscriptions                            # Active real-time WebSocket
 
 ```bash
 longbridge news TSLA.US [--count 20]             # Latest news articles for a symbol
-longbridge news-detail <id>                      # Full Markdown content of a news article
-longbridge filings AAPL.US [--count 20]          # Regulatory filings and announcements for a symbol
-longbridge filing-detail AAPL.US <id>            # Full Markdown content of a filing; --file-index N for multi-file filings (e.g. 8-K exhibit)
-longbridge topics TSLA.US [--count 20]           # Community discussion topics for a symbol
-longbridge topic-detail <id>                     # Full details of a community topic (body, author, tickers, counts, URL)
-longbridge topic-replies <id> [--page 1]         # Paginated list of replies for a topic (--size 1–50)
-longbridge my-topics [--type article]            # Topics created by the authenticated user
-longbridge create-topic --body "…"               # Publish a new community discussion topic (--title optional)
-longbridge create-topic-reply <id> --body "…"    # Post a reply to a topic (--reply-to <reply_id> for nested replies)
+longbridge news detail <id>                      # Full Markdown content of a news article
+longbridge filing list AAPL.US [--count 20]      # Regulatory filings and announcements for a symbol
+longbridge filing detail AAPL.US <id>            # Full Markdown content of a filing; --file-index N for multi-file filings (e.g. 8-K exhibit)
+longbridge topic list TSLA.US [--count 20]       # Community discussion topics for a symbol
+longbridge topic detail <id>                     # Full details of a community topic (body, author, tickers, counts, URL)
+longbridge topic replies <id> [--page 1]         # Paginated list of replies for a topic (--size 1–50)
+longbridge topic mine [--type article]           # Topics created by the authenticated user
+longbridge topic create --body "…"               # Publish a new community discussion topic (--title optional)
+longbridge topic create-reply <id> --body "…"    # Post a reply to a topic (--reply-to <reply_id> for nested replies)
 ```
 
 ### Options & Warrants
 
 ```bash
-longbridge option-quote AAPL240119C190000         # Real-time quotes for option contracts
-longbridge option-chain AAPL.US                   # Option chain: list all expiry dates
-longbridge option-chain AAPL.US --date 2024-01-19 # Option chain: strike prices for a given expiry
-longbridge warrant-quote 12345.HK                 # Real-time quotes for warrant contracts
-longbridge warrant-list 700.HK                    # Warrants linked to an underlying security
-longbridge warrant-issuers                        # Warrant issuer list (HK market)
+longbridge option quote AAPL240119C190000          # Real-time quotes for option contracts
+longbridge option chain AAPL.US                   # Option chain: list all expiry dates
+longbridge option chain AAPL.US --date 2024-01-19 # Option chain: strike prices for a given expiry
+longbridge warrant quote 12345.HK                 # Real-time quotes for warrant contracts
+longbridge warrant list 700.HK                    # Warrants linked to an underlying security
+longbridge warrant issuers                        # Warrant issuer list (HK market)
 ```
 
 ### Watchlist
