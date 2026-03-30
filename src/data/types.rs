@@ -591,4 +591,3 @@ impl Default for TradeData {
         }
     }
 }
-

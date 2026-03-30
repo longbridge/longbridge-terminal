@@ -1,8 +1,8 @@
 use std::borrow::Cow;
 
+use crate::data::statement::CommonStatementContent;
 use anyhow::Result;
-use longbridge::asset::{ GetStatementListOptions, GetStatementOptions, StatementType};
-use crate::data::statement::{CommonStatementContent};
+use longbridge::asset::{GetStatementListOptions, GetStatementOptions, StatementType};
 use serde_json::Value;
 use unicode_width::UnicodeWidthStr;
 
