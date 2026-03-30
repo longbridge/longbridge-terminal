@@ -227,13 +227,8 @@ impl KlineType {
     }
 }
 
-/// Adjustment type
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum AdjustType {
-    #[default]
-    NoAdjust,
-    ForwardAdjust,
-}
+/// Re-export `AdjustType` from Longbridge SDK
+pub use longbridge::quote::AdjustType;
 
 /// Candlestick data (detailed version with adjustment factors)
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -513,18 +508,6 @@ pub struct QuoteData {
     pub timestamp: i64,              // Timestamp
 }
 
-/// Candlestick data
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Candlestick {
-    pub timestamp: i64,
-    pub open: Decimal,
-    pub high: Decimal,
-    pub low: Decimal,
-    pub close: Decimal,
-    pub volume: u64,
-    pub turnover: Decimal,
-}
-
 /// Depth data
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Depth {
@@ -541,34 +524,8 @@ pub struct DepthData {
     pub bids: Vec<Depth>, // Bid orders
 }
 
-/// Static stock information
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct StaticInfo {
-    pub symbol: String,                  // Stock symbol
-    pub name_cn: String,                 // Chinese name
-    pub name_en: String,                 // English name
-    pub name_hk: String,                 // Traditional Chinese name
-    pub exchange: String,                // Exchange
-    pub currency: String,                // Currency
-    pub lot_size: i32,                   // Lot size
-    pub total_shares: i64,               // Total shares
-    pub circulating_shares: i64,         // Circulating shares
-    pub hk_shares: i64,                  // Hong Kong shares
-    pub eps: Option<Decimal>,            // Earnings per share
-    pub eps_ttm: Option<Decimal>,        // Earnings per share (TTM)
-    pub bps: Option<Decimal>,            // Book value per share
-    pub dividend_yield: Option<Decimal>, // Dividend yield
-    pub stock_derivatives: Vec<i32>,     // Supported derivative types
-    pub board: String,                   // Board
-}
-
-/// Trade direction
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TradeDirection {
-    Neutral,
-    Up,
-    Down,
-}
+/// Re-export `TradeDirection` from Longbridge SDK
+pub use longbridge::quote::TradeDirection;
 
 /// Single trade record
 #[derive(Clone, Debug, Serialize, Deserialize)]

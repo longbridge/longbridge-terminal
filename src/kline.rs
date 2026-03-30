@@ -161,11 +161,7 @@ impl KlineStore {
             KlineType::PerYear => longbridge::quote::Period::Year,
         };
 
-        // Convert AdjustType to Longbridge AdjustType
-        let adjust = match adjust_type {
-            AdjustType::NoAdjust => longbridge::quote::AdjustType::NoAdjust,
-            AdjustType::ForwardAdjust => longbridge::quote::AdjustType::ForwardAdjust,
-        };
+        let adjust = adjust_type;
 
         // Select appropriate trading session based on period type
         // For all periods, use All to get complete data

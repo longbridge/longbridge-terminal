@@ -110,6 +110,25 @@ cargo fmt
 cargo fmt && cargo clippy
 ```
 
+### Verifying Changes
+
+After any data-layer or CLI output change, verify correctness by comparing the installed release binary against the local build using the same command and `--format json`:
+
+```bash
+# Run both and compare — output should be identical (timestamps may differ for live data)
+longbridge <command> <args> --format json
+cargo run -- <command> <args> --format json
+```
+
+Pick commands that exercise the modified code paths. Common ones:
+
+| Changed area | Verification command |
+|---|---|
+| Trade direction / trades | `longbridge trades 700.HK --format json` |
+| Kline / AdjustType | `longbridge kline 700.HK --format json` |
+| Quote / calc-index | `longbridge calc-index 700.HK --format json` |
+| Static info | `longbridge static 700.HK --format json` |
+
 ### Configuration
 
 **Authentication Method: OAuth 2.0 (longbridge SDK)**
@@ -220,13 +239,25 @@ let order = ctx.submit_order(opts).await?;
 
 For Ratatui-specific questions or when working with TUI components, use the `rs-ratatui-crate` skill.
 
+## PR Title Conventions
+
+Use a prefix in PR titles to indicate the area of change:
+
+- `cli:` — changes to CLI commands (`src/cli/`)
+- `tui:` — changes to the TUI interface (`src/app.rs`, `src/views/`, `src/widgets/`, etc.)
+
+Example: `cli: add statement export command`, `tui: fix quit confirmation dialog`
+
 ## Keeping Docs in Sync
 
 When adding, removing, or modifying any CLI command (in `src/cli/`), always update all of the following in the same PR:
 
 1. **`README.md`** — the `<!-- COMMANDS_START -->` / `<!-- COMMANDS_END -->` block
-2. **`skills/longbridge/SKILL.md`** — quick reference section if the command is common enough
-3. **`skills/longbridge/references/`** — the relevant reference file:
-   - `quote-commands.md` for quote/market-data commands
-   - `trade-commands.md` for trading/account commands
-   - `watchlist-commands.md` for watchlist commands
+2. **`../developers/skills/longbridge/`** — all skill files are maintained in the `developers` repo; this repo no longer has its own `skills/` directory:
+   - `SKILL.md` — quick reference, if the command is common enough to mention
+   - `references/cli/overview.md` — CLI overview (features, patterns, notable flags)
+   - `references/python-sdk/` / `references/rust-sdk/` — corresponding SDK reference
+
+Skill files should stay high-level. Defer to the CLI's built-in `--help` for flag details — do not duplicate help text in skill files.
+
+If `../developers` is not available locally, the repository is https://github.com/longbridge/developers

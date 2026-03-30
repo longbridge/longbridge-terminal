@@ -1,8 +1,9 @@
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 
 use super::types::{
-    Counter, Currency, Depth, DepthData, QuoteData, StaticInfo, TradeData, TradeSession,
-    TradeStatus,
+    Counter, Currency, Depth, DepthData, QuoteData, TradeData, TradeSession, TradeStatus,
 };
 
 /// Stock data (simplified)
@@ -15,8 +16,8 @@ pub struct Stock {
     pub trade_session: TradeSession,
     pub quote: QuoteData,
     pub depth: DepthData,
-    pub static_info: Option<StaticInfo>, // Static info (market cap, shares, etc.)
-    pub trades: Vec<TradeData>,          // Recent trades
+    pub static_info: Option<Arc<longbridge::quote::SecurityStaticInfo>>,
+    pub trades: Vec<TradeData>, // Recent trades
 }
 
 impl Stock {
@@ -114,36 +115,13 @@ impl Stock {
                 volume: t.volume,
                 timestamp: t.timestamp.unix_timestamp(),
                 trade_type: t.trade_type.clone(),
-                direction: match t.direction {
-                    longbridge::quote::TradeDirection::Neutral => {
-                        super::types::TradeDirection::Neutral
-                    }
-                    longbridge::quote::TradeDirection::Down => super::types::TradeDirection::Down,
-                    longbridge::quote::TradeDirection::Up => super::types::TradeDirection::Up,
-                },
+                direction: t.direction,
             })
             .collect();
     }
 
     /// Update static info (from longbridge SDK)
-    pub fn update_from_static_info(&mut self, info: &longbridge::quote::SecurityStaticInfo) {
-        self.static_info = Some(StaticInfo {
-            symbol: info.symbol.clone(),
-            name_cn: info.name_cn.clone(),
-            name_en: info.name_en.clone(),
-            name_hk: info.name_hk.clone(),
-            exchange: info.exchange.clone(),
-            currency: info.currency.clone(),
-            lot_size: info.lot_size,
-            total_shares: info.total_shares,
-            circulating_shares: info.circulating_shares,
-            hk_shares: info.hk_shares,
-            eps: Some(info.eps),
-            eps_ttm: Some(info.eps_ttm),
-            bps: Some(info.bps),
-            dividend_yield: Some(info.dividend_yield),
-            stock_derivatives: vec![], // Simplified for now, no derivative type conversion
-            board: format!("{:?}", info.board), // Convert to string
-        });
+    pub fn update_from_static_info(&mut self, info: longbridge::quote::SecurityStaticInfo) {
+        self.static_info = Some(Arc::new(info));
     }
 }
