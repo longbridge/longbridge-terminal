@@ -19,25 +19,25 @@ longbridge brokers TSLA.US          # Broker queue
 longbridge trades TSLA.US           # Recent trades [--count 50]
 longbridge intraday TSLA.US         # Intraday lines
 longbridge kline TSLA.US            # Candlesticks [--period day|week|month|1m|5m...] [--count 100]
-longbridge kline-history TSLA.US    # History candlesticks [--period day] [--start 2024-01-01] [--end 2024-12-31]
+longbridge kline history TSLA.US    # History candlesticks [--period day] [--start 2024-01-01] [--end 2024-12-31]
 longbridge static TSLA.US           # Static info (name, lot size, currency)
 longbridge calc-index TSLA.US       # Calculated indexes [--index pe,pb,eps]
-longbridge capital-flow TSLA.US     # Capital flow
-longbridge capital-dist TSLA.US     # Capital distribution
+longbridge capital flow TSLA.US     # Capital flow
+longbridge capital dist TSLA.US     # Capital distribution
 longbridge market-temp HK           # Market temperature [HK|US|CN|SG]
-longbridge trading-session          # Trading sessions per market
-longbridge trading-days HK          # Trading calendar [--start ...] [--end ...]
+longbridge trading session          # Trading sessions per market
+longbridge trading days HK          # Trading calendar [--start ...] [--end ...]
 longbridge security-list HK         # Security list [--category main|gem|...]
 longbridge participants             # Market maker participants
 longbridge subscriptions            # Current subscriptions
 
 # ──── Options / Warrants ────
-longbridge option-quote AAPL240119C190000  # Option quote
-longbridge option-chain AAPL               # Option chain expiry date list
-longbridge option-chain AAPL --date 2024-01-19  # Option chain strike prices
-longbridge warrant-quote 12345.HK          # Warrant quote
-longbridge warrant-list 700.HK             # Warrant list for a security
-longbridge warrant-issuers                 # Warrant issuer list
+longbridge option quote AAPL240119C190000  # Option quote
+longbridge option chain AAPL               # Option chain expiry date list
+longbridge option chain AAPL --date 2024-01-19  # Option chain strike prices
+longbridge warrant quote 12345.HK          # Warrant quote
+longbridge warrant list 700.HK             # Warrant list for a security
+longbridge warrant issuers                 # Warrant issuer list
 
 # ──── Watchlist ────
 longbridge watchlist                        # List all groups
@@ -149,24 +149,24 @@ clap = { version = "4", features = ["derive"] }  # Upgrade from v3 for derive ma
 | `subscriptions`                  | `longbridge subscriptions`                        |
 | `static_info`                    | `longbridge static <symbols>`                     |
 | `quote`                          | `longbridge quote <symbols>`                      |
-| `option_quote`                   | `longbridge option-quote <symbols>`               |
-| `warrant_quote`                  | `longbridge warrant-quote <symbols>`              |
+| `option_quote`                   | `longbridge option quote <symbols>`               |
+| `warrant_quote`                  | `longbridge warrant quote <symbols>`              |
 | `depth`                          | `longbridge depth <symbol>`                       |
 | `brokers`                        | `longbridge brokers <symbol>`                     |
 | `participants`                   | `longbridge participants`                         |
 | `trades`                         | `longbridge trades <symbol>`                      |
 | `intraday`                       | `longbridge intraday <symbol>`                    |
 | `candlesticks`                   | `longbridge kline <symbol>`                       |
-| `history_candlesticks_by_offset` | `longbridge kline-history <symbol>`               |
-| `history_candlesticks_by_date`   | `longbridge kline-history <symbol> --start --end` |
-| `option_chain_expiry_date_list`  | `longbridge option-chain <symbol>`                |
-| `option_chain_info_by_date`      | `longbridge option-chain <symbol> --date`         |
-| `warrant_issuers`                | `longbridge warrant-issuers`                      |
-| `warrant_list`                   | `longbridge warrant-list <symbol>`                |
-| `trading_session`                | `longbridge trading-session`                      |
-| `trading_days`                   | `longbridge trading-days <market>`                |
-| `capital_flow`                   | `longbridge capital-flow <symbol>`                |
-| `capital_distribution`           | `longbridge capital-dist <symbol>`                |
+| `history_candlesticks_by_offset` | `longbridge kline history <symbol>`               |
+| `history_candlesticks_by_date`   | `longbridge kline history <symbol> --start --end` |
+| `option_chain_expiry_date_list`  | `longbridge option chain <symbol>`                |
+| `option_chain_info_by_date`      | `longbridge option chain <symbol> --date`         |
+| `warrant_issuers`                | `longbridge warrant issuers`                      |
+| `warrant_list`                   | `longbridge warrant list <symbol>`                |
+| `trading_session`                | `longbridge trading session`                      |
+| `trading_days`                   | `longbridge trading days <market>`                |
+| `capital_flow`                   | `longbridge capital flow <symbol>`                |
+| `capital_distribution`           | `longbridge capital dist <symbol>`                |
 | `calc_indexes`                   | `longbridge calc-index <symbols>`                 |
 | `watchlist`                      | `longbridge watchlist`                            |
 | `create_watchlist_group`         | `longbridge watchlist create`                     |

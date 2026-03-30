@@ -164,18 +164,20 @@ pub enum Commands {
         session: String,
     },
 
-    /// OHLCV candlestick (K-line) data
+    /// OHLCV candlestick (K-line) data, or historical date-range candlesticks
     ///
     /// Returns: timestamp, open, high, low, close, volume, turnover.
     /// Periods: 1m  5m  15m  30m  1h  day  week  month  year
     ///   (aliases: minute=1m, hour=1h, d/1d=day, w=week, m/1mo=month, y=year)
-    /// Use `--session all` to include pre/post-market candles (adds a Session column).
+    /// Use --session all to include pre/post-market candles (adds a Session column).
+    /// Use the `history` subcommand to fetch a specific date range.
     /// Example: longbridge kline TSLA.US --period day --count 100
     /// Example: longbridge kline TSLA.US --period 1h --adjust `forward_adjust`
     /// Example: longbridge kline TSLA.US --period 1m --session all
+    /// Example: longbridge kline history TSLA.US --start 2024-01-01 --end 2024-12-31
     Kline {
-        /// Symbol in <CODE>.<MARKET> format
-        symbol: String,
+        /// Symbol in <CODE>.<MARKET> format. Omit when using a subcommand.
+        symbol: Option<String>,
         /// Candlestick period: 1m 5m 15m 30m 1h day week month year (default: day)
         /// Aliases: minute=1m, hour=1h, d/1d=day, w=week, m/1mo=month, y=year
         #[arg(long, default_value = "day")]
@@ -190,35 +192,8 @@ pub enum Commands {
         /// Trade session filter: `intraday` (default) | `all` (includes pre/post market)
         #[arg(long, default_value = "intraday")]
         session: String,
-    },
-
-    /// Historical OHLCV candlestick data within a date range
-    ///
-    /// Both --start and --end must be provided together; if either is omitted the
-    /// most recent 100 candles are returned (offset-based, ignores the other flag).
-    /// Use `--session all` to include pre/post-market candles (adds a Session column).
-    /// Example: longbridge kline-history TSLA.US --start 2024-01-01 --end 2024-12-31
-    /// Example: longbridge kline-history TSLA.US --period 1m --session all --start 2024-01-01 --end 2024-01-02
-    KlineHistory {
-        /// Symbol in <CODE>.<MARKET> format
-        symbol: String,
-        /// Candlestick period: 1m 5m 15m 30m 1h day week month year (default: day)
-        /// Aliases: minute=1m, hour=1h, d/1d=day, w=week, m/1mo=month, y=year
-        #[arg(long, default_value = "day")]
-        period: String,
-        /// Start date (YYYY-MM-DD). Must be used together with --end.
-        #[arg(long)]
-        start: Option<String>,
-        /// End date (YYYY-MM-DD). Must be used together with --start.
-        #[arg(long)]
-        end: Option<String>,
-        /// Price adjustment: `no_adjust` (default) | `forward_adjust`
-        /// Aliases: none=`no_adjust`, forward=`forward_adjust`
-        #[arg(long, default_value = "no_adjust")]
-        adjust: String,
-        /// Trade session filter: `intraday` (default) | `all` (includes pre/post market)
-        #[arg(long, default_value = "intraday")]
-        session: String,
+        #[command(subcommand)]
+        cmd: Option<KlineCmd>,
     },
 
     /// Static reference info for one or more symbols
@@ -256,22 +231,14 @@ pub enum Commands {
         index: Vec<String>,
     },
 
-    /// Intraday capital flow time series (large/medium/small money in vs out)
+    /// Intraday capital flow and distribution
     ///
-    /// Returns a time series of inflow values for today's session.
-    /// Example: longbridge capital-flow TSLA.US
-    CapitalFlow {
-        /// Symbol in <CODE>.<MARKET> format
-        symbol: String,
-    },
-
-    /// Capital distribution snapshot (large/medium/small inflow and outflow)
-    ///
-    /// Returns total inflow/outflow broken down by order size for the current session.
-    /// Example: longbridge capital-dist TSLA.US
-    CapitalDist {
-        /// Symbol in <CODE>.<MARKET> format
-        symbol: String,
+    /// Subcommands: flow  dist
+    /// Example: longbridge capital flow TSLA.US
+    /// Example: longbridge capital dist TSLA.US
+    Capital {
+        #[command(subcommand)]
+        cmd: CapitalCmd,
     },
 
     /// Market sentiment temperature index (0–100, higher = more bullish)
@@ -297,25 +264,14 @@ pub enum Commands {
         granularity: String,
     },
 
-    /// Trading session schedule (open/close times) for all markets
+    /// Trading session schedule and trading calendar
     ///
-    /// Returns: market, session type (intraday/pre/post/overnight), `begin_time`, `end_time`.
-    TradingSession,
-
-    /// Trading days and half-trading days for a market
-    ///
-    /// Defaults to today + 30 days if no dates are provided.
-    /// Example: longbridge trading-days HK --start 2024-01-01 --end 2024-03-31
-    TradingDays {
-        /// Market: HK | US | CN (aliases: SH SZ) | SG  (case-insensitive, default: HK)
-        #[arg(default_value = "HK")]
-        market: String,
-        /// Start date (YYYY-MM-DD), defaults to today
-        #[arg(long)]
-        start: Option<String>,
-        /// End date (YYYY-MM-DD), defaults to 30 days after start
-        #[arg(long)]
-        end: Option<String>,
+    /// Subcommands: session  days
+    /// Example: longbridge trading session
+    /// Example: longbridge trading days HK --start 2024-01-01 --end 2024-03-31
+    Trading {
+        #[command(subcommand)]
+        cmd: TradingCmd,
     },
 
     /// List of US overnight-eligible securities
@@ -343,255 +299,82 @@ pub enum Commands {
     Subscriptions,
 
     // ── Options & Warrants ──────────────────────────────────────────────────────
-    /// Real-time quotes for option contracts
+    /// Option quotes and option chain
     ///
-    /// Returns standard quote fields plus `implied_volatility`, delta, `strike_price`, `expiry_date`, `contract_type`.
-    /// Example: longbridge option-quote AAPL240119C190000
-    OptionQuote {
-        /// Option contract symbols (OCC format for US, e.g. AAPL240119C190000)
-        symbols: Vec<String>,
+    /// Subcommands: quote  chain
+    /// Example: longbridge option quote AAPL240119C190000
+    /// Example: longbridge option chain AAPL.US --date 2024-01-19
+    Option {
+        #[command(subcommand)]
+        cmd: OptionCmd,
     },
 
-    /// Option chain: expiry dates, or strike prices for a given expiry
+    /// Warrant quotes, warrant list, and issuer list
     ///
-    /// Without --date: returns all available expiry dates.
-    /// With --date: returns strike prices and call/put symbols for that expiry.
-    /// Example: longbridge option-chain AAPL.US
-    /// Example: longbridge option-chain AAPL.US --date 2024-01-19
-    OptionChain {
-        /// Underlying symbol in <CODE>.<MARKET> format, e.g. AAPL.US
-        symbol: String,
-        /// Expiry date (YYYY-MM-DD). Omit to list all expiry dates.
-        #[arg(long)]
-        date: Option<String>,
+    /// Without subcommand: lists warrants for an underlying symbol.
+    /// Subcommands: quote  list  issuers
+    /// Example: longbridge warrant 700.HK
+    /// Example: longbridge warrant quote 12345.HK
+    /// Example: longbridge warrant list 700.HK
+    Warrant {
+        /// Underlying symbol (e.g. 700.HK). Omit when using a subcommand.
+        symbol: Option<String>,
+        #[command(subcommand)]
+        cmd: Option<WarrantCmd>,
     },
-
-    /// Real-time quotes for warrant contracts
-    ///
-    /// Returns: `last_done`, `prev_close`, `implied_volatility`, `leverage_ratio`, `expiry_date`, category.
-    /// Example: longbridge warrant-quote 12345.HK
-    WarrantQuote {
-        /// Warrant symbols (e.g. 12345.HK)
-        symbols: Vec<String>,
-    },
-
-    /// Warrants linked to an underlying security
-    ///
-    /// Returns: symbol, name, `last_done`, `leverage_ratio`, `expiry_date`, `warrant_type`.
-    /// Example: longbridge warrant-list 700.HK
-    WarrantList {
-        /// Underlying symbol (e.g. 700.HK)
-        symbol: String,
-    },
-
-    /// Warrant issuer list (HK market)
-    ///
-    /// Returns: `issuer_id`, `name_en`, `name_cn`.
-    WarrantIssuers,
 
     // ── News ────────────────────────────────────────────────────────────────────
-    /// Latest news articles for a symbol
+    /// Latest news articles for a symbol, or fetch full article content
     ///
+    /// Without subcommand: lists news articles for a symbol.
+    /// Subcommands: detail
     /// Returns: id, title, `published_at`, likes, comments.
     /// Example: longbridge news TSLA.US
-    /// Example: longbridge news 700.HK --count 5
+    /// Example: longbridge news TSLA.US --count 5
+    /// Example: longbridge news detail 12345678
     News {
-        /// Symbol in <CODE>.<MARKET> format, e.g. TSLA.US 700.HK
-        symbol: String,
+        /// Symbol in <CODE>.<MARKET> format (e.g. TSLA.US 700.HK). Omit when using a subcommand.
+        symbol: Option<String>,
         /// Maximum number of articles to show (default: 20)
         #[arg(long, default_value = "20")]
         count: usize,
+        #[command(subcommand)]
+        cmd: Option<NewsCmd>,
     },
 
-    /// Full Markdown content of a news article
+    /// Regulatory filings for a symbol, or list/fetch filing content
     ///
-    /// Fetches the article text from <https://longbridge.com/news>/<id>.md
-    /// Example: longbridge news-detail 12345678
-    NewsDetail {
-        /// News article ID (from `longbridge news`)
-        id: String,
-    },
-
-    /// Regulatory filings and announcements for a symbol
-    ///
-    /// Returns: id, title, `file_name`, `publish_at`.
-    /// Use `filing-detail` to read the full content.
-    /// Example: longbridge filings AAPL.US
-    /// Example: longbridge filings 700.HK --count 5
-    Filings {
-        /// Symbol in <CODE>.<MARKET> format, e.g. AAPL.US 700.HK
-        symbol: String,
+    /// Without subcommand: lists filings for a symbol.
+    /// Subcommands: list  detail
+    /// Example: longbridge filing AAPL.US
+    /// Example: longbridge filing list AAPL.US
+    /// Example: longbridge filing detail AAPL.US 580265529766123777
+    Filing {
+        /// Symbol in <CODE>.<MARKET> format (e.g. AAPL.US 700.HK). Omit when using a subcommand.
+        symbol: Option<String>,
         /// Maximum number of filings to show (default: 20)
         #[arg(long, default_value = "20")]
         count: usize,
+        #[command(subcommand)]
+        cmd: Option<FilingCmd>,
     },
 
-    /// Full Markdown content of a regulatory filing (HTML and TXT only)
+    /// Community discussion topics
     ///
-    /// Fetches and converts the filing document to Markdown.
-    /// Get the symbol and id from `longbridge filings`.
-    /// Some filings contain multiple files (e.g. 8-K cover + Exhibit 99.1).
-    /// Use --list-files to see all available files, then --file-index N to fetch a specific one.
-    /// Example: longbridge filing-detail AAPL.US 580265529766123777
-    /// Example: longbridge filing-detail AAPL.US 580265529766123777 --list-files
-    /// Example: longbridge filing-detail AAPL.US 580265529766123777 --file-index 1
-    FilingDetail {
-        /// Symbol in <CODE>.<MARKET> format, e.g. AAPL.US 700.HK
-        symbol: String,
-        /// Filing ID (from `longbridge filings`)
-        id: String,
-        /// List all available file URLs without fetching content
-        #[arg(long)]
-        list_files: bool,
-        /// Index of the file to fetch (0-based, default 0)
-        #[arg(long, default_value = "0")]
-        file_index: usize,
-    },
-
-    /// Community discussion topics for a symbol
-    ///
-    /// Returns: id, title, description, url, `published_at`, likes, comments, shares.
-    /// Example: longbridge topics TSLA.US
-    /// Example: longbridge topics 700.HK --count 5
-    Topics {
-        /// Symbol in <CODE>.<MARKET> format, e.g. TSLA.US 700.HK
-        symbol: String,
+    /// Without subcommand: lists topics for a symbol.
+    /// Subcommands: list  detail  mine  create  replies  create-reply
+    /// Example: longbridge topic TSLA.US
+    /// Example: longbridge topic list TSLA.US
+    /// Example: longbridge topic detail 6993508780031016960
+    /// Example: longbridge topic create --body "Bullish on TSLA today"
+    Topic {
+        /// Symbol in <CODE>.<MARKET> format (e.g. TSLA.US 700.HK). Omit when using a subcommand.
+        symbol: Option<String>,
         /// Maximum number of topics to show (default: 20)
         #[arg(long, default_value = "20")]
         count: usize,
-    },
-
-    /// Get full details of a community topic by its ID
-    ///
-    /// Returns: `id`, `topic_type`, `title`, `description`, `body`, `author` (`member_id`/`name`/`avatar`),
-    /// `tickers`, `hashtags`, `images`, `likes_count`, `comments_count`, `views_count`, `shares_count`,
-    /// `detail_url`, `created_at`, `updated_at`.
-    ///
-    /// `body` is plain text for `post` type, or Markdown for `article` type.
-    ///
-    /// Example: longbridge topic-detail 6993508780031016960
-    TopicDetail {
-        /// Topic ID (e.g. 6993508780031016960)
-        id: String,
-    },
-
-    /// Topics created by the authenticated user
-    ///
-    /// Returns: id, title/excerpt, type, `created_at`, likes, comments, views.
-    /// Example: longbridge my-topics
-    /// Example: longbridge my-topics --type article --size 10
-    MyTopics {
-        /// Page number (default: 1)
-        #[arg(long, default_value = "1")]
-        page: i32,
-        /// Records per page, 1–500 (default: 50)
-        #[arg(long, default_value = "50")]
-        size: i32,
-        /// Filter by content type: `article` | `post` (omit for all)
-        #[arg(long = "type")]
-        post_type: Option<String>,
-    },
-
-    /// Publish a new community discussion topic
-    ///
-    /// Only users who have opened a Longbridge account and hold assets are allowed.
-    ///
-    /// Rate limit: max 3 topics per user per minute, 10 per 24 hours. Returns 429 when exceeded.
-    ///
-    /// Two content types, with different body requirements:
-    ///
-    ///   --type post (default)
-    ///     Plain text only, like a tweet. Line breaks with \n are preserved.
-    ///     Markdown syntax is NOT rendered — asterisks, headers, tables etc.
-    ///     will appear as literal characters. No title required.
-    ///     Example: longbridge create-topic --body "Bullish on 700.HK today"
-    ///
-    ///   --type article
-    ///     Full Markdown body. The server converts it to HTML for storage and
-    ///     display. Supports headers, tables, bold, code blocks, etc.
-    ///     Title is required for articles.
-    ///     Example: longbridge create-topic --title "My Analysis" --body "$(cat post.md)" --type article
-    ///
-    /// Stock associations:
-    ///   Symbols mentioned in the body (e.g. 700.HK, TSLA.US) are automatically
-    ///   recognized and linked as related stocks by the platform. Use --tickers to
-    ///   explicitly associate additional stocks not mentioned in the body.
-    ///   Do NOT abuse symbol linking to associate unrelated stocks — moderation may
-    ///   restrict publishing or mute the account.
-    CreateTopic {
-        /// Topic title. Required for `--type article`; optional for `--type post`.
-        #[arg(long)]
-        title: Option<String>,
-        /// Topic body. post (default): plain text, Markdown NOT rendered.
-        /// article: Markdown body, title required.
-        /// Auth: account with assets required (403 otherwise).
-        /// Rate limit: 3/min, 10/24h — returns 429 when exceeded.
-        #[arg(long)]
-        body: String,
-        /// Content type: post (plain text, no Markdown, default) | article (Markdown, title required)
-        #[arg(long = "type")]
-        post_type: Option<String>,
-        /// Extra tickers to associate, comma-separated, e.g. 700.HK,TSLA.US (max 10).
-        /// Body symbols are auto-linked; use this for symbols not mentioned in body.
-        #[arg(long, value_delimiter = ',')]
-        tickers: Vec<String>,
-    },
-
-    /// List replies for a community topic (paginated)
-    ///
-    /// Returns: `id`, `topic_id`, `body` (plain text), `reply_to_id`, `author` (`member_id`/`name`/`avatar`),
-    /// `images`, `likes_count`, `comments_count`, `created_at`.
-    ///
-    /// `reply_to_id` is `"0"` for top-level replies; any other value is the parent reply ID
-    /// (indicating a nested reply under that parent).
-    ///
-    /// Page size is 1–50, default 20.
-    ///
-    /// Example: longbridge topic-replies 6993508780031016960
-    /// Example: longbridge topic-replies 6993508780031016960 --page 2 --size 20
-    TopicReplies {
-        /// Topic ID (e.g. 6993508780031016960)
-        topic_id: String,
-        /// Page number, 1-based (default: 1)
-        #[arg(long, default_value = "1")]
-        page: i32,
-        /// Records per page, 1–50 (default: 20)
-        #[arg(long, default_value = "20")]
-        size: i32,
-    },
-
-    /// Post a reply to a community topic
-    ///
-    /// Returns the new reply ID on success.
-    ///
-    /// Only users who have opened a Longbridge account and hold assets are allowed.
-    ///
-    /// Body format: plain text only — HTML and Markdown are NOT rendered; they appear as literal
-    /// characters. Symbols mentioned in the body (e.g. TSLA.US, 700.HK) are automatically
-    /// recognized and linked as related stocks. Do NOT abuse symbol linking to associate
-    /// unrelated stocks — moderation may restrict publishing or mute the account.
-    ///
-    /// Nested reply: use `--reply-to <reply_id>` to nest under an existing reply (get reply IDs
-    /// via topic-replies). Omit --reply-to for a top-level reply.
-    ///
-    /// Rate limit: first 3 replies per user per topic have no wait requirement.
-    /// After that, each subsequent reply must wait an incrementally longer interval:
-    /// 4th=3s, 5th=5s, 6th=8s, 7th=13s, 8th=21s, 9th=34s, 10th+=55s (cap).
-    /// Returns 429 when exceeded. Thresholds are for reference and may change.
-    ///
-    /// Example: longbridge create-topic-reply 6993508780031016960 --body "Great post!"
-    /// Example: longbridge create-topic-reply 6993508780031016960 --body "Agreed!" --reply-to 7001234567890123456
-    CreateTopicReply {
-        /// Topic ID to reply to (e.g. 6993508780031016960)
-        topic_id: String,
-        /// Reply body — plain text only; Markdown/HTML are NOT rendered.
-        /// Auth: account with assets required (403 otherwise).
-        /// Rate limit: first 3 replies/topic free; 4th=3s, 5th=5s, 6th=8s, ..., 10th+=55s wait (429 if exceeded).
-        #[arg(long)]
-        body: String,
-        /// Nest under this reply ID (get IDs from topic-replies). Omit for a top-level reply.
-        #[arg(long = "reply-to")]
-        reply_to_id: Option<String>,
+        #[command(subcommand)]
+        cmd: Option<TopicCmd>,
     },
 
     // ── Watchlist ───────────────────────────────────────────────────────────────
@@ -610,23 +393,38 @@ pub enum Commands {
     // ── Statement ──────────────────────────────────────────────────────────────
     /// Download and export account statements (daily/monthly)
     ///
-    /// Subcommands: list  download
-    /// Example: longbridge statement list --aaid 12345
-    /// Example: longbridge statement download --file-key "/path/to/key" --section `equity_holding_sums` -o output.csv
+    /// Without a subcommand, lists available statements (equivalent to `statement list`).
+    /// Example: longbridge statement
+    /// Example: longbridge statement --type monthly
+    /// Example: longbridge statement export --file-key KEY --section equity_holdings
     Statement {
+        /// Statement type: daily (default) | monthly
+        #[arg(long = "type", default_value = "daily")]
+        statement_type: String,
+        /// Start date of query in YYYYMMDD format (e.g. 20260121). Defaults to 30 days ago.
+        #[arg(long)]
+        start_date: Option<i32>,
+        /// Number of records to return. Defaults to 30 for daily, 12 for monthly.
+        #[arg(long)]
+        limit: Option<i32>,
         #[command(subcommand)]
-        cmd: StatementCmd,
+        cmd: Option<StatementCmd>,
     },
 
     // ── Trade ───────────────────────────────────────────────────────────────────
-    /// Today's orders, or historical orders with --history
+    /// Order management: list, detail, buy, sell, cancel, replace, executions
     ///
-    /// Returns: `order_id`, symbol, side, `order_type`, status, quantity, price,
-    ///   `executed_qty`, `executed_price`, `submitted_at`.
-    /// Example: longbridge orders
-    /// Example: longbridge orders --history --start 2024-01-01 --symbol TSLA.US
-    Orders {
-        /// Return historical orders instead of today's
+    /// Without a subcommand, lists today's orders (or historical with --history).
+    /// Example: longbridge order
+    /// Example: longbridge order --history --start 2024-01-01 --symbol TSLA.US
+    /// Example: longbridge order detail 20240101-123456789
+    /// Example: longbridge order buy TSLA.US 100 --price 250.00
+    /// Example: longbridge order sell TSLA.US 100 --price 260.00
+    /// Example: longbridge order cancel 20240101-123456789
+    /// Example: longbridge order replace 20240101-123456789 --qty 200 --price 255.00
+    /// Example: longbridge order executions --history --start 2024-01-01
+    Order {
+        /// Return historical orders instead of today's (list mode only)
         #[arg(long)]
         history: bool,
         /// Filter start date (YYYY-MM-DD)
@@ -638,124 +436,8 @@ pub enum Commands {
         /// Filter by symbol (e.g. TSLA.US)
         #[arg(long)]
         symbol: Option<String>,
-    },
-
-    /// Full detail for a single order including charges and history
-    ///
-    /// Returns all fields from `orders` plus `charge_detail`, `history_details`, msg.
-    /// Example: longbridge order 20240101-123456789
-    Order {
-        /// Order ID (from `orders` or returned by `buy`/`sell`)
-        order_id: String,
-    },
-
-    /// Today's trade executions (fills), or historical with --history
-    ///
-    /// Returns: `order_id`, `trade_id`, symbol, price, quantity, `trade_done_at`.
-    /// Example: longbridge executions --history --start 2024-01-01
-    Executions {
-        /// Return historical executions instead of today's
-        #[arg(long)]
-        history: bool,
-        /// Filter start date (YYYY-MM-DD)
-        #[arg(long)]
-        start: Option<String>,
-        /// Filter end date (YYYY-MM-DD)
-        #[arg(long)]
-        end: Option<String>,
-        /// Filter by symbol
-        #[arg(long)]
-        symbol: Option<String>,
-    },
-
-    /// Submit a buy order (prompts for confirmation)
-    ///
-    /// Returns `order_id` on success.
-    /// Order types: LO (limit) | MO (market) | ELO | ALO | ODD | SLO | LIT | MIT
-    ///   (case-insensitive)
-    /// Example: longbridge buy TSLA.US 100 --price 250.00
-    /// Example: longbridge buy 700.HK 1000 --price 300 --order-type ALO
-    /// Example: longbridge buy NVDA.US 10 --order-type MIT --trigger-price 177.89 --tif Day
-    /// Example: longbridge buy NVDA.US 10 --order-type LIT --trigger-price 177.89 --price 178.00 --tif Day
-    Buy {
-        /// Symbol in <CODE>.<MARKET> format
-        symbol: String,
-        /// Number of shares/units to buy (integer)
-        quantity: u64,
-        /// Limit price as a decimal string, e.g. 250.00 (required for LO/ELO/ALO/LIT; omit for MO/MIT)
-        #[arg(long)]
-        price: Option<String>,
-        /// Trigger price for conditional orders (required for MIT/LIT)
-        #[arg(long)]
-        trigger_price: Option<String>,
-        /// Order type: LO | MO | ELO | ALO | ODD | SLO | LIT | MIT  (case-insensitive, default: LO)
-        #[arg(long, default_value = "LO")]
-        order_type: String,
-        /// Time in force: Day | `GoodTilCanceled` (alias: gtc) | `GoodTilDate` (alias: gtd)
-        /// (case-insensitive, default: Day)
-        #[arg(long, default_value = "Day")]
-        tif: String,
-        /// Skip confirmation prompt (useful for scripting and AI agents)
-        #[arg(long, short = 'y')]
-        yes: bool,
-    },
-
-    /// Submit a sell order (prompts for confirmation)
-    ///
-    /// Returns `order_id` on success.
-    /// Example: longbridge sell TSLA.US 100 --price 260.00
-    /// Example: longbridge sell NVDA.US 10 --order-type MIT --trigger-price 177.89 --tif Day
-    Sell {
-        /// Symbol in <CODE>.<MARKET> format
-        symbol: String,
-        /// Number of shares/units to sell (integer)
-        quantity: u64,
-        /// Limit price as a decimal string, e.g. 260.00 (required for LO/ELO/ALO/LIT; omit for MO/MIT)
-        #[arg(long)]
-        price: Option<String>,
-        /// Trigger price for conditional orders (required for MIT/LIT)
-        #[arg(long)]
-        trigger_price: Option<String>,
-        /// Order type: LO | MO | ELO | ALO | ODD | SLO | LIT | MIT  (case-insensitive, default: LO)
-        #[arg(long, default_value = "LO")]
-        order_type: String,
-        /// Time in force: Day | `GoodTilCanceled` (alias: gtc) | `GoodTilDate` (alias: gtd)
-        /// (case-insensitive, default: Day)
-        #[arg(long, default_value = "Day")]
-        tif: String,
-        /// Skip confirmation prompt (useful for scripting and AI agents)
-        #[arg(long, short = 'y')]
-        yes: bool,
-    },
-
-    /// Cancel a pending order (prompts for confirmation)
-    ///
-    /// Only cancellable states (New, `PartialFilled`, etc.) are accepted.
-    /// Example: longbridge cancel 20240101-123456789
-    Cancel {
-        /// Order ID to cancel
-        order_id: String,
-        /// Skip confirmation prompt (useful for scripting and AI agents)
-        #[arg(long, short = 'y')]
-        yes: bool,
-    },
-
-    /// Modify quantity or price of a pending order (prompts for confirmation)
-    ///
-    /// --qty is required. --price is optional (omit to keep current price).
-    /// Example: longbridge replace 20240101-123456789 --qty 200 --price 255.00
-    Replace {
-        /// Order ID to modify
-        order_id: String,
-        /// New quantity (REQUIRED — integer number of shares/units)
-        #[arg(long)]
-        qty: Option<u64>,
-        /// New limit price as a decimal string, e.g. 255.00 (optional)
-        #[arg(long)]
-        price: Option<String>,
-        /// Skip confirmation prompt (useful for scripting and AI agents)
-        #[arg(long, short = 'y')]
-        yes: bool,
+        #[command(subcommand)]
+        cmd: Option<OrderCmd>,
     },
 
     /// Account cash balance and financing information
@@ -991,6 +673,369 @@ pub enum StatementCmd {
     },
 }
 
+#[derive(Subcommand)]
+pub enum OrderCmd {
+    /// Full detail for a single order including charges and history
+    ///
+    /// Returns all fields from `order` plus `charge_detail`, `history_details`, msg.
+    /// Example: longbridge order detail 20240101-123456789
+    Detail {
+        /// Order ID (from `longbridge order` or returned by `order buy`/`order sell`)
+        order_id: String,
+    },
+
+    /// Today's trade executions (fills), or historical with --history
+    ///
+    /// Returns: `order_id`, `trade_id`, symbol, price, quantity, `trade_done_at`.
+    /// Example: longbridge order executions
+    /// Example: longbridge order executions --history --start 2024-01-01
+    Executions {
+        /// Return historical executions instead of today's
+        #[arg(long)]
+        history: bool,
+        /// Filter start date (YYYY-MM-DD)
+        #[arg(long)]
+        start: Option<String>,
+        /// Filter end date (YYYY-MM-DD)
+        #[arg(long)]
+        end: Option<String>,
+        /// Filter by symbol
+        #[arg(long)]
+        symbol: Option<String>,
+    },
+
+    /// Submit a buy order (prompts for confirmation)
+    ///
+    /// Returns `order_id` on success.
+    /// Order types: LO (limit) | MO (market) | ELO | ALO | ODD | SLO | LIT | MIT
+    ///   (case-insensitive)
+    /// Example: longbridge order buy TSLA.US 100 --price 250.00
+    /// Example: longbridge order buy 700.HK 1000 --price 300 --order-type ALO
+    /// Example: longbridge order buy NVDA.US 10 --order-type MIT --trigger-price 177.89 --tif Day
+    Buy {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+        /// Number of shares/units to buy (integer)
+        quantity: u64,
+        /// Limit price as a decimal string, e.g. 250.00 (required for LO/ELO/ALO/LIT; omit for MO/MIT)
+        #[arg(long)]
+        price: Option<String>,
+        /// Trigger price for conditional orders (required for MIT/LIT)
+        #[arg(long)]
+        trigger_price: Option<String>,
+        /// Order type: LO | MO | ELO | ALO | ODD | SLO | LIT | MIT  (case-insensitive, default: LO)
+        #[arg(long, default_value = "LO")]
+        order_type: String,
+        /// Time in force: Day | `GoodTilCanceled` (alias: gtc) | `GoodTilDate` (alias: gtd)
+        /// (case-insensitive, default: Day)
+        #[arg(long, default_value = "Day")]
+        tif: String,
+        /// Skip confirmation prompt (useful for scripting and AI agents)
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
+
+    /// Submit a sell order (prompts for confirmation)
+    ///
+    /// Returns `order_id` on success.
+    /// Example: longbridge order sell TSLA.US 100 --price 260.00
+    /// Example: longbridge order sell NVDA.US 10 --order-type MIT --trigger-price 177.89 --tif Day
+    Sell {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+        /// Number of shares/units to sell (integer)
+        quantity: u64,
+        /// Limit price as a decimal string, e.g. 260.00 (required for LO/ELO/ALO/LIT; omit for MO/MIT)
+        #[arg(long)]
+        price: Option<String>,
+        /// Trigger price for conditional orders (required for MIT/LIT)
+        #[arg(long)]
+        trigger_price: Option<String>,
+        /// Order type: LO | MO | ELO | ALO | ODD | SLO | LIT | MIT  (case-insensitive, default: LO)
+        #[arg(long, default_value = "LO")]
+        order_type: String,
+        /// Time in force: Day | `GoodTilCanceled` (alias: gtc) | `GoodTilDate` (alias: gtd)
+        /// (case-insensitive, default: Day)
+        #[arg(long, default_value = "Day")]
+        tif: String,
+        /// Skip confirmation prompt (useful for scripting and AI agents)
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
+
+    /// Cancel a pending order (prompts for confirmation)
+    ///
+    /// Only cancellable states (New, `PartialFilled`, etc.) are accepted.
+    /// Example: longbridge order cancel 20240101-123456789
+    Cancel {
+        /// Order ID to cancel
+        order_id: String,
+        /// Skip confirmation prompt (useful for scripting and AI agents)
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
+
+    /// Modify quantity or price of a pending order (prompts for confirmation)
+    ///
+    /// --qty is required. --price is optional (omit to keep current price).
+    /// Example: longbridge order replace 20240101-123456789 --qty 200 --price 255.00
+    Replace {
+        /// Order ID to modify
+        order_id: String,
+        /// New quantity (REQUIRED — integer number of shares/units)
+        #[arg(long)]
+        qty: Option<u64>,
+        /// New limit price as a decimal string, e.g. 255.00 (optional)
+        #[arg(long)]
+        price: Option<String>,
+        /// Skip confirmation prompt (useful for scripting and AI agents)
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum NewsCmd {
+    /// Full Markdown content of a news article
+    ///
+    /// Fetches the article text from `<https://longbridge.com/news>`
+    /// Example: longbridge news detail 12345678
+    Detail {
+        /// News article ID (from `longbridge news <SYMBOL>`)
+        id: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum FilingCmd {
+    /// Full Markdown content of a regulatory filing (HTML and TXT only)
+    ///
+    /// Get the symbol and id from `longbridge filing <SYMBOL>`.
+    /// Some filings contain multiple files. Use --list-files to see all, then --file-index N.
+    /// Example: longbridge filing detail AAPL.US 580265529766123777
+    /// Example: longbridge filing detail AAPL.US 580265529766123777 --list-files
+    /// Example: longbridge filing detail AAPL.US 580265529766123777 --file-index 1
+    Detail {
+        /// Symbol in <CODE>.<MARKET> format, e.g. AAPL.US 700.HK
+        symbol: String,
+        /// Filing ID (from `longbridge filing list`)
+        id: String,
+        /// List all available file URLs without fetching content
+        #[arg(long)]
+        list_files: bool,
+        /// Index of the file to fetch (0-based, default 0)
+        #[arg(long, default_value = "0")]
+        file_index: usize,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum TopicCmd {
+    /// Get full details of a community topic by its ID
+    ///
+    /// Returns: id, `topic_type`, title, description, body, author, tickers, hashtags,
+    /// images, `likes_count`, `comments_count`, `views_count`, `shares_count`, `detail_url`,
+    /// `created_at`, `updated_at`.
+    /// Example: longbridge topic detail 6993508780031016960
+    Detail {
+        /// Topic ID (e.g. 6993508780031016960)
+        id: String,
+    },
+
+    /// Topics created by the authenticated user
+    ///
+    /// Returns: id, title/excerpt, type, `created_at`, likes, comments, views.
+    /// Example: longbridge topic mine
+    /// Example: longbridge topic mine --type article --size 10
+    Mine {
+        /// Page number (default: 1)
+        #[arg(long, default_value = "1")]
+        page: i32,
+        /// Records per page, 1-500 (default: 50)
+        #[arg(long, default_value = "50")]
+        size: i32,
+        /// Filter by content type: article | post (omit for all)
+        #[arg(long = "type")]
+        post_type: Option<String>,
+    },
+
+    /// Publish a new community discussion topic
+    ///
+    /// Two content types:
+    ///   --type post (default): plain text only.
+    ///   --type article: Markdown body, title required.
+    /// Rate limit: max 3 topics per user per minute, 10 per 24 hours.
+    /// Example: longbridge topic create --body "Bullish on 700.HK today"
+    /// Example: longbridge topic create --title "My Analysis" --body "$(cat post.md)" --type article
+    Create {
+        /// Topic title. Required for --type article; optional for --type post.
+        #[arg(long)]
+        title: Option<String>,
+        /// Topic body. post: plain text. article: Markdown, title required.
+        #[arg(long)]
+        body: String,
+        /// Content type: post (default) | article
+        #[arg(long = "type")]
+        post_type: Option<String>,
+        /// Extra tickers to associate, comma-separated, e.g. 700.HK,TSLA.US (max 10).
+        #[arg(long, value_delimiter = ',')]
+        tickers: Vec<String>,
+    },
+
+    /// List replies for a community topic (paginated)
+    ///
+    /// Returns: id, `topic_id`, body, `reply_to_id`, author, `likes_count`, `comments_count`, `created_at`.
+    /// Page size is 1-50, default 20.
+    /// Example: longbridge topic replies 6993508780031016960
+    /// Example: longbridge topic replies 6993508780031016960 --page 2 --size 20
+    Replies {
+        /// Topic ID (e.g. 6993508780031016960)
+        topic_id: String,
+        /// Page number, 1-based (default: 1)
+        #[arg(long, default_value = "1")]
+        page: i32,
+        /// Records per page, 1-50 (default: 20)
+        #[arg(long, default_value = "20")]
+        size: i32,
+    },
+
+    /// Post a reply to a community topic
+    ///
+    /// Body format: plain text only. Rate limit: first 3 replies per topic free,
+    /// then incrementally longer waits (4th=3s, 5th=5s, ..., 10th+=55s). Returns 429 when exceeded.
+    /// Example: longbridge topic create-reply 6993508780031016960 --body "Great post!"
+    /// Example: longbridge topic create-reply 6993508780031016960 --body "Agreed!" --reply-to 7001234567890123456
+    CreateReply {
+        /// Topic ID to reply to (e.g. 6993508780031016960)
+        topic_id: String,
+        /// Reply body - plain text only.
+        #[arg(long)]
+        body: String,
+        /// Nest under this reply ID (get IDs from topic-replies). Omit for a top-level reply.
+        #[arg(long = "reply-to")]
+        reply_to_id: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum OptionCmd {
+    /// Real-time quotes for option contracts
+    ///
+    /// Returns standard quote fields plus `implied_volatility`, delta, `strike_price`,
+    /// `expiry_date`, `contract_type`.
+    /// Example: longbridge option quote AAPL240119C190000
+    Quote {
+        /// Option contract symbols (OCC format for US, e.g. AAPL240119C190000)
+        symbols: Vec<String>,
+    },
+
+    /// Option chain: expiry dates, or strike prices for a given expiry
+    ///
+    /// Without --date: returns all available expiry dates.
+    /// With --date: returns strike prices and call/put symbols for that expiry.
+    /// Example: longbridge option chain AAPL.US
+    /// Example: longbridge option chain AAPL.US --date 2024-01-19
+    Chain {
+        /// Underlying symbol in <CODE>.<MARKET> format, e.g. AAPL.US
+        symbol: String,
+        /// Expiry date (YYYY-MM-DD). Omit to list all expiry dates.
+        #[arg(long)]
+        date: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum WarrantCmd {
+    /// Real-time quotes for warrant contracts
+    ///
+    /// Returns: `last_done`, `prev_close`, `implied_volatility`, `leverage_ratio`, `expiry_date`, category.
+    /// Example: longbridge warrant quote 12345.HK
+    Quote {
+        /// Warrant symbols (e.g. 12345.HK)
+        symbols: Vec<String>,
+    },
+
+    /// Warrant issuer list (HK market)
+    ///
+    /// Returns: `issuer_id`, `name_en`, `name_cn`.
+    Issuers,
+}
+
+#[derive(Subcommand)]
+pub enum KlineCmd {
+    /// Historical OHLCV candlestick data within a date range
+    ///
+    /// Both --start and --end must be provided together; if either is omitted the
+    /// most recent 100 candles are returned (offset-based, ignores the other flag).
+    /// Use --session all to include pre/post-market candles (adds a Session column).
+    /// Example: longbridge kline history TSLA.US --start 2024-01-01 --end 2024-12-31
+    /// Example: longbridge kline history TSLA.US --period 1m --session all --start 2024-01-01 --end 2024-01-02
+    History {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+        /// Candlestick period: 1m 5m 15m 30m 1h day week month year (default: day)
+        #[arg(long, default_value = "day")]
+        period: String,
+        /// Start date (YYYY-MM-DD). Must be used together with --end.
+        #[arg(long)]
+        start: Option<String>,
+        /// End date (YYYY-MM-DD). Must be used together with --start.
+        #[arg(long)]
+        end: Option<String>,
+        /// Price adjustment: `no_adjust` (default) | `forward_adjust`
+        #[arg(long, default_value = "no_adjust")]
+        adjust: String,
+        /// Trade session filter: intraday (default) | all (includes pre/post market)
+        #[arg(long, default_value = "intraday")]
+        session: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum CapitalCmd {
+    /// Intraday capital flow time series (large/medium/small money in vs out)
+    ///
+    /// Returns a time series of inflow values for today's session.
+    /// Example: longbridge capital flow TSLA.US
+    Flow {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+    },
+
+    /// Capital distribution snapshot (large/medium/small inflow and outflow)
+    ///
+    /// Returns total inflow/outflow broken down by order size for the current session.
+    /// Example: longbridge capital dist TSLA.US
+    Dist {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum TradingCmd {
+    /// Trading session schedule (open/close times) for all markets
+    ///
+    /// Returns: market, session type (intraday/pre/post/overnight), `begin_time`, `end_time`.
+    Session,
+
+    /// Trading days and half-trading days for a market
+    ///
+    /// Defaults to today + 30 days if no dates are provided.
+    /// Example: longbridge trading days HK --start 2024-01-01 --end 2024-03-31
+    Days {
+        /// Market: HK | US | CN (aliases: SH SZ) | SG  (case-insensitive, default: HK)
+        #[arg(default_value = "HK")]
+        market: String,
+        /// Start date (YYYY-MM-DD), defaults to today
+        #[arg(long)]
+        start: Option<String>,
+        /// End date (YYYY-MM-DD), defaults to 30 days after start
+        #[arg(long)]
+        end: Option<String>,
+    },
+}
+
 pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
     match cmd {
         Commands::Quote { symbols } => quote::cmd_quote(symbols, format).await,
@@ -1006,21 +1051,36 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
             count,
             adjust,
             session,
-        } => quote::cmd_kline(symbol, &period, count, &adjust, &session, format).await,
-        Commands::KlineHistory {
-            symbol,
-            period,
-            start,
-            end,
-            adjust,
-            session,
-        } => quote::cmd_kline_history(symbol, &period, start, end, &adjust, &session, format).await,
+            cmd,
+        } => match cmd {
+            Some(KlineCmd::History {
+                symbol: h_symbol,
+                period: h_period,
+                start,
+                end,
+                adjust: h_adjust,
+                session: h_session,
+            }) => {
+                quote::cmd_kline_history(
+                    h_symbol, &h_period, start, end, &h_adjust, &h_session, format,
+                )
+                .await
+            }
+            None => {
+                let sym = symbol.ok_or_else(|| {
+                    anyhow::anyhow!("Symbol required. Usage: longbridge kline <SYMBOL>")
+                })?;
+                quote::cmd_kline(sym, &period, count, &adjust, &session, format).await
+            }
+        },
         Commands::Static { symbols } => quote::cmd_static(symbols, format).await,
         Commands::CalcIndex { symbols, index } => {
             quote::cmd_calc_index(symbols, index, format).await
         }
-        Commands::CapitalFlow { symbol } => quote::cmd_capital_flow(symbol, format).await,
-        Commands::CapitalDist { symbol } => quote::cmd_capital_dist(symbol, format).await,
+        Commands::Capital { cmd } => match cmd {
+            CapitalCmd::Flow { symbol } => quote::cmd_capital_flow(symbol, format).await,
+            CapitalCmd::Dist { symbol } => quote::cmd_capital_dist(symbol, format).await,
+        },
         Commands::MarketTemp {
             market,
             history,
@@ -1028,120 +1088,175 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
             end,
             granularity,
         } => quote::cmd_market_temp(&market, history, start, end, &granularity, format).await,
-        Commands::TradingSession => quote::cmd_trading_session(format).await,
-        Commands::TradingDays { market, start, end } => {
-            quote::cmd_trading_days(&market, start, end, format).await
-        }
+        Commands::Trading { cmd } => match cmd {
+            TradingCmd::Session => quote::cmd_trading_session(format).await,
+            TradingCmd::Days { market, start, end } => {
+                quote::cmd_trading_days(&market, start, end, format).await
+            }
+        },
         Commands::SecurityList { market, category } => {
             quote::cmd_security_list(&market, &category, format).await
         }
         Commands::Participants => quote::cmd_participants(format).await,
         Commands::Subscriptions => quote::cmd_subscriptions(format).await,
-        Commands::OptionQuote { symbols } => quote::cmd_option_quote(symbols, format).await,
-        Commands::OptionChain { symbol, date } => {
-            quote::cmd_option_chain(symbol, date, format).await
-        }
-        Commands::WarrantQuote { symbols } => quote::cmd_warrant_quote(symbols, format).await,
-        Commands::WarrantList { symbol } => quote::cmd_warrant_list(symbol, format).await,
-        Commands::WarrantIssuers => quote::cmd_warrant_issuers(format).await,
-        Commands::News { symbol, count } => news::cmd_news(symbol, count, format).await,
-        Commands::NewsDetail { id } => news::cmd_news_detail(id).await,
-        Commands::Filings { symbol, count } => news::cmd_filings(symbol, count, format).await,
-        Commands::FilingDetail {
-            symbol,
-            id,
-            list_files,
-            file_index,
-        } => news::cmd_filing_detail(symbol, id, list_files, file_index).await,
-        Commands::Topics { symbol, count } => news::cmd_topics(symbol, count, format).await,
-        Commands::TopicDetail { id } => topic::cmd_topic_detail_api(id, format).await,
-        Commands::MyTopics {
-            page,
-            size,
-            post_type,
-        } => topic::cmd_topics_mine(page, size, post_type, format).await,
-        Commands::CreateTopic {
-            title,
-            body,
-            post_type,
-            tickers,
-        } => topic::cmd_create_topic(title, body, post_type, tickers, format).await,
-        Commands::TopicReplies {
-            topic_id,
-            page,
-            size,
-        } => topic::cmd_topic_replies(topic_id, page, size, format).await,
-        Commands::CreateTopicReply {
-            topic_id,
-            body,
-            reply_to_id,
-        } => topic::cmd_create_reply(topic_id, body, reply_to_id, format).await,
+        Commands::Option { cmd } => match cmd {
+            OptionCmd::Quote { symbols } => quote::cmd_option_quote(symbols, format).await,
+            OptionCmd::Chain { symbol, date } => {
+                quote::cmd_option_chain(symbol, date, format).await
+            }
+        },
+        Commands::Warrant { symbol, cmd } => match cmd {
+            Some(WarrantCmd::Quote { symbols }) => quote::cmd_warrant_quote(symbols, format).await,
+            Some(WarrantCmd::Issuers) => quote::cmd_warrant_issuers(format).await,
+            None => {
+                let sym = symbol.ok_or_else(|| {
+                    anyhow::anyhow!("Symbol required. Usage: longbridge warrant <SYMBOL>")
+                })?;
+                quote::cmd_warrant_list(sym, format).await
+            }
+        },
+        Commands::News { symbol, count, cmd } => match cmd {
+            Some(NewsCmd::Detail { id }) => news::cmd_news_detail(id).await,
+            None => {
+                let sym = symbol.ok_or_else(|| {
+                    anyhow::anyhow!("Symbol required. Usage: longbridge news <SYMBOL>")
+                })?;
+                news::cmd_news(sym, count, format).await
+            }
+        },
+        Commands::Filing { symbol, count, cmd } => match cmd {
+            Some(FilingCmd::Detail {
+                symbol: s,
+                id,
+                list_files,
+                file_index,
+            }) => news::cmd_filing_detail(s, id, list_files, file_index).await,
+            None => {
+                let sym = symbol.ok_or_else(|| {
+                    anyhow::anyhow!("Symbol required. Usage: longbridge filing <SYMBOL>")
+                })?;
+                news::cmd_filings(sym, count, format).await
+            }
+        },
+        Commands::Topic { symbol, count, cmd } => match cmd {
+            Some(TopicCmd::Detail { id }) => topic::cmd_topic_detail_api(id, format).await,
+            Some(TopicCmd::Mine {
+                page,
+                size,
+                post_type,
+            }) => topic::cmd_topics_mine(page, size, post_type, format).await,
+            Some(TopicCmd::Create {
+                title,
+                body,
+                post_type,
+                tickers,
+            }) => topic::cmd_create_topic(title, body, post_type, tickers, format).await,
+            Some(TopicCmd::Replies {
+                topic_id,
+                page,
+                size,
+            }) => topic::cmd_topic_replies(topic_id, page, size, format).await,
+            Some(TopicCmd::CreateReply {
+                topic_id,
+                body,
+                reply_to_id,
+            }) => topic::cmd_create_reply(topic_id, body, reply_to_id, format).await,
+            None => {
+                let sym = symbol.ok_or_else(|| {
+                    anyhow::anyhow!("Symbol required. Usage: longbridge topic <SYMBOL>")
+                })?;
+                news::cmd_topics(sym, count, format).await
+            }
+        },
         Commands::Watchlist { cmd } => watchlist::cmd_watchlist(cmd, format).await,
-        Commands::Statement { cmd } => statement::cmd_statement(cmd, format).await,
-        Commands::Orders {
+        Commands::Statement {
+            statement_type,
+            start_date,
+            limit,
+            cmd,
+        } => match cmd {
+            Some(c) => statement::cmd_statement(c, format).await,
+            None => {
+                statement::cmd_statement(
+                    StatementCmd::List {
+                        statement_type,
+                        start_date,
+                        limit,
+                    },
+                    format,
+                )
+                .await
+            }
+        },
+        Commands::Order {
             history,
             start,
             end,
             symbol,
-        } => trade::cmd_orders(history, start, end, symbol, format).await,
-        Commands::Order { order_id } => trade::cmd_order_detail(order_id, format).await,
-        Commands::Executions {
-            history,
-            start,
-            end,
-            symbol,
-        } => trade::cmd_executions(history, start, end, symbol, format).await,
-        Commands::Buy {
-            symbol,
-            quantity,
-            price,
-            trigger_price,
-            order_type,
-            tif,
-            yes,
-        } => {
-            trade::cmd_submit_order(
+            cmd,
+        } => match cmd {
+            Some(OrderCmd::Detail { order_id }) => trade::cmd_order_detail(order_id, format).await,
+            Some(OrderCmd::Executions {
+                history: h,
+                start: s,
+                end: e,
+                symbol: sy,
+            }) => trade::cmd_executions(h, s, e, sy, format).await,
+            Some(OrderCmd::Buy {
                 symbol,
                 quantity,
                 price,
                 trigger_price,
                 order_type,
                 tif,
-                longbridge::trade::OrderSide::Buy,
                 yes,
-                format,
-            )
-            .await
-        }
-        Commands::Sell {
-            symbol,
-            quantity,
-            price,
-            trigger_price,
-            order_type,
-            tif,
-            yes,
-        } => {
-            trade::cmd_submit_order(
+            }) => {
+                trade::cmd_submit_order(
+                    symbol,
+                    quantity,
+                    price,
+                    trigger_price,
+                    order_type,
+                    tif,
+                    longbridge::trade::OrderSide::Buy,
+                    yes,
+                    format,
+                )
+                .await
+            }
+            Some(OrderCmd::Sell {
                 symbol,
                 quantity,
                 price,
                 trigger_price,
                 order_type,
                 tif,
-                longbridge::trade::OrderSide::Sell,
                 yes,
-                format,
-            )
-            .await
-        }
-        Commands::Cancel { order_id, yes } => trade::cmd_cancel_order(order_id, yes).await,
-        Commands::Replace {
-            order_id,
-            qty,
-            price,
-            yes,
-        } => trade::cmd_replace_order(order_id, qty, price, yes).await,
+            }) => {
+                trade::cmd_submit_order(
+                    symbol,
+                    quantity,
+                    price,
+                    trigger_price,
+                    order_type,
+                    tif,
+                    longbridge::trade::OrderSide::Sell,
+                    yes,
+                    format,
+                )
+                .await
+            }
+            Some(OrderCmd::Cancel { order_id, yes }) => {
+                trade::cmd_cancel_order(order_id, yes).await
+            }
+            Some(OrderCmd::Replace {
+                order_id,
+                qty,
+                price,
+                yes,
+            }) => trade::cmd_replace_order(order_id, qty, price, yes).await,
+            None => trade::cmd_orders(history, start, end, symbol, format).await,
+        },
         Commands::Balance { currency } => trade::cmd_balance(currency, format).await,
         Commands::CashFlow { start, end } => trade::cmd_cash_flow(start, end, format).await,
         Commands::Positions => trade::cmd_positions(format).await,
@@ -1280,7 +1395,7 @@ mod tests {
             ..
         }) = cli.command
         {
-            assert_eq!(symbol, "TSLA.US");
+            assert_eq!(symbol, Some("TSLA.US".to_string()));
             assert_eq!(period, "day");
             assert_eq!(count, 100);
             assert_eq!(adjust, "no_adjust");
@@ -1313,7 +1428,8 @@ mod tests {
     fn test_kline_history_with_dates() {
         let cli = parse(&[
             "longbridge",
-            "kline-history",
+            "kline",
+            "history",
             "TSLA.US",
             "--start",
             "2024-01-01",
@@ -1321,15 +1437,18 @@ mod tests {
             "2024-12-31",
         ])
         .unwrap();
-        if let Some(Commands::KlineHistory {
-            symbol, start, end, ..
+        if let Some(Commands::Kline {
+            cmd: Some(KlineCmd::History {
+                symbol, start, end, ..
+            }),
+            ..
         }) = cli.command
         {
             assert_eq!(symbol, "TSLA.US");
             assert_eq!(start, Some("2024-01-01".to_string()));
             assert_eq!(end, Some("2024-12-31".to_string()));
         } else {
-            panic!("expected KlineHistory command");
+            panic!("expected Kline History command");
         }
     }
 
@@ -1373,17 +1492,17 @@ mod tests {
 
     #[test]
     fn test_capital_flow_subcommand() {
-        let cli = parse(&["longbridge", "capital-flow", "TSLA.US"]).unwrap();
+        let cli = parse(&["longbridge", "capital", "flow", "TSLA.US"]).unwrap();
         assert!(
-            matches!(cli.command, Some(Commands::CapitalFlow { symbol }) if symbol == "TSLA.US")
+            matches!(cli.command, Some(Commands::Capital { cmd: CapitalCmd::Flow { symbol } }) if symbol == "TSLA.US")
         );
     }
 
     #[test]
     fn test_capital_dist_subcommand() {
-        let cli = parse(&["longbridge", "capital-dist", "TSLA.US"]).unwrap();
+        let cli = parse(&["longbridge", "capital", "dist", "TSLA.US"]).unwrap();
         assert!(
-            matches!(cli.command, Some(Commands::CapitalDist { symbol }) if symbol == "TSLA.US")
+            matches!(cli.command, Some(Commands::Capital { cmd: CapitalCmd::Dist { symbol } }) if symbol == "TSLA.US")
         );
     }
 
@@ -1429,17 +1548,25 @@ mod tests {
 
     #[test]
     fn test_trading_session_subcommand() {
-        let cli = parse(&["longbridge", "trading-session"]).unwrap();
-        assert!(matches!(cli.command, Some(Commands::TradingSession)));
+        let cli = parse(&["longbridge", "trading", "session"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Trading {
+                cmd: TradingCmd::Session
+            })
+        ));
     }
 
     #[test]
     fn test_trading_days_default_market() {
-        let cli = parse(&["longbridge", "trading-days"]).unwrap();
-        if let Some(Commands::TradingDays { market, .. }) = cli.command {
+        let cli = parse(&["longbridge", "trading", "days"]).unwrap();
+        if let Some(Commands::Trading {
+            cmd: TradingCmd::Days { market, .. },
+        }) = cli.command
+        {
             assert_eq!(market, "HK");
         } else {
-            panic!("expected TradingDays command");
+            panic!("expected Trading Days command");
         }
     }
 
@@ -1469,22 +1596,28 @@ mod tests {
 
     #[test]
     fn test_option_quote_subcommand() {
-        let cli = parse(&["longbridge", "option-quote", "AAPL240119C190000"]).unwrap();
-        if let Some(Commands::OptionQuote { symbols }) = cli.command {
+        let cli = parse(&["longbridge", "option", "quote", "AAPL240119C190000"]).unwrap();
+        if let Some(Commands::Option {
+            cmd: OptionCmd::Quote { symbols },
+        }) = cli.command
+        {
             assert_eq!(symbols, vec!["AAPL240119C190000"]);
         } else {
-            panic!("expected OptionQuote command");
+            panic!("expected Option Quote command");
         }
     }
 
     #[test]
     fn test_option_chain_no_date() {
-        let cli = parse(&["longbridge", "option-chain", "AAPL.US"]).unwrap();
-        if let Some(Commands::OptionChain { symbol, date }) = cli.command {
+        let cli = parse(&["longbridge", "option", "chain", "AAPL.US"]).unwrap();
+        if let Some(Commands::Option {
+            cmd: OptionCmd::Chain { symbol, date },
+        }) = cli.command
+        {
             assert_eq!(symbol, "AAPL.US");
             assert!(date.is_none());
         } else {
-            panic!("expected OptionChain command");
+            panic!("expected Option Chain command");
         }
     }
 
@@ -1492,41 +1625,57 @@ mod tests {
     fn test_option_chain_with_date() {
         let cli = parse(&[
             "longbridge",
-            "option-chain",
+            "option",
+            "chain",
             "AAPL.US",
             "--date",
             "2024-01-19",
         ])
         .unwrap();
-        if let Some(Commands::OptionChain { date, .. }) = cli.command {
+        if let Some(Commands::Option {
+            cmd: OptionCmd::Chain { date, .. },
+        }) = cli.command
+        {
             assert_eq!(date, Some("2024-01-19".to_string()));
         } else {
-            panic!("expected OptionChain command");
+            panic!("expected Option Chain command");
         }
     }
 
     #[test]
     fn test_warrant_quote_subcommand() {
-        let cli = parse(&["longbridge", "warrant-quote", "12345.HK"]).unwrap();
-        if let Some(Commands::WarrantQuote { symbols }) = cli.command {
+        let cli = parse(&["longbridge", "warrant", "quote", "12345.HK"]).unwrap();
+        if let Some(Commands::Warrant {
+            cmd: Some(WarrantCmd::Quote { symbols }),
+            ..
+        }) = cli.command
+        {
             assert_eq!(symbols, vec!["12345.HK"]);
         } else {
-            panic!("expected WarrantQuote command");
+            panic!("expected Warrant Quote command");
         }
     }
 
     #[test]
-    fn test_warrant_list_subcommand() {
-        let cli = parse(&["longbridge", "warrant-list", "700.HK"]).unwrap();
-        assert!(
-            matches!(cli.command, Some(Commands::WarrantList { symbol }) if symbol == "700.HK")
-        );
+    fn test_warrant_list_positional() {
+        let cli = parse(&["longbridge", "warrant", "700.HK"]).unwrap();
+        if let Some(Commands::Warrant { symbol, cmd: None }) = cli.command {
+            assert_eq!(symbol, Some("700.HK".to_string()));
+        } else {
+            panic!("expected Warrant positional command");
+        }
     }
 
     #[test]
     fn test_warrant_issuers_subcommand() {
-        let cli = parse(&["longbridge", "warrant-issuers"]).unwrap();
-        assert!(matches!(cli.command, Some(Commands::WarrantIssuers)));
+        let cli = parse(&["longbridge", "warrant", "issuers"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Warrant {
+                cmd: Some(WarrantCmd::Issuers),
+                ..
+            })
+        ));
     }
 
     // ─── Watchlist ────────────────────────────────────────────────────────────
@@ -1630,13 +1779,14 @@ mod tests {
     // ─── Trade commands ───────────────────────────────────────────────────────
 
     #[test]
-    fn test_orders_defaults() {
-        let cli = parse(&["longbridge", "orders"]).unwrap();
-        if let Some(Commands::Orders {
+    fn test_order_list_defaults() {
+        let cli = parse(&["longbridge", "order"]).unwrap();
+        if let Some(Commands::Order {
             history,
             start,
             end,
             symbol,
+            cmd: None,
         }) = cli.command
         {
             assert!(!history);
@@ -1644,15 +1794,15 @@ mod tests {
             assert!(end.is_none());
             assert!(symbol.is_none());
         } else {
-            panic!("expected Orders command");
+            panic!("expected Order list command");
         }
     }
 
     #[test]
-    fn test_orders_history_with_filters() {
+    fn test_order_list_history_with_filters() {
         let cli = parse(&[
             "longbridge",
-            "orders",
+            "order",
             "--history",
             "--start",
             "2024-01-01",
@@ -1660,10 +1810,11 @@ mod tests {
             "TSLA.US",
         ])
         .unwrap();
-        if let Some(Commands::Orders {
+        if let Some(Commands::Order {
             history,
             start,
             symbol,
+            cmd: None,
             ..
         }) = cli.command
         {
@@ -1671,37 +1822,58 @@ mod tests {
             assert_eq!(start, Some("2024-01-01".to_string()));
             assert_eq!(symbol, Some("TSLA.US".to_string()));
         } else {
-            panic!("expected Orders command");
+            panic!("expected Order list command");
         }
     }
 
     #[test]
     fn test_order_detail_subcommand() {
-        let cli = parse(&["longbridge", "order", "order-123"]).unwrap();
-        assert!(
-            matches!(cli.command, Some(Commands::Order { order_id }) if order_id == "order-123")
-        );
+        let cli = parse(&["longbridge", "order", "detail", "order-123"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Order {
+                cmd: Some(OrderCmd::Detail { order_id }),
+                ..
+            }) if order_id == "order-123"
+        ));
     }
 
     #[test]
-    fn test_executions_subcommand() {
-        let cli = parse(&["longbridge", "executions"]).unwrap();
-        if let Some(Commands::Executions { history, .. }) = cli.command {
+    fn test_order_executions_subcommand() {
+        let cli = parse(&["longbridge", "order", "executions"]).unwrap();
+        if let Some(Commands::Order {
+            cmd: Some(OrderCmd::Executions { history, .. }),
+            ..
+        }) = cli.command
+        {
             assert!(!history);
         } else {
-            panic!("expected Executions command");
+            panic!("expected Order Executions command");
         }
     }
 
     #[test]
-    fn test_buy_subcommand() {
-        let cli = parse(&["longbridge", "buy", "TSLA.US", "100", "--price", "250.00"]).unwrap();
-        if let Some(Commands::Buy {
-            symbol,
-            quantity,
-            price,
-            order_type,
-            tif,
+    fn test_order_buy_subcommand() {
+        let cli = parse(&[
+            "longbridge",
+            "order",
+            "buy",
+            "TSLA.US",
+            "100",
+            "--price",
+            "250.00",
+        ])
+        .unwrap();
+        if let Some(Commands::Order {
+            cmd:
+                Some(OrderCmd::Buy {
+                    symbol,
+                    quantity,
+                    price,
+                    order_type,
+                    tif,
+                    ..
+                }),
             ..
         }) = cli.command
         {
@@ -1711,17 +1883,30 @@ mod tests {
             assert_eq!(order_type, "LO");
             assert_eq!(tif, "Day");
         } else {
-            panic!("expected Buy command");
+            panic!("expected Order Buy command");
         }
     }
 
     #[test]
-    fn test_sell_subcommand() {
-        let cli = parse(&["longbridge", "sell", "TSLA.US", "50", "--price", "260.00"]).unwrap();
-        if let Some(Commands::Sell {
-            symbol,
-            quantity,
-            price,
+    fn test_order_sell_subcommand() {
+        let cli = parse(&[
+            "longbridge",
+            "order",
+            "sell",
+            "TSLA.US",
+            "50",
+            "--price",
+            "260.00",
+        ])
+        .unwrap();
+        if let Some(Commands::Order {
+            cmd:
+                Some(OrderCmd::Sell {
+                    symbol,
+                    quantity,
+                    price,
+                    ..
+                }),
             ..
         }) = cli.command
         {
@@ -1729,22 +1914,27 @@ mod tests {
             assert_eq!(quantity, 50);
             assert_eq!(price, Some("260.00".to_string()));
         } else {
-            panic!("expected Sell command");
+            panic!("expected Order Sell command");
         }
     }
 
     #[test]
-    fn test_cancel_subcommand() {
-        let cli = parse(&["longbridge", "cancel", "order-456"]).unwrap();
-        assert!(
-            matches!(cli.command, Some(Commands::Cancel { order_id, .. }) if order_id == "order-456")
-        );
+    fn test_order_cancel_subcommand() {
+        let cli = parse(&["longbridge", "order", "cancel", "order-456"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Order {
+                cmd: Some(OrderCmd::Cancel { order_id, .. }),
+                ..
+            }) if order_id == "order-456"
+        ));
     }
 
     #[test]
-    fn test_replace_subcommand() {
+    fn test_order_replace_subcommand() {
         let cli = parse(&[
             "longbridge",
+            "order",
             "replace",
             "order-789",
             "--qty",
@@ -1753,10 +1943,14 @@ mod tests {
             "255.00",
         ])
         .unwrap();
-        if let Some(Commands::Replace {
-            order_id,
-            qty,
-            price,
+        if let Some(Commands::Order {
+            cmd:
+                Some(OrderCmd::Replace {
+                    order_id,
+                    qty,
+                    price,
+                    ..
+                }),
             ..
         }) = cli.command
         {
@@ -1764,7 +1958,7 @@ mod tests {
             assert_eq!(qty, Some(200));
             assert_eq!(price, Some("255.00".to_string()));
         } else {
-            panic!("expected Replace command");
+            panic!("expected Order Replace command");
         }
     }
 
