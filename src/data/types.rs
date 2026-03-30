@@ -541,27 +541,6 @@ pub struct DepthData {
     pub bids: Vec<Depth>, // Bid orders
 }
 
-/// Static stock information
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct StaticInfo {
-    pub symbol: String,                  // Stock symbol
-    pub name_cn: String,                 // Chinese name
-    pub name_en: String,                 // English name
-    pub name_hk: String,                 // Traditional Chinese name
-    pub exchange: String,                // Exchange
-    pub currency: String,                // Currency
-    pub lot_size: i32,                   // Lot size
-    pub total_shares: i64,               // Total shares
-    pub circulating_shares: i64,         // Circulating shares
-    pub hk_shares: i64,                  // Hong Kong shares
-    pub eps: Option<Decimal>,            // Earnings per share
-    pub eps_ttm: Option<Decimal>,        // Earnings per share (TTM)
-    pub bps: Option<Decimal>,            // Book value per share
-    pub dividend_yield: Option<Decimal>, // Dividend yield
-    pub stock_derivatives: Vec<i32>,     // Supported derivative types
-    pub board: String,                   // Board
-}
-
 /// Trade direction
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TradeDirection {

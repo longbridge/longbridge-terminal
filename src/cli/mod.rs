@@ -222,19 +222,19 @@ pub enum Commands {
 
     /// Static reference info for one or more symbols
     ///
-    /// Returns: name, exchange, currency, `lot_size`, `total_shares`, `circulating_shares`, EPS, BPS, `dividend_yield`.
+    /// Returns: name, exchange, currency, `lot_size`, `total_shares`, `circulating_shares`, EPS, BPS, dividend.
     /// Example: longbridge static TSLA.US 700.HK
     Static {
         /// One or more symbols in <CODE>.<MARKET> format
         symbols: Vec<String>,
     },
 
-    /// Calculated financial indexes (PE, PB, EPS, turnover rate, etc.)
+    /// Calculated financial indexes (PE, PB, DPS rate, turnover rate, etc.)
     ///
     /// Full index list:
     ///   `last_done`  `change_value`  `change_rate`  volume  turnover  `ytd_change_rate`
     ///   `turnover_rate`  `total_market_value`  `capital_flow`  amplitude  `volume_ratio`
-    ///   pe (alias: `pe_ttm`)  pb  eps (alias: `dividend_yield`)
+    ///   pe (alias: `pe_ttm`)  pb  `dps_rate` (alias: `dividend_yield`)
     ///   `five_day_change_rate`  `ten_day_change_rate`  `half_year_change_rate`  `five_minutes_change_rate`
     ///   `implied_volatility`  delta  gamma  theta  vega  rho  `open_interest`
     ///   `expiry_date`  `strike_price`  `upper_strike_price`  `lower_strike_price`
@@ -245,12 +245,12 @@ pub enum Commands {
     CalcIndex {
         /// One or more symbols in <CODE>.<MARKET> format
         symbols: Vec<String>,
-        /// Comma-separated indexes to compute (default: pe,pb,eps,`turnover_rate`,`total_market_value`)
+        /// Comma-separated indexes to compute (default: pe,pb,`dps_rate`,`turnover_rate`,`total_market_value`)
         /// Unknown index names are silently ignored.
         #[arg(
             long,
             value_delimiter = ',',
-            default_value = "pe,pb,eps,turnover_rate,total_market_value"
+            default_value = "pe,pb,dps_rate,turnover_rate,total_market_value"
         )]
         index: Vec<String>,
     },

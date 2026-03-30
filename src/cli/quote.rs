@@ -63,6 +63,74 @@ fn pre_post_quote_to_json(q: &PrePostQuote) -> serde_json::Value {
     })
 }
 
+type CalcIndexExtractor = fn(&longbridge::quote::SecurityCalcIndex) -> String;
+
+fn calc_index_column(key: &str) -> Option<(&'static str, CalcIndexExtractor)> {
+    match key {
+        "last_done" => Some(("Last Done", |r| fmt_decimal(&r.last_done))),
+        "change_value" => Some(("Change Value", |r| fmt_decimal(&r.change_value))),
+        "change_rate" => Some(("Change Rate", |r| fmt_decimal(&r.change_rate))),
+        "volume" => Some(("Volume", |r| {
+            r.volume.map_or_else(|| "-".to_string(), |v| v.to_string())
+        })),
+        "turnover" => Some(("Turnover", |r| fmt_decimal(&r.turnover))),
+        "ytd_change_rate" => Some(("YTD Change Rate", |r| fmt_decimal(&r.ytd_change_rate))),
+        "turnover_rate" => Some(("Turnover Rate", |r| fmt_decimal(&r.turnover_rate))),
+        "total_market_value" => {
+            Some(("Total Market Value", |r| fmt_decimal(&r.total_market_value)))
+        }
+        "capital_flow" => Some(("Capital Flow", |r| fmt_decimal(&r.capital_flow))),
+        "amplitude" => Some(("Amplitude", |r| fmt_decimal(&r.amplitude))),
+        "volume_ratio" => Some(("Volume Ratio", |r| fmt_decimal(&r.volume_ratio))),
+        "pe" | "pe_ttm" => Some(("PE TTM", |r| fmt_decimal(&r.pe_ttm_ratio))),
+        "pb" => Some(("PB", |r| fmt_decimal(&r.pb_ratio))),
+        "dps_rate" | "dividend_yield" => Some(("DPS Rate", |r| {
+            r.dividend_ratio_ttm
+                .map_or_else(|| "-".to_string(), |d| d.round_dp(2).to_string())
+        })),
+        "five_day_change_rate" => Some(("5D Chg Rate", |r| fmt_decimal(&r.five_day_change_rate))),
+        "ten_day_change_rate" => Some(("10D Chg Rate", |r| fmt_decimal(&r.ten_day_change_rate))),
+        "half_year_change_rate" => Some(("6M Chg Rate", |r| fmt_decimal(&r.half_year_change_rate))),
+        "five_minutes_change_rate" => Some(("5Min Chg Rate", |r| {
+            fmt_decimal(&r.five_minutes_change_rate)
+        })),
+        "implied_volatility" => Some(("Impl. Vol.", |r| fmt_decimal(&r.implied_volatility))),
+        "delta" => Some(("Delta", |r| fmt_decimal(&r.delta))),
+        "gamma" => Some(("Gamma", |r| fmt_decimal(&r.gamma))),
+        "theta" => Some(("Theta", |r| fmt_decimal(&r.theta))),
+        "vega" => Some(("Vega", |r| fmt_decimal(&r.vega))),
+        "rho" => Some(("Rho", |r| fmt_decimal(&r.rho))),
+        "open_interest" => Some(("Open Interest", |r| {
+            r.open_interest
+                .map_or_else(|| "-".to_string(), |v| v.to_string())
+        })),
+        "expiry_date" => Some(("Expiry Date", |r| {
+            r.expiry_date
+                .map_or_else(|| "-".to_string(), |d| d.to_string())
+        })),
+        "strike_price" => Some(("Strike Price", |r| fmt_decimal(&r.strike_price))),
+        "upper_strike_price" => Some(("Upper Strike", |r| fmt_decimal(&r.upper_strike_price))),
+        "lower_strike_price" => Some(("Lower Strike", |r| fmt_decimal(&r.lower_strike_price))),
+        "outstanding_qty" => Some(("Outst. Qty", |r| {
+            r.outstanding_qty
+                .map_or_else(|| "-".to_string(), |v| v.to_string())
+        })),
+        "outstanding_ratio" => Some(("Outstanding Ratio", |r| fmt_decimal(&r.outstanding_ratio))),
+        "premium" => Some(("Premium", |r| fmt_decimal(&r.premium))),
+        "itm_otm" => Some(("ITM/OTM", |r| fmt_decimal(&r.itm_otm))),
+        "warrant_delta" => Some(("Warrant Delta", |r| fmt_decimal(&r.warrant_delta))),
+        "call_price" => Some(("Call Price", |r| fmt_decimal(&r.call_price))),
+        "to_call_price" => Some(("To Call Price", |r| fmt_decimal(&r.to_call_price))),
+        "effective_leverage" => {
+            Some(("Effective Leverage", |r| fmt_decimal(&r.effective_leverage)))
+        }
+        "leverage_ratio" => Some(("Leverage Ratio", |r| fmt_decimal(&r.leverage_ratio))),
+        "conversion_ratio" => Some(("Conversion Ratio", |r| fmt_decimal(&r.conversion_ratio))),
+        "balance_point" => Some(("Balance Point", |r| fmt_decimal(&r.balance_point))),
+        _ => None,
+    }
+}
+
 fn parse_calc_indexes(indexes: &[String]) -> Vec<CalcIndex> {
     indexes
         .iter()
@@ -80,7 +148,7 @@ fn parse_calc_indexes(indexes: &[String]) -> Vec<CalcIndex> {
             "volume_ratio" => Some(CalcIndex::VolumeRatio),
             "pe" | "pe_ttm" => Some(CalcIndex::PeTtmRatio),
             "pb" => Some(CalcIndex::PbRatio),
-            "eps" | "dividend_yield" => Some(CalcIndex::DividendRatioTtm),
+            "dps_rate" | "dividend_yield" => Some(CalcIndex::DividendRatioTtm),
             "five_day_change_rate" => Some(CalcIndex::FiveDayChangeRate),
             "ten_day_change_rate" => Some(CalcIndex::TenDayChangeRate),
             "half_year_change_rate" => Some(CalcIndex::HalfYearChangeRate),
@@ -551,7 +619,7 @@ pub async fn cmd_static(symbols: Vec<String>, format: &OutputFormat) -> Result<(
         "EPS",
         "EPS TTM",
         "BPS",
-        "Dividend Yield",
+        "Dividend",
     ];
     let rows = infos
         .iter()
@@ -588,37 +656,50 @@ pub async fn cmd_calc_index(
     let indexes = parse_calc_indexes(&index);
     let results = ctx.calc_indexes(symbols, indexes).await?;
 
-    let headers = &[
-        "Symbol",
-        "Last Done",
-        "Change Rate",
-        "Change Value",
-        "Volume",
-        "Turnover",
-        "Turnover Rate",
-        "Total Market Value",
-        "PE TTM",
-        "PB",
-    ];
-    let rows = results
-        .iter()
-        .map(|r| {
-            vec![
-                r.symbol.clone(),
-                fmt_decimal(&r.last_done),
-                fmt_decimal(&r.change_rate),
-                fmt_decimal(&r.change_value),
-                r.volume.map_or_else(|| "-".to_string(), |v| v.to_string()),
-                fmt_decimal(&r.turnover),
-                fmt_decimal(&r.turnover_rate),
-                fmt_decimal(&r.total_market_value),
-                fmt_decimal(&r.pe_ttm_ratio),
-                fmt_decimal(&r.pb_ratio),
-            ]
-        })
-        .collect();
+    // Deduplicate columns (e.g. "pe" and "pe_ttm" map to the same field)
+    let columns: Vec<(&str, &str, CalcIndexExtractor)> = {
+        let mut seen = std::collections::HashSet::new();
+        index
+            .iter()
+            .filter_map(|key| {
+                calc_index_column(key).map(|(header, extract)| (key.as_str(), header, extract))
+            })
+            .filter(|(_, header, _)| seen.insert(*header))
+            .collect()
+    };
 
-    print_table(headers, rows, format);
+    match format {
+        OutputFormat::Json => {
+            let records: Vec<serde_json::Value> = results
+                .iter()
+                .map(|r| {
+                    let mut map = serde_json::Map::new();
+                    map.insert(
+                        "symbol".to_string(),
+                        serde_json::Value::String(r.symbol.clone()),
+                    );
+                    for (key, _, extract) in &columns {
+                        map.insert(key.to_string(), serde_json::Value::String(extract(r)));
+                    }
+                    serde_json::Value::Object(map)
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&records)?);
+        }
+        OutputFormat::Table => {
+            let mut headers = vec!["Symbol"];
+            headers.extend(columns.iter().map(|(_, h, _)| *h));
+            let rows = results
+                .iter()
+                .map(|r| {
+                    let mut row = vec![r.symbol.clone()];
+                    row.extend(columns.iter().map(|(_, _, extract)| extract(r)));
+                    row
+                })
+                .collect();
+            print_table(&headers, rows, format);
+        }
+    }
     Ok(())
 }
 
