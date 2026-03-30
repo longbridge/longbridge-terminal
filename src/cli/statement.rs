@@ -3,8 +3,8 @@ use std::borrow::Cow;
 use crate::data::statement::CommonStatementContent;
 use anyhow::Result;
 use longbridge::asset::{GetStatementListOptions, GetStatementOptions, StatementType};
-use time::OffsetDateTime;
 use serde_json::Value;
+use time::OffsetDateTime;
 use unicode_width::UnicodeWidthStr;
 
 use super::{output::print_table, ExportFormat, OutputFormat, StatementCmd, StatementSection};
@@ -47,7 +47,17 @@ pub async fn cmd_statement(cmd: StatementCmd, format: &OutputFormat) -> Result<(
             all,
             export_format,
             output,
-        } => cmd_export(&file_key, &sections, all, export_format, output.as_deref(), format).await,
+        } => {
+            cmd_export(
+                &file_key,
+                &sections,
+                all,
+                export_format,
+                output.as_deref(),
+                format,
+            )
+            .await
+        }
     }
 }
 
