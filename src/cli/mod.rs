@@ -311,12 +311,16 @@ pub enum Commands {
 
     /// Warrant quotes, warrant list, and issuer list
     ///
+    /// Without subcommand: lists warrants for an underlying symbol.
     /// Subcommands: quote  list  issuers
+    /// Example: longbridge warrant 700.HK
     /// Example: longbridge warrant quote 12345.HK
     /// Example: longbridge warrant list 700.HK
     Warrant {
+        /// Underlying symbol (e.g. 700.HK). Omit when using a subcommand.
+        symbol: Option<String>,
         #[command(subcommand)]
-        cmd: WarrantCmd,
+        cmd: Option<WarrantCmd>,
     },
 
     // ── News ────────────────────────────────────────────────────────────────────
@@ -338,25 +342,39 @@ pub enum Commands {
         cmd: Option<NewsCmd>,
     },
 
-    /// Regulatory filings for a symbol
+    /// Regulatory filings for a symbol, or list/fetch filing content
     ///
+    /// Without subcommand: lists filings for a symbol.
     /// Subcommands: list  detail
+    /// Example: longbridge filing AAPL.US
     /// Example: longbridge filing list AAPL.US
     /// Example: longbridge filing detail AAPL.US 580265529766123777
     Filing {
+        /// Symbol in <CODE>.<MARKET> format (e.g. AAPL.US 700.HK). Omit when using a subcommand.
+        symbol: Option<String>,
+        /// Maximum number of filings to show (default: 20)
+        #[arg(long, default_value = "20")]
+        count: usize,
         #[command(subcommand)]
-        cmd: FilingCmd,
+        cmd: Option<FilingCmd>,
     },
 
     /// Community discussion topics
     ///
+    /// Without subcommand: lists topics for a symbol.
     /// Subcommands: list  detail  mine  create  replies  create-reply
+    /// Example: longbridge topic TSLA.US
     /// Example: longbridge topic list TSLA.US
     /// Example: longbridge topic detail 6993508780031016960
     /// Example: longbridge topic create --body "Bullish on TSLA today"
     Topic {
+        /// Symbol in <CODE>.<MARKET> format (e.g. TSLA.US 700.HK). Omit when using a subcommand.
+        symbol: Option<String>,
+        /// Maximum number of topics to show (default: 20)
+        #[arg(long, default_value = "20")]
+        count: usize,
         #[command(subcommand)]
-        cmd: TopicCmd,
+        cmd: Option<TopicCmd>,
     },
 
     // ── Watchlist ───────────────────────────────────────────────────────────────
@@ -375,12 +393,22 @@ pub enum Commands {
     // ── Statement ──────────────────────────────────────────────────────────────
     /// Download and export account statements (daily/monthly)
     ///
-    /// Subcommands: list  download
-    /// Example: longbridge statement list --aaid 12345
-    /// Example: longbridge statement download --file-key "/path/to/key" --section `equity_holding_sums` -o output.csv
+    /// Without a subcommand, lists available statements (equivalent to `statement list`).
+    /// Example: longbridge statement
+    /// Example: longbridge statement --type monthly
+    /// Example: longbridge statement export --file-key KEY --section equity_holdings
     Statement {
+        /// Statement type: daily (default) | monthly
+        #[arg(long = "type", default_value = "daily")]
+        statement_type: String,
+        /// Start date of query in YYYYMMDD format (e.g. 20260121). Defaults to 30 days ago.
+        #[arg(long)]
+        start_date: Option<i32>,
+        /// Number of records to return. Defaults to 30 for daily, 12 for monthly.
+        #[arg(long)]
+        limit: Option<i32>,
         #[command(subcommand)]
-        cmd: StatementCmd,
+        cmd: Option<StatementCmd>,
     },
 
     // ── Trade ───────────────────────────────────────────────────────────────────
@@ -770,22 +798,9 @@ pub enum NewsCmd {
 
 #[derive(Subcommand)]
 pub enum FilingCmd {
-    /// List regulatory filings and announcements for a symbol
-    ///
-    /// Returns: id, title, `file_name`, `publish_at`.
-    /// Example: longbridge filing list AAPL.US
-    /// Example: longbridge filing list 700.HK --count 5
-    List {
-        /// Symbol in <CODE>.<MARKET> format, e.g. AAPL.US 700.HK
-        symbol: String,
-        /// Maximum number of filings to show (default: 20)
-        #[arg(long, default_value = "20")]
-        count: usize,
-    },
-
     /// Full Markdown content of a regulatory filing (HTML and TXT only)
     ///
-    /// Get the symbol and id from `longbridge filing list`.
+    /// Get the symbol and id from `longbridge filing <SYMBOL>`.
     /// Some filings contain multiple files. Use --list-files to see all, then --file-index N.
     /// Example: longbridge filing detail AAPL.US 580265529766123777
     /// Example: longbridge filing detail AAPL.US 580265529766123777 --list-files
@@ -806,19 +821,6 @@ pub enum FilingCmd {
 
 #[derive(Subcommand)]
 pub enum TopicCmd {
-    /// Community discussion topics for a symbol
-    ///
-    /// Returns: id, title, description, url, `published_at`, likes, comments, shares.
-    /// Example: longbridge topic list TSLA.US
-    /// Example: longbridge topic list 700.HK --count 5
-    List {
-        /// Symbol in <CODE>.<MARKET> format, e.g. TSLA.US 700.HK
-        symbol: String,
-        /// Maximum number of topics to show (default: 20)
-        #[arg(long, default_value = "20")]
-        count: usize,
-    },
-
     /// Get full details of a community topic by its ID
     ///
     /// Returns: id, `topic_type`, title, description, body, author, tickers, hashtags,
@@ -941,15 +943,6 @@ pub enum WarrantCmd {
     Quote {
         /// Warrant symbols (e.g. 12345.HK)
         symbols: Vec<String>,
-    },
-
-    /// Warrants linked to an underlying security
-    ///
-    /// Returns: symbol, name, `last_done`, `leverage_ratio`, `expiry_date`, `warrant_type`.
-    /// Example: longbridge warrant list 700.HK
-    List {
-        /// Underlying symbol (e.g. 700.HK)
-        symbol: String,
     },
 
     /// Warrant issuer list (HK market)
@@ -1102,10 +1095,15 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
                 quote::cmd_option_chain(symbol, date, format).await
             }
         },
-        Commands::Warrant { cmd } => match cmd {
-            WarrantCmd::Quote { symbols } => quote::cmd_warrant_quote(symbols, format).await,
-            WarrantCmd::List { symbol } => quote::cmd_warrant_list(symbol, format).await,
-            WarrantCmd::Issuers => quote::cmd_warrant_issuers(format).await,
+        Commands::Warrant { symbol, cmd } => match cmd {
+            Some(WarrantCmd::Quote { symbols }) => quote::cmd_warrant_quote(symbols, format).await,
+            Some(WarrantCmd::Issuers) => quote::cmd_warrant_issuers(format).await,
+            None => {
+                let sym = symbol.ok_or_else(|| {
+                    anyhow::anyhow!("Symbol required. Usage: longbridge warrant <SYMBOL>")
+                })?;
+                quote::cmd_warrant_list(sym, format).await
+            }
         },
         Commands::News { symbol, count, cmd } => match cmd {
             Some(NewsCmd::Detail { id }) => news::cmd_news_detail(id).await,
@@ -1116,42 +1114,70 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
                 news::cmd_news(sym, count, format).await
             }
         },
-        Commands::Filing { cmd } => match cmd {
-            FilingCmd::List { symbol, count } => news::cmd_filings(symbol, count, format).await,
-            FilingCmd::Detail {
-                symbol,
+        Commands::Filing { symbol, count, cmd } => match cmd {
+            Some(FilingCmd::Detail {
+                symbol: s,
                 id,
                 list_files,
                 file_index,
-            } => news::cmd_filing_detail(symbol, id, list_files, file_index).await,
+            }) => news::cmd_filing_detail(s, id, list_files, file_index).await,
+            None => {
+                let sym = symbol.ok_or_else(|| {
+                    anyhow::anyhow!("Symbol required. Usage: longbridge filing <SYMBOL>")
+                })?;
+                news::cmd_filings(sym, count, format).await
+            }
         },
-        Commands::Topic { cmd } => match cmd {
-            TopicCmd::List { symbol, count } => news::cmd_topics(symbol, count, format).await,
-            TopicCmd::Detail { id } => topic::cmd_topic_detail_api(id, format).await,
-            TopicCmd::Mine {
+        Commands::Topic { symbol, count, cmd } => match cmd {
+            Some(TopicCmd::Detail { id }) => topic::cmd_topic_detail_api(id, format).await,
+            Some(TopicCmd::Mine {
                 page,
                 size,
                 post_type,
-            } => topic::cmd_topics_mine(page, size, post_type, format).await,
-            TopicCmd::Create {
+            }) => topic::cmd_topics_mine(page, size, post_type, format).await,
+            Some(TopicCmd::Create {
                 title,
                 body,
                 post_type,
                 tickers,
-            } => topic::cmd_create_topic(title, body, post_type, tickers, format).await,
-            TopicCmd::Replies {
+            }) => topic::cmd_create_topic(title, body, post_type, tickers, format).await,
+            Some(TopicCmd::Replies {
                 topic_id,
                 page,
                 size,
-            } => topic::cmd_topic_replies(topic_id, page, size, format).await,
-            TopicCmd::CreateReply {
+            }) => topic::cmd_topic_replies(topic_id, page, size, format).await,
+            Some(TopicCmd::CreateReply {
                 topic_id,
                 body,
                 reply_to_id,
-            } => topic::cmd_create_reply(topic_id, body, reply_to_id, format).await,
+            }) => topic::cmd_create_reply(topic_id, body, reply_to_id, format).await,
+            None => {
+                let sym = symbol.ok_or_else(|| {
+                    anyhow::anyhow!("Symbol required. Usage: longbridge topic <SYMBOL>")
+                })?;
+                news::cmd_topics(sym, count, format).await
+            }
         },
         Commands::Watchlist { cmd } => watchlist::cmd_watchlist(cmd, format).await,
-        Commands::Statement { cmd } => statement::cmd_statement(cmd, format).await,
+        Commands::Statement {
+            statement_type,
+            start_date,
+            limit,
+            cmd,
+        } => match cmd {
+            Some(c) => statement::cmd_statement(c, format).await,
+            None => {
+                statement::cmd_statement(
+                    StatementCmd::List {
+                        statement_type,
+                        start_date,
+                        limit,
+                    },
+                    format,
+                )
+                .await
+            }
+        },
         Commands::Orders {
             history,
             start,
@@ -1605,7 +1631,8 @@ mod tests {
     fn test_warrant_quote_subcommand() {
         let cli = parse(&["longbridge", "warrant", "quote", "12345.HK"]).unwrap();
         if let Some(Commands::Warrant {
-            cmd: WarrantCmd::Quote { symbols },
+            cmd: Some(WarrantCmd::Quote { symbols }),
+            ..
         }) = cli.command
         {
             assert_eq!(symbols, vec!["12345.HK"]);
@@ -1615,11 +1642,13 @@ mod tests {
     }
 
     #[test]
-    fn test_warrant_list_subcommand() {
-        let cli = parse(&["longbridge", "warrant", "list", "700.HK"]).unwrap();
-        assert!(
-            matches!(cli.command, Some(Commands::Warrant { cmd: WarrantCmd::List { symbol } }) if symbol == "700.HK")
-        );
+    fn test_warrant_list_positional() {
+        let cli = parse(&["longbridge", "warrant", "700.HK"]).unwrap();
+        if let Some(Commands::Warrant { symbol, cmd: None }) = cli.command {
+            assert_eq!(symbol, Some("700.HK".to_string()));
+        } else {
+            panic!("expected Warrant positional command");
+        }
     }
 
     #[test]
@@ -1628,7 +1657,8 @@ mod tests {
         assert!(matches!(
             cli.command,
             Some(Commands::Warrant {
-                cmd: WarrantCmd::Issuers
+                cmd: Some(WarrantCmd::Issuers),
+                ..
             })
         ));
     }
