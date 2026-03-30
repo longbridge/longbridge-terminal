@@ -4,6 +4,7 @@ pub mod types;
 pub mod user;
 pub mod watchlist;
 pub mod ws;
+pub mod statement;
 
 pub use stock::Stock;
 pub use stocks::{StockStore, STOCKS};

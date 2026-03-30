@@ -6,8 +6,8 @@ use super::wrapper::{RateLimitedQuoteContext, RateLimitedTradeContext};
 /// Global `QuoteContext`
 pub static QUOTE_CTX: OnceLock<longbridge::quote::QuoteContext> = OnceLock::new();
 
-/// Global `StatementContext`
-pub static STATEMENT_CTX: OnceLock<longbridge::StatementContext> = OnceLock::new();
+/// Global `AssetContext`
+pub static STATEMENT_CTX: OnceLock<longbridge::AssetContext> = OnceLock::new();
 
 /// Global `TradeContext`
 pub static TRADE_CTX: OnceLock<longbridge::trade::TradeContext> = OnceLock::new();
@@ -124,10 +124,10 @@ pub async fn init_contexts() -> Result<(
         .set(content_ctx)
         .map_err(|_| anyhow::anyhow!("ContentContext already initialized"))?;
 
-    let statement_ctx = longbridge::StatementContext::new(Arc::clone(&config));
+    let statement_ctx = longbridge::AssetContext::new(Arc::clone(&config));
     STATEMENT_CTX
         .set(statement_ctx)
-        .map_err(|_| anyhow::anyhow!("StatementContext already initialized"))?;
+        .map_err(|_| anyhow::anyhow!("AssetContext already initialized"))?;
 
     let http_client = longbridge::httpclient::HttpClient::new(http_client_config);
     HTTP_CLIENT
@@ -209,9 +209,9 @@ pub fn trade_limited() -> &'static RateLimitedTradeContext {
         .expect("TradeContext not initialized, please call init_contexts() first")
 }
 
-/// Get global `StatementContext`
-pub fn statement() -> &'static longbridge::StatementContext {
+/// Get global `AssetContext`
+pub fn statement() -> &'static longbridge::AssetContext {
     STATEMENT_CTX
         .get()
-        .expect("StatementContext not initialized, please call init_contexts() first")
+        .expect("AssetContext not initialized, please call init_contexts() first")
 }
