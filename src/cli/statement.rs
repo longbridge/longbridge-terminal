@@ -3,6 +3,7 @@ use std::borrow::Cow;
 use crate::data::statement::CommonStatementContent;
 use anyhow::Result;
 use longbridge::asset::{GetStatementListOptions, GetStatementOptions, StatementType};
+use time::OffsetDateTime;
 use serde_json::Value;
 use unicode_width::UnicodeWidthStr;
 
@@ -23,7 +24,13 @@ pub async fn cmd_statement(cmd: StatementCmd, format: &OutputFormat) -> Result<(
             statement_type,
             start_date,
             limit,
-        } => cmd_list(&statement_type, start_date, limit, format).await,
+        } => {
+            let start_date = start_date.unwrap_or_else(|| {
+                let now = OffsetDateTime::now_utc();
+                now.year() * 10000 + now.month() as i32 * 100 + 1
+            });
+            cmd_list(&statement_type, start_date, limit, format).await
+        }
         StatementCmd::Export {
             file_key,
             section: sections,
