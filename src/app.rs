@@ -29,6 +29,7 @@ pub const POPUP_ACCOUNT: u8 = 0b100;
 pub const POPUP_CURRENCY: u8 = 0b1000;
 pub const POPUP_WATCHLIST: u8 = 0b10000;
 
+
 #[derive(
     Clone, Copy, PartialEq, Eq, Hash, Debug, Default, States, strum::EnumIter, bytemuck::NoUninit,
 )]
@@ -702,26 +703,21 @@ fn handle_global_keys(
             POPUP.store(POPUP_HELP, Ordering::Relaxed);
             render_state.mark_dirty(DirtyFlags::POPUP_HELP);
         }
-        key!('/') => {
-            if let Some(mut search) = app
-                .world
-                .get_resource_mut::<Search<openapi::search::StockItem>>()
-            {
-                POPUP.store(POPUP_SEARCH, Ordering::Relaxed);
-                search.visible();
-                render_state.mark_dirty(DirtyFlags::POPUP_SEARCH);
-            }
+        key!('q') => {
+            crate::widgets::Terminal::graceful_exit(0);
         }
         ::crossterm::event::KeyEvent {
-            code: ::crossterm::event::KeyCode::Esc | ::crossterm::event::KeyCode::Char('q'),
+            code: ::crossterm::event::KeyCode::Esc,
             modifiers: ::crossterm::event::KeyModifiers::NONE,
             kind: ::crossterm::event::KeyEventKind::Press,
             state: ::crossterm::event::KeyEventState::NONE,
         } => {
-            let last_state = LAST_STATE.load(Ordering::Relaxed);
-            if last_state != state {
-                app.world.insert_resource(NextState(Some(last_state)));
+            if matches!(state, AppState::Stock | AppState::WatchlistStock) {
+                app.world
+                    .insert_resource(NextState(Some(AppState::Watchlist)));
                 render_state.mark_dirty(DirtyFlags::ALL);
+            } else {
+                crate::widgets::Terminal::graceful_exit(0);
             }
         }
         ::crossterm::event::KeyEvent {

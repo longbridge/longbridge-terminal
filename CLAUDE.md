@@ -239,6 +239,15 @@ let order = ctx.submit_order(opts).await?;
 
 For Ratatui-specific questions or when working with TUI components, use the `rs-ratatui-crate` skill.
 
+## PR Title Conventions
+
+Use a prefix in PR titles to indicate the area of change:
+
+- `cli:` — changes to CLI commands (`src/cli/`)
+- `tui:` — changes to the TUI interface (`src/app.rs`, `src/views/`, `src/widgets/`, etc.)
+
+Example: `cli: add statement export command`, `tui: fix quit confirmation dialog`
+
 ## Keeping Docs in Sync
 
 When adding, removing, or modifying any CLI command (in `src/cli/`), always update all of the following in the same PR:
