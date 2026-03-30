@@ -862,12 +862,12 @@ pub enum StatementCmd {
         /// Statement type: daily (default) | monthly
         #[arg(long = "type", default_value = "daily")]
         statement_type: String,
-        /// Start date of query in YYYYMMDD format (e.g. 20260121). Defaults to the first day of the current month.
+        /// Start date of query in YYYYMMDD format (e.g. 20260121). Defaults to 30 days ago.
         #[arg(long)]
         start_date: Option<i32>,
-        /// query limit (default: 5)
-        #[arg(long, default_value = "5")]
-        limit: i32,
+        /// Number of records to return. Defaults to 30 for daily, 12 for monthly.
+        #[arg(long)]
+        limit: Option<i32>,
     },
 
     /// Export statement sections as CSV files or markdown
