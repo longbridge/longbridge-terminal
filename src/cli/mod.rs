@@ -887,8 +887,8 @@ pub enum StatementCmd {
         /// Sections to export (can specify multiple)
         #[arg(long, num_args = 1.., conflicts_with = "all")]
         section: Vec<StatementSection>,
-        /// Export all sections (empty sections are skipped)
-        #[arg(long)]
+        /// Export all sections (empty sections are skipped). Defaults to true when --section is not specified.
+        #[arg(long, default_value_t = true)]
         all: bool,
         /// Export format: csv | md.
         /// Defaults to `md` when `-o` is omitted, `csv` when `-o` is provided.

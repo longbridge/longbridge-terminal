@@ -47,7 +47,7 @@ pub async fn cmd_statement(cmd: StatementCmd, format: &OutputFormat) -> Result<(
             all,
             export_format,
             output,
-        } => cmd_export(&file_key, &sections, all, export_format, output.as_deref()).await,
+        } => cmd_export(&file_key, &sections, all, export_format, output.as_deref(), format).await,
     }
 }
 
@@ -112,6 +112,7 @@ async fn cmd_export(
     all: bool,
     explicit_format: Option<ExportFormat>,
     output_path: Option<&str>,
+    output_format: &OutputFormat,
 ) -> Result<()> {
     let sections = if all {
         ALL_SECTIONS
@@ -128,11 +129,38 @@ async fn cmd_export(
     // Fetch the statement JSON
     let client = reqwest::Client::new();
     let body = client.get(&resp.url).send().await?.text().await?;
-    // println!("{body}");
     let value: Value = serde_json::from_str(&body)?;
     let content: CommonStatementContent = serde_json::from_value(value)?;
 
-    // Resolve format: explicit flag wins, otherwise csv when -o is given, md when not.
+    // --format json: output all sections as a single JSON object keyed by section name.
+    if matches!(output_format, OutputFormat::Json) {
+        let mut obj = serde_json::Map::new();
+        for section in sections {
+            let data = section_data(&content, section);
+            if data.rows.is_empty() {
+                continue;
+            }
+            let rows: Vec<serde_json::Map<String, Value>> = data
+                .rows
+                .iter()
+                .map(|row| {
+                    data.headers
+                        .iter()
+                        .zip(row.iter())
+                        .map(|(k, v)| (k.to_string(), Value::String(v.to_string())))
+                        .collect()
+                })
+                .collect();
+            obj.insert(
+                section_file_name(section).to_string(),
+                Value::Array(rows.into_iter().map(Value::Object).collect()),
+            );
+        }
+        println!("{}", serde_json::to_string_pretty(&obj)?);
+        return Ok(());
+    }
+
+    // Resolve export format: explicit flag wins, otherwise csv when -o is given, md when not.
     let format = explicit_format.unwrap_or(if output_path.is_some() {
         ExportFormat::Csv
     } else {
