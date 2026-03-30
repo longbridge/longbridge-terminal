@@ -1084,11 +1084,11 @@ impl SectionData<'_> {
     fn to_markdown(&self) -> String {
         let mut out = format!("## {}\n\n", self.title);
         let widths = self.markdown_column_widths();
-        self.push_markdown_row(&mut out, self.headers.iter().copied(), &widths);
-        self.push_markdown_separator(&mut out, &widths);
+        Self::push_markdown_row(&mut out, self.headers.iter().copied(), &widths);
+        Self::push_markdown_separator(&mut out, &widths);
         for row in &self.rows {
             debug_assert_eq!(row.len(), self.headers.len());
-            self.push_markdown_row(&mut out, row.iter().copied(), &widths);
+            Self::push_markdown_row(&mut out, row.iter().copied(), &widths);
         }
         out.push('\n');
         out
@@ -1112,7 +1112,6 @@ impl SectionData<'_> {
     }
 
     fn push_markdown_row<'a>(
-        &self,
         out: &mut String,
         cells: impl IntoIterator<Item = &'a str>,
         widths: &[usize],
@@ -1130,7 +1129,7 @@ impl SectionData<'_> {
         out.push('\n');
     }
 
-    fn push_markdown_separator(&self, out: &mut String, widths: &[usize]) {
+    fn push_markdown_separator(out: &mut String, widths: &[usize]) {
         out.push('|');
         for width in widths {
             out.push(' ');
