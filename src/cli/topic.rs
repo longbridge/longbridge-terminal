@@ -1,7 +1,7 @@
 use anyhow::Result;
 use longbridge::content::{
-    CreateTopicOptions, CreateReplyOptions, ListTopicRepliesOptions, MyTopicsOptions,
-    OwnedTopic, TopicReply,
+    CreateReplyOptions, CreateTopicOptions, ListTopicRepliesOptions, MyTopicsOptions, OwnedTopic,
+    TopicReply,
 };
 use regex::Regex;
 use time::OffsetDateTime;

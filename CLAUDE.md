@@ -110,6 +110,25 @@ cargo fmt
 cargo fmt && cargo clippy
 ```
 
+### Verifying Changes
+
+After any data-layer or CLI output change, verify correctness by comparing the installed release binary against the local build using the same command and `--format json`:
+
+```bash
+# Run both and compare — output should be identical (timestamps may differ for live data)
+longbridge <command> <args> --format json
+cargo run -- <command> <args> --format json
+```
+
+Pick commands that exercise the modified code paths. Common ones:
+
+| Changed area | Verification command |
+|---|---|
+| Trade direction / trades | `longbridge trades 700.HK --format json` |
+| Kline / AdjustType | `longbridge kline 700.HK --format json` |
+| Quote / calc-index | `longbridge calc-index 700.HK --format json` |
+| Static info | `longbridge static 700.HK --format json` |
+
 ### Configuration
 
 **Authentication Method: OAuth 2.0 (longbridge SDK)**

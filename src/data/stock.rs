@@ -115,13 +115,7 @@ impl Stock {
                 volume: t.volume,
                 timestamp: t.timestamp.unix_timestamp(),
                 trade_type: t.trade_type.clone(),
-                direction: match t.direction {
-                    longbridge::quote::TradeDirection::Neutral => {
-                        super::types::TradeDirection::Neutral
-                    }
-                    longbridge::quote::TradeDirection::Down => super::types::TradeDirection::Down,
-                    longbridge::quote::TradeDirection::Up => super::types::TradeDirection::Up,
-                },
+                direction: t.direction,
             })
             .collect();
     }
