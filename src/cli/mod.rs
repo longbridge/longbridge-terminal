@@ -843,14 +843,18 @@ pub enum FilingCmd {
 
 #[derive(Subcommand)]
 pub enum ImageCmd {
-    /// Upload a local image file to Imgur (https://imgur.com) anonymously
+    /// Upload a local image file anonymously and print the public URL
     ///
-    /// Prints the public Imgur URL on success. Images are not tied to any account.
+    /// Without --provider, tries Imgur then imgbb as fallback.
     /// Use the URL in a topic body with Markdown syntax: ![](URL)
     /// Example: longbridge image upload ./chart.png
+    /// Example: longbridge image upload ./chart.png --provider imgbb
     Upload {
         /// Path to the image file (PNG, JPEG, GIF, or WebP)
         path: std::path::PathBuf,
+        /// Force a specific provider instead of auto-fallback
+        #[arg(long)]
+        provider: Option<image::ImageProvider>,
     },
 }
 
@@ -1164,7 +1168,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
             }
         },
         Commands::Image { cmd } => match cmd {
-            ImageCmd::Upload { path } => image::cmd_image_upload(path).await,
+            ImageCmd::Upload { path, provider } => image::cmd_image_upload(path, provider).await,
         },
         Commands::Topic { symbol, count, cmd } => match cmd {
             Some(TopicCmd::Detail { id }) => topic::cmd_topic_detail_api(id, format).await,
