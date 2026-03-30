@@ -6,6 +6,9 @@ use super::wrapper::{RateLimitedQuoteContext, RateLimitedTradeContext};
 /// Global `QuoteContext`
 pub static QUOTE_CTX: OnceLock<longbridge::quote::QuoteContext> = OnceLock::new();
 
+/// Global `AssetContext`
+pub static STATEMENT_CTX: OnceLock<longbridge::AssetContext> = OnceLock::new();
+
 /// Global `TradeContext`
 pub static TRADE_CTX: OnceLock<longbridge::trade::TradeContext> = OnceLock::new();
 
@@ -57,7 +60,7 @@ pub async fn init_contexts() -> Result<(
         tracing::info!("No API key env vars found, using OAuth authentication");
         // Build OAuth client: loads token from ~/.longbridge/openapi/tokens/<client_id>
         // or starts browser authorization. Token refresh is automatic inside the SDK.
-        let oauth_result = longbridge::oauth::OAuthBuilder::new(crate::auth::OAUTH_CLIENT_ID)
+        let oauth_result = longbridge::oauth::OAuthBuilder::new(crate::auth::client_id())
             .callback_port(60355)
             .build(|url| {
                 println!("Opening browser for Longbridge OpenAPI authorization...");
@@ -95,8 +98,17 @@ pub async fn init_contexts() -> Result<(
     let mut config_builder = config_builder;
     let mut http_client_config = http_client_config;
 
-    // If last geotest indicated China Mainland, use CN endpoints directly.
-    if crate::region::is_cn_cached() {
+    // If LONGBRIDGE_ENV=staging, override all endpoints to test environment.
+    // This takes highest priority over region detection.
+    if crate::auth::is_test_env() {
+        tracing::info!("Using TEST environment endpoints (openapi.longbridge.xyz)");
+        config_builder = config_builder
+            .http_url(crate::region::HTTP_URL_TEST)
+            .quote_ws_url(crate::region::QUOTE_WS_URL_TEST)
+            .trade_ws_url(crate::region::TRADE_WS_URL_TEST);
+        http_client_config = http_client_config.http_url(crate::region::HTTP_URL_TEST);
+    } else if crate::region::is_cn_cached() {
+        // If last geotest indicated China Mainland, use CN endpoints directly.
         tracing::debug!("Using CN region endpoints (cached)");
         config_builder = config_builder
             .http_url(crate::region::HTTP_URL_CN)
@@ -111,6 +123,11 @@ pub async fn init_contexts() -> Result<(
     CONTENT_CTX
         .set(content_ctx)
         .map_err(|_| anyhow::anyhow!("ContentContext already initialized"))?;
+
+    let statement_ctx = longbridge::AssetContext::new(Arc::clone(&config));
+    STATEMENT_CTX
+        .set(statement_ctx)
+        .map_err(|_| anyhow::anyhow!("AssetContext already initialized"))?;
 
     let http_client = longbridge::httpclient::HttpClient::new(http_client_config);
     HTTP_CLIENT
@@ -190,4 +207,11 @@ pub fn trade_limited() -> &'static RateLimitedTradeContext {
     RATE_LIMITED_TRADE_CTX
         .get()
         .expect("TradeContext not initialized, please call init_contexts() first")
+}
+
+/// Get global `AssetContext`
+pub fn statement() -> &'static longbridge::AssetContext {
+    STATEMENT_CTX
+        .get()
+        .expect("AssetContext not initialized, please call init_contexts() first")
 }

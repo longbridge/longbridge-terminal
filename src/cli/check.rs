@@ -11,6 +11,8 @@ const PROBE_COUNT: usize = 10;
 const GLOBAL_HTTP_URL: &str = "https://openapi.longbridge.com";
 const GLOBAL_PROBE_URL: &str = "https://openapi.longbridge.com/health";
 const CN_PROBE_URL: &str = "https://openapi.longbridge.cn/health";
+const TEST_HTTP_URL: &str = "https://openapi.longbridge.xyz";
+const TEST_PROBE_URL: &str = "https://openapi.longbridge.xyz/health";
 
 // ANSI colors
 const GREEN: &str = "\x1b[32m";
@@ -88,6 +90,7 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
         .and_then(|p| std::fs::read_to_string(p).ok())
         .map_or_else(|| "none".to_string(), |s| s.trim().to_lowercase());
     let is_cn = region_cached == "cn";
+    let is_test_env = crate::auth::is_test_env();
 
     // ── Token verification via market temperature API ─────────────────────────
     let token_ok: bool;
@@ -114,7 +117,11 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
     }
 
     // ── Connectivity (concurrent) ─────────────────────────────────────────────
-    let (global, cn) = tokio::join!(probe(GLOBAL_PROBE_URL), probe(CN_PROBE_URL),);
+    let (global, cn, test) = tokio::join!(
+        probe(GLOBAL_PROBE_URL),
+        probe(CN_PROBE_URL),
+        probe(TEST_PROBE_URL),
+    );
 
     match format {
         OutputFormat::Json => {
@@ -125,11 +132,12 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
                 },
                 "region": {
                     "cached": region_cached,
-                    "active": if is_cn { "CN" } else { "Global" },
+                    "active": if is_test_env { "Test" } else if is_cn { "CN" } else { "Global" },
                 },
                 "connectivity": {
                     "global": { "url": GLOBAL_HTTP_URL, "ok": global.ok, "ms": global.ms },
                     "cn":     { "url": region::HTTP_URL_CN, "ok": cn.ok, "ms": cn.ms },
+                    "test":   { "url": TEST_HTTP_URL, "ok": test.ok, "ms": test.ms },
                 },
             });
             println!("{}", serde_json::to_string_pretty(&value)?);
@@ -152,17 +160,23 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
                 "  {:<8} {}  {}  {DIM}{}{RESET}",
                 "token", token_icon, token_label, token_detail
             );
+            let active_env = if is_test_env {
+                "Test"
+            } else if is_cn {
+                "CN"
+            } else {
+                "Global"
+            };
             println!(
                 "  {:<8} {}  (active: {})",
-                "region",
-                region_cached,
-                if is_cn { "CN" } else { "Global" }
+                "region", region_cached, active_env
             );
 
             println!();
             println!("Connectivity {DIM}(avg of {PROBE_COUNT}){RESET}");
             println!("{}", probe_line("global", &global, GLOBAL_HTTP_URL));
             println!("{}", probe_line("cn", &cn, region::HTTP_URL_CN));
+            println!("{}", probe_line("test", &test, TEST_HTTP_URL));
         }
     }
 

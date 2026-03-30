@@ -13,6 +13,11 @@ pub const HTTP_URL_CN: &str = "https://openapi.longbridge.cn";
 pub const QUOTE_WS_URL_CN: &str = "wss://openapi-quote.longbridge.cn/v2";
 pub const TRADE_WS_URL_CN: &str = "wss://openapi-trade.longbridge.cn/v2";
 
+// Test environment URLs (openapi.longbridge.xyz)
+pub const HTTP_URL_TEST: &str = "https://openapi.longbridge.xyz";
+pub const QUOTE_WS_URL_TEST: &str = "wss://openapi-quote.longbridge.xyz/v2";
+pub const TRADE_WS_URL_TEST: &str = "wss://openapi-trade.longbridge.xyz/v2";
+
 fn cache_file_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".longbridge").join("openapi").join("region-cache"))
 }

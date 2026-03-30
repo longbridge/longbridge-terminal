@@ -6,6 +6,7 @@ pub mod check;
 pub mod news;
 pub mod output;
 pub mod quote;
+pub mod statement;
 pub mod topic;
 pub mod trade;
 pub mod watchlist;
@@ -606,6 +607,17 @@ pub enum Commands {
         cmd: Option<WatchlistCmd>,
     },
 
+    // ── Statement ──────────────────────────────────────────────────────────────
+    /// Download and export account statements (daily/monthly)
+    ///
+    /// Subcommands: list  download
+    /// Example: longbridge statement list --aaid 12345
+    /// Example: longbridge statement download --file-key "/path/to/key" --section `equity_holding_sums` -o output.csv
+    Statement {
+        #[command(subcommand)]
+        cmd: StatementCmd,
+    },
+
     // ── Trade ───────────────────────────────────────────────────────────────────
     /// Today's orders, or historical orders with --history
     ///
@@ -867,6 +879,118 @@ pub enum WatchlistCmd {
     },
 }
 
+#[derive(ValueEnum, Clone, Debug)]
+pub enum StatementSection {
+    #[value(name = "asset")]
+    Asset,
+    #[value(name = "account_balances")]
+    AccountBalanceSum,
+    #[value(name = "equity_holdings")]
+    EquityHoldingSums,
+    #[value(name = "account_balance_changes")]
+    AccountBalanceChangeSums,
+    #[value(name = "stock_trades")]
+    StockTradeSums,
+    #[value(name = "equity_holding_changes")]
+    EquityHoldingChangeSums,
+    #[value(name = "account_balance_locks")]
+    AccountBalanceLockSums,
+    #[value(name = "equity_holding_locks")]
+    EquityHoldingLockSums,
+    #[value(name = "option_trades")]
+    OptionTradeSums,
+    #[value(name = "fund_trades")]
+    FundTradeSums,
+    #[value(name = "ipo_trades")]
+    IpoTradeSums,
+    #[value(name = "virtual_trades")]
+    VirtualTradeSums,
+    #[value(name = "interests")]
+    Interests,
+    #[value(name = "lending_fees")]
+    LendingFees,
+    #[value(name = "custodian_fees")]
+    CustodianFees,
+    #[value(name = "corps")]
+    Corps,
+    #[value(name = "bond_equity_holdings")]
+    BondEquityHoldingSums,
+    #[value(name = "otc_trades")]
+    OtcTradeSums,
+    #[value(name = "outstandings")]
+    OutstandingSums,
+    #[value(name = "financing_transactions")]
+    FinancingTransactionSums,
+    #[value(name = "interest_deposits")]
+    InterestDeposits,
+    #[value(name = "maintenance_fees")]
+    MaintenanceFees,
+    #[value(name = "cash_pluses")]
+    CashPluses,
+    #[value(name = "gst_details")]
+    GstDetails,
+}
+
+#[derive(ValueEnum, Clone, Debug)]
+pub enum ExportFormat {
+    #[value(name = "csv")]
+    Csv,
+    #[value(name = "md")]
+    Md,
+}
+
+#[derive(Subcommand)]
+pub enum StatementCmd {
+    /// List available statements for an account
+    ///
+    /// Returns: date (dt), `file_key` for each statement.
+    /// Example: longbridge statement list --aaid 12345
+    /// Example: longbridge statement list --aaid 12345 --type monthly
+    List {
+        /// Statement type: daily (default) | monthly
+        #[arg(long = "type", default_value = "daily")]
+        statement_type: String,
+        /// Start date of query in YYYYMMDD format (e.g. 20260121). Defaults to 30 days ago.
+        #[arg(long)]
+        start_date: Option<i32>,
+        /// Number of records to return. Defaults to 30 for daily, 12 for monthly.
+        #[arg(long)]
+        limit: Option<i32>,
+    },
+
+    /// Export statement sections as CSV files or markdown
+    ///
+    /// Fetches the statement JSON by `file_key`, extracts the specified sections,
+    /// and either saves them as files or prints to stdout.
+    ///
+    /// When `-o` is provided, defaults to CSV format and saves to file(s).
+    /// When `-o` is omitted, defaults to markdown format and prints to stdout.
+    ///
+    /// Example: longbridge statement export --file-key KEY --section `equity_holdings`
+    /// Example: longbridge statement export --file-key KEY --section `equity_holdings` -o holdings.csv
+    Export {
+        /// File key from `longbridge statement list`
+        #[arg(long)]
+        file_key: String,
+        /// Sections to export (can specify multiple)
+        #[arg(long, num_args = 1.., conflicts_with = "all")]
+        section: Vec<StatementSection>,
+        /// Export all sections (empty sections are skipped). Defaults to true when --section is not specified.
+        #[arg(long, default_value_t = true)]
+        all: bool,
+        /// Export format: csv | md.
+        /// Defaults to `md` when `-o` is omitted, `csv` when `-o` is provided.
+        #[arg(long = "export-format")]
+        export_format: Option<ExportFormat>,
+        /// Output directory or file path.
+        /// When multiple sections are specified, this is treated as a directory
+        /// and each section is saved as a separate file inside it.
+        /// Omit to print to stdout.
+        #[arg(long, short = 'o')]
+        output: Option<String>,
+    },
+}
+
 pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
     match cmd {
         Commands::Quote { symbols } => quote::cmd_quote(symbols, format).await,
@@ -953,6 +1077,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
             reply_to_id,
         } => topic::cmd_create_reply(topic_id, body, reply_to_id, format).await,
         Commands::Watchlist { cmd } => watchlist::cmd_watchlist(cmd, format).await,
+        Commands::Statement { cmd } => statement::cmd_statement(cmd, format).await,
         Commands::Orders {
             history,
             start,

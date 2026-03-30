@@ -1,3 +1,4 @@
+pub mod statement;
 pub mod stock;
 pub mod stocks;
 pub mod types;

@@ -170,6 +170,14 @@ longbridge margin-ratio TSLA.US                        # Margin ratio requiremen
 longbridge max-qty TSLA.US --side buy --price 250      # Estimate maximum buy or sell quantity given current account balance
 ```
 
+### Statements
+
+```bash
+longbridge statement list [--type daily|monthly]                        # List available account statements (daily or monthly)
+longbridge statement export --file-key <KEY> --section equity_holdings  # Export statement sections as CSV or Markdown
+longbridge statement export --file-key <KEY> --all                     # Export all non-empty sections
+```
+
 <!-- COMMANDS_END -->
 
 ### Symbol Format

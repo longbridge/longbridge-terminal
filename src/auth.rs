@@ -10,11 +10,38 @@ use percent_encoding::{percent_decode_str, utf8_percent_encode, NON_ALPHANUMERIC
 use std::fs;
 use std::path::PathBuf;
 
-/// OAuth client ID for the terminal (registered with Longbridge).
-pub const OAUTH_CLIENT_ID: &str = "fd52fbc5-02a9-47f5-ad30-0842c841aae9";
-
+const OAUTH_CLIENT_ID: &str = "fd52fbc5-02a9-47f5-ad30-0842c841aae9";
 const OAUTH_BASE_URL: &str = "https://openapi.longbridge.com/oauth2";
+
+const OAUTH_TEST_CLIENT_ID: &str = "37435cdf-c7e4-4de9-8715-b20d33416196";
+const OAUTH_TEST_URL: &str = "https://openapi.longbridge.xyz/oauth2";
+
 const CALLBACK_PORT: u16 = 60355;
+
+/// Whether the staging environment is active (`LONGBRIDGE_ENV=staging`).
+pub fn is_test_env() -> bool {
+    std::env::var("LONGBRIDGE_ENV")
+        .map(|v| v == "staging")
+        .unwrap_or(false)
+}
+
+/// Return the OAuth client ID for the current environment.
+pub fn client_id() -> &'static str {
+    if is_test_env() {
+        OAUTH_TEST_CLIENT_ID
+    } else {
+        OAUTH_CLIENT_ID
+    }
+}
+
+/// Return the OAuth base URL for the current environment.
+fn oauth_base_url() -> &'static str {
+    if is_test_env() {
+        OAUTH_TEST_URL
+    } else {
+        OAUTH_BASE_URL
+    }
+}
 
 /// Token file path: `~/.longbridge/openapi/tokens/<client_id>`
 ///
@@ -25,7 +52,7 @@ fn token_file_path() -> Result<PathBuf> {
         .join(".longbridge")
         .join("openapi")
         .join("tokens")
-        .join(OAUTH_CLIENT_ID))
+        .join(client_id()))
 }
 
 /// Headless OAuth login for remote environments (SSH, cloud agents, etc.).
@@ -36,6 +63,9 @@ fn token_file_path() -> Result<PathBuf> {
 pub async fn headless_login() -> Result<()> {
     use std::io::{BufRead, Write};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    let oauth_base = oauth_base_url();
+    let client_id = client_id();
 
     let redirect_uri = format!("http://localhost:{CALLBACK_PORT}/callback");
 
@@ -49,7 +79,7 @@ pub async fn headless_login() -> Result<()> {
     // Percent-encode the redirect URI for inclusion in the query string.
     let redirect_uri_enc = utf8_percent_encode(&redirect_uri, NON_ALPHANUMERIC).to_string();
     let auth_url = format!(
-        "{OAUTH_BASE_URL}/authorize?client_id={OAUTH_CLIENT_ID}&redirect_uri={redirect_uri_enc}&response_type=code&state={state}"
+        "{oauth_base}/authorize?client_id={client_id}&redirect_uri={redirect_uri_enc}&response_type=code&state={state}"
     );
 
     println!("Open the following URL in your browser to authorize:");
@@ -76,12 +106,12 @@ pub async fn headless_login() -> Result<()> {
 
     // Exchange authorization code for access token.
     let raw = reqwest::Client::new()
-        .post(format!("{OAUTH_BASE_URL}/token"))
+        .post(format!("{oauth_base}/token"))
         .form(&[
             ("grant_type", "authorization_code"),
             ("code", code.as_str()),
             ("redirect_uri", redirect_uri.as_str()),
-            ("client_id", OAUTH_CLIENT_ID),
+            ("client_id", client_id),
         ])
         .send()
         .await
@@ -111,7 +141,7 @@ pub async fn headless_login() -> Result<()> {
 
     // Write token in the format expected by the SDK.
     let token = serde_json::json!({
-        "client_id": OAUTH_CLIENT_ID,
+        "client_id": client_id,
         "access_token": access_token,
         "refresh_token": refresh_token,
         "expires_at": expires_at,
