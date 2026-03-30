@@ -551,7 +551,7 @@ pub async fn cmd_static(symbols: Vec<String>, format: &OutputFormat) -> Result<(
         "EPS",
         "EPS TTM",
         "BPS",
-        "Dividend Yield",
+        "Dividend",
     ];
     let rows = infos
         .iter()

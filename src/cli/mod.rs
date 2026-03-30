@@ -222,7 +222,7 @@ pub enum Commands {
 
     /// Static reference info for one or more symbols
     ///
-    /// Returns: name, exchange, currency, `lot_size`, `total_shares`, `circulating_shares`, EPS, BPS, `dividend_yield`.
+    /// Returns: name, exchange, currency, `lot_size`, `total_shares`, `circulating_shares`, EPS, BPS, dividend.
     /// Example: longbridge static TSLA.US 700.HK
     Static {
         /// One or more symbols in <CODE>.<MARKET> format

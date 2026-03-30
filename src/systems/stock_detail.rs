@@ -314,8 +314,8 @@ pub(crate) fn stock_detail(
             ListItem::new(" "),
             ListItem::new(" "),
             ListItem::new(" "),
-            item(t!("StockDetail.P/E (TTM)"), fmt_decimal(info.eps_ttm)),
-            item(t!("StockDetail.EPS (TTM)"), fmt_decimal(info.eps)),
+            item(t!("StockDetail.P/E (TTM)"), fmt_decimal(Some(info.eps_ttm))),
+            item(t!("StockDetail.EPS (TTM)"), fmt_decimal(Some(info.eps))),
             ListItem::new(" "),
         ]
     } else {
@@ -341,10 +341,10 @@ pub(crate) fn stock_detail(
                 fmt_signed(info.circulating_shares),
             ),
             ListItem::new(" "),
-            item(t!("StockDetail.BPS"), fmt_decimal(info.bps)),
+            item(t!("StockDetail.BPS"), fmt_decimal(Some(info.bps))),
             item(
-                t!("StockDetail.Dividend Yield (TTM)"),
-                fmt_decimal(info.dividend_yield),
+                t!("StockDetail.Dividend (TTM)"),
+                fmt_decimal(Some(info.dividend_yield)),
             ),
             ListItem::new(" "),
             ListItem::new(" "),
@@ -901,7 +901,7 @@ pub fn refresh_stock_debounced(counter: Counter) {
             if should_fetch {
                 // Async fetch static info
                 if let Ok(infos) = openapi::quote::fetch_static_info(&[counter.to_string()]).await {
-                    if let Some(info) = infos.first() {
+                    if let Some(info) = infos.into_iter().next() {
                         STOCKS.modify(counter.clone(), |stock| {
                             stock.update_from_static_info(info);
                         });

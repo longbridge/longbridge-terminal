@@ -511,7 +511,7 @@ pub fn refresh_watchlist(update_tx: mpsc::UnboundedSender<CommandQueue>) {
                         if let Ok(counter) = info.symbol.parse() {
                             STOCKS.modify(counter, |stock| {
                                 stock.name.clone_from(&info.name_cn);
-                                stock.update_from_static_info(&info);
+                                stock.update_from_static_info(info);
                             });
                         }
                     }
