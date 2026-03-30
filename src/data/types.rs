@@ -227,13 +227,8 @@ impl KlineType {
     }
 }
 
-/// Adjustment type
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum AdjustType {
-    #[default]
-    NoAdjust,
-    ForwardAdjust,
-}
+/// Re-export `AdjustType` from Longbridge SDK
+pub use longbridge::quote::AdjustType;
 
 /// Candlestick data (detailed version with adjustment factors)
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -513,18 +508,6 @@ pub struct QuoteData {
     pub timestamp: i64,              // Timestamp
 }
 
-/// Candlestick data
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Candlestick {
-    pub timestamp: i64,
-    pub open: Decimal,
-    pub high: Decimal,
-    pub low: Decimal,
-    pub close: Decimal,
-    pub volume: u64,
-    pub turnover: Decimal,
-}
-
 /// Depth data
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Depth {
@@ -541,13 +524,8 @@ pub struct DepthData {
     pub bids: Vec<Depth>, // Bid orders
 }
 
-/// Trade direction
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TradeDirection {
-    Neutral,
-    Up,
-    Down,
-}
+/// Re-export `TradeDirection` from Longbridge SDK
+pub use longbridge::quote::TradeDirection;
 
 /// Single trade record
 #[derive(Clone, Debug, Serialize, Deserialize)]
