@@ -39,10 +39,12 @@ fn get_api_language() -> longbridge::Language {
 /// If `LONGBRIDGE_APP_KEY`, `LONGBRIDGE_APP_SECRET`, and `LONGBRIDGE_ACCESS_TOKEN`
 /// are all set, uses API key authentication (no browser needed).
 /// Otherwise falls back to OAuth: loads token from disk or runs browser flow.
-/// Returns quote receiver for caller to handle WebSocket events.
+/// Returns `(quote_stream, using_api_key, http_url)` where `http_url` is the
+/// effective base URL that was configured (useful for diagnostics/verbose output).
 pub async fn init_contexts() -> Result<(
     impl tokio_stream::Stream<Item = longbridge::quote::PushEvent> + Send + Unpin,
     bool,
+    &'static str,
 )> {
     let (config_builder, http_client_config, using_api_key) = if let (Ok(config), Ok(http_config)) = (
         longbridge::Config::from_apikey_env(),
@@ -100,6 +102,7 @@ pub async fn init_contexts() -> Result<(
 
     // If LONGBRIDGE_ENV=staging, override all endpoints to test environment.
     // This takes highest priority over region detection.
+    let effective_http_url;
     if crate::auth::is_test_env() {
         tracing::info!("Using TEST environment endpoints (openapi.longbridge.xyz)");
         config_builder = config_builder
@@ -107,6 +110,7 @@ pub async fn init_contexts() -> Result<(
             .quote_ws_url(crate::region::QUOTE_WS_URL_TEST)
             .trade_ws_url(crate::region::TRADE_WS_URL_TEST);
         http_client_config = http_client_config.http_url(crate::region::HTTP_URL_TEST);
+        effective_http_url = crate::region::HTTP_URL_TEST;
     } else if crate::region::is_cn_cached() {
         // If last geotest indicated China Mainland, use CN endpoints directly.
         tracing::debug!("Using CN region endpoints (cached)");
@@ -115,6 +119,9 @@ pub async fn init_contexts() -> Result<(
             .quote_ws_url(crate::region::QUOTE_WS_URL_CN)
             .trade_ws_url(crate::region::TRADE_WS_URL_CN);
         http_client_config = http_client_config.http_url(crate::region::HTTP_URL_CN);
+        effective_http_url = crate::region::HTTP_URL_CN;
+    } else {
+        effective_http_url = "https://openapi.longbridge.com";
     }
 
     let config = Arc::new(config_builder);
@@ -164,6 +171,7 @@ pub async fn init_contexts() -> Result<(
     Ok((
         tokio_stream::wrappers::UnboundedReceiverStream::new(quote_receiver),
         using_api_key,
+        effective_http_url,
     ))
 }
 

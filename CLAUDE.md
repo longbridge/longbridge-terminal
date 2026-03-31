@@ -122,12 +122,12 @@ cargo run -- <command> <args> --format json
 
 Pick commands that exercise the modified code paths. Common ones:
 
-| Changed area | Verification command |
-|---|---|
-| Trade direction / trades | `longbridge trades 700.HK --format json` |
-| Kline / AdjustType | `longbridge kline 700.HK --format json` |
-| Quote / calc-index | `longbridge calc-index 700.HK --format json` |
-| Static info | `longbridge static 700.HK --format json` |
+| Changed area             | Verification command                         |
+| ------------------------ | -------------------------------------------- |
+| Trade direction / trades | `longbridge trades 700.HK --format json`     |
+| Kline / AdjustType       | `longbridge kline 700.HK --format json`      |
+| Quote / calc-index       | `longbridge calc-index 700.HK --format json` |
+| Static info              | `longbridge static 700.HK --format json`     |
 
 ### Configuration
 
@@ -243,8 +243,11 @@ For Ratatui-specific questions or when working with TUI components, use the `rs-
 
 Use a prefix in PR titles to indicate the area of change:
 
-- `cli:` — changes to CLI commands (`src/cli/`)
-- `tui:` — changes to the TUI interface (`src/app.rs`, `src/views/`, `src/widgets/`, etc.)
+- `cli:` — changes to CLI commands (`src/cli/`) or shared infrastructure (`src/openapi/`, `src/region.rs`, `src/auth.rs`, etc.)
+- `tui:` — changes that touch TUI-specific code (`src/app.rs`, `src/views/`, `src/widgets/`, `src/systems/`, etc.)
+- `chore:` - for other changes that don't fit the above categories (e.g. docs, formatting, refactors that don't modify behavior)
+
+Only use `tui:` when the diff actually modifies TUI files. Changes to shared modules that happen to be triggered by a TUI bug should still use `cli:` or a more specific prefix.
 
 Example: `cli: add statement export command`, `tui: fix quit confirmation dialog`
 
