@@ -2,7 +2,9 @@ use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 
 pub mod api;
+pub mod asset;
 pub mod check;
+pub mod fundamental;
 pub mod news;
 pub mod output;
 pub mod quote;
@@ -323,6 +325,98 @@ pub enum Commands {
         cmd: Option<WarrantCmd>,
     },
 
+    // ── Fundamentals ────────────────────────────────────────────────────────────
+    /// Financial statements (income, balance sheet, cash flow) for a symbol
+    ///
+    /// Example: longbridge financial-report TSLA.US --kind IS --report af
+    /// Example: longbridge financial-report TSLA.US --kind BS --format json
+    FinancialReport {
+        /// Symbol in <CODE>.<MARKET> format, e.g. TSLA.US 700.HK
+        symbol: String,
+        /// Statement type: IS (income), BS (balance sheet), CF (cash flow), ALL
+        #[arg(long, value_name = "TYPE", default_value = "ALL")]
+        kind: String,
+        /// Report period: af (annual), saf (semi-annual), q1 (Q1), 3q (3 quarters), qf (quarterly)
+        #[arg(long)]
+        report: Option<String>,
+    },
+
+    /// Institution rating overview and target price summary
+    ///
+    /// Without a subcommand: returns rating distribution (Strong Buy / Buy / Hold /
+    /// Underperform / Sell) and the current average target price.
+    /// Subcommands: detail
+    /// Example: longbridge institution-rating TSLA.US
+    /// Example: longbridge institution-rating detail TSLA.US
+    /// Example: longbridge institution-rating TSLA.US --format json
+    InstitutionRating {
+        /// Symbol in <CODE>.<MARKET> format. Omit when using a subcommand.
+        symbol: Option<String>,
+        #[command(subcommand)]
+        cmd: Option<InstitutionRatingCmd>,
+    },
+
+    /// Dividend history and distribution details for a symbol
+    ///
+    /// Example: longbridge dividend AAPL.US
+    /// Example: longbridge dividend detail AAPL.US
+    Dividend {
+        /// Symbol in <CODE>.<MARKET> format (omit when using a subcommand)
+        symbol: Option<String>,
+        #[command(subcommand)]
+        cmd: Option<DividendCmd>,
+    },
+
+    /// EPS forecasts and analyst consensus estimates for a symbol
+    ///
+    /// Example: longbridge forecast-eps TSLA.US
+    /// Example: longbridge forecast-eps TSLA.US --format json
+    ForecastEps {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+    },
+
+    /// Financial consensus detail for a symbol
+    ///
+    /// Example: longbridge consensus TSLA.US
+    /// Example: longbridge consensus TSLA.US --format json
+    Consensus {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+    },
+
+    /// Investment style and multi-dimensional score for a symbol
+    ///
+    /// Returns: overall score/grade, investment style (value/blend/growth × small/mid/large),
+    /// industry rank, peer average/median, and dimension breakdown (growth/value/quality/momentum).
+    /// Example: longbridge score TSLA.US
+    /// Example: longbridge score TSLA.US --format json
+    Score {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+    },
+
+    /// Valuation analysis: P/E, P/B, P/S, dividend yield, and peer comparison
+    ///
+    /// Without a subcommand: returns current valuation metrics and industry median.
+    /// Subcommands: detail
+    /// Example: longbridge valuation TSLA.US
+    /// Example: longbridge valuation detail TSLA.US
+    /// Example: longbridge valuation detail TSLA.US --indicator pe
+    /// Example: longbridge valuation TSLA.US --format json
+    Valuation {
+        /// Symbol in <CODE>.<MARKET> format. Omit when using a subcommand.
+        symbol: Option<String>,
+        /// Valuation indicator: `pe` | `pb` | `ps` | `dvd_yld`
+        #[arg(long)]
+        indicator: Option<String>,
+        /// Historical range in years: 1 | 3 | 5 | 10
+        #[arg(long)]
+        range: Option<String>,
+        #[command(subcommand)]
+        cmd: Option<ValuationCmd>,
+    },
+
     // ── News ────────────────────────────────────────────────────────────────────
     /// Latest news articles for a symbol, or fetch full article content
     ///
@@ -396,7 +490,7 @@ pub enum Commands {
     /// Without a subcommand, lists available statements (equivalent to `statement list`).
     /// Example: longbridge statement
     /// Example: longbridge statement --type monthly
-    /// Example: longbridge statement export --file-key KEY --section equity_holdings
+    /// Example: longbridge statement export --file-key KEY --section `equity_holdings`
     Statement {
         /// Statement type: daily (default) | monthly
         #[arg(long = "type", default_value = "daily")]
@@ -500,6 +594,56 @@ pub enum Commands {
         /// Order type: LO | MO | ELO | ALO  (case-insensitive, default: LO)
         #[arg(long, default_value = "LO")]
         order_type: String,
+    },
+
+    /// Exchange rates for all supported currencies
+    ///
+    /// Example: longbridge exchange-rate
+    /// Example: longbridge exchange-rate --format json
+    ExchangeRate,
+
+    /// My personal commission and fee rates
+    ///
+    /// Returns: trading fee rates for the current account.
+    /// Example: longbridge my-rate
+    /// Example: longbridge my-rate --format json
+    MyRate,
+}
+
+#[derive(Subcommand)]
+pub enum DividendCmd {
+    /// Dividend distribution scheme details
+    ///
+    /// Example: longbridge dividend detail AAPL.US
+    Detail {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum InstitutionRatingCmd {
+    /// Historical institution rating and target price detail
+    ///
+    /// Example: longbridge institution-rating detail TSLA.US
+    Detail {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ValuationCmd {
+    /// Detailed valuation analysis
+    ///
+    /// Example: longbridge valuation detail TSLA.US
+    /// Example: longbridge valuation detail TSLA.US --indicator pe
+    Detail {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+        /// Valuation indicator: `pe` | `pb` | `ps` | `dvd_yld`
+        #[arg(long)]
+        indicator: Option<String>,
     },
 }
 
@@ -1036,7 +1180,7 @@ pub enum TradingCmd {
     },
 }
 
-pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
+pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Result<()> {
     match cmd {
         Commands::Quote { symbols } => quote::cmd_quote(symbols, format).await,
         Commands::Depth { symbol } => quote::cmd_depth(symbol, format).await,
@@ -1113,6 +1257,57 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
                     anyhow::anyhow!("Symbol required. Usage: longbridge warrant <SYMBOL>")
                 })?;
                 quote::cmd_warrant_list(sym, format).await
+            }
+        },
+        Commands::FinancialReport {
+            symbol,
+            kind,
+            report,
+        } => fundamental::cmd_financial_report(symbol, kind, report, format, verbose).await,
+        Commands::InstitutionRating { symbol, cmd } => match cmd {
+            Some(InstitutionRatingCmd::Detail { symbol: s }) => {
+                fundamental::cmd_institution_rating_detail(s, format, verbose).await
+            }
+            None => {
+                let sym = symbol.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Symbol required. Usage: longbridge institution-rating <SYMBOL>"
+                    )
+                })?;
+                fundamental::cmd_institution_rating(sym, format, verbose).await
+            }
+        },
+        Commands::Dividend { symbol, cmd } => match cmd {
+            Some(DividendCmd::Detail { symbol: s }) => {
+                fundamental::cmd_dividend_detail(s, format, verbose).await
+            }
+            None => {
+                let sym = symbol.ok_or_else(|| {
+                    anyhow::anyhow!("Symbol required. Usage: longbridge dividend <SYMBOL>")
+                })?;
+                fundamental::cmd_dividend(sym, format, verbose).await
+            }
+        },
+        Commands::ForecastEps { symbol } => {
+            fundamental::cmd_forecast_eps(symbol, format, verbose).await
+        }
+        Commands::Consensus { symbol } => fundamental::cmd_consensus(symbol, format, verbose).await,
+        Commands::Score { symbol } => fundamental::cmd_score(symbol, format, verbose).await,
+        Commands::Valuation {
+            symbol,
+            indicator,
+            range,
+            cmd,
+        } => match cmd {
+            Some(ValuationCmd::Detail {
+                symbol: s,
+                indicator: ind,
+            }) => fundamental::cmd_valuation_detail(s, ind, format, verbose).await,
+            None => {
+                let sym = symbol.ok_or_else(|| {
+                    anyhow::anyhow!("Symbol required. Usage: longbridge valuation <SYMBOL>")
+                })?;
+                fundamental::cmd_valuation(sym, indicator, range, format, verbose).await
             }
         },
         Commands::News { symbol, count, cmd } => match cmd {
@@ -1268,6 +1463,8 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
             price,
             order_type,
         } => trade::cmd_max_qty(symbol, &side, price, &order_type, format).await,
+        Commands::ExchangeRate => asset::cmd_exchange_rate(format, verbose).await,
+        Commands::MyRate => asset::cmd_my_rate(format, verbose).await,
         Commands::Login { .. }
         | Commands::Logout
         | Commands::Tui

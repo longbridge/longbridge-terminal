@@ -409,3 +409,33 @@ impl TradeApi for LbTradeApi {
         Ok(self.ctx.estimate_max_purchase_quantity(opts).await?)
     }
 }
+
+// ── HTTP helpers ─────────────────────────────────────────────────────────────
+
+pub async fn http_get(
+    path: &str,
+    params: &[(&str, &str)],
+    verbose: bool,
+) -> Result<serde_json::Value> {
+    use longbridge::httpclient::Json;
+    use reqwest::Method;
+
+    if verbose {
+        let qs = params
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join("&");
+        eprintln!("* GET {path}?{qs}");
+    }
+    let client = crate::openapi::http_client();
+    let params: Vec<(&str, &str)> = params.to_vec();
+    let resp = client
+        .request(Method::GET, path)
+        .query_params(params)
+        .response::<Json<serde_json::Value>>()
+        .send()
+        .await
+        .map_err(anyhow::Error::from)?;
+    Ok(resp.0)
+}

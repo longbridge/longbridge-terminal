@@ -1,0 +1,973 @@
+use anyhow::Result;
+use longbridge::httpclient::Json;
+use reqwest::Method;
+use serde_json::Value;
+
+use super::OutputFormat;
+
+use crate::utils::counter::symbol_to_counter_id;
+use crate::utils::datetime::format_date;
+use crate::utils::number::format_financial_value;
+use crate::utils::text::strip_html;
+
+async fn http_get(path: &str, params: &[(&str, &str)], verbose: bool) -> Result<Value> {
+    if verbose {
+        let qs = params
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join("&");
+        eprintln!("* GET {path}?{qs}");
+    }
+    let client = crate::openapi::http_client();
+    let params: Vec<(&str, &str)> = params.to_vec();
+    let resp = client
+        .request(Method::GET, path)
+        .query_params(params)
+        .response::<Json<Value>>()
+        .send()
+        .await
+        .map_err(anyhow::Error::from)?;
+    Ok(resp.0)
+}
+
+fn print_json(value: &Value) {
+    println!(
+        "{}",
+        serde_json::to_string_pretty(value).unwrap_or_default()
+    );
+}
+
+/// Print a JSON value as a human-readable table.
+///
+/// Objects are split into scalar rows (rendered as a key/value table) and
+/// nested sections (printed with a heading and recursed into).  Arrays print
+/// each element as a block separated by blank lines.
+fn print_kv(value: &Value) {
+    print_kv_section(value, 0);
+}
+
+fn print_kv_section(value: &Value, depth: usize) {
+    let indent = "  ".repeat(depth);
+    match value {
+        Value::Object(map) => {
+            let mut scalar_rows: Vec<Vec<String>> = Vec::new();
+            let mut nested: Vec<(&String, &Value)> = Vec::new();
+
+            for (k, v) in map {
+                match v {
+                    Value::Object(_) | Value::Array(_) => nested.push((k, v)),
+                    _ => {
+                        let v_str = match v {
+                            Value::String(s) => s.clone(),
+                            Value::Null => "-".to_string(),
+                            other => other.to_string(),
+                        };
+                        scalar_rows.push(vec![k.clone(), v_str]);
+                    }
+                }
+            }
+
+            if !scalar_rows.is_empty() {
+                super::output::print_table(&["key", "value"], scalar_rows, &OutputFormat::Table);
+            }
+
+            for (k, v) in nested {
+                println!("\n{indent}{k}:");
+                print_kv_section(v, depth + 1);
+            }
+        }
+        Value::Array(arr) => {
+            if let Some(headers) = uniform_object_keys(arr) {
+                let rows: Vec<Vec<String>> = arr
+                    .iter()
+                    .map(|item| {
+                        headers
+                            .iter()
+                            .map(|h| match &item[h.as_str()] {
+                                Value::String(s) => s.clone(),
+                                Value::Null => "-".to_string(),
+                                other => other.to_string(),
+                            })
+                            .collect()
+                    })
+                    .collect();
+                let header_refs: Vec<&str> = headers.iter().map(String::as_str).collect();
+                super::output::print_table(&header_refs, rows, &OutputFormat::Table);
+            } else {
+                for (i, item) in arr.iter().enumerate() {
+                    if i > 0 {
+                        println!();
+                    }
+                    print_kv_section(item, depth);
+                }
+            }
+        }
+        other => println!("{indent}{other}"),
+    }
+}
+
+/// Returns the ordered key list if every element of `arr` is an object with
+/// the same set of keys; otherwise returns `None`.
+fn uniform_object_keys(arr: &[Value]) -> Option<Vec<String>> {
+    if arr.is_empty() {
+        return None;
+    }
+    let first = arr[0].as_object()?;
+    let key_set: std::collections::BTreeSet<&str> = first.keys().map(String::as_str).collect();
+    for item in arr.iter().skip(1) {
+        let obj = item.as_object()?;
+        let keys: std::collections::BTreeSet<&str> = obj.keys().map(String::as_str).collect();
+        if keys != key_set {
+            return None;
+        }
+    }
+    Some(first.keys().cloned().collect())
+}
+
+// ── financials ──────────────────────────────────────────────────────────────
+
+/// Print financial statements as a transposed table: rows = metrics, columns = periods.
+/// Limits to the 5 most recent periods for table-width sanity.
+fn print_financials(value: &Value) {
+    let Some(list) = value.get("list").and_then(|v| v.as_object()) else {
+        print_kv(value);
+        return;
+    };
+
+    for (kind, kind_data) in list {
+        let indicators = match kind_data.get("indicators").and_then(|v| v.as_array()) {
+            Some(i) if !i.is_empty() => i,
+            _ => continue,
+        };
+
+        println!("── {kind} ──");
+
+        // Collect column headers (periods) from the first account of the first indicator.
+        let periods: Vec<String> = indicators[0]
+            .get("accounts")
+            .and_then(|a| a.as_array())
+            .and_then(|a| a.first())
+            .and_then(|acc| acc.get("values"))
+            .and_then(|v| v.as_array())
+            .map(|vals| {
+                vals.iter()
+                    .take(5)
+                    .filter_map(|v| v.get("period")?.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if periods.is_empty() {
+            continue;
+        }
+
+        let period_refs: Vec<&str> = periods.iter().map(String::as_str).collect();
+        let mut headers = vec!["metric"];
+        headers.extend_from_slice(&period_refs);
+
+        let mut rows: Vec<Vec<String>> = Vec::new();
+
+        for indicator in indicators {
+            let accounts = match indicator.get("accounts").and_then(|v| v.as_array()) {
+                Some(a) if !a.is_empty() => a,
+                _ => continue,
+            };
+            for account in accounts {
+                let name = account
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_owned();
+
+                let value_map: std::collections::HashMap<&str, &str> = account
+                    .get("values")
+                    .and_then(|v| v.as_array())
+                    .map(|vals| {
+                        vals.iter()
+                            .filter_map(|v| {
+                                Some((v.get("period")?.as_str()?, v.get("value")?.as_str()?))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                let is_percent = account
+                    .get("percent")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+
+                let mut row = vec![name];
+                for p in &periods {
+                    let raw = value_map.get(p.as_str()).copied().unwrap_or("-");
+                    row.push(format_financial_value(raw, is_percent));
+                }
+                rows.push(row);
+            }
+        }
+
+        super::output::print_table(&headers, rows, &OutputFormat::Table);
+    }
+}
+
+/// Fetch financial statements for a symbol.
+pub async fn cmd_financial_report(
+    symbol: String,
+    kind: String,
+    report: Option<String>,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let mut params: Vec<(&str, &str)> = vec![("counter_id", cid.as_str()), ("kind", kind.as_str())];
+    if let Some(ref r) = report {
+        params.push(("report", r.as_str()));
+    }
+    let data = http_get("/v1/quote/financial-reports", &params, verbose).await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Table => print_financials(&data),
+    }
+    Ok(())
+}
+
+// ── analyst ─────────────────────────────────────────────────────────────────
+
+fn val_str(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        Value::Null => "-".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn print_institution_rating(ratings: &Value, instratings: &Value) {
+    // Consensus: recommend / target price / change / updated_at
+    {
+        let change_raw = val_str(&instratings["change"]);
+        let change = change_raw
+            .parse::<f64>()
+            .map(|f| format!("{f:.2}%"))
+            .unwrap_or(change_raw);
+        let target_raw = val_str(&instratings["target"]);
+        let target = target_raw
+            .parse::<f64>()
+            .map(|f| format!("{f:.2}"))
+            .unwrap_or(target_raw);
+        let headers = ["recommend", "target", "change", "updated_at"];
+        let row = vec![
+            val_str(&instratings["recommend"]),
+            target,
+            change,
+            val_str(&instratings["updated_at"]),
+        ];
+        println!("Consensus:");
+        super::output::print_table(&headers, vec![row], &OutputFormat::Table);
+    }
+
+    // Rating breakdown: merge counts from both endpoints
+    {
+        let ie = &instratings["evaluate"];
+        let re = &ratings["evaluate"];
+        let headers = [
+            "strong_buy",
+            "buy",
+            "hold",
+            "sell",
+            "under",
+            "no_opinion",
+            "total",
+        ];
+        let row = vec![
+            val_str(&ie["strong_buy"]),
+            val_str(&ie["buy"]),
+            val_str(&ie["hold"]),
+            val_str(&ie["sell"]),
+            val_str(&ie["under"]),
+            val_str(&re["no_opinion"]),
+            val_str(&re["total"]),
+        ];
+        println!("\nRating breakdown:");
+        super::output::print_table(&headers, vec![row], &OutputFormat::Table);
+    }
+
+    // Target price range
+    {
+        let t = &ratings["target"];
+        let headers = ["lowest_price", "highest_price", "prev_close"];
+        let row: Vec<String> = headers.iter().map(|k| val_str(&t[k])).collect();
+        println!("\nTarget price range:");
+        super::output::print_table(&headers, vec![row], &OutputFormat::Table);
+    }
+
+    // Industry comparison
+    {
+        let name = val_str(&ratings["industry_name"]);
+        if name != "-" {
+            let headers = ["industry", "rank", "mean", "median", "total"];
+            let row = vec![
+                name,
+                val_str(&ratings["industry_rank"]),
+                val_str(&ratings["industry_mean"]),
+                val_str(&ratings["industry_median"]),
+                val_str(&ratings["industry_total"]),
+            ];
+            println!("\nIndustry:");
+            super::output::print_table(&headers, vec![row], &OutputFormat::Table);
+        }
+    }
+}
+
+const DETAIL_SKIP: &[&str] = &["timestamp"];
+
+fn print_institution_rating_detail(data: &Value) {
+    // evaluate.list — monthly rating history (fixed column order: date first)
+    if let Some(list) = data["evaluate"]["list"].as_array() {
+        if !list.is_empty() {
+            println!("Rating history:");
+            let ordered = ["date", "strong_buy", "buy", "hold", "sell", "under"];
+            let rows: Vec<Vec<String>> = list
+                .iter()
+                .map(|item| ordered.iter().map(|h| val_str(&item[h])).collect())
+                .collect();
+            super::output::print_table(&ordered, rows, &OutputFormat::Table);
+        }
+    }
+
+    // target metadata
+    let t = &data["target"];
+    {
+        let accuracy_raw = val_str(&t["prediction_accuracy"]);
+        let accuracy = accuracy_raw
+            .parse::<f64>()
+            .map(|f| format!("{f:.2}%"))
+            .unwrap_or(accuracy_raw);
+        let data_pct_raw = val_str(&t["data_percent"]);
+        let data_pct = data_pct_raw
+            .parse::<f64>()
+            .map(|f| format!("{:.2}%", f * 100.0))
+            .unwrap_or(data_pct_raw);
+        let headers = ["data_coverage", "prediction_accuracy", "updated_at"];
+        let row = vec![data_pct, accuracy, val_str(&t["updated_at"])];
+        println!("\nTarget accuracy:");
+        super::output::print_table(&headers, vec![row], &OutputFormat::Table);
+    }
+
+    // target.list — weekly price target history, skip raw timestamp
+    if let Some(list) = t["list"].as_array() {
+        if !list.is_empty() {
+            println!("\nTarget price history:");
+            if let Some(all_headers) = uniform_object_keys(list) {
+                let headers: Vec<String> = all_headers
+                    .into_iter()
+                    .filter(|k| !DETAIL_SKIP.contains(&k.as_str()))
+                    .collect();
+                let rows = list
+                    .iter()
+                    .map(|item| headers.iter().map(|h| val_str(&item[h.as_str()])).collect())
+                    .collect();
+                let header_refs: Vec<&str> = headers.iter().map(String::as_str).collect();
+                super::output::print_table(&header_refs, rows, &OutputFormat::Table);
+            }
+        }
+    }
+}
+
+/// Fetch institution rating distribution + current target price summary.
+pub async fn cmd_institution_rating(
+    symbol: String,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let ratings = http_get(
+        "/v1/quote/institution-rating-latest",
+        &[("counter_id", cid.as_str())],
+        verbose,
+    )
+    .await?;
+    let instratings = http_get(
+        "/v1/quote/institution-ratings",
+        &[("counter_id", cid.as_str())],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&serde_json::json!({
+            "analyst": ratings,
+            "instratings": instratings,
+        })),
+        OutputFormat::Table => print_institution_rating(&ratings, &instratings),
+    }
+    Ok(())
+}
+
+/// Fetch historical institution rating and target price detail.
+pub async fn cmd_institution_rating_detail(
+    symbol: String,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/v1/quote/institution-ratings/detail",
+        &[("counter_id", cid.as_str())],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Table => print_institution_rating_detail(&data),
+    }
+    Ok(())
+}
+
+// ── dividends ───────────────────────────────────────────────────────────────
+
+const DIVIDENDS_SKIP: &[&str] = &["counter_id", "id", "dividend_summary"];
+
+fn print_dividends(value: &Value) {
+    let items = match value.get("list").and_then(|v| v.as_array()) {
+        Some(a) if !a.is_empty() => a,
+        _ => {
+            println!("No dividend records found.");
+            return;
+        }
+    };
+
+    let headers: Vec<String> = items[0]
+        .as_object()
+        .map(|m| {
+            m.keys()
+                .filter(|k| !DIVIDENDS_SKIP.contains(&k.as_str()))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let header_refs: Vec<&str> = headers.iter().map(String::as_str).collect();
+    let mut seen = std::collections::HashSet::new();
+    let rows: Vec<Vec<String>> = items
+        .iter()
+        .map(|item| {
+            headers
+                .iter()
+                .map(|h| match item.get(h) {
+                    Some(Value::String(s)) => s.clone(),
+                    Some(Value::Null) | None => "-".to_owned(),
+                    Some(other) => other.to_string(),
+                })
+                .collect::<Vec<_>>()
+        })
+        .filter(|row| seen.insert(row.clone()))
+        .collect();
+
+    super::output::print_table(&header_refs, rows, &OutputFormat::Table);
+}
+
+/// Fetch dividend history for a symbol.
+pub async fn cmd_dividend(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/v1/quote/dividends",
+        &[("counter_id", cid.as_str())],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Table => print_dividends(&data),
+    }
+    Ok(())
+}
+
+// ── estimates ───────────────────────────────────────────────────────────────
+
+/// EPS forecast history — most recent 20 snapshots with formatted dates.
+fn print_forecast_eps(data: &Value) {
+    let all_items = match data["items"].as_array() {
+        Some(a) if !a.is_empty() => a,
+        _ => {
+            println!("No forecast data.");
+            return;
+        }
+    };
+    let start = all_items.len().saturating_sub(20);
+    let items = &all_items[start..];
+    let headers = [
+        "end_date", "mean", "median", "highest", "lowest", "up", "down", "total",
+    ];
+    let rows: Vec<Vec<String>> = items
+        .iter()
+        .filter_map(|item| {
+            let ts = item["forecast_end_date"]
+                .as_str()
+                .and_then(|s| s.parse::<i64>().ok())
+                .unwrap_or(0);
+            if ts == 0 {
+                return None;
+            }
+            Some(vec![
+                format_date(ts),
+                val_str(&item["forecast_eps_mean"]),
+                val_str(&item["forecast_eps_median"]),
+                val_str(&item["forecast_eps_highest"]),
+                val_str(&item["forecast_eps_lowest"]),
+                item["institution_up"].to_string(),
+                item["institution_down"].to_string(),
+                item["institution_total"].to_string(),
+            ])
+        })
+        .collect();
+    println!("EPS Forecasts (recent {}):", rows.len());
+    super::output::print_table(&headers, rows, &OutputFormat::Table);
+}
+
+/// Consensus estimates — rows = metrics, columns = periods.
+/// Released values marked ↑ (beat) or ↓ (miss); unreleased prefixed with ~.
+fn print_consensus(data: &Value) {
+    let periods = match data["list"].as_array() {
+        Some(a) if !a.is_empty() => a,
+        _ => {
+            println!("No consensus data.");
+            return;
+        }
+    };
+    let period_texts: Vec<String> = periods.iter().map(|p| val_str(&p["period_text"])).collect();
+    let mut headers = vec!["metric".to_owned()];
+    headers.extend(period_texts.iter().cloned());
+    let header_refs: Vec<&str> = headers.iter().map(String::as_str).collect();
+
+    let metric_keys = [
+        "revenue",
+        "ebit",
+        "net_income",
+        "normalized_net_income",
+        "eps",
+        "normalized_eps",
+    ];
+    let first_details = periods[0]["details"].as_array();
+    let mut rows: Vec<Vec<String>> = Vec::new();
+
+    for key in &metric_keys {
+        let name = first_details
+            .and_then(|d| d.iter().find(|m| m["key"].as_str() == Some(key)))
+            .and_then(|m| m["name"].as_str())
+            .unwrap_or(key)
+            .to_owned();
+        let mut row = vec![name];
+        for period in periods {
+            let details = period["details"].as_array();
+            let metric = details.and_then(|d| d.iter().find(|m| m["key"].as_str() == Some(key)));
+            let cell = match metric {
+                Some(m) => {
+                    let is_released = m["is_released"].as_bool().unwrap_or(false);
+                    if is_released {
+                        let actual = val_str(&m["actual"]);
+                        let v = format_financial_value(&actual, false);
+                        match val_str(&m["comp"]).as_str() {
+                            "beat_est" => format!("{v} ↑"),
+                            "miss_est" => format!("{v} ↓"),
+                            _ => v,
+                        }
+                    } else {
+                        let est = val_str(&m["estimate"]);
+                        format!("~{}", format_financial_value(&est, false))
+                    }
+                }
+                None => "-".to_owned(),
+            };
+            row.push(cell);
+        }
+        rows.push(row);
+    }
+
+    println!(
+        "Currency: {} | Period: {}",
+        val_str(&data["currency"]),
+        val_str(&data["current_period"])
+    );
+    super::output::print_table(&header_refs, rows, &OutputFormat::Table);
+}
+
+/// Fetch EPS forecasts and analyst consensus estimates.
+pub async fn cmd_forecast_eps(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/v1/quote/forecast-eps",
+        &[("counter_id", cid.as_str())],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Table => print_forecast_eps(&data),
+    }
+    Ok(())
+}
+
+/// Fetch financial consensus detail.
+pub async fn cmd_consensus(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/v1/quote/financial-consensus-detail",
+        &[("counter_id", cid.as_str())],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Table => print_consensus(&data),
+    }
+    Ok(())
+}
+
+// ── valuation ───────────────────────────────────────────────────────────────
+
+/// Valuation detail — overview row + peer comparison table.
+fn print_valuation_detail(data: &Value) {
+    let overview = &data["overview"];
+    let indicator = val_str(&overview["indicator"]);
+    if indicator == "-" || indicator.is_empty() {
+        print_kv(data);
+        return;
+    }
+    let ind = indicator.as_str();
+
+    // Overview: current value vs historical range and industry median
+    {
+        let ov_m = &overview["metrics"][ind];
+        let hist_m = &data["history"]["metrics"][ind];
+        let desc_raw = val_str(&ov_m["desc"]);
+        let desc = if desc_raw == "-" {
+            String::new()
+        } else {
+            strip_html(&desc_raw)
+        };
+        let headers = [
+            "indicator",
+            "current",
+            "high",
+            "low",
+            "median",
+            "industry_median",
+            "date",
+        ];
+        let row = vec![
+            indicator.to_uppercase(),
+            val_str(&ov_m["metric"]),
+            val_str(&hist_m["high"]),
+            val_str(&hist_m["low"]),
+            val_str(&hist_m["median"]),
+            val_str(&ov_m["industry_median"]),
+            val_str(&overview["date"]),
+        ];
+        println!("Overview:");
+        super::output::print_table(&headers, vec![row], &OutputFormat::Table);
+        if !desc.is_empty() {
+            println!("  {desc}");
+        }
+    }
+
+    // Peers: up to 10 comparable stocks
+    if let Some(peers) = data["peers"][ind]["list"].as_array() {
+        if !peers.is_empty() {
+            let rows: Vec<Vec<String>> = peers
+                .iter()
+                .take(10)
+                .map(|p| {
+                    let v_raw = val_str(&p["value"]);
+                    let v = v_raw
+                        .parse::<f64>()
+                        .map(|f| format!("{f:.2}"))
+                        .unwrap_or(v_raw);
+                    vec![val_str(&p["name"]), v]
+                })
+                .collect();
+            println!("\nPeers ({}):", rows.len());
+            super::output::print_table(&["name", ind], rows, &OutputFormat::Table);
+        }
+    }
+}
+
+/// Print valuation history: summary row + recent time-series values.
+fn print_valuation_history(data: &Value) {
+    let metrics = match data["metrics"].as_object() {
+        Some(m) if !m.is_empty() => m,
+        _ => {
+            println!("No valuation data.");
+            return;
+        }
+    };
+    for (key, m) in metrics {
+        let desc_raw = val_str(&m["desc"]);
+        let desc = if desc_raw == "-" {
+            String::new()
+        } else {
+            strip_html(&desc_raw)
+        };
+        let headers = ["indicator", "high", "low", "median"];
+        let row = vec![
+            key.to_uppercase(),
+            val_str(&m["high"]),
+            val_str(&m["low"]),
+            val_str(&m["median"]),
+        ];
+        println!("{}:", key.to_uppercase());
+        super::output::print_table(&headers, vec![row], &OutputFormat::Table);
+        if !desc.is_empty() {
+            println!("  {desc}");
+        }
+
+        if let Some(list) = m["list"].as_array() {
+            if !list.is_empty() {
+                let rows: Vec<Vec<String>> = list
+                    .iter()
+                    .filter_map(|v| {
+                        let ts = val_str(&v["timestamp"]).parse::<i64>().ok()?;
+                        Some(vec![format_date(ts), val_str(&v["value"])])
+                    })
+                    .collect();
+                println!();
+                super::output::print_table(&["date", "value"], rows, &OutputFormat::Table);
+            }
+        }
+    }
+}
+
+/// Fetch valuation overview: P/E, P/B, P/S, dividend yield + peer comparison.
+pub async fn cmd_valuation(
+    symbol: String,
+    indicator: Option<String>,
+    range: Option<String>,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let mut params: Vec<(&str, &str)> = vec![("counter_id", cid.as_str())];
+    if let Some(ref ind) = indicator {
+        params.push(("indicator", ind.as_str()));
+    }
+    if let Some(ref r) = range {
+        params.push(("range", r.as_str()));
+    }
+    let data = http_get("/v1/quote/valuation", &params, verbose).await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Table => {
+            let has_data = data["metrics"].as_object().is_some_and(|m| {
+                m.values()
+                    .any(|v| !val_str(&v["median"]).is_empty() && val_str(&v["median"]) != "-")
+            });
+            if has_data {
+                print_valuation_history(&data);
+            } else {
+                println!("No valuation data. Use `valuation detail {symbol}` for full analysis.");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Fetch detailed valuation analysis, optionally focused on one indicator.
+pub async fn cmd_valuation_detail(
+    symbol: String,
+    indicator: Option<String>,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let mut params: Vec<(&str, &str)> = vec![("counter_id", cid.as_str())];
+    if let Some(ref ind) = indicator {
+        params.push(("indicator", ind.as_str()));
+    }
+    let data = http_get("/v1/quote/valuation/detail", &params, verbose).await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Table => print_valuation_detail(&data),
+    }
+    Ok(())
+}
+
+// ── dividend detail ──────────────────────────────────────────────────────────
+
+fn print_dividend_detail(data: &Value) {
+    let items = match data.get("list").and_then(|v| v.as_array()) {
+        Some(a) if !a.is_empty() => a,
+        _ => {
+            println!("No dividend detail records found.");
+            return;
+        }
+    };
+    let headers = ["desc", "ex_date", "payment_date", "record_date"];
+    let rows: Vec<Vec<String>> = items
+        .iter()
+        .map(|item| {
+            let raw = val_str(&item["desc"]).replace('\n', " ");
+            let desc = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+            headers[1..].iter().fold(vec![desc], |mut row, h| {
+                row.push(val_str(&item[*h]));
+                row
+            })
+        })
+        .collect();
+    super::output::print_table(&headers, rows, &OutputFormat::Table);
+}
+
+/// Fetch dividend distribution scheme details.
+pub async fn cmd_dividend_detail(
+    symbol: String,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/v1/quote/dividends/details",
+        &[("counter_id", cid.as_str())],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Table => print_dividend_detail(&data),
+    }
+    Ok(())
+}
+
+// ── security score ───────────────────────────────────────────────────────────
+
+fn change_arrow(change: i64) -> &'static str {
+    match change {
+        1 => "↑",
+        -1 => "↓",
+        _ => "→",
+    }
+}
+
+fn print_score(data: &Value) {
+    // Summary section
+    let multi_letter = val_str(&data["multi_letter"]);
+    let multi_score = val_str(&data["multi_score"]);
+    let multi_change = data["multi_score_change"].as_i64().unwrap_or(0);
+    let style_name = val_str(&data["style_txt_name"]);
+    let style_val = val_str(&data["style_txt_value"]);
+    let scale_name = val_str(&data["scale_txt_name"]);
+    let scale_val = val_str(&data["scale_txt_value"]);
+    let industry_rank = val_str(&data["industry_rank"]);
+    let industry_total = val_str(&data["industry_total"]);
+    let industry_name = val_str(&data["industry_name"]);
+    let mean_letter = val_str(&data["industry_mean_letter"]);
+    let mean_score = val_str(&data["industry_mean_score"]);
+    let median_letter = val_str(&data["industry_median_letter"]);
+    let median_score = val_str(&data["industry_median_score"]);
+    let fiscal_year = val_str(&data["fiscal_year_txt"]);
+    let report_period = val_str(&data["report_period_txt"]);
+
+    let mut summary = vec![
+        vec![
+            "Score".to_string(),
+            format!(
+                "{}  {}  {}",
+                multi_letter,
+                multi_score,
+                change_arrow(multi_change)
+            ),
+        ],
+        vec![style_name, style_val],
+        vec![scale_name, scale_val],
+        vec![
+            "Industry Rank".to_string(),
+            format!("{industry_rank} / {industry_total}  {industry_name}"),
+        ],
+        vec![
+            "Peer Avg".to_string(),
+            format!("{mean_letter}  {mean_score}"),
+        ],
+        vec![
+            "Peer Median".to_string(),
+            format!("{median_letter}  {median_score}"),
+        ],
+    ];
+    if !fiscal_year.is_empty() && fiscal_year != "-" {
+        summary.push(vec!["Fiscal Year".to_string(), fiscal_year]);
+    }
+    if !report_period.is_empty() && report_period != "-" {
+        summary.push(vec!["Period".to_string(), report_period]);
+    }
+    super::output::print_table(&["", ""], summary, &OutputFormat::Table);
+
+    if data["trap_enabled"].as_bool().unwrap_or(false) {
+        let title = val_str(&data["trap_title"]);
+        let content = val_str(&data["trap_content"]);
+        println!("\n⚠  {title}: {content}");
+    }
+
+    // Multi-dimensional ratings breakdown (type=3 only)
+    let Some(ratings) = data["ratings"].as_array() else {
+        return;
+    };
+
+    for rating in ratings {
+        if rating["type"].as_i64().unwrap_or(0) != 3 {
+            continue;
+        }
+        let Some(indicator) = rating.get("indicator") else {
+            continue;
+        };
+        let Some(subs) = rating["sub_indicators"].as_array() else {
+            continue;
+        };
+
+        let ind_name = val_str(&indicator["name"]);
+        let ind_letter = val_str(&indicator["letter"]);
+        let ind_score = val_str(&indicator["score"]);
+        let ind_change = indicator["change"].as_i64().unwrap_or(0);
+        println!(
+            "\n── {ind_name}  {}  {}  {} ──",
+            ind_letter,
+            ind_score,
+            change_arrow(ind_change)
+        );
+
+        let rows: Vec<Vec<String>> = subs
+            .iter()
+            .filter_map(|sub| {
+                let ind = sub.get("indicator")?;
+                let name = val_str(&ind["name"]);
+                let score = val_str(&ind["score"]);
+                let letter = val_str(&ind["letter"]);
+                let change = ind["change"].as_i64().unwrap_or(0);
+                Some(vec![
+                    name,
+                    score,
+                    letter,
+                    change_arrow(change).to_string(),
+                ])
+            })
+            .collect();
+
+        if !rows.is_empty() {
+            super::output::print_table(
+                &["indicator", "score", "grade", "trend"],
+                rows,
+                &OutputFormat::Table,
+            );
+        }
+    }
+}
+
+/// Fetch investment style and multi-dimensional score for a symbol.
+pub async fn cmd_score(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/v1/quote/security-ratings",
+        &[("counter_id", cid.as_str())],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Table => print_score(&data),
+    }
+    Ok(())
+}

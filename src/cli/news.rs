@@ -1,21 +1,9 @@
 use anyhow::{bail, Result};
-use time::OffsetDateTime;
 
 use super::{output::print_table, OutputFormat};
+use crate::utils::datetime::format_datetime;
 
 const NEWS_DETAIL_BASE: &str = "https://longbridge.com/news";
-
-/// Format an `OffsetDateTime` as "YYYY-MM-DD HH:MM".
-fn format_datetime(dt: OffsetDateTime) -> String {
-    format!(
-        "{}-{:02}-{:02} {:02}:{:02}",
-        dt.year(),
-        dt.month() as u8,
-        dt.day(),
-        dt.hour(),
-        dt.minute()
-    )
-}
 
 /// Return `s` truncated to `max` chars with a trailing `…`, or the original if it fits.
 fn truncate_display(s: &str, max: usize) -> String {
@@ -352,18 +340,6 @@ pub async fn cmd_news_detail(id: String) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn format_known_timestamp() {
-        let dt = OffsetDateTime::from_unix_timestamp(0).unwrap();
-        assert_eq!(format_datetime(dt), "1970-01-01 00:00");
-    }
-
-    #[test]
-    fn format_realistic_timestamp() {
-        let dt = OffsetDateTime::from_unix_timestamp(1_705_305_000).unwrap();
-        assert_eq!(format_datetime(dt), "2024-01-15 07:50");
-    }
 
     #[test]
     fn truncate_short_string_unchanged() {
