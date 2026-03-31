@@ -225,7 +225,7 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
                 .collect();
             println!("{}", serde_json::to_string_pretty(&records)?);
         }
-        OutputFormat::Table => {
+        OutputFormat::Pretty => {
             let headers = &[
                 "Symbol",
                 "Last",
@@ -328,7 +328,7 @@ pub async fn cmd_depth(symbol: String, format: &OutputFormat) -> Result<()> {
             });
             println!("{}", serde_json::to_string_pretty(&val)?);
         }
-        OutputFormat::Table => {
+        OutputFormat::Pretty => {
             println!("Symbol: {symbol}");
             println!("\nAsks (Sell):");
             let headers = &["Position", "Price", "Volume", "Orders"];
@@ -344,7 +344,7 @@ pub async fn cmd_depth(symbol: String, format: &OutputFormat) -> Result<()> {
                     ]
                 })
                 .collect();
-            print_table(headers, rows, &OutputFormat::Table);
+            print_table(headers, rows, &OutputFormat::Pretty);
 
             println!("\nBids (Buy):");
             let rows: Vec<Vec<String>> = depth
@@ -359,7 +359,7 @@ pub async fn cmd_depth(symbol: String, format: &OutputFormat) -> Result<()> {
                     ]
                 })
                 .collect();
-            print_table(headers, rows, &OutputFormat::Table);
+            print_table(headers, rows, &OutputFormat::Pretty);
         }
     }
     Ok(())
@@ -384,7 +384,7 @@ pub async fn cmd_brokers(symbol: String, format: &OutputFormat) -> Result<()> {
             });
             println!("{}", serde_json::to_string_pretty(&val)?);
         }
-        OutputFormat::Table => {
+        OutputFormat::Pretty => {
             println!("Symbol: {symbol}");
             println!("\nAsk Brokers:");
             let headers = &["Position", "Broker IDs"];
@@ -402,7 +402,7 @@ pub async fn cmd_brokers(symbol: String, format: &OutputFormat) -> Result<()> {
                     ]
                 })
                 .collect();
-            print_table(headers, rows, &OutputFormat::Table);
+            print_table(headers, rows, &OutputFormat::Pretty);
 
             println!("\nBid Brokers:");
             let rows: Vec<Vec<String>> = brokers
@@ -419,7 +419,7 @@ pub async fn cmd_brokers(symbol: String, format: &OutputFormat) -> Result<()> {
                     ]
                 })
                 .collect();
-            print_table(headers, rows, &OutputFormat::Table);
+            print_table(headers, rows, &OutputFormat::Pretty);
         }
     }
     Ok(())
@@ -686,7 +686,7 @@ pub async fn cmd_calc_index(
                 .collect();
             println!("{}", serde_json::to_string_pretty(&records)?);
         }
-        OutputFormat::Table => {
+        OutputFormat::Pretty => {
             let mut headers = vec!["Symbol"];
             headers.extend(columns.iter().map(|(_, h, _)| *h));
             let rows = results
@@ -739,7 +739,7 @@ pub async fn cmd_capital_dist(symbol: String, format: &OutputFormat) -> Result<(
             });
             println!("{}", serde_json::to_string_pretty(&val)?);
         }
-        OutputFormat::Table => {
+        OutputFormat::Pretty => {
             println!("Symbol: {}  Time: {}", symbol, fmt_datetime(dist.timestamp));
             let headers = &["Direction", "Large", "Medium", "Small"];
             let rows = vec![
@@ -756,7 +756,7 @@ pub async fn cmd_capital_dist(symbol: String, format: &OutputFormat) -> Result<(
                     fmt_dec(dist.capital_out.small),
                 ],
             ];
-            print_table(headers, rows, &OutputFormat::Table);
+            print_table(headers, rows, &OutputFormat::Pretty);
         }
     }
     Ok(())
@@ -837,7 +837,7 @@ pub async fn cmd_trading_session(format: &OutputFormat) -> Result<()> {
                 .collect();
             println!("{}", serde_json::to_string_pretty(&val)?);
         }
-        OutputFormat::Table => {
+        OutputFormat::Pretty => {
             let headers = &["Market", "Session", "Open", "Close"];
             let mut rows = vec![];
             for s in &sessions {
@@ -850,7 +850,7 @@ pub async fn cmd_trading_session(format: &OutputFormat) -> Result<()> {
                     ]);
                 }
             }
-            print_table(headers, rows, &OutputFormat::Table);
+            print_table(headers, rows, &OutputFormat::Pretty);
         }
     }
     Ok(())
@@ -887,7 +887,7 @@ pub async fn cmd_trading_days(
             });
             println!("{}", serde_json::to_string_pretty(&val)?);
         }
-        OutputFormat::Table => {
+        OutputFormat::Pretty => {
             println!("Trading days:");
             for chunk in days.trading_days.chunks(7) {
                 println!(
@@ -1237,7 +1237,7 @@ pub async fn run_depth(api: &dyn QuoteApi, symbol: String, format: &OutputFormat
             });
             println!("{}", serde_json::to_string_pretty(&val)?);
         }
-        OutputFormat::Table => {
+        OutputFormat::Pretty => {
             let headers = &["Position", "Price", "Volume", "Orders"];
             let ask_rows: Vec<Vec<String>> = depth
                 .asks
@@ -1264,9 +1264,9 @@ pub async fn run_depth(api: &dyn QuoteApi, symbol: String, format: &OutputFormat
                 })
                 .collect();
             println!("Asks:");
-            print_table(headers, ask_rows, &OutputFormat::Table);
+            print_table(headers, ask_rows, &OutputFormat::Pretty);
             println!("Bids:");
-            print_table(headers, bid_rows, &OutputFormat::Table);
+            print_table(headers, bid_rows, &OutputFormat::Pretty);
         }
     }
     Ok(())
@@ -1283,7 +1283,7 @@ pub async fn run_brokers(api: &dyn QuoteApi, symbol: String, format: &OutputForm
             });
             println!("{}", serde_json::to_string_pretty(&val)?);
         }
-        OutputFormat::Table => {
+        OutputFormat::Pretty => {
             let headers = &["Position", "Broker IDs"];
             let ask_rows: Vec<Vec<String>> = brokers
                 .ask_brokers
@@ -1314,9 +1314,9 @@ pub async fn run_brokers(api: &dyn QuoteApi, symbol: String, format: &OutputForm
                 })
                 .collect();
             println!("Ask Brokers:");
-            print_table(headers, ask_rows, &OutputFormat::Table);
+            print_table(headers, ask_rows, &OutputFormat::Pretty);
             println!("Bid Brokers:");
-            print_table(headers, bid_rows, &OutputFormat::Table);
+            print_table(headers, bid_rows, &OutputFormat::Pretty);
         }
     }
     Ok(())
@@ -1860,7 +1860,7 @@ mod tests {
             .with(mockall::predicate::eq(vec!["TSLA.US".to_string()]))
             .times(1)
             .returning(|_| Ok(vec![]));
-        run_quote(&mock, vec!["TSLA.US".to_string()], &OutputFormat::Table)
+        run_quote(&mock, vec!["TSLA.US".to_string()], &OutputFormat::Pretty)
             .await
             .unwrap();
     }
@@ -1868,7 +1868,7 @@ mod tests {
     #[tokio::test]
     async fn test_run_quote_empty_symbols_errors() {
         let mock = MockQuoteApi::new();
-        let result = run_quote(&mock, vec![], &OutputFormat::Table).await;
+        let result = run_quote(&mock, vec![], &OutputFormat::Pretty).await;
         assert!(result.is_err());
     }
 
@@ -1884,7 +1884,7 @@ mod tests {
                     bids: vec![],
                 })
             });
-        run_depth(&mock, "700.HK".to_string(), &OutputFormat::Table)
+        run_depth(&mock, "700.HK".to_string(), &OutputFormat::Pretty)
             .await
             .unwrap();
     }
@@ -1901,7 +1901,7 @@ mod tests {
                     bid_brokers: vec![],
                 })
             });
-        run_brokers(&mock, "700.HK".to_string(), &OutputFormat::Table)
+        run_brokers(&mock, "700.HK".to_string(), &OutputFormat::Pretty)
             .await
             .unwrap();
     }
@@ -1916,7 +1916,7 @@ mod tests {
             )
             .times(1)
             .returning(|_, _| Ok(vec![]));
-        run_trades(&mock, "AAPL.US".to_string(), 20, &OutputFormat::Table)
+        run_trades(&mock, "AAPL.US".to_string(), 20, &OutputFormat::Pretty)
             .await
             .unwrap();
     }
@@ -1928,7 +1928,7 @@ mod tests {
             .with(mockall::predicate::eq("TSLA.US".to_string()))
             .times(1)
             .returning(|_| Ok(vec![]));
-        run_intraday(&mock, "TSLA.US".to_string(), &OutputFormat::Table)
+        run_intraday(&mock, "TSLA.US".to_string(), &OutputFormat::Pretty)
             .await
             .unwrap();
     }
@@ -1951,7 +1951,7 @@ mod tests {
             Period::Day,
             100,
             AdjustType::NoAdjust,
-            &OutputFormat::Table,
+            &OutputFormat::Pretty,
         )
         .await
         .unwrap();
@@ -1972,7 +1972,7 @@ mod tests {
             AdjustType::NoAdjust,
             Some(start),
             Some(end),
-            &OutputFormat::Table,
+            &OutputFormat::Pretty,
         )
         .await
         .unwrap();
@@ -1991,7 +1991,7 @@ mod tests {
             AdjustType::NoAdjust,
             None,
             None,
-            &OutputFormat::Table,
+            &OutputFormat::Pretty,
         )
         .await
         .unwrap();
@@ -2004,7 +2004,7 @@ mod tests {
             .with(mockall::predicate::eq(vec!["TSLA.US".to_string()]))
             .times(1)
             .returning(|_| Ok(vec![]));
-        run_static(&mock, vec!["TSLA.US".to_string()], &OutputFormat::Table)
+        run_static(&mock, vec!["TSLA.US".to_string()], &OutputFormat::Pretty)
             .await
             .unwrap();
     }
@@ -2016,7 +2016,7 @@ mod tests {
             .with(mockall::predicate::eq("TSLA.US".to_string()))
             .times(1)
             .returning(|_| Ok(vec![]));
-        run_capital_flow(&mock, "TSLA.US".to_string(), &OutputFormat::Table)
+        run_capital_flow(&mock, "TSLA.US".to_string(), &OutputFormat::Pretty)
             .await
             .unwrap();
     }
@@ -2043,7 +2043,7 @@ mod tests {
                     },
                 })
             });
-        run_capital_dist(&mock, "TSLA.US".to_string(), &OutputFormat::Table)
+        run_capital_dist(&mock, "TSLA.US".to_string(), &OutputFormat::Pretty)
             .await
             .unwrap();
     }
@@ -2054,7 +2054,7 @@ mod tests {
         mock.expect_trading_session()
             .times(1)
             .returning(|| Ok(vec![]));
-        run_trading_session(&mock, &OutputFormat::Table)
+        run_trading_session(&mock, &OutputFormat::Pretty)
             .await
             .unwrap();
     }
@@ -2066,7 +2066,7 @@ mod tests {
             .with(mockall::predicate::eq(longbridge::Market::HK))
             .times(1)
             .returning(|_| Ok(vec![]));
-        run_security_list(&mock, longbridge::Market::HK, &OutputFormat::Table)
+        run_security_list(&mock, longbridge::Market::HK, &OutputFormat::Pretty)
             .await
             .unwrap();
     }
@@ -2075,7 +2075,9 @@ mod tests {
     async fn test_run_participants_dispatches() {
         let mut mock = MockQuoteApi::new();
         mock.expect_participants().times(1).returning(|| Ok(vec![]));
-        run_participants(&mock, &OutputFormat::Table).await.unwrap();
+        run_participants(&mock, &OutputFormat::Pretty)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -2084,7 +2086,7 @@ mod tests {
         mock.expect_subscriptions()
             .times(1)
             .returning(|| Ok(vec![]));
-        run_subscriptions(&mock, &OutputFormat::Table)
+        run_subscriptions(&mock, &OutputFormat::Pretty)
             .await
             .unwrap();
     }
@@ -2101,7 +2103,7 @@ mod tests {
         run_option_quote(
             &mock,
             vec!["AAPL240119C190000".to_string()],
-            &OutputFormat::Table,
+            &OutputFormat::Pretty,
         )
         .await
         .unwrap();
@@ -2114,7 +2116,7 @@ mod tests {
             .with(mockall::predicate::eq("AAPL.US".to_string()))
             .times(1)
             .returning(|_| Ok(vec![]));
-        run_option_chain_dates(&mock, "AAPL.US".to_string(), &OutputFormat::Table)
+        run_option_chain_dates(&mock, "AAPL.US".to_string(), &OutputFormat::Pretty)
             .await
             .unwrap();
     }
@@ -2130,7 +2132,7 @@ mod tests {
             )
             .times(1)
             .returning(|_, _| Ok(vec![]));
-        run_option_chain_strikes(&mock, "AAPL.US".to_string(), date, &OutputFormat::Table)
+        run_option_chain_strikes(&mock, "AAPL.US".to_string(), date, &OutputFormat::Pretty)
             .await
             .unwrap();
     }
@@ -2141,7 +2143,7 @@ mod tests {
         mock.expect_warrant_quote()
             .times(1)
             .returning(|_| Ok(vec![]));
-        run_warrant_quote(&mock, vec!["12345.HK".to_string()], &OutputFormat::Table)
+        run_warrant_quote(&mock, vec!["12345.HK".to_string()], &OutputFormat::Pretty)
             .await
             .unwrap();
     }
@@ -2153,7 +2155,7 @@ mod tests {
             .with(mockall::predicate::eq("700.HK".to_string()))
             .times(1)
             .returning(|_| Ok(vec![]));
-        run_warrant_list(&mock, "700.HK".to_string(), &OutputFormat::Table)
+        run_warrant_list(&mock, "700.HK".to_string(), &OutputFormat::Pretty)
             .await
             .unwrap();
     }
@@ -2164,7 +2166,7 @@ mod tests {
         mock.expect_warrant_issuers()
             .times(1)
             .returning(|| Ok(vec![]));
-        run_warrant_issuers(&mock, &OutputFormat::Table)
+        run_warrant_issuers(&mock, &OutputFormat::Pretty)
             .await
             .unwrap();
     }

@@ -28,7 +28,7 @@ pub async fn cmd_exchange_rate(format: &OutputFormat, verbose: bool) -> Result<(
     let data = http_get("/v1/asset/exchange_rates", &[], verbose).await?;
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Table => print_exchange_rates(&data),
+        OutputFormat::Pretty => print_exchange_rates(&data),
     }
     Ok(())
 }
@@ -53,7 +53,7 @@ fn print_exchange_rates(data: &Value) {
         super::output::print_table(
             &["pair", "average_rate", "bid_rate", "offer_rate"],
             rows,
-            &OutputFormat::Table,
+            &OutputFormat::Pretty,
         );
     } else {
         print_json(data);
@@ -67,7 +67,7 @@ pub async fn cmd_my_rate(format: &OutputFormat, verbose: bool) -> Result<()> {
     let data = http_get("/v1/billing/my_rate", &[], verbose).await?;
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Table => print_my_rate(&data),
+        OutputFormat::Pretty => print_my_rate(&data),
     }
     Ok(())
 }
@@ -106,7 +106,7 @@ fn print_my_rate(data: &Value) {
         super::output::print_table(
             &["currency", "type", "rate", "divisor", "min_fee", "max_fee"],
             rows,
-            &OutputFormat::Table,
+            &OutputFormat::Pretty,
         );
     }
 }

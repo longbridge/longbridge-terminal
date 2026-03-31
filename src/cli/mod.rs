@@ -16,7 +16,8 @@ pub mod watchlist;
 #[derive(ValueEnum, Clone, Default, Debug)]
 pub enum OutputFormat {
     #[default]
-    Table,
+    #[value(alias = "table")]
+    Pretty,
     Json,
 }
 
@@ -52,8 +53,8 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,
 
-    /// Output format: 'table' for human-readable, 'json' for AI agents and scripting
-    #[arg(long, global = true, default_value = "table")]
+    /// Output format: 'pretty' for human-readable, 'json' for AI agents and scripting
+    #[arg(long, global = true, default_value = "pretty")]
     pub format: OutputFormat,
 
     /// Clear stored OAuth token and exit (same as `longbridge logout`)
@@ -1568,7 +1569,7 @@ mod tests {
     #[test]
     fn test_format_default_is_table() {
         let cli = parse(&["longbridge", "quote", "TSLA.US"]).unwrap();
-        assert!(matches!(cli.format, OutputFormat::Table));
+        assert!(matches!(cli.format, OutputFormat::Pretty));
     }
 
     #[test]

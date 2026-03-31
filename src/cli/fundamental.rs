@@ -69,7 +69,7 @@ fn print_kv_section(value: &Value, depth: usize) {
             }
 
             if !scalar_rows.is_empty() {
-                super::output::print_table(&["key", "value"], scalar_rows, &OutputFormat::Table);
+                super::output::print_table(&["key", "value"], scalar_rows, &OutputFormat::Pretty);
             }
 
             for (k, v) in nested {
@@ -93,7 +93,7 @@ fn print_kv_section(value: &Value, depth: usize) {
                     })
                     .collect();
                 let header_refs: Vec<&str> = headers.iter().map(String::as_str).collect();
-                super::output::print_table(&header_refs, rows, &OutputFormat::Table);
+                super::output::print_table(&header_refs, rows, &OutputFormat::Pretty);
             } else {
                 for (i, item) in arr.iter().enumerate() {
                     if i > 0 {
@@ -206,7 +206,7 @@ fn print_financials(value: &Value) {
             }
         }
 
-        super::output::print_table(&headers, rows, &OutputFormat::Table);
+        super::output::print_table(&headers, rows, &OutputFormat::Pretty);
     }
 }
 
@@ -226,7 +226,7 @@ pub async fn cmd_financial_report(
     let data = http_get("/v1/quote/financial-reports", &params, verbose).await?;
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Table => print_financials(&data),
+        OutputFormat::Pretty => print_financials(&data),
     }
     Ok(())
 }
@@ -262,7 +262,7 @@ fn print_institution_rating(ratings: &Value, instratings: &Value) {
             val_str(&instratings["updated_at"]),
         ];
         println!("Consensus:");
-        super::output::print_table(&headers, vec![row], &OutputFormat::Table);
+        super::output::print_table(&headers, vec![row], &OutputFormat::Pretty);
     }
 
     // Rating breakdown: merge counts from both endpoints
@@ -288,7 +288,7 @@ fn print_institution_rating(ratings: &Value, instratings: &Value) {
             val_str(&re["total"]),
         ];
         println!("\nRating breakdown:");
-        super::output::print_table(&headers, vec![row], &OutputFormat::Table);
+        super::output::print_table(&headers, vec![row], &OutputFormat::Pretty);
     }
 
     // Target price range
@@ -297,7 +297,7 @@ fn print_institution_rating(ratings: &Value, instratings: &Value) {
         let headers = ["lowest_price", "highest_price", "prev_close"];
         let row: Vec<String> = headers.iter().map(|k| val_str(&t[k])).collect();
         println!("\nTarget price range:");
-        super::output::print_table(&headers, vec![row], &OutputFormat::Table);
+        super::output::print_table(&headers, vec![row], &OutputFormat::Pretty);
     }
 
     // Industry comparison
@@ -313,7 +313,7 @@ fn print_institution_rating(ratings: &Value, instratings: &Value) {
                 val_str(&ratings["industry_total"]),
             ];
             println!("\nIndustry:");
-            super::output::print_table(&headers, vec![row], &OutputFormat::Table);
+            super::output::print_table(&headers, vec![row], &OutputFormat::Pretty);
         }
     }
 }
@@ -330,7 +330,7 @@ fn print_institution_rating_detail(data: &Value) {
                 .iter()
                 .map(|item| ordered.iter().map(|h| val_str(&item[h])).collect())
                 .collect();
-            super::output::print_table(&ordered, rows, &OutputFormat::Table);
+            super::output::print_table(&ordered, rows, &OutputFormat::Pretty);
         }
     }
 
@@ -350,7 +350,7 @@ fn print_institution_rating_detail(data: &Value) {
         let headers = ["data_coverage", "prediction_accuracy", "updated_at"];
         let row = vec![data_pct, accuracy, val_str(&t["updated_at"])];
         println!("\nTarget accuracy:");
-        super::output::print_table(&headers, vec![row], &OutputFormat::Table);
+        super::output::print_table(&headers, vec![row], &OutputFormat::Pretty);
     }
 
     // target.list — weekly price target history, skip raw timestamp
@@ -367,7 +367,7 @@ fn print_institution_rating_detail(data: &Value) {
                     .map(|item| headers.iter().map(|h| val_str(&item[h.as_str()])).collect())
                     .collect();
                 let header_refs: Vec<&str> = headers.iter().map(String::as_str).collect();
-                super::output::print_table(&header_refs, rows, &OutputFormat::Table);
+                super::output::print_table(&header_refs, rows, &OutputFormat::Pretty);
             }
         }
     }
@@ -397,7 +397,7 @@ pub async fn cmd_institution_rating(
             "analyst": ratings,
             "instratings": instratings,
         })),
-        OutputFormat::Table => print_institution_rating(&ratings, &instratings),
+        OutputFormat::Pretty => print_institution_rating(&ratings, &instratings),
     }
     Ok(())
 }
@@ -417,7 +417,7 @@ pub async fn cmd_institution_rating_detail(
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Table => print_institution_rating_detail(&data),
+        OutputFormat::Pretty => print_institution_rating_detail(&data),
     }
     Ok(())
 }
@@ -462,7 +462,7 @@ fn print_dividends(value: &Value) {
         .filter(|row| seen.insert(row.clone()))
         .collect();
 
-    super::output::print_table(&header_refs, rows, &OutputFormat::Table);
+    super::output::print_table(&header_refs, rows, &OutputFormat::Pretty);
 }
 
 /// Fetch dividend history for a symbol.
@@ -476,7 +476,7 @@ pub async fn cmd_dividend(symbol: String, format: &OutputFormat, verbose: bool) 
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Table => print_dividends(&data),
+        OutputFormat::Pretty => print_dividends(&data),
     }
     Ok(())
 }
@@ -520,7 +520,7 @@ fn print_forecast_eps(data: &Value) {
         })
         .collect();
     println!("EPS Forecasts (recent {}):", rows.len());
-    super::output::print_table(&headers, rows, &OutputFormat::Table);
+    super::output::print_table(&headers, rows, &OutputFormat::Pretty);
 }
 
 /// Consensus estimates — rows = metrics, columns = periods.
@@ -587,7 +587,7 @@ fn print_consensus(data: &Value) {
         val_str(&data["currency"]),
         val_str(&data["current_period"])
     );
-    super::output::print_table(&header_refs, rows, &OutputFormat::Table);
+    super::output::print_table(&header_refs, rows, &OutputFormat::Pretty);
 }
 
 /// Fetch EPS forecasts and analyst consensus estimates.
@@ -601,7 +601,7 @@ pub async fn cmd_forecast_eps(symbol: String, format: &OutputFormat, verbose: bo
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Table => print_forecast_eps(&data),
+        OutputFormat::Pretty => print_forecast_eps(&data),
     }
     Ok(())
 }
@@ -617,7 +617,7 @@ pub async fn cmd_consensus(symbol: String, format: &OutputFormat, verbose: bool)
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Table => print_consensus(&data),
+        OutputFormat::Pretty => print_consensus(&data),
     }
     Ok(())
 }
@@ -663,7 +663,7 @@ fn print_valuation_detail(data: &Value) {
             val_str(&overview["date"]),
         ];
         println!("Overview:");
-        super::output::print_table(&headers, vec![row], &OutputFormat::Table);
+        super::output::print_table(&headers, vec![row], &OutputFormat::Pretty);
         if !desc.is_empty() {
             println!("  {desc}");
         }
@@ -685,7 +685,7 @@ fn print_valuation_detail(data: &Value) {
                 })
                 .collect();
             println!("\nPeers ({}):", rows.len());
-            super::output::print_table(&["name", ind], rows, &OutputFormat::Table);
+            super::output::print_table(&["name", ind], rows, &OutputFormat::Pretty);
         }
     }
 }
@@ -714,7 +714,7 @@ fn print_valuation_history(data: &Value) {
             val_str(&m["median"]),
         ];
         println!("{}:", key.to_uppercase());
-        super::output::print_table(&headers, vec![row], &OutputFormat::Table);
+        super::output::print_table(&headers, vec![row], &OutputFormat::Pretty);
         if !desc.is_empty() {
             println!("  {desc}");
         }
@@ -729,7 +729,7 @@ fn print_valuation_history(data: &Value) {
                     })
                     .collect();
                 println!();
-                super::output::print_table(&["date", "value"], rows, &OutputFormat::Table);
+                super::output::print_table(&["date", "value"], rows, &OutputFormat::Pretty);
             }
         }
     }
@@ -754,7 +754,7 @@ pub async fn cmd_valuation(
     let data = http_get("/v1/quote/valuation", &params, verbose).await?;
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Table => {
+        OutputFormat::Pretty => {
             let has_data = data["metrics"].as_object().is_some_and(|m| {
                 m.values()
                     .any(|v| !val_str(&v["median"]).is_empty() && val_str(&v["median"]) != "-")
@@ -784,7 +784,7 @@ pub async fn cmd_valuation_detail(
     let data = http_get("/v1/quote/valuation/detail", &params, verbose).await?;
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Table => print_valuation_detail(&data),
+        OutputFormat::Pretty => print_valuation_detail(&data),
     }
     Ok(())
 }
@@ -811,7 +811,7 @@ fn print_dividend_detail(data: &Value) {
             })
         })
         .collect();
-    super::output::print_table(&headers, rows, &OutputFormat::Table);
+    super::output::print_table(&headers, rows, &OutputFormat::Pretty);
 }
 
 /// Fetch dividend distribution scheme details.
@@ -829,7 +829,7 @@ pub async fn cmd_dividend_detail(
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Table => print_dividend_detail(&data),
+        OutputFormat::Pretty => print_dividend_detail(&data),
     }
     Ok(())
 }
@@ -894,7 +894,7 @@ fn print_score(data: &Value) {
     if !report_period.is_empty() && report_period != "-" {
         summary.push(vec!["Period".to_string(), report_period]);
     }
-    super::output::print_table(&["", ""], summary, &OutputFormat::Table);
+    super::output::print_table(&["", ""], summary, &OutputFormat::Pretty);
 
     if data["trap_enabled"].as_bool().unwrap_or(false) {
         let title = val_str(&data["trap_title"]);
@@ -945,7 +945,7 @@ fn print_score(data: &Value) {
             super::output::print_table(
                 &["indicator", "score", "grade", "trend"],
                 rows,
-                &OutputFormat::Table,
+                &OutputFormat::Pretty,
             );
         }
     }
@@ -962,7 +962,7 @@ pub async fn cmd_score(symbol: String, format: &OutputFormat, verbose: bool) -> 
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Table => print_score(&data),
+        OutputFormat::Pretty => print_score(&data),
     }
     Ok(())
 }
@@ -996,7 +996,7 @@ fn print_fund_holders(data: &Value) {
             ]
         })
         .collect();
-    super::output::print_table(&headers, rows, &OutputFormat::Table);
+    super::output::print_table(&headers, rows, &OutputFormat::Pretty);
 }
 
 // ── shareholders ─────────────────────────────────────────────────────────────
@@ -1056,7 +1056,7 @@ fn print_shareholders(data: &Value) {
             ]
         })
         .collect();
-    super::output::print_table(&headers, rows, &OutputFormat::Table);
+    super::output::print_table(&headers, rows, &OutputFormat::Pretty);
 }
 
 /// Fetch institutional shareholders for a symbol.
@@ -1083,7 +1083,7 @@ pub async fn cmd_shareholders(
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Table => print_shareholders(&data),
+        OutputFormat::Pretty => print_shareholders(&data),
     }
     Ok(())
 }
@@ -1105,7 +1105,7 @@ pub async fn cmd_fund_holders(
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Table => print_fund_holders(&data),
+        OutputFormat::Pretty => print_fund_holders(&data),
     }
     Ok(())
 }
@@ -1214,7 +1214,7 @@ pub async fn cmd_finance_calendar(
 
     match format {
         OutputFormat::Json => print_json(&resp),
-        OutputFormat::Table => print_finance_calendar(&resp),
+        OutputFormat::Pretty => print_finance_calendar(&resp),
     }
     Ok(())
 }

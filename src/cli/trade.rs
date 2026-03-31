@@ -123,7 +123,7 @@ pub async fn cmd_order_detail(order_id: String, format: &OutputFormat) -> Result
             });
             println!("{}", serde_json::to_string_pretty(&val)?);
         }
-        OutputFormat::Table => {
+        OutputFormat::Pretty => {
             let headers = &["Field", "Value"];
             let rows = vec![
                 vec!["Order ID".to_string(), detail.order_id.clone()],
@@ -151,7 +151,7 @@ pub async fn cmd_order_detail(order_id: String, format: &OutputFormat) -> Result
                 ],
                 vec!["Remark".to_string(), detail.msg.clone()],
             ];
-            print_table(headers, rows, &OutputFormat::Table);
+            print_table(headers, rows, &OutputFormat::Pretty);
         }
     }
     Ok(())
@@ -261,7 +261,7 @@ pub async fn cmd_submit_order(
             let val = serde_json::json!({ "order_id": resp.order_id });
             println!("{}", serde_json::to_string_pretty(&val)?);
         }
-        OutputFormat::Table => {
+        OutputFormat::Pretty => {
             println!("Order submitted successfully.");
             println!("Order ID: {}", resp.order_id);
         }
@@ -615,7 +615,7 @@ pub async fn run_order_detail(
             let val = serde_json::json!({"order_id": detail.order_id, "symbol": detail.symbol, "side": format!("{:?}", detail.side), "status": format!("{:?}", detail.status)});
             println!("{}", serde_json::to_string_pretty(&val)?);
         }
-        OutputFormat::Table => {
+        OutputFormat::Pretty => {
             let headers = &["Field", "Value"];
             let rows = vec![
                 vec!["Order ID".to_string(), detail.order_id.clone()],
@@ -623,7 +623,7 @@ pub async fn run_order_detail(
                 vec!["Side".to_string(), format!("{:?}", detail.side)],
                 vec!["Status".to_string(), format!("{:?}", detail.status)],
             ];
-            print_table(headers, rows, &OutputFormat::Table);
+            print_table(headers, rows, &OutputFormat::Pretty);
         }
     }
     Ok(())
@@ -694,7 +694,7 @@ pub async fn run_submit_order(
                 serde_json::to_string_pretty(&serde_json::json!({"order_id": resp.order_id}))?
             );
         }
-        OutputFormat::Table => println!("Order ID: {}", resp.order_id),
+        OutputFormat::Pretty => println!("Order ID: {}", resp.order_id),
     }
     Ok(())
 }
@@ -894,7 +894,7 @@ mod tests {
         mock.expect_today_orders()
             .times(1)
             .returning(|_| Ok(vec![]));
-        run_today_orders(&mock, GetTodayOrdersOptions::new(), &OutputFormat::Table)
+        run_today_orders(&mock, GetTodayOrdersOptions::new(), &OutputFormat::Pretty)
             .await
             .unwrap();
     }
@@ -905,7 +905,7 @@ mod tests {
         mock.expect_history_orders()
             .times(1)
             .returning(|_| Ok(vec![]));
-        run_history_orders(&mock, GetHistoryOrdersOptions::new(), &OutputFormat::Table)
+        run_history_orders(&mock, GetHistoryOrdersOptions::new(), &OutputFormat::Pretty)
             .await
             .unwrap();
     }
@@ -919,7 +919,7 @@ mod tests {
         run_today_executions(
             &mock,
             GetTodayExecutionsOptions::new(),
-            &OutputFormat::Table,
+            &OutputFormat::Pretty,
         )
         .await
         .unwrap();
@@ -934,7 +934,7 @@ mod tests {
         run_history_executions(
             &mock,
             GetHistoryExecutionsOptions::new(),
-            &OutputFormat::Table,
+            &OutputFormat::Pretty,
         )
         .await
         .unwrap();
@@ -948,7 +948,7 @@ mod tests {
                 order_id: "order-1".to_string(),
             })
         });
-        run_submit_order(&mock, make_submit_opts(), &OutputFormat::Table)
+        run_submit_order(&mock, make_submit_opts(), &OutputFormat::Pretty)
             .await
             .unwrap();
     }
@@ -980,7 +980,7 @@ mod tests {
             .with(mockall::predicate::eq(None::<String>))
             .times(1)
             .returning(|_| Ok(vec![]));
-        run_balance(&mock, None, &OutputFormat::Table)
+        run_balance(&mock, None, &OutputFormat::Pretty)
             .await
             .unwrap();
     }
@@ -992,7 +992,7 @@ mod tests {
         mock.expect_stock_positions()
             .times(1)
             .returning(|| Ok(StockPositionsResponse { channels: vec![] }));
-        run_positions(&mock, &OutputFormat::Table).await.unwrap();
+        run_positions(&mock, &OutputFormat::Pretty).await.unwrap();
     }
 
     #[tokio::test]
@@ -1002,7 +1002,7 @@ mod tests {
         mock.expect_fund_positions()
             .times(1)
             .returning(|| Ok(FundPositionsResponse { channels: vec![] }));
-        run_fund_positions(&mock, &OutputFormat::Table)
+        run_fund_positions(&mock, &OutputFormat::Pretty)
             .await
             .unwrap();
     }
@@ -1021,7 +1021,7 @@ mod tests {
                     fm_factor: Decimal::ZERO,
                 })
             });
-        run_margin_ratio(&mock, "TSLA.US".to_string(), &OutputFormat::Table)
+        run_margin_ratio(&mock, "TSLA.US".to_string(), &OutputFormat::Pretty)
             .await
             .unwrap();
     }
