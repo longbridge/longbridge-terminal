@@ -3,7 +3,9 @@
     "allow": [
       "Bash(cargo clippy:*)",
       "Bash(cargo test:*)",
-      "WebFetch(domain:docs.rs)"
+      "WebFetch(domain:docs.rs)",
+      "WebFetch(domain:open.longbridge.com)",
+      "WebFetch(domain:github.com)"
     ]
   }
 }
