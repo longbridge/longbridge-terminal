@@ -1167,47 +1167,31 @@ fn print_finance_calendar(payload: &Value) {
     }
 }
 
-const ALL_CALENDAR_TYPES: &[&str] = &[
-    "earning",
-    "financial",
-    "report",
-    "dividend",
-    "ipo",
-    "meeting",
-];
-
-/// Fetch finance calendar events for a symbol.
+/// Fetch finance calendar events by type. Optionally filter by symbol.
 pub async fn cmd_finance_calendar(
-    symbol: String,
+    event_type: String,
+    symbol: Option<String>,
     date: Option<String>,
     date_end: Option<String>,
-    types: Vec<String>,
     count: u32,
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let today = time::OffsetDateTime::now_utc().date();
-    let start =
-        date.unwrap_or_else(|| format!("{}", today.saturating_sub(time::Duration::days(180))));
-    let end =
-        date_end.unwrap_or_else(|| format!("{}", today.saturating_add(time::Duration::days(180))));
+    let start = date.unwrap_or_else(|| format!("{today}"));
     let count_str = count.to_string();
-
-    let active_types: Vec<&str> = if types.is_empty() {
-        ALL_CALENDAR_TYPES.to_vec()
-    } else {
-        types.iter().map(String::as_str).collect()
-    };
+    let cid = symbol.as_deref().map(symbol_to_counter_id);
 
     let mut params: Vec<(&str, &str)> = vec![
         ("date", start.as_str()),
-        ("date_end", end.as_str()),
         ("count", count_str.as_str()),
-        ("counter_ids[]", cid.as_str()),
+        ("types[]", event_type.as_str()),
     ];
-    for t in &active_types {
-        params.push(("types[]", t));
+    if let Some(ref e) = date_end {
+        params.push(("date_end", e.as_str()));
+    }
+    if let Some(ref c) = cid {
+        params.push(("counter_ids[]", c.as_str()));
     }
 
     let resp = super::api::http_get("/v1/quote/finance_calendar", &params, verbose).await?;
