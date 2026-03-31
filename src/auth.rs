@@ -57,7 +57,7 @@ fn token_file_path() -> Result<PathBuf> {
 
 /// Try to open a URL in the system browser. Returns `true` if the command was
 /// launched successfully (the browser may still fail to load the page).
-fn open_browser(url: &str) -> bool {
+pub fn open_browser(url: &str) -> bool {
     #[cfg(target_os = "macos")]
     let mut cmd = std::process::Command::new("open");
     #[cfg(target_os = "windows")]
