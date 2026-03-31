@@ -55,6 +55,125 @@ fn token_file_path() -> Result<PathBuf> {
         .join(client_id()))
 }
 
+/// Write a token JSON blob to the SDK token file path.
+fn save_token(client_id: &str, token_resp: &serde_json::Value) -> Result<()> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let access_token = token_resp["access_token"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("No access_token in token response"))?;
+    let expires_in = token_resp["expires_in"].as_u64().unwrap_or(3600);
+    let refresh_token = token_resp["refresh_token"].as_str();
+    let expires_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + expires_in;
+
+    let token = serde_json::json!({
+        "client_id": client_id,
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "expires_at": expires_at,
+    });
+
+    let token_path = token_file_path()?;
+    if let Some(parent) = token_path.parent() {
+        fs::create_dir_all(parent).context("Failed to create token directory")?;
+    }
+    fs::write(&token_path, serde_json::to_string_pretty(&token).unwrap())
+        .context("Failed to write token file")?;
+    Ok(())
+}
+
+/// Device Authorization Flow (RFC 8628).
+///
+/// Displays a URL for the user to open in any browser (no localhost redirect needed).
+/// Polls for the token until the user completes authorization or the code expires.
+/// Works on any machine including SSH sessions, cloud agents, and headless servers.
+pub async fn device_login() -> Result<()> {
+    use std::time::{Duration, Instant};
+
+    let oauth_base = oauth_base_url();
+    let client_id = client_id();
+    let http_client = reqwest::Client::new();
+
+    // Step 1: request device & user codes.
+    let raw = http_client
+        .post(format!("{oauth_base}/device/authorize"))
+        .form(&[("client_id", client_id)])
+        .send()
+        .await
+        .context("Device authorization request failed")?;
+
+    if !raw.status().is_success() {
+        let status = raw.status();
+        let body = raw.text().await.unwrap_or_default();
+        anyhow::bail!("Device authorization failed ({status}): {body}");
+    }
+
+    let device_resp = raw
+        .json::<serde_json::Value>()
+        .await
+        .context("Failed to parse device authorization response")?;
+
+    let device_code = device_resp["device_code"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("No device_code in response"))?
+        .to_owned();
+    let verification_url = device_resp["verification_uri_complete"]
+        .as_str()
+        .unwrap_or_else(|| device_resp["verification_uri"].as_str().unwrap_or(""));
+    let expires_in = device_resp["expires_in"].as_u64().unwrap_or(300);
+    let interval = device_resp["interval"].as_u64().unwrap_or(5);
+
+    println!("Open the following URL in your browser to authorize:");
+    println!();
+    println!("  {verification_url}");
+    println!();
+    println!("Waiting for authorization...");
+
+    // Step 2: poll until authorized or expired.
+    let deadline = Instant::now() + Duration::from_secs(expires_in);
+    let poll_interval = Duration::from_secs(interval);
+
+    loop {
+        tokio::time::sleep(poll_interval).await;
+
+        if Instant::now() >= deadline {
+            anyhow::bail!("Device authorization timed out — please try again.");
+        }
+
+        let raw = http_client
+            .post(format!("{oauth_base}/token"))
+            .form(&[
+                ("client_id", client_id),
+                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+                ("device_code", device_code.as_str()),
+            ])
+            .send()
+            .await
+            .context("Token poll request failed")?;
+
+        if raw.status().is_success() {
+            let token_resp = raw
+                .json::<serde_json::Value>()
+                .await
+                .context("Failed to parse token response")?;
+            save_token(client_id, &token_resp)?;
+            println!("Successfully authenticated.");
+            return Ok(());
+        }
+
+        let err_resp = raw.json::<serde_json::Value>().await.unwrap_or_default();
+        match err_resp["error"].as_str() {
+            Some("authorization_pending" | "slow_down") => {}
+            Some(other) => anyhow::bail!("Authorization failed: {other}"),
+            None => anyhow::bail!("Unexpected token poll response"),
+        }
+    }
+}
+
 /// Headless OAuth login for remote environments (SSH, cloud agents, etc.).
 ///
 /// Prints the authorization URL. The user opens it in a local browser, completes
@@ -123,37 +242,12 @@ pub async fn headless_login() -> Result<()> {
         anyhow::bail!("Token exchange failed ({status}): {body}");
     }
 
-    let resp = raw
+    let token_resp = raw
         .json::<serde_json::Value>()
         .await
         .context("Failed to parse token response")?;
 
-    let access_token = resp["access_token"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("No access_token in token response"))?;
-    let expires_in = resp["expires_in"].as_u64().unwrap_or(3600);
-    let refresh_token = resp["refresh_token"].as_str();
-    let expires_at = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
-        + expires_in;
-
-    // Write token in the format expected by the SDK.
-    let token = serde_json::json!({
-        "client_id": client_id,
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "expires_at": expires_at,
-    });
-
-    let token_path = token_file_path()?;
-    if let Some(parent) = token_path.parent() {
-        fs::create_dir_all(parent).context("Failed to create token directory")?;
-    }
-    fs::write(&token_path, serde_json::to_string_pretty(&token).unwrap())
-        .context("Failed to write token file")?;
-
+    save_token(client_id, &token_resp)?;
     println!("Successfully authenticated.");
     Ok(())
 }
