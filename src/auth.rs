@@ -55,6 +55,27 @@ fn token_file_path() -> Result<PathBuf> {
         .join(client_id()))
 }
 
+/// Try to open a URL in the system browser. Returns `true` if the command was
+/// launched successfully (the browser may still fail to load the page).
+fn open_browser(url: &str) -> bool {
+    #[cfg(target_os = "macos")]
+    let mut cmd = std::process::Command::new("open");
+    #[cfg(target_os = "windows")]
+    let mut cmd = {
+        let mut c = std::process::Command::new("cmd");
+        c.args(["/c", "start"]);
+        c
+    };
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let mut cmd = std::process::Command::new("xdg-open");
+
+    cmd.arg(url)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .is_ok()
+}
+
 /// Write a token JSON blob to the SDK token file path.
 fn save_token(client_id: &str, token_resp: &serde_json::Value) -> Result<()> {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -127,11 +148,18 @@ pub async fn device_login() -> Result<()> {
     let expires_in = device_resp["expires_in"].as_u64().unwrap_or(300);
     let interval = device_resp["interval"].as_u64().unwrap_or(5);
 
+    // Try to open the browser automatically; silently fall back to manual if unavailable.
+    let opened = open_browser(verification_url);
+
     println!("Open the following URL in your browser to authorize:");
     println!();
     println!("  {verification_url}");
     println!();
-    println!("Waiting for authorization...");
+    if opened {
+        println!("Browser opened. Waiting for authorization...");
+    } else {
+        println!("Waiting for authorization...");
+    }
 
     // Step 2: poll until authorized or expired.
     let deadline = Instant::now() + Duration::from_secs(expires_in);
