@@ -133,7 +133,7 @@ longbridge topic create-reply <id> --body "…"    # Post a reply to a topic (--
 ### Options & Warrants
 
 ```bash
-longbridge option AAPL240119C190000               # Real-time quote for an option contract
+longbridge option quote AAPL240119C190000          # Real-time quotes for option contracts
 longbridge option chain AAPL.US                   # Option chain: list all expiry dates
 longbridge option chain AAPL.US --date 2024-01-19 # Option chain: strike prices for a given expiry
 longbridge warrant quote 12345.HK                 # Real-time quotes for warrant contracts
