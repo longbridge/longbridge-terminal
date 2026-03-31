@@ -25,7 +25,7 @@
 | ✅   | 行情   | K 线扩展时段       | `longbridge kline --session`           | SDK `QuoteContext.candlesticks()` + `TradeSessions` 参数   | P0     | `--session intraday`（默认）/ `all`（含盘前盘后）        |
 | ✅   | 行情   | 分时扩展时段       | `longbridge intraday --session`        | SDK `QuoteContext.intraday()`  + `TradeSessions` 参数      | P0     | `--session intraday`（默认）/ `all`（含盘前盘后）        |
 |      | 行情   | 逐笔扩展时段       | `longbridge trades --session`          | SDK `QuoteContext.trades()` — 暂不支持                     | P2     | SDK `trades()` 无 TradeSessions 参数，待 SDK 升级        |
-| ✅   | 基本面 | 投资风格与多维评分 | `longbridge score`                     | `GET /v1/quote/security-ratings`                           | P1     | 投资风格分类 + 盈利/成长/现金/运营/负债五维打分          |
+|      | 基本面 | 投资风格与多维评分 | `longbridge score`                     | `GET /v1/quote/security-ratings`                           | P1     | 未在授权数据清单中，暂不开放                             |
 |      | 公司   | 公司概况           | `longbridge company`                   | `GET /stock-info/comp-overview`                            | P1     | 基本信息、员工数、IPO 价格等                             |
 |      | 公司   | 公司高管           | `longbridge executive`                 | `GET /stock-info/company-professionals`                    | P1     | 高管姓名、职位、biography                                |
 |      | 公司   | 所属行业 & 排名    | `longbridge industry`                  | `GET /v1/stock-info/panorama` + `ranking-in-industry`      | P1     | 行业涨跌统计 + 个股指标排名                              |
@@ -35,11 +35,11 @@
 |      | 市场   | 指数/ETF 成分股    | `longbridge constituent`               | `GET /v2/discovery/index-constituents`                     | P1     | 指数成分股 + ETF 持仓；统一命令                          |
 | ✅   | 市场   | 持有该股的基金     | `longbridge fund-holder`               | `GET /v1/quote/fund-holders`                               | P1     | 哪些基金/ETF 持有该股，含持仓比例                        |
 |      | 市场   | 新股日历 & 详情    | `longbridge ipo`                       | `POST /ipo/calendar` + `GET /stock-info/ipo-profile`       | P1     | upcoming/subscribing/listed + 招股详情                   |
-| ✅   | 市场   | 财经日历           | `longbridge finance-calendar`          | `GET /v1/quote/finance_calendar`                           | P2     | 财报/派息/新股/股东大会；`--type`、`--date`、`--count`   |
+| ✅   | 市场   | 财经日历           | `longbridge finance-calendar <TYPE>`   | `GET /v1/quote/finance_calendar`                           | P2     | 类型优先；financial/report/dividend/ipo/macrodata/closed  |
 |      | 行情   | 期权成交量统计     | `longbridge option volume`             | REST（待确认）                                             | P2     | Call/Put 总成交量比例                                    |
 |      | 账户   | 股价提醒           | `longbridge alert`                     | `price-notify` scope（待确认）                             | P1     | 设置/查看/删除价格提醒；多指标                           |
 |      | 账户   | 股票备注           | `longbridge note`                      | REST（待确认）                                             | P2     | 对自选股设置/读取个人备注                                |
-|      | 账户   | 内部人士交易       | `longbridge insider`                   | `GET /stock-info/get_company_insider_holding_detail`       | P1     | 高管/大股东增减持明细                                    |
+| ✅   | 基本面 | 内部人士持股       | `longbridge insider-holding`           | `GET /v1/quote/company_insider_holdings`                   | P1     | 高管/董事持股汇总，含季度累计买卖股数                    |
 |      | 选股   | 选股器             | `longbridge screener`                  | REST（待确认）                                             | P1     | 多指标条件筛选（估值/技术/基本面）                       |
 
 ---
@@ -647,67 +647,122 @@ longbridge consensus TSLA.US --format json
 
 ---
 
-## 十六、投资风格与多维评分（Security Ratings）✅ 已实现
+## 十六、投资风格与多维评分（Security Ratings）⛔ 暂不开放
 
-### 功能说明
+> 该功能未在授权数据清单中，当前 PR 已将 `score` 命令从 CLI 中移除，等待数据授权确认后再行开放。
 
-| 功能         | 说明                                                                |
-| ------------ | ------------------------------------------------------------------- |
-| 投资风格分类 | 1-9 格子（价值/平衡/成长 × 小盘/中盘/大盘）+ 风格描述               |
-| 多维打分     | 盈利 / 成长 / 现金 / 运营 / 负债 五维评分（分数 + 字母等级 + 趋势） |
-| 行业横向对比 | 行业排名 + 行业均值/中位数评分                                      |
-
-### API Path
+### API Path（待授权）
 
 ```
 GET /v1/quote/security-ratings
   ?counter_id=ST/US/TSLA
 ```
 
-### CLI 用法
-
-```bash
-# 投资风格 + 多维评分概览
-longbridge score TSLA.US
-
-# JSON 输出（含完整 ratings 树）
-longbridge score TSLA.US --format json
-```
-
 ---
 
-## 十八、财经日历（Finance Calendar）
-
-> 来源：`stock-info` scope（scopes.json 确认）
+## 十八、财经日历（Finance Calendar）✅ 已实现
 
 ### 功能说明
 
-| 功能     | 说明                                             |
-| -------- | ------------------------------------------------ |
-| 财经日历 | 重要经济事件（财报发布日、央行决议、宏观数据等） |
-| 新股日历 | IPO 上市时间线                                   |
+| 功能         | 说明                                                           |
+| ------------ | -------------------------------------------------------------- |
+| 财报 & 财务  | 财报发布预告（`report` 自动扩展为 `report` + `financial`）     |
+| 派息日历     | 股息除权/到账事件列表                                          |
+| 新股日历     | IPO 上市时间线                                                 |
+| 休市安排     | 各市场休市/缩短交易日（`closed`）                              |
+| 宏观数据     | 宏观经济事件；`--star` 按重要性过滤；显示前值/预期/公告值      |
+
+所有类型默认从**今天起**向未来查询，方便 AI 代理生成日历提醒。
 
 ### API Path
 
 ```
-POST /stock_info/finance_calendar
-POST /stock_info/finance_calendar_detail
-GET  /stock_info/finance_calendar_date
+GET /v1/quote/finance_calendar
+  ?types[]=financial         # 事件类型（可多值）
+  &counter_ids[]=ST/US/TSLA  # 可选，最多 10 只
+  &markets[]=US              # 可选，市场过滤
+  &date=2026-03-31           # 开始日期（默认今天）
+  &date_end=                 # 结束日期（可选，不填=不限）
+  &count=100                 # 最多返回条数
+  &star[]=3                  # 宏观重要性（仅 macrodata 有效）
+  &next=later                # 分页方向（later / earlier）
+  &offset=0                  # 分页偏移
 ```
 
-### CLI 规划
+### 事件类型枚举
+
+| 类型        | 说明                                   |
+| ----------- | -------------------------------------- |
+| `financial` | 财务预告（业绩预告）                   |
+| `report`    | 财报发布（自动扩展为 report+financial）|
+| `dividend`  | 派息事件                               |
+| `ipo`       | 新股上市                               |
+| `macrodata` | 宏观经济数据发布                       |
+| `closed`    | 休市/缩短交易日                        |
+
+### CLI 用法
 
 ```bash
-longbridge calendar                          # 近期财经日历
-longbridge calendar --date 2025-04-01        # 指定日期
-longbridge calendar --type earnings          # 只看财报发布
-longbridge calendar TSLA.US                  # 指定股票相关事件
-longbridge calendar --format json
+# 按类型查询（所有类型默认从今天起向未来）
+longbridge finance-calendar financial              # 财务预告
+longbridge finance-calendar report                 # 财报发布（含 financial）
+longbridge finance-calendar dividend               # 派息事件
+longbridge finance-calendar ipo                    # 新股上市
+longbridge finance-calendar macrodata              # 宏观数据（全部）
+longbridge finance-calendar macrodata --star 3     # 只看三星重要性
+longbridge finance-calendar closed                 # 休市安排
+
+# 过滤特定股票（可重复，最多 10 只）
+longbridge finance-calendar report --symbol AAPL.US
+longbridge finance-calendar dividend --symbol AAPL.US --symbol TSLA.US
+
+# 过滤市场
+longbridge finance-calendar macrodata --market US --market CN
+
+# 指定日期区间
+longbridge finance-calendar financial --date 2026-04-01 --end-date 2026-06-30
+
+# 分页
+longbridge finance-calendar macrodata --count 50 --offset 50 --next earlier
+
+# JSON 输出
+longbridge finance-calendar report --format json
 ```
 
 ---
 
-## 十九、待确认 / 不确定开放的功能
+## 十九、内部人士持股（Insider Holdings）✅ 已实现
+
+### 功能说明
+
+| 功能         | 说明                                                         |
+| ------------ | ------------------------------------------------------------ |
+| 内部人士持股 | 高管/董事持股汇总：期间股价变化、季度累计买入/卖出股数       |
+
+### API Path
+
+```
+GET /v1/quote/company_insider_holdings
+  ?counter_id=ST/US/TSLA   # symbol_to_counter_id("TSLA.US") 转换
+  &period=2024Q4            # 可选，报告期（默认最新）
+```
+
+### CLI 用法
+
+```bash
+# 最新内部人士持股概览
+longbridge insider-holding AAPL.US
+
+# 指定报告期
+longbridge insider-holding TSLA.US --period 2024Q4
+
+# JSON 输出
+longbridge insider-holding AAPL.US --format json
+```
+
+---
+
+## 二十、待确认 / 不确定开放的功能
 
 以下功能在 app 内存在，是否对外开放 API 需产品确认：
 
