@@ -120,7 +120,7 @@ async fn main() {
 
         Some(cli::Commands::Tui) => {
             tracing::info!("App started");
-            let (quote_receiver, using_api_key) = match openapi::init_contexts().await {
+            let (quote_receiver, using_api_key, _) = match openapi::init_contexts().await {
                 Ok(r) => r,
                 Err(e) => {
                     eprintln!("OAuth2 authentication failed: {e}");
@@ -187,23 +187,18 @@ async fn main() {
         },
 
         Some(cmd) => {
-            let host = if region::is_cn_cached() {
-                "openapi.longbridge.cn"
-            } else {
-                "openapi.longbridge.com"
-            };
-            if verbose {
-                eprintln!("* Host: https://{host}");
-            }
             let start = verbose.then(Instant::now);
             // CLI mode: init contexts (auth), then dispatch
-            let using_api_key = match openapi::init_contexts().await {
-                Ok((_, using_api_key)) => using_api_key,
+            let (using_api_key, http_url) = match openapi::init_contexts().await {
+                Ok((_, using_api_key, http_url)) => (using_api_key, http_url),
                 Err(e) => {
                     eprintln!("Authentication failed: {e}");
                     std::process::exit(1);
                 }
             };
+            if verbose {
+                eprintln!("* Host: {http_url}");
+            }
             if let Err(e) = cli::dispatch(cmd, &cli.format).await {
                 print_cli_error(&e, using_api_key);
                 std::process::exit(1);
