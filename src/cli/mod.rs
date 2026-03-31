@@ -426,23 +426,24 @@ pub enum Commands {
 
     /// Valuation analysis: P/E, P/B, P/S, dividend yield, and peer comparison
     ///
-    /// Without a subcommand: returns current valuation metrics and industry median.
-    /// Subcommands: detail
+    /// Default: current metrics + 5-year range + peer comparison.
+    /// With --history: returns the historical valuation time series.
     /// Example: longbridge valuation TSLA.US
-    /// Example: longbridge valuation detail TSLA.US
-    /// Example: longbridge valuation detail TSLA.US --indicator pe
+    /// Example: longbridge valuation TSLA.US --history
+    /// Example: longbridge valuation TSLA.US --history --indicator pe --range 5
     /// Example: longbridge valuation TSLA.US --format json
     Valuation {
-        /// Symbol in <CODE>.<MARKET> format. Omit when using a subcommand.
-        symbol: Option<String>,
-        /// Valuation indicator: `pe` | `pb` | `ps` | `dvd_yld`
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+        /// Show historical valuation time series instead of current snapshot
+        #[arg(long)]
+        history: bool,
+        /// Valuation indicator for history mode: `pe` | `pb` | `ps` | `dvd_yld`
         #[arg(long)]
         indicator: Option<String>,
-        /// Historical range in years: 1 | 3 | 5 | 10
+        /// Historical range in years (history mode): 1 | 3 | 5 | 10
         #[arg(long)]
         range: Option<String>,
-        #[command(subcommand)]
-        cmd: Option<ValuationCmd>,
     },
 
     // ── News ────────────────────────────────────────────────────────────────────
@@ -705,21 +706,6 @@ pub enum InstitutionRatingCmd {
     Detail {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
-    },
-}
-
-#[derive(Subcommand)]
-pub enum ValuationCmd {
-    /// Detailed valuation analysis
-    ///
-    /// Example: longbridge valuation detail TSLA.US
-    /// Example: longbridge valuation detail TSLA.US --indicator pe
-    Detail {
-        /// Symbol in <CODE>.<MARKET> format
-        symbol: String,
-        /// Valuation indicator: `pe` | `pb` | `ps` | `dvd_yld`
-        #[arg(long)]
-        indicator: Option<String>,
     },
 }
 
@@ -1388,21 +1374,16 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
 
         Commands::Valuation {
             symbol,
+            history,
             indicator,
             range,
-            cmd,
-        } => match cmd {
-            Some(ValuationCmd::Detail {
-                symbol: s,
-                indicator: ind,
-            }) => fundamental::cmd_valuation_detail(s, ind, format, verbose).await,
-            None => {
-                let sym = symbol.ok_or_else(|| {
-                    anyhow::anyhow!("Symbol required. Usage: longbridge valuation <SYMBOL>")
-                })?;
-                fundamental::cmd_valuation(sym, indicator, range, format, verbose).await
+        } => {
+            if history {
+                fundamental::cmd_valuation(symbol, indicator, range, format, verbose).await
+            } else {
+                fundamental::cmd_valuation_detail(symbol, indicator, format, verbose).await
             }
-        },
+        }
         Commands::News { symbol, count, cmd } => match cmd {
             Some(NewsCmd::Detail { id }) => news::cmd_news_detail(id).await,
             None => {
