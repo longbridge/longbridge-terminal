@@ -1019,10 +1019,15 @@ fn print_finance_calendar(payload: &Value) {
 
             let mut header = format!("{event_date}  [{type_label}]");
             if !market.is_empty() {
-                header.push_str(&format!("  {market}"));
+                header.push_str("  ");
+                header.push_str(&market);
             }
             if !name.is_empty() {
-                header.push_str(&format!("  {name} ({symbol})"));
+                header.push_str("  ");
+                header.push_str(&name);
+                header.push_str(" (");
+                header.push_str(&symbol);
+                header.push(')');
             }
             println!("{header}");
             println!("  {content}");
@@ -1094,7 +1099,7 @@ pub async fn cmd_finance_calendar(
 
     let count_str = count.to_string();
     let offset_str = offset.to_string();
-    let star_strs: Vec<String> = star.iter().map(|s| s.to_string()).collect();
+    let star_strs: Vec<String> = star.iter().map(ToString::to_string).collect();
 
     let mut params: Vec<(&str, &str)> = vec![
         ("date", start.as_str()),

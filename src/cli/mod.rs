@@ -675,7 +675,7 @@ pub enum Commands {
 
     /// Company insider holdings: shares held by executives and directors
     ///
-    /// Returns aggregate holdings and per-person breakdown with QoQ changes.
+    /// Returns aggregate holdings and per-person breakdown with `QoQ` changes.
     /// Example: longbridge insider-holding AAPL.US
     /// Example: longbridge insider-holding TSLA.US --period 2024Q4
     InsiderHolding {
