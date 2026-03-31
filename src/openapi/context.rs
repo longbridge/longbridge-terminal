@@ -63,7 +63,7 @@ pub async fn init_contexts() -> Result<(
         // Build OAuth client: loads token from ~/.longbridge/openapi/tokens/<client_id>
         // or starts browser authorization. Token refresh is automatic inside the SDK.
         let oauth_result = longbridge::oauth::OAuthBuilder::new(crate::auth::client_id())
-            .callback_port(60355)
+            .callback_port(crate::auth::CALLBACK_PORT)
             .build(|url| {
                 println!("Open the following URL in your browser to authorize:");
                 println!();

@@ -163,9 +163,7 @@ async fn main() {
             return;
         }
 
-        Some(cli::Commands::Login {
-            auth_code: true, ..
-        }) => match openapi::init_contexts().await {
+        Some(cli::Commands::Login { auth_code: true }) => match openapi::init_contexts().await {
             Ok(_) => println!("Successfully authenticated."),
             Err(e) => {
                 eprintln!("Authentication failed: {e}");
@@ -173,20 +171,7 @@ async fn main() {
             }
         },
 
-        Some(cli::Commands::Login {
-            auth_code: false,
-            headless: true,
-        }) => {
-            if let Err(e) = auth::headless_login().await {
-                eprintln!("Authentication failed: {e}");
-                std::process::exit(1);
-            }
-        }
-
-        Some(cli::Commands::Login {
-            auth_code: false,
-            headless: false,
-        }) => {
+        Some(cli::Commands::Login { auth_code: false }) => {
             if let Err(e) = auth::device_login().await {
                 eprintln!("Authentication failed: {e}");
                 std::process::exit(1);

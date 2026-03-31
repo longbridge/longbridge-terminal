@@ -65,7 +65,7 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Authenticate and save token for CLI and TUI
+    /// Authenticate via Device Authorization Flow (default) or browser OAuth
     ///
     /// By default uses the Device Authorization Flow (RFC 8628): displays a URL,
     /// the user opens it in any browser (no localhost redirect needed), and the
@@ -75,19 +75,12 @@ pub enum Commands {
     /// Use `--auth-code` for the Authorization Code flow: opens a browser on this
     /// machine and listens on `localhost:60355` for the OAuth callback.
     ///
-    /// Use `--headless` for the copy-paste flow: prints the auth URL and waits
-    /// for the user to paste the redirect URL from the browser address bar.
-    ///
     /// Token is stored at `~/.longbridge/openapi/tokens/<client_id>` and shared with the TUI.
     Login {
         /// Authorization Code flow: opens a browser and handles the localhost callback.
         /// Requires the browser to be on the same machine (local use only).
         #[arg(long)]
         auth_code: bool,
-
-        /// Copy-paste flow: prints the auth URL; paste the redirect URL to complete login.
-        #[arg(long)]
-        headless: bool,
     },
 
     /// Clear the locally stored OAuth token
