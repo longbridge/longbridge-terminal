@@ -147,7 +147,7 @@ pub async fn device_login() -> Result<()> {
 
     println!("Open the following URL in your browser to authorize:");
     println!();
-    println!("  {verification_url}");
+    println!("{verification_url}");
     println!();
     if opened {
         println!("Browser opened. Waiting for authorization...");
