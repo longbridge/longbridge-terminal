@@ -401,12 +401,12 @@ pub enum Commands {
     ///
     /// Returns market-wide events for the given type. Default range: 6 months back to no limit.
     /// Optionally filter by up to 10 symbols or specify a date range.
-    /// Types: earning, financial, report, dividend, ipo, macrodata, closed
-    /// Example: longbridge finance-calendar earning
-    /// Example: longbridge finance-calendar earning --symbol AAPL.US --symbol TSLA.US
-    /// Example: longbridge finance-calendar earning --date 2026-01-01 --end-date 2026-06-30
+    /// Types: financial, report, dividend, ipo, macrodata, closed
+    /// Example: longbridge finance-calendar financial
+    /// Example: longbridge finance-calendar financial --symbol AAPL.US --symbol TSLA.US
+    /// Example: longbridge finance-calendar dividend --date 2026-01-01 --end-date 2026-06-30
     FinanceCalendar {
-        /// Event type: earning, financial, report, dividend, ipo, macrodata, closed
+        /// Event type: financial, report, dividend, ipo, macrodata, closed
         event_type: String,
         /// Filter by symbol, repeatable (max 10)
         #[arg(long, value_name = "SYMBOL")]
