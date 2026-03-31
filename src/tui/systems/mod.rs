@@ -11,10 +11,10 @@ use rust_decimal::Decimal;
 use tokio::sync::mpsc;
 
 use crate::{
-    app::AppState,
     data::{Account, Counter, KlineType, ReadyState, SubTypes, WatchlistGroup},
     openapi,
-    widgets::{Carousel, LocalSearch, Search},
+    tui::app::AppState,
+    tui::widgets::{Carousel, LocalSearch, Search},
 };
 
 mod common;

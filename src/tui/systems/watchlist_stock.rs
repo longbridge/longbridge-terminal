@@ -12,8 +12,8 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppState, WATCHLIST},
     data::Counter,
+    tui::app::{AppState, WATCHLIST},
     utils::cycle,
 };
 
@@ -29,14 +29,14 @@ use super::{
 };
 
 pub fn render_watchlist_stock(
-    mut terminal: ResMut<crate::widgets::Terminal>,
+    mut terminal: ResMut<crate::tui::widgets::Terminal>,
     mut events: EventReader<Key>,
     stock: Res<StockDetail>,
     command: Res<Command>,
     (state, indexes, ws): NavFooter,
     (mut account, mut currency, mut search, mut watchgroup): PopUp,
     mut last_choose: Local<Counter>,
-    mut log_panel: Local<crate::widgets::LogPanel>,
+    mut log_panel: Local<crate::tui::widgets::LogPanel>,
 ) {
     // workaround bevyengine/bevy#9130
     if *last_choose != stock.0 {
@@ -205,14 +205,14 @@ pub fn render_watchlist_stock(
     _ = terminal.draw(|frame| {
         let rect = frame.area();
         let top = Rect { height: 1, ..rect };
-        crate::views::navbar::render(frame, top, *state.get());
+        crate::tui::views::navbar::render(frame, top, *state.get());
 
         let bottom = Rect {
             y: rect.y + rect.height - 1,
             height: 1,
             ..rect
         };
-        crate::views::footer::render(frame, bottom, indexes.tick(), &ws);
+        crate::tui::views::footer::render(frame, bottom, indexes.tick(), &ws);
 
         let rect = Rect {
             y: rect.y + 1,
@@ -243,7 +243,7 @@ pub fn render_watchlist_stock(
         };
         let tabs = Tabs::new(tab_titles)
             .select(selected_tab)
-            .highlight_style(crate::ui::styles::primary().add_modifier(Modifier::BOLD))
+            .highlight_style(crate::tui::ui::styles::primary().add_modifier(Modifier::BOLD))
             .divider(" ");
         frame.render_widget(tabs, right_chunks[0]);
 
@@ -265,7 +265,7 @@ pub fn render_watchlist_stock(
             }
         }
 
-        crate::views::popup::render(
+        crate::tui::views::popup::render(
             frame,
             rect,
             &mut account,
@@ -276,7 +276,7 @@ pub fn render_watchlist_stock(
 
         // Render floating log panel if visible
         let log_panel_visible =
-            crate::app::LOG_PANEL_VISIBLE.load(std::sync::atomic::Ordering::Relaxed);
+            crate::tui::app::LOG_PANEL_VISIBLE.load(std::sync::atomic::Ordering::Relaxed);
         if log_panel_visible {
             log_panel.set_visible(true);
             let panel_height = 15;

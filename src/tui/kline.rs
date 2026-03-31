@@ -33,7 +33,7 @@ impl KlineStore {
             kline_type,
             Self::normalize(kline_type).unwrap_or(adjust_type),
         )) else {
-            crate::app::RT.get().unwrap().spawn(Self::request(
+            crate::tui::app::RT.get().unwrap().spawn(Self::request(
                 counter,
                 kline_type,
                 adjust_type,
@@ -52,7 +52,7 @@ impl KlineStore {
         };
 
         if *has_more && results.len() < page_size {
-            crate::app::RT.get().unwrap().spawn(Self::request(
+            crate::tui::app::RT.get().unwrap().spawn(Self::request(
                 counter,
                 kline_type,
                 adjust_type,

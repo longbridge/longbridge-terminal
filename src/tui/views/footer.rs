@@ -8,7 +8,7 @@ use rust_decimal::Decimal;
 
 use crate::data::{Counter, ReadyState, STOCKS};
 use crate::utils::DecimalExt;
-use crate::{systems::WsState, ui::styles};
+use crate::{tui::systems::WsState, tui::ui::styles};
 
 pub fn render(frame: &mut Frame, rect: Rect, indexes: &[Counter; 3], state: &WsState) {
     let chunks = Layout::default()
@@ -51,7 +51,7 @@ pub fn render(frame: &mut Frame, rect: Rect, indexes: &[Counter; 3], state: &WsS
 
     let (status, status_style) = match state.0 {
         ReadyState::Open => {
-            if crate::app::QUOTE_BMP.load(atomic::Ordering::Relaxed) {
+            if crate::tui::app::QUOTE_BMP.load(atomic::Ordering::Relaxed) {
                 ("□□■", styles::bmp()) // Semi-automatic
             } else {
                 ("■■■", styles::online())

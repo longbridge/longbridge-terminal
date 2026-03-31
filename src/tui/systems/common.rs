@@ -1,6 +1,6 @@
 use crate::{
-    ui::Content,
-    widgets::{Loading, LoadingWidget, Terminal},
+    tui::ui::Content,
+    tui::widgets::{Loading, LoadingWidget, Terminal},
 };
 use bevy_ecs::prelude::*;
 

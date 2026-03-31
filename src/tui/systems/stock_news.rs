@@ -16,7 +16,7 @@ use time::OffsetDateTime;
 use tokio::sync::mpsc;
 use tui_markdown::{Options, StyleSheet};
 
-use crate::{app::RT, data::Counter, ui::styles};
+use crate::{data::Counter, tui::app::RT, tui::ui::styles};
 
 // ─── Markdown StyleSheet ─────────────────────────────────────────────────────
 

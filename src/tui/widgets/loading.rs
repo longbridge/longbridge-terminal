@@ -35,7 +35,7 @@ impl Widget for LoadingWidget {
             5 => "◱ LOADING  .",
             _ => "◰ LOADING   ",
         };
-        let area = crate::ui::rect::centered(12, 1, area);
+        let area = crate::tui::ui::rect::centered(12, 1, area);
         Paragraph::new(text).render(area, buf);
     }
 }
