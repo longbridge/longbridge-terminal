@@ -417,8 +417,8 @@ pub enum Commands {
         /// End date (YYYY-MM-DD), defaults to no limit
         #[arg(long)]
         end_date: Option<String>,
-        /// Max events returned (default: 20)
-        #[arg(long, default_value = "20")]
+        /// Max events returned (default: 100)
+        #[arg(long, default_value = "100")]
         count: u32,
     },
 
