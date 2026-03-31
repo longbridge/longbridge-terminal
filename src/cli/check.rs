@@ -114,10 +114,7 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
     }
 
     // ── Connectivity (concurrent) ─────────────────────────────────────────────
-    let (global, cn) = tokio::join!(
-        probe(GLOBAL_PROBE_URL),
-        probe(CN_PROBE_URL),
-    );
+    let (global, cn) = tokio::join!(probe(GLOBAL_PROBE_URL), probe(CN_PROBE_URL),);
 
     match format {
         OutputFormat::Json => {

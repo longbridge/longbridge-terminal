@@ -76,8 +76,9 @@ watchlist_group.hk: "港股"
 watchlist_group.cn: "A股"
 watchlist_group.sg: "新加坡"
 watchlist_group.jp: "日本"
-watchlist_group.uk: "英国"
-watchlist_group.de: "德国"
+watchlist_group.na: "未上市"
+watchlist_group.uk: "英國"
+watchlist_group.de: "德國"
 StockDetail.52wk High: 52 周高
 StockDetail.52wk Low: 52 周低
 StockDetail.Amplitude: 振幅
@@ -118,6 +119,7 @@ Portfolio.Risk Level: 風控狀態
 Portfolio.Credit Limit: 融資額度
 Portfolio.Health Status: 槓桿
 Portfolio.Fund Market Cap: 基金市值
+Portfolio.No Holdings: 暫無持倉數據
 Holding.Code: 代碼
 Holding.Cost Price: 成本價
 Holding.Hold Ratio: 佔比%
@@ -169,8 +171,14 @@ RiskLevel.Warning: 預警
 TradeStatus.Normal: ""
 TradeStatus.Halted: 停牌
 TradeStatus.Delisted: 退市
-TradeStatus.STOP: 休市
-TradeStatus.UsStop: 休市
+TradeStatus.Fuse: 熔斷
+TradeStatus.PrepareList: 準備上市
+TradeStatus.CodeMoved: 代碼變更
+TradeStatus.ToBeOpened: 即將開盤
+TradeStatus.SplitStockHalts: 分拆停牌
+TradeStatus.Expired: 已過期
+TradeStatus.WarrantPrepareList: 權證準備中
+TradeStatus.SuspendTrade: 暫停交易
 TradeSession.Intraday: 交易中
 TradeSession.Pre: 盤前
 TradeSession.Post: 盤後
@@ -214,6 +222,9 @@ News:
   Detail: "文章"
   DetailEmpty: "選擇一篇文章來閱讀"
   DetailHint: "↑↓ 切換文章  PgUp/PgDn 捲動  o 瀏覽器開啟  q 返回"
+  ErrorContent: "讀取內容失敗：%{error}"
+  ErrorHttp: "載入新聞失敗（HTTP %{status}）"
+  ErrorFetch: "載入新聞失敗：%{error}"
 Error.KlineDataFormat: "K 線數據格式錯誤"
 Currency.HKD: "港幣"
 Currency.USD: "美元"

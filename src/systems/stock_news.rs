@@ -213,7 +213,7 @@ pub fn fetch_news_detail(id: String, tx: mpsc::UnboundedSender<CommandQueue>) {
                 Err(e) => {
                     tracing::error!("Failed to read news detail body: {e}");
                     if let Ok(mut content) = NEWS_DETAIL_CONTENT.lock() {
-                        *content = format!("Failed to read content: {e}");
+                        *content = t!("News.ErrorContent", error = e.to_string()).to_string();
                     }
                 }
             },
@@ -221,13 +221,13 @@ pub fn fetch_news_detail(id: String, tx: mpsc::UnboundedSender<CommandQueue>) {
                 let status = resp.status();
                 tracing::error!("Failed to fetch news detail: HTTP {status}");
                 if let Ok(mut content) = NEWS_DETAIL_CONTENT.lock() {
-                    *content = format!("Failed to load news (HTTP {status})");
+                    *content = t!("News.ErrorHttp", status = status.to_string()).to_string();
                 }
             }
             Err(e) => {
                 tracing::error!("Failed to fetch news detail: {e}");
                 if let Ok(mut content) = NEWS_DETAIL_CONTENT.lock() {
-                    *content = format!("Failed to load news: {e}");
+                    *content = t!("News.ErrorFetch", error = e.to_string()).to_string();
                 }
             }
         }
