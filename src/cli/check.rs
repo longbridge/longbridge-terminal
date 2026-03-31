@@ -11,6 +11,7 @@ const PROBE_COUNT: usize = 10;
 const GLOBAL_HTTP_URL: &str = "https://openapi.longbridge.com";
 const GLOBAL_PROBE_URL: &str = "https://openapi.longbridge.com/health";
 const CN_PROBE_URL: &str = "https://openapi.longbridge.cn/health";
+const TEST_PROBE_URL: &str = "https://openapi.longbridge.xyz/health";
 
 // ANSI colors
 const GREEN: &str = "\x1b[32m";
@@ -113,14 +114,28 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
         }
     }
 
-    // ── Connectivity (concurrent) ─────────────────────────────────────────────
-    let (global, cn) = tokio::join!(
-        probe(GLOBAL_PROBE_URL),
-        probe(CN_PROBE_URL),
-    );
+    let is_test = crate::auth::is_test_env();
+    let active_env = if is_test {
+        "Test"
+    } else if is_cn {
+        "CN"
+    } else {
+        "Global"
+    };
 
+    // ── Connectivity (concurrent) ─────────────────────────────────────────────
     match format {
         OutputFormat::Json => {
+            let connectivity = if is_test {
+                let test = probe(TEST_PROBE_URL).await;
+                json!({ "test": { "url": region::HTTP_URL_TEST, "ok": test.ok, "ms": test.ms } })
+            } else {
+                let (global, cn) = tokio::join!(probe(GLOBAL_PROBE_URL), probe(CN_PROBE_URL));
+                json!({
+                    "global": { "url": GLOBAL_HTTP_URL, "ok": global.ok, "ms": global.ms },
+                    "cn":     { "url": region::HTTP_URL_CN, "ok": cn.ok, "ms": cn.ms },
+                })
+            };
             let value = json!({
                 "session": {
                     "token": if token_ok { "valid" } else { "invalid" },
@@ -128,12 +143,9 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
                 },
                 "region": {
                     "cached": region_cached,
-                    "active": if is_cn { "CN" } else { "Global" },
+                    "active": active_env,
                 },
-                "connectivity": {
-                    "global": { "url": GLOBAL_HTTP_URL, "ok": global.ok, "ms": global.ms },
-                    "cn":     { "url": region::HTTP_URL_CN, "ok": cn.ok, "ms": cn.ms },
-                },
+                "connectivity": connectivity,
             });
             println!("{}", serde_json::to_string_pretty(&value)?);
         }
@@ -157,15 +169,19 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
             );
             println!(
                 "  {:<8} {}  (active: {})",
-                "region",
-                region_cached,
-                if is_cn { "CN" } else { "Global" }
+                "region", region_cached, active_env
             );
 
             println!();
             println!("Connectivity {DIM}(avg of {PROBE_COUNT}){RESET}");
-            println!("{}", probe_line("global", &global, GLOBAL_HTTP_URL));
-            println!("{}", probe_line("cn", &cn, region::HTTP_URL_CN));
+            if is_test {
+                let test = probe(TEST_PROBE_URL).await;
+                println!("{}", probe_line("test", &test, region::HTTP_URL_TEST));
+            } else {
+                let (global, cn) = tokio::join!(probe(GLOBAL_PROBE_URL), probe(CN_PROBE_URL));
+                println!("{}", probe_line("global", &global, GLOBAL_HTTP_URL));
+                println!("{}", probe_line("cn", &cn, region::HTTP_URL_CN));
+            }
         }
     }
 
