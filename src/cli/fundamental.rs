@@ -744,13 +744,13 @@ pub async fn cmd_valuation(
     verbose: bool,
 ) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
-    let mut params: Vec<(&str, &str)> = vec![("counter_id", cid.as_str())];
-    if let Some(ref ind) = indicator {
-        params.push(("indicator", ind.as_str()));
-    }
-    if let Some(ref r) = range {
-        params.push(("range", r.as_str()));
-    }
+    let ind = indicator.as_deref().unwrap_or("pe");
+    let range_val = range.as_deref().unwrap_or("1");
+    let params: Vec<(&str, &str)> = vec![
+        ("counter_id", cid.as_str()),
+        ("indicator", ind),
+        ("range", range_val),
+    ];
     let data = http_get("/v1/quote/valuation", &params, verbose).await?;
     match format {
         OutputFormat::Json => print_json(&data),
@@ -762,7 +762,7 @@ pub async fn cmd_valuation(
             if has_data {
                 print_valuation_history(&data);
             } else {
-                println!("No valuation data. Use `valuation detail {symbol}` for full analysis.");
+                println!("No valuation data.");
             }
         }
     }

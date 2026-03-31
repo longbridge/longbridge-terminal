@@ -427,10 +427,10 @@ pub enum Commands {
     /// Valuation analysis: P/E, P/B, P/S, dividend yield, and peer comparison
     ///
     /// Default: current metrics + 5-year range + peer comparison.
-    /// With --history: returns the historical valuation time series.
+    /// With --history: returns historical valuation time series (default indicator: pe).
     /// Example: longbridge valuation TSLA.US
     /// Example: longbridge valuation TSLA.US --history
-    /// Example: longbridge valuation TSLA.US --history --indicator pe --range 5
+    /// Example: longbridge valuation TSLA.US --history --indicator pb --range 5
     /// Example: longbridge valuation TSLA.US --format json
     Valuation {
         /// Symbol in <CODE>.<MARKET> format
@@ -441,7 +441,7 @@ pub enum Commands {
         /// Valuation indicator for history mode: `pe` | `pb` | `ps` | `dvd_yld`
         #[arg(long)]
         indicator: Option<String>,
-        /// Historical range in years (history mode): 1 | 3 | 5 | 10
+        /// Historical range in years (history mode, default: 1): 1 | 3 | 5 | 10
         #[arg(long)]
         range: Option<String>,
     },
