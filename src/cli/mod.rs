@@ -397,20 +397,24 @@ pub enum Commands {
         symbol: String,
     },
 
-    /// Finance calendar: upcoming events by type
+    /// Finance calendar: upcoming events by type (V2)
     ///
     /// Returns market-wide events for the given type. Default range: 6 months back to no limit.
-    /// Optionally filter by up to 10 symbols or specify a date range.
     /// Types: financial, report, dividend, ipo, macrodata, closed
+    /// Note: "report" automatically includes "financial" per V2 rules.
     /// Example: longbridge finance-calendar financial
     /// Example: longbridge finance-calendar financial --symbol AAPL.US --symbol TSLA.US
-    /// Example: longbridge finance-calendar dividend --date 2026-01-01 --end-date 2026-06-30
+    /// Example: longbridge finance-calendar macrodata --star 3
+    /// Example: longbridge finance-calendar dividend --market US --market HK
     FinanceCalendar {
         /// Event type: financial, report, dividend, ipo, macrodata, closed
         event_type: String,
         /// Filter by symbol, repeatable (max 10)
         #[arg(long, value_name = "SYMBOL")]
         symbol: Vec<String>,
+        /// Filter by market, repeatable (HK, US, CN, SG, JP, UK, DE, AU)
+        #[arg(long, value_name = "MARKET")]
+        market: Vec<String>,
         /// Start date (YYYY-MM-DD), defaults to 6 months ago
         #[arg(long)]
         date: Option<String>,
@@ -420,6 +424,15 @@ pub enum Commands {
         /// Max events returned (default: 100)
         #[arg(long, default_value = "100")]
         count: u32,
+        /// Macro data importance filter, repeatable (1, 2, 3); only effective for macrodata type
+        #[arg(long, value_name = "LEVEL")]
+        star: Vec<u32>,
+        /// Pagination direction: later (default) or earlier
+        #[arg(long, default_value = "later")]
+        next: String,
+        /// Pagination offset (default: 0)
+        #[arg(long, default_value = "0")]
+        offset: u32,
     },
 
     /// Valuation analysis: P/E, P/B, P/S, dividend yield, and peer comparison
@@ -1357,12 +1370,17 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         Commands::FinanceCalendar {
             event_type,
             symbol,
+            market,
             date,
             end_date,
             count,
+            star,
+            next,
+            offset,
         } => {
             fundamental::cmd_finance_calendar(
-                event_type, symbol, date, end_date, count, format, verbose,
+                event_type, symbol, market, date, end_date, count, star, next, offset, format,
+                verbose,
             )
             .await
         }

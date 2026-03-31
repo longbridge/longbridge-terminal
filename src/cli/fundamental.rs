@@ -1185,36 +1185,61 @@ fn print_finance_calendar(payload: &Value) {
     }
 }
 
-/// Fetch finance calendar events by type. Optionally filter by up to 10 symbols.
+/// Fetch finance calendar events (V2). Optionally filter by symbols, markets, and star level.
+#[allow(clippy::too_many_arguments)]
 pub async fn cmd_finance_calendar(
     event_type: String,
     symbols: Vec<String>,
+    markets: Vec<String>,
     date: Option<String>,
     date_end: Option<String>,
     count: u32,
+    star: Vec<u32>,
+    next: String,
+    offset: u32,
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
     let today = time::OffsetDateTime::now_utc().date();
     let start =
         date.unwrap_or_else(|| format!("{}", today.saturating_sub(time::Duration::days(180))));
-    let count_str = count.to_string();
+
+    // V2 rule: ["report"] must be expanded to ["report", "financial"]
+    let mut types: Vec<&str> = vec![event_type.as_str()];
+    if types == ["report"] {
+        types.push("financial");
+    }
+
     let cids: Vec<String> = symbols
         .iter()
         .take(10)
         .map(|s| symbol_to_counter_id(s))
         .collect();
 
+    let count_str = count.to_string();
+    let offset_str = offset.to_string();
+    let star_strs: Vec<String> = star.iter().map(|s| s.to_string()).collect();
+
     let mut params: Vec<(&str, &str)> = vec![
         ("date", start.as_str()),
         ("count", count_str.as_str()),
-        ("types[]", event_type.as_str()),
+        ("offset", offset_str.as_str()),
+        ("next", next.as_str()),
     ];
-    if let Some(ref e) = date_end {
-        params.push(("date_end", e.as_str()));
+    for t in &types {
+        params.push(("types[]", t));
     }
     for c in &cids {
         params.push(("counter_ids[]", c.as_str()));
+    }
+    for m in &markets {
+        params.push(("markets[]", m.as_str()));
+    }
+    for s in &star_strs {
+        params.push(("star[]", s.as_str()));
+    }
+    if let Some(ref end) = date_end {
+        params.push(("date_end", end.as_str()));
     }
 
     let resp = super::api::http_get("/v1/quote/finance_calendar", &params, verbose).await?;
