@@ -1205,9 +1205,9 @@ pub async fn cmd_finance_calendar(
     verbose: bool,
 ) -> Result<()> {
     let today = time::OffsetDateTime::now_utc().date();
-    // "closed" events are only meaningful going forward; other types default to 6 months back.
+    // Forward-looking types default to today; others default to 6 months back.
     let start = date.unwrap_or_else(|| {
-        if event_type == "closed" {
+        if matches!(event_type.as_str(), "closed" | "report") {
             format!("{today}")
         } else {
             format!("{}", today.saturating_sub(time::Duration::days(180)))
