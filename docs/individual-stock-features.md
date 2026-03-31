@@ -7,39 +7,39 @@
 
 ## 实施列表
 
-| 状态 | 分类   | 功能名称          | CLI 命令                               | API 接口                                                  | 优先级 | 备注                                                      |
-| ---- | ------ | ----------------- | -------------------------------------- | --------------------------------------------------------- | ------ | --------------------------------------------------------- |
-| ✅   | 基本面 | 财务报表          | `longbridge financial-report`          | `GET /v1/quote/financial-reports`                         | P0     | IS/BS/CF，transposed 多期对比                             |
-| ✅   | 基本面 | 估值分析          | `longbridge valuation`                 | `GET /v1/quote/valuation` `GET /v1/quote/valuation/detail`| P0     | PE/PB/PS/DY 历史 + 同行对比；`detail` 子命令             |
-| ✅   | 基本面 | 机构评级          | `longbridge institution-rating`        | `GET /v1/quote/institution-ratings[/detail]`              | P0     | 评级分布 + 目标价；`detail` 子命令查历史                  |
-| ✅   | 基本面 | 分红历史          | `longbridge dividend`                  | `GET /v1/quote/dividends[/details]`                       | P0     | 历史派息记录；`detail` 子命令查分配方案                   |
-| ✅   | 基本面 | EPS 业绩预测      | `longbridge forecast-eps`              | `GET /v1/quote/forecast-eps`                              | P0     | 分析师 EPS 共识快照序列                                   |
-| ✅   | 基本面 | 财务一致预期      | `longbridge consensus`                 | `GET /v1/quote/financial-consensus-detail`                | P0     | 营收/利润/EPS 多期横向对比，含 beat/miss 标记             |
-| ✅   | 资讯   | 新闻资讯          | `longbridge news`                      | SDK `ContentContext.news()`                               | P0     | 股票相关新闻；`detail` 子命令看全文                       |
-| ✅   | 资讯   | 监管文件          | `longbridge filing`                    | SDK `QuoteContext.filings()`                              | P0     | 监管公告/文件；`detail` 子命令列文件/下载                 |
-| ✅   | 行情   | 期权              | `longbridge option`                    | SDK `QuoteContext.option_quote()` / `option_chain_*()`    | P0     | 期权行情 + 期权链                                         |
-| ✅   | 行情   | 权证              | `longbridge warrant`                   | SDK `QuoteContext.warrant_quote()` / `warrant_list()`     | P1     | 权证行情 + 权证列表 + 发行人列表                          |
-|      | 行情   | 美股深度摆盘      | `longbridge orderbook`                 | WS `TOTAL_VIEW` / `TOTAL_VIEW_BRIEF`                      | P0     | 全量订单簿；`--brief` 取 60 档；引擎已实现，仅需暴露      |
-|      | 行情   | 资金流（大笔）    | `longbridge flow`                      | WS `DETAIL.inflow` + REST（待确认）                       | P0     | 大单净流入/流出（超大/大/中/小单分层）；历史 K 线 + 分时  |
-|      | 行情   | 做空数据          | `longbridge short`                     | REST（待确认）                                            | P0     | 美股/港股卖空成交 + 做空持仓数量/比例                     |
-|      | 行情   | K 线扩展时段      | `longbridge kline --session`           | SDK `QuoteContext.candlesticks()` + `session` 参数        | P0     | 新增 `--session pre-post/all`；引擎已支持，CLI 未透传     |
-|      | 行情   | 分时/逐笔扩展时段 | `longbridge intraday/trades --session` | SDK `QuoteContext.intraday_lines()` / `trades()`          | P0     | 盘前盘后/夜盘；引擎已支持                                 |
-| ✅   | 基本面 | 投资风格与多维评分 | `longbridge score`                    | `GET /v1/quote/security-ratings`                          | P1     | 投资风格分类 + 盈利/成长/现金/运营/负债五维打分           |
-|      | 公司   | 公司概况          | `longbridge company`                   | `GET /stock-info/comp-overview`                           | P1     | 基本信息、员工数、IPO 价格等                              |
-|      | 公司   | 公司高管          | `longbridge executives`                | `GET /stock-info/company-professionals`                   | P1     | 高管姓名、职位、biography                                 |
-|      | 公司   | 所属行业 & 排名   | `longbridge industry`                  | `GET /v1/stock-info/panorama` + `ranking-in-industry`     | P1     | 行业涨跌统计 + 个股指标排名                               |
-|      | 公司   | 股东结构          | `longbridge shareholders`              | `GET /stock-info/company-shareholders`                    | P1     | Top20 股东；`--institutions` 机构；`--insiders` 内部人    |
-|      | 公司   | 主营业务拆分      | `longbridge business`                  | `GET /stock-info/business[-historical]`                   | P1     | 按业务线/地区拆分营收占比                                 |
-|      | 公司   | 供应链            | `longbridge supply-chain`              | `GET /stock-info/supply_chains[/detail]`                  | P1     | 上下游供应商/客户列表                                     |
-|      | 市场   | 指数/ETF 成分股   | `longbridge constituents`              | `GET /v2/discovery/index-constituents`                    | P1     | 指数成分股 + ETF 持仓；统一命令                           |
-|      | 市场   | 持有该股的基金    | `longbridge fund-holders`              | `GET /ut/fundamental/reverse/stock`                       | P1     | 哪些基金/ETF 持有该股，含持仓比例                         |
-|      | 市场   | 新股日历 & 详情   | `longbridge ipo`                       | `POST /ipo/calendar` + `GET /stock-info/ipo-profile`      | P1     | upcoming/subscribing/listed + 招股详情                    |
-|      | 市场   | 财经日历          | `longbridge calendar`                  | `POST /stock_info/finance_calendar`                       | P2     | 财报发布日、IPO 日期、宏观经济事件                        |
-|      | 行情   | 期权成交量统计    | `longbridge option volume`             | REST（待确认）                                            | P2     | Call/Put 总成交量比例                                     |
-|      | 账户   | 股价提醒          | `longbridge alert`                     | `price-notify` scope（待确认）                            | P1     | 设置/查看/删除价格提醒；多指标                            |
-|      | 账户   | 股票备注          | `longbridge note`                      | REST（待确认）                                            | P2     | 对自选股设置/读取个人备注                                 |
-|      | 账户   | 内部人士交易      | `longbridge insider`                   | `GET /stock-info/get_company_insider_holding_detail`      | P1     | 高管/大股东增减持明细                                     |
-|      | 选股   | 选股器            | `longbridge screener`                  | REST（待确认）                                            | P1     | 多指标条件筛选（估值/技术/基本面）                        |
+| 状态 | 分类   | 功能名称           | CLI 命令                               | API 接口                                                   | 优先级 | 备注                                                     |
+| ---- | ------ | ------------------ | -------------------------------------- | ---------------------------------------------------------- | ------ | -------------------------------------------------------- |
+| ✅   | 基本面 | 财务报表           | `longbridge financial-report`          | `GET /v1/quote/financial-reports`                          | P0     | IS/BS/CF，transposed 多期对比                            |
+| ✅   | 基本面 | 估值分析           | `longbridge valuation`                 | `GET /v1/quote/valuation` `GET /v1/quote/valuation/detail` | P0     | PE/PB/PS/DY 历史 + 同行对比；`detail` 子命令             |
+| ✅   | 基本面 | 机构评级           | `longbridge institution-rating`        | `GET /v1/quote/institution-ratings[/detail]`               | P0     | 评级分布 + 目标价；`detail` 子命令查历史                 |
+| ✅   | 基本面 | 分红历史           | `longbridge dividend`                  | `GET /v1/quote/dividends[/details]`                        | P0     | 历史派息记录；`detail` 子命令查分配方案                  |
+| ✅   | 基本面 | EPS 业绩预测       | `longbridge forecast-eps`              | `GET /v1/quote/forecast-eps`                               | P0     | 分析师 EPS 共识快照序列                                  |
+| ✅   | 基本面 | 财务一致预期       | `longbridge consensus`                 | `GET /v1/quote/financial-consensus-detail`                 | P0     | 营收/利润/EPS 多期横向对比，含 beat/miss 标记            |
+| ✅   | 资讯   | 新闻资讯           | `longbridge news`                      | SDK `ContentContext.news()`                                | P0     | 股票相关新闻；`detail` 子命令看全文                      |
+| ✅   | 资讯   | 监管文件           | `longbridge filing`                    | SDK `QuoteContext.filings()`                               | P0     | 监管公告/文件；`detail` 子命令列文件/下载                |
+| ✅   | 行情   | 期权               | `longbridge option`                    | SDK `QuoteContext.option_quote()` / `option_chain_*()`     | P0     | 期权行情 + 期权链                                        |
+| ✅   | 行情   | 权证               | `longbridge warrant`                   | SDK `QuoteContext.warrant_quote()` / `warrant_list()`      | P1     | 权证行情 + 权证列表 + 发行人列表                         |
+|      | 行情   | 美股深度摆盘       | `longbridge orderbook`                 | WS `TOTAL_VIEW` / `TOTAL_VIEW_BRIEF`                       | P0     | 全量订单簿；`--brief` 取 60 档；引擎已实现，仅需暴露     |
+|      | 行情   | 资金流（大笔）     | `longbridge flow`                      | WS `DETAIL.inflow` + REST（待确认）                        | P0     | 大单净流入/流出（超大/大/中/小单分层）；历史 K 线 + 分时 |
+|      | 行情   | 做空数据           | `longbridge short`                     | REST（待确认）                                             | P0     | 美股/港股卖空成交 + 做空持仓数量/比例                    |
+|      | 行情   | K 线扩展时段       | `longbridge kline --session`           | SDK `QuoteContext.candlesticks()` + `session` 参数         | P0     | 新增 `--session pre-post/all`；引擎已支持，CLI 未透传    |
+|      | 行情   | 分时/逐笔扩展时段  | `longbridge intraday/trades --session` | SDK `QuoteContext.intraday_lines()` / `trades()`           | P0     | 盘前盘后/夜盘；引擎已支持                                |
+| ✅   | 基本面 | 投资风格与多维评分 | `longbridge score`                     | `GET /v1/quote/security-ratings`                           | P1     | 投资风格分类 + 盈利/成长/现金/运营/负债五维打分          |
+|      | 公司   | 公司概况           | `longbridge company`                   | `GET /stock-info/comp-overview`                            | P1     | 基本信息、员工数、IPO 价格等                             |
+|      | 公司   | 公司高管           | `longbridge executive`                 | `GET /stock-info/company-professionals`                    | P1     | 高管姓名、职位、biography                                |
+|      | 公司   | 所属行业 & 排名    | `longbridge industry`                  | `GET /v1/stock-info/panorama` + `ranking-in-industry`      | P1     | 行业涨跌统计 + 个股指标排名                              |
+| ✅   | 公司   | 股东结构           | `longbridge shareholder`               | `GET /v1/quote/shareholders`                               | P1     | 机构股东；`--range inc/dec`、`--sort chg/owned/time`     |
+|      | 公司   | 主营业务拆分       | `longbridge business`                  | `GET /stock-info/business[-historical]`                    | P1     | 按业务线/地区拆分营收占比                                |
+|      | 公司   | 供应链             | `longbridge supply-chain`              | `GET /stock-info/supply_chains[/detail]`                   | P1     | 上下游供应商/客户列表                                    |
+|      | 市场   | 指数/ETF 成分股    | `longbridge constituent`               | `GET /v2/discovery/index-constituents`                     | P1     | 指数成分股 + ETF 持仓；统一命令                          |
+| ✅   | 市场   | 持有该股的基金     | `longbridge fund-holder`               | `GET /v1/quote/fund-holders`                               | P1     | 哪些基金/ETF 持有该股，含持仓比例                        |
+|      | 市场   | 新股日历 & 详情    | `longbridge ipo`                       | `POST /ipo/calendar` + `GET /stock-info/ipo-profile`       | P1     | upcoming/subscribing/listed + 招股详情                   |
+|      | 市场   | 财经日历           | `longbridge calendar`                  | `POST /stock_info/finance_calendar`                        | P2     | 财报发布日、IPO 日期、宏观经济事件                       |
+|      | 行情   | 期权成交量统计     | `longbridge option volume`             | REST（待确认）                                             | P2     | Call/Put 总成交量比例                                    |
+|      | 账户   | 股价提醒           | `longbridge alert`                     | `price-notify` scope（待确认）                             | P1     | 设置/查看/删除价格提醒；多指标                           |
+|      | 账户   | 股票备注           | `longbridge note`                      | REST（待确认）                                             | P2     | 对自选股设置/读取个人备注                                |
+|      | 账户   | 内部人士交易       | `longbridge insider`                   | `GET /stock-info/get_company_insider_holding_detail`       | P1     | 高管/大股东增减持明细                                    |
+|      | 选股   | 选股器             | `longbridge screener`                  | REST（待确认）                                             | P1     | 多指标条件筛选（估值/技术/基本面）                       |
 
 ---
 
@@ -158,10 +158,10 @@ longbridge financial-report TSLA.US --format json
 
 ### 功能说明
 
-| 功能         | 说明                                              |
-| ------------ | ------------------------------------------------- |
+| 功能         | 说明                                                     |
+| ------------ | -------------------------------------------------------- |
 | 估值详情     | 当前指标值 + 5年 High/Median/Low + 行业中位数 + 同行对比 |
-| 历史估值走势 | 指定指标的历史序列（日度/月度），含区间统计       |
+| 历史估值走势 | 指定指标的历史序列（日度/月度），含区间统计              |
 
 ### API Path
 
@@ -202,10 +202,10 @@ longbridge valuation TSLA.US --indicator pe --range 5 --format json
 
 ### 功能说明
 
-| 功能         | 说明                                                             |
-| ------------ | ---------------------------------------------------------------- |
-| 评级概况     | 强买/买/持有/卖 评级分布 + 共识目标价 + 目标价区间 + 行业排名   |
-| 评级历史详情 | 月度评级分布趋势 + 分析师预测准确率 + 周度目标价历史            |
+| 功能         | 说明                                                          |
+| ------------ | ------------------------------------------------------------- |
+| 评级概况     | 强买/买/持有/卖 评级分布 + 共识目标价 + 目标价区间 + 行业排名 |
+| 评级历史详情 | 月度评级分布趋势 + 分析师预测准确率 + 周度目标价历史          |
 
 ### API Path
 
@@ -411,13 +411,13 @@ longbridge warrant list 700.HK --format json
 
 ### 功能说明
 
-| 功能            | 说明                                                                       |
-| --------------- | -------------------------------------------------------------------------- |
-| 公司概况        | 成立日期、上市日期、员工数、地址、官网、IPO 价格、董事长、审计机构等       |
-| 公司高管列表    | 高管姓名、职位、简介（biography）                                          |
-| 全景聚合        | 所属行业（含行业涨跌家数、个股排名）+ 相关证券分时                         |
-| 行业排名        | 个股关键指标在所属行业中的排名（PE、ROE、营收等）                          |
-| 关联公司/供应链 | 与该股相关联的公司列表（上下游、生态伙伴），含 counter_id + 关联产品描述   |
+| 功能            | 说明                                                                     |
+| --------------- | ------------------------------------------------------------------------ |
+| 公司概况        | 成立日期、上市日期、员工数、地址、官网、IPO 价格、董事长、审计机构等     |
+| 公司高管列表    | 高管姓名、职位、简介（biography）                                        |
+| 全景聚合        | 所属行业（含行业涨跌家数、个股排名）+ 相关证券分时                       |
+| 行业排名        | 个股关键指标在所属行业中的排名（PE、ROE、营收等）                        |
+| 关联公司/供应链 | 与该股相关联的公司列表（上下游、生态伙伴），含 counter_id + 关联产品描述 |
 
 ### API Path
 
@@ -456,10 +456,10 @@ longbridge industry TSLA.US --format json
 
 ### 功能说明
 
-| 功能         | 说明                                                 |
-| ------------ | ---------------------------------------------------- |
-| 分红摘要     | 历史派息记录：除权日、金额、到账日、登记日           |
-| 分红分配方案 | 完整分配方案明细（`/dividends/details` 独立端点）    |
+| 功能         | 说明                                              |
+| ------------ | ------------------------------------------------- |
+| 分红摘要     | 历史派息记录：除权日、金额、到账日、登记日        |
+| 分红分配方案 | 完整分配方案明细（`/dividends/details` 独立端点） |
 
 ### API Path
 
@@ -487,30 +487,29 @@ longbridge dividend detail TSLA.US --format json
 
 ---
 
-## 十一、持有该股的基金（Fund Holders）
+## 十一、持有该股的基金（Fund Holder）✅ 已实现
 
 ### 功能说明
 
-| 功能           | 说明                                                      |
-| -------------- | --------------------------------------------------------- |
-| 持有该股的基金 | 哪些基金/ETF 持有这只股票，含持仓比例、持仓市值、持仓变化 |
+| 功能           | 说明                                                           |
+| -------------- | -------------------------------------------------------------- |
+| 持有该股的基金 | 哪些基金/ETF 持有这只股票，含 symbol、货币、仓位占比、报告日期 |
 
 ### API Path
 
 ```
-GET /ut/fundamental/reverse/stock
+GET /v1/quote/fund-holders
   ?counter_id=ST/US/TSLA
-
-GET /stock-info/reverse/stock
-  ?counter_id=ST/US/TSLA
+  &limit=20              # 返回个数（传 -1 返回全部）
 ```
 
-### CLI 规划
+### CLI 用法
 
 ```bash
-longbridge fund-holders TSLA.US
-longbridge fund-holders TSLA.US --count 20
-longbridge fund-holders TSLA.US --format json
+longbridge fund-holder TSLA.US                  # 默认返回 20 条
+longbridge fund-holder TSLA.US --count 50       # 返回 50 条
+longbridge fund-holder TSLA.US --count -1       # 返回全部
+longbridge fund-holder TSLA.US --format json
 ```
 
 ---
@@ -552,11 +551,11 @@ longbridge business TSLA.US --format json
 
 ### 功能说明
 
-| 功能            | 说明                                    |
-| --------------- | --------------------------------------- |
-| 核心供应链列表  | 上下游主要供应商/客户，含产品描述       |
-| 供应链详情      | 上下游完整列表                          |
-| 产业链          | 所属产业链及产业链内个股                |
+| 功能           | 说明                              |
+| -------------- | --------------------------------- |
+| 核心供应链列表 | 上下游主要供应商/客户，含产品描述 |
+| 供应链详情     | 上下游完整列表                    |
+| 产业链         | 所属产业链及产业链内个股          |
 
 ### API Path
 
@@ -582,36 +581,34 @@ longbridge supply-chain TSLA.US --format json
 
 ---
 
-## 十四、股东结构（Shareholders）
-
-> 来源：`stock-info` scope（scopes.json 确认存在）
+## 十四、股东结构（Shareholders）✅ 已实现
 
 ### 功能说明
 
-| 功能         | 说明                          |
-| ------------ | ----------------------------- |
-| 股东列表     | Top20 主要股东（机构 + 个人） |
-| 机构持仓明细 | 机构持股列表 + 持仓变动       |
-| Insider 持仓 | 公司内部人员持股              |
+| 功能         | 说明                                                         |
+| ------------ | ------------------------------------------------------------ |
+| 机构股东列表 | 主要机构股东及持仓比例、持股变动、报告期                     |
+| 过滤 & 排序  | 按增持/减持过滤；按变动量/持股量/报告期排序                  |
 
 ### API Path
 
 ```
-GET /stock-info/company-shareholders
+GET /v1/quote/shareholders
   ?counter_id=ST/US/TSLA
-
-GET /stock-info/get_company_major_shareholders
-GET /stock-info/get_company_institution_holding_detail
-GET /stock-info/get_company_insider_holding_detail
+  &position=entry          # entry | detail
+  &range=all               # all | inc | dec
+  &sort_field=chg          # chg | owned | time
+  &sort_order=desc         # desc | asc
 ```
 
-### CLI 规划
+### CLI 用法
 
 ```bash
-longbridge shareholders TSLA.US               # 主要股东列表
-longbridge shareholders TSLA.US --institutions # 机构持仓明细
-longbridge shareholders TSLA.US --insiders    # Insider 持仓
-longbridge shareholders TSLA.US --format json
+longbridge shareholder TSLA.US                          # 默认：按变动量降序
+longbridge shareholder TSLA.US --range inc              # 只看增持
+longbridge shareholder TSLA.US --range dec --sort owned # 减持，按持股量
+longbridge shareholder TSLA.US --sort time              # 按报告期
+longbridge shareholder TSLA.US --format json
 ```
 
 ---
@@ -620,9 +617,9 @@ longbridge shareholders TSLA.US --format json
 
 ### 功能说明
 
-| 功能             | 说明                                                |
-| ---------------- | --------------------------------------------------- |
-| EPS 预测快照序列 | 分析师 EPS 共识随时间收敛的快照（最近 20 条）       |
+| 功能             | 说明                                                 |
+| ---------------- | ---------------------------------------------------- |
+| EPS 预测快照序列 | 分析师 EPS 共识随时间收敛的快照（最近 20 条）        |
 | 财务一致预期详情 | 营收/EBIT/净利润/EPS 多期横向对比，含 beat/miss 标记 |
 
 ### API Path
@@ -653,11 +650,11 @@ longbridge consensus TSLA.US --format json
 
 ### 功能说明
 
-| 功能             | 说明                                                                  |
-| ---------------- | --------------------------------------------------------------------- |
-| 投资风格分类     | 1-9 格子（价值/平衡/成长 × 小盘/中盘/大盘）+ 风格描述                |
-| 多维打分         | 盈利 / 成长 / 现金 / 运营 / 负债 五维评分（分数 + 字母等级 + 趋势）  |
-| 行业横向对比     | 行业排名 + 行业均值/中位数评分                                        |
+| 功能         | 说明                                                                |
+| ------------ | ------------------------------------------------------------------- |
+| 投资风格分类 | 1-9 格子（价值/平衡/成长 × 小盘/中盘/大盘）+ 风格描述               |
+| 多维打分     | 盈利 / 成长 / 现金 / 运营 / 负债 五维评分（分数 + 字母等级 + 趋势） |
+| 行业横向对比 | 行业排名 + 行业均值/中位数评分                                      |
 
 ### API Path
 
@@ -713,8 +710,8 @@ longbridge calendar --format json
 
 以下功能在 app 内存在，是否对外开放 API 需产品确认：
 
-| 功能         | App Crate / Scope                       | 说明                                                 | 建议                           |
-| ------------ | --------------------------------------- | ---------------------------------------------------- | ------------------------------ |
-| 股票提醒     | `price-notify` scope                    | 指标提醒 API 完整，scope 已确认                      | 可直接对外开放                 |
-| 技术指标数据 | `indicator-gateway` scope               | 获取/保存用户自定义指标配置                          | 更适合工具 API，非数据查询     |
-| 榜单排行     | `rank-list` scope                       | 多指标排行榜（涨幅、换手率等）                       | 高价值，建议规划               |
+| 功能         | App Crate / Scope         | 说明                            | 建议                       |
+| ------------ | ------------------------- | ------------------------------- | -------------------------- |
+| 股票提醒     | `price-notify` scope      | 指标提醒 API 完整，scope 已确认 | 可直接对外开放             |
+| 技术指标数据 | `indicator-gateway` scope | 获取/保存用户自定义指标配置     | 更适合工具 API，非数据查询 |
+| 榜单排行     | `rank-list` scope         | 多指标排行榜（涨幅、换手率等）  | 高价值，建议规划           |

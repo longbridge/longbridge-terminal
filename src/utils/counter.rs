@@ -13,6 +13,17 @@ fn us_etf_set() -> &'static HashSet<&'static str> {
     })
 }
 
+/// Convert a `counter_id` (e.g. `ST/US/TSLA`, `ETF/US/SPY`, `ST/HK/700`) back to
+/// a display symbol (e.g. `TSLA.US`, `SPY.US`, `700.HK`).
+pub fn counter_id_to_symbol(counter_id: &str) -> String {
+    let parts: Vec<&str> = counter_id.splitn(3, '/').collect();
+    if parts.len() == 3 {
+        format!("{}.{}", parts[2], parts[1])
+    } else {
+        counter_id.to_string()
+    }
+}
+
 /// Convert a user-supplied symbol (e.g. `TSLA.US`, `700.HK`) to a `counter_id`
 /// (e.g. `ST/US/TSLA`, `ST/HK/700`, `ETF/US/SPY`).
 ///

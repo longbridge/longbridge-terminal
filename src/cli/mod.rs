@@ -608,6 +608,41 @@ pub enum Commands {
     /// Example: longbridge my-rate
     /// Example: longbridge my-rate --format json
     MyRate,
+
+    /// Institutional shareholders for a symbol
+    ///
+    /// Returns: shareholder name, related symbol (if listed), % shares held, share change, report date.
+    /// Example: longbridge shareholder AAPL.US
+    /// Example: longbridge shareholder AAPL.US --range inc --sort owned
+    /// Example: longbridge shareholder AAPL.US --format json
+    Shareholder {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+        /// Filter by change direction: all | inc (increase) | dec (decrease)
+        #[arg(long, default_value = "all")]
+        range: String,
+        /// Sort field: chg (change) | owned (holdings) | time (report date)
+        #[arg(long, default_value = "chg")]
+        sort: String,
+        /// Sort order: desc | asc
+        #[arg(long, default_value = "desc")]
+        order: String,
+    },
+
+    /// Funds and ETFs that hold a given symbol
+    ///
+    /// Returns: fund name, ticker, currency, weight (position ratio), and report date.
+    /// Pass --count -1 to return all holders.
+    /// Example: longbridge fund-holder AAPL.US
+    /// Example: longbridge fund-holder AAPL.US --count 20
+    /// Example: longbridge fund-holder AAPL.US --format json
+    FundHolder {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+        /// Number of results to return (-1 for all)
+        #[arg(long, default_value = "20")]
+        count: i32,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1465,6 +1500,15 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         } => trade::cmd_max_qty(symbol, &side, price, &order_type, format).await,
         Commands::ExchangeRate => asset::cmd_exchange_rate(format, verbose).await,
         Commands::MyRate => asset::cmd_my_rate(format, verbose).await,
+        Commands::Shareholder {
+            symbol,
+            range,
+            sort,
+            order,
+        } => fundamental::cmd_shareholders(symbol, range, sort, order, format, verbose).await,
+        Commands::FundHolder { symbol, count } => {
+            fundamental::cmd_fund_holders(symbol, count, format, verbose).await
+        }
         Commands::Login { .. }
         | Commands::Logout
         | Commands::Tui

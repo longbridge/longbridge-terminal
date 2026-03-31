@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use super::OutputFormat;
 
-use crate::utils::counter::symbol_to_counter_id;
+use crate::utils::counter::{counter_id_to_symbol, symbol_to_counter_id};
 use crate::utils::datetime::format_date;
 use crate::utils::number::format_financial_value;
 use crate::utils::text::strip_html;
@@ -968,6 +968,141 @@ pub async fn cmd_score(symbol: String, format: &OutputFormat, verbose: bool) -> 
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Table => print_score(&data),
+    }
+    Ok(())
+}
+
+// ── fund holders ─────────────────────────────────────────────────────────────
+
+fn print_fund_holders(data: &Value) {
+    let items = match data.get("lists").and_then(|v| v.as_array()) {
+        Some(a) if !a.is_empty() => a,
+        _ => {
+            println!("No fund holder records found.");
+            return;
+        }
+    };
+    let headers = ["name", "symbol", "currency", "weight", "report_date"];
+    let rows: Vec<Vec<String>> = items
+        .iter()
+        .map(|item| {
+            let symbol = counter_id_to_symbol(&val_str(&item["counter_id"]));
+            let weight_raw = val_str(&item["position_ratio"]);
+            let weight = weight_raw
+                .parse::<f64>()
+                .map(|f| format!("{f:.2}%"))
+                .unwrap_or(weight_raw);
+            vec![
+                val_str(&item["name"]),
+                symbol,
+                val_str(&item["currency"]),
+                weight,
+                val_str(&item["report_date"]),
+            ]
+        })
+        .collect();
+    super::output::print_table(&headers, rows, &OutputFormat::Table);
+}
+
+// ── shareholders ─────────────────────────────────────────────────────────────
+
+fn print_shareholders(data: &Value) {
+    let items = match data.get("shareholder_list").and_then(|v| v.as_array()) {
+        Some(a) if !a.is_empty() => a,
+        _ => {
+            println!("No shareholder records found.");
+            return;
+        }
+    };
+
+    let total = data["total"].as_i64().unwrap_or(0);
+    println!("Total shareholders: {total}\n");
+
+    let headers = ["shareholder", "symbol", "% shares", "chg shares", "report_date"];
+    let rows: Vec<Vec<String>> = items
+        .iter()
+        .map(|item| {
+            // Related public stock symbol (institution may itself be listed)
+            let symbol = item["stocks"]
+                .as_array()
+                .and_then(|s| s.first())
+                .map(|s| counter_id_to_symbol(&val_str(&s["counter_id"])))
+                .unwrap_or_else(|| "-".to_string());
+
+            let pct_raw = val_str(&item["percent_of_shares"]);
+            let pct = pct_raw
+                .parse::<f64>()
+                .map(|f| format!("{f:.2}%"))
+                .unwrap_or(pct_raw);
+
+            let chg_raw = val_str(&item["shares_changed"]);
+            let chg = chg_raw
+                .parse::<f64>()
+                .map(|f| {
+                    let sign = if f > 0.0 { "+" } else { "" };
+                    format!("{sign}{}", format_financial_value(&f.to_string(), false))
+                })
+                .unwrap_or(chg_raw);
+
+            vec![
+                val_str(&item["shareholder_name"]),
+                symbol,
+                pct,
+                chg,
+                val_str(&item["report_date"]),
+            ]
+        })
+        .collect();
+    super::output::print_table(&headers, rows, &OutputFormat::Table);
+}
+
+/// Fetch institutional shareholders for a symbol.
+pub async fn cmd_shareholders(
+    symbol: String,
+    range: String,
+    sort_field: String,
+    sort_order: String,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/v1/quote/shareholders",
+        &[
+            ("counter_id", cid.as_str()),
+            ("position", "entry"),
+            ("range", range.as_str()),
+            ("sort_field", sort_field.as_str()),
+            ("sort_order", sort_order.as_str()),
+        ],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Table => print_shareholders(&data),
+    }
+    Ok(())
+}
+
+/// Fetch funds and ETFs that hold a given symbol.
+pub async fn cmd_fund_holders(
+    symbol: String,
+    count: i32,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let limit = count.to_string();
+    let data = http_get(
+        "/v1/quote/fund-holders",
+        &[("counter_id", cid.as_str()), ("limit", limit.as_str())],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Table => print_fund_holders(&data),
     }
     Ok(())
 }
