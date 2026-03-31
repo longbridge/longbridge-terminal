@@ -22,7 +22,7 @@ impl<'a> Content<'a> {
     }
 
     pub fn anykey_exit<B: Backend>(mut self, terminal: &mut Terminal<B>) -> std::io::Result<()> {
-        let anykey = Span::styled(t!("exit.any_key"), crate::ui::styles::gray());
+        let anykey = Span::styled(t!("exit.any_key"), crate::tui::ui::styles::gray());
         self.content.lines.push(Line::from(anykey));
 
         terminal

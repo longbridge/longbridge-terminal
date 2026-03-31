@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::RwLock};
 
-use crate::data::{AdjustType, Counter, Kline, KlineType, Klines, Market};
+use crate::data::{AdjustType, Counter, Kline, KlineType, Klines};
 use rust_decimal::Decimal;
 
 pub static KLINES: std::sync::LazyLock<KlineStore> = std::sync::LazyLock::new(KlineStore::new);
@@ -33,7 +33,7 @@ impl KlineStore {
             kline_type,
             Self::normalize(kline_type).unwrap_or(adjust_type),
         )) else {
-            crate::app::RT.get().unwrap().spawn(Self::request(
+            crate::tui::app::RT.get().unwrap().spawn(Self::request(
                 counter,
                 kline_type,
                 adjust_type,
@@ -52,7 +52,7 @@ impl KlineStore {
         };
 
         if *has_more && results.len() < page_size {
-            crate::app::RT.get().unwrap().spawn(Self::request(
+            crate::tui::app::RT.get().unwrap().spawn(Self::request(
                 counter,
                 kline_type,
                 adjust_type,
@@ -84,17 +84,6 @@ impl KlineStore {
         } else {
             results.to_vec()
         }
-    }
-
-    pub fn clear(&self) {
-        // Clear candlestick cache
-        let mut store = self.inner.write().expect("poison");
-        store.clear();
-    }
-
-    /// Daily rotation (at market close)
-    pub fn daily_rotate(&self, _market: Market) {
-        // TODO: Implement daily rotation logic
     }
 
     /// Update candlestick data

@@ -13,14 +13,14 @@ use rust_decimal::Decimal;
 use tokio::task::JoinHandle;
 
 use crate::{
-    app::RT,
     data::{Counter, KlineType, TradeSessionExt, TradeStatusExt, STOCKS},
-    kline::KLINES,
     openapi,
-    systems::WS,
-    ui::styles::{self, item},
+    tui::app::RT,
+    tui::kline::KLINES,
+    tui::systems::WS,
+    tui::ui::styles::{self, item},
+    tui::widgets::Terminal,
     utils::{DecimalExt, Sign},
-    widgets::Terminal,
 };
 
 use super::{Key, NavFooter, PopUp, StockDetail, KLINE_INDEX, KLINE_TYPE};
@@ -59,7 +59,7 @@ pub fn render_stock(
     (state, indexes, ws): NavFooter,
     (mut account, mut currency, mut search, mut watchgroup): PopUp,
     mut last_choose: Local<Counter>,
-    mut log_panel: Local<crate::widgets::LogPanel>,
+    mut log_panel: Local<crate::tui::widgets::LogPanel>,
 ) {
     // workaround bevyengine/bevy#9130
     if *last_choose != stock.0 {
@@ -104,14 +104,14 @@ pub fn render_stock(
     _ = terminal.draw(|frame| {
         let rect = frame.area();
         let top = Rect { height: 1, ..rect };
-        crate::views::navbar::render(frame, top, *state.get());
+        crate::tui::views::navbar::render(frame, top, *state.get());
 
         let bottom = Rect {
             y: rect.y + rect.height - 1,
             height: 1,
             ..rect
         };
-        crate::views::footer::render(frame, bottom, indexes.tick(), &ws);
+        crate::tui::views::footer::render(frame, bottom, indexes.tick(), &ws);
 
         let rect = Rect {
             y: rect.y + 1,
@@ -126,7 +126,7 @@ pub fn render_stock(
             KLINE_TYPE.load(Ordering::Relaxed),
             KLINE_INDEX.load(Ordering::Relaxed),
         );
-        crate::views::popup::render(
+        crate::tui::views::popup::render(
             frame,
             rect,
             &mut account,
@@ -137,7 +137,7 @@ pub fn render_stock(
 
         // Render floating log panel if visible
         let log_panel_visible =
-            crate::app::LOG_PANEL_VISIBLE.load(std::sync::atomic::Ordering::Relaxed);
+            crate::tui::app::LOG_PANEL_VISIBLE.load(std::sync::atomic::Ordering::Relaxed);
         if log_panel_visible {
             log_panel.set_visible(true);
             let panel_height = 15;
@@ -248,7 +248,7 @@ pub(crate) fn stock_detail(
                 let cmp = p.cmp(&prev);
                 let style = styles::up(cmp);
                 ListItem::new(Line::from(vec![
-                    Span::styled(format!("{label}: "), crate::ui::styles::label()),
+                    Span::styled(format!("{label}: "), crate::tui::ui::styles::label()),
                     Span::styled(price_str, style),
                 ]))
             }
@@ -271,7 +271,7 @@ pub(crate) fn stock_detail(
         if val == 0 {
             EMPTY_PLACEHOLDER.to_string()
         } else {
-            crate::ui::text::unit(Decimal::from(val), 0)
+            crate::tui::ui::text::unit(Decimal::from(val), 0)
         }
     };
 
@@ -280,7 +280,7 @@ pub(crate) fn stock_detail(
         if val == 0 {
             EMPTY_PLACEHOLDER.to_string()
         } else {
-            crate::ui::text::unit(Decimal::from(val), 0)
+            crate::tui::ui::text::unit(Decimal::from(val), 0)
         }
     };
 
@@ -309,7 +309,7 @@ pub(crate) fn stock_detail(
         item(t!("StockDetail.Volume"), fmt_unsigned(stock.quote.volume)),
         item(
             t!("StockDetail.Turnover"),
-            crate::ui::text::unit(stock.quote.turnover, 2),
+            crate::tui::ui::text::unit(stock.quote.turnover, 2),
         ),
         ListItem::new(" "),
     ];
@@ -473,20 +473,23 @@ pub(crate) fn stock_detail(
             let price_str = depth.price.format_quote_by_counter(counter).clone();
 
             // Volume (right-aligned to fixed width)
-            let volume_str = crate::ui::text::align_right(
-                &crate::ui::text::unit(Decimal::from(depth.volume), 0),
+            let volume_str = crate::tui::ui::text::align_right(
+                &crate::tui::ui::text::unit(Decimal::from(depth.volume), 0),
                 volume_width,
             );
 
             // Order count (only for HK stocks, right-aligned to 6 chars)
             let order_count_str = if counter.is_hk() {
-                crate::ui::text::align_right(&format!("({})", depth.order_num.clamp(0, 999)), 6)
+                crate::tui::ui::text::align_right(
+                    &format!("({})", depth.order_num.clamp(0, 999)),
+                    6,
+                )
             } else {
                 String::new()
             };
 
             Row::new(vec![
-                Cell::from(position).style(crate::ui::styles::gray()),
+                Cell::from(position).style(crate::tui::ui::styles::gray()),
                 Cell::from(price_str).style(price_style),
                 Cell::from(volume_str),
                 Cell::from(order_count_str),
@@ -715,7 +718,7 @@ pub(crate) fn stock_detail(
                 chart.set_vol_bull_color(bull);
                 chart.set_bear_color(bear);
                 chart.set_vol_bear_color(bear);
-                frame.render_widget(crate::widgets::Ansi(&chart.render()), area);
+                frame.render_widget(crate::tui::widgets::Ansi(&chart.render()), area);
             }
         }
     }
@@ -797,8 +800,8 @@ pub(crate) fn stock_detail(
                         0.0
                     };
 
-                    let volume_text = crate::ui::text::align_right(
-                        &crate::ui::text::unit(Decimal::from(trade.volume), 0),
+                    let volume_text = crate::tui::ui::text::align_right(
+                        &crate::tui::ui::text::unit(Decimal::from(trade.volume), 0),
                         volume_width,
                     );
 
@@ -829,7 +832,7 @@ pub(crate) fn stock_detail(
                     let price_str = format!("{:>8}", trade.price.format_quote_by_counter(counter));
 
                     Row::new(vec![
-                        Cell::from(time_str).style(crate::ui::styles::label()),
+                        Cell::from(time_str).style(crate::tui::ui::styles::label()),
                         Cell::from(direction_symbol).style(price_style),
                         Cell::from(price_str).style(price_style),
                         volume_cell,
@@ -931,7 +934,7 @@ pub fn enter_stock(counter: Res<StockDetail>) {
 }
 
 pub fn exit_stock() {
-    crate::systems::stock_news::reset_news_view();
+    crate::tui::systems::stock_news::reset_news_view();
     RT.get().unwrap().spawn(async move {
         _ = WS.unmount("stock_detail").await;
     });

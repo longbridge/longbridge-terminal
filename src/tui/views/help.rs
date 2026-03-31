@@ -6,10 +6,10 @@ use ratatui::{
     Frame,
 };
 
-use crate::ui::styles;
+use crate::tui::ui::styles;
 
 pub fn render(frame: &mut Frame, rect: Rect) {
-    let rect = crate::ui::rect::centered(100, 40, rect);
+    let rect = crate::tui::ui::rect::centered(100, 40, rect);
 
     let mut spans = vec![
         Line::from("\n"),

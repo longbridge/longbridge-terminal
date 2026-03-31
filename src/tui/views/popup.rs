@@ -1,7 +1,7 @@
 use crate::{
     openapi,
-    ui::styles,
-    widgets::{LocalSearch, Search},
+    tui::ui::styles,
+    tui::widgets::{LocalSearch, Search},
 };
 
 use ratatui::{
@@ -20,23 +20,23 @@ pub fn render(
     search: &mut Search<openapi::search::StockItem>,
     watchlist: &mut LocalSearch<crate::data::WatchlistGroup>,
 ) {
-    let popup = crate::app::POPUP.load(std::sync::atomic::Ordering::Relaxed);
-    if popup == crate::app::POPUP_ACCOUNT {
+    let popup = crate::tui::app::POPUP.load(std::sync::atomic::Ordering::Relaxed);
+    if popup == crate::tui::app::POPUP_ACCOUNT {
         switch_account(frame, rect, account);
-    } else if popup == crate::app::POPUP_CURRENCY {
+    } else if popup == crate::tui::app::POPUP_CURRENCY {
         switch_currency(frame, rect, currency);
-    } else if popup == crate::app::POPUP_WATCHLIST {
+    } else if popup == crate::tui::app::POPUP_WATCHLIST {
         switch_watchlist(frame, rect, watchlist);
-    } else if popup == crate::app::POPUP_HELP {
-        crate::views::help::render(frame, rect);
-    } else if popup == crate::app::POPUP_SEARCH {
+    } else if popup == crate::tui::app::POPUP_HELP {
+        crate::tui::views::help::render(frame, rect);
+    } else if popup == crate::tui::app::POPUP_SEARCH {
         searching(frame, rect, search);
     }
 }
 
 fn switch_account(frame: &mut Frame, rect: Rect, account: &mut LocalSearch<crate::data::Account>) {
     const MAX_SIZE: (u16, u16) = (50, 30);
-    let rect = crate::ui::rect::centered(MAX_SIZE.0, MAX_SIZE.1, rect);
+    let rect = crate::tui::ui::rect::centered(MAX_SIZE.0, MAX_SIZE.1, rect);
     frame.render_widget(Clear, rect);
 
     let chunks = Layout::default()
@@ -94,7 +94,7 @@ fn switch_currency(
     currency: &mut LocalSearch<openapi::account::CurrencyInfo>,
 ) {
     const MAX_SIZE: (u16, u16) = (50, 30);
-    let rect = crate::ui::rect::centered(MAX_SIZE.0, MAX_SIZE.1, rect);
+    let rect = crate::tui::ui::rect::centered(MAX_SIZE.0, MAX_SIZE.1, rect);
     frame.render_widget(Clear, rect);
 
     let chunks = Layout::default()
@@ -152,7 +152,7 @@ fn switch_watchlist(
     groups: &mut LocalSearch<crate::data::WatchlistGroup>,
 ) {
     const MAX_SIZE: (u16, u16) = (50, 30);
-    let rect = crate::ui::rect::centered(MAX_SIZE.0, MAX_SIZE.1, rect);
+    let rect = crate::tui::ui::rect::centered(MAX_SIZE.0, MAX_SIZE.1, rect);
     frame.render_widget(Clear, rect);
 
     let chunks = Layout::default()
@@ -206,7 +206,7 @@ fn switch_watchlist(
 
 fn searching(frame: &mut Frame, rect: Rect, search: &mut Search<openapi::search::StockItem>) {
     const MAX_SIZE: (u16, u16) = (50, 30);
-    let rect = crate::ui::rect::centered(MAX_SIZE.0, MAX_SIZE.1, rect);
+    let rect = crate::tui::ui::rect::centered(MAX_SIZE.0, MAX_SIZE.1, rect);
     frame.render_widget(Clear, rect);
 
     let chunks = Layout::default()

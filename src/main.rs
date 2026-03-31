@@ -1,30 +1,20 @@
-use crate::widgets::Terminal;
+use crate::tui::widgets::Terminal;
 use clap::Parser;
 use std::io::Write;
 use std::time::Instant;
 
-#[macro_use]
-mod macros;
-
-pub mod app;
 pub mod auth;
 pub mod cli;
 pub mod data;
-pub mod kline;
 pub mod logger;
 pub mod openapi;
 #[cfg_attr(target_family = "windows", path = "os/windows.rs")]
 #[cfg_attr(target_family = "unix", path = "os/unix.rs")]
 pub mod os;
 pub mod region;
-pub mod render;
-pub mod systems;
-pub mod ui;
+pub mod tui;
 pub mod update;
 pub mod utils;
-pub mod widgets;
-
-mod views;
 
 #[macro_use]
 extern crate rust_i18n;
@@ -144,7 +134,7 @@ async fn main() {
             let _ = std::io::stdout().flush();
 
             Terminal::enter_full_screen();
-            app::run(Args { logout: false }, quote_receiver).await;
+            tui::app::run(Args { logout: false }, quote_receiver).await;
             Terminal::exit_full_screen();
             return;
         }
