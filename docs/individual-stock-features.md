@@ -35,7 +35,7 @@
 |      | 市场   | 指数/ETF 成分股    | `longbridge constituent`               | `GET /v2/discovery/index-constituents`                     | P1     | 指数成分股 + ETF 持仓；统一命令                          |
 | ✅   | 市场   | 持有该股的基金     | `longbridge fund-holder`               | `GET /v1/quote/fund-holders`                               | P1     | 哪些基金/ETF 持有该股，含持仓比例                        |
 |      | 市场   | 新股日历 & 详情    | `longbridge ipo`                       | `POST /ipo/calendar` + `GET /stock-info/ipo-profile`       | P1     | upcoming/subscribing/listed + 招股详情                   |
-|      | 市场   | 财经日历           | `longbridge calendar`                  | `POST /stock_info/finance_calendar`                        | P2     | 财报发布日、IPO 日期、宏观经济事件                       |
+| ✅   | 市场   | 财经日历           | `longbridge finance-calendar`          | `GET /v1/quote/finance_calendar`                           | P2     | 财报/派息/新股/股东大会；`--type`、`--date`、`--count`   |
 |      | 行情   | 期权成交量统计     | `longbridge option volume`             | REST（待确认）                                             | P2     | Call/Put 总成交量比例                                    |
 |      | 账户   | 股价提醒           | `longbridge alert`                     | `price-notify` scope（待确认）                             | P1     | 设置/查看/删除价格提醒；多指标                           |
 |      | 账户   | 股票备注           | `longbridge note`                      | REST（待确认）                                             | P2     | 对自选股设置/读取个人备注                                |

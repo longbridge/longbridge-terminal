@@ -396,6 +396,31 @@ pub enum Commands {
         symbol: String,
     },
 
+    /// Finance calendar: upcoming and recent events for a symbol
+    ///
+    /// Returns: earnings reports, dividends, IPOs, shareholder meetings, and more.
+    /// Default date range is 6 months back to 6 months forward (12 months total).
+    /// All event types are included by default; use --type to filter.
+    /// Example: longbridge finance-calendar AAPL.US
+    /// Example: longbridge finance-calendar AAPL.US --date 2026-01-01 --end-date 2026-12-31
+    /// Example: longbridge finance-calendar AAPL.US --type earning --type dividend
+    FinanceCalendar {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+        /// Start date (YYYY-MM-DD), defaults to 6 months ago
+        #[arg(long)]
+        date: Option<String>,
+        /// End date (YYYY-MM-DD), defaults to 6 months from now
+        #[arg(long)]
+        end_date: Option<String>,
+        /// Event types to include (default: all). Choices: earning, financial, report, dividend, ipo, meeting, closed
+        #[arg(long = "type", value_name = "TYPE")]
+        types: Vec<String>,
+        /// Max events per type per day (default: 20)
+        #[arg(long, default_value = "20")]
+        count: u32,
+    },
+
     /// Valuation analysis: P/E, P/B, P/S, dividend yield, and peer comparison
     ///
     /// Without a subcommand: returns current valuation metrics and industry median.
@@ -1328,6 +1353,16 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         }
         Commands::Consensus { symbol } => fundamental::cmd_consensus(symbol, format, verbose).await,
         Commands::Score { symbol } => fundamental::cmd_score(symbol, format, verbose).await,
+        Commands::FinanceCalendar {
+            symbol,
+            date,
+            end_date,
+            types,
+            count,
+        } => {
+            fundamental::cmd_finance_calendar(symbol, date, end_date, types, count, format, verbose)
+                .await
+        }
         Commands::Valuation {
             symbol,
             indicator,

@@ -1109,3 +1109,112 @@ pub async fn cmd_fund_holders(
     }
     Ok(())
 }
+
+fn finance_calendar_type_label(t: &str) -> &'static str {
+    match t {
+        "earning" => "Earnings",
+        "financial" => "Financials",
+        "report" => "Preview",
+        "dividend" => "Dividend",
+        "ipo" => "IPO",
+        "meeting" => "Meeting",
+        "macrodata" => "Macro",
+        "closed" => "Closed",
+        _ => "Event",
+    }
+}
+
+fn print_finance_calendar(payload: &Value) {
+    let empty = vec![];
+    let list = payload["list"].as_array().unwrap_or(&empty);
+
+    for group in list {
+        let group_date = val_str(&group["date"]);
+        let infos = group["infos"].as_array().unwrap_or(&empty);
+        for info in infos {
+            let event_date = {
+                let d = val_str(&info["date"]);
+                if d.is_empty() {
+                    group_date.clone()
+                } else {
+                    d
+                }
+            };
+            let type_label = finance_calendar_type_label(info["type"].as_str().unwrap_or(""));
+            let content = val_str(&info["content"]);
+
+            println!("{event_date}  [{type_label}]");
+            println!("  {content}");
+
+            let kv = info["data_kv"].as_array().unwrap_or(&empty);
+            if !kv.is_empty() {
+                let find_kv = |key: &str| -> String {
+                    kv.iter()
+                        .find(|e| e["type"].as_str() == Some(key))
+                        .map(|e| val_str(&e["value"]))
+                        .unwrap_or_default()
+                };
+                let est_eps = find_kv("estimate_eps");
+                let act_eps = find_kv("actual_eps");
+                let est_rev = find_kv("estimate_revenue");
+                let act_rev = find_kv("actual_revenue");
+                if !est_eps.is_empty() || !act_eps.is_empty() {
+                    println!("  EPS: Est {est_eps} / Act {act_eps}  |  Revenue: Est {est_rev} / Act {act_rev}");
+                }
+            }
+            println!();
+        }
+    }
+}
+
+const ALL_CALENDAR_TYPES: &[&str] = &[
+    "earning",
+    "financial",
+    "report",
+    "dividend",
+    "ipo",
+    "meeting",
+];
+
+/// Fetch finance calendar events for a symbol.
+pub async fn cmd_finance_calendar(
+    symbol: String,
+    date: Option<String>,
+    date_end: Option<String>,
+    types: Vec<String>,
+    count: u32,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let today = time::OffsetDateTime::now_utc().date();
+    let start =
+        date.unwrap_or_else(|| format!("{}", today.saturating_sub(time::Duration::days(180))));
+    let end =
+        date_end.unwrap_or_else(|| format!("{}", today.saturating_add(time::Duration::days(180))));
+    let count_str = count.to_string();
+
+    let active_types: Vec<&str> = if types.is_empty() {
+        ALL_CALENDAR_TYPES.to_vec()
+    } else {
+        types.iter().map(String::as_str).collect()
+    };
+
+    let mut params: Vec<(&str, &str)> = vec![
+        ("date", start.as_str()),
+        ("date_end", end.as_str()),
+        ("count", count_str.as_str()),
+        ("counter_ids[]", cid.as_str()),
+    ];
+    for t in &active_types {
+        params.push(("types[]", t));
+    }
+
+    let resp = super::api::http_get("/v1/quote/finance_calendar", &params, verbose).await?;
+
+    match format {
+        OutputFormat::Json => print_json(&resp),
+        OutputFormat::Table => print_finance_calendar(&resp),
+    }
+    Ok(())
+}
