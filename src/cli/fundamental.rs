@@ -1132,14 +1132,18 @@ fn print_finance_calendar(payload: &Value) {
         let group_date = val_str(&group["date"]);
         let infos = group["infos"].as_array().unwrap_or(&empty);
         for info in infos {
-            let event_date = {
-                let d = val_str(&info["date"]);
-                if d.is_empty() {
-                    group_date.clone()
-                } else {
-                    d
-                }
+            // For macrodata, info["date"] is a time string (e.g. "07:50"); combine with group date.
+            // For other types, info["date"] is a full display date or empty (fall back to group date).
+            let info_date = val_str(&info["date"]);
+            let event_date = if info_date.is_empty() {
+                group_date.clone()
+            } else if info_date.len() <= 5 {
+                // looks like HH:MM — prepend the group date
+                format!("{group_date} {info_date}")
+            } else {
+                info_date
             };
+
             let type_label = finance_calendar_type_label(info["type"].as_str().unwrap_or(""));
             let content = val_str(&info["content"]);
             let name = val_str(&info["counter_name"]);
@@ -1160,12 +1164,20 @@ fn print_finance_calendar(payload: &Value) {
                         .map(|e| val_str(&e["value"]))
                         .unwrap_or_default()
                 };
+                // Financial events: EPS / Revenue
                 let est_eps = find_kv("estimate_eps");
                 let act_eps = find_kv("actual_eps");
-                let est_rev = find_kv("estimate_revenue");
-                let act_rev = find_kv("actual_revenue");
                 if !est_eps.is_empty() || !act_eps.is_empty() {
+                    let est_rev = find_kv("estimate_revenue");
+                    let act_rev = find_kv("actual_revenue");
                     println!("  EPS: Est {est_eps} / Act {act_eps}  |  Revenue: Est {est_rev} / Act {act_rev}");
+                }
+                // Macro events: previous / estimate / actual
+                let prev = find_kv("previous");
+                let est = find_kv("estimate");
+                let act = find_kv("actual");
+                if !prev.is_empty() || !est.is_empty() || !act.is_empty() {
+                    println!("  前值: {prev}  预测: {est}  公告: {act}");
                 }
             }
             println!();
