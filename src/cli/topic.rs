@@ -281,9 +281,7 @@ pub async fn cmd_create_topic(
 ) -> Result<()> {
     let is_post = post_type.as_deref().unwrap_or("post") == "post";
     if is_post && body.contains("![") {
-        anyhow::bail!(
-            "--type post does not support images. Use --type article to embed images."
-        );
+        anyhow::bail!("--type post does not support images. Use --type article to embed images.");
     }
     if is_post && has_rich_markup(&body) {
         anyhow::bail!(

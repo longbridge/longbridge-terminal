@@ -363,7 +363,7 @@ pub enum Commands {
     // ── Image ──────────────────────────────────────────────────────────────────
     /// Upload images for use in community posts
     ///
-    /// Images are uploaded anonymously to Imgur (https://imgur.com).
+    /// Images are uploaded via the Longbridge API (requires authentication).
     /// The returned URL can be embedded in a topic body with Markdown: ![](URL)
     /// Example: longbridge image upload ./chart.png
     Image {
@@ -408,7 +408,7 @@ pub enum Commands {
     /// Without a subcommand, lists available statements (equivalent to `statement list`).
     /// Example: longbridge statement
     /// Example: longbridge statement --type monthly
-    /// Example: longbridge statement export --file-key KEY --section equity_holdings
+    /// Example: longbridge statement export --file-key `KEY` --section `equity_holdings`
     Statement {
         /// Statement type: daily (default) | monthly
         #[arg(long = "type", default_value = "daily")]
@@ -843,18 +843,14 @@ pub enum FilingCmd {
 
 #[derive(Subcommand)]
 pub enum ImageCmd {
-    /// Upload a local image file anonymously and print the public URL
+    /// Upload a local image file and print the public URL
     ///
-    /// Without --provider, tries Imgur then imgbb as fallback.
-    /// Use the URL in a topic body with Markdown syntax: ![](URL)
+    /// Requires authentication. Uses the Longbridge API to upload images.
+    /// The returned URL can be embedded in a topic body with Markdown: ![](URL)
     /// Example: longbridge image upload ./chart.png
-    /// Example: longbridge image upload ./chart.png --provider imgbb
     Upload {
         /// Path to the image file (PNG, JPEG, GIF, or WebP)
         path: std::path::PathBuf,
-        /// Force a specific provider instead of auto-fallback
-        #[arg(long)]
-        provider: Option<image::ImageProvider>,
     },
 }
 
@@ -1168,7 +1164,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
             }
         },
         Commands::Image { cmd } => match cmd {
-            ImageCmd::Upload { path, provider } => image::cmd_image_upload(path, provider).await,
+            ImageCmd::Upload { path } => image::cmd_image_upload(path).await,
         },
         Commands::Topic { symbol, count, cmd } => match cmd {
             Some(TopicCmd::Detail { id }) => topic::cmd_topic_detail_api(id, format).await,
