@@ -133,12 +133,42 @@ longbridge topic create-reply <id> --body "…"    # Post a reply to a topic (--
 ### Options & Warrants
 
 ```bash
-longbridge option quote AAPL240119C190000          # Real-time quotes for option contracts
+longbridge option AAPL240119C190000               # Real-time quote for an option contract
 longbridge option chain AAPL.US                   # Option chain: list all expiry dates
 longbridge option chain AAPL.US --date 2024-01-19 # Option chain: strike prices for a given expiry
 longbridge warrant quote 12345.HK                 # Real-time quotes for warrant contracts
 longbridge warrant list 700.HK                    # Warrants linked to an underlying security
 longbridge warrant issuers                        # Warrant issuer list (HK market)
+```
+
+### Fundamentals
+
+```bash
+longbridge financial-report AAPL.US [--kind IS|BS|CF]               # Multi-period financial statements (income / balance sheet / cash flow)
+longbridge institution-rating AAPL.US                                # Analyst rating distribution and consensus target price
+longbridge institution-rating detail AAPL.US                         # Monthly rating trend and analyst accuracy history
+longbridge dividend AAPL.US                                          # Historical dividend records
+longbridge dividend detail AAPL.US                                   # Dividend allocation plan details
+longbridge forecast-eps AAPL.US                                      # Analyst EPS consensus forecast snapshots
+longbridge consensus AAPL.US                                         # Revenue / profit / EPS multi-period comparison with beat/miss markers
+longbridge valuation AAPL.US [--indicator pe|pb|ps|dvd_yld]         # Current valuation snapshot and peer comparison
+longbridge valuation AAPL.US --history [--indicator pe] [--range 5]  # Historical valuation time series (1 / 3 / 5 / 10 years)
+longbridge fund-holder AAPL.US [--count 20]                          # Funds and ETFs holding this stock
+longbridge shareholder AAPL.US [--range all|inc|dec] [--sort chg]    # Institutional shareholders with QoQ change tracking
+longbridge insider-holding AAPL.US [--period 2024Q4]                 # Executive and director holdings with quarterly buy/sell totals
+```
+
+### Market Data
+
+```bash
+longbridge exchange-rate                                             # Exchange rates for all markets
+longbridge my-rate                                                   # Personal commission rates and fee schedule
+longbridge finance-calendar financial [--symbol AAPL.US]             # Earnings guidance announcements from today onward
+longbridge finance-calendar report [--symbol AAPL.US]                # Earnings report release dates from today onward
+longbridge finance-calendar dividend [--symbol AAPL.US]              # Dividend ex-date / payment events from today onward
+longbridge finance-calendar ipo [--market US]                        # IPO listing timeline from today onward
+longbridge finance-calendar macrodata [--star 3]                     # Macro economic events (--star 1–3 filters by importance)
+longbridge finance-calendar closed [--market HK]                     # Market holidays and shortened trading days
 ```
 
 ### Watchlist
