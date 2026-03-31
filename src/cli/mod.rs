@@ -400,17 +400,17 @@ pub enum Commands {
     /// Finance calendar: upcoming events by type
     ///
     /// Returns market-wide events for the given type starting from today.
-    /// Optionally filter by symbol or specify a date range.
+    /// Optionally filter by up to 10 symbols or specify a date range.
     /// Types: earning, financial, report, dividend, ipo, meeting, macrodata, closed
     /// Example: longbridge finance-calendar earning
-    /// Example: longbridge finance-calendar earning --symbol AAPL.US
+    /// Example: longbridge finance-calendar earning --symbol AAPL.US --symbol TSLA.US
     /// Example: longbridge finance-calendar earning --date 2026-01-01 --end-date 2026-06-30
     FinanceCalendar {
         /// Event type: earning, financial, report, dividend, ipo, meeting, macrodata, closed
         event_type: String,
-        /// Filter by symbol (optional)
-        #[arg(long)]
-        symbol: Option<String>,
+        /// Filter by symbol, repeatable (max 10)
+        #[arg(long, value_name = "SYMBOL")]
+        symbol: Vec<String>,
         /// Start date (YYYY-MM-DD), defaults to today
         #[arg(long)]
         date: Option<String>,
@@ -1366,6 +1366,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             )
             .await
         }
+
         Commands::Valuation {
             symbol,
             indicator,

@@ -1142,8 +1142,14 @@ fn print_finance_calendar(payload: &Value) {
             };
             let type_label = finance_calendar_type_label(info["type"].as_str().unwrap_or(""));
             let content = val_str(&info["content"]);
+            let name = val_str(&info["counter_name"]);
+            let symbol = counter_id_to_symbol(info["counter_id"].as_str().unwrap_or(""));
 
-            println!("{event_date}  [{type_label}]");
+            if name.is_empty() {
+                println!("{event_date}  [{type_label}]");
+            } else {
+                println!("{event_date}  [{type_label}]  {name} ({symbol})");
+            }
             println!("  {content}");
 
             let kv = info["data_kv"].as_array().unwrap_or(&empty);
@@ -1167,10 +1173,10 @@ fn print_finance_calendar(payload: &Value) {
     }
 }
 
-/// Fetch finance calendar events by type. Optionally filter by symbol.
+/// Fetch finance calendar events by type. Optionally filter by up to 10 symbols.
 pub async fn cmd_finance_calendar(
     event_type: String,
-    symbol: Option<String>,
+    symbols: Vec<String>,
     date: Option<String>,
     date_end: Option<String>,
     count: u32,
@@ -1180,7 +1186,11 @@ pub async fn cmd_finance_calendar(
     let today = time::OffsetDateTime::now_utc().date();
     let start = date.unwrap_or_else(|| format!("{today}"));
     let count_str = count.to_string();
-    let cid = symbol.as_deref().map(symbol_to_counter_id);
+    let cids: Vec<String> = symbols
+        .iter()
+        .take(10)
+        .map(|s| symbol_to_counter_id(s))
+        .collect();
 
     let mut params: Vec<(&str, &str)> = vec![
         ("date", start.as_str()),
@@ -1190,7 +1200,7 @@ pub async fn cmd_finance_calendar(
     if let Some(ref e) = date_end {
         params.push(("date_end", e.as_str()));
     }
-    if let Some(ref c) = cid {
+    for c in &cids {
         params.push(("counter_ids[]", c.as_str()));
     }
 
