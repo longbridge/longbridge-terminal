@@ -86,7 +86,8 @@ fn print_cli_error(e: &anyhow::Error, using_api_key: bool) {
 
 #[tokio::main]
 async fn main() {
-    rust_i18n::set_locale("en");
+    let locale = std::env::var("LONGBRIDGE_LANGUAGE").unwrap_or_else(|_| "en".to_string());
+    rust_i18n::set_locale(&locale);
     let _guard = logger::init();
 
     let cli = cli::Cli::parse();
