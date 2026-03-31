@@ -1029,9 +1029,28 @@ pub async fn cmd_option_chain(
 ) -> Result<()> {
     let ctx = crate::openapi::quote();
 
-    if let Some(date_str) = date {
-        let d = parse_date(&date_str)?;
-        let strikes = ctx.option_chain_info_by_date(symbol, d).await?;
+    let expiry = if let Some(date_str) = date {
+        parse_date(&date_str)?
+    } else {
+        let dates = ctx.option_chain_expiry_date_list(symbol.clone()).await?;
+        *dates
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("No expiry dates available for {symbol}"))?
+    };
+
+    let strikes = ctx.option_chain_info_by_date(symbol, expiry).await?;
+
+    let all_symbols: Vec<String> = strikes
+        .iter()
+        .flat_map(|s| [s.call_symbol.clone(), s.put_symbol.clone()])
+        .filter(|sym| !sym.is_empty())
+        .collect();
+
+    let quotes = ctx.option_quote(all_symbols).await.unwrap_or_default();
+    let quote_map: std::collections::HashMap<&str, &longbridge::quote::OptionQuote> =
+        quotes.iter().map(|q| (q.symbol.as_str(), q)).collect();
+
+    if quote_map.is_empty() {
         let headers = &["Strike", "Call Symbol", "Put Symbol", "Standard"];
         let rows = strikes
             .iter()
@@ -1046,9 +1065,33 @@ pub async fn cmd_option_chain(
             .collect();
         print_table(headers, rows, format);
     } else {
-        let dates = ctx.option_chain_expiry_date_list(symbol).await?;
-        let headers = &["Expiry Date"];
-        let rows = dates.iter().map(|d| vec![fmt_date(*d)]).collect();
+        let headers = &[
+            "Strike",
+            "Call Last",
+            "Call IV",
+            "Call Vol",
+            "Put Last",
+            "Put IV",
+            "Put Vol",
+            "Standard",
+        ];
+        let rows = strikes
+            .iter()
+            .map(|s| {
+                let call = quote_map.get(s.call_symbol.as_str());
+                let put = quote_map.get(s.put_symbol.as_str());
+                vec![
+                    fmt_dec(s.price),
+                    call.map_or_else(|| "-".to_string(), |q| fmt_dec(q.last_done)),
+                    call.map_or_else(|| "-".to_string(), |q| fmt_dec(q.implied_volatility)),
+                    call.map_or_else(|| "-".to_string(), |q| q.volume.to_string()),
+                    put.map_or_else(|| "-".to_string(), |q| fmt_dec(q.last_done)),
+                    put.map_or_else(|| "-".to_string(), |q| fmt_dec(q.implied_volatility)),
+                    put.map_or_else(|| "-".to_string(), |q| q.volume.to_string()),
+                    s.standard.to_string(),
+                ]
+            })
+            .collect();
         print_table(headers, rows, format);
     }
     Ok(())
@@ -1672,19 +1715,61 @@ pub async fn run_option_chain_strikes(
     format: &OutputFormat,
 ) -> Result<()> {
     let strikes = api.option_chain_info_by_date(symbol, expiry_date).await?;
-    let headers = &["Strike", "Call Symbol", "Put Symbol", "Standard"];
-    let rows = strikes
+
+    let all_symbols: Vec<String> = strikes
         .iter()
-        .map(|s| {
-            vec![
-                fmt_dec(s.price),
-                s.call_symbol.clone(),
-                s.put_symbol.clone(),
-                s.standard.to_string(),
-            ]
-        })
+        .flat_map(|s| [s.call_symbol.clone(), s.put_symbol.clone()])
+        .filter(|sym| !sym.is_empty())
         .collect();
-    print_table(headers, rows, format);
+
+    let quotes = api.option_quote(all_symbols).await.unwrap_or_default();
+    let quote_map: std::collections::HashMap<&str, &longbridge::quote::OptionQuote> =
+        quotes.iter().map(|q| (q.symbol.as_str(), q)).collect();
+
+    if quote_map.is_empty() {
+        let headers = &["Strike", "Call Symbol", "Put Symbol", "Standard"];
+        let rows = strikes
+            .iter()
+            .map(|s| {
+                vec![
+                    fmt_dec(s.price),
+                    s.call_symbol.clone(),
+                    s.put_symbol.clone(),
+                    s.standard.to_string(),
+                ]
+            })
+            .collect();
+        print_table(headers, rows, format);
+    } else {
+        let headers = &[
+            "Strike",
+            "Call Last",
+            "Call IV",
+            "Call Vol",
+            "Put Last",
+            "Put IV",
+            "Put Vol",
+            "Standard",
+        ];
+        let rows = strikes
+            .iter()
+            .map(|s| {
+                let call = quote_map.get(s.call_symbol.as_str());
+                let put = quote_map.get(s.put_symbol.as_str());
+                vec![
+                    fmt_dec(s.price),
+                    call.map_or_else(|| "-".to_string(), |q| fmt_dec(q.last_done)),
+                    call.map_or_else(|| "-".to_string(), |q| fmt_dec(q.implied_volatility)),
+                    call.map_or_else(|| "-".to_string(), |q| q.volume.to_string()),
+                    put.map_or_else(|| "-".to_string(), |q| fmt_dec(q.last_done)),
+                    put.map_or_else(|| "-".to_string(), |q| fmt_dec(q.implied_volatility)),
+                    put.map_or_else(|| "-".to_string(), |q| q.volume.to_string()),
+                    s.standard.to_string(),
+                ]
+            })
+            .collect();
+        print_table(headers, rows, format);
+    }
     Ok(())
 }
 

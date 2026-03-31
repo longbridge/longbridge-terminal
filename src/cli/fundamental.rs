@@ -937,12 +937,7 @@ fn print_score(data: &Value) {
                 let score = val_str(&ind["score"]);
                 let letter = val_str(&ind["letter"]);
                 let change = ind["change"].as_i64().unwrap_or(0);
-                Some(vec![
-                    name,
-                    score,
-                    letter,
-                    change_arrow(change).to_string(),
-                ])
+                Some(vec![name, score, letter, change_arrow(change).to_string()])
             })
             .collect();
 
@@ -1018,7 +1013,13 @@ fn print_shareholders(data: &Value) {
     let total = data["total"].as_i64().unwrap_or(0);
     println!("Total shareholders: {total}\n");
 
-    let headers = ["shareholder", "symbol", "% shares", "chg shares", "report_date"];
+    let headers = [
+        "shareholder",
+        "symbol",
+        "% shares",
+        "chg shares",
+        "report_date",
+    ];
     let rows: Vec<Vec<String>> = items
         .iter()
         .map(|item| {
@@ -1026,8 +1027,10 @@ fn print_shareholders(data: &Value) {
             let symbol = item["stocks"]
                 .as_array()
                 .and_then(|s| s.first())
-                .map(|s| counter_id_to_symbol(&val_str(&s["counter_id"])))
-                .unwrap_or_else(|| "-".to_string());
+                .map_or_else(
+                    || "-".to_string(),
+                    |s| counter_id_to_symbol(&val_str(&s["counter_id"])),
+                );
 
             let pct_raw = val_str(&item["percent_of_shares"]);
             let pct = pct_raw

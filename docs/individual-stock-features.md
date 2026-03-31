@@ -22,8 +22,9 @@
 |      | 行情   | 美股深度摆盘       | `longbridge orderbook`                 | WS `TOTAL_VIEW` / `TOTAL_VIEW_BRIEF`                       | P0     | 全量订单簿；`--brief` 取 60 档；引擎已实现，仅需暴露     |
 |      | 行情   | 资金流（大笔）     | `longbridge flow`                      | WS `DETAIL.inflow` + REST（待确认）                        | P0     | 大单净流入/流出（超大/大/中/小单分层）；历史 K 线 + 分时 |
 |      | 行情   | 做空数据           | `longbridge short`                     | REST（待确认）                                             | P0     | 美股/港股卖空成交 + 做空持仓数量/比例                    |
-|      | 行情   | K 线扩展时段       | `longbridge kline --session`           | SDK `QuoteContext.candlesticks()` + `session` 参数         | P0     | 新增 `--session pre-post/all`；引擎已支持，CLI 未透传    |
-|      | 行情   | 分时/逐笔扩展时段  | `longbridge intraday/trades --session` | SDK `QuoteContext.intraday_lines()` / `trades()`           | P0     | 盘前盘后/夜盘；引擎已支持                                |
+| ✅   | 行情   | K 线扩展时段       | `longbridge kline --session`           | SDK `QuoteContext.candlesticks()` + `TradeSessions` 参数   | P0     | `--session intraday`（默认）/ `all`（含盘前盘后）        |
+| ✅   | 行情   | 分时扩展时段       | `longbridge intraday --session`        | SDK `QuoteContext.intraday()`  + `TradeSessions` 参数      | P0     | `--session intraday`（默认）/ `all`（含盘前盘后）        |
+|      | 行情   | 逐笔扩展时段       | `longbridge trades --session`          | SDK `QuoteContext.trades()` — 暂不支持                     | P2     | SDK `trades()` 无 TradeSessions 参数，待 SDK 升级        |
 | ✅   | 基本面 | 投资风格与多维评分 | `longbridge score`                     | `GET /v1/quote/security-ratings`                           | P1     | 投资风格分类 + 盈利/成长/现金/运营/负债五维打分          |
 |      | 公司   | 公司概况           | `longbridge company`                   | `GET /stock-info/comp-overview`                            | P1     | 基本信息、员工数、IPO 价格等                             |
 |      | 公司   | 公司高管           | `longbridge executive`                 | `GET /stock-info/company-professionals`                    | P1     | 高管姓名、职位、biography                                |
