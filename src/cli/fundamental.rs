@@ -1148,12 +1148,16 @@ fn print_finance_calendar(payload: &Value) {
             let content = val_str(&info["content"]);
             let name = val_str(&info["counter_name"]);
             let symbol = counter_id_to_symbol(info["counter_id"].as_str().unwrap_or(""));
+            let market = val_str(&info["market"]);
 
-            if name.is_empty() {
-                println!("{event_date}  [{type_label}]");
-            } else {
-                println!("{event_date}  [{type_label}]  {name} ({symbol})");
+            let mut header = format!("{event_date}  [{type_label}]");
+            if !market.is_empty() {
+                header.push_str(&format!("  {market}"));
             }
+            if !name.is_empty() {
+                header.push_str(&format!("  {name} ({symbol})"));
+            }
+            println!("{header}");
             println!("  {content}");
 
             let kv = info["data_kv"].as_array().unwrap_or(&empty);
