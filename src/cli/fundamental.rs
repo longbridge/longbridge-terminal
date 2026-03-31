@@ -1205,7 +1205,13 @@ pub async fn cmd_finance_calendar(
     verbose: bool,
 ) -> Result<()> {
     let today = time::OffsetDateTime::now_utc().date();
-    let start = date.unwrap_or_else(|| format!("{today}"));
+    let start = date.unwrap_or_else(|| {
+        if symbols.is_empty() {
+            format!("{today}")
+        } else {
+            format!("{}", today.saturating_sub(time::Duration::days(90)))
+        }
+    });
 
     // V2 rule: ["report"] must be expanded to ["report", "financial"]
     let mut types: Vec<&str> = vec![event_type.as_str()];
