@@ -280,10 +280,15 @@ pub async fn cmd_create_topic(
     format: &OutputFormat,
 ) -> Result<()> {
     let is_post = post_type.as_deref().unwrap_or("post") == "post";
+    if is_post && body.contains("![") {
+        anyhow::bail!(
+            "--type post does not support images. Use --type article to embed images."
+        );
+    }
     if is_post && has_rich_markup(&body) {
-        eprintln!(
-            "Warning: --type post is plain text only. Markdown and HTML (**, ##, <b>, etc.) \
-             will appear as literal characters. Use --type article for rich formatting."
+        anyhow::bail!(
+            "--type post is plain text only. Markdown and HTML (**, ##, <b>, etc.) \
+             are not supported. Use --type article for rich formatting."
         );
     }
 
