@@ -1201,8 +1201,14 @@ pub async fn cmd_finance_calendar(
     verbose: bool,
 ) -> Result<()> {
     let today = time::OffsetDateTime::now_utc().date();
-    let start =
-        date.unwrap_or_else(|| format!("{}", today.saturating_sub(time::Duration::days(180))));
+    // "closed" events are only meaningful going forward; other types default to 6 months back.
+    let start = date.unwrap_or_else(|| {
+        if event_type == "closed" {
+            format!("{today}")
+        } else {
+            format!("{}", today.saturating_sub(time::Duration::days(180)))
+        }
+    });
 
     // V2 rule: ["report"] must be expanded to ["report", "financial"]
     let mut types: Vec<&str> = vec![event_type.as_str()];
