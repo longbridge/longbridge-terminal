@@ -1184,7 +1184,8 @@ pub async fn cmd_finance_calendar(
     verbose: bool,
 ) -> Result<()> {
     let today = time::OffsetDateTime::now_utc().date();
-    let start = date.unwrap_or_else(|| format!("{today}"));
+    let start =
+        date.unwrap_or_else(|| format!("{}", today.saturating_sub(time::Duration::days(180))));
     let count_str = count.to_string();
     let cids: Vec<String> = symbols
         .iter()

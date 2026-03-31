@@ -399,7 +399,7 @@ pub enum Commands {
 
     /// Finance calendar: upcoming events by type
     ///
-    /// Returns market-wide events for the given type starting from today.
+    /// Returns market-wide events for the given type. Default range: 6 months back to no limit.
     /// Optionally filter by up to 10 symbols or specify a date range.
     /// Types: earning, financial, report, dividend, ipo, meeting, macrodata, closed
     /// Example: longbridge finance-calendar earning
@@ -411,7 +411,7 @@ pub enum Commands {
         /// Filter by symbol, repeatable (max 10)
         #[arg(long, value_name = "SYMBOL")]
         symbol: Vec<String>,
-        /// Start date (YYYY-MM-DD), defaults to today
+        /// Start date (YYYY-MM-DD), defaults to 6 months ago
         #[arg(long)]
         date: Option<String>,
         /// End date (YYYY-MM-DD), defaults to no limit
