@@ -1722,7 +1722,11 @@ pub async fn run_option_chain_strikes(
         .filter(|sym| !sym.is_empty())
         .collect();
 
-    let quotes = api.option_quote(all_symbols).await.unwrap_or_default();
+    let quotes = if all_symbols.is_empty() {
+        vec![]
+    } else {
+        api.option_quote(all_symbols).await.unwrap_or_default()
+    };
     let quote_map: std::collections::HashMap<&str, &longbridge::quote::OptionQuote> =
         quotes.iter().map(|q| (q.symbol.as_str(), q)).collect();
 
