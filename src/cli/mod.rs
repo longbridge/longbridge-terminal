@@ -386,17 +386,6 @@ pub enum Commands {
         symbol: String,
     },
 
-    /// Investment style and multi-dimensional score for a symbol
-    ///
-    /// Returns: overall score/grade, investment style (value/blend/growth × small/mid/large),
-    /// industry rank, peer average/median, and dimension breakdown (growth/value/quality/momentum).
-    /// Example: longbridge score TSLA.US
-    /// Example: longbridge score TSLA.US --format json
-    Score {
-        /// Symbol in <CODE>.<MARKET> format
-        symbol: String,
-    },
-
     /// Finance calendar: upcoming events by type (V2)
     ///
     /// Default start date: today (no --symbol) or 3 months ago (with --symbol).
@@ -1379,7 +1368,6 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             fundamental::cmd_forecast_eps(symbol, format, verbose).await
         }
         Commands::Consensus { symbol } => fundamental::cmd_consensus(symbol, format, verbose).await,
-        Commands::Score { symbol } => fundamental::cmd_score(symbol, format, verbose).await,
         Commands::FinanceCalendar {
             event_type,
             symbol,
