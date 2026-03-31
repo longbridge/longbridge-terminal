@@ -682,6 +682,19 @@ pub enum Commands {
         #[arg(long, default_value = "20")]
         count: i32,
     },
+
+    /// Company insider holdings: shares held by executives and directors
+    ///
+    /// Returns aggregate holdings and per-person breakdown with QoQ changes.
+    /// Example: longbridge insider-holding AAPL.US
+    /// Example: longbridge insider-holding TSLA.US --period 2024Q4
+    InsiderHolding {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+        /// Reporting period (e.g. 2024Q4), defaults to latest
+        #[arg(long)]
+        period: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1565,6 +1578,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         } => fundamental::cmd_shareholders(symbol, range, sort, order, format, verbose).await,
         Commands::FundHolder { symbol, count } => {
             fundamental::cmd_fund_holders(symbol, count, format, verbose).await
+        }
+        Commands::InsiderHolding { symbol, period } => {
+            fundamental::cmd_insider_holding(symbol, period, format, verbose).await
         }
         Commands::Login { .. }
         | Commands::Logout
