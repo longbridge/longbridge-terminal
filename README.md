@@ -155,7 +155,6 @@ longbridge valuation AAPL.US [--indicator pe|pb|ps|dvd_yld]         # Current va
 longbridge valuation AAPL.US --history [--indicator pe] [--range 5]  # Historical valuation time series (1 / 3 / 5 / 10 years)
 longbridge fund-holder AAPL.US [--count 20]                          # Funds and ETFs holding this stock
 longbridge shareholder AAPL.US [--range all|inc|dec] [--sort chg]    # Institutional shareholders with QoQ change tracking
-longbridge insider-holding AAPL.US [--period 2024Q4]                 # Executive and director holdings with quarterly buy/sell totals
 ```
 
 ### Market Data

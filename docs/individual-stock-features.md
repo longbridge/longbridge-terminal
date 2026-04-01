@@ -38,7 +38,7 @@
 |      | 行情   | 期权成交量统计  | `longbridge option volume`           | REST（待确认）                                             | P2     | Call/Put 总成交量比例                                    |
 |      | 账户   | 股价提醒        | `longbridge alert`                   | `price-notify` scope（待确认）                             | P1     | 设置/查看/删除价格提醒；多指标                           |
 |      | 账户   | 股票备注        | `longbridge note`                    | REST（待确认）                                             | P2     | 对自选股设置/读取个人备注                                |
-| ✅   | 基本面 | 内部人士持股    | `longbridge insider-holding`         | `GET /v1/quote/company_insider_holdings`                   | P1     | 高管/董事持股汇总，含季度累计买卖股数                    |
+|      | 基本面 | 内部人士持股    | `longbridge insider-holding`         | `GET /v1/quote/company_insider_holdings`                   | P1     | 高管/董事持股汇总，含季度累计买卖股数                    |
 |      | 选股   | 选股器          | `longbridge screener`                | REST（待确认）                                             | P1     | 多指标条件筛选（估值/技术/基本面）                       |
 
 ---
