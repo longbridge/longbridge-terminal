@@ -50,13 +50,25 @@ Also ships a full-screen TUI for interactive monitoring.
 brew install --cask longbridge/tap/longbridge-terminal
 ```
 
-**Install script**
+**Windows** ([Scoop](https://scoop.sh))
+
+```powershell
+scoop install https://raw.githubusercontent.com/longbridge/longbridge-terminal/main/longbridge.json
+```
+
+**Windows** (PowerShell)
+
+```powershell
+iwr https://github.com/longbridge/longbridge-terminal/raw/main/install.ps1 | iex
+```
+
+**Install script (macOS / Linux)**
 
 ```bash
 curl -sSL https://github.com/longbridge/longbridge-terminal/raw/main/install | sh
 ```
 
-Installs the `longbridge` binary to `/usr/local/bin`.
+Installs the `longbridge` binary to `/usr/local/bin` (macOS/Linux) or `%LOCALAPPDATA%\Programs\longbridge` (Windows).
 
 ## Authentication
 
@@ -279,7 +291,7 @@ Longbridge OpenAPI: maximum 10 calls per second. The SDK auto-refreshes OAuth to
 
 ## Requirements
 
-- macOS or Linux
+- macOS, Linux, or Windows
 - Internet connection and browser access (for initial OAuth)
 - [Longbridge account](https://open.longbridge.com)
 

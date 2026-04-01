@@ -1,0 +1,124 @@
+name: Update Scoop Manifest
+
+on:
+  workflow_run:
+    workflows: ["Release"]
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.8.0). Leave empty to use the latest release."
+        required: false
+        type: string
+
+jobs:
+  update-scoop:
+    name: Update longbridge.json
+    runs-on: ubuntu-latest
+    # For workflow_run: only run after a successful tag release (not branch builds)
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        startsWith(github.event.workflow_run.head_branch, 'v')
+      )
+
+    steps:
+      - name: Resolve release tag
+        id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ -n "${{ inputs.tag }}" ]; then
+              TAG="${{ inputs.tag }}"
+            else
+              TAG=$(gh release view --repo "${{ github.repository }}" --json tagName -q .tagName)
+            fi
+          else
+            TAG="${{ github.event.workflow_run.head_branch }}"
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Download Windows release artifact and compute SHA256
+        id: checksum
+        run: |
+          BASE_URL="https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}"
+          FILE="longbridge-terminal-windows-amd64.zip"
+          URL="${BASE_URL}/${FILE}"
+
+          # Retry up to 5 times; release assets may not be immediately available
+          for i in {1..5}; do
+            if curl -fsSL --retry 3 -o "/tmp/${FILE}" "${URL}"; then
+              break
+            fi
+            echo "Attempt $i failed for ${FILE}, retrying in 15s..."
+            sleep 15
+          done
+
+          SHA=$(sha256sum "/tmp/${FILE}" | awk '{print $1}')
+          echo "windows_amd64_sha256=${SHA}" >> "$GITHUB_OUTPUT"
+          echo "windows-amd64: ${SHA}"
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update longbridge.json
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+          WINDOWS_AMD64_SHA256: ${{ steps.checksum.outputs.windows_amd64_sha256 }}
+          REPO: ${{ github.repository }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os
+
+          manifest_path = "longbridge.json"
+          version  = os.environ["VERSION"]
+          tag      = os.environ["TAG"]
+          repo     = os.environ["REPO"]
+          sha      = os.environ["WINDOWS_AMD64_SHA256"]
+          base_url = f"https://github.com/{repo}/releases/download/{tag}"
+
+          with open(manifest_path) as f:
+              manifest = json.load(f)
+
+          manifest["version"] = version
+          manifest["architecture"]["64bit"]["url"] = f"{base_url}/longbridge-terminal-windows-amd64.zip"
+          manifest["architecture"]["64bit"]["hash"] = sha
+
+          with open(manifest_path, "w") as f:
+              json.dump(manifest, f, indent=2)
+              f.write("\n")
+
+          print("Manifest updated successfully")
+          PYEOF
+
+          echo "--- Updated manifest ---"
+          cat longbridge.json
+
+      - name: Commit and push
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add longbridge.json
+
+          if git diff --cached --quiet; then
+            echo "No changes detected — manifest is already up to date"
+            exit 0
+          fi
+
+          git commit -m "chore: bump scoop manifest to ${VERSION}
+
+          Automated version bump triggered by https://github.com/${REPO}/actions/runs/${RUN_ID}"
+          git push origin main
