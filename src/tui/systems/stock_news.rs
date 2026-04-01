@@ -16,7 +16,7 @@ use time::OffsetDateTime;
 use tokio::sync::mpsc;
 use tui_markdown::{Options, StyleSheet};
 
-use crate::{data::Counter, tui::app::RT, tui::ui::styles};
+use crate::{data::Counter, tui::app::RT, tui::ui::styles, utils::datetime::format_datetime};
 
 // ─── Markdown StyleSheet ─────────────────────────────────────────────────────
 
@@ -113,17 +113,6 @@ fn prepare_article(text: &str) -> String {
     } else {
         text.to_owned()
     }
-}
-
-fn format_datetime(dt: OffsetDateTime) -> String {
-    format!(
-        "{}-{:02}-{:02} {:02}:{:02}",
-        dt.year(),
-        dt.month() as u8,
-        dt.day(),
-        dt.hour(),
-        dt.minute()
-    )
 }
 
 fn truncate_title(title: &str, max: usize) -> String {

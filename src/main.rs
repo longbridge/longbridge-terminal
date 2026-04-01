@@ -190,7 +190,7 @@ async fn main() {
             if verbose {
                 eprintln!("* Host: {http_url}");
             }
-            if let Err(e) = cli::dispatch(cmd, &cli.format).await {
+            if let Err(e) = cli::dispatch(cmd, &cli.format, cli.verbose).await {
                 print_cli_error(&e, using_api_key);
                 std::process::exit(1);
             }

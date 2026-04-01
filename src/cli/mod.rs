@@ -2,7 +2,9 @@ use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 
 pub mod api;
+pub mod asset;
 pub mod check;
+pub mod fundamental;
 pub mod news;
 pub mod output;
 pub mod quote;
@@ -14,7 +16,8 @@ pub mod watchlist;
 #[derive(ValueEnum, Clone, Default, Debug)]
 pub enum OutputFormat {
     #[default]
-    Table,
+    #[value(alias = "table")]
+    Pretty,
     Json,
 }
 
@@ -50,8 +53,8 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,
 
-    /// Output format: 'table' for human-readable, 'json' for AI agents and scripting
-    #[arg(long, global = true, default_value = "table")]
+    /// Output format: 'pretty' for human-readable, 'json' for AI agents and scripting
+    #[arg(long, global = true, default_value = "pretty")]
     pub format: OutputFormat,
 
     /// Clear stored OAuth token and exit (same as `longbridge logout`)
@@ -323,6 +326,126 @@ pub enum Commands {
         cmd: Option<WarrantCmd>,
     },
 
+    // ── Fundamentals ────────────────────────────────────────────────────────────
+    /// Financial statements (income, balance sheet, cash flow) for a symbol
+    ///
+    /// Example: longbridge financial-report TSLA.US --kind IS --report af
+    /// Example: longbridge financial-report TSLA.US --kind BS --format json
+    FinancialReport {
+        /// Symbol in <CODE>.<MARKET> format, e.g. TSLA.US 700.HK
+        symbol: String,
+        /// Statement type: IS (income), BS (balance sheet), CF (cash flow), ALL
+        #[arg(long, value_name = "TYPE", default_value = "ALL")]
+        kind: String,
+        /// Report period: af (annual), saf (semi-annual), q1 (Q1), 3q (3 quarters), qf (quarterly)
+        #[arg(long)]
+        report: Option<String>,
+    },
+
+    /// Institution rating overview and target price summary
+    ///
+    /// Without a subcommand: returns rating distribution (Strong Buy / Buy / Hold /
+    /// Underperform / Sell) and the current average target price.
+    /// Subcommands: detail
+    /// Example: longbridge institution-rating TSLA.US
+    /// Example: longbridge institution-rating detail TSLA.US
+    /// Example: longbridge institution-rating TSLA.US --format json
+    InstitutionRating {
+        /// Symbol in <CODE>.<MARKET> format. Omit when using a subcommand.
+        symbol: Option<String>,
+        #[command(subcommand)]
+        cmd: Option<InstitutionRatingCmd>,
+    },
+
+    /// Dividend history and distribution details for a symbol
+    ///
+    /// Example: longbridge dividend AAPL.US
+    /// Example: longbridge dividend detail AAPL.US
+    Dividend {
+        /// Symbol in <CODE>.<MARKET> format (omit when using a subcommand)
+        symbol: Option<String>,
+        #[command(subcommand)]
+        cmd: Option<DividendCmd>,
+    },
+
+    /// EPS forecasts and analyst consensus estimates for a symbol
+    ///
+    /// Example: longbridge forecast-eps TSLA.US
+    /// Example: longbridge forecast-eps TSLA.US --format json
+    ForecastEps {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+    },
+
+    /// Financial consensus detail for a symbol
+    ///
+    /// Example: longbridge consensus TSLA.US
+    /// Example: longbridge consensus TSLA.US --format json
+    Consensus {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+    },
+
+    /// Finance calendar: upcoming events by type (V2)
+    ///
+    /// Default start date: today (no --symbol) or 3 months ago (with --symbol).
+    /// Types: financial, report, dividend, ipo, macrodata, closed
+    /// Note: "report" automatically includes "financial" per V2 rules.
+    /// Example: longbridge finance-calendar financial
+    /// Example: longbridge finance-calendar financial --symbol AAPL.US --symbol TSLA.US
+    /// Example: longbridge finance-calendar macrodata --star 3
+    /// Example: longbridge finance-calendar dividend --market US --market HK
+    FinanceCalendar {
+        /// Event type: financial, report, dividend, ipo, macrodata, closed
+        event_type: String,
+        /// Filter by symbol, repeatable (max 10)
+        #[arg(long, value_name = "SYMBOL")]
+        symbol: Vec<String>,
+        /// Filter by market, repeatable (HK, US, CN, SG, JP, UK, DE, AU)
+        #[arg(long, value_name = "MARKET")]
+        market: Vec<String>,
+        /// Start date (YYYY-MM-DD), defaults to today
+        #[arg(long)]
+        date: Option<String>,
+        /// End date (YYYY-MM-DD), defaults to no limit
+        #[arg(long)]
+        end_date: Option<String>,
+        /// Max events returned (default: 100)
+        #[arg(long, default_value = "100")]
+        count: u32,
+        /// Macro data importance filter, repeatable (1, 2, 3); only effective for macrodata type
+        #[arg(long, value_name = "LEVEL")]
+        star: Vec<u32>,
+        /// Pagination direction: later (default) or earlier
+        #[arg(long, default_value = "later")]
+        next: String,
+        /// Pagination offset (default: 0)
+        #[arg(long, default_value = "0")]
+        offset: u32,
+    },
+
+    /// Valuation analysis: P/E, P/B, P/S, dividend yield, and peer comparison
+    ///
+    /// Default: current metrics + 5-year range + peer comparison.
+    /// With --history: returns historical valuation time series (default indicator: pe).
+    /// Example: longbridge valuation TSLA.US
+    /// Example: longbridge valuation TSLA.US --history
+    /// Example: longbridge valuation TSLA.US --history --indicator pb --range 5
+    /// Example: longbridge valuation TSLA.US --format json
+    Valuation {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+        /// Show historical valuation time series instead of current snapshot
+        #[arg(long)]
+        history: bool,
+        /// Valuation indicator for history mode: `pe` | `pb` | `ps` | `dvd_yld`
+        #[arg(long)]
+        indicator: Option<String>,
+        /// Historical range in years (history mode, default: 1): 1 | 3 | 5 | 10
+        #[arg(long)]
+        range: Option<String>,
+    },
+
     // ── News ────────────────────────────────────────────────────────────────────
     /// Latest news articles for a symbol, or fetch full article content
     ///
@@ -396,7 +519,7 @@ pub enum Commands {
     /// Without a subcommand, lists available statements (equivalent to `statement list`).
     /// Example: longbridge statement
     /// Example: longbridge statement --type monthly
-    /// Example: longbridge statement export --file-key KEY --section equity_holdings
+    /// Example: longbridge statement export --file-key KEY --section `equity_holdings`
     Statement {
         /// Statement type: daily (default) | monthly
         #[arg(long = "type", default_value = "daily")]
@@ -500,6 +623,69 @@ pub enum Commands {
         /// Order type: LO | MO | ELO | ALO  (case-insensitive, default: LO)
         #[arg(long, default_value = "LO")]
         order_type: String,
+    },
+
+    /// Exchange rates for all supported currencies
+    ///
+    /// Example: longbridge exchange-rate
+    /// Example: longbridge exchange-rate --format json
+    ExchangeRate,
+
+    /// Institutional shareholders for a symbol
+    ///
+    /// Returns: shareholder name, related symbol (if listed), % shares held, share change, report date.
+    /// Example: longbridge shareholder AAPL.US
+    /// Example: longbridge shareholder AAPL.US --range inc --sort owned
+    /// Example: longbridge shareholder AAPL.US --format json
+    Shareholder {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+        /// Filter by change direction: all | inc (increase) | dec (decrease)
+        #[arg(long, default_value = "all")]
+        range: String,
+        /// Sort field: chg (change) | owned (holdings) | time (report date)
+        #[arg(long, default_value = "chg")]
+        sort: String,
+        /// Sort order: desc | asc
+        #[arg(long, default_value = "desc")]
+        order: String,
+    },
+
+    /// Funds and ETFs that hold a given symbol
+    ///
+    /// Returns: fund name, ticker, currency, weight (position ratio), and report date.
+    /// Pass --count -1 to return all holders.
+    /// Example: longbridge fund-holder AAPL.US
+    /// Example: longbridge fund-holder AAPL.US --count 20
+    /// Example: longbridge fund-holder AAPL.US --format json
+    FundHolder {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+        /// Number of results to return (-1 for all)
+        #[arg(long, default_value = "20")]
+        count: i32,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum DividendCmd {
+    /// Dividend distribution scheme details
+    ///
+    /// Example: longbridge dividend detail AAPL.US
+    Detail {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum InstitutionRatingCmd {
+    /// Historical institution rating and target price detail
+    ///
+    /// Example: longbridge institution-rating detail TSLA.US
+    Detail {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
     },
 }
 
@@ -1036,7 +1222,7 @@ pub enum TradingCmd {
     },
 }
 
-pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
+pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Result<()> {
     match cmd {
         Commands::Quote { symbols } => quote::cmd_quote(symbols, format).await,
         Commands::Depth { symbol } => quote::cmd_depth(symbol, format).await,
@@ -1115,6 +1301,69 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
                 quote::cmd_warrant_list(sym, format).await
             }
         },
+        Commands::FinancialReport {
+            symbol,
+            kind,
+            report,
+        } => fundamental::cmd_financial_report(symbol, kind, report, format, verbose).await,
+        Commands::InstitutionRating { symbol, cmd } => match cmd {
+            Some(InstitutionRatingCmd::Detail { symbol: s }) => {
+                fundamental::cmd_institution_rating_detail(s, format, verbose).await
+            }
+            None => {
+                let sym = symbol.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Symbol required. Usage: longbridge institution-rating <SYMBOL>"
+                    )
+                })?;
+                fundamental::cmd_institution_rating(sym, format, verbose).await
+            }
+        },
+        Commands::Dividend { symbol, cmd } => match cmd {
+            Some(DividendCmd::Detail { symbol: s }) => {
+                fundamental::cmd_dividend_detail(s, format, verbose).await
+            }
+            None => {
+                let sym = symbol.ok_or_else(|| {
+                    anyhow::anyhow!("Symbol required. Usage: longbridge dividend <SYMBOL>")
+                })?;
+                fundamental::cmd_dividend(sym, format, verbose).await
+            }
+        },
+        Commands::ForecastEps { symbol } => {
+            fundamental::cmd_forecast_eps(symbol, format, verbose).await
+        }
+        Commands::Consensus { symbol } => fundamental::cmd_consensus(symbol, format, verbose).await,
+        Commands::FinanceCalendar {
+            event_type,
+            symbol,
+            market,
+            date,
+            end_date,
+            count,
+            star,
+            next,
+            offset,
+        } => {
+            fundamental::cmd_finance_calendar(
+                event_type, symbol, market, date, end_date, count, star, next, offset, format,
+                verbose,
+            )
+            .await
+        }
+
+        Commands::Valuation {
+            symbol,
+            history,
+            indicator,
+            range,
+        } => {
+            if history {
+                fundamental::cmd_valuation(symbol, indicator, range, format, verbose).await
+            } else {
+                fundamental::cmd_valuation_detail(symbol, indicator, format, verbose).await
+            }
+        }
         Commands::News { symbol, count, cmd } => match cmd {
             Some(NewsCmd::Detail { id }) => news::cmd_news_detail(id).await,
             None => {
@@ -1268,6 +1517,17 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat) -> Result<()> {
             price,
             order_type,
         } => trade::cmd_max_qty(symbol, &side, price, &order_type, format).await,
+        Commands::ExchangeRate => asset::cmd_exchange_rate(format, verbose).await,
+
+        Commands::Shareholder {
+            symbol,
+            range,
+            sort,
+            order,
+        } => fundamental::cmd_shareholders(symbol, range, sort, order, format, verbose).await,
+        Commands::FundHolder { symbol, count } => {
+            fundamental::cmd_fund_holders(symbol, count, format, verbose).await
+        }
         Commands::Login { .. }
         | Commands::Logout
         | Commands::Tui
@@ -1292,7 +1552,7 @@ mod tests {
     #[test]
     fn test_format_default_is_table() {
         let cli = parse(&["longbridge", "quote", "TSLA.US"]).unwrap();
-        assert!(matches!(cli.format, OutputFormat::Table));
+        assert!(matches!(cli.format, OutputFormat::Pretty));
     }
 
     #[test]

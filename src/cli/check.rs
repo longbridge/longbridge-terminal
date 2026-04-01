@@ -135,7 +135,7 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&value)?);
         }
 
-        OutputFormat::Table => {
+        OutputFormat::Pretty => {
             let token_icon = if token_ok {
                 format!("{GREEN}OK{RESET}")
             } else {
