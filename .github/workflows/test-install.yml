@@ -5,10 +5,12 @@ on:
     paths:
       - install
       - install.ps1
+      - longbridge.json
   pull_request:
     paths:
       - install
       - install.ps1
+      - longbridge.json
   workflow_dispatch:
 
 jobs:
@@ -40,3 +42,25 @@ jobs:
         run: |
           $installDir = Join-Path $env:LOCALAPPDATA 'Programs\longbridge'
           & "$installDir\longbridge.exe" --version
+
+  windows-scoop:
+    name: Windows (Scoop)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Scoop
+        shell: pwsh
+        run: |
+          Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+          iex "& {$(irm get.scoop.sh)}"
+          # Add scoop to PATH for subsequent steps
+          echo "$env:USERPROFILE\scoop\shims" >> $env:GITHUB_PATH
+
+      - name: Install via Scoop manifest
+        shell: pwsh
+        run: scoop install .\longbridge.json
+
+      - name: Verify binary
+        shell: pwsh
+        run: longbridge --version
