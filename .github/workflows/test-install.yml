@@ -1,0 +1,41 @@
+name: Test Install Scripts
+
+on:
+  push:
+    paths:
+      - install
+      - install.ps1
+  pull_request:
+    paths:
+      - install
+      - install.ps1
+  workflow_dispatch:
+
+jobs:
+  linux:
+    name: Linux (sh)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run install script
+        run: sh install
+
+      - name: Verify binary
+        run: longbridge --version
+
+  windows:
+    name: Windows (PowerShell)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run install.ps1
+        shell: pwsh
+        run: pwsh -ExecutionPolicy Bypass -File install.ps1
+
+      - name: Verify binary
+        shell: pwsh
+        run: |
+          $installDir = Join-Path $env:LOCALAPPDATA 'Programs\longbridge'
+          & "$installDir\longbridge.exe" --version
