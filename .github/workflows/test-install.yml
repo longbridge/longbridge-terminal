@@ -2,15 +2,19 @@ name: Test Install Scripts
 
 on:
   push:
+    branches:
+      - main
+    tags:
+      - "*"
     paths:
       - install
       - install.ps1
-      - longbridge.json
+      - scoop.json
   pull_request:
     paths:
       - install
       - install.ps1
-      - longbridge.json
+      - scoop.json
   workflow_dispatch:
 
 jobs:
@@ -59,7 +63,7 @@ jobs:
 
       - name: Install via Scoop manifest
         shell: pwsh
-        run: scoop install .\longbridge.json
+        run: scoop install .\scoop.json
 
       - name: Verify binary
         shell: pwsh

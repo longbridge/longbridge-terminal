@@ -14,7 +14,7 @@ on:
 
 jobs:
   update-scoop:
-    name: Update longbridge.json
+    name: Update scoop.json
     runs-on: ubuntu-latest
     # For workflow_run: only run after a successful tag release (not branch builds)
     if: >
@@ -68,7 +68,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Update longbridge.json
+      - name: Update scoop.json
         env:
           VERSION: ${{ steps.version.outputs.version }}
           TAG: ${{ steps.version.outputs.tag }}
@@ -78,7 +78,7 @@ jobs:
           python3 - <<'PYEOF'
           import json, os
 
-          manifest_path = "longbridge.json"
+          manifest_path = "scoop.json"
           version  = os.environ["VERSION"]
           tag      = os.environ["TAG"]
           repo     = os.environ["REPO"]
@@ -100,7 +100,7 @@ jobs:
           PYEOF
 
           echo "--- Updated manifest ---"
-          cat longbridge.json
+          cat scoop.json
 
       - name: Commit and push
         env:
@@ -111,7 +111,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add longbridge.json
+          git add scoop.json
 
           if git diff --cached --quiet; then
             echo "No changes detected — manifest is already up to date"
