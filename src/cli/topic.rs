@@ -4,14 +4,9 @@ use longbridge::content::{
     TopicReply,
 };
 use regex::Regex;
-use time::OffsetDateTime;
 
 use super::{output::print_table, OutputFormat};
-
-fn format_datetime(dt: OffsetDateTime) -> String {
-    dt.format(&time::format_description::well_known::Rfc3339)
-        .unwrap_or_default()
-}
+use crate::utils::datetime::format_datetime;
 
 /// Format topic content by replacing `[st]ST/MARKET/SYMBOL#...[/st]` tags with ticker symbols like `TSLA.US`.
 pub fn format_topic_contents(text: &str) -> String {

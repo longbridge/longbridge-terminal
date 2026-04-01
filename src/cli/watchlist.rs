@@ -43,7 +43,7 @@ async fn cmd_list(format: &OutputFormat) -> Result<()> {
                 .collect();
             println!("{}", serde_json::to_string_pretty(&val)?);
         }
-        OutputFormat::Table => {
+        OutputFormat::Pretty => {
             for group in &groups {
                 println!("\nGroup: {} (ID: {})", group.name, group.id);
                 let headers = &["Symbol", "Name", "Market"];
@@ -52,7 +52,7 @@ async fn cmd_list(format: &OutputFormat) -> Result<()> {
                     .iter()
                     .map(|s| vec![s.symbol.clone(), s.name.clone(), format!("{:?}", s.market)])
                     .collect();
-                print_table(headers, rows, &OutputFormat::Table);
+                print_table(headers, rows, &OutputFormat::Pretty);
             }
         }
     }
@@ -88,7 +88,7 @@ async fn cmd_show(group: String, format: &OutputFormat) -> Result<()> {
             });
             println!("{}", serde_json::to_string_pretty(&val)?);
         }
-        OutputFormat::Table => {
+        OutputFormat::Pretty => {
             println!("Group: {} (ID: {})", g.name, g.id);
             let headers = &["Symbol", "Name", "Market"];
             let rows: Vec<Vec<String>> = g
@@ -96,7 +96,7 @@ async fn cmd_show(group: String, format: &OutputFormat) -> Result<()> {
                 .iter()
                 .map(|s| vec![s.symbol.clone(), s.name.clone(), format!("{:?}", s.market)])
                 .collect();
-            print_table(headers, rows, &OutputFormat::Table);
+            print_table(headers, rows, &OutputFormat::Pretty);
         }
     }
     Ok(())
@@ -182,7 +182,7 @@ pub async fn run_watchlist_list(api: &dyn QuoteApi, format: &OutputFormat) -> Re
             })).collect();
             println!("{}", serde_json::to_string_pretty(&val)?);
         }
-        OutputFormat::Table => {
+        OutputFormat::Pretty => {
             for group in &groups {
                 println!("\nGroup: {} (ID: {})", group.name, group.id);
                 let headers = &["Symbol", "Name", "Market"];
@@ -191,7 +191,7 @@ pub async fn run_watchlist_list(api: &dyn QuoteApi, format: &OutputFormat) -> Re
                     .iter()
                     .map(|s| vec![s.symbol.clone(), s.name.clone(), format!("{:?}", s.market)])
                     .collect();
-                print_table(headers, rows, &OutputFormat::Table);
+                print_table(headers, rows, &OutputFormat::Pretty);
             }
         }
     }
@@ -229,7 +229,7 @@ mod tests {
     async fn test_run_watchlist_list_dispatches() {
         let mut mock = MockQuoteApi::new();
         mock.expect_watchlist().times(1).returning(|| Ok(vec![]));
-        run_watchlist_list(&mock, &OutputFormat::Table)
+        run_watchlist_list(&mock, &OutputFormat::Pretty)
             .await
             .unwrap();
     }

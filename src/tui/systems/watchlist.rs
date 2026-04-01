@@ -15,24 +15,24 @@ use rust_decimal::Decimal;
 use tokio::sync::mpsc;
 
 use crate::{
-    app::{AppState, RT, WATCHLIST},
     data::{Counter, SubTypes, TradeSessionExt, TradeStatusExt, STOCKS},
-    systems::portfolio::fetch_holdings,
-    systems::WS,
-    ui::styles,
+    tui::app::{AppState, RT, WATCHLIST},
+    tui::systems::portfolio::fetch_holdings,
+    tui::systems::WS,
+    tui::ui::styles,
+    tui::widgets::LocalSearch,
     utils::{cycle, DecimalExt, Sign},
-    widgets::LocalSearch,
 };
 
 use super::{Command, Key, NavFooter, PopUp, StockDetail, LAST_DONE, WATCHLIST_TABLE};
 
 pub fn render_watchlist(
-    mut terminal: ResMut<crate::widgets::Terminal>,
+    mut terminal: ResMut<crate::tui::widgets::Terminal>,
     mut events: EventReader<Key>,
     command: Res<Command>,
     (state, indexes, ws): NavFooter,
     (mut account, mut currency, mut search, mut watchgroup): PopUp,
-    mut log_panel: Local<crate::widgets::LogPanel>,
+    mut log_panel: Local<crate::tui::widgets::LogPanel>,
 ) {
     for event in &mut events {
         match event {
@@ -85,14 +85,14 @@ pub fn render_watchlist(
     _ = terminal.draw(|frame| {
         let rect = frame.area();
         let top = Rect { height: 1, ..rect };
-        crate::views::navbar::render(frame, top, *state.get());
+        crate::tui::views::navbar::render(frame, top, *state.get());
 
         let bottom = Rect {
             y: rect.y + rect.height - 1,
             height: 1,
             ..rect
         };
-        crate::views::footer::render(frame, bottom, indexes.tick(), &ws);
+        crate::tui::views::footer::render(frame, bottom, indexes.tick(), &ws);
 
         let rect = Rect {
             y: rect.y + 1,
@@ -108,7 +108,7 @@ pub fn render_watchlist(
         watch(frame, chunks[0], true);
         banner(frame, chunks[1]);
 
-        crate::views::popup::render(
+        crate::tui::views::popup::render(
             frame,
             rect,
             &mut account,
@@ -119,7 +119,7 @@ pub fn render_watchlist(
 
         // Render floating log panel if visible
         let log_panel_visible =
-            crate::app::LOG_PANEL_VISIBLE.load(std::sync::atomic::Ordering::Relaxed);
+            crate::tui::app::LOG_PANEL_VISIBLE.load(std::sync::atomic::Ordering::Relaxed);
         if log_panel_visible {
             log_panel.set_visible(true);
             let panel_height = 15;
@@ -200,8 +200,8 @@ fn banner(frame: &mut Frame, rect: Rect) {
     );
 
     frame.render_widget(
-        crate::ui::assets::banner(crate::ui::styles::text()),
-        crate::ui::rect::centered(0, crate::ui::assets::BANNER_HEIGHT, rect),
+        crate::tui::ui::assets::banner(crate::tui::ui::styles::text()),
+        crate::tui::ui::rect::centered(0, crate::tui::ui::assets::BANNER_HEIGHT, rect),
     );
 }
 
@@ -227,7 +227,7 @@ pub fn watch_group_table(
         cells.push(Cell::from(t!("watchlist.NAME")).style(styles::header()));
         cells.push(Cell::from(t!("watchlist.PRICE")).style(styles::header()));
         cells.push(
-            Cell::from(crate::ui::text::align_right(
+            Cell::from(crate::tui::ui::text::align_right(
                 &t!("watchlist.CHG"),
                 COLUMN_WIDTHS[3],
             ))
@@ -235,7 +235,7 @@ pub fn watch_group_table(
         );
         if full_mode {
             cells.push(
-                Cell::from(crate::ui::text::align_right(
+                Cell::from(crate::tui::ui::text::align_right(
                     &t!("watchlist.VOL"),
                     COLUMN_WIDTHS[4],
                 ))
@@ -314,7 +314,7 @@ pub fn watch_group_table(
             cells.push(Cell::from(stock.display_name().to_string()));
             cells.push(Cell::from(display_price.format_quote_by_counter(counter)).style(style));
             cells.push(
-                Cell::from(crate::ui::text::align_right(
+                Cell::from(crate::tui::ui::text::align_right(
                     &increase_percent_str,
                     COLUMN_WIDTHS[3],
                 ))
@@ -322,7 +322,7 @@ pub fn watch_group_table(
             );
             if full_mode {
                 let volume_text = crate::utils::format_volume(quote_data.volume);
-                cells.push(Cell::from(crate::ui::text::align_right(
+                cells.push(Cell::from(crate::tui::ui::text::align_right(
                     &volume_text,
                     COLUMN_WIDTHS[4],
                 )));
@@ -360,7 +360,7 @@ pub fn watch_group_table(
 }
 
 pub fn exit_watchlist() {
-    crate::app::LAST_STATE.store(AppState::Watchlist, std::sync::atomic::Ordering::Relaxed);
+    crate::tui::app::LAST_STATE.store(AppState::Watchlist, std::sync::atomic::Ordering::Relaxed);
 }
 
 pub fn enter_watchlist_common(command: Res<Command>) {

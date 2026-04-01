@@ -1,7 +1,7 @@
 use crate::{
-    app::{AppState, RT},
     data::Market,
     openapi,
+    tui::app::{AppState, RT},
 };
 use bevy_ecs::prelude::*;
 use ratatui::{
@@ -15,8 +15,8 @@ use std::{collections::HashMap, sync::atomic::Ordering};
 
 use crate::{
     data::{Account, Counter, STOCKS},
-    ui::styles,
-    widgets::Terminal,
+    tui::ui::styles,
+    tui::widgets::Terminal,
 };
 
 use super::{NavFooter, PopUp};
@@ -35,25 +35,25 @@ pub fn render_portfolio(
     mut terminal: ResMut<Terminal>,
     mut _events: EventReader<super::Key>,
     _portfolio: Res<Portfolio>,
-    _accounts: Res<crate::widgets::Select<Account>>,
+    _accounts: Res<crate::tui::widgets::Select<Account>>,
     _command: Res<super::Command>,
     (state, indexes, ws): NavFooter,
     (mut account, mut currency, mut search, mut watchgroup): PopUp,
     _table_state: Local<ratatui::widgets::TableState>,
-    mut log_panel: Local<crate::widgets::LogPanel>,
+    mut log_panel: Local<crate::tui::widgets::LogPanel>,
 ) {
     _ = terminal.draw(|frame| {
         let rect = frame.area();
 
         let top = Rect { height: 1, ..rect };
-        crate::views::navbar::render(frame, top, *state.get());
+        crate::tui::views::navbar::render(frame, top, *state.get());
 
         let bottom = Rect {
             y: rect.y + rect.height - 1,
             height: 1,
             ..rect
         };
-        crate::views::footer::render(frame, bottom, indexes.tick(), &ws);
+        crate::tui::views::footer::render(frame, bottom, indexes.tick(), &ws);
 
         // Main content area with horizontal margins (1 char on each side)
         let content_rect = Rect {
@@ -78,7 +78,7 @@ pub fn render_portfolio(
                 content_rect,
             );
             drop(portfolio_view_lock);
-            crate::views::popup::render(
+            crate::tui::views::popup::render(
                 frame,
                 rect,
                 &mut account,
@@ -345,7 +345,7 @@ pub fn render_portfolio(
         }
 
         // Render popups
-        crate::views::popup::render(
+        crate::tui::views::popup::render(
             frame,
             rect,
             &mut account,
@@ -356,7 +356,7 @@ pub fn render_portfolio(
 
         // Render floating log panel if visible
         let log_panel_visible =
-            crate::app::LOG_PANEL_VISIBLE.load(std::sync::atomic::Ordering::Relaxed);
+            crate::tui::app::LOG_PANEL_VISIBLE.load(std::sync::atomic::Ordering::Relaxed);
         if log_panel_visible {
             log_panel.set_visible(true);
             let panel_height = 15;
@@ -570,5 +570,5 @@ pub fn enter_portfolio(_portfolio: Res<Portfolio>) {
 }
 
 pub fn exit_portfolio() {
-    crate::app::LAST_STATE.store(AppState::Portfolio, Ordering::Relaxed);
+    crate::tui::app::LAST_STATE.store(AppState::Portfolio, Ordering::Relaxed);
 }

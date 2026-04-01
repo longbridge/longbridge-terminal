@@ -22,8 +22,16 @@ fn cache_file_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".longbridge").join("openapi").join("region-cache"))
 }
 
-/// Returns `true` if the cached region from the last geotest check was CN.
+/// Returns `true` if the region is known to be CN.
+///
+/// Priority:
+/// 1. `LONGBRIDGE_REGION` env var (explicit override)
+/// 2. Cached result from the last background geotest probe
 pub fn is_cn_cached() -> bool {
+    if let Ok(region) = std::env::var("LONGBRIDGE_REGION") {
+        return region.trim().eq_ignore_ascii_case("cn");
+    }
+
     let Some(path) = cache_file_path() else {
         return false;
     };

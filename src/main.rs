@@ -1,30 +1,20 @@
-use crate::widgets::Terminal;
+use crate::tui::widgets::Terminal;
 use clap::Parser;
 use std::io::Write;
 use std::time::Instant;
 
-#[macro_use]
-mod macros;
-
-pub mod app;
 pub mod auth;
 pub mod cli;
 pub mod data;
-pub mod kline;
 pub mod logger;
 pub mod openapi;
 #[cfg_attr(target_family = "windows", path = "os/windows.rs")]
 #[cfg_attr(target_family = "unix", path = "os/unix.rs")]
 pub mod os;
 pub mod region;
-pub mod render;
-pub mod systems;
-pub mod ui;
+pub mod tui;
 pub mod update;
 pub mod utils;
-pub mod widgets;
-
-mod views;
 
 #[macro_use]
 extern crate rust_i18n;
@@ -86,7 +76,8 @@ fn print_cli_error(e: &anyhow::Error, using_api_key: bool) {
 
 #[tokio::main]
 async fn main() {
-    rust_i18n::set_locale("en");
+    let locale = std::env::var("LONGBRIDGE_LANGUAGE").unwrap_or_else(|_| "en".to_string());
+    rust_i18n::set_locale(&locale);
     let _guard = logger::init();
 
     let cli = cli::Cli::parse();
@@ -120,7 +111,7 @@ async fn main() {
 
         Some(cli::Commands::Tui) => {
             tracing::info!("App started");
-            let (quote_receiver, using_api_key) = match openapi::init_contexts().await {
+            let (quote_receiver, using_api_key, _) = match openapi::init_contexts().await {
                 Ok(r) => r,
                 Err(e) => {
                     eprintln!("OAuth2 authentication failed: {e}");
@@ -143,7 +134,7 @@ async fn main() {
             let _ = std::io::stdout().flush();
 
             Terminal::enter_full_screen();
-            app::run(Args { logout: false }, quote_receiver).await;
+            tui::app::run(Args { logout: false }, quote_receiver).await;
             Terminal::exit_full_screen();
             return;
         }
@@ -187,24 +178,19 @@ async fn main() {
         },
 
         Some(cmd) => {
-            let host = if region::is_cn_cached() {
-                "openapi.longbridge.cn"
-            } else {
-                "openapi.longbridge.com"
-            };
-            if verbose {
-                eprintln!("* Host: https://{host}");
-            }
             let start = verbose.then(Instant::now);
             // CLI mode: init contexts (auth), then dispatch
-            let using_api_key = match openapi::init_contexts().await {
-                Ok((_, using_api_key)) => using_api_key,
+            let (using_api_key, http_url) = match openapi::init_contexts().await {
+                Ok((_, using_api_key, http_url)) => (using_api_key, http_url),
                 Err(e) => {
                     eprintln!("Authentication failed: {e}");
                     std::process::exit(1);
                 }
             };
-            if let Err(e) = cli::dispatch(cmd, &cli.format).await {
+            if verbose {
+                eprintln!("* Host: {http_url}");
+            }
+            if let Err(e) = cli::dispatch(cmd, &cli.format, cli.verbose).await {
                 print_cli_error(&e, using_api_key);
                 std::process::exit(1);
             }
