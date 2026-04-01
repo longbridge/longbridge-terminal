@@ -631,13 +631,6 @@ pub enum Commands {
     /// Example: longbridge exchange-rate --format json
     ExchangeRate,
 
-    /// My personal commission and fee rates
-    ///
-    /// Returns: trading fee rates for the current account.
-    /// Example: longbridge my-rate
-    /// Example: longbridge my-rate --format json
-    MyRate,
-
     /// Institutional shareholders for a symbol
     ///
     /// Returns: shareholder name, related symbol (if listed), % shares held, share change, report date.
@@ -672,7 +665,6 @@ pub enum Commands {
         #[arg(long, default_value = "20")]
         count: i32,
     },
-
 }
 
 #[derive(Subcommand)]
@@ -1526,7 +1518,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             order_type,
         } => trade::cmd_max_qty(symbol, &side, price, &order_type, format).await,
         Commands::ExchangeRate => asset::cmd_exchange_rate(format, verbose).await,
-        Commands::MyRate => asset::cmd_my_rate(format, verbose).await,
+
         Commands::Shareholder {
             symbol,
             range,
