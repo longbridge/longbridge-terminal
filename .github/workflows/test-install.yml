@@ -32,7 +32,8 @@ jobs:
 
       - name: Run install.ps1
         shell: pwsh
-        run: pwsh -ExecutionPolicy Bypass -File install.ps1
+        # Simulate the documented one-liner: iwr .../install.ps1 | iex
+        run: Get-Content install.ps1 -Raw | Invoke-Expression
 
       - name: Verify binary
         shell: pwsh
