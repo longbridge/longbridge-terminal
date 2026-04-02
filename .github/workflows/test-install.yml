@@ -9,12 +9,12 @@ on:
     paths:
       - install
       - install.ps1
-      - scoop.json
+      - .scoop/longbridge.json
   pull_request:
     paths:
       - install
       - install.ps1
-      - scoop.json
+      - .scoop/longbridge.json
   workflow_dispatch:
 
 jobs:
@@ -60,10 +60,12 @@ jobs:
           iex "& {$(irm get.scoop.sh)}"
           # Add scoop to PATH for subsequent steps
           echo "$env:USERPROFILE\scoop\shims" >> $env:GITHUB_PATH
+          # Initialize buckets directory
+          scoop update
 
       - name: Install via Scoop manifest
         shell: pwsh
-        run: scoop install .\scoop.json
+        run: scoop install .\.scoop\longbridge.json
 
       - name: Verify binary
         shell: pwsh
