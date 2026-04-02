@@ -8,6 +8,9 @@ use std::{path::PathBuf, time::Duration};
 const GEOTEST_URL: &str = "https://geotest.lbkrs.com";
 const GEOTEST_TIMEOUT_SECS: u64 = 3;
 
+// Global endpoint URLs
+pub const HTTP_URL_GLOBAL: &str = "https://openapi.longbridge.com";
+
 // CN endpoint URLs
 pub const HTTP_URL_CN: &str = "https://openapi.longbridge.cn";
 pub const QUOTE_WS_URL_CN: &str = "wss://openapi-quote.longbridge.cn/v2";
