@@ -5,10 +5,9 @@ use std::fs;
 use std::path::PathBuf;
 
 const OAUTH_CLIENT_ID: &str = "fd52fbc5-02a9-47f5-ad30-0842c841aae9";
-const OAUTH_BASE_URL: &str = "https://openapi.longbridge.com/oauth2";
+const OAUTH_PATH: &str = "/oauth2";
 
 const OAUTH_TEST_CLIENT_ID: &str = "37435cdf-c7e4-4de9-8715-b20d33416196";
-const OAUTH_TEST_URL: &str = "https://openapi.longbridge.xyz/oauth2";
 
 pub const CALLBACK_PORT: u16 = 60355;
 
@@ -28,13 +27,16 @@ pub fn client_id() -> &'static str {
     }
 }
 
-/// Return the OAuth base URL for the current environment.
-fn oauth_base_url() -> &'static str {
-    if is_test_env() {
-        OAUTH_TEST_URL
+/// Return the OAuth base URL for the current environment and region.
+fn oauth_base_url() -> String {
+    let host = if is_test_env() {
+        crate::region::HTTP_URL_TEST
+    } else if crate::region::is_cn_cached() {
+        crate::region::HTTP_URL_CN
     } else {
-        OAUTH_BASE_URL
-    }
+        crate::region::HTTP_URL_GLOBAL
+    };
+    format!("{host}{OAUTH_PATH}")
 }
 
 /// Token file path: `~/.longbridge/openapi/tokens/<client_id>`
@@ -106,7 +108,7 @@ fn save_token(client_id: &str, token_resp: &serde_json::Value) -> Result<()> {
 /// Displays a URL for the user to open in any browser (no localhost redirect needed).
 /// Polls for the token until the user completes authorization or the code expires.
 /// Works on any machine including SSH sessions, cloud agents, and headless servers.
-pub async fn device_login() -> Result<()> {
+pub async fn device_login(verbose: bool) -> Result<()> {
     use std::time::{Duration, Instant};
 
     let oauth_base = oauth_base_url();
@@ -114,15 +116,19 @@ pub async fn device_login() -> Result<()> {
     let http_client = reqwest::Client::new();
 
     // Step 1: request device & user codes.
+    let url = format!("{oauth_base}/device/authorize");
+    if verbose {
+        eprintln!("POST {url}");
+    }
     let raw = http_client
-        .post(format!("{oauth_base}/device/authorize"))
+        .post(&url)
         .form(&[("client_id", client_id)])
         .send()
         .await
         .context("Device authorization request failed")?;
 
-    if !raw.status().is_success() {
-        let status = raw.status();
+    let status = raw.status();
+    if !status.is_success() {
         let body = raw.text().await.unwrap_or_default();
         anyhow::bail!("Device authorization failed ({status}): {body}");
     }
@@ -166,8 +172,12 @@ pub async fn device_login() -> Result<()> {
             anyhow::bail!("Device authorization timed out — please try again.");
         }
 
+        let url = format!("{oauth_base}/token");
+        if verbose {
+            eprintln!("POST {url}  grant_type=device_code");
+        }
         let raw = http_client
-            .post(format!("{oauth_base}/token"))
+            .post(&url)
             .form(&[
                 ("client_id", client_id),
                 ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
@@ -177,7 +187,8 @@ pub async fn device_login() -> Result<()> {
             .await
             .context("Token poll request failed")?;
 
-        if raw.status().is_success() {
+        let status = raw.status();
+        if status.is_success() {
             let token_resp = raw
                 .json::<serde_json::Value>()
                 .await

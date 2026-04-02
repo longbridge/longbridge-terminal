@@ -84,6 +84,9 @@ pub enum Commands {
         /// Requires the browser to be on the same machine (local use only).
         #[arg(long)]
         auth_code: bool,
+        /// Print request/response details for each OAuth step.
+        #[arg(short, long)]
+        verbose: bool,
     },
 
     /// Clear the locally stored OAuth token
