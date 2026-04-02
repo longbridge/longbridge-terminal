@@ -68,20 +68,22 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Authenticate via browser OAuth and save token for CLI and TUI
+    /// Authenticate via Device Authorization Flow (default) or browser OAuth
     ///
-    /// Opens a browser for Longbridge `OpenAPI` authorization.
+    /// By default uses the Device Authorization Flow (RFC 8628): displays a URL,
+    /// the user opens it in any browser (no localhost redirect needed), and the
+    /// CLI polls until authorization is complete. Works on any machine including
+    /// SSH sessions and headless servers.
+    ///
+    /// Use `--auth-code` for the Authorization Code flow: opens a browser on this
+    /// machine and listens on `localhost:60355` for the OAuth callback.
+    ///
     /// Token is stored at `~/.longbridge/openapi/tokens/<client_id>` and shared with the TUI.
-    ///
-    /// For remote or headless environments (e.g. SSH, `OpenClaw`), use `--headless`:
-    /// prints the auth URL; after authorizing in a local browser, paste the
-    /// redirect URL from the address bar back into the terminal.
     Login {
-        /// Headless mode for remote environments (SSH, cloud agents).
-        /// Prints the auth URL instead of opening a browser. After authorizing,
-        /// paste the redirect URL from the browser address bar to complete login.
+        /// Authorization Code flow: opens a browser and handles the localhost callback.
+        /// Requires the browser to be on the same machine (local use only).
         #[arg(long)]
-        headless: bool,
+        auth_code: bool,
     },
 
     /// Clear the locally stored OAuth token

@@ -5,7 +5,8 @@
       "Bash(cargo test:*)",
       "WebFetch(domain:docs.rs)",
       "WebFetch(domain:open.longbridge.com)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Skill(commit-commands:commit-push-pr)"
     ]
   }
 }
