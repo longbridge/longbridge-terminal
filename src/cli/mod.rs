@@ -901,6 +901,7 @@ pub enum OrderCmd {
     /// Example: longbridge order buy 700.HK 1000 --price 300 --order-type ALO
     /// Example: longbridge order buy NVDA.US 10 --order-type MIT --trigger-price 177.89 --tif Day
     /// Example: longbridge order buy TSLA.US 10 --order-type TSLPPCT --trailing-percent 3 --limit-offset 1 --tif gtc
+    /// Example: longbridge order buy AAPL.US 10 --price 180 --tif gtd --expire-date 2025-12-31
     Buy {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -921,6 +922,15 @@ pub enum OrderCmd {
         /// Limit offset for TSLPAMT/TSLPPCT orders (spread between trigger and limit price)
         #[arg(long)]
         limit_offset: Option<String>,
+        /// Expiry date for GTD orders in YYYY-MM-DD format (required when --tif gtd)
+        #[arg(long)]
+        expire_date: Option<String>,
+        /// Outside regular trading hours: RTH_ONLY | ANY_TIME | OVERNIGHT (US market only)
+        #[arg(long)]
+        outside_rth: Option<String>,
+        /// Order remark (max 255 characters)
+        #[arg(long)]
+        remark: Option<String>,
         /// Order type: LO ELO MO AO ALO ODD SLO LIT MIT TSLPAMT TSLPPCT TSMAMT TSMPCT
         ///   (case-insensitive, default: LO)
         #[arg(long, default_value = "LO")]
@@ -944,6 +954,7 @@ pub enum OrderCmd {
     /// Example: longbridge order sell TSLA.US 100 --price 260.00
     /// Example: longbridge order sell NVDA.US 10 --order-type MIT --trigger-price 177.89 --tif Day
     /// Example: longbridge order sell TSLA.US 130 --order-type TSLPPCT --trailing-percent 3 --limit-offset 1 --tif gtc
+    /// Example: longbridge order sell AAPL.US 10 --price 180 --tif gtd --expire-date 2025-12-31
     Sell {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -964,6 +975,15 @@ pub enum OrderCmd {
         /// Limit offset for TSLPAMT/TSLPPCT orders (spread between trigger and limit price)
         #[arg(long)]
         limit_offset: Option<String>,
+        /// Expiry date for GTD orders in YYYY-MM-DD format (required when --tif gtd)
+        #[arg(long)]
+        expire_date: Option<String>,
+        /// Outside regular trading hours: RTH_ONLY | ANY_TIME | OVERNIGHT (US market only)
+        #[arg(long)]
+        outside_rth: Option<String>,
+        /// Order remark (max 255 characters)
+        #[arg(long)]
+        remark: Option<String>,
         /// Order type: LO ELO MO AO ALO ODD SLO LIT MIT TSLPAMT TSLPPCT TSMAMT TSMPCT
         ///   (case-insensitive, default: LO)
         #[arg(long, default_value = "LO")]
@@ -1487,6 +1507,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 trailing_amount,
                 trailing_percent,
                 limit_offset,
+                expire_date,
+                outside_rth,
+                remark,
                 order_type,
                 tif,
                 yes,
@@ -1499,6 +1522,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                     trailing_amount,
                     trailing_percent,
                     limit_offset,
+                    expire_date,
+                    outside_rth,
+                    remark,
                     order_type,
                     tif,
                     longbridge::trade::OrderSide::Buy,
@@ -1515,6 +1541,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 trailing_amount,
                 trailing_percent,
                 limit_offset,
+                expire_date,
+                outside_rth,
+                remark,
                 order_type,
                 tif,
                 yes,
@@ -1527,6 +1556,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                     trailing_amount,
                     trailing_percent,
                     limit_offset,
+                    expire_date,
+                    outside_rth,
+                    remark,
                     order_type,
                     tif,
                     longbridge::trade::OrderSide::Sell,

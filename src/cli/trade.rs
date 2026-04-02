@@ -2,7 +2,7 @@ use anyhow::{bail, Result};
 use longbridge::trade::{
     EstimateMaxPurchaseQuantityOptions, GetCashFlowOptions, GetHistoryExecutionsOptions,
     GetHistoryOrdersOptions, GetTodayExecutionsOptions, GetTodayOrdersOptions, OrderSide,
-    OrderType, ReplaceOrderOptions, SubmitOrderOptions, TimeInForceType,
+    OrderType, OutsideRTH, ReplaceOrderOptions, SubmitOrderOptions, TimeInForceType,
 };
 use rust_decimal::Decimal;
 use std::str::FromStr;
@@ -214,6 +214,15 @@ pub async fn cmd_executions(
     Ok(())
 }
 
+fn parse_outside_rth(s: &str) -> Result<OutsideRTH> {
+    match s.to_uppercase().as_str() {
+        "RTH_ONLY" => Ok(OutsideRTH::RTHOnly),
+        "ANY_TIME" => Ok(OutsideRTH::AnyTime),
+        "OVERNIGHT" => Ok(OutsideRTH::Overnight),
+        _ => bail!("Unknown outside-rth '{s}'. Use: RTH_ONLY ANY_TIME OVERNIGHT"),
+    }
+}
+
 pub async fn cmd_submit_order(
     symbol: String,
     quantity: u64,
@@ -222,6 +231,9 @@ pub async fn cmd_submit_order(
     trailing_amount: Option<String>,
     trailing_percent: Option<String>,
     limit_offset: Option<String>,
+    expire_date: Option<String>,
+    outside_rth: Option<String>,
+    remark: Option<String>,
     order_type: String,
     tif: String,
     side: OrderSide,
@@ -258,6 +270,21 @@ pub async fn cmd_submit_order(
             Decimal::from_str(lo).map_err(|_| anyhow::anyhow!("Invalid limit offset: {lo}"))?;
         opts = opts.limit_offset(lo_dec);
     }
+    if let Some(ref ed) = expire_date {
+        let date = time::Date::parse(
+            ed,
+            &time::format_description::parse("[year]-[month]-[day]")
+                .map_err(|e| anyhow::anyhow!("Date format error: {e}"))?,
+        )
+        .map_err(|_| anyhow::anyhow!("Invalid expire date '{ed}'. Use YYYY-MM-DD"))?;
+        opts = opts.expire_date(date);
+    }
+    if let Some(ref rth) = outside_rth {
+        opts = opts.outside_rth(parse_outside_rth(rth)?);
+    }
+    if let Some(ref r) = remark {
+        opts = opts.remark(r.clone());
+    }
 
     // Confirm before submitting
     let mut price_display = match (price.as_deref(), trigger_price.as_deref()) {
@@ -274,6 +301,12 @@ pub async fn cmd_submit_order(
     }
     if let Some(ref lo) = limit_offset {
         price_display.push_str(&format!(" limit-offset: {lo}"));
+    }
+    if let Some(ref ed) = expire_date {
+        price_display.push_str(&format!(" expire: {ed}"));
+    }
+    if let Some(ref rth) = outside_rth {
+        price_display.push_str(&format!(" outside-rth: {rth}"));
     }
     println!("Submitting {side:?} order: {quantity} {symbol} @ {price_display}");
     if !yes {
