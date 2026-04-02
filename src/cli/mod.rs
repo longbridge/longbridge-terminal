@@ -893,11 +893,14 @@ pub enum OrderCmd {
     /// Submit a buy order (prompts for confirmation)
     ///
     /// Returns `order_id` on success.
-    /// Order types: LO (limit) | MO (market) | ELO | ALO | ODD | SLO | LIT | MIT
+    /// Order types: LO ELO MO AO ALO ODD SLO LIT MIT TSLPAMT TSLPPCT TSMAMT TSMPCT
     ///   (case-insensitive)
+    /// Trailing orders (TSLPAMT/TSLPPCT/TSMAMT/TSMPCT) require --trailing-amount or
+    ///   --trailing-percent. TSLPAMT/TSLPPCT also require --limit-offset.
     /// Example: longbridge order buy TSLA.US 100 --price 250.00
     /// Example: longbridge order buy 700.HK 1000 --price 300 --order-type ALO
     /// Example: longbridge order buy NVDA.US 10 --order-type MIT --trigger-price 177.89 --tif Day
+    /// Example: longbridge order buy TSLA.US 10 --order-type TSLPPCT --trailing-percent 3 --limit-offset 1 --tif gtc
     Buy {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -909,7 +912,17 @@ pub enum OrderCmd {
         /// Trigger price for conditional orders (required for MIT/LIT)
         #[arg(long)]
         trigger_price: Option<String>,
-        /// Order type: LO | MO | ELO | ALO | ODD | SLO | LIT | MIT  (case-insensitive, default: LO)
+        /// Trailing amount for TSLPAMT/TSMAMT orders
+        #[arg(long)]
+        trailing_amount: Option<String>,
+        /// Trailing percent for TSLPPCT/TSMPCT orders
+        #[arg(long)]
+        trailing_percent: Option<String>,
+        /// Limit offset for TSLPAMT/TSLPPCT orders (spread between trigger and limit price)
+        #[arg(long)]
+        limit_offset: Option<String>,
+        /// Order type: LO ELO MO AO ALO ODD SLO LIT MIT TSLPAMT TSLPPCT TSMAMT TSMPCT
+        ///   (case-insensitive, default: LO)
         #[arg(long, default_value = "LO")]
         order_type: String,
         /// Time in force: Day | `GoodTilCanceled` (alias: gtc) | `GoodTilDate` (alias: gtd)
@@ -924,8 +937,13 @@ pub enum OrderCmd {
     /// Submit a sell order (prompts for confirmation)
     ///
     /// Returns `order_id` on success.
+    /// Order types: LO ELO MO AO ALO ODD SLO LIT MIT TSLPAMT TSLPPCT TSMAMT TSMPCT
+    ///   (case-insensitive)
+    /// Trailing orders (TSLPAMT/TSLPPCT/TSMAMT/TSMPCT) require --trailing-amount or
+    ///   --trailing-percent. TSLPAMT/TSLPPCT also require --limit-offset.
     /// Example: longbridge order sell TSLA.US 100 --price 260.00
     /// Example: longbridge order sell NVDA.US 10 --order-type MIT --trigger-price 177.89 --tif Day
+    /// Example: longbridge order sell TSLA.US 130 --order-type TSLPPCT --trailing-percent 3 --limit-offset 1 --tif gtc
     Sell {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -937,7 +955,17 @@ pub enum OrderCmd {
         /// Trigger price for conditional orders (required for MIT/LIT)
         #[arg(long)]
         trigger_price: Option<String>,
-        /// Order type: LO | MO | ELO | ALO | ODD | SLO | LIT | MIT  (case-insensitive, default: LO)
+        /// Trailing amount for TSLPAMT/TSMAMT orders
+        #[arg(long)]
+        trailing_amount: Option<String>,
+        /// Trailing percent for TSLPPCT/TSMPCT orders
+        #[arg(long)]
+        trailing_percent: Option<String>,
+        /// Limit offset for TSLPAMT/TSLPPCT orders (spread between trigger and limit price)
+        #[arg(long)]
+        limit_offset: Option<String>,
+        /// Order type: LO ELO MO AO ALO ODD SLO LIT MIT TSLPAMT TSLPPCT TSMAMT TSMPCT
+        ///   (case-insensitive, default: LO)
         #[arg(long, default_value = "LO")]
         order_type: String,
         /// Time in force: Day | `GoodTilCanceled` (alias: gtc) | `GoodTilDate` (alias: gtd)
@@ -1456,6 +1484,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 quantity,
                 price,
                 trigger_price,
+                trailing_amount,
+                trailing_percent,
+                limit_offset,
                 order_type,
                 tif,
                 yes,
@@ -1465,6 +1496,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                     quantity,
                     price,
                     trigger_price,
+                    trailing_amount,
+                    trailing_percent,
+                    limit_offset,
                     order_type,
                     tif,
                     longbridge::trade::OrderSide::Buy,
@@ -1478,6 +1512,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 quantity,
                 price,
                 trigger_price,
+                trailing_amount,
+                trailing_percent,
+                limit_offset,
                 order_type,
                 tif,
                 yes,
@@ -1487,6 +1524,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                     quantity,
                     price,
                     trigger_price,
+                    trailing_amount,
+                    trailing_percent,
+                    limit_offset,
                     order_type,
                     tif,
                     longbridge::trade::OrderSide::Sell,
