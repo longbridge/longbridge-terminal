@@ -40,12 +40,12 @@ esac
 
 echo "Downloading $package_name@$version ..."
 
-# Detect musl libc on Linux
+# Always use the musl build on Linux – it is statically linked and works on any
+# Linux system regardless of the glibc version (avoids segfaults on glibc
+# systems where the binary was compiled against a different glibc version).
 libc=''
 if [ "$platform" = "linux" ]; then
-  if ldd --version 2>&1 | grep -q 'musl'; then
-    libc='-musl'
-  fi
+  libc='-musl'
 fi
 
 download_url=https://github.com/longbridge/longbridge-terminal/releases/download/$version/$package_name-$platform$libc-$arch.tar.gz
