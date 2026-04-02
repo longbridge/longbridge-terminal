@@ -81,19 +81,19 @@ impl DirtyFlags {
     #[inline]
     #[must_use]
     pub fn mark_popup_change(mut self, popup: u8) -> Self {
-        if popup & crate::app::POPUP_HELP != 0 {
+        if popup & crate::tui::app::POPUP_HELP != 0 {
             self.insert(Self::POPUP_HELP);
         }
-        if popup & crate::app::POPUP_SEARCH != 0 {
+        if popup & crate::tui::app::POPUP_SEARCH != 0 {
             self.insert(Self::POPUP_SEARCH);
         }
-        if popup & crate::app::POPUP_ACCOUNT != 0 {
+        if popup & crate::tui::app::POPUP_ACCOUNT != 0 {
             self.insert(Self::POPUP_ACCOUNT);
         }
-        if popup & crate::app::POPUP_CURRENCY != 0 {
+        if popup & crate::tui::app::POPUP_CURRENCY != 0 {
             self.insert(Self::POPUP_CURRENCY);
         }
-        if popup & crate::app::POPUP_WATCHLIST != 0 {
+        if popup & crate::tui::app::POPUP_WATCHLIST != 0 {
             self.insert(Self::POPUP_WATCHLIST);
         }
         self

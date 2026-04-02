@@ -18,36 +18,46 @@ jobs:
             os: ubuntu-latest
             name: longbridge-terminal-linux-amd64.tar.gz
             arch: x86_64
+            cross: false
 
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             name: longbridge-terminal-linux-arm64.tar.gz
             arch: aarch64
+            cross: true
 
           - target: x86_64-apple-darwin
             os: macOS-latest
             name: longbridge-terminal-darwin-amd64.tar.gz
             arch: x86_64
+            cross: false
 
           - target: aarch64-apple-darwin
             os: macOS-latest
             name: longbridge-terminal-darwin-arm64.tar.gz
             arch: aarch64
+            cross: false
 
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             name: longbridge-terminal-windows-amd64.zip
             arch: x86_64
+            cross: false
 
+          # Statically linked musl builds – these are the default for the
+          # Linux install script and work on any Linux system regardless of
+          # the glibc version present on the host.
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             name: longbridge-terminal-linux-musl-amd64.tar.gz
             arch: x86_64
+            cross: false  # Compile natively on x86_64 runner with musl-tools
 
           - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
             name: longbridge-terminal-linux-musl-arm64.tar.gz
             arch: aarch64
+            cross: true
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -70,10 +80,14 @@ jobs:
             ~/.cargo/git/db/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Install Musl Tool
-        if: matrix.target == 'x86_64-unknown-linux-musl' || matrix.target == 'aarch64-unknown-linux-musl'
+      - name: Install Musl Tools
+        if: contains(matrix.target, 'musl') && matrix.cross == false
         run: |
-          sudo apt-get install musl-tools
+          sudo apt-get install -y musl-tools
+
+      - name: Install Cross
+        if: matrix.cross == true
+        run: cargo install cross --git https://github.com/cross-rs/cross
 
       - name: Setup | Rust
         uses: dtolnay/rust-toolchain@stable
@@ -82,12 +96,13 @@ jobs:
           components: rustfmt, clippy
           targets: ${{ matrix.target }}
 
-      - name: Build | Build
-        uses: actions-rs/cargo@v1
-        with:
-          command: build
-          args: --manifest-path Cargo.toml --release --target ${{ matrix.target }} --config 'package.version="${{ steps.tagName.outputs.version }}"'
-          use-cross: ${{ matrix.os == 'ubuntu-latest' }}
+      - name: Build | Build (cross)
+        if: matrix.cross == true
+        run: cross build --manifest-path Cargo.toml --release --target ${{ matrix.target }} --config 'package.version="${{ steps.tagName.outputs.version }}"'
+
+      - name: Build | Build (cargo)
+        if: matrix.cross == false
+        run: cargo build --manifest-path Cargo.toml --release --target ${{ matrix.target }} --config 'package.version="${{ steps.tagName.outputs.version }}"'
 
       - name: Prepare artifacts [Windows]
         if: matrix.os == 'windows-latest'

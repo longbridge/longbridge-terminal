@@ -16,7 +16,7 @@ use time::OffsetDateTime;
 use tokio::sync::mpsc;
 use tui_markdown::{Options, StyleSheet};
 
-use crate::{app::RT, data::Counter, ui::styles};
+use crate::{data::Counter, tui::app::RT, tui::ui::styles, utils::datetime::format_datetime};
 
 // ─── Markdown StyleSheet ─────────────────────────────────────────────────────
 
@@ -115,17 +115,6 @@ fn prepare_article(text: &str) -> String {
     }
 }
 
-fn format_datetime(dt: OffsetDateTime) -> String {
-    format!(
-        "{}-{:02}-{:02} {:02}:{:02}",
-        dt.year(),
-        dt.month() as u8,
-        dt.day(),
-        dt.hour(),
-        dt.minute()
-    )
-}
-
 fn truncate_title(title: &str, max: usize) -> String {
     if title.chars().count() > max {
         format!(
@@ -213,7 +202,7 @@ pub fn fetch_news_detail(id: String, tx: mpsc::UnboundedSender<CommandQueue>) {
                 Err(e) => {
                     tracing::error!("Failed to read news detail body: {e}");
                     if let Ok(mut content) = NEWS_DETAIL_CONTENT.lock() {
-                        *content = format!("Failed to read content: {e}");
+                        *content = t!("News.ErrorContent", error = e.to_string()).to_string();
                     }
                 }
             },
@@ -221,13 +210,13 @@ pub fn fetch_news_detail(id: String, tx: mpsc::UnboundedSender<CommandQueue>) {
                 let status = resp.status();
                 tracing::error!("Failed to fetch news detail: HTTP {status}");
                 if let Ok(mut content) = NEWS_DETAIL_CONTENT.lock() {
-                    *content = format!("Failed to load news (HTTP {status})");
+                    *content = t!("News.ErrorHttp", status = status.to_string()).to_string();
                 }
             }
             Err(e) => {
                 tracing::error!("Failed to fetch news detail: {e}");
                 if let Ok(mut content) = NEWS_DETAIL_CONTENT.lock() {
-                    *content = format!("Failed to load news: {e}");
+                    *content = t!("News.ErrorFetch", error = e.to_string()).to_string();
                 }
             }
         }

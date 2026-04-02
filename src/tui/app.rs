@@ -9,10 +9,10 @@ use bevy_ecs::system::{CommandQueue, InsertResource, SystemState};
 use tokio::sync::mpsc;
 
 use crate::data::{Counter, User, Watchlist, WatchlistGroup};
-use crate::render::{DirtyFlags, RenderState};
-use crate::ui::Content;
-use crate::widgets::{Carousel, Loading, LocalSearch, Search, Terminal};
-use crate::{openapi, systems};
+use crate::tui::render::{DirtyFlags, RenderState};
+use crate::tui::ui::Content;
+use crate::tui::widgets::{Carousel, Loading, LocalSearch, Search, Terminal};
+use crate::{openapi, tui::systems};
 
 pub static RT: OnceLock<tokio::runtime::Handle> = OnceLock::new();
 pub static POPUP: AtomicU8 = AtomicU8::new(0);
@@ -210,7 +210,7 @@ pub async fn run(
 
                     // Add Select<Account> resource for Portfolio
                     queue.push(InsertResource {
-                        resource: crate::widgets::Select::new(accounts.status.clone()),
+                        resource: crate::tui::widgets::Select::new(accounts.status.clone()),
                     });
 
                     queue.push(InsertResource {
@@ -563,7 +563,7 @@ fn handle_global_keys(
     render_state: &mut RenderState,
 ) {
     match event {
-        ctrl!('c') => crate::widgets::Terminal::graceful_exit(0),
+        ctrl!('c') => crate::tui::widgets::Terminal::graceful_exit(0),
         key!('1') if state != AppState::Watchlist => {
             app.world
                 .insert_resource(NextState(Some(AppState::Watchlist)));
@@ -727,7 +727,7 @@ fn handle_global_keys(
                     }
                 }
             } else {
-                crate::widgets::Terminal::graceful_exit(0);
+                crate::tui::widgets::Terminal::graceful_exit(0);
             }
         }
         ::crossterm::event::KeyEvent {
@@ -812,7 +812,7 @@ fn handle_global_keys(
                     .insert_resource(NextState(Some(AppState::Watchlist)));
                 render_state.mark_dirty(DirtyFlags::ALL);
             } else {
-                crate::widgets::Terminal::graceful_exit(0);
+                crate::tui::widgets::Terminal::graceful_exit(0);
             }
         }
         ::crossterm::event::KeyEvent {

@@ -50,13 +50,25 @@ Also ships a full-screen TUI for interactive monitoring.
 brew install --cask longbridge/tap/longbridge-terminal
 ```
 
-**Install script**
+**Windows** ([Scoop](https://scoop.sh))
+
+```powershell
+scoop install https://github.com/longbridge/longbridge-terminal/raw/refs/heads/main/.scoop/longbridge.json
+```
+
+**Windows** (PowerShell)
+
+```powershell
+iwr https://github.com/longbridge/longbridge-terminal/raw/main/install.ps1 | iex
+```
+
+**Install script (macOS / Linux)**
 
 ```bash
 curl -sSL https://github.com/longbridge/longbridge-terminal/raw/main/install | sh
 ```
 
-Installs the `longbridge` binary to `/usr/local/bin`.
+Installs the `longbridge` binary to `/usr/local/bin` (macOS/Linux) or `%LOCALAPPDATA%\Programs\longbridge` (Windows).
 
 ## Authentication
 
@@ -139,6 +151,34 @@ longbridge option chain AAPL.US --date 2024-01-19 # Option chain: strike prices 
 longbridge warrant quote 12345.HK                 # Real-time quotes for warrant contracts
 longbridge warrant list 700.HK                    # Warrants linked to an underlying security
 longbridge warrant issuers                        # Warrant issuer list (HK market)
+```
+
+### Fundamentals
+
+```bash
+longbridge financial-report AAPL.US [--kind IS|BS|CF]               # Multi-period financial statements (income / balance sheet / cash flow)
+longbridge institution-rating AAPL.US                                # Analyst rating distribution and consensus target price
+longbridge institution-rating detail AAPL.US                         # Monthly rating trend and analyst accuracy history
+longbridge dividend AAPL.US                                          # Historical dividend records
+longbridge dividend detail AAPL.US                                   # Dividend allocation plan details
+longbridge forecast-eps AAPL.US                                      # Analyst EPS consensus forecast snapshots
+longbridge consensus AAPL.US                                         # Revenue / profit / EPS multi-period comparison with beat/miss markers
+longbridge valuation AAPL.US [--indicator pe|pb|ps|dvd_yld]         # Current valuation snapshot and peer comparison
+longbridge valuation AAPL.US --history [--indicator pe] [--range 5]  # Historical valuation time series (1 / 3 / 5 / 10 years)
+longbridge fund-holder AAPL.US [--count 20]                          # Funds and ETFs holding this stock
+longbridge shareholder AAPL.US [--range all|inc|dec] [--sort chg]    # Institutional shareholders with QoQ change tracking
+```
+
+### Market Data
+
+```bash
+longbridge exchange-rate                                             # Exchange rates for all markets
+longbridge finance-calendar financial [--symbol AAPL.US]             # Earnings guidance announcements from today onward
+longbridge finance-calendar report [--symbol AAPL.US]                # Earnings report release dates from today onward
+longbridge finance-calendar dividend [--symbol AAPL.US]              # Dividend ex-date / payment events from today onward
+longbridge finance-calendar ipo [--market US]                        # IPO listing timeline from today onward
+longbridge finance-calendar macrodata [--star 3]                     # Macro economic events (--star 1–3 filters by importance)
+longbridge finance-calendar closed [--market HK]                     # Market holidays and shortened trading days
 ```
 
 ### Watchlist
@@ -251,7 +291,7 @@ Longbridge OpenAPI: maximum 10 calls per second. The SDK auto-refreshes OAuth to
 
 ## Requirements
 
-- macOS or Linux
+- macOS, Linux, or Windows
 - Internet connection and browser access (for initial OAuth)
 - [Longbridge account](https://open.longbridge.com)
 

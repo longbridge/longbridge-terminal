@@ -2,7 +2,7 @@ use anyhow::{bail, Result};
 use longbridge::trade::{
     EstimateMaxPurchaseQuantityOptions, GetCashFlowOptions, GetHistoryExecutionsOptions,
     GetHistoryOrdersOptions, GetTodayExecutionsOptions, GetTodayOrdersOptions, OrderSide,
-    OrderType, ReplaceOrderOptions, SubmitOrderOptions, TimeInForceType,
+    OrderType, OutsideRTH, ReplaceOrderOptions, SubmitOrderOptions, TimeInForceType,
 };
 use rust_decimal::Decimal;
 use std::str::FromStr;
@@ -18,12 +18,17 @@ fn parse_order_type(s: &str) -> Result<OrderType> {
         "LO" => Ok(OrderType::LO),
         "MO" => Ok(OrderType::MO),
         "ELO" => Ok(OrderType::ELO),
+        "AO" => Ok(OrderType::AO),
         "ALO" => Ok(OrderType::ALO),
         "ODD" => Ok(OrderType::ODD),
         "SLO" => Ok(OrderType::SLO),
         "LIT" => Ok(OrderType::LIT),
         "MIT" => Ok(OrderType::MIT),
-        _ => bail!("Unknown order type '{s}'. Use: LO MO ELO ALO ODD SLO LIT MIT"),
+        "TSLPAMT" => Ok(OrderType::TSLPAMT),
+        "TSLPPCT" => Ok(OrderType::TSLPPCT),
+        _ => {
+            bail!("Unknown order type '{s}'. Use: LO MO ELO AO ALO ODD SLO LIT MIT TSLPAMT TSLPPCT")
+        }
     }
 }
 
@@ -71,11 +76,11 @@ pub async fn cmd_orders(
         "Order ID",
         "Symbol",
         "Side",
-        "Type",
+        "Order Type",
         "Status",
-        "Qty",
+        "Quantity",
         "Price",
-        "Executed Qty",
+        "Executed Quantity",
         "Executed Price",
         "Created At",
     ];
@@ -123,13 +128,13 @@ pub async fn cmd_order_detail(order_id: String, format: &OutputFormat) -> Result
             });
             println!("{}", serde_json::to_string_pretty(&val)?);
         }
-        OutputFormat::Table => {
+        OutputFormat::Pretty => {
             let headers = &["Field", "Value"];
             let rows = vec![
                 vec!["Order ID".to_string(), detail.order_id.clone()],
                 vec!["Symbol".to_string(), detail.symbol.clone()],
                 vec!["Side".to_string(), format!("{:?}", detail.side)],
-                vec!["Type".to_string(), format!("{:?}", detail.order_type)],
+                vec!["Order Type".to_string(), format!("{:?}", detail.order_type)],
                 vec!["Status".to_string(), format!("{:?}", detail.status)],
                 vec!["Quantity".to_string(), detail.quantity.to_string()],
                 vec!["Price".to_string(), fmt_decimal(&detail.price)],
@@ -151,7 +156,7 @@ pub async fn cmd_order_detail(order_id: String, format: &OutputFormat) -> Result
                 ],
                 vec!["Remark".to_string(), detail.msg.clone()],
             ];
-            print_table(headers, rows, &OutputFormat::Table);
+            print_table(headers, rows, &OutputFormat::Pretty);
         }
     }
     Ok(())
@@ -207,11 +212,26 @@ pub async fn cmd_executions(
     Ok(())
 }
 
+fn parse_outside_rth(s: &str) -> Result<OutsideRTH> {
+    match s.to_uppercase().as_str() {
+        "RTH_ONLY" => Ok(OutsideRTH::RTHOnly),
+        "ANY_TIME" => Ok(OutsideRTH::AnyTime),
+        "OVERNIGHT" => Ok(OutsideRTH::Overnight),
+        _ => bail!("Unknown outside-rth '{s}'. Use: RTH_ONLY ANY_TIME OVERNIGHT"),
+    }
+}
+
 pub async fn cmd_submit_order(
     symbol: String,
     quantity: u64,
     price: Option<String>,
     trigger_price: Option<String>,
+    trailing_amount: Option<String>,
+    trailing_percent: Option<String>,
+    limit_offset: Option<String>,
+    expire_date: Option<String>,
+    outside_rth: Option<String>,
+    remark: Option<String>,
     order_type: String,
     tif: String,
     side: OrderSide,
@@ -233,14 +253,59 @@ pub async fn cmd_submit_order(
             Decimal::from_str(tp).map_err(|_| anyhow::anyhow!("Invalid trigger price: {tp}"))?;
         opts = opts.trigger_price(tp_dec);
     }
+    if let Some(ref ta) = trailing_amount {
+        let ta_dec =
+            Decimal::from_str(ta).map_err(|_| anyhow::anyhow!("Invalid trailing amount: {ta}"))?;
+        opts = opts.trailing_amount(ta_dec);
+    }
+    if let Some(ref tp) = trailing_percent {
+        let tp_dec =
+            Decimal::from_str(tp).map_err(|_| anyhow::anyhow!("Invalid trailing percent: {tp}"))?;
+        opts = opts.trailing_percent(tp_dec);
+    }
+    if let Some(ref lo) = limit_offset {
+        let lo_dec =
+            Decimal::from_str(lo).map_err(|_| anyhow::anyhow!("Invalid limit offset: {lo}"))?;
+        opts = opts.limit_offset(lo_dec);
+    }
+    if let Some(ref ed) = expire_date {
+        let date = time::Date::parse(
+            ed,
+            &time::format_description::parse("[year]-[month]-[day]")
+                .map_err(|e| anyhow::anyhow!("Date format error: {e}"))?,
+        )
+        .map_err(|_| anyhow::anyhow!("Invalid expire date '{ed}'. Use YYYY-MM-DD"))?;
+        opts = opts.expire_date(date);
+    }
+    if let Some(ref rth) = outside_rth {
+        opts = opts.outside_rth(parse_outside_rth(rth)?);
+    }
+    if let Some(ref r) = remark {
+        opts = opts.remark(r.clone());
+    }
 
     // Confirm before submitting
-    let price_display = match (price.as_deref(), trigger_price.as_deref()) {
+    let mut price_display = match (price.as_deref(), trigger_price.as_deref()) {
         (Some(p), Some(tp)) => format!("{p} (trigger: {tp})"),
         (Some(p), None) => p.to_string(),
         (None, Some(tp)) => format!("market (trigger: {tp})"),
         (None, None) => "market".to_string(),
     };
+    if let Some(ref ta) = trailing_amount {
+        price_display.push_str(&format!(" trailing-amount: {ta}"));
+    }
+    if let Some(ref tp) = trailing_percent {
+        price_display.push_str(&format!(" trailing-percent: {tp}%"));
+    }
+    if let Some(ref lo) = limit_offset {
+        price_display.push_str(&format!(" limit-offset: {lo}"));
+    }
+    if let Some(ref ed) = expire_date {
+        price_display.push_str(&format!(" expire: {ed}"));
+    }
+    if let Some(ref rth) = outside_rth {
+        price_display.push_str(&format!(" outside-rth: {rth}"));
+    }
     println!("Submitting {side:?} order: {quantity} {symbol} @ {price_display}");
     if !yes {
         print!("Confirm? [y/N] ");
@@ -261,7 +326,7 @@ pub async fn cmd_submit_order(
             let val = serde_json::json!({ "order_id": resp.order_id });
             println!("{}", serde_json::to_string_pretty(&val)?);
         }
-        OutputFormat::Table => {
+        OutputFormat::Pretty => {
             println!("Order submitted successfully.");
             println!("Order ID: {}", resp.order_id);
         }
@@ -544,9 +609,9 @@ pub async fn run_today_orders(
         "Order ID",
         "Symbol",
         "Side",
-        "Type",
+        "Order Type",
         "Status",
-        "Qty",
+        "Quantity",
         "Price",
         "Created At",
     ];
@@ -579,9 +644,9 @@ pub async fn run_history_orders(
         "Order ID",
         "Symbol",
         "Side",
-        "Type",
+        "Order Type",
         "Status",
-        "Qty",
+        "Quantity",
         "Price",
         "Created At",
     ];
@@ -615,7 +680,7 @@ pub async fn run_order_detail(
             let val = serde_json::json!({"order_id": detail.order_id, "symbol": detail.symbol, "side": format!("{:?}", detail.side), "status": format!("{:?}", detail.status)});
             println!("{}", serde_json::to_string_pretty(&val)?);
         }
-        OutputFormat::Table => {
+        OutputFormat::Pretty => {
             let headers = &["Field", "Value"];
             let rows = vec![
                 vec!["Order ID".to_string(), detail.order_id.clone()],
@@ -623,7 +688,7 @@ pub async fn run_order_detail(
                 vec!["Side".to_string(), format!("{:?}", detail.side)],
                 vec!["Status".to_string(), format!("{:?}", detail.status)],
             ];
-            print_table(headers, rows, &OutputFormat::Table);
+            print_table(headers, rows, &OutputFormat::Pretty);
         }
     }
     Ok(())
@@ -694,7 +759,7 @@ pub async fn run_submit_order(
                 serde_json::to_string_pretty(&serde_json::json!({"order_id": resp.order_id}))?
             );
         }
-        OutputFormat::Table => println!("Order ID: {}", resp.order_id),
+        OutputFormat::Pretty => println!("Order ID: {}", resp.order_id),
     }
     Ok(())
 }
@@ -894,7 +959,7 @@ mod tests {
         mock.expect_today_orders()
             .times(1)
             .returning(|_| Ok(vec![]));
-        run_today_orders(&mock, GetTodayOrdersOptions::new(), &OutputFormat::Table)
+        run_today_orders(&mock, GetTodayOrdersOptions::new(), &OutputFormat::Pretty)
             .await
             .unwrap();
     }
@@ -905,7 +970,7 @@ mod tests {
         mock.expect_history_orders()
             .times(1)
             .returning(|_| Ok(vec![]));
-        run_history_orders(&mock, GetHistoryOrdersOptions::new(), &OutputFormat::Table)
+        run_history_orders(&mock, GetHistoryOrdersOptions::new(), &OutputFormat::Pretty)
             .await
             .unwrap();
     }
@@ -919,7 +984,7 @@ mod tests {
         run_today_executions(
             &mock,
             GetTodayExecutionsOptions::new(),
-            &OutputFormat::Table,
+            &OutputFormat::Pretty,
         )
         .await
         .unwrap();
@@ -934,7 +999,7 @@ mod tests {
         run_history_executions(
             &mock,
             GetHistoryExecutionsOptions::new(),
-            &OutputFormat::Table,
+            &OutputFormat::Pretty,
         )
         .await
         .unwrap();
@@ -948,7 +1013,7 @@ mod tests {
                 order_id: "order-1".to_string(),
             })
         });
-        run_submit_order(&mock, make_submit_opts(), &OutputFormat::Table)
+        run_submit_order(&mock, make_submit_opts(), &OutputFormat::Pretty)
             .await
             .unwrap();
     }
@@ -980,7 +1045,7 @@ mod tests {
             .with(mockall::predicate::eq(None::<String>))
             .times(1)
             .returning(|_| Ok(vec![]));
-        run_balance(&mock, None, &OutputFormat::Table)
+        run_balance(&mock, None, &OutputFormat::Pretty)
             .await
             .unwrap();
     }
@@ -992,7 +1057,7 @@ mod tests {
         mock.expect_stock_positions()
             .times(1)
             .returning(|| Ok(StockPositionsResponse { channels: vec![] }));
-        run_positions(&mock, &OutputFormat::Table).await.unwrap();
+        run_positions(&mock, &OutputFormat::Pretty).await.unwrap();
     }
 
     #[tokio::test]
@@ -1002,7 +1067,7 @@ mod tests {
         mock.expect_fund_positions()
             .times(1)
             .returning(|| Ok(FundPositionsResponse { channels: vec![] }));
-        run_fund_positions(&mock, &OutputFormat::Table)
+        run_fund_positions(&mock, &OutputFormat::Pretty)
             .await
             .unwrap();
     }
@@ -1021,7 +1086,7 @@ mod tests {
                     fm_factor: Decimal::ZERO,
                 })
             });
-        run_margin_ratio(&mock, "TSLA.US".to_string(), &OutputFormat::Table)
+        run_margin_ratio(&mock, "TSLA.US".to_string(), &OutputFormat::Pretty)
             .await
             .unwrap();
     }

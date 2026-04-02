@@ -5,7 +5,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::{app::AppState, ui::styles};
+use crate::{tui::app::AppState, tui::ui::styles};
 
 pub fn render(frame: &mut Frame, rect: Rect, state: AppState) {
     let chunks = Layout::default()

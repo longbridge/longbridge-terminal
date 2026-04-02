@@ -1,11 +1,11 @@
 use ansi_parser::AnsiParser;
+use bevy_ecs::prelude::*;
 use ratatui::{
-    buffer::Buffer,
-    layout::{Alignment, Rect},
-    style::Style,
+    layout::{Alignment, Margin, Rect},
     text::Text,
     widgets::{Paragraph, Widget},
 };
+use unicode_width::UnicodeWidthStr;
 
 static LOGO_STR: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/logo.ascii"));
 
@@ -16,23 +16,28 @@ static BANNER_STR: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
 
 pub const BANNER_HEIGHT: u16 = 23;
 
-/// Banner widget that properly renders ANSI-colored logo and text banner
-pub struct BannerWidget {
-    style: Style,
-}
+#[derive(Copy, Clone, Debug, Default, Resource, Component)]
+pub struct Logo;
 
-impl BannerWidget {
-    pub fn new(style: Style) -> Self {
-        Self { style }
-    }
-}
+impl Widget for Logo {
+    fn render(self, area: Rect, buf: &mut ratatui::buffer::Buffer) {
+        // Make vertical center
+        let area = if area.height > BANNER_HEIGHT {
+            let margin = (area.height - BANNER_HEIGHT) / 2;
+            area.inner(Margin {
+                vertical: margin,
+                horizontal: 0,
+            })
+        } else {
+            area
+        };
 
-impl Widget for BannerWidget {
-    fn render(self, area: Rect, buf: &mut Buffer) {
+        // Calculate the width needed for centering
         let logo_lines = LOGO_STR.lines().count();
         let banner_lines = BANNER_STR.lines().count();
         let total_lines = logo_lines + 2 + banner_lines; // +2 for spacing
 
+        // Split the area into logo and banner sections
         let logo_height = logo_lines as u16;
         let spacing_height = 2;
         let banner_height = banner_lines as u16;
@@ -62,15 +67,13 @@ impl Widget for BannerWidget {
         let banner_text = Text::raw(BANNER_STR.as_str());
         Paragraph::new(banner_text)
             .alignment(Alignment::Center)
-            .style(self.style)
+            .style(crate::tui::ui::styles::text())
             .render(banner_area, buf);
     }
 }
 
 /// Helper function to center ANSI text within an area
-fn center_ansi(text: &str, area: Rect, buf: &mut Buffer) {
-    use unicode_width::UnicodeWidthStr;
-
+fn center_ansi(text: &str, area: Rect, buf: &mut ratatui::buffer::Buffer) {
     for (line_idx, line) in text.lines().enumerate() {
         let y = area.y + line_idx as u16;
         if y >= area.bottom() {
@@ -100,11 +103,6 @@ fn center_ansi(text: &str, area: Rect, buf: &mut Buffer) {
             height: 1,
         };
 
-        crate::widgets::Ansi(line).render(line_area, buf);
+        crate::tui::widgets::Ansi(line).render(line_area, buf);
     }
-}
-
-/// Legacy function for backward compatibility
-pub fn banner(style: Style) -> BannerWidget {
-    BannerWidget::new(style)
 }

@@ -138,6 +138,7 @@ StockDepth:
 StockQuoteTrades: "Trades"
 CashBalance:
   title: " Cash Balance "
+  total: Total Cash
   Total: Total
   Avail. Balance: Avail. Balance
   Cash Locked: Cash Locked
@@ -221,6 +222,9 @@ News:
   Detail: "Article"
   DetailEmpty: "Select an article to read"
   DetailHint: "↑↓ switch article  PgUp/PgDn scroll  o browser  q back"
+  ErrorContent: "Failed to read content: %{error}"
+  ErrorHttp: "Failed to load news (HTTP %{status})"
+  ErrorFetch: "Failed to load news: %{error}"
 Error.KlineDataFormat: "Invalid K-line data format"
 Currency.HKD: "Hong Kong Dollar"
 Currency.USD: "US Dollar"

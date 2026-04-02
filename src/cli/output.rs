@@ -33,7 +33,7 @@ pub fn print_table(headers: &[&str], rows: Vec<Vec<String>>, format: &OutputForm
                 serde_json::to_string_pretty(&records).unwrap_or_default()
             );
         }
-        OutputFormat::Table => {
+        OutputFormat::Pretty => {
             print_markdown_table(headers, &rows);
         }
     }
@@ -48,7 +48,7 @@ pub fn print_json_value(value: &serde_json::Value, format: &OutputFormat) {
                 serde_json::to_string_pretty(value).unwrap_or_default()
             );
         }
-        OutputFormat::Table => {
+        OutputFormat::Pretty => {
             if let serde_json::Value::Object(map) = value {
                 let rows: Vec<Vec<String>> = map
                     .iter()

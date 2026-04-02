@@ -1,0 +1,95 @@
+name: Test Install Scripts
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "*"
+    paths:
+      - install
+      - install.ps1
+      - .scoop/longbridge.json
+      - .github/workflows/test-install.yml
+  pull_request:
+    paths:
+      - install
+      - install.ps1
+      - .scoop/longbridge.json
+      - .github/workflows/test-install.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux (sh)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run install script
+        run: sh install
+
+      - name: Verify binary
+        run: longbridge --version
+
+  # The install script always downloads the statically-linked musl binary for
+  # Linux.  This job explicitly verifies that the musl binary runs correctly on
+  # a glibc-based Ubuntu runner – this is the scenario that caused the segfault
+  # reported in https://github.com/longbridge/longbridge-terminal/issues.
+  linux-musl-on-glibc:
+    name: Linux musl binary on glibc (Ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run install script (downloads musl binary by default)
+        run: sh install
+
+      - name: Verify musl binary works on glibc system
+        run: |
+          longbridge --version
+          file $(which longbridge)
+
+  windows:
+    name: Windows (PowerShell)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run install.ps1
+        shell: pwsh
+        # Simulate the documented one-liner: iwr .../install.ps1 | iex
+        run: Get-Content install.ps1 -Raw | Invoke-Expression
+
+      - name: Verify binary
+        shell: pwsh
+        run: |
+          $installDir = Join-Path $env:LOCALAPPDATA 'Programs\longbridge'
+          & "$installDir\longbridge.exe" --version
+
+  windows-scoop:
+    name: Windows (Scoop)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Scoop
+        shell: pwsh
+        run: |
+          Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+          iex "& {$(irm get.scoop.sh)}"
+          # Add scoop to PATH for subsequent steps
+          echo "$env:USERPROFILE\scoop\shims" >> $env:GITHUB_PATH
+          # Initialize buckets directory
+          scoop update
+
+      - name: Install via Scoop manifest
+        shell: pwsh
+        run: scoop install .\.scoop\longbridge.json
+
+      - name: Verify binary
+        shell: pwsh
+        run: longbridge --version
