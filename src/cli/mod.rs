@@ -893,10 +893,10 @@ pub enum OrderCmd {
     /// Submit a buy order (prompts for confirmation)
     ///
     /// Returns `order_id` on success.
-    /// Order types: LO ELO MO AO ALO ODD SLO LIT MIT TSLPAMT TSLPPCT TSMAMT TSMPCT
+    /// Order types: LO ELO MO AO ALO ODD SLO LIT MIT TSLPAMT TSLPPCT
     ///   (case-insensitive)
-    /// Trailing orders (TSLPAMT/TSLPPCT/TSMAMT/TSMPCT) require --trailing-amount or
-    ///   --trailing-percent. TSLPAMT/TSLPPCT also require --limit-offset.
+    /// Trailing orders (TSLPAMT/TSLPPCT) require --trailing-amount/--trailing-percent
+    ///   and --limit-offset.
     /// Example: longbridge order buy TSLA.US 100 --price 250.00
     /// Example: longbridge order buy 700.HK 1000 --price 300 --order-type ALO
     /// Example: longbridge order buy NVDA.US 10 --order-type MIT --trigger-price 177.89 --tif Day
@@ -931,7 +931,7 @@ pub enum OrderCmd {
         /// Order remark (max 255 characters)
         #[arg(long)]
         remark: Option<String>,
-        /// Order type: LO ELO MO AO ALO ODD SLO LIT MIT TSLPAMT TSLPPCT TSMAMT TSMPCT
+        /// Order type: LO ELO MO AO ALO ODD SLO LIT MIT TSLPAMT TSLPPCT
         ///   (case-insensitive, default: LO)
         #[arg(long, default_value = "LO")]
         order_type: String,
@@ -947,10 +947,10 @@ pub enum OrderCmd {
     /// Submit a sell order (prompts for confirmation)
     ///
     /// Returns `order_id` on success.
-    /// Order types: LO ELO MO AO ALO ODD SLO LIT MIT TSLPAMT TSLPPCT TSMAMT TSMPCT
+    /// Order types: LO ELO MO AO ALO ODD SLO LIT MIT TSLPAMT TSLPPCT
     ///   (case-insensitive)
-    /// Trailing orders (TSLPAMT/TSLPPCT/TSMAMT/TSMPCT) require --trailing-amount or
-    ///   --trailing-percent. TSLPAMT/TSLPPCT also require --limit-offset.
+    /// Trailing orders (TSLPAMT/TSLPPCT) require --trailing-amount/--trailing-percent
+    ///   and --limit-offset.
     /// Example: longbridge order sell TSLA.US 100 --price 260.00
     /// Example: longbridge order sell NVDA.US 10 --order-type MIT --trigger-price 177.89 --tif Day
     /// Example: longbridge order sell TSLA.US 130 --order-type TSLPPCT --trailing-percent 3 --limit-offset 1 --tif gtc
@@ -984,7 +984,7 @@ pub enum OrderCmd {
         /// Order remark (max 255 characters)
         #[arg(long)]
         remark: Option<String>,
-        /// Order type: LO ELO MO AO ALO ODD SLO LIT MIT TSLPAMT TSLPPCT TSMAMT TSMPCT
+        /// Order type: LO ELO MO AO ALO ODD SLO LIT MIT TSLPAMT TSLPPCT
         ///   (case-insensitive, default: LO)
         #[arg(long, default_value = "LO")]
         order_type: String,

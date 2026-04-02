@@ -26,11 +26,9 @@ fn parse_order_type(s: &str) -> Result<OrderType> {
         "MIT" => Ok(OrderType::MIT),
         "TSLPAMT" => Ok(OrderType::TSLPAMT),
         "TSLPPCT" => Ok(OrderType::TSLPPCT),
-        "TSMAMT" => Ok(OrderType::TSMAMT),
-        "TSMPCT" => Ok(OrderType::TSMPCT),
-        _ => bail!(
-            "Unknown order type '{s}'. Use: LO MO ELO AO ALO ODD SLO LIT MIT TSLPAMT TSLPPCT TSMAMT TSMPCT"
-        ),
+        _ => {
+            bail!("Unknown order type '{s}'. Use: LO MO ELO AO ALO ODD SLO LIT MIT TSLPAMT TSLPPCT")
+        }
     }
 }
 
@@ -78,11 +76,11 @@ pub async fn cmd_orders(
         "Order ID",
         "Symbol",
         "Side",
-        "Type",
+        "Order Type",
         "Status",
-        "Qty",
+        "Quantity",
         "Price",
-        "Executed Qty",
+        "Executed Quantity",
         "Executed Price",
         "Created At",
     ];
@@ -136,7 +134,7 @@ pub async fn cmd_order_detail(order_id: String, format: &OutputFormat) -> Result
                 vec!["Order ID".to_string(), detail.order_id.clone()],
                 vec!["Symbol".to_string(), detail.symbol.clone()],
                 vec!["Side".to_string(), format!("{:?}", detail.side)],
-                vec!["Type".to_string(), format!("{:?}", detail.order_type)],
+                vec!["Order Type".to_string(), format!("{:?}", detail.order_type)],
                 vec!["Status".to_string(), format!("{:?}", detail.status)],
                 vec!["Quantity".to_string(), detail.quantity.to_string()],
                 vec!["Price".to_string(), fmt_decimal(&detail.price)],
@@ -611,9 +609,9 @@ pub async fn run_today_orders(
         "Order ID",
         "Symbol",
         "Side",
-        "Type",
+        "Order Type",
         "Status",
-        "Qty",
+        "Quantity",
         "Price",
         "Created At",
     ];
@@ -646,9 +644,9 @@ pub async fn run_history_orders(
         "Order ID",
         "Symbol",
         "Side",
-        "Type",
+        "Order Type",
         "Status",
-        "Qty",
+        "Quantity",
         "Price",
         "Created At",
     ];
