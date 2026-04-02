@@ -1131,4 +1131,3 @@ pub async fn cmd_finance_calendar(
     }
     Ok(())
 }
-

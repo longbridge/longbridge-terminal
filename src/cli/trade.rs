@@ -18,12 +18,19 @@ fn parse_order_type(s: &str) -> Result<OrderType> {
         "LO" => Ok(OrderType::LO),
         "MO" => Ok(OrderType::MO),
         "ELO" => Ok(OrderType::ELO),
+        "AO" => Ok(OrderType::AO),
         "ALO" => Ok(OrderType::ALO),
         "ODD" => Ok(OrderType::ODD),
         "SLO" => Ok(OrderType::SLO),
         "LIT" => Ok(OrderType::LIT),
         "MIT" => Ok(OrderType::MIT),
-        _ => bail!("Unknown order type '{s}'. Use: LO MO ELO ALO ODD SLO LIT MIT"),
+        "TSLPAMT" => Ok(OrderType::TSLPAMT),
+        "TSLPPCT" => Ok(OrderType::TSLPPCT),
+        "TSMAMT" => Ok(OrderType::TSMAMT),
+        "TSMPCT" => Ok(OrderType::TSMPCT),
+        _ => bail!(
+            "Unknown order type '{s}'. Use: LO MO ELO AO ALO ODD SLO LIT MIT TSLPAMT TSLPPCT TSMAMT TSMPCT"
+        ),
     }
 }
 
@@ -212,6 +219,9 @@ pub async fn cmd_submit_order(
     quantity: u64,
     price: Option<String>,
     trigger_price: Option<String>,
+    trailing_amount: Option<String>,
+    trailing_percent: Option<String>,
+    limit_offset: Option<String>,
     order_type: String,
     tif: String,
     side: OrderSide,
@@ -233,14 +243,38 @@ pub async fn cmd_submit_order(
             Decimal::from_str(tp).map_err(|_| anyhow::anyhow!("Invalid trigger price: {tp}"))?;
         opts = opts.trigger_price(tp_dec);
     }
+    if let Some(ref ta) = trailing_amount {
+        let ta_dec =
+            Decimal::from_str(ta).map_err(|_| anyhow::anyhow!("Invalid trailing amount: {ta}"))?;
+        opts = opts.trailing_amount(ta_dec);
+    }
+    if let Some(ref tp) = trailing_percent {
+        let tp_dec =
+            Decimal::from_str(tp).map_err(|_| anyhow::anyhow!("Invalid trailing percent: {tp}"))?;
+        opts = opts.trailing_percent(tp_dec);
+    }
+    if let Some(ref lo) = limit_offset {
+        let lo_dec =
+            Decimal::from_str(lo).map_err(|_| anyhow::anyhow!("Invalid limit offset: {lo}"))?;
+        opts = opts.limit_offset(lo_dec);
+    }
 
     // Confirm before submitting
-    let price_display = match (price.as_deref(), trigger_price.as_deref()) {
+    let mut price_display = match (price.as_deref(), trigger_price.as_deref()) {
         (Some(p), Some(tp)) => format!("{p} (trigger: {tp})"),
         (Some(p), None) => p.to_string(),
         (None, Some(tp)) => format!("market (trigger: {tp})"),
         (None, None) => "market".to_string(),
     };
+    if let Some(ref ta) = trailing_amount {
+        price_display.push_str(&format!(" trailing-amount: {ta}"));
+    }
+    if let Some(ref tp) = trailing_percent {
+        price_display.push_str(&format!(" trailing-percent: {tp}%"));
+    }
+    if let Some(ref lo) = limit_offset {
+        price_display.push_str(&format!(" limit-offset: {lo}"));
+    }
     println!("Submitting {side:?} order: {quantity} {symbol} @ {price_display}");
     if !yes {
         print!("Confirm? [y/N] ");
