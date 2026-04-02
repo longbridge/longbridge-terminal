@@ -53,7 +53,7 @@ brew install --cask longbridge/tap/longbridge-terminal
 **Windows** ([Scoop](https://scoop.sh))
 
 ```powershell
-scoop install https://raw.githubusercontent.com/longbridge/longbridge-terminal/main/scoop.json
+scoop install https://github.com/longbridge/longbridge-terminal/raw/refs/heads/main/.scoop/longbridge.json
 ```
 
 **Windows** (PowerShell)
