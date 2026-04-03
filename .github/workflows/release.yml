@@ -198,3 +198,14 @@ jobs:
             -e oss-cn-hangzhou.aliyuncs.com \
             -i ${{ secrets.FE_LB_ASSET_ACCESS_KEY_ID }} \
             -k ${{ secrets.FE_LB_ASSET_ACCESS_KEY_SECRET }}
+
+      - name: Update latest version file
+        run: |
+          echo "v${{ steps.version.outputs.version }}" > latest
+          ./ossutil cp latest \
+            oss://lb-assets/github/release/longbridge-terminal/latest \
+            -f \
+            -e oss-cn-hangzhou.aliyuncs.com \
+            -i ${{ secrets.FE_LB_ASSET_ACCESS_KEY_ID }} \
+            -k ${{ secrets.FE_LB_ASSET_ACCESS_KEY_SECRET }} \
+            --meta "Cache-Control:no-cache#Content-Type:text/plain;charset=utf-8"
