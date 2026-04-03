@@ -8,6 +8,9 @@ jobs:
     name: Sync latest release to OSS
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Get latest release tag
         id: release
         run: |
@@ -53,3 +56,18 @@ jobs:
             -i ${{ secrets.FE_LB_ASSET_ACCESS_KEY_ID }} \
             -k ${{ secrets.FE_LB_ASSET_ACCESS_KEY_SECRET }} \
             --meta "Cache-Control:no-cache#Content-Type:text/plain;charset=utf-8"
+
+      - name: Upload scoop manifest to OSS
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          cat .scoop/longbridge.json \
+            | sed "s|https://github.com/longbridge/longbridge-terminal/releases/download/v${VERSION}|https://open.longbridge.cn/github/release/longbridge-terminal/v${VERSION}|g" \
+            > longbridge.json
+          ./ossutil cp longbridge.json \
+            oss://lb-assets/github/release/longbridge-terminal/longbridge.json \
+            -f \
+            -e oss-cn-hangzhou.aliyuncs.com \
+            -i ${{ secrets.FE_LB_ASSET_ACCESS_KEY_ID }} \
+            -k ${{ secrets.FE_LB_ASSET_ACCESS_KEY_SECRET }} \
+            --meta "Cache-Control:no-cache#Content-Type:application/json;charset=utf-8"
