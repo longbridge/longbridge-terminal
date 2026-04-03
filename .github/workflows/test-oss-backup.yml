@@ -1,0 +1,44 @@
+name: Test OSS Backup
+
+on:
+  workflow_dispatch:
+
+jobs:
+  oss_backup:
+    name: Sync latest release to OSS
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get latest release tag
+        id: release
+        run: |
+          TAG=$(gh api repos/${{ github.repository }}/releases/latest --jq '.tag_name')
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "Latest release: $TAG"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download release assets
+        run: |
+          mkdir -p release-dist
+          gh release download "${{ steps.release.outputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --dir release-dist
+          ls -lha release-dist/
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup ossutil
+        run: |
+          wget -q https://github.com/aliyun/ossutil/releases/download/v1.7.17/ossutil-v1.7.17-linux-amd64.zip
+          unzip -q ossutil-v1.7.17-linux-amd64.zip
+          cp ./ossutil-v1.7.17-linux-amd64/ossutil . && chmod +x ./ossutil
+
+      - name: Upload to OSS
+        run: |
+          ./ossutil cp ./release-dist/ \
+            oss://lb-assets/github/release/longbridge-terminal/v${{ steps.release.outputs.version }}/ \
+            -u -r -j 10 \
+            -e oss-cn-hangzhou.aliyuncs.com \
+            -i ${{ secrets.FE_LB_ASSET_ACCESS_KEY_ID }} \
+            -k ${{ secrets.FE_LB_ASSET_ACCESS_KEY_SECRET }}

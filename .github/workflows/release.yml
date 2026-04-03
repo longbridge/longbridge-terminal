@@ -168,3 +168,33 @@ jobs:
           files: release-dist/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Upload release artifacts to Aliyun OSS as backup
+  oss_backup:
+    name: Upload to Aliyun OSS
+    needs: github_release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup | Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-dist
+
+      - name: Setup | ossutil
+        run: |
+          wget -q https://github.com/aliyun/ossutil/releases/download/v1.7.17/ossutil-v1.7.17-linux-amd64.zip
+          unzip -q ossutil-v1.7.17-linux-amd64.zip
+          cp ./ossutil-v1.7.17-linux-amd64/ossutil . && chmod +x ./ossutil
+
+      - name: Get version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload to OSS
+        run: |
+          ./ossutil cp ./release-dist/ \
+            oss://lb-assets/github/release/longbridge-terminal/v${{ steps.version.outputs.version }}/ \
+            -u -r -j 10 \
+            -e oss-cn-hangzhou.aliyuncs.com \
+            -i ${{ secrets.FE_LB_ASSET_ACCESS_KEY_ID }} \
+            -k ${{ secrets.FE_LB_ASSET_ACCESS_KEY_SECRET }}
