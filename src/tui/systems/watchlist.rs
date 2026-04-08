@@ -516,7 +516,11 @@ pub fn refresh_watchlist(update_tx: mpsc::UnboundedSender<CommandQueue>) {
                         #[allow(irrefutable_let_patterns)]
                         if let Ok(counter) = info.symbol.parse() {
                             STOCKS.modify(counter, |stock| {
-                                stock.name.clone_from(&info.name_cn);
+                                let name = match crate::locale::get() {
+                                    "zh-CN" | "zh-HK" => &info.name_cn,
+                                    _ => &info.name_en,
+                                };
+                                stock.name.clone_from(name);
                                 stock.update_from_static_info(info);
                             });
                         }
