@@ -173,6 +173,7 @@ longbridge shareholder AAPL.US [--range all|inc|dec] [--sort chg]    # Instituti
 
 ```bash
 longbridge exchange-rate                                             # Exchange rates for all markets
+longbridge currency-convert HKD USD 10000                           # Convert 10000 HKD to USD at the live mid rate
 longbridge finance-calendar financial [--symbol AAPL.US]             # Earnings guidance announcements from today onward
 longbridge finance-calendar report [--symbol AAPL.US]                # Earnings report release dates from today onward
 longbridge finance-calendar dividend [--symbol AAPL.US]              # Dividend ex-date / payment events from today onward

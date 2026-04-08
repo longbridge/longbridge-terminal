@@ -641,6 +641,22 @@ pub enum Commands {
     /// Example: longbridge exchange-rate --format json
     ExchangeRate,
 
+    /// Convert an amount from one currency to another using live exchange rates
+    ///
+    /// Uses the mid (average) rate from the exchange rate feed.
+    ///
+    /// Example: longbridge currency-convert HKD USD 10000
+    /// Example: longbridge currency-convert USD HKD 1000
+    /// Example: longbridge currency-convert HKD USD 10000 --format json
+    CurrencyConvert {
+        /// Source currency code (e.g. HKD, USD, CNY, SGD)
+        from: String,
+        /// Target currency code
+        to: String,
+        /// Amount in source currency
+        amount: String,
+    },
+
     /// Institutional shareholders for a symbol
     ///
     /// Returns: shareholder name, related symbol (if listed), % shares held, share change, report date.
@@ -1602,6 +1618,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             order_type,
         } => trade::cmd_max_qty(symbol, &side, price, &order_type, format).await,
         Commands::ExchangeRate => asset::cmd_exchange_rate(format, verbose).await,
+        Commands::CurrencyConvert { from, to, amount } => {
+            asset::cmd_currency_convert(from, to, amount, format, verbose).await
+        }
 
         Commands::Shareholder {
             symbol,

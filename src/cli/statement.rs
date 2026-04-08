@@ -18,7 +18,6 @@ fn first_non_empty<'a>(candidates: &[&'a str]) -> &'a str {
         .unwrap_or("")
 }
 
-
 pub async fn cmd_statement(cmd: StatementCmd, format: &OutputFormat) -> Result<()> {
     match cmd {
         StatementCmd::List {
