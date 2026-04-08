@@ -11,6 +11,16 @@ use super::{
     OutputFormat,
 };
 
+/// Return the locale-appropriate display name for a security.
+///
+/// Uses the Chinese name for zh-CN and zh-HK locales, English name otherwise.
+fn locale_name<'a>(name_en: &'a str, name_cn: &'a str) -> &'a str {
+    match crate::locale::get() {
+        "zh-CN" | "zh-HK" => name_cn,
+        _ => name_en,
+    }
+}
+
 fn parse_period(s: &str) -> Result<Period> {
     match s {
         "1m" | "minute" => Ok(Period::OneMinute),
@@ -610,7 +620,7 @@ pub async fn cmd_static(symbols: Vec<String>, format: &OutputFormat) -> Result<(
 
     let headers = &[
         "Symbol",
-        "Name (EN)",
+        "Name",
         "Exchange",
         "Currency",
         "Lot Size",
@@ -626,7 +636,7 @@ pub async fn cmd_static(symbols: Vec<String>, format: &OutputFormat) -> Result<(
         .map(|i| {
             vec![
                 i.symbol.clone(),
-                i.name_en.clone(),
+                locale_name(&i.name_en, &i.name_cn).to_owned(),
                 i.exchange.clone(),
                 i.currency.clone(),
                 i.lot_size.to_string(),
@@ -919,10 +929,10 @@ pub async fn cmd_security_list(market: &str, category: &str, format: &OutputForm
     let cat = parse_security_list_category(category);
     let securities = ctx.security_list(m, cat).await?;
 
-    let headers = &["Symbol", "Name (EN)", "Name (CN)"];
+    let headers = &["Symbol", "Name"];
     let rows = securities
         .iter()
-        .map(|s| vec![s.symbol.clone(), s.name_en.clone(), s.name_cn.clone()])
+        .map(|s| vec![s.symbol.clone(), locale_name(&s.name_en, &s.name_cn).to_owned()])
         .collect();
 
     print_table(headers, rows, format);
@@ -933,7 +943,7 @@ pub async fn cmd_participants(format: &OutputFormat) -> Result<()> {
     let ctx = crate::openapi::quote();
     let participants = ctx.participants().await?;
 
-    let headers = &["Broker ID", "Name (EN)", "Name (CN)"];
+    let headers = &["Broker ID", "Name EN", "Name CN"];
     let rows = participants
         .iter()
         .map(|p| {
@@ -1168,7 +1178,7 @@ pub async fn cmd_warrant_issuers(format: &OutputFormat) -> Result<()> {
     let ctx = crate::openapi::quote();
     let issuers = ctx.warrant_issuers().await?;
 
-    let headers = &["ID", "Name (EN)", "Name (CN)"];
+    let headers = &["ID", "Name EN", "Name CN"];
     let rows = issuers
         .iter()
         .map(|i| {
@@ -1443,7 +1453,7 @@ pub async fn run_static(
         .map(|i| {
             vec![
                 i.symbol.clone(),
-                i.name_en.clone(),
+                locale_name(&i.name_en, &i.name_cn).to_owned(),
                 i.exchange.clone(),
                 i.currency.clone(),
                 i.lot_size.to_string(),
@@ -1619,10 +1629,10 @@ pub async fn run_security_list(
     format: &OutputFormat,
 ) -> Result<()> {
     let securities = api.security_list(market).await?;
-    let headers = &["Symbol", "Name (EN)", "Name (CN)"];
+    let headers = &["Symbol", "Name"];
     let rows = securities
         .iter()
-        .map(|s| vec![s.symbol.clone(), s.name_en.clone(), s.name_cn.clone()])
+        .map(|s| vec![s.symbol.clone(), locale_name(&s.name_en, &s.name_cn).to_owned()])
         .collect();
     print_table(headers, rows, format);
     Ok(())
@@ -1630,7 +1640,7 @@ pub async fn run_security_list(
 
 pub async fn run_participants(api: &dyn QuoteApi, format: &OutputFormat) -> Result<()> {
     let participants = api.participants().await?;
-    let headers = &["Broker ID", "Name (EN)", "Name (CN)"];
+    let headers = &["Broker ID", "Name EN", "Name CN"];
     let rows = participants
         .iter()
         .map(|p| {
@@ -1837,7 +1847,7 @@ pub async fn run_warrant_list(
 
 pub async fn run_warrant_issuers(api: &dyn QuoteApi, format: &OutputFormat) -> Result<()> {
     let issuers = api.warrant_issuers().await?;
-    let headers = &["ID", "Name (EN)", "Name (CN)"];
+    let headers = &["ID", "Name EN", "Name CN"];
     let rows = issuers
         .iter()
         .map(|i| {
