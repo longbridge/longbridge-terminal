@@ -64,6 +64,11 @@ pub struct Cli {
     /// Print verbose request info (host, elapsed) to stderr, prefixed with `*` like curl -v
     #[arg(long, short = 'v', global = true)]
     pub verbose: bool,
+
+    /// Language for content fetched from longbridge.com: zh-CN or en.
+    /// Defaults to LONGBRIDGE_LANGUAGE env var, then system LANG, then en.
+    #[arg(long, global = true)]
+    pub lang: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -1037,8 +1042,10 @@ pub enum OrderCmd {
 pub enum NewsCmd {
     /// Full Markdown content of a news article
     ///
-    /// Fetches the article text from `<https://longbridge.com/news>`
+    /// Fetches the article from longbridge.com (or longbridge.cn for CN region).
+    /// Use the global --lang flag to select language (zh-CN or en).
     /// Example: longbridge news detail 12345678
+    /// Example: longbridge --lang zh-CN news detail 12345678
     Detail {
         /// News article ID (from `longbridge news <SYMBOL>`)
         id: String,

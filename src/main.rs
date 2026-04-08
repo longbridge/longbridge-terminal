@@ -6,6 +6,7 @@ use std::time::Instant;
 pub mod auth;
 pub mod cli;
 pub mod data;
+pub mod locale;
 pub mod logger;
 pub mod openapi;
 #[cfg_attr(target_family = "windows", path = "os/windows.rs")]
@@ -76,12 +77,13 @@ fn print_cli_error(e: &anyhow::Error, using_api_key: bool) {
 
 #[tokio::main]
 async fn main() {
-    let locale = std::env::var("LONGBRIDGE_LANGUAGE").unwrap_or_else(|_| "en".to_string());
-    rust_i18n::set_locale(&locale);
     let _guard = logger::init();
 
     let cli = cli::Cli::parse();
     let verbose = cli.verbose;
+
+    locale::init(cli.lang.as_deref());
+    rust_i18n::set_locale(locale::get());
 
     // Handle legacy --logout flag
     if cli.logout {

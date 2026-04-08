@@ -24,11 +24,9 @@ pub static RATE_LIMITED_QUOTE_CTX: OnceLock<RateLimitedQuoteContext> = OnceLock:
 /// Global rate-limited `TradeContext` wrapper
 pub static RATE_LIMITED_TRADE_CTX: OnceLock<RateLimitedTradeContext> = OnceLock::new();
 
-/// Get API language based on current UI locale
-/// Maps UI locale to API-supported languages: en, zh-CN, zh-HK
-/// Defaults to "en" if locale is not supported
+/// Map the effective content language to the SDK Language enum.
 fn get_api_language() -> longbridge::Language {
-    match rust_i18n::locale().as_str() {
+    match crate::locale::get() {
         "zh-CN" => longbridge::Language::ZH_CN,
         "zh-HK" => longbridge::Language::ZH_HK,
         _ => longbridge::Language::EN,

@@ -3,7 +3,7 @@ use anyhow::{bail, Result};
 use super::{output::print_table, OutputFormat};
 use crate::utils::datetime::format_datetime;
 
-const NEWS_DETAIL_BASE: &str = "https://longbridge.com/news";
+const NEWS_DETAIL_HOST: &str = "https://longbridge.com";
 
 /// Return `s` truncated to `max` chars with a trailing `…`, or the original if it fits.
 fn truncate_display(s: &str, max: usize) -> String {
@@ -318,9 +318,25 @@ pub async fn cmd_topic_detail(id: String) -> Result<()> {
     Ok(())
 }
 
-/// Fetch full news article as Markdown: GET <https://longbridge.com/news/{id}.md>
+/// Build the news detail URL for the given id.
+///
+/// Always uses longbridge.com as host.
+/// Language prefix is determined by the global content language (`crate::locale::get()`).
+fn news_detail_url(id: &str) -> String {
+    match crate::locale::get() {
+        "zh-CN" => format!("{NEWS_DETAIL_HOST}/zh-CN/news/{id}.md"),
+        "zh-HK" => format!("{NEWS_DETAIL_HOST}/zh-HK/news/{id}.md"),
+        _ => format!("{NEWS_DETAIL_HOST}/news/{id}.md"),
+    }
+}
+
+/// Fetch full news article as Markdown.
+///
+/// URL pattern:
+/// - English: `https://longbridge.com/news/{id}.md`
+/// - Chinese: `https://longbridge.com/zh-CN/news/{id}.md`
 pub async fn cmd_news_detail(id: String) -> Result<()> {
-    let url = format!("{NEWS_DETAIL_BASE}/{id}.md");
+    let url = news_detail_url(&id);
     let client = reqwest::Client::new();
     let resp = client
         .get(&url)
