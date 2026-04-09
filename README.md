@@ -221,7 +221,7 @@ longbridge statement export --file-key <KEY> --all                     # Export 
 ### Investors
 
 ```bash
-longbridge investors                                   # Top 50 institutional investors by AUM (live SEC 13F rankings; use --top N to change)
+longbridge investors                                   # Top 50 active fund managers by AUM (live SEC 13F rankings; passive index giants excluded; use --top N to change)
 longbridge investors warren-buffett                    # Berkshire Hathaway's latest 13F portfolio (top 50 by value)
 longbridge investors warren-buffett --top 20           # Show top 20 positions only
 longbridge investors 0001067983                        # View 13F holdings for any filer by SEC CIK number
