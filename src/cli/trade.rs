@@ -396,7 +396,7 @@ pub async fn cmd_replace_order(
     Ok(())
 }
 
-fn print_balance(balances: &[longbridge::trade::AccountBalance], format: &OutputFormat) {
+fn print_assets(balances: &[longbridge::trade::AccountBalance], format: &OutputFormat) {
     match format {
         OutputFormat::Json => {
             let records: Vec<serde_json::Value> = balances
@@ -494,10 +494,10 @@ fn print_balance(balances: &[longbridge::trade::AccountBalance], format: &Output
     }
 }
 
-pub async fn cmd_balance(currency: Option<String>, format: &OutputFormat) -> Result<()> {
+pub async fn cmd_assets(currency: Option<String>, format: &OutputFormat) -> Result<()> {
     let ctx = crate::openapi::trade();
     let balances = ctx.account_balance(currency.as_deref()).await?;
-    print_balance(&balances, format);
+    print_assets(&balances, format);
     Ok(())
 }
 
@@ -859,13 +859,13 @@ pub async fn run_replace_order(api: &dyn TradeApi, opts: ReplaceOrderOptions) ->
     Ok(())
 }
 
-pub async fn run_balance(
+pub async fn run_assets(
     api: &dyn TradeApi,
     currency: Option<String>,
     format: &OutputFormat,
 ) -> Result<()> {
     let balances = api.account_balance(currency).await?;
-    print_balance(&balances, format);
+    print_assets(&balances, format);
     Ok(())
 }
 
@@ -1103,13 +1103,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_run_balance_dispatches() {
+    async fn test_run_assets_dispatches() {
         let mut mock = MockTradeApi::new();
         mock.expect_account_balance()
             .with(mockall::predicate::eq(None::<String>))
             .times(1)
             .returning(|_| Ok(vec![]));
-        run_balance(&mock, None, &OutputFormat::Pretty)
+        run_assets(&mock, None, &OutputFormat::Pretty)
             .await
             .unwrap();
     }
