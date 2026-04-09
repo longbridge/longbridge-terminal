@@ -2197,7 +2197,7 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 [[package]]
 name = "longbridge"
 version = "4.0.5"
-source = "git+https://github.com/longbridge/openapi.git?branch=main#cbf4db611ee2f382b00f9a64b6970f0bbe0b3e0f"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#0ecf1f0ace4a25838ffbb172cac1acc0044991ae"
 dependencies = [
  "anyhow",
  "bitflags 2.10.0",
@@ -2232,7 +2232,7 @@ dependencies = [
 [[package]]
 name = "longbridge-candlesticks"
 version = "4.0.5"
-source = "git+https://github.com/longbridge/openapi.git?branch=main#cbf4db611ee2f382b00f9a64b6970f0bbe0b3e0f"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#0ecf1f0ace4a25838ffbb172cac1acc0044991ae"
 dependencies = [
  "bitflags 2.10.0",
  "num-traits",
@@ -2244,7 +2244,7 @@ dependencies = [
 [[package]]
 name = "longbridge-geo"
 version = "4.0.5"
-source = "git+https://github.com/longbridge/openapi.git?branch=main#cbf4db611ee2f382b00f9a64b6970f0bbe0b3e0f"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#0ecf1f0ace4a25838ffbb172cac1acc0044991ae"
 dependencies = [
  "reqwest 0.12.28",
 ]
@@ -2252,7 +2252,7 @@ dependencies = [
 [[package]]
 name = "longbridge-httpcli"
 version = "4.0.5"
-source = "git+https://github.com/longbridge/openapi.git?branch=main#cbf4db611ee2f382b00f9a64b6970f0bbe0b3e0f"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#0ecf1f0ace4a25838ffbb172cac1acc0044991ae"
 dependencies = [
  "dotenv",
  "futures-util",
@@ -2274,7 +2274,7 @@ dependencies = [
 [[package]]
 name = "longbridge-oauth"
 version = "4.0.5"
-source = "git+https://github.com/longbridge/openapi.git?branch=main#cbf4db611ee2f382b00f9a64b6970f0bbe0b3e0f"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#0ecf1f0ace4a25838ffbb172cac1acc0044991ae"
 dependencies = [
  "dirs 6.0.0",
  "futures-util",
@@ -2291,7 +2291,7 @@ dependencies = [
 [[package]]
 name = "longbridge-proto"
 version = "4.0.5"
-source = "git+https://github.com/longbridge/openapi.git?branch=main#cbf4db611ee2f382b00f9a64b6970f0bbe0b3e0f"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#0ecf1f0ace4a25838ffbb172cac1acc0044991ae"
 dependencies = [
  "prost 0.14.3",
  "serde",
@@ -2356,7 +2356,7 @@ dependencies = [
 [[package]]
 name = "longbridge-wscli"
 version = "4.0.5"
-source = "git+https://github.com/longbridge/openapi.git?branch=main#cbf4db611ee2f382b00f9a64b6970f0bbe0b3e0f"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#0ecf1f0ace4a25838ffbb172cac1acc0044991ae"
 dependencies = [
  "byteorder",
  "flate2",
