@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use anyhow::{anyhow, Result};
 use regex::Regex;
 use roxmltree::Document;
@@ -293,42 +295,36 @@ fn parse_holdings(xml: &str) -> Result<Vec<Holding>> {
     Ok(holdings)
 }
 
-pub async fn cmd_investor_holdings(slug: &str, top: usize, format: &OutputFormat) -> Result<()> {
-    let investor = INVESTORS.iter().find(|inv| inv.id == slug).ok_or_else(|| {
-        let slugs: Vec<&str> = INVESTORS.iter().map(|i| i.id).collect();
-        anyhow!(
-            "unknown investor '{}'. Available slugs:\n  {}",
-            slug,
-            slugs.join("\n  ")
-        )
-    })?;
-
-    let client = sec_client();
-
+// Core holdings display logic — shared by slug-based and CIK-based entry points.
+// `label` is the header line shown in Pretty mode (e.g. "Warren Buffett — Berkshire Hathaway").
+// `firm` is included in the JSON output under the "firm" key.
+async fn show_holdings(
+    client: &reqwest::Client,
+    cik: &str,
+    label: &str,
+    firm: &str,
+    top: usize,
+    format: &OutputFormat,
+) -> Result<()> {
     if matches!(format, OutputFormat::Pretty) {
-        eprintln!(
-            "Fetching 13F filings for {} from SEC EDGAR...",
-            investor.name
-        );
+        eprintln!("Fetching 13F filings for {label} from SEC EDGAR...");
     }
 
-    let (accession, filing_date, report_date) = fetch_latest_13f(&client, investor.cik).await?;
+    let (accession, filing_date, report_date) = fetch_latest_13f(client, cik).await?;
 
     if matches!(format, OutputFormat::Pretty) {
         eprintln!("Period: {report_date}  (filed: {filing_date})");
     }
 
-    let xml = fetch_infotable_xml(&client, investor.cik, &accession).await?;
-
+    let xml = fetch_infotable_xml(client, cik, &accession).await?;
     let raw_holdings = parse_holdings(&xml)?;
 
     if raw_holdings.is_empty() {
         return Err(anyhow!("no holdings found in 13F filing {accession}"));
     }
 
-    // Consolidate duplicate CUSIP entries (different managers within the same filer
-    // report positions separately; merge them into a single row per security).
-    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    // Consolidate duplicate CUSIP entries (sub-managers report separately; merge per security).
+    let mut seen: HashMap<String, usize> = HashMap::new();
     let mut holdings: Vec<Holding> = Vec::new();
     for h in raw_holdings {
         if let Some(&idx) = seen.get(&h.cusip) {
@@ -361,10 +357,7 @@ pub async fn cmd_investor_holdings(slug: &str, top: usize, format: &OutputFormat
                         "shares": h.shares,
                         "share_type": h.share_type,
                         "weight_pct": if total_value > 0 {
-                            format!(
-                                "{:.2}",
-                                h.value as f64 / total_value as f64 * 100.0
-                            )
+                            format!("{:.2}", h.value as f64 / total_value as f64 * 100.0)
                         } else {
                             "0.00".to_string()
                         },
@@ -374,9 +367,9 @@ pub async fn cmd_investor_holdings(slug: &str, top: usize, format: &OutputFormat
             println!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
-                    "investor": investor.name,
-                    "firm": investor.firm,
-                    "cik": investor.cik,
+                    "investor": label,
+                    "firm": firm,
+                    "cik": cik,
                     "period": report_date,
                     "filing_date": filing_date,
                     "accession_number": accession,
@@ -388,10 +381,7 @@ pub async fn cmd_investor_holdings(slug: &str, top: usize, format: &OutputFormat
             );
         }
         OutputFormat::Pretty => {
-            println!(
-                "\n{} — {} (period: {})\n",
-                investor.name, investor.firm, report_date
-            );
+            println!("\n{label} (period: {report_date})\n");
             println!(
                 "Portfolio: {} positions, total value ~{}",
                 total_count,
@@ -421,8 +411,152 @@ pub async fn cmd_investor_holdings(slug: &str, top: usize, format: &OutputFormat
                 .collect();
 
             print_table(&["company", "value", "shares", "weight"], rows, format);
-
             println!("\nSource: SEC EDGAR 13F — {accession} (filed {filing_date})");
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn cmd_investor_holdings(slug: &str, top: usize, format: &OutputFormat) -> Result<()> {
+    let investor = INVESTORS.iter().find(|inv| inv.id == slug).ok_or_else(|| {
+        let slugs: Vec<&str> = INVESTORS.iter().map(|i| i.id).collect();
+        anyhow!(
+            "unknown investor slug '{}'. Known slugs:\n  {}\n\nTo find any 13F filer by name, run: longbridge investors --search <name>",
+            slug,
+            slugs.join("\n  ")
+        )
+    })?;
+    let client = sec_client();
+    let label = format!("{} — {}", investor.name, investor.firm);
+    show_holdings(&client, investor.cik, &label, investor.firm, top, format).await
+}
+
+// View 13F holdings for an arbitrary SEC EDGAR filer by their CIK number.
+pub async fn cmd_investor_holdings_by_cik(
+    cik_raw: &str,
+    top: usize,
+    format: &OutputFormat,
+) -> Result<()> {
+    let cik_num: u64 = cik_raw
+        .parse()
+        .map_err(|_| anyhow!("invalid CIK number: '{cik_raw}' — CIK must be numeric"))?;
+    let cik = format!("{cik_num:010}");
+    let client = sec_client();
+
+    // Resolve entity name from EDGAR submissions before fetching holdings.
+    let sub_url = format!("https://data.sec.gov/submissions/CIK{cik}.json");
+    let resp = client.get(&sub_url).send().await?;
+    if !resp.status().is_success() {
+        return Err(anyhow!(
+            "CIK {cik} not found on SEC EDGAR (HTTP {}). \
+             Use `longbridge investors --search <name>` to find the correct CIK.",
+            resp.status()
+        ));
+    }
+    let data: serde_json::Value = resp.json().await?;
+    let entity_name = data["name"].as_str().unwrap_or("Unknown Fund").to_string();
+
+    show_holdings(&client, &cik, &entity_name, &entity_name, top, format).await
+}
+
+// Search SEC EDGAR for 13F filers whose name contains the query string.
+// Displays the CIK, entity name, and latest reporting period.
+pub async fn cmd_investors_search(query: &str, format: &OutputFormat) -> Result<()> {
+    let client = sec_client();
+
+    if matches!(format, OutputFormat::Pretty) {
+        eprintln!("Searching SEC EDGAR 13F filers for '{query}'...");
+    }
+
+    // Phrase search scoped to 13F-HR filings filed since 2020.
+    let resp = client
+        .get("https://efts.sec.gov/LATEST/search-index")
+        .query(&[
+            ("q", format!("\"{query}\"")),
+            ("forms", "13F-HR".to_string()),
+            ("dateRange", "custom".to_string()),
+            ("startdt", "2020-01-01".to_string()),
+        ])
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        return Err(anyhow!("EDGAR search returned HTTP {}", resp.status()));
+    }
+
+    let data: serde_json::Value = resp.json().await?;
+
+    // Collect unique filers: CIK → (display name, latest period).
+    let mut seen: HashMap<String, (String, String)> = HashMap::new();
+
+    if let Some(hits) = data["hits"]["hits"].as_array() {
+        for hit in hits {
+            let src = &hit["_source"];
+            let cik = match src["ciks"]
+                .as_array()
+                .and_then(|a| a.first())
+                .and_then(|v| v.as_str())
+            {
+                Some(c) => c.to_string(),
+                None => continue,
+            };
+            if seen.contains_key(&cik) {
+                continue;
+            }
+            let raw_name = src["display_names"]
+                .as_array()
+                .and_then(|a| a.first())
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            // Strip the trailing "  (CIK XXXXXXXXXX)" appended by EDGAR to display names.
+            let name = if let Some(pos) = raw_name.find("  (CIK") {
+                raw_name[..pos].trim().to_string()
+            } else {
+                raw_name.trim().to_string()
+            };
+            let period = src["period_ending"].as_str().unwrap_or("").to_string();
+            seen.insert(cik, (name, period));
+        }
+    }
+
+    if seen.is_empty() {
+        if matches!(format, OutputFormat::Pretty) {
+            println!("No 13F filers found matching '{query}'.");
+            println!("Try a different or broader search term.");
+        } else {
+            println!("[]");
+        }
+        return Ok(());
+    }
+
+    let mut results: Vec<(String, String, String)> = seen
+        .into_iter()
+        .map(|(cik, (name, period))| (cik, name, period))
+        .collect();
+    results.sort_by(|a, b| a.1.cmp(&b.1));
+
+    match format {
+        OutputFormat::Json => {
+            let json: Vec<_> = results
+                .iter()
+                .map(|(cik, name, period)| {
+                    serde_json::json!({ "cik": cik, "name": name, "latest_period": period })
+                })
+                .collect();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json).unwrap_or_default()
+            );
+        }
+        OutputFormat::Pretty => {
+            let rows: Vec<Vec<String>> = results
+                .iter()
+                .map(|(cik, name, period)| vec![cik.clone(), name.clone(), period.clone()])
+                .collect();
+            print_table(&["cik", "name", "latest_period"], rows, format);
+            println!("\nRun `longbridge investors <CIK>` to view their portfolio.");
         }
     }
 

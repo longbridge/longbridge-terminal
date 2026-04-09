@@ -695,19 +695,28 @@ pub enum Commands {
     // ── SEC Investors ──────────────────────────────────────────────────────────
     /// Top institutional investors and their SEC 13F portfolio holdings
     ///
-    /// Without a slug: lists known investors and their slugs.
+    /// Without arguments: lists built-in well-known investors and their slugs.
     /// With a slug: fetches their latest 13F portfolio from SEC EDGAR.
+    /// With a CIK number: fetches the 13F portfolio for any SEC EDGAR filer.
+    /// With --search: searches SEC EDGAR for 13F filers by institution name.
     ///
     /// Example: longbridge investors
     /// Example: longbridge investors warren-buffett
     /// Example: longbridge investors warren-buffett --top 20
-    /// Example: longbridge investors warren-buffett --format json
+    /// Example: longbridge investors 0001067983
+    /// Example: longbridge investors --search "bridgewater"
+    /// Example: longbridge investors --search "tiger global" --format json
     Investors {
-        /// Investor slug (omit to list all investors)
-        slug: Option<String>,
+        /// Investor slug or numeric CIK (omit to list built-in investors).
+        /// Slugs: run `longbridge investors` to see available slugs.
+        /// CIK: any numeric SEC EDGAR CIK, e.g. 0001067983 or 1067983.
+        slug_or_cik: Option<String>,
         /// Number of top holdings to display, sorted by value (default: 50)
         #[arg(long, default_value = "50")]
         top: usize,
+        /// Search SEC EDGAR for 13F filers by institution or fund name
+        #[arg(long, value_name = "QUERY")]
+        search: Option<String>,
     },
 }
 
@@ -1647,10 +1656,23 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         Commands::FundHolder { symbol, count } => {
             fundamental::cmd_fund_holders(symbol, count, format, verbose).await
         }
-        Commands::Investors { slug, top } => match slug {
-            Some(slug) => investors::cmd_investor_holdings(&slug, top, format).await,
-            None => investors::cmd_investors_list(format),
-        },
+        Commands::Investors {
+            slug_or_cik,
+            top,
+            search,
+        } => {
+            if let Some(query) = search {
+                investors::cmd_investors_search(&query, format).await
+            } else {
+                match slug_or_cik {
+                    None => investors::cmd_investors_list(format),
+                    Some(s) if s.chars().all(|c| c.is_ascii_digit()) => {
+                        investors::cmd_investor_holdings_by_cik(&s, top, format).await
+                    }
+                    Some(slug) => investors::cmd_investor_holdings(&slug, top, format).await,
+                }
+            }
+        }
         Commands::Login { .. }
         | Commands::Logout
         | Commands::Tui
