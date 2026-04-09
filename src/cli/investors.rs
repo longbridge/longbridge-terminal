@@ -11,76 +11,6 @@ use super::output::print_table;
 use super::OutputFormat;
 use crate::utils::number::format_volume;
 
-struct Investor {
-    id: &'static str,
-    name: &'static str,
-    firm: &'static str,
-    cik: &'static str,
-}
-
-const INVESTORS: &[Investor] = &[
-    Investor {
-        id: "warren-buffett",
-        name: "Warren Buffett",
-        firm: "Berkshire Hathaway",
-        cik: "0001067983",
-    },
-    Investor {
-        id: "bill-ackman",
-        name: "Bill Ackman",
-        firm: "Pershing Square Capital Management",
-        cik: "0001336528",
-    },
-    Investor {
-        id: "michael-burry",
-        name: "Michael Burry",
-        firm: "Scion Asset Management",
-        cik: "0001649339",
-    },
-    Investor {
-        id: "george-soros",
-        name: "George Soros",
-        firm: "Soros Fund Management",
-        cik: "0001029160",
-    },
-    Investor {
-        id: "david-tepper",
-        name: "David Tepper",
-        firm: "Appaloosa",
-        cik: "0001656456",
-    },
-    Investor {
-        id: "seth-klarman",
-        name: "Seth Klarman",
-        firm: "Baupost Group",
-        cik: "0001061768",
-    },
-    Investor {
-        id: "dan-loeb",
-        name: "Dan Loeb",
-        firm: "Third Point",
-        cik: "0001040273",
-    },
-    Investor {
-        id: "ken-griffin",
-        name: "Ken Griffin",
-        firm: "Citadel Advisors",
-        cik: "0001423053",
-    },
-    Investor {
-        id: "stan-druckenmiller",
-        name: "Stanley Druckenmiller",
-        firm: "Duquesne Family Office",
-        cik: "0001536411",
-    },
-    Investor {
-        id: "david-einhorn",
-        name: "David Einhorn",
-        firm: "Greenlight Capital",
-        cik: "0001079114",
-    },
-];
-
 // SEC EDGAR requires a declared automated tool User-Agent in the format:
 // "OrganizationName ApplicationName contact@email.com"
 const SEC_UA: &str = "Longbridge longbridge-terminal support@longbridge.com";
@@ -441,11 +371,7 @@ pub async fn cmd_investors_list(top: usize, format: &OutputFormat) -> Result<()>
     let zip_url = match fetch_latest_dataset_url(&client).await {
         Ok(u) => u,
         Err(e) => {
-            if matches!(format, OutputFormat::Pretty) {
-                eprintln!("Warning: could not fetch rankings ({e}). Showing built-in shortcuts.");
-            }
-            show_builtin_investors(format);
-            return Ok(());
+            return Err(anyhow!("could not fetch 13F rankings from SEC DERA: {e}"));
         }
     };
     let rankings = if let Some(cached) = load_rankings_cache(&zip_url) {
@@ -576,26 +502,6 @@ pub async fn cmd_investors_list(top: usize, format: &OutputFormat) -> Result<()>
         }
     }
     Ok(())
-}
-
-fn show_builtin_investors(format: &OutputFormat) {
-    let rows: Vec<Vec<String>> = INVESTORS
-        .iter()
-        .enumerate()
-        .map(|(i, inv)| {
-            vec![
-                (i + 1).to_string(),
-                inv.name.to_string(),
-                inv.firm.to_string(),
-                inv.id.to_string(),
-            ]
-        })
-        .collect();
-    print_table(&["#", "investor", "firm", "slug"], rows, format);
-    if matches!(format, OutputFormat::Pretty) {
-        println!("\nView holdings: longbridge investors <SLUG|CIK>");
-        println!("Data source: SEC EDGAR 13F filings (sec.gov)");
-    }
 }
 
 struct Holding {
@@ -810,7 +716,11 @@ async fn show_holdings(
             .collect();
         ratios.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let median = ratios.get(ratios.len() / 2).copied().unwrap_or(1.0);
-        if median < 1.0 { 1000 } else { 1 }
+        if median < 1.0 {
+            1000
+        } else {
+            1
+        }
     };
     if value_multiplier > 1 {
         for h in &mut holdings {
@@ -900,20 +810,6 @@ async fn show_holdings(
     Ok(())
 }
 
-pub async fn cmd_investor_holdings(slug: &str, top: usize, format: &OutputFormat) -> Result<()> {
-    let investor = INVESTORS.iter().find(|inv| inv.id == slug).ok_or_else(|| {
-        let slugs: Vec<&str> = INVESTORS.iter().map(|i| i.id).collect();
-        anyhow!(
-            "unknown investor slug '{}'. Known slugs:\n  {}\n\nTo look up any 13F filer by CIK, run: longbridge investors <CIK>",
-            slug,
-            slugs.join("\n  ")
-        )
-    })?;
-    let client = sec_client();
-    let label = format!("{} — {}", investor.name, investor.firm);
-    show_holdings(&client, investor.cik, &label, investor.firm, top, format).await
-}
-
 // View 13F holdings for an arbitrary SEC EDGAR filer by their CIK number.
 pub async fn cmd_investor_holdings_by_cik(
     cik_raw: &str,
@@ -932,7 +828,7 @@ pub async fn cmd_investor_holdings_by_cik(
     if !resp.status().is_success() {
         return Err(anyhow!(
             "CIK {cik} not found on SEC EDGAR (HTTP {}). \
-             Use `longbridge investors --search <name>` to find the correct CIK.",
+             Search EDGAR at https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&type=13F to find the correct CIK.",
             resp.status()
         ));
     }

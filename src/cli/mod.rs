@@ -695,18 +695,16 @@ pub enum Commands {
     // ── SEC Investors ──────────────────────────────────────────────────────────
     /// View SEC 13F portfolio holdings for institutional investors
     ///
-    /// Without arguments: shows live top-50 institutional investor rankings by AUM.
-    /// With a slug: fetches their latest 13F portfolio from SEC EDGAR.
+    /// Without arguments: shows live top-50 active fund manager rankings by AUM.
     /// With a CIK: fetches holdings for any SEC EDGAR 13F filer.
     ///
     /// Example: longbridge investors
-    /// Example: longbridge investors warren-buffett
-    /// Example: longbridge investors warren-buffett --top 20
     /// Example: longbridge investors 0001067983
+    /// Example: longbridge investors 1067983 --top 20
     Investors {
-        /// Investor slug or numeric CIK (omit to see AUM rankings).
-        /// Slug: e.g. warren-buffett — run `longbridge investors` to see built-in slugs.
-        /// CIK: any numeric SEC EDGAR CIK, e.g. 0001067983 or 1067983.
+        /// Numeric CIK from SEC EDGAR (omit to see AUM rankings).
+        /// Run `longbridge investors` to see the rankings table with CIK column.
+        /// Example: 0001067983 or 1067983
         slug_or_cik: Option<String>,
         /// Number of top holdings to display, sorted by value (default: 50)
         #[arg(long, default_value = "50")]
@@ -1655,7 +1653,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             Some(s) if s.chars().all(|c| c.is_ascii_digit()) => {
                 investors::cmd_investor_holdings_by_cik(&s, top, format).await
             }
-            Some(slug) => investors::cmd_investor_holdings(&slug, top, format).await,
+            Some(s) => Err(anyhow::anyhow!(
+                "'{s}' is not a valid CIK — CIK must be numeric.\nRun `longbridge investors` to see rankings with CIK column."
+            )),
         },
         Commands::Login { .. }
         | Commands::Logout
