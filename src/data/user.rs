@@ -102,7 +102,10 @@ pub struct Holding {
     pub available_quantity: rust_decimal::Decimal,
     pub cost_price: Option<rust_decimal::Decimal>,
     pub market_value: rust_decimal::Decimal,
+    /// Market value converted to the account's base currency (USD).
+    pub market_value_usd: rust_decimal::Decimal,
     pub market_price: rust_decimal::Decimal,
+    pub prev_close: Option<rust_decimal::Decimal>,
 }
 
 impl Default for Holding {
@@ -115,7 +118,9 @@ impl Default for Holding {
             available_quantity: rust_decimal::Decimal::ZERO,
             cost_price: None,
             market_value: rust_decimal::Decimal::ZERO,
+            market_value_usd: rust_decimal::Decimal::ZERO,
             market_price: rust_decimal::Decimal::ZERO,
+            prev_close: None,
         }
     }
 }

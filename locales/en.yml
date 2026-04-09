@@ -110,7 +110,7 @@ StockDetail.Volume: Volume
 StockDetail.Volume Ratio: Volume Ratio
 Portfolio.Title: Overview
 Portfolio.Intraday P/L: Intraday P/L
-Portfolio.Total Cash Amount: Total Cash Amount
+Portfolio.Cash Amount: Cash Amount
 Portfolio.Total Asset: Total Asset
 Portfolio.P/L: P/L
 Portfolio.Market Cap: Market Cap
@@ -120,6 +120,7 @@ Portfolio.Credit Limit: Credit Limit
 Portfolio.Health Status: Health Status
 Portfolio.Fund Market Cap: Fund Market Cap
 Portfolio.No Holdings: No holdings data
+Portfolio.QuoteDisclaimer: "* Values may differ from mobile app — subject to OpenAPI after-hours quote permissions"
 Holding.Code: Code
 Holding.Cost Price: Cost
 Holding.Hold Ratio: Owned%
@@ -167,6 +168,7 @@ LeverageStatus.Used: Used
 RiskLevel.Danger: Danger
 RiskLevel.Middle: Middle
 RiskLevel.Safe: Safe
+RiskLevel.Unknown: Unknown
 RiskLevel.Warning: Warning
 TradeStatus.Normal: ""
 TradeStatus.Halted: Halted

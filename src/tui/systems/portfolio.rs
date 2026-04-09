@@ -102,10 +102,17 @@ pub fn render_portfolio(
                 .borders(Borders::ALL)
                 .border_style(styles::border())
                 .title(format!(
-                    " {} ({}) ",
+                    " {} ({}) ─── Refresh [r] ",
                     t!("Portfolio.Title"),
                     overview.currency
-                ));
+                ))
+                .title_bottom(
+                    Line::from(Span::styled(
+                        format!(" {} ", t!("Portfolio.QuoteDisclaimer")),
+                        styles::dark_gray(),
+                    ))
+                    .right_aligned(),
+                );
 
             // Calculate styles for P/L
             let pl_style = styles::up(overview.total_pl.cmp(&Decimal::ZERO));
@@ -121,6 +128,12 @@ pub fn render_portfolio(
             };
             frame.render_widget(overview_block, chunks[0]);
 
+            // Split inner area: 3-column overview + 1 distribution row
+            let inner_vertical = Layout::default()
+                .constraints([Constraint::Min(3), Constraint::Length(1)])
+                .direction(Direction::Vertical)
+                .split(inner_area);
+
             let inner_chunks = Layout::default()
                 .constraints([
                     Constraint::Ratio(1, 3),
@@ -128,7 +141,7 @@ pub fn render_portfolio(
                     Constraint::Ratio(1, 3),
                 ])
                 .direction(Direction::Horizontal)
-                .split(inner_area);
+                .split(inner_vertical[0]);
 
             // Column 1
             let left_items = vec![
@@ -153,16 +166,6 @@ pub fn render_portfolio(
                     ),
                     Span::styled(format!("{:.2}", overview.margin_call), styles::text()),
                 ])),
-                ListItem::new(Line::from(vec![
-                    Span::styled(
-                        format!("{}: ", t!("Portfolio.Health Status")),
-                        styles::label(),
-                    ),
-                    Span::styled(
-                        format!("{:.2}%", overview.leverage_ratio * Decimal::from(100)),
-                        styles::text(),
-                    ),
-                ])),
             ];
 
             // Column 2
@@ -180,10 +183,28 @@ pub fn render_portfolio(
                 ])),
                 ListItem::new(Line::from(vec![
                     Span::styled(
-                        format!("{}: ", t!("Portfolio.Total Cash Amount")),
+                        format!("{}: ", t!("Portfolio.Cash Amount")),
                         styles::label(),
                     ),
                     Span::styled(format!("{:.2}", overview.total_cash), styles::text()),
+                ])),
+            ];
+
+            // Column 3
+            let right_items = vec![
+                {
+                    let (risk_label, risk_style) = styles::risk_level(overview.risk_level);
+                    ListItem::new(Line::from(vec![
+                        Span::styled(format!("{}: ", t!("Portfolio.Risk Level")), styles::label()),
+                        Span::styled(risk_label, risk_style),
+                    ]))
+                },
+                ListItem::new(Line::from(vec![
+                    Span::styled(
+                        format!("{}: ", t!("Portfolio.Credit Limit")),
+                        styles::label(),
+                    ),
+                    Span::styled(format!("{:.2}", overview.credit_limit), styles::text()),
                 ])),
                 ListItem::new(Line::from(vec![
                     Span::styled(
@@ -194,30 +215,6 @@ pub fn render_portfolio(
                 ])),
             ];
 
-            // Column 3
-            let right_items = vec![
-                ListItem::new(Line::from(vec![
-                    Span::styled(format!("{}: ", t!("Portfolio.Risk Level")), styles::label()),
-                    Span::styled(format!("{}", overview.risk_level), styles::text()),
-                ])),
-                ListItem::new(Line::from(vec![
-                    Span::styled(
-                        format!("{}: ", t!("Portfolio.Credit Limit")),
-                        styles::label(),
-                    ),
-                    Span::styled(format!("{:.2}", overview.credit_limit), styles::text()),
-                ])),
-                ListItem::new(Line::from(vec![
-                    Span::styled("Holdings: ", styles::label()),
-                    Span::styled(format!("{}", holdings.len()), styles::text()),
-                ])),
-                ListItem::new(""),
-                ListItem::new(Span::styled(
-                    "Press R to refresh",
-                    Style::default().fg(Color::Gray),
-                )),
-            ];
-
             let left_list = List::new(left_items);
             let middle_list = List::new(middle_items);
             let right_list = List::new(right_items);
@@ -225,6 +222,53 @@ pub fn render_portfolio(
             frame.render_widget(left_list, inner_chunks[0]);
             frame.render_widget(middle_list, inner_chunks[1]);
             frame.render_widget(right_list, inner_chunks[2]);
+
+            // Distribution row: colored dot + market label + pct, sorted by USD value desc
+            if overview.total_asset > Decimal::ZERO {
+                let total = overview.total_asset;
+
+                // Aggregate USD market value per market
+                let mut map: std::collections::HashMap<Market, Decimal> =
+                    std::collections::HashMap::new();
+                for h in holdings {
+                    let market = if let Some(dot_pos) = h.symbol.rfind('.') {
+                        match &h.symbol[dot_pos + 1..] {
+                            "US" => Market::US,
+                            "SH" | "SZ" => Market::CN,
+                            "SG" => Market::SG,
+                            _ => Market::HK,
+                        }
+                    } else {
+                        Market::HK
+                    };
+                    *map.entry(market).or_insert(Decimal::ZERO) += h.market_value_usd;
+                }
+
+                // Build sorted list including cash (None = cash)
+                let mut entries: Vec<(String, Decimal, Option<Market>)> = map
+                    .into_iter()
+                    .filter(|(_, v)| *v > Decimal::ZERO)
+                    .map(|(m, v)| (format!("{m:?}"), v, Some(m)))
+                    .collect();
+                entries.push(("Cash".to_string(), overview.total_cash, None));
+                entries.sort_by(|a, b| b.1.cmp(&a.1));
+
+                let mut spans: Vec<Span> = Vec::new();
+                for (label, value, market_opt) in &entries {
+                    let pct = value / total * Decimal::ONE_HUNDRED;
+                    let dot_style = if let Some(m) = market_opt {
+                        styles::market(*m)
+                    } else {
+                        Style::default().fg(Color::Green)
+                    };
+                    spans.push(Span::styled("● ", dot_style));
+                    spans.push(Span::styled(
+                        format!("{label} {pct:.1}%  "),
+                        styles::label(),
+                    ));
+                }
+                frame.render_widget(Paragraph::new(Line::from(spans)), inner_vertical[1]);
+            }
         }
 
         // Bottom: Holdings list

@@ -682,6 +682,189 @@ pub async fn cmd_max_qty(
     Ok(())
 }
 
+pub async fn cmd_portfolio(format: &OutputFormat) -> Result<()> {
+    let portfolio = crate::openapi::account::fetch_portfolio().await?;
+
+    match format {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&portfolio)?);
+        }
+        OutputFormat::Pretty => {
+            let o = &portfolio.overview;
+
+            // Overview section
+            let risk_label = match o.risk_level {
+                0 => "Safe",
+                1 => "Middle",
+                2 => "Warning",
+                3 => "Danger",
+                _ => "Unknown",
+            };
+            let overview_headers = &["Field", "Value"];
+            let overview_rows = vec![
+                vec!["Currency".to_string(), o.currency.clone()],
+                vec!["Total Asset".to_string(), fmt_decimal(&Some(o.total_asset))],
+                vec!["Market Cap".to_string(), fmt_decimal(&Some(o.market_cap))],
+                vec!["Total Cash".to_string(), fmt_decimal(&Some(o.total_cash))],
+                vec!["P/L".to_string(), format!("{:.2}", o.total_pl)],
+                vec![
+                    "Intraday P/L".to_string(),
+                    format!("{:.2}", o.total_today_pl),
+                ],
+                vec!["Margin Call".to_string(), fmt_decimal(&Some(o.margin_call))],
+                vec!["Risk Level".to_string(), risk_label.to_string()],
+                vec![
+                    "Credit Limit".to_string(),
+                    fmt_decimal(&Some(o.credit_limit)),
+                ],
+                vec![
+                    "Fund Market Value".to_string(),
+                    fmt_decimal(&Some(o.fund_market_value)),
+                ],
+            ];
+            print_table(overview_headers, overview_rows, format);
+
+            // Asset distribution section
+            {
+                println!();
+                let total = o.total_asset;
+                // Aggregate USD market value per market (from symbol suffix)
+                let mut market_values: std::collections::BTreeMap<String, rust_decimal::Decimal> =
+                    std::collections::BTreeMap::new();
+                for h in &portfolio.holdings {
+                    let market_label = if let Some(dot_pos) = h.symbol.rfind('.') {
+                        match &h.symbol[dot_pos + 1..] {
+                            "US" => "US",
+                            "SH" | "SZ" => "CN",
+                            "SG" => "SG",
+                            _ => "HK",
+                        }
+                    } else {
+                        "HK"
+                    };
+                    *market_values.entry(market_label.to_string()).or_default() +=
+                        h.market_value_usd;
+                }
+                // Add cash and fund
+                market_values.insert("Cash".to_string(), o.total_cash);
+                if o.fund_market_value > rust_decimal::Decimal::ZERO {
+                    market_values.insert("Fund".to_string(), o.fund_market_value);
+                }
+
+                // Sort by value descending
+                let mut dist: Vec<(String, rust_decimal::Decimal)> =
+                    market_values.into_iter().collect();
+                dist.sort_by(|a, b| b.1.cmp(&a.1));
+
+                let dist_headers = &["Market", "Value (USD)", "%"];
+                let dist_rows = dist
+                    .iter()
+                    .map(|(label, value)| {
+                        let pct = if total > rust_decimal::Decimal::ZERO {
+                            value / total * rust_decimal::Decimal::ONE_HUNDRED
+                        } else {
+                            rust_decimal::Decimal::ZERO
+                        };
+                        vec![
+                            label.clone(),
+                            format!("{:.2}", value),
+                            format!("{:.2}%", pct),
+                        ]
+                    })
+                    .collect::<Vec<_>>();
+                print_table(dist_headers, dist_rows, format);
+            }
+
+            // Holdings section
+            if portfolio.holdings.is_empty() {
+                println!("\nNo holdings data");
+            } else {
+                println!();
+                let holding_headers = &[
+                    "Symbol",
+                    "Name",
+                    "Qty",
+                    "Price",
+                    "Cost",
+                    "Mkt Value",
+                    "P/L",
+                    "P/L%",
+                    "Intraday",
+                    "Intraday%",
+                    "Currency",
+                ];
+                let holding_rows = portfolio
+                    .holdings
+                    .iter()
+                    .map(|h| {
+                        let pl = h.cost_price.map_or(rust_decimal::Decimal::ZERO, |cost| {
+                            (h.market_price - cost) * h.quantity
+                        });
+                        let pl_pct = h
+                            .cost_price
+                            .filter(|&c| c > rust_decimal::Decimal::ZERO)
+                            .map_or(rust_decimal::Decimal::ZERO, |cost| {
+                                (h.market_price - cost) / cost * rust_decimal::Decimal::ONE_HUNDRED
+                            });
+                        let today_pl = h
+                            .prev_close
+                            .filter(|&pc| pc > rust_decimal::Decimal::ZERO)
+                            .map_or(rust_decimal::Decimal::ZERO, |pc| {
+                                (h.market_price - pc) * h.quantity
+                            });
+                        let today_pl_pct = h
+                            .prev_close
+                            .filter(|&pc| pc > rust_decimal::Decimal::ZERO)
+                            .map_or(rust_decimal::Decimal::ZERO, |pc| {
+                                (h.market_price - pc) / pc * rust_decimal::Decimal::ONE_HUNDRED
+                            });
+                        vec![
+                            h.symbol.clone(),
+                            h.name.clone(),
+                            h.quantity.to_string(),
+                            fmt_decimal(&Some(h.market_price)),
+                            h.cost_price
+                                .map(|c| fmt_decimal(&Some(c)))
+                                .unwrap_or_default(),
+                            fmt_decimal(&Some(h.market_value)),
+                            fmt_decimal(&Some(pl)),
+                            format!("{:.2}%", pl_pct),
+                            fmt_decimal(&Some(today_pl)),
+                            format!("{:.2}%", today_pl_pct),
+                            format!("{:?}", h.currency),
+                        ]
+                    })
+                    .collect::<Vec<_>>();
+                print_table(holding_headers, holding_rows, format);
+            }
+
+            // Cash balances section
+            if !portfolio.cash_balances.is_empty() {
+                println!();
+                let cash_headers = &["Currency", "Total", "Available", "Frozen", "Withdrawable"];
+                let cash_rows = portfolio
+                    .cash_balances
+                    .iter()
+                    .map(|c| {
+                        vec![
+                            format!("{:?}", c.currency),
+                            fmt_decimal(&Some(c.total_amount)),
+                            fmt_decimal(&Some(c.balance)),
+                            fmt_decimal(&Some(c.frozen_cash)),
+                            fmt_decimal(&Some(c.withdraw_cash)),
+                        ]
+                    })
+                    .collect::<Vec<_>>();
+                print_table(cash_headers, cash_rows, format);
+            }
+
+            println!("\n{}", t!("Portfolio.QuoteDisclaimer"));
+        }
+    }
+
+    Ok(())
+}
+
 // ─── Testable run_* functions ─────────────────────────────────────────────────
 
 pub async fn run_today_orders(

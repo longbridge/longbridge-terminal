@@ -183,6 +183,19 @@ pub fn item_value_up<'a>(value: impl Into<Cow<'a, str>>) -> ListItem<'a> {
     ListItem::new(span)
 }
 
+pub fn risk_level(level: u8) -> (String, Style) {
+    match level {
+        0 => (t!("RiskLevel.Safe"), Style::default().fg(Color::Green)),
+        1 => (t!("RiskLevel.Middle"), Style::default().fg(Color::Yellow)),
+        2 => (
+            t!("RiskLevel.Warning"),
+            Style::default().fg(Color::Rgb(255, 140, 0)),
+        ),
+        3 => (t!("RiskLevel.Danger"), Style::default().fg(Color::Red)),
+        _ => (t!("RiskLevel.Unknown"), Style::default().fg(Color::Gray)),
+    }
+}
+
 pub fn online() -> Style {
     Style::default().fg(Color::Green)
 }

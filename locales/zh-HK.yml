@@ -110,7 +110,7 @@ StockDetail.Volume: 成交量
 StockDetail.Volume Ratio: 量比
 Portfolio.Title: 資產總覽
 Portfolio.Intraday P/L: 當日盈虧
-Portfolio.Total Cash Amount: 現金
+Portfolio.Cash Amount: 現金
 Portfolio.Total Asset: 總資產
 Portfolio.P/L: 持倉盈虧
 Portfolio.Market Cap: 持倉市值
@@ -120,6 +120,7 @@ Portfolio.Credit Limit: 融資額度
 Portfolio.Health Status: 槓桿
 Portfolio.Fund Market Cap: 基金市值
 Portfolio.No Holdings: 暫無持倉數據
+Portfolio.QuoteDisclaimer: "* 受 OpenAPI 夜盤行情權限影響，數據可能與手機端有出入"
 Holding.Code: 代碼
 Holding.Cost Price: 成本價
 Holding.Hold Ratio: 佔比%
@@ -167,6 +168,7 @@ LeverageStatus.Used: 已使用
 RiskLevel.Danger: 危險
 RiskLevel.Middle: 中等
 RiskLevel.Safe: 安全
+RiskLevel.Unknown: 未知
 RiskLevel.Warning: 預警
 TradeStatus.Normal: ""
 TradeStatus.Halted: 停牌
