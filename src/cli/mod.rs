@@ -770,6 +770,18 @@ pub enum WatchlistCmd {
         #[arg(long, default_value = "add")]
         mode: String,
     },
+
+    /// Pin or unpin securities so they appear at the top of a watchlist group
+    ///
+    /// Example: longbridge watchlist pin TSLA.US AAPL.US
+    /// Example: longbridge watchlist pin --remove 700.HK
+    Pin {
+        /// Symbols to pin (positional; omit to use --remove)
+        securities: Vec<String>,
+        /// Symbols to unpin (repeatable: --remove 700.HK)
+        #[arg(long)]
+        remove: Vec<String>,
+    },
 }
 
 #[derive(ValueEnum, Clone, Debug)]

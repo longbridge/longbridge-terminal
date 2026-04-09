@@ -18,6 +18,7 @@ pub async fn cmd_watchlist(cmd: Option<WatchlistCmd>, format: &OutputFormat) -> 
             remove,
             mode,
         }) => cmd_update(id, name, add, remove, &mode, format).await,
+        Some(WatchlistCmd::Pin { securities, remove }) => cmd_pin(securities, remove).await,
     }
 }
 
@@ -37,6 +38,7 @@ async fn cmd_list(format: &OutputFormat) -> Result<()> {
                             "symbol": s.symbol,
                             "name": s.name,
                             "market": format!("{:?}", s.market),
+                            "is_pinned": s.is_pinned,
                         })).collect::<Vec<_>>(),
                     })
                 })
@@ -46,11 +48,18 @@ async fn cmd_list(format: &OutputFormat) -> Result<()> {
         OutputFormat::Pretty => {
             for group in &groups {
                 println!("\nGroup: {} (ID: {})", group.name, group.id);
-                let headers = &["Symbol", "Name", "Market"];
+                let headers = &["Symbol", "Name", "Market", "Pinned"];
                 let rows: Vec<Vec<String>> = group
                     .securities
                     .iter()
-                    .map(|s| vec![s.symbol.clone(), s.name.clone(), format!("{:?}", s.market)])
+                    .map(|s| {
+                        vec![
+                            s.symbol.clone(),
+                            s.name.clone(),
+                            format!("{:?}", s.market),
+                            if s.is_pinned { "yes" } else { "" }.to_string(),
+                        ]
+                    })
                     .collect();
                 print_table(headers, rows, &OutputFormat::Pretty);
             }
@@ -84,20 +93,54 @@ async fn cmd_show(group: String, format: &OutputFormat) -> Result<()> {
                     "symbol": s.symbol,
                     "name": s.name,
                     "market": format!("{:?}", s.market),
+                    "is_pinned": s.is_pinned,
                 })).collect::<Vec<_>>(),
             });
             println!("{}", serde_json::to_string_pretty(&val)?);
         }
         OutputFormat::Pretty => {
             println!("Group: {} (ID: {})", g.name, g.id);
-            let headers = &["Symbol", "Name", "Market"];
+            let headers = &["Symbol", "Name", "Market", "Pinned"];
             let rows: Vec<Vec<String>> = g
                 .securities
                 .iter()
-                .map(|s| vec![s.symbol.clone(), s.name.clone(), format!("{:?}", s.market)])
+                .map(|s| {
+                    vec![
+                        s.symbol.clone(),
+                        s.name.clone(),
+                        format!("{:?}", s.market),
+                        if s.is_pinned { "yes" } else { "" }.to_string(),
+                    ]
+                })
                 .collect();
             print_table(headers, rows, &OutputFormat::Pretty);
         }
+    }
+    Ok(())
+}
+
+async fn cmd_pin(securities: Vec<String>, remove: Vec<String>) -> Result<()> {
+    let (mode, targets) = if remove.is_empty() {
+        ("add", securities)
+    } else {
+        ("remove", remove)
+    };
+
+    if targets.is_empty() {
+        anyhow::bail!("No securities specified. Use positional args to pin, or --remove to unpin.");
+    }
+
+    let body = serde_json::json!({
+        "mode": mode,
+        "securities": targets,
+    });
+
+    super::api::http_post("/v1/watchlist/pinned", body, false).await?;
+
+    if mode == "remove" {
+        println!("Unpinned: {}", targets.join(", "));
+    } else {
+        println!("Pinned: {}", targets.join(", "));
     }
     Ok(())
 }
