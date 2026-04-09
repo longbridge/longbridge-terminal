@@ -14,10 +14,10 @@ use super::{
 /// Return the locale-appropriate display name for a security.
 ///
 /// Uses the Chinese name for zh-CN and zh-HK locales, English name otherwise.
-fn locale_name<'a>(name_en: &'a str, name_cn: &'a str) -> &'a str {
+fn locale_name<'a>(en: &'a str, zh: &'a str) -> &'a str {
     match crate::locale::get() {
-        "zh-CN" | "zh-HK" => name_cn,
-        _ => name_en,
+        "zh-CN" | "zh-HK" => zh,
+        _ => en,
     }
 }
 

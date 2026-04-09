@@ -3,3 +3,4 @@
 *.log
 .DS_Store
 docs/individual-stock-features.md
+.claude/worktrees/

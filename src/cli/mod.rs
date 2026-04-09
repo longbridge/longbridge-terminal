@@ -5,6 +5,7 @@ pub mod api;
 pub mod asset;
 pub mod check;
 pub mod fundamental;
+pub mod investors;
 pub mod news;
 pub mod output;
 pub mod quote;
@@ -690,6 +691,52 @@ pub enum Commands {
         #[arg(long, default_value = "20")]
         count: i32,
     },
+
+    // ── SEC Investors ──────────────────────────────────────────────────────────
+    /// View SEC 13F portfolio holdings for institutional investors
+    ///
+    /// Without arguments: shows live top-50 active fund manager rankings by AUM.
+    /// With a CIK: fetches the latest 13F holdings snapshot.
+    /// With subcommand 'changes': shows quarter-over-quarter position changes.
+    ///
+    /// Example: longbridge investors
+    /// Example: longbridge investors 0001067983
+    /// Example: longbridge investors 1067983 --top 20
+    /// Example: longbridge investors changes 1067983
+    Investors {
+        /// Numeric CIK from SEC EDGAR (omit to see AUM rankings).
+        /// Run `longbridge investors` to see the rankings table with CIK column.
+        /// Example: 0001067983 or 1067983
+        cik: Option<String>,
+        /// Number of top holdings to display, sorted by value (default: 50)
+        #[arg(long, default_value = "50")]
+        top: usize,
+        #[command(subcommand)]
+        subcmd: Option<InvestorsSubCmd>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum InvestorsSubCmd {
+    /// Show position changes between two 13F filings (NEW/ADDED/REDUCED/EXITED)
+    ///
+    /// By default compares the latest filing against the previous one.
+    /// Use --from to compare against a specific period (e.g. 2024-12-31).
+    ///
+    /// Example: longbridge investors changes 1067983
+    /// Example: longbridge investors changes 1067983 --from 2024-12-31
+    /// Example: longbridge investors changes 1067983 --top 20
+    Changes {
+        /// Numeric CIK from SEC EDGAR
+        cik: String,
+        /// Number of changes to display (default: 50)
+        #[arg(long, default_value = "50")]
+        top: usize,
+        /// Base period to compare against (report date, e.g. 2024-12-31).
+        /// Defaults to the filing immediately before the latest one.
+        #[arg(long, value_name = "PERIOD")]
+        from: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -962,7 +1009,7 @@ pub enum OrderCmd {
         /// Expiry date for GTD orders in YYYY-MM-DD format (required when --tif gtd)
         #[arg(long)]
         expire_date: Option<String>,
-        /// Outside regular trading hours: RTH_ONLY | ANY_TIME | OVERNIGHT (US market only)
+        /// Outside regular trading hours: `RTH_ONLY` | `ANY_TIME` | `OVERNIGHT` (US market only)
         #[arg(long)]
         outside_rth: Option<String>,
         /// Order remark (max 255 characters)
@@ -1015,7 +1062,7 @@ pub enum OrderCmd {
         /// Expiry date for GTD orders in YYYY-MM-DD format (required when --tif gtd)
         #[arg(long)]
         expire_date: Option<String>,
-        /// Outside regular trading hours: RTH_ONLY | ANY_TIME | OVERNIGHT (US market only)
+        /// Outside regular trading hours: `RTH_ONLY` | `ANY_TIME` | `OVERNIGHT` (US market only)
         #[arg(long)]
         outside_rth: Option<String>,
         /// Order remark (max 255 characters)
@@ -1640,6 +1687,25 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         Commands::FundHolder { symbol, count } => {
             fundamental::cmd_fund_holders(symbol, count, format, verbose).await
         }
+        Commands::Investors { cik, top, subcmd } => match subcmd {
+            Some(InvestorsSubCmd::Changes {
+                cik: changes_cik,
+                top: changes_top,
+                from,
+            }) => {
+                investors::cmd_investor_changes(&changes_cik, changes_top, from.as_deref(), format)
+                    .await
+            }
+            None => match cik {
+                None => investors::cmd_investors_list(top, format).await,
+                Some(s) if s.chars().all(|c| c.is_ascii_digit()) => {
+                    investors::cmd_investor_holdings_by_cik(&s, top, format).await
+                }
+                Some(s) => Err(anyhow::anyhow!(
+                    "'{s}' is not a valid CIK — CIK must be numeric.\nRun `longbridge investors` to see rankings with CIK column."
+                )),
+            },
+        },
         Commands::Login { .. }
         | Commands::Logout
         | Commands::Tui
