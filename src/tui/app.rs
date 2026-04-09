@@ -530,17 +530,17 @@ fn handle_popup_input(
             systems::refresh_watchlist(update_tx.clone());
         }
     } else if popup == POPUP_SEARCH {
-        let mut search = app
-            .world
-            .resource_mut::<Search<openapi::search::StockItem>>();
-        let (hidden, selected) = search.handle_key(event);
-        if hidden {
+        // Check for direct symbol navigation: Enter with typed text but no dropdown selection
+        let direct_query = {
+            let mut search = app
+                .world
+                .resource_mut::<Search<openapi::search::StockItem>>();
+            search.consume_direct_enter(event)
+        };
+        if let Some(query) = direct_query {
             POPUP.store(0, Ordering::Relaxed);
-        }
-        if let Some(selected) = selected {
-            POPUP.store(0, Ordering::Relaxed);
-            app.world
-                .insert_resource(systems::StockDetail(selected.counter_id));
+            let counter = crate::data::Counter::new(&query);
+            app.world.insert_resource(systems::StockDetail(counter));
             let state = *app.world.resource::<State<AppState>>().get();
             let next_state = if state == AppState::Stock {
                 AppState::Stock
@@ -548,6 +548,26 @@ fn handle_popup_input(
                 AppState::WatchlistStock
             };
             app.world.insert_resource(NextState(Some(next_state)));
+        } else {
+            let mut search = app
+                .world
+                .resource_mut::<Search<openapi::search::StockItem>>();
+            let (hidden, selected) = search.handle_key(event);
+            if hidden {
+                POPUP.store(0, Ordering::Relaxed);
+            }
+            if let Some(selected) = selected {
+                POPUP.store(0, Ordering::Relaxed);
+                app.world
+                    .insert_resource(systems::StockDetail(selected.counter_id));
+                let state = *app.world.resource::<State<AppState>>().get();
+                let next_state = if state == AppState::Stock {
+                    AppState::Stock
+                } else {
+                    AppState::WatchlistStock
+                };
+                app.world.insert_resource(NextState(Some(next_state)));
+            }
         }
     } else if popup == POPUP_HELP {
         POPUP.store(0, Ordering::Relaxed);
@@ -698,6 +718,16 @@ fn handle_global_keys(
             }
             _ => {}
         },
+        key!('/') => {
+            {
+                let mut search = app
+                    .world
+                    .resource_mut::<Search<openapi::search::StockItem>>();
+                search.visible();
+            }
+            POPUP.store(POPUP_SEARCH, Ordering::Relaxed);
+            render_state.mark_dirty(DirtyFlags::POPUP_SEARCH);
+        }
         key!('?') => {
             POPUP.store(POPUP_HELP, Ordering::Relaxed);
             render_state.mark_dirty(DirtyFlags::POPUP_HELP);

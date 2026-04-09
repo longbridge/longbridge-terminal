@@ -54,7 +54,7 @@ WebSocket Connected: "數據實時更新中"
 WebSocket Connecting: "實時更新中斷"
 WebSocket Disconnected: "實時更新中斷"
 Keyboard.Help: "幫助 [?]"
-Keyboard.Search: "搜索 [/]"
+Keyboard.Search: "股票 [/]"
 Keyboard.Quit: "退出 [^c]"
 Keyboard.OpenDetail: "選擇 [o]"
 Keyboard.QRCode.Enter: "登錄 [⏎]"
@@ -157,7 +157,7 @@ SwitchAccount.title: 選擇賬號
 SwitchCurrency.title: 選擇幣種
 SwitchWatchlist.title: 選擇自選列表分組
 SearchStock:
-  title: 搜索股票
+  title: "查看股票（例如 AAPL.US）"
 TextInput:
   placeholder: "輸入想搜索的內容"
 TradeToken.title: 交易密碼

@@ -54,7 +54,7 @@ WebSocket Connected: "Realtime Data"
 WebSocket Connecting: "Data Update Paused"
 WebSocket Disconnected: "Data Update Paused"
 Keyboard.Help: "Help [?]"
-Keyboard.Search: "Search [/]"
+Keyboard.Search: "Quote [/]"
 Keyboard.Quit: "Quit [^c]"
 Keyboard.OpenDetail: "Select [⏎]"
 Keyboard.QRCode.Enter: "Sign in [⏎]"
@@ -157,7 +157,7 @@ SwitchAccount.title: Choose Account
 SwitchCurrency.title: Choose Currency
 SwitchWatchlist.title: Choose Watchlist group
 SearchStock:
-  title: Search Stock
+  title: "Open Quote (e.g. AAPL.US)"
 TextInput:
   placeholder: "What are you searching for?"
 TradeToken.title: Trade Password
@@ -189,7 +189,7 @@ HelpTips: |-
 
     ?                               Show help info
     `                               Toggle debug log panel
-    /                               Open search stock popup
+    /                               Open quote (type code, e.g. AAPL.US, then Enter)
     q, ESC                          Dismiss current window, or go back to last tab
     Enter                           Perform action for the current selection
     R                               Refresh data manually

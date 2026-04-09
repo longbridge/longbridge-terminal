@@ -32,12 +32,15 @@ pub fn render(frame: &mut Frame, rect: Rect, state: AppState) {
     let nickname = "User".to_string();
     let dark_gray_style = styles::dark_gray();
     let name = Span::styled(t!("Welcome, %{name}", name = nickname), dark_gray_style);
+    let search = Span::styled(t!("Keyboard.Search"), dark_gray_style);
     let help = Span::styled(t!("Keyboard.Help"), dark_gray_style);
     let log = Span::styled(t!("Keyboard.Console"), dark_gray_style);
     let quit = Span::styled(t!("Keyboard.Quit"), dark_gray_style);
     let user_info = Paragraph::new(Line::from(vec![
         name,
         Span::styled(" | ", dark_gray_style),
+        search,
+        Span::styled(" ", dark_gray_style),
         help,
         Span::styled(" ", dark_gray_style),
         log,
