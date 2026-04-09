@@ -30,7 +30,7 @@ crossterm = { version = "0.29", features = ["event-stream"] }
 dashmap = "6.1"
 dirs = "5.0"
 csv = "1"
-longbridge = { path = "../openapi/rust" }
+longbridge = { git = "https://github.com/longbridge/openapi.git", branch = "main" }
 futures = "0.3.28"
 open = "5"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "gzip", "brotli"] }

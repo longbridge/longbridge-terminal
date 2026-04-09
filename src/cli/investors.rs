@@ -111,23 +111,62 @@ struct RankingCache {
     rankings: Vec<RankedFund>,
 }
 
+fn is_leap_year(year: i32) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+}
+
+// Generates candidate ZIP URLs for the last 6 quarterly 13F data set periods,
+// newest first. The SEC publishes one ZIP per calendar quarter:
+//   Dec 1 – Feb 28/29 | Mar 1 – May 31 | Jun 1 – Aug 31 | Sep 1 – Nov 30
+fn dataset_url_candidates() -> Vec<String> {
+    use time::OffsetDateTime;
+    let now = OffsetDateTime::now_utc();
+    let year = now.year();
+    let month = now.month() as u8; // 1–12
+
+    // Starting period: the quarter whose start month ≤ current month.
+    let (mut pm, mut py) = match month {
+        1 | 2 => (12u8, year - 1),
+        3..=5 => (3u8, year),
+        6..=8 => (6u8, year),
+        9..=11 => (9u8, year),
+        _ => (12u8, year), // December
+    };
+
+    let base = "https://www.sec.gov/files/structureddata/data/form-13f-data-sets";
+    let mut urls = Vec::new();
+    for _ in 0..6 {
+        let url = match pm {
+            12 => {
+                let feb_days = if is_leap_year(py + 1) { 29 } else { 28 };
+                format!("{base}/01dec{py}-{feb_days:02}feb{}_form13f.zip", py + 1)
+            }
+            3 => format!("{base}/01mar{py}-31may{py}_form13f.zip"),
+            6 => format!("{base}/01jun{py}-31aug{py}_form13f.zip"),
+            _ => format!("{base}/01sep{py}-30nov{py}_form13f.zip"), // 9
+        };
+        urls.push(url);
+        (pm, py) = match pm {
+            12 => (9u8, py),
+            9 => (6u8, py),
+            6 => (3u8, py),
+            _ => (12u8, py - 1), // 3
+        };
+    }
+    urls
+}
+
+// Finds the most recent SEC 13F quarterly data set ZIP by probing candidate URLs with HEAD.
 async fn fetch_latest_dataset_url(client: &reqwest::Client) -> Result<String> {
-    let page = client
-        .get("https://www.sec.gov/dera/data/form-13f-data-sets")
-        .send()
-        .await?
-        .text()
-        .await?;
-    let re =
-        Regex::new(r#"href="(/files/structureddata/data/form-13f-data-sets/[^"]+form13f\.zip)""#)
-            .expect("infallible regex");
-    let urls: Vec<String> = re
-        .captures_iter(&page)
-        .map(|c| format!("https://www.sec.gov{}", &c[1]))
-        .collect();
-    urls.into_iter()
-        .next()
-        .ok_or_else(|| anyhow!("could not find 13F data set ZIP on SEC DERA page"))
+    for url in dataset_url_candidates() {
+        match client.head(&url).send().await {
+            Ok(resp) if resp.status().is_success() => return Ok(url),
+            _ => {}
+        }
+    }
+    Err(anyhow!(
+        "could not find a current 13F quarterly data set on SEC EDGAR after trying 6 candidates"
+    ))
 }
 
 async fn download_zip_tail(client: &reqwest::Client, url: &str) -> Result<(Vec<u8>, u64)> {
@@ -479,24 +518,19 @@ pub async fn cmd_investors_list(top: usize, format: &OutputFormat) -> Result<()>
         ranked
     };
     let displayed: Vec<_> = rankings.into_iter().take(top).collect();
-    let slug_for_cik: HashMap<&str, &str> = INVESTORS.iter().map(|inv| (inv.cik, inv.id)).collect();
     match format {
         OutputFormat::Json => {
             let json: Vec<_> = displayed
                 .iter()
                 .enumerate()
                 .map(|(i, f)| {
-                    let mut obj = serde_json::json!({
+                    serde_json::json!({
                         "rank": i + 1,
                         "cik": f.cik,
                         "name": f.name,
-                        "aum_usd": f.aum_thousands * 1000,
+                        "aum_usd": f.aum_thousands,
                         "period": f.period,
-                    });
-                    if let Some(slug) = slug_for_cik.get(f.cik.as_str()) {
-                        obj["slug"] = serde_json::json!(slug);
-                    }
-                    obj
+                    })
                 })
                 .collect();
             println!(
@@ -510,17 +544,16 @@ pub async fn cmd_investors_list(top: usize, format: &OutputFormat) -> Result<()>
                 .iter()
                 .enumerate()
                 .map(|(i, f)| {
-                    let slug = slug_for_cik.get(f.cik.as_str()).copied().unwrap_or("-");
                     vec![
                         (i + 1).to_string(),
                         f.name.clone(),
-                        format_large_usd(f.aum_thousands * 1000),
+                        format_large_usd(f.aum_thousands),
                         f.period.clone(),
-                        slug.to_string(),
+                        f.cik.clone(),
                     ]
                 })
                 .collect();
-            print_table(&["#", "name", "AUM", "period", "slug"], rows, format);
+            print_table(&["#", "name", "AUM", "period", "cik"], rows, format);
             println!("\nView holdings: longbridge investors <SLUG|CIK>");
             let zip_name = zip_url.rsplit('/').next().unwrap_or("");
             println!("Source: SEC EDGAR 13F — {zip_name}");
