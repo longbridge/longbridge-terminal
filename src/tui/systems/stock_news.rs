@@ -185,7 +185,11 @@ pub fn fetch_news_detail(id: String, tx: mpsc::UnboundedSender<CommandQueue>) {
     }
 
     RT.get().unwrap().spawn(async move {
-        let url = format!("https://longbridge.com/news/{id}.md");
+        let url = match crate::locale::get() {
+            "zh-CN" => format!("https://longbridge.com/zh-CN/news/{id}.md"),
+            "zh-HK" => format!("https://longbridge.com/zh-HK/news/{id}.md"),
+            _ => format!("https://longbridge.com/news/{id}.md"),
+        };
         let client = reqwest::Client::new();
         let result = client
             .get(&url)
