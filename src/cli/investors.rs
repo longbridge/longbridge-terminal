@@ -107,7 +107,8 @@ pub fn cmd_investors_list(format: &OutputFormat) -> Result<()> {
     print_table(&["#", "investor", "firm", "slug"], rows, format);
 
     if matches!(format, OutputFormat::Pretty) {
-        println!("\nRun `longbridge investors <SLUG>` to view their portfolio.");
+        println!("\nView holdings:  longbridge investors <SLUG|CIK>");
+        println!("Find any filer: longbridge investors search <name>");
         println!("Data source: SEC EDGAR 13F filings (sec.gov)");
     }
 

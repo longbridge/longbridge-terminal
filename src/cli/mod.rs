@@ -693,30 +693,46 @@ pub enum Commands {
     },
 
     // ── SEC Investors ──────────────────────────────────────────────────────────
-    /// Top institutional investors and their SEC 13F portfolio holdings
+    /// View SEC 13F portfolio holdings for institutional investors
     ///
-    /// Without arguments: lists built-in well-known investors and their slugs.
+    /// Without arguments: lists built-in shortcut slugs and hints for discovering more.
     /// With a slug: fetches their latest 13F portfolio from SEC EDGAR.
-    /// With a CIK number: fetches the 13F portfolio for any SEC EDGAR filer.
-    /// With --search: searches SEC EDGAR for 13F filers by institution name.
+    /// With a CIK: fetches holdings for any SEC EDGAR 13F filer.
+    /// With the `search` subcommand: find any 13F filer by institution name.
     ///
     /// Example: longbridge investors
     /// Example: longbridge investors warren-buffett
     /// Example: longbridge investors warren-buffett --top 20
     /// Example: longbridge investors 0001067983
-    /// Example: longbridge investors --search "bridgewater"
-    /// Example: longbridge investors --search "tiger global" --format json
+    /// Example: longbridge investors search bridgewater
+    /// Example: longbridge investors search "tiger global" --format json
     Investors {
-        /// Investor slug or numeric CIK (omit to list built-in investors).
-        /// Slugs: run `longbridge investors` to see available slugs.
+        /// Investor slug or numeric CIK (omit to list shortcuts or use a subcommand).
+        /// Slug: e.g. warren-buffett — run `longbridge investors` to see built-in slugs.
         /// CIK: any numeric SEC EDGAR CIK, e.g. 0001067983 or 1067983.
         slug_or_cik: Option<String>,
         /// Number of top holdings to display, sorted by value (default: 50)
         #[arg(long, default_value = "50")]
         top: usize,
-        /// Search SEC EDGAR for 13F filers by institution or fund name
-        #[arg(long, value_name = "QUERY")]
-        search: Option<String>,
+        #[command(subcommand)]
+        cmd: Option<InvestorsCmd>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum InvestorsCmd {
+    /// Search SEC EDGAR for 13F filers by institution or fund name
+    ///
+    /// Returns CIK, entity name, and latest reporting period for matching filers.
+    /// Then use `longbridge investors <CIK>` to view their holdings.
+    ///
+    /// Example: longbridge investors search bridgewater
+    /// Example: longbridge investors search "tiger global"
+    /// Example: longbridge investors search "point72" --format json
+    Search {
+        /// Institution or fund name (multiple words joined automatically)
+        #[arg(required = true)]
+        query: Vec<String>,
     },
 }
 
@@ -1659,20 +1675,19 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         Commands::Investors {
             slug_or_cik,
             top,
-            search,
-        } => {
-            if let Some(query) = search {
-                investors::cmd_investors_search(&query, format).await
-            } else {
-                match slug_or_cik {
-                    None => investors::cmd_investors_list(format),
-                    Some(s) if s.chars().all(|c| c.is_ascii_digit()) => {
-                        investors::cmd_investor_holdings_by_cik(&s, top, format).await
-                    }
-                    Some(slug) => investors::cmd_investor_holdings(&slug, top, format).await,
-                }
+            cmd,
+        } => match cmd {
+            Some(InvestorsCmd::Search { query }) => {
+                investors::cmd_investors_search(&query.join(" "), format).await
             }
-        }
+            None => match slug_or_cik {
+                None => investors::cmd_investors_list(format),
+                Some(s) if s.chars().all(|c| c.is_ascii_digit()) => {
+                    investors::cmd_investor_holdings_by_cik(&s, top, format).await
+                }
+                Some(slug) => investors::cmd_investor_holdings(&slug, top, format).await,
+            },
+        },
         Commands::Login { .. }
         | Commands::Logout
         | Commands::Tui
