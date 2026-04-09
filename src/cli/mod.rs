@@ -5,6 +5,7 @@ pub mod api;
 pub mod asset;
 pub mod check;
 pub mod fundamental;
+pub mod insider_trades;
 pub mod investors;
 pub mod news;
 pub mod output;
@@ -690,6 +691,27 @@ pub enum Commands {
         /// Number of results to return (-1 for all)
         #[arg(long, default_value = "20")]
         count: i32,
+    },
+
+    // ── SEC Insider Trades ────────────────────────────────────────────────────
+    /// SEC Form 4 insider trades for a US-listed company
+    ///
+    /// Shows non-derivative transactions (direct stock buys, sells, grants, etc.)
+    /// filed by corporate insiders (officers, directors, 10% owners) with the SEC.
+    /// Only US-listed equities are supported (data source: SEC EDGAR Form 4).
+    ///
+    /// Transaction types: BUY (P) | SELL (S) | GRANT (A) | DISP (D) |
+    ///   TAX (F) | EXERCISE (M/X) | GIFT (G)
+    ///
+    /// Example: longbridge insider-trades TSLA.US
+    /// Example: longbridge insider-trades AAPL.US --count 40
+    /// Example: longbridge insider-trades NVDA.US --format json
+    InsiderTrades {
+        /// Symbol in <CODE>.<MARKET> format (US market only, e.g. TSLA.US AAPL.US)
+        symbol: String,
+        /// Number of Form 4 filings to fetch (default: 20)
+        #[arg(long, default_value = "20")]
+        count: usize,
     },
 
     // ── SEC Investors ──────────────────────────────────────────────────────────
@@ -1686,6 +1708,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         } => fundamental::cmd_shareholders(symbol, range, sort, order, format, verbose).await,
         Commands::FundHolder { symbol, count } => {
             fundamental::cmd_fund_holders(symbol, count, format, verbose).await
+        }
+        Commands::InsiderTrades { symbol, count } => {
+            insider_trades::cmd_insider_trades(&symbol, count, format).await
         }
         Commands::Investors { cik, top, subcmd } => match subcmd {
             Some(InvestorsSubCmd::Changes {
