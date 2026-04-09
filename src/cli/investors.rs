@@ -1,6 +1,10 @@
 use std::collections::HashMap;
+use std::io::Read as IoRead;
+use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
+use flate2::read::DeflateDecoder;
+use futures::future::join_all;
 use regex::Regex;
 use roxmltree::Document;
 
@@ -90,7 +94,443 @@ fn sec_client() -> reqwest::Client {
         .expect("failed to build HTTP client")
 }
 
-pub fn cmd_investors_list(format: &OutputFormat) -> Result<()> {
+// Download size for the ZIP tail; 1 MB covers the central directory and both TSV files.
+const ZIP_TAIL_SIZE: u64 = 1_048_576;
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct RankedFund {
+    cik: String,
+    name: String,
+    aum_thousands: u64,
+    period: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct RankingCache {
+    zip_url: String,
+    rankings: Vec<RankedFund>,
+}
+
+async fn fetch_latest_dataset_url(client: &reqwest::Client) -> Result<String> {
+    let page = client
+        .get("https://www.sec.gov/dera/data/form-13f-data-sets")
+        .send()
+        .await?
+        .text()
+        .await?;
+    let re =
+        Regex::new(r#"href="(/files/structureddata/data/form-13f-data-sets/[^"]+form13f\.zip)""#)
+            .expect("infallible regex");
+    let urls: Vec<String> = re
+        .captures_iter(&page)
+        .map(|c| format!("https://www.sec.gov{}", &c[1]))
+        .collect();
+    urls.into_iter()
+        .next()
+        .ok_or_else(|| anyhow!("could not find 13F data set ZIP on SEC DERA page"))
+}
+
+async fn download_zip_tail(client: &reqwest::Client, url: &str) -> Result<(Vec<u8>, u64)> {
+    let head_resp = client.head(url).send().await?;
+    if !head_resp.status().is_success() {
+        return Err(anyhow!("HEAD {url}: HTTP {}", head_resp.status()));
+    }
+    let content_length: u64 = head_resp
+        .headers()
+        .get("content-length")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| anyhow!("no Content-Length in HEAD response for {url}"))?;
+    let chunk_start = content_length.saturating_sub(ZIP_TAIL_SIZE);
+    let range_header = format!("bytes={chunk_start}-{}", content_length - 1);
+    let resp = client
+        .get(url)
+        .header("Range", &range_header)
+        .send()
+        .await?;
+    if resp.status().as_u16() != 206 {
+        return Err(anyhow!(
+            "Range request returned HTTP {} (expected 206)",
+            resp.status()
+        ));
+    }
+    let data = resp.bytes().await?.to_vec();
+    Ok((data, chunk_start))
+}
+
+fn read_u16_le(data: &[u8], offset: usize) -> u16 {
+    u16::from_le_bytes([data[offset], data[offset + 1]])
+}
+
+fn read_u32_le(data: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes([
+        data[offset],
+        data[offset + 1],
+        data[offset + 2],
+        data[offset + 3],
+    ])
+}
+
+// Scans backwards for the ZIP End of Central Directory record (signature PK\x05\x06).
+#[allow(clippy::indexing_slicing)]
+fn find_eocd(data: &[u8]) -> Option<usize> {
+    let sig = [0x50u8, 0x4B, 0x05, 0x06];
+    for i in (0..data.len().saturating_sub(21)).rev() {
+        if data[i..i + 4] == sig {
+            return Some(i);
+        }
+    }
+    None
+}
+
+// Parses the ZIP central directory; returns filename → (local_offset_abs, comp_size, comp_method).
+#[allow(clippy::indexing_slicing)]
+fn parse_central_directory(
+    data: &[u8],
+    chunk_start: u64,
+    cd_offset_abs: u64,
+    cd_size: usize,
+) -> HashMap<String, (u64, u32, u16)> {
+    let mut result = HashMap::new();
+    let cd_in_chunk = cd_offset_abs.saturating_sub(chunk_start) as usize;
+    if cd_in_chunk >= data.len() {
+        return result;
+    }
+    let cd_end = (cd_in_chunk + cd_size).min(data.len());
+    let cd = &data[cd_in_chunk..cd_end];
+    let mut pos = 0usize;
+    while pos + 46 <= cd.len() {
+        if cd[pos..pos + 4] != [0x50u8, 0x4B, 0x01, 0x02] {
+            break;
+        }
+        let comp_method = read_u16_le(cd, pos + 10);
+        let comp_size = read_u32_le(cd, pos + 20);
+        let filename_len = read_u16_le(cd, pos + 28) as usize;
+        let extra_len = read_u16_le(cd, pos + 30) as usize;
+        let comment_len = read_u16_le(cd, pos + 32) as usize;
+        let local_offset_abs = u64::from(read_u32_le(cd, pos + 42));
+        if pos + 46 + filename_len <= cd.len() {
+            let name = String::from_utf8_lossy(&cd[pos + 46..pos + 46 + filename_len]).to_string();
+            result.insert(name, (local_offset_abs, comp_size, comp_method));
+        }
+        pos += 46 + filename_len + extra_len + comment_len;
+    }
+    result
+}
+
+// Decompresses a file from the downloaded ZIP tail chunk.
+#[allow(clippy::indexing_slicing)]
+fn extract_file_from_chunk(
+    data: &[u8],
+    chunk_start: u64,
+    local_offset_abs: u64,
+    comp_size: u32,
+    comp_method: u16,
+) -> Result<String> {
+    let in_chunk = local_offset_abs.saturating_sub(chunk_start) as usize;
+    if in_chunk + 30 > data.len() {
+        return Err(anyhow!(
+            "local file header at offset {local_offset_abs} is not within the downloaded chunk \
+             (chunk_start={chunk_start}); the file may be too large — try increasing ZIP_TAIL_SIZE"
+        ));
+    }
+    if data[in_chunk..in_chunk + 4] != [0x50u8, 0x4B, 0x03, 0x04] {
+        return Err(anyhow!(
+            "invalid local file header signature at offset {local_offset_abs}"
+        ));
+    }
+    let filename_len = read_u16_le(data, in_chunk + 26) as usize;
+    let extra_len = read_u16_le(data, in_chunk + 28) as usize;
+    let data_start = in_chunk + 30 + filename_len + extra_len;
+    let data_end = data_start + comp_size as usize;
+    if data_end > data.len() {
+        return Err(anyhow!(
+            "compressed data at offset {local_offset_abs} extends beyond the downloaded chunk; \
+             increase ZIP_TAIL_SIZE"
+        ));
+    }
+    let comp_data = &data[data_start..data_end];
+    match comp_method {
+        0 => Ok(String::from_utf8_lossy(comp_data).to_string()),
+        8 => {
+            let mut decoder = DeflateDecoder::new(comp_data);
+            let mut out = String::new();
+            decoder
+                .read_to_string(&mut out)
+                .map_err(|e| anyhow!("DEFLATE decompression failed: {e}"))?;
+            Ok(out)
+        }
+        _ => Err(anyhow!("unsupported ZIP compression method {comp_method}")),
+    }
+}
+
+// Parses SUBMISSION.tsv; returns accession → (cik, period) for 13F-HR filings only.
+fn parse_submission_tsv(text: &str) -> HashMap<String, (String, String)> {
+    let mut result = HashMap::new();
+    let mut lines = text.lines();
+    let Some(header) = lines.next() else {
+        return result;
+    };
+    let cols: Vec<&str> = header.split('\t').collect();
+    let (Some(acc_i), Some(cik_i), Some(period_i)) = (
+        cols.iter().position(|&c| c == "ACCESSION_NUMBER"),
+        cols.iter().position(|&c| c == "CIK"),
+        cols.iter().position(|&c| c == "PERIODOFREPORT"),
+    ) else {
+        return result;
+    };
+    let subtype_i = cols.iter().position(|&c| c == "SUBMISSIONTYPE");
+    let min_len = [acc_i, cik_i, period_i, subtype_i.unwrap_or(0)]
+        .iter()
+        .copied()
+        .max()
+        .unwrap_or(0)
+        + 1;
+    for line in lines {
+        let fields: Vec<&str> = line.split('\t').collect();
+        if fields.len() < min_len {
+            continue;
+        }
+        // Skip amendments (13F-HR/A) to avoid double-counting.
+        if let Some(i) = subtype_i {
+            if fields.get(i).copied() != Some("13F-HR") {
+                continue;
+            }
+        }
+        result.insert(
+            fields[acc_i].to_string(),
+            (fields[cik_i].to_string(), fields[period_i].to_string()),
+        );
+    }
+    result
+}
+
+// Parses SUMMARYPAGE.tsv; returns accession → total_value_thousands.
+fn parse_summarypage_tsv(text: &str) -> HashMap<String, u64> {
+    let mut result = HashMap::new();
+    let mut lines = text.lines();
+    let Some(header) = lines.next() else {
+        return result;
+    };
+    let cols: Vec<&str> = header.split('\t').collect();
+    let (Some(acc_i), Some(val_i)) = (
+        cols.iter().position(|&c| c == "ACCESSION_NUMBER"),
+        cols.iter().position(|&c| c == "TABLEVALUETOTAL"),
+    ) else {
+        return result;
+    };
+    let min_len = acc_i.max(val_i) + 1;
+    for line in lines {
+        let fields: Vec<&str> = line.split('\t').collect();
+        if fields.len() < min_len {
+            continue;
+        }
+        let value: u64 = fields[val_i].replace(',', "").parse().unwrap_or(0);
+        result.insert(fields[acc_i].to_string(), value);
+    }
+    result
+}
+
+// Fetches entity names from SEC EDGAR for a list of 10-digit zero-padded CIKs.
+async fn fetch_entity_names(
+    client: &reqwest::Client,
+    ciks: Vec<String>,
+) -> HashMap<String, String> {
+    let sem = Arc::new(tokio::sync::Semaphore::new(5));
+    let futs: Vec<_> = ciks
+        .into_iter()
+        .map(|cik| {
+            let client = client.clone();
+            let sem = Arc::clone(&sem);
+            async move {
+                let _permit = sem.acquire().await.ok()?;
+                let url = format!("https://data.sec.gov/submissions/CIK{cik}.json");
+                let resp = client.get(&url).send().await.ok()?;
+                if !resp.status().is_success() {
+                    return None;
+                }
+                let data: serde_json::Value = resp.json().await.ok()?;
+                let name = data["name"].as_str()?.to_string();
+                Some((cik, name))
+            }
+        })
+        .collect();
+    join_all(futs).await.into_iter().flatten().collect()
+}
+
+fn rankings_cache_path() -> Option<std::path::PathBuf> {
+    dirs::home_dir().map(|h| h.join(".longbridge").join("13f_rankings_cache.json"))
+}
+
+fn load_rankings_cache(zip_url: &str) -> Option<Vec<RankedFund>> {
+    let path = rankings_cache_path()?;
+    let text = std::fs::read_to_string(path).ok()?;
+    let cache: RankingCache = serde_json::from_str(&text).ok()?;
+    (cache.zip_url == zip_url).then_some(cache.rankings)
+}
+
+fn save_rankings_cache(zip_url: &str, rankings: &[RankedFund]) {
+    let Some(path) = rankings_cache_path() else {
+        return;
+    };
+    let cache = RankingCache {
+        zip_url: zip_url.to_string(),
+        rankings: rankings.to_vec(),
+    };
+    if let Ok(json) = serde_json::to_string_pretty(&cache) {
+        let _ = std::fs::write(path, json);
+    }
+}
+
+pub async fn cmd_investors_list(top: usize, format: &OutputFormat) -> Result<()> {
+    let client = sec_client();
+    if matches!(format, OutputFormat::Pretty) {
+        eprintln!("Fetching SEC 13F institutional investor rankings...");
+    }
+    let zip_url = match fetch_latest_dataset_url(&client).await {
+        Ok(u) => u,
+        Err(e) => {
+            if matches!(format, OutputFormat::Pretty) {
+                eprintln!("Warning: could not fetch rankings ({e}). Showing built-in shortcuts.");
+            }
+            show_builtin_investors(format);
+            return Ok(());
+        }
+    };
+    let rankings = if let Some(cached) = load_rankings_cache(&zip_url) {
+        if matches!(format, OutputFormat::Pretty) {
+            let zip_name = zip_url.rsplit('/').next().unwrap_or("");
+            eprintln!("Using cached rankings ({zip_name}).");
+        }
+        cached
+    } else {
+        if matches!(format, OutputFormat::Pretty) {
+            eprintln!("Downloading 13F quarterly data set (last 1 MB)...");
+        }
+        let (chunk, chunk_start) = download_zip_tail(&client, &zip_url).await?;
+        let eocd_pos =
+            find_eocd(&chunk).ok_or_else(|| anyhow!("EOCD signature not found in ZIP tail"))?;
+        let cd_size = read_u32_le(&chunk, eocd_pos + 12) as usize;
+        let cd_offset_abs = u64::from(read_u32_le(&chunk, eocd_pos + 16));
+        let cd = parse_central_directory(&chunk, chunk_start, cd_offset_abs, cd_size);
+        let submission_key = cd
+            .keys()
+            .find(|k| k.ends_with("SUBMISSION.tsv"))
+            .cloned()
+            .ok_or_else(|| anyhow!("SUBMISSION.tsv not found in ZIP central directory"))?;
+        let summarypage_key = cd
+            .keys()
+            .find(|k| k.ends_with("SUMMARYPAGE.tsv"))
+            .cloned()
+            .ok_or_else(|| anyhow!("SUMMARYPAGE.tsv not found in ZIP central directory"))?;
+        let (sbs_local, sbs_comp_size, sbs_method) = cd[&submission_key];
+        let (smy_local, smy_comp_size, smy_method) = cd[&summarypage_key];
+        let submission_text =
+            extract_file_from_chunk(&chunk, chunk_start, sbs_local, sbs_comp_size, sbs_method)?;
+        let summarypage_text =
+            extract_file_from_chunk(&chunk, chunk_start, smy_local, smy_comp_size, smy_method)?;
+        let submissions = parse_submission_tsv(&submission_text);
+        let values = parse_summarypage_tsv(&summarypage_text);
+        // Join accession tables to get per-CIK total AUM (in thousands USD).
+        let mut by_cik: HashMap<String, (String, u64)> = HashMap::new();
+        for (accession, value) in &values {
+            if let Some((cik, period)) = submissions.get(accession) {
+                by_cik
+                    .entry(cik.clone())
+                    .and_modify(|e| e.1 += value)
+                    .or_insert_with(|| (period.clone(), *value));
+            }
+        }
+        // Sort by AUM descending; cache top 200 to cover any --top request.
+        let mut all_ranked: Vec<(String, String, u64)> = by_cik
+            .into_iter()
+            .map(|(cik, (period, aum))| (cik, period, aum))
+            .collect();
+        all_ranked.sort_unstable_by(|a, b| b.2.cmp(&a.2));
+        all_ranked.truncate(200);
+        let padded_ciks: Vec<String> = all_ranked
+            .iter()
+            .map(|(cik, _, _)| format!("{cik:0>10}"))
+            .collect();
+        if matches!(format, OutputFormat::Pretty) {
+            eprintln!(
+                "Fetching entity names for top {} filers...",
+                padded_ciks.len()
+            );
+        }
+        let names = fetch_entity_names(&client, padded_ciks).await;
+        let ranked: Vec<RankedFund> = all_ranked
+            .into_iter()
+            .map(|(cik, period, aum)| {
+                let cik_padded = format!("{cik:0>10}");
+                let name = names
+                    .get(&cik_padded)
+                    .cloned()
+                    .unwrap_or_else(|| format!("CIK {cik}"));
+                RankedFund {
+                    cik: cik_padded,
+                    name,
+                    aum_thousands: aum,
+                    period,
+                }
+            })
+            .collect();
+        save_rankings_cache(&zip_url, &ranked);
+        ranked
+    };
+    let displayed: Vec<_> = rankings.into_iter().take(top).collect();
+    let slug_for_cik: HashMap<&str, &str> = INVESTORS.iter().map(|inv| (inv.cik, inv.id)).collect();
+    match format {
+        OutputFormat::Json => {
+            let json: Vec<_> = displayed
+                .iter()
+                .enumerate()
+                .map(|(i, f)| {
+                    let mut obj = serde_json::json!({
+                        "rank": i + 1,
+                        "cik": f.cik,
+                        "name": f.name,
+                        "aum_usd": f.aum_thousands * 1000,
+                        "period": f.period,
+                    });
+                    if let Some(slug) = slug_for_cik.get(f.cik.as_str()) {
+                        obj["slug"] = serde_json::json!(slug);
+                    }
+                    obj
+                })
+                .collect();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json).unwrap_or_default()
+            );
+        }
+        OutputFormat::Pretty => {
+            println!();
+            let rows: Vec<Vec<String>> = displayed
+                .iter()
+                .enumerate()
+                .map(|(i, f)| {
+                    let slug = slug_for_cik.get(f.cik.as_str()).copied().unwrap_or("-");
+                    vec![
+                        (i + 1).to_string(),
+                        f.name.clone(),
+                        format_large_usd(f.aum_thousands * 1000),
+                        f.period.clone(),
+                        slug.to_string(),
+                    ]
+                })
+                .collect();
+            print_table(&["#", "name", "AUM", "period", "slug"], rows, format);
+            println!("\nView holdings:  longbridge investors <SLUG|CIK>");
+            println!("Find any filer: longbridge investors search <name>");
+            let zip_name = zip_url.rsplit('/').next().unwrap_or("");
+            println!("Source: SEC EDGAR 13F — {zip_name}");
+        }
+    }
+    Ok(())
+}
+
+fn show_builtin_investors(format: &OutputFormat) {
     let rows: Vec<Vec<String>> = INVESTORS
         .iter()
         .enumerate()
@@ -103,16 +543,12 @@ pub fn cmd_investors_list(format: &OutputFormat) -> Result<()> {
             ]
         })
         .collect();
-
     print_table(&["#", "investor", "firm", "slug"], rows, format);
-
     if matches!(format, OutputFormat::Pretty) {
         println!("\nView holdings:  longbridge investors <SLUG|CIK>");
         println!("Find any filer: longbridge investors search <name>");
         println!("Data source: SEC EDGAR 13F filings (sec.gov)");
     }
-
-    Ok(())
 }
 
 struct Holding {
@@ -423,7 +859,7 @@ pub async fn cmd_investor_holdings(slug: &str, top: usize, format: &OutputFormat
     let investor = INVESTORS.iter().find(|inv| inv.id == slug).ok_or_else(|| {
         let slugs: Vec<&str> = INVESTORS.iter().map(|i| i.id).collect();
         anyhow!(
-            "unknown investor slug '{}'. Known slugs:\n  {}\n\nTo find any 13F filer by name, run: longbridge investors --search <name>",
+            "unknown investor slug '{}'. Known slugs:\n  {}\n\nTo find any 13F filer by name, run: longbridge investors search <name>",
             slug,
             slugs.join("\n  ")
         )

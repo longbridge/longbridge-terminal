@@ -221,7 +221,7 @@ longbridge statement export --file-key <KEY> --all                     # Export 
 ### Investors
 
 ```bash
-longbridge investors                                   # List built-in shortcut slugs; hints for finding any filer
+longbridge investors                                   # Top 50 institutional investors by AUM (live SEC 13F rankings; use --top N to change)
 longbridge investors search bridgewater                # Search SEC EDGAR for any 13F filer by name
 longbridge investors search "tiger global"             # Multi-word search (quote or just space-separate)
 longbridge investors warren-buffett                    # Berkshire Hathaway's latest 13F portfolio (top 50 by value)

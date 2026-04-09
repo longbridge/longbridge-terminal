@@ -1681,7 +1681,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 investors::cmd_investors_search(&query.join(" "), format).await
             }
             None => match slug_or_cik {
-                None => investors::cmd_investors_list(format),
+                None => investors::cmd_investors_list(top, format).await,
                 Some(s) if s.chars().all(|c| c.is_ascii_digit()) => {
                     investors::cmd_investor_holdings_by_cik(&s, top, format).await
                 }
