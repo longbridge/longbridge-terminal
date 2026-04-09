@@ -575,11 +575,14 @@ pub enum Commands {
 
     /// Account cash balance and financing information
     ///
-    /// Returns: currency, `total_cash`, `max_finance_amount`, `remaining_finance_amount`, `risk_level`, `margin_call`.
-    /// Example: longbridge balance --currency USD
+    /// Returns: currency, `net_assets`, `total_cash`, `buy_power`, `max_finance_amount`,
+    /// `remaining_finance_amount`, `init_margin`, `maintenance_margin`, `margin_call`, `risk_level`,
+    /// and a `cash_infos` array with per-currency available/frozen/settling/withdrawable amounts.
+    /// Example: longbridge balance
+    /// Example: longbridge balance --currency HKD
     Balance {
-        /// Filter by currency (e.g. USD HKD CNY SGD); returns all if omitted
-        #[arg(long)]
+        /// Filter by currency (e.g. USD HKD CNY SGD); defaults to USD
+        #[arg(long, default_value = "USD")]
         currency: Option<String>,
     },
 
