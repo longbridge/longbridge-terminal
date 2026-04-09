@@ -344,8 +344,8 @@ fn parse_submission_tsv(text: &str) -> HashMap<String, (String, String)> {
     result
 }
 
-// Parses SUMMARYPAGE.tsv; returns accession → total_value_thousands.
-fn parse_summarypage_tsv(text: &str) -> HashMap<String, u64> {
+// Parses SUMMARYPAGE.tsv; returns accession → (total_value_usd, entry_count).
+fn parse_summarypage_tsv(text: &str) -> HashMap<String, (u64, u64)> {
     let mut result = HashMap::new();
     let mut lines = text.lines();
     let Some(header) = lines.next() else {
@@ -358,14 +358,24 @@ fn parse_summarypage_tsv(text: &str) -> HashMap<String, u64> {
     ) else {
         return result;
     };
-    let min_len = acc_i.max(val_i) + 1;
+    let entry_i = cols.iter().position(|&c| c == "TABLEENTRYTOTAL");
+    let min_len = [acc_i, val_i, entry_i.unwrap_or(0)]
+        .iter()
+        .copied()
+        .max()
+        .unwrap_or(0)
+        + 1;
     for line in lines {
         let fields: Vec<&str> = line.split('\t').collect();
         if fields.len() < min_len {
             continue;
         }
         let value: u64 = fields[val_i].replace(',', "").parse().unwrap_or(0);
-        result.insert(fields[acc_i].to_string(), value);
+        let entries: u64 = entry_i
+            .and_then(|i| fields.get(i))
+            .and_then(|s| s.replace(',', "").parse().ok())
+            .unwrap_or(0);
+        result.insert(fields[acc_i].to_string(), (value, entries));
     }
     result
 }
@@ -397,8 +407,11 @@ async fn fetch_entity_names(
     join_all(futs).await.into_iter().flatten().collect()
 }
 
+// Max holdings per 13F filing; filings above this threshold are passive index managers.
+const MAX_ACTIVE_HOLDINGS: u64 = 500;
+
 fn rankings_cache_path() -> Option<std::path::PathBuf> {
-    dirs::home_dir().map(|h| h.join(".longbridge").join("13f_rankings_cache.json"))
+    dirs::home_dir().map(|h| h.join(".longbridge").join("13f_rankings_cache_v2.json"))
 }
 
 fn load_rankings_cache(zip_url: &str) -> Option<Vec<RankedFund>> {
@@ -470,9 +483,13 @@ pub async fn cmd_investors_list(top: usize, format: &OutputFormat) -> Result<()>
             extract_file_from_chunk(&chunk, chunk_start, smy_local, smy_comp_size, smy_method)?;
         let submissions = parse_submission_tsv(&submission_text);
         let values = parse_summarypage_tsv(&summarypage_text);
-        // Join accession tables to get per-CIK total AUM (in thousands USD).
+        // Join accession tables to get per-CIK total AUM.
+        // Skip passive index managers (filing covers more than MAX_ACTIVE_HOLDINGS positions).
         let mut by_cik: HashMap<String, (String, u64)> = HashMap::new();
-        for (accession, value) in &values {
+        for (accession, (value, entry_count)) in &values {
+            if *entry_count > MAX_ACTIVE_HOLDINGS {
+                continue;
+            }
             if let Some((cik, period)) = submissions.get(accession) {
                 by_cik
                     .entry(cik.clone())
