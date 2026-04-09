@@ -5,7 +5,6 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use flate2::read::DeflateDecoder;
 use futures::future::join_all;
-use regex::Regex;
 use roxmltree::Document;
 
 use super::output::print_table;
@@ -663,39 +662,31 @@ async fn fetch_infotable_xml(
     let base =
         format!("https://www.sec.gov/Archives/edgar/data/{cik_no_zeros}/{accession_no_dashes}");
 
-    // Use the EDGAR EFTS search API to find documents in this filing.
-    // The response contains "_id" fields in the format "{accession}:{filename}".
-    // We filter out "primary_doc.xml" (the cover page) to find the infotable XML.
-    // Note: the response may contain control characters so we use regex on raw bytes.
-    let efts_url =
-        format!("https://efts.sec.gov/LATEST/search-index?q=%22{accession}%22&forms=13F-HR");
-    if let Ok(resp) = client.get(&efts_url).send().await {
+    // Use EDGAR's filing index.json to discover the infotable XML filename.
+    // This is the most reliable approach: the directory listing always contains
+    // the actual filenames regardless of naming convention used by the filer.
+    let index_url = format!("{base}/index.json");
+    if let Ok(resp) = client.get(&index_url).send().await {
         if resp.status().is_success() {
-            if let Ok(body) = resp.text().await {
-                if let Some(filename) = find_infotable_filename_from_efts(&body, accession) {
-                    let xml_url = format!("{base}/{filename}");
-                    if let Ok(xml_resp) = client.get(&xml_url).send().await {
-                        if xml_resp.status().is_success() {
-                            return Ok(xml_resp.text().await?);
+            if let Ok(data) = resp.json::<serde_json::Value>().await {
+                if let Some(items) = data["directory"]["item"].as_array() {
+                    // Find any XML file that is not the cover page.
+                    let filename = items
+                        .iter()
+                        .filter_map(|item| item["name"].as_str())
+                        .find(|name| {
+                            name.to_ascii_lowercase().ends_with(".xml")
+                                && *name != "primary_doc.xml"
+                        });
+                    if let Some(name) = filename {
+                        let xml_url = format!("{base}/{name}");
+                        if let Ok(xml_resp) = client.get(&xml_url).send().await {
+                            if xml_resp.status().is_success() {
+                                return Ok(xml_resp.text().await?);
+                            }
                         }
                     }
                 }
-            }
-        }
-    }
-
-    // Fallback: try well-known filenames used across different filers.
-    let common_names = [
-        "infotable.xml",
-        "form13fInfoTable.xml",
-        "13F_INFOTABLE.xml",
-        "INFORMATION_TABLE.xml",
-    ];
-    for name in &common_names {
-        let xml_url = format!("{base}/{name}");
-        if let Ok(resp) = client.get(&xml_url).send().await {
-            if resp.status().is_success() {
-                return Ok(resp.text().await?);
             }
         }
     }
@@ -704,21 +695,6 @@ async fn fetch_infotable_xml(
         "could not find the 13F information table in filing {accession}.\n\
          Check https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik_no_zeros}&type=13F",
     ))
-}
-
-// Extract the infotable XML filename from an EDGAR EFTS search response.
-// The response contains "_id" fields in the format "{accession}:{filename}".
-// We skip "primary_doc.xml" (the cover page form) and return the infotable filename.
-fn find_infotable_filename_from_efts(body: &str, accession: &str) -> Option<String> {
-    // Match "_id":"<accession>:<filename>" entries in the raw response body.
-    // The accession contains dashes which are safe in regex but we escape to be sure.
-    let escaped = accession.replace('-', r"\-");
-    let pattern = format!(r#""_id"\s*:\s*"{escaped}:([^"]+\.xml)""#);
-    let re = Regex::new(&pattern).ok()?;
-    // Collect all matching filenames into an owned Vec so `re` can be dropped.
-    let filenames: Vec<String> = re.captures_iter(body).map(|c| c[1].to_string()).collect();
-    drop(re);
-    filenames.into_iter().find(|f| f != "primary_doc.xml")
 }
 
 fn parse_holdings(xml: &str) -> Result<Vec<Holding>> {
