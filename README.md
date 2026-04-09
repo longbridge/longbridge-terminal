@@ -218,6 +218,15 @@ longbridge statement export --file-key <KEY> --section equity_holdings  # Export
 longbridge statement export --file-key <KEY> --all                     # Export all non-empty sections
 ```
 
+### Investors
+
+```bash
+longbridge investors                                   # List top institutional investors with their slugs
+longbridge investors warren-buffett                    # Berkshire Hathaway's latest 13F portfolio (top 50 by value)
+longbridge investors warren-buffett --top 20           # Show top 20 positions only
+longbridge investors bill-ackman --format json         # Export holdings as JSON
+```
+
 <!-- COMMANDS_END -->
 
 ### Symbol Format

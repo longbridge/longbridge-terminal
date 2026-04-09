@@ -5,6 +5,7 @@ pub mod api;
 pub mod asset;
 pub mod check;
 pub mod fundamental;
+pub mod investors;
 pub mod news;
 pub mod output;
 pub mod quote;
@@ -690,6 +691,24 @@ pub enum Commands {
         #[arg(long, default_value = "20")]
         count: i32,
     },
+
+    // ── SEC Investors ──────────────────────────────────────────────────────────
+    /// Top institutional investors and their SEC 13F portfolio holdings
+    ///
+    /// Without a slug: lists known investors and their slugs.
+    /// With a slug: fetches their latest 13F portfolio from SEC EDGAR.
+    ///
+    /// Example: longbridge investors
+    /// Example: longbridge investors warren-buffett
+    /// Example: longbridge investors warren-buffett --top 20
+    /// Example: longbridge investors warren-buffett --format json
+    Investors {
+        /// Investor slug (omit to list all investors)
+        slug: Option<String>,
+        /// Number of top holdings to display, sorted by value (default: 50)
+        #[arg(long, default_value = "50")]
+        top: usize,
+    },
 }
 
 #[derive(Subcommand)]
@@ -950,7 +969,7 @@ pub enum OrderCmd {
         /// Expiry date for GTD orders in YYYY-MM-DD format (required when --tif gtd)
         #[arg(long)]
         expire_date: Option<String>,
-        /// Outside regular trading hours: RTH_ONLY | ANY_TIME | OVERNIGHT (US market only)
+        /// Outside regular trading hours: `RTH_ONLY` | `ANY_TIME` | `OVERNIGHT` (US market only)
         #[arg(long)]
         outside_rth: Option<String>,
         /// Order remark (max 255 characters)
@@ -1003,7 +1022,7 @@ pub enum OrderCmd {
         /// Expiry date for GTD orders in YYYY-MM-DD format (required when --tif gtd)
         #[arg(long)]
         expire_date: Option<String>,
-        /// Outside regular trading hours: RTH_ONLY | ANY_TIME | OVERNIGHT (US market only)
+        /// Outside regular trading hours: `RTH_ONLY` | `ANY_TIME` | `OVERNIGHT` (US market only)
         #[arg(long)]
         outside_rth: Option<String>,
         /// Order remark (max 255 characters)
@@ -1628,6 +1647,10 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         Commands::FundHolder { symbol, count } => {
             fundamental::cmd_fund_holders(symbol, count, format, verbose).await
         }
+        Commands::Investors { slug, top } => match slug {
+            Some(slug) => investors::cmd_investor_holdings(&slug, top, format).await,
+            None => investors::cmd_investors_list(format),
+        },
         Commands::Login { .. }
         | Commands::Logout
         | Commands::Tui

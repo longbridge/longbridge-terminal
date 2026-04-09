@@ -5,6 +5,7 @@ use longbridge::trade::{
     OrderType, OutsideRTH, ReplaceOrderOptions, SubmitOrderOptions, TimeInForceType,
 };
 use rust_decimal::Decimal;
+use std::fmt::Write as _;
 use std::str::FromStr;
 
 use super::{
@@ -302,19 +303,19 @@ pub async fn cmd_submit_order(
         (None, None) => "market".to_string(),
     };
     if let Some(ref ta) = trailing_amount {
-        price_display.push_str(&format!(" trailing-amount: {ta}"));
+        let _ = write!(price_display, " trailing-amount: {ta}");
     }
     if let Some(ref tp) = trailing_percent {
-        price_display.push_str(&format!(" trailing-percent: {tp}%"));
+        let _ = write!(price_display, " trailing-percent: {tp}%");
     }
     if let Some(ref lo) = limit_offset {
-        price_display.push_str(&format!(" limit-offset: {lo}"));
+        let _ = write!(price_display, " limit-offset: {lo}");
     }
     if let Some(ref ed) = expire_date {
-        price_display.push_str(&format!(" expire: {ed}"));
+        let _ = write!(price_display, " expire: {ed}");
     }
     if let Some(ref rth) = outside_rth {
-        price_display.push_str(&format!(" outside-rth: {rth}"));
+        let _ = write!(price_display, " outside-rth: {rth}");
     }
     println!("Submitting {side:?} order: {quantity} {symbol} @ {price_display}");
     if !yes {
