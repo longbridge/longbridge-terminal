@@ -1,35 +1,49 @@
-name: Test OSS Backup
+name: Release to OSS
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.8.0). Leave empty to use the latest release."
+        required: false
+        type: string
+
+permissions:
+  contents: read
 
 jobs:
   oss_backup:
-    name: Sync latest release to OSS
+    name: Sync release to OSS (manual)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Get latest release tag
+      - name: Resolve release tag
         id: release
-        run: |
-          TAG=$(gh api repos/${{ github.repository }}/releases/latest --jq '.tag_name')
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
-          echo "Latest release: $TAG"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG=$(gh api repos/${{ github.repository }}/releases/latest --jq '.tag_name')
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "Release: $TAG"
 
       - name: Download release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           mkdir -p release-dist
           gh release download "${{ steps.release.outputs.tag }}" \
             --repo "${{ github.repository }}" \
             --dir release-dist
           ls -lha release-dist/
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup ossutil
         run: |
@@ -39,6 +53,7 @@ jobs:
 
       - name: Upload to OSS
         run: |
+          set -euo pipefail
           ./ossutil cp ./release-dist/ \
             oss://lb-assets/github/release/longbridge-terminal/v${{ steps.release.outputs.version }}/ \
             -u -r -j 10 \
@@ -48,6 +63,7 @@ jobs:
 
       - name: Update latest version file
         run: |
+          set -euo pipefail
           echo "${{ steps.release.outputs.tag }}" > latest
           ./ossutil cp latest \
             oss://lb-assets/github/release/longbridge-terminal/latest \
@@ -61,9 +77,9 @@ jobs:
         env:
           VERSION: ${{ steps.release.outputs.version }}
         run: |
-          cat .scoop/longbridge.json \
-            | sed "s|https://github.com/longbridge/longbridge-terminal/releases/download/v${VERSION}|https://open.longbridge.cn/github/release/longbridge-terminal/v${VERSION}|g" \
-            > longbridge.json
+          set -euo pipefail
+          sed "s|https://github.com/longbridge/longbridge-terminal/releases/download/v${VERSION}|https://open.longbridge.cn/github/release/longbridge-terminal/v${VERSION}|g" \
+            .scoop/longbridge.json > longbridge.json
           ./ossutil cp longbridge.json \
             oss://lb-assets/github/release/longbridge-terminal/longbridge.json \
             -f \

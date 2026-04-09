@@ -175,10 +175,26 @@ jobs:
     needs: github_release
     runs-on: ubuntu-latest
     steps:
+      - name: Setup | Checkout
+        uses: actions/checkout@v4
+
       - name: Setup | Artifacts
         uses: actions/download-artifact@v4
         with:
           path: release-dist
+          merge-multiple: true
+
+      - name: Verify | No unexpected subdirectories in release-dist
+        run: |
+          set -euo pipefail
+          subdirs=$(find release-dist -mindepth 1 -maxdepth 1 -type d)
+          if [ -n "$subdirs" ]; then
+            echo "ERROR: Unexpected subdirectories found in release-dist:"
+            echo "$subdirs"
+            exit 1
+          fi
+          echo "OK: release-dist contains only files (no subdirectories)."
+          ls -lha release-dist/
 
       - name: Setup | ossutil
         run: |
@@ -192,6 +208,7 @@ jobs:
 
       - name: Upload to OSS
         run: |
+          set -euo pipefail
           ./ossutil cp ./release-dist/ \
             oss://lb-assets/github/release/longbridge-terminal/v${{ steps.version.outputs.version }}/ \
             -u -r -j 10 \
@@ -201,6 +218,7 @@ jobs:
 
       - name: Update latest version file
         run: |
+          set -euo pipefail
           echo "v${{ steps.version.outputs.version }}" > latest
           ./ossutil cp latest \
             oss://lb-assets/github/release/longbridge-terminal/latest \
@@ -214,9 +232,9 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          cat .scoop/longbridge.json \
-            | sed "s|https://github.com/longbridge/longbridge-terminal/releases/download/v${VERSION}|https://open.longbridge.cn/github/release/longbridge-terminal/v${VERSION}|g" \
-            > longbridge.json
+          set -euo pipefail
+          sed "s|https://github.com/longbridge/longbridge-terminal/releases/download/v${VERSION}|https://open.longbridge.cn/github/release/longbridge-terminal/v${VERSION}|g" \
+            .scoop/longbridge.json > longbridge.json
           ./ossutil cp longbridge.json \
             oss://lb-assets/github/release/longbridge-terminal/longbridge.json \
             -f \
