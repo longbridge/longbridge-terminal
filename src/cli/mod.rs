@@ -600,6 +600,18 @@ pub enum Commands {
         end: Option<String>,
     },
 
+    /// Portfolio overview — total assets, P/L, intraday P/L, holdings, and cash breakdown
+    ///
+    /// Fetches live quotes, FX rates, and account balance concurrently, then
+    /// computes all P/L figures in USD.
+    ///
+    /// Returns: overview (`total_asset`, `market_cap`, `total_cash`, `total_pl`, `total_today_pl`,
+    /// `margin_call`, `risk_level`, `credit_limit`, currency), holdings table, and cash balances.
+    ///
+    /// Example: longbridge portfolio
+    /// Example: longbridge portfolio --format json
+    Portfolio,
+
     /// Current stock (equity) positions across all sub-accounts
     ///
     /// Returns: symbol, name, quantity, `available_quantity`, `cost_price`, currency, market.
@@ -1595,6 +1607,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         },
         Commands::Assets { currency } => trade::cmd_assets(currency, format).await,
         Commands::CashFlow { start, end } => trade::cmd_cash_flow(start, end, format).await,
+        Commands::Portfolio => trade::cmd_portfolio(format).await,
         Commands::Positions => trade::cmd_positions(format).await,
         Commands::FundPositions => trade::cmd_fund_positions(format).await,
         Commands::MarginRatio { symbol } => trade::cmd_margin_ratio(symbol, format).await,

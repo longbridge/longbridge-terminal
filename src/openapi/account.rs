@@ -1,5 +1,5 @@
 use crate::data::{
-    Account, AccountBalance, AccountList, CashBalance, CashInfo, Holding, MarketAccount,
+    Account, AccountBalance, AccountList, CashBalance, CashInfo, Currency, Holding, MarketAccount,
     OverviewData, PortfolioView,
 };
 use crate::openapi;
@@ -121,7 +121,7 @@ pub fn currencies(account_channel: &str) -> Result<Vec<CurrencyInfo>> {
 /// Fetch account balance from Longbridge SDK
 pub async fn fetch_account_balance() -> Result<AccountBalance> {
     let ctx = openapi::trade();
-    let balances = ctx.account_balance(None).await?;
+    let balances = ctx.account_balance(Some("USD")).await?;
 
     // Take the first account (user typically has one main account)
     let response = balances
@@ -186,7 +186,9 @@ pub async fn fetch_stock_holdings() -> Result<Vec<Holding>> {
                 available_quantity: position.available_quantity,
                 cost_price: Some(position.cost_price),
                 market_value: position.cost_price * position.quantity, // Will be updated with real price
+                market_value_usd: Decimal::ZERO, // Will be updated in fetch_portfolio
                 market_price: position.cost_price, // Will be updated with real price
+                prev_close: None,
             });
         }
     }
@@ -195,19 +197,39 @@ pub async fn fetch_stock_holdings() -> Result<Vec<Holding>> {
     if !symbols.is_empty() {
         let quote_ctx = openapi::quote();
         if let Ok(quotes) = quote_ctx.quote(&symbols).await {
-            // Create a map for quick lookup
-            let mut quote_map: std::collections::HashMap<String, rust_decimal::Decimal> =
-                std::collections::HashMap::new();
+            // Create a map for quick lookup: symbol -> (last_done, prev_close)
+            let mut quote_map: std::collections::HashMap<
+                String,
+                (rust_decimal::Decimal, rust_decimal::Decimal),
+            > = std::collections::HashMap::new();
 
             for quote in quotes {
-                quote_map.insert(quote.symbol.clone(), quote.last_done);
+                // Use the most recently traded price across all sessions (regular, post-market, overnight)
+                // to match how the mobile client computes P/L (includes overnight session prices).
+                let mut best_price = quote.last_done;
+                let mut best_ts = quote.timestamp;
+                for ext in [
+                    &quote.post_market_quote,
+                    &quote.overnight_quote,
+                    &quote.pre_market_quote,
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    if ext.last_done > Decimal::ZERO && ext.timestamp > best_ts {
+                        best_price = ext.last_done;
+                        best_ts = ext.timestamp;
+                    }
+                }
+                quote_map.insert(quote.symbol.clone(), (best_price, quote.prev_close));
             }
 
             // Update market prices and market values with real-time data
             for holding in &mut holdings {
-                if let Some(&real_price) = quote_map.get(&holding.symbol) {
+                if let Some(&(real_price, prev_close)) = quote_map.get(&holding.symbol) {
                     holding.market_price = real_price;
                     holding.market_value = real_price * holding.quantity;
+                    holding.prev_close = Some(prev_close);
                 }
             }
         }
@@ -216,49 +238,114 @@ pub async fn fetch_stock_holdings() -> Result<Vec<Holding>> {
     Ok(holdings)
 }
 
-/// Calculate overview data from balance and holdings
-fn calculate_overview(balance: &AccountBalance, holdings: &[Holding]) -> OverviewData {
-    // Trust SDK's net_assets which includes cash + actual market value
-    // Market cap = net_assets - total_cash
+/// Fetch exchange rates and return a map of currency code -> USD per 1 unit.
+/// Handles both API conventions:
+///   base="HKD", other="USD", rate=0.128  →  1 HKD = 0.128 USD
+///   base="USD", other="HKD", rate=7.82   →  1 HKD = 1/7.82 USD
+async fn fetch_fx_rates() -> HashMap<String, Decimal> {
+    use longbridge::httpclient::Json;
+    use reqwest::Method;
+
+    let client = openapi::http_client();
+    let Ok(resp) = client
+        .request(Method::GET, "/v1/asset/exchange_rates")
+        .response::<Json<serde_json::Value>>()
+        .send()
+        .await
+    else {
+        return HashMap::new();
+    };
+
+    tracing::debug!("exchange_rates raw: {}", resp.0);
+
+    let mut rates = HashMap::new();
+    if let Some(exchanges) = resp.0["exchanges"].as_array() {
+        for item in exchanges {
+            let base = item["base_currency"].as_str().unwrap_or("");
+            let other = item["other_currency"].as_str().unwrap_or("");
+            let rate = if let Some(n) = item["average_rate"].as_f64() {
+                Decimal::try_from(n).unwrap_or(Decimal::ZERO)
+            } else if let Some(s) = item["average_rate"].as_str() {
+                s.parse::<Decimal>().unwrap_or(Decimal::ZERO)
+            } else {
+                continue;
+            };
+            if rate == Decimal::ZERO {
+                continue;
+            }
+            // Store "USD per 1 unit of the non-USD currency" in both directions:
+            //   base="USD", other="HKD", rate=0.12767 → rates["HKD"] = 0.12767
+            //   base="HKD", other="USD", rate=0.128  → rates["HKD"] = 0.128
+            let non_usd = if base == "USD" && other != "USD" {
+                Some(other)
+            } else if other == "USD" && base != "USD" {
+                Some(base)
+            } else {
+                None
+            };
+            if let Some(code) = non_usd {
+                rates.insert(code.to_string(), rate);
+            }
+        }
+    }
+    tracing::info!("fx_rates built: {:?}", rates);
+    rates
+}
+
+/// Convert an amount in `currency` to USD.
+/// `rates` maps currency code -> USD per 1 unit of that currency.
+fn to_usd(amount: Decimal, currency: Currency, rates: &HashMap<String, Decimal>) -> Decimal {
+    let code = currency.as_str();
+    if code == "USD" {
+        return amount;
+    }
+    if let Some(&usd_per_unit) = rates.get(code) {
+        if usd_per_unit > Decimal::ZERO {
+            return amount * usd_per_unit;
+        }
+    }
+    // Fallback: no rate available, return unconverted
+    amount
+}
+
+/// Calculate overview data from balance and holdings.
+/// All P/L figures are expressed in USD (matching the balance currency).
+fn calculate_overview(
+    balance: &AccountBalance,
+    holdings: &[Holding],
+    fx_rates: &HashMap<String, Decimal>,
+) -> OverviewData {
+    // market_cap from SDK balance (balance currency is already USD)
     let market_cap: Decimal = balance.net_assets - balance.total_cash;
 
-    // Calculate total cost (all holdings)
-    let total_cost: Decimal = holdings
+    // Total P/L: compute directly per holding to avoid net_assets/total_cash ambiguity.
+    // Each holding's P/L is in its native currency; convert to USD via fx_rates.
+    let total_pl: Decimal = holdings
         .iter()
-        .filter_map(|h| h.cost_price.map(|cost| cost * h.quantity))
+        .map(|h| {
+            if let Some(cost) = h.cost_price {
+                to_usd((h.market_price - cost) * h.quantity, h.currency, fx_rates)
+            } else {
+                Decimal::ZERO
+            }
+        })
         .sum();
 
-    // Calculate total P/L: market_value - cost
-    // Since market_cap = actual market value from SDK
-    let total_pl: Decimal = market_cap - total_cost;
-
-    // Calculate intraday P/L using STOCKS cache (if available)
-    // Intraday P/L = (current_price - prev_close) * quantity
+    // Intraday P/L in USD: (current_price - prev_close) * quantity, converted
     let total_today_pl: Decimal = holdings
         .iter()
         .map(|h| {
-            let counter = crate::data::Counter::new(&h.symbol);
-            if let Some(stock) = crate::data::STOCKS.get(&counter) {
-                if let (Some(last_done), Some(prev_close)) =
-                    (stock.quote.last_done, stock.quote.prev_close)
-                {
-                    // Intraday P/L = (current_price - prev_close) * quantity
-                    return (last_done - prev_close) * h.quantity;
+            if let Some(prev_close) = h.prev_close {
+                if prev_close > Decimal::ZERO {
+                    let daily_change = (h.market_price - prev_close) * h.quantity;
+                    return to_usd(daily_change, h.currency, fx_rates);
                 }
             }
             Decimal::ZERO
         })
         .sum();
 
-    // Calculate leverage ratio (simplified)
-    let leverage_ratio = if balance.net_assets > Decimal::ZERO {
-        (balance.total_cash - balance.net_assets) / balance.net_assets
-    } else {
-        Decimal::ZERO
-    };
-
     OverviewData {
-        // net_assets from SDK already includes cash and market value
         total_asset: balance.net_assets,
         market_cap,
         total_cash: balance.total_cash,
@@ -267,8 +354,8 @@ fn calculate_overview(balance: &AccountBalance, holdings: &[Holding]) -> Overvie
         margin_call: balance.margin_call,
         risk_level: balance.risk_level,
         credit_limit: balance.max_finance_amount,
-        leverage_ratio,
-        fund_market_value: Decimal::ZERO, // Not implemented yet
+        leverage_ratio: Decimal::ZERO,
+        fund_market_value: Decimal::ZERO,
         currency: balance.currency.clone(),
     }
 }
@@ -333,15 +420,23 @@ fn extract_cash_balances(balance: &AccountBalance) -> Vec<CashBalance> {
 
 /// Fetch complete portfolio data
 pub async fn fetch_portfolio() -> Result<PortfolioView> {
-    // Fetch data concurrently
-    let (balance_result, holdings_result) =
-        tokio::join!(fetch_account_balance(), fetch_stock_holdings());
+    // Fetch balance, holdings, and FX rates concurrently
+    let (balance_result, holdings_result, fx_rates) = tokio::join!(
+        fetch_account_balance(),
+        fetch_stock_holdings(),
+        fetch_fx_rates()
+    );
 
     let balance = balance_result?;
-    let holdings = holdings_result?;
+    let mut holdings = holdings_result?;
 
-    // Calculate aggregated metrics
-    let overview = calculate_overview(&balance, &holdings);
+    // Compute USD market value for each holding
+    for holding in &mut holdings {
+        holding.market_value_usd = to_usd(holding.market_value, holding.currency, &fx_rates);
+    }
+
+    // Calculate aggregated metrics with FX-aware P/L
+    let overview = calculate_overview(&balance, &holdings, &fx_rates);
     let market_accounts = group_by_market(&holdings);
     let cash_balances = extract_cash_balances(&balance);
 

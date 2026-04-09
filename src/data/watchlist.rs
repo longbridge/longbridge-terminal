@@ -78,9 +78,7 @@ impl Watchlist {
 
     /// Refresh (re-apply sorting, etc.)
     pub fn refresh(&mut self) {
-        // Get market sort priority
         fn market_priority(market: &str) -> u8 {
-            // Base priority: US=0, HK=1, SH/SZ=2, SG=3
             match market {
                 "US" => 0,
                 "HK" => 1,
@@ -90,37 +88,31 @@ impl Watchlist {
             }
         }
 
-        // Sort by trading status first, then market, then code
-        self.counters.sort_by(|a, b| {
-            let a_market_str = a.market();
-            let b_market_str = b.market();
+        // Snapshot sort keys before sorting. STOCKS is updated concurrently,
+        // so reading it inside sort_by can yield different results for the same
+        // pair on successive calls, violating total order and causing a panic.
+        let keys: Vec<(bool, u8)> = self
+            .counters
+            .iter()
+            .map(|c| {
+                let not_trading = !super::STOCKS
+                    .get(c)
+                    .is_some_and(|s| s.trade_session.is_normal_trading());
+                (not_trading, market_priority(c.market()))
+            })
+            .collect();
 
-            // Check if in normal trading session (not Pre/Post/Overnight)
-            let a_normal_trading = super::STOCKS
-                .get(a)
-                .is_some_and(|s| s.trade_session.is_normal_trading());
-            let b_normal_trading = super::STOCKS
-                .get(b)
-                .is_some_and(|s| s.trade_session.is_normal_trading());
-
-            // First sort by trading session (Intraday first)
-            // false < true in bool ordering, so reverse comparison to put true first
-            match a_normal_trading.cmp(&b_normal_trading).reverse() {
-                std::cmp::Ordering::Equal => {
-                    // Same trading status, sort by market priority
-                    let a_priority = market_priority(a_market_str);
-                    let b_priority = market_priority(b_market_str);
-                    match a_priority.cmp(&b_priority) {
-                        std::cmp::Ordering::Equal => {
-                            // Same market, sort by code
-                            a.as_str().cmp(b.as_str())
-                        }
-                        other => other,
-                    }
-                }
-                other => other,
-            }
+        let mut indices: Vec<usize> = (0..self.counters.len()).collect();
+        indices.sort_by(|&i, &j| {
+            keys[i]
+                .cmp(&keys[j])
+                .then_with(|| self.counters[i].as_str().cmp(self.counters[j].as_str()))
         });
+        let sorted = indices
+            .into_iter()
+            .map(|i| self.counters[i].clone())
+            .collect();
+        self.counters = sorted;
     }
 
     /// Get group list
