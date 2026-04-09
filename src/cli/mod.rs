@@ -66,7 +66,7 @@ pub struct Cli {
     pub verbose: bool,
 
     /// Language for content fetched from longbridge.com: zh-CN or en.
-    /// Defaults to LONGBRIDGE_LANGUAGE env var, then system LANG, then en.
+    /// Defaults to system LANG env var, then en.
     #[arg(long, global = true)]
     pub lang: Option<String>,
 }
@@ -573,13 +573,16 @@ pub enum Commands {
         cmd: Option<OrderCmd>,
     },
 
-    /// Account cash balance and financing information
+    /// Account asset overview — net assets, cash, buy power, margins, and per-currency breakdown
     ///
-    /// Returns: currency, `total_cash`, `max_finance_amount`, `remaining_finance_amount`, `risk_level`, `margin_call`.
-    /// Example: longbridge balance --currency USD
-    Balance {
-        /// Filter by currency (e.g. USD HKD CNY SGD); returns all if omitted
-        #[arg(long)]
+    /// Returns: currency, `net_assets`, `total_cash`, `buy_power`, `max_finance_amount`,
+    /// `remaining_finance_amount`, `init_margin`, `maintenance_margin`, `margin_call`, `risk_level`,
+    /// and a `cash_infos` array with per-currency available/frozen/settling/withdrawable amounts.
+    /// Example: longbridge assets
+    /// Example: longbridge assets --currency HKD
+    Assets {
+        /// Filter by currency (e.g. USD HKD CNY SGD)
+        #[arg(long, default_value = "USD")]
         currency: Option<String>,
     },
 
@@ -1590,7 +1593,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             }) => trade::cmd_replace_order(order_id, qty, price, yes).await,
             None => trade::cmd_orders(history, start, end, symbol, format).await,
         },
-        Commands::Balance { currency } => trade::cmd_balance(currency, format).await,
+        Commands::Assets { currency } => trade::cmd_assets(currency, format).await,
         Commands::CashFlow { start, end } => trade::cmd_cash_flow(start, end, format).await,
         Commands::Positions => trade::cmd_positions(format).await,
         Commands::FundPositions => trade::cmd_fund_positions(format).await,
@@ -2307,22 +2310,22 @@ mod tests {
     }
 
     #[test]
-    fn test_balance_no_currency() {
-        let cli = parse(&["longbridge", "balance"]).unwrap();
-        if let Some(Commands::Balance { currency }) = cli.command {
-            assert!(currency.is_none());
+    fn test_assets_no_currency() {
+        let cli = parse(&["longbridge", "assets"]).unwrap();
+        if let Some(Commands::Assets { currency }) = cli.command {
+            assert_eq!(currency, Some("USD".to_string()));
         } else {
-            panic!("expected Balance command");
+            panic!("expected Assets command");
         }
     }
 
     #[test]
-    fn test_balance_with_currency() {
-        let cli = parse(&["longbridge", "balance", "--currency", "USD"]).unwrap();
-        if let Some(Commands::Balance { currency }) = cli.command {
-            assert_eq!(currency, Some("USD".to_string()));
+    fn test_assets_with_currency() {
+        let cli = parse(&["longbridge", "assets", "--currency", "HKD"]).unwrap();
+        if let Some(Commands::Assets { currency }) = cli.command {
+            assert_eq!(currency, Some("HKD".to_string()));
         } else {
-            panic!("expected Balance command");
+            panic!("expected Assets command");
         }
     }
 

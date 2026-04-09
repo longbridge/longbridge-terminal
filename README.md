@@ -202,7 +202,7 @@ longbridge buy TSLA.US 100 --price 250.00              # Submit a buy order (pro
 longbridge sell TSLA.US 100 --price 260.00             # Submit a sell order (prompts for confirmation)
 longbridge cancel <order_id>                           # Cancel a pending order (prompts for confirmation)
 longbridge replace <order_id> --qty 200 --price 255.00 # Modify quantity or price of a pending order
-longbridge balance                                     # Account cash balance and financing information
+longbridge assets [--currency USD]                     # Asset overview: net assets, cash, buy power, margins, and per-currency breakdown
 longbridge cash-flow [--start 2024-01-01]              # Cash flow records (deposits, withdrawals, dividends, settlements)
 longbridge positions                                   # Current stock (equity) positions across all sub-accounts
 longbridge fund-positions                              # Current fund (mutual fund) positions across all sub-accounts

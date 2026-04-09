@@ -13,6 +13,16 @@ use super::{
     OutputFormat,
 };
 
+fn risk_level_name(level: i32) -> &'static str {
+    match level {
+        0 => "Safe",
+        1 => "Medium Risk",
+        2 => "Early Warning",
+        3 => "Danger",
+        _ => "Unknown",
+    }
+}
+
 fn parse_order_type(s: &str) -> Result<OrderType> {
     match s.to_uppercase().as_str() {
         "LO" => Ok(OrderType::LO),
@@ -386,33 +396,108 @@ pub async fn cmd_replace_order(
     Ok(())
 }
 
-pub async fn cmd_balance(currency: Option<String>, format: &OutputFormat) -> Result<()> {
+fn print_assets(balances: &[longbridge::trade::AccountBalance], format: &OutputFormat) {
+    match format {
+        OutputFormat::Json => {
+            let records: Vec<serde_json::Value> = balances
+                .iter()
+                .map(|b| {
+                    let cash_infos: Vec<serde_json::Value> = b
+                        .cash_infos
+                        .iter()
+                        .map(|c| {
+                            serde_json::json!({
+                                "currency": c.currency,
+                                "available_cash": c.available_cash.to_string(),
+                                "frozen_cash": c.frozen_cash.to_string(),
+                                "settling_cash": c.settling_cash.to_string(),
+                                "withdraw_cash": c.withdraw_cash.to_string(),
+                            })
+                        })
+                        .collect();
+                    serde_json::json!({
+                        "currency": b.currency,
+                        "net_assets": b.net_assets.to_string(),
+                        "total_cash": b.total_cash.to_string(),
+                        "buy_power": b.buy_power.to_string(),
+                        "max_finance_amount": b.max_finance_amount.to_string(),
+                        "remaining_finance_amount": b.remaining_finance_amount.to_string(),
+                        "init_margin": b.init_margin.to_string(),
+                        "maintenance_margin": b.maintenance_margin.to_string(),
+                        "margin_call": b.margin_call.to_string(),
+                        "risk_level": risk_level_name(b.risk_level),
+                        "cash_infos": cash_infos,
+                    })
+                })
+                .collect();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&records).unwrap_or_default()
+            );
+        }
+        OutputFormat::Pretty => {
+            let headers = &[
+                "Currency",
+                "Net Assets",
+                "Total Cash",
+                "Buy Power",
+                "Max Finance",
+                "Remaining Finance",
+                "Init Margin",
+                "Maintenance Margin",
+                "Margin Call",
+                "Risk Level",
+            ];
+            let rows = balances
+                .iter()
+                .map(|b| {
+                    vec![
+                        b.currency.clone(),
+                        b.net_assets.to_string(),
+                        b.total_cash.to_string(),
+                        b.buy_power.to_string(),
+                        b.max_finance_amount.to_string(),
+                        b.remaining_finance_amount.to_string(),
+                        b.init_margin.to_string(),
+                        b.maintenance_margin.to_string(),
+                        b.margin_call.to_string(),
+                        risk_level_name(b.risk_level).to_string(),
+                    ]
+                })
+                .collect::<Vec<_>>();
+            print_table(headers, rows, format);
+
+            let cash_headers = &[
+                "Currency",
+                "Available Cash",
+                "Frozen Cash",
+                "Settling Cash",
+                "Withdrawable",
+            ];
+            let mut cash_rows = vec![];
+            for b in balances {
+                for c in &b.cash_infos {
+                    cash_rows.push(vec![
+                        c.currency.clone(),
+                        c.available_cash.to_string(),
+                        c.frozen_cash.to_string(),
+                        c.settling_cash.to_string(),
+                        c.withdraw_cash.to_string(),
+                    ]);
+                }
+            }
+            if !cash_rows.is_empty() {
+                println!();
+                print_table(cash_headers, cash_rows, format);
+            }
+        }
+    }
+}
+
+pub async fn cmd_assets(currency: Option<String>, format: &OutputFormat) -> Result<()> {
     let ctx = crate::openapi::trade();
     let balances = ctx.account_balance(currency.as_deref()).await?;
-
-    let headers = &[
-        "Currency",
-        "Total Cash",
-        "Max Finance Amount",
-        "Remaining Finance",
-        "Risk Level",
-        "Margin Call",
-    ];
-    let rows = balances
-        .iter()
-        .map(|b| {
-            vec![
-                b.currency.clone(),
-                b.total_cash.to_string(),
-                b.max_finance_amount.to_string(),
-                b.remaining_finance_amount.to_string(),
-                b.risk_level.to_string(),
-                b.margin_call.to_string(),
-            ]
-        })
-        .collect();
-
-    print_table(headers, rows, format);
+    print_assets(&balances, format);
     Ok(())
 }
 
@@ -774,34 +859,13 @@ pub async fn run_replace_order(api: &dyn TradeApi, opts: ReplaceOrderOptions) ->
     Ok(())
 }
 
-pub async fn run_balance(
+pub async fn run_assets(
     api: &dyn TradeApi,
     currency: Option<String>,
     format: &OutputFormat,
 ) -> Result<()> {
     let balances = api.account_balance(currency).await?;
-    let headers = &[
-        "Currency",
-        "Total Cash",
-        "Max Finance Amount",
-        "Remaining Finance",
-        "Risk Level",
-        "Margin Call",
-    ];
-    let rows = balances
-        .iter()
-        .map(|b| {
-            vec![
-                b.currency.clone(),
-                b.total_cash.to_string(),
-                b.max_finance_amount.to_string(),
-                b.remaining_finance_amount.to_string(),
-                b.risk_level.to_string(),
-                b.margin_call.to_string(),
-            ]
-        })
-        .collect();
-    print_table(headers, rows, format);
+    print_assets(&balances, format);
     Ok(())
 }
 
@@ -1039,13 +1103,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_run_balance_dispatches() {
+    async fn test_run_assets_dispatches() {
         let mut mock = MockTradeApi::new();
         mock.expect_account_balance()
             .with(mockall::predicate::eq(None::<String>))
             .times(1)
             .returning(|_| Ok(vec![]));
-        run_balance(&mock, None, &OutputFormat::Pretty)
+        run_assets(&mock, None, &OutputFormat::Pretty)
             .await
             .unwrap();
     }
