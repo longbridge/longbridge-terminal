@@ -184,11 +184,14 @@ longbridge finance-calendar closed [--market HK]                     # Market ho
 ### Watchlist
 
 ```bash
-longbridge watchlist                               # List watchlist groups, or create/update/delete a group
+longbridge watchlist                               # List all watchlist groups and their securities (pinned shown first)
+longbridge watchlist show <id|name>                # Show securities in a specific group (pinned marked)
 longbridge watchlist create "My Portfolio"         # Create a new watchlist group
 longbridge watchlist update <id> --add TSLA.US     # Add securities in a group
 longbridge watchlist update <id> --remove AAPL.US  # Remove securities from a group
 longbridge watchlist delete <id>                   # Delete a watchlist group
+longbridge watchlist pin TSLA.US AAPL.US           # Pin securities to the top of their group
+longbridge watchlist pin --remove 700.HK           # Unpin securities
 ```
 
 ### Trading
