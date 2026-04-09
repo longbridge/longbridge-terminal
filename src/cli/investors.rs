@@ -46,14 +46,14 @@ const INVESTORS: &[Investor] = &[
     Investor {
         id: "david-tepper",
         name: "David Tepper",
-        firm: "Appaloosa Management",
-        cik: "0001262463",
+        firm: "Appaloosa",
+        cik: "0001656456",
     },
     Investor {
         id: "seth-klarman",
         name: "Seth Klarman",
         firm: "Baupost Group",
-        cik: "0000887936",
+        cik: "0001061768",
     },
     Investor {
         id: "dan-loeb",
@@ -65,7 +65,7 @@ const INVESTORS: &[Investor] = &[
         id: "ken-griffin",
         name: "Ken Griffin",
         firm: "Citadel Advisors",
-        cik: "0001423298",
+        cik: "0001423053",
     },
     Investor {
         id: "stan-druckenmiller",
@@ -795,6 +795,26 @@ async fn show_holdings(
         } else {
             seen.insert(h.cusip.clone(), holdings.len());
             holdings.push(h);
+        }
+    }
+
+    // The 13F spec says <value> is in thousands of USD, but some filers (e.g. Berkshire)
+    // report in actual dollars. Detect the unit by checking if the median (value/shares)
+    // implied price is below $1 — if so, values are in thousands and need scaling.
+    #[allow(clippy::cast_precision_loss)]
+    let value_multiplier: u64 = {
+        let mut ratios: Vec<f64> = holdings
+            .iter()
+            .filter(|h| h.shares > 0 && h.value > 0)
+            .map(|h| (h.value as f64) / (h.shares as f64))
+            .collect();
+        ratios.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let median = ratios.get(ratios.len() / 2).copied().unwrap_or(1.0);
+        if median < 1.0 { 1000 } else { 1 }
+    };
+    if value_multiplier > 1 {
+        for h in &mut holdings {
+            h.value *= value_multiplier;
         }
     }
 
