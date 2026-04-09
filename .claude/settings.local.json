@@ -6,7 +6,12 @@
       "WebFetch(domain:docs.rs)",
       "WebFetch(domain:open.longbridge.com)",
       "WebFetch(domain:github.com)",
-      "Skill(commit-commands:commit-push-pr)"
+      "Skill(commit-commands:commit-push-pr)",
+      "WebFetch(domain:www.openfigi.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebSearch",
+      "WebFetch(domain:data.sec.gov)",
+      "WebFetch(domain:efts.sec.gov)"
     ]
   }
 }
