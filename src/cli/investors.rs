@@ -671,13 +671,14 @@ async fn fetch_infotable_xml(
             if let Ok(data) = resp.json::<serde_json::Value>().await {
                 if let Some(items) = data["directory"]["item"].as_array() {
                     // Find any XML file that is not the cover page.
-                    let filename = items
-                        .iter()
-                        .filter_map(|item| item["name"].as_str())
-                        .find(|name| {
-                            name.to_ascii_lowercase().ends_with(".xml")
-                                && *name != "primary_doc.xml"
-                        });
+                    let filename =
+                        items
+                            .iter()
+                            .filter_map(|item| item["name"].as_str())
+                            .find(|name| {
+                                name.to_ascii_lowercase().ends_with(".xml")
+                                    && *name != "primary_doc.xml"
+                            });
                     if let Some(name) = filename {
                         let xml_url = format!("{base}/{name}");
                         if let Ok(xml_resp) = client.get(&xml_url).send().await {
