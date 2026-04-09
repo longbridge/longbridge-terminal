@@ -22,6 +22,14 @@ pub async fn cmd_watchlist(cmd: Option<WatchlistCmd>, format: &OutputFormat) -> 
     }
 }
 
+fn sorted_securities(
+    securities: &[longbridge::quote::WatchlistSecurity],
+) -> Vec<&longbridge::quote::WatchlistSecurity> {
+    let mut sorted: Vec<_> = securities.iter().collect();
+    sorted.sort_by_key(|s| !s.is_pinned);
+    sorted
+}
+
 async fn cmd_list(format: &OutputFormat) -> Result<()> {
     let ctx = crate::openapi::quote();
     let groups = ctx.watchlist().await?;
@@ -34,7 +42,7 @@ async fn cmd_list(format: &OutputFormat) -> Result<()> {
                     serde_json::json!({
                         "id": g.id,
                         "name": g.name,
-                        "securities": g.securities.iter().map(|s| serde_json::json!({
+                        "securities": sorted_securities(&g.securities).iter().map(|s| serde_json::json!({
                             "symbol": s.symbol,
                             "name": s.name,
                             "market": format!("{:?}", s.market),
@@ -49,8 +57,7 @@ async fn cmd_list(format: &OutputFormat) -> Result<()> {
             for group in &groups {
                 println!("\nGroup: {} (ID: {})", group.name, group.id);
                 let headers = &["Symbol", "Name", "Market", "Pinned"];
-                let rows: Vec<Vec<String>> = group
-                    .securities
+                let rows: Vec<Vec<String>> = sorted_securities(&group.securities)
                     .iter()
                     .map(|s| {
                         vec![
@@ -89,7 +96,7 @@ async fn cmd_show(group: String, format: &OutputFormat) -> Result<()> {
             let val = serde_json::json!({
                 "id": g.id,
                 "name": g.name,
-                "securities": g.securities.iter().map(|s| serde_json::json!({
+                "securities": sorted_securities(&g.securities).iter().map(|s| serde_json::json!({
                     "symbol": s.symbol,
                     "name": s.name,
                     "market": format!("{:?}", s.market),
@@ -101,8 +108,7 @@ async fn cmd_show(group: String, format: &OutputFormat) -> Result<()> {
         OutputFormat::Pretty => {
             println!("Group: {} (ID: {})", g.name, g.id);
             let headers = &["Symbol", "Name", "Market", "Pinned"];
-            let rows: Vec<Vec<String>> = g
-                .securities
+            let rows: Vec<Vec<String>> = sorted_securities(&g.securities)
                 .iter()
                 .map(|s| {
                     vec![
