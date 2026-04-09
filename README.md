@@ -221,6 +221,14 @@ longbridge statement export --file-key <KEY> --section equity_holdings  # Export
 longbridge statement export --file-key <KEY> --all                     # Export all non-empty sections
 ```
 
+### Insider Trades
+
+```bash
+longbridge insider-trades TSLA.US                 # Recent Form 4 insider trades (SEC EDGAR, US stocks only)
+longbridge insider-trades AAPL.US --count 40      # Fetch 40 Form 4 filings instead of the default 20
+longbridge insider-trades NVDA.US --format json   # Export as JSON
+```
+
 ### Investors
 
 ```bash
