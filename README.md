@@ -221,10 +221,12 @@ longbridge statement export --file-key <KEY> --all                     # Export 
 ### Investors
 
 ```bash
-longbridge investors                                   # Top 50 active fund managers by AUM (live SEC 13F rankings; passive index giants excluded; use --top N to change)
-longbridge investors 0001067983                        # View 13F holdings for any filer by SEC CIK number
-longbridge investors 0001067983 --top 20               # Show top 20 positions only
-longbridge investors 0001067983 --format json          # Export holdings as JSON
+longbridge investors                                          # Top 50 active fund managers by AUM (live SEC 13F rankings; passive index giants excluded; use --top N to change)
+longbridge investors 0001067983                               # View 13F holdings for any filer by SEC CIK number
+longbridge investors 0001067983 --top 20                      # Show top 20 positions only
+longbridge investors 0001067983 --format json                 # Export holdings as JSON
+longbridge investors changes 0001067983                       # Quarter-over-quarter changes (NEW/ADDED/REDUCED/EXITED)
+longbridge investors changes 0001067983 --from 2024-12-31     # Compare latest vs a specific period
 ```
 
 <!-- COMMANDS_END -->

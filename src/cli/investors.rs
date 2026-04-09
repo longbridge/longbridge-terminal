@@ -512,8 +512,57 @@ struct Holding {
     share_type: String,
 }
 
-// Returns (accession_number, filing_date, report_date)
-async fn fetch_latest_13f(client: &reqwest::Client, cik: &str) -> Result<(String, String, String)> {
+struct FilingInfo {
+    accession: String,
+    filing_date: String,
+    report_date: String,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum ChangeAction {
+    New,
+    Added,
+    Reduced,
+    Exited,
+}
+
+impl ChangeAction {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::New => "NEW",
+            Self::Added => "ADDED",
+            Self::Reduced => "REDUCED",
+            Self::Exited => "EXITED",
+        }
+    }
+
+    fn sort_priority(self) -> u8 {
+        match self {
+            Self::New => 0,
+            Self::Added => 1,
+            Self::Reduced => 2,
+            Self::Exited => 3,
+        }
+    }
+}
+
+struct HoldingChange {
+    name: String,
+    cusip: String,
+    value: u64,
+    prev_value: u64,
+    shares: u64,
+    prev_shares: u64,
+    action: ChangeAction,
+}
+
+// Returns up to `count` most-recent 13F-HR filings (amendments excluded).
+async fn fetch_recent_13f_filings(
+    client: &reqwest::Client,
+    cik: &str,
+    count: usize,
+) -> Result<Vec<FilingInfo>> {
     let url = format!("https://data.sec.gov/submissions/CIK{cik}.json");
     let resp = client.get(&url).send().await?;
     if !resp.status().is_success() {
@@ -537,25 +586,51 @@ async fn fetch_latest_13f(client: &reqwest::Client, cik: &str) -> Result<(String
         .ok_or_else(|| anyhow!("no filingDates in SEC response"))?;
     let report_dates = recent["reportDate"].as_array();
 
-    let idx = forms
-        .iter()
-        .position(|f| f.as_str() == Some("13F-HR"))
-        .ok_or_else(|| {
-            anyhow!("no 13F-HR filing found — this investor may not file 13F reports with the SEC")
-        })?;
+    let mut results = Vec::new();
+    for (i, form) in forms.iter().enumerate() {
+        if form.as_str() != Some("13F-HR") {
+            continue;
+        }
+        let Some(accession) = accessions.get(i).and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let filing_date = filing_dates
+            .get(i)
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let report_date = report_dates
+            .and_then(|arr| arr.get(i))
+            .and_then(|v| v.as_str())
+            .unwrap_or(&filing_date)
+            .to_string();
+        results.push(FilingInfo {
+            accession: accession.to_string(),
+            filing_date,
+            report_date,
+        });
+        if results.len() >= count {
+            break;
+        }
+    }
 
-    let accession = accessions[idx]
-        .as_str()
-        .ok_or_else(|| anyhow!("accessionNumber not a string"))?
-        .to_string();
-    let filing_date = filing_dates[idx].as_str().unwrap_or("unknown").to_string();
-    let report_date = report_dates
-        .and_then(|arr| arr.get(idx))
-        .and_then(|v| v.as_str())
-        .unwrap_or(&filing_date)
-        .to_string();
+    if results.is_empty() {
+        return Err(anyhow!(
+            "no 13F-HR filing found — this investor may not file 13F reports with the SEC"
+        ));
+    }
+    Ok(results)
+}
 
-    Ok((accession, filing_date, report_date))
+// Returns (accession_number, filing_date, report_date) for the most recent 13F-HR.
+async fn fetch_latest_13f(client: &reqwest::Client, cik: &str) -> Result<(String, String, String)> {
+    let filings = fetch_recent_13f_filings(client, cik, 1).await?;
+    let f = &filings[0];
+    Ok((
+        f.accession.clone(),
+        f.filing_date.clone(),
+        f.report_date.clone(),
+    ))
 }
 
 async fn fetch_infotable_xml(
@@ -663,6 +738,289 @@ fn parse_holdings(xml: &str) -> Result<Vec<Holding>> {
     Ok(holdings)
 }
 
+// Merges duplicate CUSIP entries (sub-managers filing separately are combined).
+fn consolidate_holdings(raw: Vec<Holding>) -> Vec<Holding> {
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    let mut holdings: Vec<Holding> = Vec::new();
+    for h in raw {
+        if let Some(&idx) = seen.get(&h.cusip) {
+            holdings[idx].value += h.value;
+            holdings[idx].shares += h.shares;
+        } else {
+            seen.insert(h.cusip.clone(), holdings.len());
+            holdings.push(h);
+        }
+    }
+    holdings
+}
+
+// The 13F spec says <value> is in thousands of USD, but some filers report in actual dollars.
+// Detect the unit by checking the median (value/shares) implied price: below $1 means thousands.
+#[allow(clippy::cast_precision_loss)]
+fn apply_value_multiplier(holdings: &mut [Holding]) {
+    let mut ratios: Vec<f64> = holdings
+        .iter()
+        .filter(|h| h.shares > 0 && h.value > 0)
+        .map(|h| (h.value as f64) / (h.shares as f64))
+        .collect();
+    ratios.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let median = ratios.get(ratios.len() / 2).copied().unwrap_or(1.0);
+    if median < 1.0 {
+        for h in holdings.iter_mut() {
+            h.value *= 1000;
+        }
+    }
+}
+
+// Diffs two snapshots keyed by CUSIP; returns NEW/ADDED/REDUCED/EXITED entries only.
+fn compute_holdings_diff(prev: &[Holding], curr: &[Holding]) -> Vec<HoldingChange> {
+    let prev_map: HashMap<&str, &Holding> = prev.iter().map(|h| (h.cusip.as_str(), h)).collect();
+    let curr_map: HashMap<&str, &Holding> = curr.iter().map(|h| (h.cusip.as_str(), h)).collect();
+
+    let mut changes = Vec::new();
+
+    for h in curr {
+        let action = match prev_map.get(h.cusip.as_str()) {
+            None => ChangeAction::New,
+            Some(p) if h.value > p.value => ChangeAction::Added,
+            Some(p) if h.value < p.value => ChangeAction::Reduced,
+            Some(_) => continue, // unchanged — skip
+        };
+        let prev = prev_map.get(h.cusip.as_str());
+        changes.push(HoldingChange {
+            name: h.name.clone(),
+            cusip: h.cusip.clone(),
+            value: h.value,
+            prev_value: prev.map_or(0, |p| p.value),
+            shares: h.shares,
+            prev_shares: prev.map_or(0, |p| p.shares),
+            action,
+        });
+    }
+
+    for p in prev {
+        if !curr_map.contains_key(p.cusip.as_str()) {
+            changes.push(HoldingChange {
+                name: p.name.clone(),
+                cusip: p.cusip.clone(),
+                value: 0,
+                prev_value: p.value,
+                shares: 0,
+                prev_shares: p.shares,
+                action: ChangeAction::Exited,
+            });
+        }
+    }
+
+    // Sort by action group, then by the more significant of current/previous value.
+    changes.sort_unstable_by(|a, b| {
+        a.action
+            .sort_priority()
+            .cmp(&b.action.sort_priority())
+            .then_with(|| b.value.max(b.prev_value).cmp(&a.value.max(a.prev_value)))
+    });
+
+    changes
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn format_change(value: u64, prev_value: u64, action: ChangeAction) -> String {
+    match action {
+        ChangeAction::New => format!("+{}", format_large_usd(value)),
+        ChangeAction::Exited => format!("-{} (-100%)", format_large_usd(prev_value)),
+        ChangeAction::Added | ChangeAction::Reduced => {
+            let is_increase = value > prev_value;
+            let abs_delta = if is_increase {
+                value - prev_value
+            } else {
+                prev_value - value
+            };
+            let pct = abs_delta as f64 / prev_value as f64 * 100.0;
+            let sign = if is_increase { "+" } else { "-" };
+            format!("{sign}{} ({sign}{:.1}%)", format_large_usd(abs_delta), pct)
+        }
+    }
+}
+
+// Fetches two 13F filings and shows position changes between them.
+// `from_period` pins the base filing by its report_date (e.g. "2024-12-31");
+// if None, uses the filing immediately before the latest one.
+async fn show_holdings_changes(
+    client: &reqwest::Client,
+    cik: &str,
+    label: &str,
+    firm: &str,
+    top: usize,
+    from_period: Option<&str>,
+    format: &OutputFormat,
+) -> Result<()> {
+    if matches!(format, OutputFormat::Pretty) {
+        eprintln!("Fetching 13F filings for {label} from SEC EDGAR...");
+    }
+
+    // Fetch enough history to satisfy any --from request (20 covers ~5 years quarterly).
+    let filings = fetch_recent_13f_filings(client, cik, 20).await?;
+    let latest = &filings[0];
+
+    if matches!(format, OutputFormat::Pretty) {
+        eprintln!(
+            "Period: {}  (filed: {})",
+            latest.report_date, latest.filing_date
+        );
+    }
+
+    let curr_xml = fetch_infotable_xml(client, cik, &latest.accession).await?;
+    let curr_raw = parse_holdings(&curr_xml)?;
+    if curr_raw.is_empty() {
+        return Err(anyhow!(
+            "no holdings found in 13F filing {}",
+            latest.accession
+        ));
+    }
+    let mut curr = consolidate_holdings(curr_raw);
+    apply_value_multiplier(&mut curr);
+
+    let prev_filing = if let Some(period) = from_period {
+        if let Some(f) = filings.iter().skip(1).find(|f| f.report_date == period) {
+            f
+        } else {
+            let available: Vec<&str> = filings
+                .iter()
+                .skip(1)
+                .map(|f| f.report_date.as_str())
+                .collect();
+            return Err(anyhow!(
+                "no 13F-HR filing found for period '{period}'.\nAvailable periods: {}",
+                available.join(", ")
+            ));
+        }
+    } else {
+        filings.get(1).ok_or_else(|| {
+            anyhow!("only one 13F-HR filing found — no previous period to compare against")
+        })?
+    };
+
+    if matches!(format, OutputFormat::Pretty) {
+        eprintln!("Comparing against: {}", prev_filing.report_date);
+    }
+
+    let prev_xml = fetch_infotable_xml(client, cik, &prev_filing.accession).await?;
+    let prev_raw = parse_holdings(&prev_xml)?;
+    let mut prev = consolidate_holdings(prev_raw);
+    apply_value_multiplier(&mut prev);
+
+    let prev_report_date = prev_filing.report_date.clone();
+
+    let all_changes = compute_holdings_diff(&prev, &curr);
+
+    let n_new = all_changes
+        .iter()
+        .filter(|c| c.action == ChangeAction::New)
+        .count();
+    let n_added = all_changes
+        .iter()
+        .filter(|c| c.action == ChangeAction::Added)
+        .count();
+    let n_reduced = all_changes
+        .iter()
+        .filter(|c| c.action == ChangeAction::Reduced)
+        .count();
+    let n_exited = all_changes
+        .iter()
+        .filter(|c| c.action == ChangeAction::Exited)
+        .count();
+
+    let displayed: Vec<_> = all_changes.iter().take(top).collect();
+
+    match format {
+        OutputFormat::Json => {
+            #[allow(clippy::cast_precision_loss)]
+            let json_changes: Vec<serde_json::Value> = displayed
+                .iter()
+                .map(|c| {
+                    let (delta_usd, delta_pct): (i64, String) = if c.prev_value == 0 {
+                        (
+                            i64::try_from(c.value).unwrap_or(i64::MAX),
+                            "NEW".to_string(),
+                        )
+                    } else {
+                        let abs_delta = c.value.abs_diff(c.prev_value);
+                        let signed = if c.value >= c.prev_value {
+                            i64::try_from(abs_delta).unwrap_or(i64::MAX)
+                        } else {
+                            -i64::try_from(abs_delta).unwrap_or(i64::MAX)
+                        };
+                        let pct = signed as f64 / c.prev_value as f64 * 100.0;
+                        (signed, format!("{pct:.2}"))
+                    };
+                    serde_json::json!({
+                        "name": c.name,
+                        "cusip": c.cusip,
+                        "action": c.action,
+                        "value_usd": c.value,
+                        "prev_value_usd": c.prev_value,
+                        "delta_usd": delta_usd,
+                        "delta_pct": delta_pct,
+                        "shares": c.shares,
+                        "prev_shares": c.prev_shares,
+                    })
+                })
+                .collect();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "investor": label,
+                    "firm": firm,
+                    "cik": cik,
+                    "period": latest.report_date,
+                    "prev_report_date": prev_report_date,
+                    "filing_date": latest.filing_date,
+                    "new": n_new,
+                    "added": n_added,
+                    "reduced": n_reduced,
+                    "exited": n_exited,
+                    "changes": json_changes,
+                }))
+                .unwrap_or_default()
+            );
+        }
+        OutputFormat::Pretty => {
+            println!(
+                "\n{label}\nChanges: {} vs {prev_report_date}\n",
+                latest.report_date
+            );
+            println!(
+                "{n_new} new  |  {n_added} added  |  {n_reduced} reduced  |  {n_exited} exited\n"
+            );
+
+            let rows: Vec<Vec<String>> = displayed
+                .iter()
+                .map(|c| {
+                    let value_str = if c.action == ChangeAction::Exited {
+                        "—".to_string()
+                    } else {
+                        format_large_usd(c.value)
+                    };
+                    vec![
+                        c.name.clone(),
+                        c.action.as_str().to_string(),
+                        value_str,
+                        format_change(c.value, c.prev_value, c.action),
+                    ]
+                })
+                .collect();
+
+            print_table(&["company", "action", "value", "change"], rows, format);
+            println!(
+                "\nSource: SEC EDGAR 13F — {} (filed {})",
+                latest.accession, latest.filing_date
+            );
+        }
+    }
+
+    Ok(())
+}
+
 // Core holdings display logic — shared by slug-based and CIK-based entry points.
 // `label` is the header line shown in Pretty mode (e.g. "Warren Buffett — Berkshire Hathaway").
 // `firm` is included in the JSON output under the "firm" key.
@@ -691,42 +1049,8 @@ async fn show_holdings(
         return Err(anyhow!("no holdings found in 13F filing {accession}"));
     }
 
-    // Consolidate duplicate CUSIP entries (sub-managers report separately; merge per security).
-    let mut seen: HashMap<String, usize> = HashMap::new();
-    let mut holdings: Vec<Holding> = Vec::new();
-    for h in raw_holdings {
-        if let Some(&idx) = seen.get(&h.cusip) {
-            holdings[idx].value += h.value;
-            holdings[idx].shares += h.shares;
-        } else {
-            seen.insert(h.cusip.clone(), holdings.len());
-            holdings.push(h);
-        }
-    }
-
-    // The 13F spec says <value> is in thousands of USD, but some filers (e.g. Berkshire)
-    // report in actual dollars. Detect the unit by checking if the median (value/shares)
-    // implied price is below $1 — if so, values are in thousands and need scaling.
-    #[allow(clippy::cast_precision_loss)]
-    let value_multiplier: u64 = {
-        let mut ratios: Vec<f64> = holdings
-            .iter()
-            .filter(|h| h.shares > 0 && h.value > 0)
-            .map(|h| (h.value as f64) / (h.shares as f64))
-            .collect();
-        ratios.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let median = ratios.get(ratios.len() / 2).copied().unwrap_or(1.0);
-        if median < 1.0 {
-            1000
-        } else {
-            1
-        }
-    };
-    if value_multiplier > 1 {
-        for h in &mut holdings {
-            h.value *= value_multiplier;
-        }
-    }
+    let mut holdings = consolidate_holdings(raw_holdings);
+    apply_value_multiplier(&mut holdings);
 
     holdings.sort_unstable_by(|a, b| b.value.cmp(&a.value));
 
@@ -810,19 +1134,11 @@ async fn show_holdings(
     Ok(())
 }
 
-// View 13F holdings for an arbitrary SEC EDGAR filer by their CIK number.
-pub async fn cmd_investor_holdings_by_cik(
-    cik_raw: &str,
-    top: usize,
-    format: &OutputFormat,
-) -> Result<()> {
+async fn resolve_cik_and_name(client: &reqwest::Client, cik_raw: &str) -> Result<(String, String)> {
     let cik_num: u64 = cik_raw
         .parse()
         .map_err(|_| anyhow!("invalid CIK number: '{cik_raw}' — CIK must be numeric"))?;
     let cik = format!("{cik_num:010}");
-    let client = sec_client();
-
-    // Resolve entity name from EDGAR submissions before fetching holdings.
     let sub_url = format!("https://data.sec.gov/submissions/CIK{cik}.json");
     let resp = client.get(&sub_url).send().await?;
     if !resp.status().is_success() {
@@ -834,8 +1150,39 @@ pub async fn cmd_investor_holdings_by_cik(
     }
     let data: serde_json::Value = resp.json().await?;
     let entity_name = data["name"].as_str().unwrap_or("Unknown Fund").to_string();
+    Ok((cik, entity_name))
+}
 
+// View current 13F holdings for any SEC EDGAR 13F filer by CIK.
+pub async fn cmd_investor_holdings_by_cik(
+    cik_raw: &str,
+    top: usize,
+    format: &OutputFormat,
+) -> Result<()> {
+    let client = sec_client();
+    let (cik, entity_name) = resolve_cik_and_name(&client, cik_raw).await?;
     show_holdings(&client, &cik, &entity_name, &entity_name, top, format).await
+}
+
+// View quarter-over-quarter 13F position changes for any SEC EDGAR 13F filer by CIK.
+pub async fn cmd_investor_changes(
+    cik_raw: &str,
+    top: usize,
+    from_period: Option<&str>,
+    format: &OutputFormat,
+) -> Result<()> {
+    let client = sec_client();
+    let (cik, entity_name) = resolve_cik_and_name(&client, cik_raw).await?;
+    show_holdings_changes(
+        &client,
+        &cik,
+        &entity_name,
+        &entity_name,
+        top,
+        from_period,
+        format,
+    )
+    .await
 }
 
 #[allow(clippy::cast_precision_loss)]
