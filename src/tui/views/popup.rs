@@ -7,7 +7,7 @@ use crate::{
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
-    text::{Line, Span},
+    text::Span,
     widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table},
     Frame,
 };
@@ -205,60 +205,20 @@ fn switch_watchlist(
 }
 
 fn searching(frame: &mut Frame, rect: Rect, search: &mut Search<openapi::search::StockItem>) {
-    const MAX_SIZE: (u16, u16) = (50, 30);
+    const MAX_SIZE: (u16, u16) = (50, 3);
     let rect = crate::tui::ui::rect::centered(MAX_SIZE.0, MAX_SIZE.1, rect);
     frame.render_widget(Clear, rect);
 
-    let chunks = Layout::default()
-        .margin(1)
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Percentage(100)].as_ref())
-        .split(rect);
-
     let input = &search.input;
-    // one line, without scroll
     let paragraph = Paragraph::new(input.value()).block(
         Block::default()
             .borders(Borders::ALL)
             .border_style(styles::border())
             .title(t!("SearchStock.title")),
     );
-    frame.render_widget(paragraph, chunks[0]);
+    frame.render_widget(paragraph, rect);
     frame.set_cursor_position((
-        // Put cursor past the end of the input text
-        chunks[0].x + u16::try_from(input.visual_cursor()).unwrap() + 1,
-        // Move one line down, from the border to the input line
-        chunks[0].y + 1,
+        rect.x + u16::try_from(input.visual_cursor()).unwrap() + 1,
+        rect.y + 1,
     ));
-
-    let column_widths = [12, 34];
-
-    let rows = search
-        .options()
-        .into_iter()
-        .map(|stock| {
-            let market = stock.market.as_str().into();
-            Row::new(vec![
-                Cell::from(Line::from(vec![
-                    Span::styled(stock.market, styles::market(market)),
-                    Span::raw(" "),
-                    Span::raw(stock.code),
-                ])),
-                Cell::from(stock.name),
-            ])
-        })
-        .collect::<Vec<_>>();
-
-    let column_constraints = column_widths.map(|w| Constraint::Length(u16::try_from(w).unwrap()));
-
-    let table = Table::new(rows, column_constraints)
-        .block(
-            Block::default()
-                .borders(Borders::all())
-                .border_style(styles::border()),
-        )
-        .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-        .column_spacing(2);
-
-    frame.render_stateful_widget(table, chunks[1], &mut search.table);
 }

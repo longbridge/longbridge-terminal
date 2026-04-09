@@ -932,7 +932,12 @@ pub async fn cmd_security_list(market: &str, category: &str, format: &OutputForm
     let headers = &["Symbol", "Name"];
     let rows = securities
         .iter()
-        .map(|s| vec![s.symbol.clone(), locale_name(&s.name_en, &s.name_cn).to_owned()])
+        .map(|s| {
+            vec![
+                s.symbol.clone(),
+                locale_name(&s.name_en, &s.name_cn).to_owned(),
+            ]
+        })
         .collect();
 
     print_table(headers, rows, format);
@@ -1632,7 +1637,12 @@ pub async fn run_security_list(
     let headers = &["Symbol", "Name"];
     let rows = securities
         .iter()
-        .map(|s| vec![s.symbol.clone(), locale_name(&s.name_en, &s.name_cn).to_owned()])
+        .map(|s| {
+            vec![
+                s.symbol.clone(),
+                locale_name(&s.name_en, &s.name_cn).to_owned(),
+            ]
+        })
         .collect();
     print_table(headers, rows, format);
     Ok(())

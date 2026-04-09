@@ -261,4 +261,21 @@ where
             .cloned()
             .expect("index in range")
     }
+
+    /// If Enter is pressed with non-empty input and no dropdown selection, closes the popup
+    /// and returns the raw typed query so the caller can navigate directly by symbol.
+    pub fn consume_direct_enter(&mut self, event: KeyEvent) -> Option<String> {
+        if matches!(event, key!(Enter))
+            && self.table.selected().is_none()
+            && !self.input.value().is_empty()
+        {
+            let query = self.input.value().to_string();
+            self.input.reset();
+            let _ = self.tx.send(String::new());
+            self.visible = false;
+            Some(query)
+        } else {
+            None
+        }
+    }
 }
