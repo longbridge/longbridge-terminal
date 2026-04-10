@@ -53,7 +53,23 @@ fn token_file_path() -> Result<PathBuf> {
 
 /// Try to open a URL in the system browser. Returns `true` if the command was
 /// launched successfully (the browser may still fail to load the page).
+///
+/// Checks the `BROWSER` environment variable first; falls back to the
+/// platform default (`open` on macOS, `cmd /c start` on Windows, `xdg-open`
+/// on Linux).
 pub fn open_browser(url: &str) -> bool {
+    // Honor the BROWSER environment variable if set.
+    if let Ok(browser) = std::env::var("BROWSER") {
+        if !browser.is_empty() {
+            return std::process::Command::new(&browser)
+                .arg(url)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .is_ok();
+        }
+    }
+
     #[cfg(target_os = "macos")]
     let mut cmd = std::process::Command::new("open");
     #[cfg(target_os = "windows")]
