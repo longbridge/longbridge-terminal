@@ -1,4 +1,5 @@
 use crate::{
+    data::Counter,
     openapi,
     tui::ui::styles,
     tui::widgets::{LocalSearch, Search},
@@ -6,7 +7,7 @@ use crate::{
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::Span,
     widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table},
     Frame,
@@ -19,6 +20,7 @@ pub fn render(
     currency: &mut LocalSearch<openapi::account::CurrencyInfo>,
     search: &mut Search<openapi::search::StockItem>,
     watchlist: &mut LocalSearch<crate::data::WatchlistGroup>,
+    watchlist_search: &mut LocalSearch<Counter>,
 ) {
     let popup = crate::tui::app::POPUP.load(std::sync::atomic::Ordering::Relaxed);
     if popup == crate::tui::app::POPUP_ACCOUNT {
@@ -31,6 +33,8 @@ pub fn render(
         crate::tui::views::help::render(frame, rect);
     } else if popup == crate::tui::app::POPUP_SEARCH {
         searching(frame, rect, search);
+    } else if popup == crate::tui::app::POPUP_WATCHLIST_SEARCH {
+        search_watchlist(frame, rect, watchlist_search);
     }
 }
 
@@ -221,4 +225,69 @@ fn searching(frame: &mut Frame, rect: Rect, search: &mut Search<openapi::search:
         rect.x + u16::try_from(input.visual_cursor()).unwrap() + 1,
         rect.y + 1,
     ));
+}
+
+fn search_watchlist(frame: &mut Frame, rect: Rect, search: &mut LocalSearch<Counter>) {
+    const MAX_SIZE: (u16, u16) = (60, 25);
+    const COLUMN_WIDTHS: [Constraint; 3] = [
+        Constraint::Length(4),
+        Constraint::Length(12),
+        Constraint::Min(10),
+    ];
+    let rect = crate::tui::ui::rect::centered(MAX_SIZE.0, MAX_SIZE.1, rect);
+    frame.render_widget(Clear, rect);
+
+    let chunks = Layout::default()
+        .margin(1)
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(1)].as_ref())
+        .split(rect);
+
+    let input = &search.input;
+    let (title, border_style) = if let Some(err) = search.error() {
+        (format!(" {err} "), Style::default().fg(Color::LightRed))
+    } else {
+        (t!("WatchlistSearch.title").to_string(), styles::border())
+    };
+    let paragraph = Paragraph::new(input.value()).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(border_style)
+            .title(title),
+    );
+    frame.render_widget(paragraph, chunks[0]);
+    frame.set_cursor_position((
+        chunks[0].x + u16::try_from(input.visual_cursor()).unwrap() + 1,
+        chunks[0].y + 1,
+    ));
+
+    let rows = search
+        .options()
+        .iter()
+        .map(|counter| {
+            let name = crate::data::STOCKS
+                .get(counter)
+                .map(|s| s.display_name().to_string())
+                .unwrap_or_default();
+            Row::new(vec![
+                Cell::from(Span::styled(
+                    counter.market().to_string(),
+                    styles::market(counter.region()),
+                )),
+                Cell::from(counter.code().to_string()),
+                Cell::from(name),
+            ])
+        })
+        .collect::<Vec<_>>();
+
+    let table = Table::new(rows, COLUMN_WIDTHS)
+        .block(
+            Block::default()
+                .borders(Borders::all())
+                .border_style(styles::border()),
+        )
+        .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+        .column_spacing(1);
+
+    frame.render_stateful_widget(table, chunks[1], &mut search.table);
 }

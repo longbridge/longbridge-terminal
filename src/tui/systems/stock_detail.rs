@@ -32,6 +32,8 @@ static REFRESH_STOCK_TASK: std::sync::LazyLock<Mutex<Option<JoinHandle<()>>>> =
     std::sync::LazyLock::new(|| Mutex::new(None));
 // Flag to track if a refresh is currently executing
 static REFRESH_EXECUTING: Atomic<bool> = Atomic::new(false);
+// Flag set when the API returns no data for the current symbol
+static STOCK_NOT_FOUND: Atomic<bool> = Atomic::new(false);
 
 // RAII guard to ensure REFRESH_EXECUTING is always cleared
 struct RefreshGuard;
@@ -57,7 +59,7 @@ pub fn render_stock(
     mut events: EventReader<Key>,
     stock: Res<StockDetail>,
     (state, indexes, ws): NavFooter,
-    (mut account, mut currency, mut search, mut watchgroup): PopUp,
+    (mut account, mut currency, mut search, mut watchgroup, mut watchlist_search): PopUp,
     mut last_choose: Local<Counter>,
     mut log_panel: Local<crate::tui::widgets::LogPanel>,
 ) {
@@ -133,6 +135,7 @@ pub fn render_stock(
             &mut currency,
             &mut search,
             &mut watchgroup,
+            &mut watchlist_search,
         );
 
         // Render floating log panel if visible
@@ -206,6 +209,26 @@ pub(crate) fn stock_detail(
     }
 
     let Some(stock) = STOCKS.get(counter) else {
+        if STOCK_NOT_FOUND.load(Ordering::Relaxed) {
+            let content_height = 2u16;
+            let y_offset = rect.height.saturating_sub(content_height) / 2;
+            let centered_rect = Rect {
+                y: rect.y + y_offset,
+                height: content_height,
+                ..rect
+            };
+            let text = ratatui::text::Text::from(vec![
+                Line::from(Span::styled(counter.to_string(), styles::primary())),
+                Line::from(Span::styled(
+                    t!("StockDetail.not_found").to_string(),
+                    styles::dark_gray(),
+                )),
+            ]);
+            frame.render_widget(
+                Paragraph::new(text).alignment(Alignment::Center),
+                centered_rect,
+            );
+        }
         return;
     };
 
@@ -863,10 +886,13 @@ pub fn refresh_stock_debounced(counter: Counter) {
             task.abort();
         }
 
+        // Reset not-found flag whenever a new refresh starts
+        STOCK_NOT_FOUND.store(false, Ordering::Relaxed);
+
         // Spawn a new debounced task
         let handle = RT.get().unwrap().spawn(async move {
-            // Wait 50ms before executing
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            // Wait 150ms before executing to avoid firing on every stock passed during navigation
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 
             // Try to acquire the execution lock (RAII guard)
             let Some(_guard) = RefreshGuard::try_acquire() else {
@@ -894,6 +920,12 @@ pub fn refresh_stock_debounced(counter: Counter) {
                     STOCKS.modify(counter.clone(), |stock| {
                         stock.update_from_security_quote(quote);
                     });
+                } else {
+                    // API returned no data — symbol does not exist
+                    STOCK_NOT_FOUND.store(true, Ordering::Relaxed);
+                    if let Some(tx) = crate::tui::app::UPDATE_TX.get() {
+                        let _ = tx.send(bevy_ecs::system::CommandQueue::default());
+                    }
                 }
             }
 
@@ -934,6 +966,7 @@ pub fn enter_stock(counter: Res<StockDetail>) {
 }
 
 pub fn exit_stock() {
+    STOCK_NOT_FOUND.store(false, Ordering::Relaxed);
     crate::tui::systems::stock_news::reset_news_view();
     RT.get().unwrap().spawn(async move {
         _ = WS.unmount("stock_detail").await;

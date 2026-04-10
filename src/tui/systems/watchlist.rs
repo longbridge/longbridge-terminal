@@ -31,7 +31,7 @@ pub fn render_watchlist(
     mut events: EventReader<Key>,
     command: Res<Command>,
     (state, indexes, ws): NavFooter,
-    (mut account, mut currency, mut search, mut watchgroup): PopUp,
+    (mut account, mut currency, mut search, mut watchgroup, mut watchlist_search): PopUp,
     mut log_panel: Local<crate::tui::widgets::LogPanel>,
 ) {
     for event in &mut events {
@@ -115,6 +115,7 @@ pub fn render_watchlist(
             &mut currency,
             &mut search,
             &mut watchgroup,
+            &mut watchlist_search,
         );
 
         // Render floating log panel if visible
@@ -540,6 +541,7 @@ pub fn refresh_watchlist(update_tx: mpsc::UnboundedSender<CommandQueue>) {
         // counter order maybe change, reset table highlight
         WATCHLIST_TABLE.lock().expect("poison").select(None);
 
+        let final_counters = WATCHLIST.read().expect("poison").counters().to_vec();
         let local_search = LocalSearch::new(
             WATCHLIST.read().expect("poison").groups().to_vec(),
             |keyword: &str, group: &crate::data::WatchlistGroup| {
@@ -547,9 +549,22 @@ pub fn refresh_watchlist(update_tx: mpsc::UnboundedSender<CommandQueue>) {
                 group.name.to_ascii_lowercase().contains(keyword)
             },
         );
+        let watchlist_search =
+            LocalSearch::new(final_counters, |keyword: &str, counter: &Counter| {
+                let kw = keyword.to_ascii_lowercase();
+                if counter.as_str().to_ascii_lowercase().contains(&kw) {
+                    return true;
+                }
+                crate::data::STOCKS
+                    .get(counter)
+                    .is_some_and(|s| s.name.to_ascii_lowercase().contains(&kw))
+            });
         let mut queue = CommandQueue::default();
         queue.push(InsertResource {
             resource: local_search,
+        });
+        queue.push(InsertResource {
+            resource: watchlist_search,
         });
         _ = update_tx.send(queue);
     });

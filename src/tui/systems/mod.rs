@@ -130,6 +130,7 @@ pub(crate) type PopUp<'w> = (
     ResMut<'w, LocalSearch<openapi::account::CurrencyInfo>>,
     ResMut<'w, Search<openapi::search::StockItem>>,
     ResMut<'w, LocalSearch<WatchlistGroup>>,
+    ResMut<'w, LocalSearch<Counter>>,
 );
 
 // Shared event types

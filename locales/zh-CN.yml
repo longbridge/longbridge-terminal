@@ -159,6 +159,10 @@ SwitchCurrency.title: 选择币种
 SwitchWatchlist.title: 选择自选列表分组
 SearchStock:
   title: "查看股票（例如 AAPL.US）"
+StockDetail.not_found: "股票代码不存在"
+WatchlistSearch:
+  title: "搜索自选股票（代码 / 名称）"
+  invalid_format: "格式无效，请输入如 AAPL.US 的 symbol"
 TextInput:
   placeholder: "输入想搜索的内容"
 TradeToken.title: 交易密码

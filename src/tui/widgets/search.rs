@@ -20,6 +20,7 @@ pub struct LocalSearch<T> {
     items: Vec<T>,
     options: Vec<T>,
     func: fn(&str, &T) -> bool,
+    error_msg: Option<String>,
 }
 
 impl<T> std::fmt::Debug for LocalSearch<T>
@@ -47,6 +48,7 @@ where
             options: items.clone(),
             items,
             func,
+            error_msg: None,
         }
     }
 
@@ -62,6 +64,7 @@ where
         match event {
             key!(Esc) => {
                 self.visible = false;
+                self.error_msg = None;
                 return (true, None);
             }
             key!(Enter) => {
@@ -71,6 +74,7 @@ where
                     self.input.reset();
                     self.options = self.items.clone();
                     self.visible = false;
+                    self.error_msg = None;
                     return (true, Some(selected));
                 }
             }
@@ -83,6 +87,7 @@ where
                 self.table.select(idx);
             }
             _ => {
+                self.error_msg = None;
                 let evt = crossterm::event::Event::Key(event);
                 if self.input.handle_event(&evt).is_some() {
                     let keyword = self.input.value();
@@ -92,10 +97,54 @@ where
                         .filter(|v| keyword.is_empty() || (self.func)(keyword, v))
                         .cloned()
                         .collect();
+                    // Auto-select first match so Enter works immediately
+                    self.table.select(if self.options.is_empty() {
+                        None
+                    } else {
+                        Some(0)
+                    });
                 }
             }
         }
         (false, None)
+    }
+
+    pub fn set_error(&mut self, msg: String) {
+        self.error_msg = Some(msg);
+    }
+
+    pub fn error(&self) -> Option<&str> {
+        self.error_msg.as_deref()
+    }
+
+    /// When Enter is pressed with a non-empty input and no dropdown item selected,
+    /// returns the raw typed query for direct navigation. Leaves the popup open so
+    /// the caller can decide whether to close it or show an error.
+    pub fn consume_direct_enter(&mut self, event: KeyEvent) -> Option<String> {
+        if matches!(event, key!(Enter))
+            && self.table.selected().is_none()
+            && !self.input.value().is_empty()
+        {
+            Some(self.input.value().to_string())
+        } else {
+            None
+        }
+    }
+
+    pub fn close(&mut self) {
+        self.visible = false;
+        self.error_msg = None;
+        self.input.reset();
+        self.options = self.items.clone();
+        self.table.select(None);
+    }
+
+    pub fn reset_items(&mut self, items: Vec<T>) {
+        self.items = items.clone();
+        self.options = items;
+        self.input.reset();
+        self.table.select(None);
+        self.error_msg = None;
     }
 
     pub fn items(&self) -> &[T] {

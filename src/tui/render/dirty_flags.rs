@@ -96,6 +96,9 @@ impl DirtyFlags {
         if popup & crate::tui::app::POPUP_WATCHLIST != 0 {
             self.insert(Self::POPUP_WATCHLIST);
         }
+        if popup & crate::tui::app::POPUP_WATCHLIST_SEARCH != 0 {
+            self.insert(Self::POPUP_WATCHLIST);
+        }
         self
     }
 }
