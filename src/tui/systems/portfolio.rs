@@ -38,7 +38,7 @@ pub fn render_portfolio(
     _accounts: Res<crate::tui::widgets::Select<Account>>,
     _command: Res<super::Command>,
     (state, indexes, ws): NavFooter,
-    (mut account, mut currency, mut search, mut watchgroup): PopUp,
+    (mut account, mut currency, mut search, mut watchgroup, mut watchlist_search): PopUp,
     _table_state: Local<ratatui::widgets::TableState>,
     mut log_panel: Local<crate::tui::widgets::LogPanel>,
 ) {
@@ -85,6 +85,7 @@ pub fn render_portfolio(
                 &mut currency,
                 &mut search,
                 &mut watchgroup,
+                &mut watchlist_search,
             );
             return;
         };
@@ -396,6 +397,7 @@ pub fn render_portfolio(
             &mut currency,
             &mut search,
             &mut watchgroup,
+            &mut watchlist_search,
         );
 
         // Render floating log panel if visible

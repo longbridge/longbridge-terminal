@@ -15,6 +15,7 @@ use crate::tui::widgets::{Carousel, Loading, LocalSearch, Search, Terminal};
 use crate::{openapi, tui::systems};
 
 pub static RT: OnceLock<tokio::runtime::Handle> = OnceLock::new();
+pub static UPDATE_TX: OnceLock<mpsc::UnboundedSender<CommandQueue>> = OnceLock::new();
 pub static POPUP: AtomicU8 = AtomicU8::new(0);
 pub static LAST_STATE: Atomic<AppState> = Atomic::new(AppState::Watchlist);
 pub static QUOTE_BMP: Atomic<bool> = Atomic::new(false);
@@ -28,6 +29,7 @@ pub const POPUP_SEARCH: u8 = 0b10;
 pub const POPUP_ACCOUNT: u8 = 0b100;
 pub const POPUP_CURRENCY: u8 = 0b1000;
 pub const POPUP_WATCHLIST: u8 = 0b10000;
+pub const POPUP_WATCHLIST_SEARCH: u8 = 0b10_0000;
 
 #[derive(
     Clone, Copy, PartialEq, Eq, Hash, Debug, Default, States, strum::EnumIter, bytemuck::NoUninit,
@@ -50,6 +52,7 @@ pub async fn run(
     mut quote_receiver: impl tokio_stream::Stream<Item = longbridge::quote::PushEvent> + Unpin,
 ) {
     let (update_tx, mut update_rx) = mpsc::unbounded_channel();
+    UPDATE_TX.set(update_tx.clone()).ok();
 
     // Initialize index subscriptions
     let indexes: Vec<[Counter; 3]> = vec![
@@ -114,6 +117,18 @@ pub async fn run(
         })
     });
     let search_watchlist = LocalSearch::new(Vec::<WatchlistGroup>::new(), |_keyword, _group| false);
+    let watchlist_search = LocalSearch::new(
+        Vec::<crate::data::Counter>::new(),
+        |keyword: &str, counter: &crate::data::Counter| {
+            let kw = keyword.to_ascii_lowercase();
+            if counter.as_str().to_ascii_lowercase().contains(&kw) {
+                return true;
+            }
+            crate::data::STOCKS
+                .get(counter)
+                .is_some_and(|s| s.name.to_ascii_lowercase().contains(&kw))
+        },
+    );
 
     RT.set(tokio::runtime::Handle::current()).unwrap();
     let mut app = bevy_app::App::new();
@@ -124,6 +139,7 @@ pub async fn run(
         .init_resource::<Loading>()
         .insert_resource(search_stock)
         .insert_resource(search_watchlist)
+        .insert_resource(watchlist_search)
         .insert_resource(systems::Command(update_tx.clone()))
         .insert_resource(Carousel::new(indexes, Duration::from_secs(5)))
         .insert_resource(systems::WsState(crate::data::ReadyState::Open))
@@ -571,7 +587,91 @@ fn handle_popup_input(
         }
     } else if popup == POPUP_HELP {
         POPUP.store(0, Ordering::Relaxed);
+    } else if popup == POPUP_WATCHLIST_SEARCH {
+        handle_watchlist_search_input(app, event);
     }
+}
+
+fn handle_watchlist_search_input(app: &mut bevy_app::App, event: crossterm::event::KeyEvent) {
+    // First check for direct Enter (typed input, no dropdown selection)
+    let direct_query = {
+        let mut search = app
+            .world
+            .resource_mut::<LocalSearch<crate::data::Counter>>();
+        search.consume_direct_enter(event)
+    };
+
+    if let Some(query) = direct_query {
+        if let Some(symbol) = normalize_counter(&query) {
+            POPUP.store(0, Ordering::Relaxed);
+            let counter = crate::data::Counter::new(&symbol);
+            {
+                app.world
+                    .resource_mut::<LocalSearch<crate::data::Counter>>()
+                    .close();
+            }
+            navigate_to_counter(app, counter);
+        } else {
+            app.world
+                .resource_mut::<LocalSearch<crate::data::Counter>>()
+                .set_error(t!("WatchlistSearch.invalid_format").to_string());
+        }
+    } else {
+        let (hidden, selected) = {
+            let mut search = app
+                .world
+                .resource_mut::<LocalSearch<crate::data::Counter>>();
+            let (hidden, selected) = search.handle_key(event);
+            if hidden {
+                POPUP.store(0, Ordering::Relaxed);
+            }
+            (hidden, selected)
+        };
+        let _ = hidden;
+        if let Some(counter) = selected {
+            navigate_to_counter(app, counter);
+        }
+    }
+}
+
+/// Normalizes user input into a full `CODE.MARKET` symbol string.
+/// - Input with a dot (e.g. `AAPL.US`, `700.hk`) → validates market, returns uppercased.
+/// - All-letter input (e.g. `AAPL`, `tsla`) → appends `.US`.
+/// - All-digit input (e.g. `700`, `09988`) → appends `.HK`.
+/// - Anything else → `None` (invalid).
+fn normalize_counter(query: &str) -> Option<String> {
+    let q = query.trim();
+    if q.is_empty() {
+        return None;
+    }
+    if q.contains('.') {
+        let mut parts = q.splitn(2, '.');
+        let code = parts.next().unwrap_or("").trim();
+        let market = parts.next().unwrap_or("").trim().to_uppercase();
+        if code.is_empty()
+            || !matches!(market.as_str(), "HK" | "US" | "SH" | "SZ" | "SG" | "HAS")
+        {
+            return None;
+        }
+        Some(format!("{}.{}", code.to_uppercase(), market))
+    } else if q.chars().all(|c| c.is_ascii_alphabetic()) {
+        Some(format!("{}.US", q.to_uppercase()))
+    } else if q.chars().all(|c| c.is_ascii_digit()) {
+        Some(format!("{q}.HK"))
+    } else {
+        None
+    }
+}
+
+fn navigate_to_counter(app: &mut bevy_app::App, counter: crate::data::Counter) {
+    app.world.insert_resource(systems::StockDetail(counter));
+    let state = *app.world.resource::<State<AppState>>().get();
+    let next_state = if state == AppState::Stock {
+        AppState::Stock
+    } else {
+        AppState::WatchlistStock
+    };
+    app.world.insert_resource(NextState(Some(next_state)));
 }
 
 #[allow(clippy::too_many_lines)]
@@ -719,14 +819,21 @@ fn handle_global_keys(
             _ => {}
         },
         key!('/') => {
-            {
+            if state == AppState::Watchlist || state == AppState::WatchlistStock {
+                let mut ws = app
+                    .world
+                    .resource_mut::<LocalSearch<crate::data::Counter>>();
+                ws.visible();
+                POPUP.store(POPUP_WATCHLIST_SEARCH, Ordering::Relaxed);
+                render_state.mark_dirty(DirtyFlags::ALL);
+            } else {
                 let mut search = app
                     .world
                     .resource_mut::<Search<openapi::search::StockItem>>();
                 search.visible();
+                POPUP.store(POPUP_SEARCH, Ordering::Relaxed);
+                render_state.mark_dirty(DirtyFlags::POPUP_SEARCH);
             }
-            POPUP.store(POPUP_SEARCH, Ordering::Relaxed);
-            render_state.mark_dirty(DirtyFlags::POPUP_SEARCH);
         }
         key!('?') => {
             POPUP.store(POPUP_HELP, Ordering::Relaxed);

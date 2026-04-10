@@ -34,7 +34,7 @@ pub fn render_watchlist_stock(
     stock: Res<StockDetail>,
     command: Res<Command>,
     (state, indexes, ws): NavFooter,
-    (mut account, mut currency, mut search, mut watchgroup): PopUp,
+    (mut account, mut currency, mut search, mut watchgroup, mut watchlist_search): PopUp,
     mut last_choose: Local<Counter>,
     mut log_panel: Local<crate::tui::widgets::LogPanel>,
 ) {
@@ -272,6 +272,7 @@ pub fn render_watchlist_stock(
             &mut currency,
             &mut search,
             &mut watchgroup,
+            &mut watchlist_search,
         );
 
         // Render floating log panel if visible

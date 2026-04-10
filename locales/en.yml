@@ -159,6 +159,10 @@ SwitchCurrency.title: Choose Currency
 SwitchWatchlist.title: Choose Watchlist group
 SearchStock:
   title: "Open Quote (e.g. AAPL.US)"
+StockDetail.not_found: "Symbol not found"
+WatchlistSearch:
+  title: "Search Watchlist (code / name)"
+  invalid_format: "Invalid format, try AAPL.US"
 TextInput:
   placeholder: "What are you searching for?"
 TradeToken.title: Trade Password
