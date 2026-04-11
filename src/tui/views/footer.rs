@@ -40,7 +40,8 @@ pub fn render(frame: &mut Frame, rect: Rect, indexes: &[Counter; 3], state: &WsS
             );
         let color = styles::up(ordering);
         // todo: add reversed modifier for chosen stock
-        let name = t!(&format!("StockIndex.{counter}"));
+        let key = format!("StockIndex.{counter}");
+        let name = t!(&key).to_string();
         let index_name = Span::styled(name, color);
         let index_num = Span::styled(numbers, color);
         let toggle_key = Span::styled(format!("[{toggle_key}]  "), styles::dark_gray());

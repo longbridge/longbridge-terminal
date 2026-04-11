@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
@@ -94,6 +96,7 @@ impl TradeSessionExt for TradeSession {
             TradeSession::Post => t!("TradeSession.Post"),
             TradeSession::Overnight => t!("TradeSession.Overnight"),
         }
+        .to_string()
     }
 }
 
@@ -122,7 +125,7 @@ impl TradeStatusExt for TradeStatus {
 
     fn label(self) -> String {
         match self {
-            TradeStatus::Normal => String::new(), // No label for normal status
+            TradeStatus::Normal => Cow::Borrowed(""), // No label for normal status
             TradeStatus::Halted => t!("TradeStatus.Halted"),
             TradeStatus::Delisted => t!("TradeStatus.Delisted"),
             TradeStatus::Fuse => t!("TradeStatus.Fuse"),
@@ -132,8 +135,8 @@ impl TradeStatusExt for TradeStatus {
             TradeStatus::SplitStockHalts => t!("TradeStatus.SplitStockHalts"),
             TradeStatus::Expired => t!("TradeStatus.Expired"),
             TradeStatus::WarrantPrepareList => t!("TradeStatus.WarrantPrepareList"),
-            TradeStatus::SuspendTrade => t!("TradeStatus.SuspendTrade"),
-        }
+           TradeStatus::SuspendTrade => t!("TradeStatus.SuspendTrade"),
+        }.to_string()
     }
 }
 

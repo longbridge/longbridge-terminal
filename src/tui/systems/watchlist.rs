@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap};
 
 use bevy_ecs::{
     prelude::*,
@@ -391,8 +391,9 @@ pub async fn fetch_watchlist(
             "uk" => t!("watchlist_group.uk"),
             "de" => t!("watchlist_group.de"),
             "na" => t!("watchlist_group.na"),
-            _ => name.to_string(),
+            _ => Cow::Borrowed(name),
         }
+        .to_string()
     }
 
     let ctx = crate::openapi::quote();
