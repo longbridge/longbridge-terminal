@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap};
 
 use bevy_ecs::{
     prelude::*,
@@ -381,18 +381,19 @@ pub async fn fetch_watchlist(
     // Translate default group names
     fn translate_group_name(name: &str) -> String {
         match name.to_lowercase().as_str() {
-            "all" => t!("watchlist_group.all").to_string(),
-            "holdings" => t!("watchlist_group.holdings").to_string(),
-            "us" => t!("watchlist_group.us").to_string(),
-            "hk" => t!("watchlist_group.hk").to_string(),
-            "cn" => t!("watchlist_group.cn").to_string(),
-            "sg" => t!("watchlist_group.sg").to_string(),
-            "jp" => t!("watchlist_group.jp").to_string(),
-            "uk" => t!("watchlist_group.uk").to_string(),
-            "de" => t!("watchlist_group.de").to_string(),
-            "na" => t!("watchlist_group.na").to_string(),
-            _ => name.to_string(),
+            "all" => t!("watchlist_group.all"),
+            "holdings" => t!("watchlist_group.holdings"),
+            "us" => t!("watchlist_group.us"),
+            "hk" => t!("watchlist_group.hk"),
+            "cn" => t!("watchlist_group.cn"),
+            "sg" => t!("watchlist_group.sg"),
+            "jp" => t!("watchlist_group.jp"),
+            "uk" => t!("watchlist_group.uk"),
+            "de" => t!("watchlist_group.de"),
+            "na" => t!("watchlist_group.na"),
+            _ => Cow::Borrowed(name),
         }
+        .to_string()
     }
 
     let ctx = crate::openapi::quote();
