@@ -14,7 +14,7 @@ pub fn align_right(text: &str, width: usize) -> String {
 }
 
 pub fn unit(number: Decimal, precision: u32) -> String {
-    match rust_i18n::locale().as_str() {
+    match &*rust_i18n::locale() {
         "zh-CN" => unit_4(number, precision, (" 万", " 亿", " 万亿")),
         "zh-HK" => unit_4(number, precision, (" 萬", " 億", " 萬億")),
         _ => unit_3(number, precision, ("K", "M", "B")),

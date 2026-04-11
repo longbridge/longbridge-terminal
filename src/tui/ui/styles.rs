@@ -142,8 +142,8 @@ pub fn bull_bear_color() -> (cli_candlestick_chart::Color, cli_candlestick_chart
     }
 }
 
-#[allow(clippy::needless_pass_by_value)]
-pub fn item<'a>(label: String, value: impl Into<Cow<'a, str>>) -> ListItem<'a> {
+pub fn item<'a>(label: impl Into<String>, value: impl Into<Cow<'a, str>>) -> ListItem<'a> {
+    let label = label.into();
     let spans = Line::from(vec![
         Span::styled(format!("{label}: "), super::styles::label()),
         Span::styled(value, super::styles::text()),
@@ -151,8 +151,8 @@ pub fn item<'a>(label: String, value: impl Into<Cow<'a, str>>) -> ListItem<'a> {
     ListItem::new(spans)
 }
 
-#[allow(clippy::needless_pass_by_value)]
-pub fn item_up<'a>(label: String, value: impl Into<Cow<'a, str>>) -> ListItem<'a> {
+pub fn item_up<'a>(label: impl Into<String>, value: impl Into<Cow<'a, str>>) -> ListItem<'a> {
+    let label = label.into();
     let value = value.into();
     let style = super::styles::up(value.sign());
     let spans = Line::from(vec![
@@ -162,8 +162,8 @@ pub fn item_up<'a>(label: String, value: impl Into<Cow<'a, str>>) -> ListItem<'a
     ListItem::new(spans)
 }
 
-#[allow(clippy::needless_pass_by_value)]
-pub fn item_label(label: String) -> ListItem<'static> {
+pub fn item_label(label: impl Into<String>) -> ListItem<'static> {
+    let label = label.into();
     let span = Span::styled(format!("{label}: "), super::styles::label());
 
     ListItem::new(span)
@@ -185,14 +185,14 @@ pub fn item_value_up<'a>(value: impl Into<Cow<'a, str>>) -> ListItem<'a> {
 
 pub fn risk_level(level: u8) -> (String, Style) {
     match level {
-        0 => (t!("RiskLevel.Safe"), Style::default().fg(Color::Green)),
-        1 => (t!("RiskLevel.Middle"), Style::default().fg(Color::Yellow)),
+        0 => (t!("RiskLevel.Safe").to_string(), Style::default().fg(Color::Green)),
+        1 => (t!("RiskLevel.Middle").to_string(), Style::default().fg(Color::Yellow)),
         2 => (
-            t!("RiskLevel.Warning"),
+            t!("RiskLevel.Warning").to_string(),
             Style::default().fg(Color::Rgb(255, 140, 0)),
         ),
-        3 => (t!("RiskLevel.Danger"), Style::default().fg(Color::Red)),
-        _ => (t!("RiskLevel.Unknown"), Style::default().fg(Color::Gray)),
+        3 => (t!("RiskLevel.Danger").to_string(), Style::default().fg(Color::Red)),
+        _ => (t!("RiskLevel.Unknown").to_string(), Style::default().fg(Color::Gray)),
     }
 }
 
