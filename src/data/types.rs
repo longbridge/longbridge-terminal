@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
@@ -89,11 +91,12 @@ impl TradeSessionExt for TradeSession {
 
     fn label(self) -> String {
         match self {
-            TradeSession::Intraday => t!("TradeSession.Intraday").to_string(),
-            TradeSession::Pre => t!("TradeSession.Pre").to_string(),
-            TradeSession::Post => t!("TradeSession.Post").to_string(),
-            TradeSession::Overnight => t!("TradeSession.Overnight").to_string(),
+            TradeSession::Intraday => t!("TradeSession.Intraday"),
+            TradeSession::Pre => t!("TradeSession.Pre"),
+            TradeSession::Post => t!("TradeSession.Post"),
+            TradeSession::Overnight => t!("TradeSession.Overnight"),
         }
+        .to_string()
     }
 }
 
@@ -122,18 +125,18 @@ impl TradeStatusExt for TradeStatus {
 
     fn label(self) -> String {
         match self {
-            TradeStatus::Normal => String::new(), // No label for normal status
-            TradeStatus::Halted => t!("TradeStatus.Halted").to_string(),
-            TradeStatus::Delisted => t!("TradeStatus.Delisted").to_string(),
-            TradeStatus::Fuse => t!("TradeStatus.Fuse").to_string(),
-            TradeStatus::PrepareList => t!("TradeStatus.PrepareList").to_string(),
-            TradeStatus::CodeMoved => t!("TradeStatus.CodeMoved").to_string(),
-            TradeStatus::ToBeOpened => t!("TradeStatus.ToBeOpened").to_string(),
-            TradeStatus::SplitStockHalts => t!("TradeStatus.SplitStockHalts").to_string(),
-            TradeStatus::Expired => t!("TradeStatus.Expired").to_string(),
-            TradeStatus::WarrantPrepareList => t!("TradeStatus.WarrantPrepareList").to_string(),
-            TradeStatus::SuspendTrade => t!("TradeStatus.SuspendTrade").to_string(),
-        }
+            TradeStatus::Normal => Cow::Borrowed(""), // No label for normal status
+            TradeStatus::Halted => t!("TradeStatus.Halted"),
+            TradeStatus::Delisted => t!("TradeStatus.Delisted"),
+            TradeStatus::Fuse => t!("TradeStatus.Fuse"),
+            TradeStatus::PrepareList => t!("TradeStatus.PrepareList"),
+            TradeStatus::CodeMoved => t!("TradeStatus.CodeMoved"),
+            TradeStatus::ToBeOpened => t!("TradeStatus.ToBeOpened"),
+            TradeStatus::SplitStockHalts => t!("TradeStatus.SplitStockHalts"),
+            TradeStatus::Expired => t!("TradeStatus.Expired"),
+            TradeStatus::WarrantPrepareList => t!("TradeStatus.WarrantPrepareList"),
+           TradeStatus::SuspendTrade => t!("TradeStatus.SuspendTrade"),
+        }.to_string()
     }
 }
 
