@@ -261,7 +261,7 @@ pub(crate) fn stock_detail(
     };
 
     // Helper function to create ListItem with price and color based on prev_close
-    let price_item = |label: String, price_opt: Option<Decimal>| -> ListItem<'_> {
+    let price_item = |label: &str, price_opt: Option<Decimal>| -> ListItem<'_> {
         let prev_close = stock.quote.prev_close.filter(|&p| p > Decimal::ZERO);
         let price = price_opt.filter(|&p| p > Decimal::ZERO);
 
@@ -319,14 +319,14 @@ pub(crate) fn stock_detail(
             }
         }),
         ListItem::new(" "),
-        price_item(t!("StockDetail.Open").to_string(), stock.quote.open),
+        price_item(&t!("StockDetail.Open"), stock.quote.open),
         item(
             t!("StockDetail.Prev. Close"),
             fmt_decimal(stock.quote.prev_close),
         ),
         ListItem::new(" "),
-        price_item(t!("StockDetail.High").to_string(), stock.quote.high),
-        price_item(t!("StockDetail.Low").to_string(), stock.quote.low),
+        price_item(&t!("StockDetail.High"), stock.quote.high),
+        price_item(&t!("StockDetail.Low"), stock.quote.low),
         item(t!("StockDetail.Average"), EMPTY_PLACEHOLDER),
         ListItem::new(" "),
         item(t!("StockDetail.Volume"), fmt_unsigned(stock.quote.volume)),
