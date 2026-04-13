@@ -194,39 +194,19 @@ fn build_download_url(base: &str, version: &str) -> String {
 }
 
 async fn download_to_file(url: &str, dest: &std::path::Path) -> anyhow::Result<()> {
-    use futures::StreamExt as _;
-    use std::io::Write as _;
-
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
         .build()?;
 
-    let resp = client.get(url).send().await?.error_for_status()?;
-    let total_size = resp.content_length();
+    eprint!("Downloading...");
+    let bytes = client.get(url).send().await?.error_for_status()?.bytes().await?;
 
-    let mut file = std::fs::File::create(dest)?;
-    let mut downloaded: u64 = 0;
-    let mut stream = resp.bytes_stream();
-
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk?;
-        file.write_all(&chunk)?;
-        downloaded += chunk.len() as u64;
-
-        #[allow(clippy::cast_precision_loss)]
-        if let Some(total) = total_size {
-            eprint!(
-                "\rDownloading... {:.1}MB / {:.1}MB",
-                downloaded as f64 / 1_048_576.0,
-                total as f64 / 1_048_576.0,
-            );
-        } else {
-            eprint!("\rDownloading... {:.1}MB", downloaded as f64 / 1_048_576.0);
-        }
+    #[allow(clippy::cast_precision_loss)]
+    {
+        eprintln!(" {:.1}MB", bytes.len() as f64 / 1_048_576.0);
     }
-    eprintln!();
 
-    file.flush()?;
+    std::fs::write(dest, &bytes)?;
     Ok(())
 }
 
