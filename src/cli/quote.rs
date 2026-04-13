@@ -2109,7 +2109,7 @@ pub async fn cmd_broker_holding_detail(
 ) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
-        "/v1/broker-holding/detail",
+        "/v1/quote/broker-holding/detail",
         &[("counter_id", cid.as_str())],
         verbose,
     )
@@ -2171,26 +2171,34 @@ pub async fn cmd_broker_holding_daily(
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => {
-            let raw = val_str(&data["list"]);
-            if raw == "-" || raw.is_empty() {
+            let items = match data.get("list").and_then(|v| v.as_array()) {
+                Some(a) if !a.is_empty() => a.clone(),
+                _ => {
+                    let raw = val_str(&data["list"]);
+                    if raw == "-" || raw.is_empty() {
+                        println!("No daily holding data found.");
+                        return Ok(());
+                    }
+                    serde_json::from_str::<Vec<Value>>(&raw).unwrap_or_default()
+                }
+            };
+            if items.is_empty() {
                 println!("No daily holding data found.");
                 return Ok(());
             }
-            if let Ok(items) = serde_json::from_str::<Vec<Value>>(&raw) {
-                let headers = ["date", "holding", "ratio%", "change"];
-                let rows: Vec<Vec<String>> = items
-                    .iter()
-                    .map(|item| {
-                        vec![
-                            val_str(&item["date"]),
-                            val_str(&item["holding"]),
-                            val_str(&item["ratio"]),
-                            val_str(&item["chg"]),
-                        ]
-                    })
-                    .collect();
-                print_table(&headers, rows, format);
-            }
+            let headers = ["date", "holding", "ratio%", "change"];
+            let rows: Vec<Vec<String>> = items
+                .iter()
+                .map(|item| {
+                    vec![
+                        val_str(&item["date"]),
+                        val_str(&item["holding"]),
+                        val_str(&item["ratio"]),
+                        val_str(&item["chg"]),
+                    ]
+                })
+                .collect();
+            print_table(&headers, rows, format);
         }
     }
     Ok(())
