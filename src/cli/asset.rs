@@ -268,7 +268,7 @@ fn print_pnl_detail(data: &Value, symbol: &str) {
     };
     print!("{title}");
     if !currency.is_empty() && currency != "-" {
-        print!("  [{currency}]");
+        print!("  currency: {currency}");
     }
     if !start_date.is_empty() && start_date != "-" {
         print!("  {start_date} ~ {end_date}");
