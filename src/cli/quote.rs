@@ -1912,6 +1912,18 @@ fn format_with_commas(n: i64) -> String {
     result.chars().rev().collect()
 }
 
+/// Format unix timestamp string to ISO 8601 date
+fn fmt_ts(raw: &str) -> String {
+    raw.parse::<i64>()
+        .map_or_else(|_| raw.to_string(), crate::utils::datetime::format_date)
+}
+
+/// Format premium rate: -0.182435 → -18.24%
+fn fmt_premium(raw: &str) -> String {
+    raw.parse::<f64>()
+        .map_or_else(|_| raw.to_string(), |v| format!("{:.2}%", v * 100.0))
+}
+
 fn val_str(v: &Value) -> String {
     match v {
         Value::String(s) => s.clone(),
@@ -2290,23 +2302,15 @@ pub async fn cmd_ah_premium_kline(
                     return Ok(());
                 }
             };
-            let headers = [
-                "timestamp",
-                "a_price",
-                "h_price",
-                "premium%",
-                "spread",
-                "rate",
-            ];
+            let headers = ["date", "a_price(CNY)", "h_price(HKD)", "premium", "fx_rate"];
             let rows: Vec<Vec<String>> = items
                 .iter()
                 .map(|item| {
                     vec![
-                        val_str(&item["timestamp"]),
+                        fmt_ts(&val_str(&item["timestamp"])),
                         val_str(&item["aprice"]),
                         val_str(&item["hprice"]),
-                        val_str(&item["ahpremium_rate"]),
-                        val_str(&item["price_spread"]),
+                        fmt_premium(&val_str(&item["ahpremium_rate"])),
                         val_str(&item["currency_rate"]),
                     ]
                 })
@@ -2339,16 +2343,16 @@ pub async fn cmd_ah_premium_intraday(
                     return Ok(());
                 }
             };
-            let headers = ["timestamp", "a_price", "h_price", "premium%", "spread"];
+            let headers = ["time", "a_price(CNY)", "h_price(HKD)", "premium", "fx_rate"];
             let rows: Vec<Vec<String>> = items
                 .iter()
                 .map(|item| {
                     vec![
-                        val_str(&item["timestamp"]),
+                        fmt_ts(&val_str(&item["timestamp"])),
                         val_str(&item["aprice"]),
                         val_str(&item["hprice"]),
-                        val_str(&item["ahpremium_rate"]),
-                        val_str(&item["price_spread"]),
+                        fmt_premium(&val_str(&item["ahpremium_rate"])),
+                        val_str(&item["currency_rate"]),
                     ]
                 })
                 .collect();
