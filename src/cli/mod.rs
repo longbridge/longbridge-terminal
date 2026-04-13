@@ -785,6 +785,8 @@ pub enum Commands {
 
     /// A/H premium ratio for dual-listed stocks (kline or intraday)
     ///
+    /// Only works for HK stocks that are also listed on A-share markets (e.g. 939.HK, 1398.HK).
+    /// If the API returns no data, the stock is not dual-listed in A-shares.
     /// Example: longbridge ah-premium 939.HK
     /// Example: longbridge ah-premium intraday 939.HK
     /// Example: longbridge ah-premium 939.HK --kline-type day --count 100
