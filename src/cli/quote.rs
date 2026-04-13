@@ -2476,14 +2476,41 @@ pub async fn cmd_trade_stats(symbol: String, format: &OutputFormat, verbose: boo
                 .get("statistics")
                 .or_else(|| data.get("tradestatistics"))
             {
-                println!("Trade Statistics");
-                println!("  Avg Price:    {}", val_str(&stats["avgprice"]));
-                println!("  Total Amount: {}", val_str(&stats["total_amount"]));
+                let total: f64 = val_str(&stats["total_amount"]).parse().unwrap_or(0.0);
+                let buy: f64 = val_str(&stats["buy"]).parse().unwrap_or(0.0);
+                let sell: f64 = val_str(&stats["sell"]).parse().unwrap_or(0.0);
+                let neutral: f64 = val_str(&stats["neutral"]).parse().unwrap_or(0.0);
+                let buy_pct = if total > 0.0 {
+                    buy / total * 100.0
+                } else {
+                    0.0
+                };
+                let sell_pct = if total > 0.0 {
+                    sell / total * 100.0
+                } else {
+                    0.0
+                };
+                let neutral_pct = if total > 0.0 {
+                    neutral / total * 100.0
+                } else {
+                    0.0
+                };
+
                 println!(
-                    "  Buy: {}  Sell: {}  Neutral: {}",
-                    val_str(&stats["buy"]),
-                    val_str(&stats["sell"]),
-                    val_str(&stats["neutral"]),
+                    "Prev Close: {}  Avg Price: {}  Trades: {}",
+                    val_str(&stats["preclose"]),
+                    val_str(&stats["avgprice"]),
+                    val_str(&stats["trades_count"]),
+                );
+                println!(
+                    "Volume: {}  Buy: {} ({:.1}%)  Sell: {} ({:.1}%)  Neutral: {} ({:.1}%)",
+                    fmt_shares(&total.to_string()),
+                    fmt_shares(&buy.to_string()),
+                    buy_pct,
+                    fmt_shares(&sell.to_string()),
+                    sell_pct,
+                    fmt_shares(&neutral.to_string()),
+                    neutral_pct,
                 );
                 println!();
             }
@@ -2494,15 +2521,15 @@ pub async fn cmd_trade_stats(symbol: String, format: &OutputFormat, verbose: boo
                 .and_then(|v| v.as_array())
             {
                 if !items.is_empty() {
-                    let headers = ["price", "buy", "sell", "neutral"];
+                    let headers = ["price", "buy(shares)", "sell(shares)", "neutral(shares)"];
                     let rows: Vec<Vec<String>> = items
                         .iter()
                         .map(|item| {
                             vec![
                                 val_str(&item["price"]),
-                                val_str(&item["buy_amount"]),
-                                val_str(&item["sell_amount"]),
-                                val_str(&item["neutral_amount"]),
+                                fmt_shares(&val_str(&item["buy_amount"])),
+                                fmt_shares(&val_str(&item["sell_amount"])),
+                                fmt_shares(&val_str(&item["neutral_amount"])),
                             ]
                         })
                         .collect();
