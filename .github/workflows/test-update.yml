@@ -17,6 +17,10 @@ on:
       - .github/workflows/test-update.yml
   workflow_dispatch:
 
+concurrency:
+  group: test-update-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
