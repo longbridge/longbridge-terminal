@@ -1313,7 +1313,7 @@ pub async fn cmd_alert_add(
 
 pub async fn cmd_alert_delete(id: String, format: &OutputFormat, verbose: bool) -> Result<()> {
     let id_num: i64 = id.parse().unwrap_or(0);
-    let body = serde_json::json!({ "id": id_num });
+    let body = serde_json::json!({ "ids": [id_num] });
     let data = super::api::http_delete("/v1/notify/reminders", body, verbose).await?;
     match format {
         OutputFormat::Json => print_json_value(&data),
