@@ -5,11 +5,14 @@ use longbridge::quote::{
 use longbridge::Market;
 use time::Date;
 
+use serde_json::Value;
+
 use super::{
-    api::QuoteApi,
+    api::{http_get, QuoteApi},
     output::{fmt_date, fmt_datetime, fmt_dec, fmt_decimal, parse_date, print_table},
     OutputFormat,
 };
+use crate::utils::counter::symbol_to_counter_id;
 
 /// Return the locale-appropriate display name for a security.
 ///
@@ -1869,6 +1872,607 @@ pub async fn run_warrant_issuers(api: &dyn QuoteApi, format: &OutputFormat) -> R
         })
         .collect();
     print_table(headers, rows, format);
+    Ok(())
+}
+
+// ── Pending commands ─────────────────────────────────────────────────────────
+
+fn val_str(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        Value::Null => "-".to_owned(),
+        other => other.to_string(),
+    }
+}
+
+fn print_json(data: &Value) {
+    println!("{}", serde_json::to_string_pretty(data).unwrap_or_default());
+}
+
+/// Convert index symbol to IX/ prefix `counter_id` (e.g. `HSI.HK` → `IX/HK/HSI`)
+fn index_symbol_to_counter_id(symbol: &str) -> String {
+    if let Some((code, market)) = symbol.rsplit_once('.') {
+        format!("IX/{}/{code}", market.to_uppercase())
+    } else {
+        symbol.to_string()
+    }
+}
+
+pub async fn cmd_history_intraday(
+    symbol: String,
+    session: &str,
+    hist_date: &str,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let trade_session = match session {
+        "all" => "100",
+        "pre" | "post" => "101",
+        _ => "0",
+    };
+    let data = http_get(
+        "/v1/quote/history-timeshares",
+        &[
+            ("counter_id", cid.as_str()),
+            ("date", hist_date),
+            ("trade_session", trade_session),
+            ("adjust_type", "0"),
+        ],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            if let Some(timeshares) = data.get("timeshares").and_then(|v| v.as_array()) {
+                for ts in timeshares {
+                    if let Some(minutes) = ts.get("minutes").and_then(|v| v.as_array()) {
+                        let headers = ["timestamp", "price", "volume", "turnover", "avg_price"];
+                        let rows: Vec<Vec<String>> = minutes
+                            .iter()
+                            .map(|m| {
+                                vec![
+                                    val_str(&m["timestamp"]),
+                                    val_str(&m["price"]),
+                                    val_str(&m["amount"]),
+                                    val_str(&m["balance"]),
+                                    val_str(&m["avg_price"]),
+                                ]
+                            })
+                            .collect();
+                        print_table(&headers, rows, format);
+                    }
+                }
+            } else {
+                println!("No history intraday data found.");
+            }
+        }
+    }
+    Ok(())
+}
+
+pub async fn cmd_constituent(
+    symbol: String,
+    limit: i32,
+    sort: &str,
+    order: &str,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = index_symbol_to_counter_id(&symbol);
+    let indicator = match sort {
+        "price" => "2",
+        "turnover" => "3",
+        "inflow" => "4",
+        "turnover_rate" => "5",
+        "market_cap" => "6",
+        _ => "1", // change% default
+    };
+    let order_val = if order == "asc" { "1" } else { "0" };
+    let limit_str = limit.to_string();
+    let data = http_get(
+        "/v1/quote/index-constituents",
+        &[
+            ("counter_id", cid.as_str()),
+            ("offset", "0"),
+            ("limit", limit_str.as_str()),
+            ("indicator", indicator),
+            ("order", order_val),
+        ],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            let total = data["total"].as_i64().unwrap_or(0);
+            println!("Constituents ({total} total)\n");
+            let items = match data.get("stocks").and_then(|v| v.as_array()) {
+                Some(a) if !a.is_empty() => a,
+                _ => {
+                    println!("No constituent data found.");
+                    return Ok(());
+                }
+            };
+            let headers = ["symbol", "name", "price", "change%", "turnover"];
+            let rows: Vec<Vec<String>> = items
+                .iter()
+                .map(|item| {
+                    vec![
+                        crate::utils::counter::counter_id_to_symbol(&val_str(&item["counter_id"])),
+                        val_str(&item["name"]),
+                        val_str(&item["last_done"]),
+                        val_str(&item["chg"]),
+                        val_str(&item["balance"]),
+                    ]
+                })
+                .collect();
+            print_table(&headers, rows, format);
+        }
+    }
+    Ok(())
+}
+
+pub async fn cmd_market_status(format: &OutputFormat, verbose: bool) -> Result<()> {
+    let data = http_get("/v1/quote/market-status", &[], verbose).await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            if let Some(list) = data.as_array() {
+                let headers = ["market", "status", "trade_session"];
+                let rows: Vec<Vec<String>> = list
+                    .iter()
+                    .map(|item| {
+                        vec![
+                            val_str(&item["market"]),
+                            val_str(&item["status"]),
+                            val_str(&item["trade_session"]),
+                        ]
+                    })
+                    .collect();
+                print_table(&headers, rows, format);
+            } else if let Some(list) = data.get("list").and_then(|v| v.as_array()) {
+                let headers = ["market", "status", "trade_session"];
+                let rows: Vec<Vec<String>> = list
+                    .iter()
+                    .map(|item| {
+                        vec![
+                            val_str(&item["market"]),
+                            val_str(&item["status"]),
+                            val_str(&item["trade_session"]),
+                        ]
+                    })
+                    .collect();
+                print_table(&headers, rows, format);
+            } else {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&data).unwrap_or_default()
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+pub async fn cmd_broker_holding_top(
+    symbol: String,
+    period: &str,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/v1/quote/broker-holding",
+        &[("counter_id", cid.as_str()), ("type", period)],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            let updated = val_str(&data["updated_at"]);
+            println!("Broker Holding Top (updated: {updated})\n");
+
+            for (label, key) in [("Buy", "buy"), ("Sell", "sell")] {
+                let raw = val_str(&data[key]);
+                if raw == "-" || raw.is_empty() {
+                    continue;
+                }
+                if let Ok(items) = serde_json::from_str::<Vec<Value>>(&raw) {
+                    println!("{label}:");
+                    let headers = ["broker", "code", "change"];
+                    let rows: Vec<Vec<String>> = items
+                        .iter()
+                        .map(|item| {
+                            vec![
+                                val_str(&item["name"]),
+                                val_str(&item["parti_number"]),
+                                val_str(&item["chg"]),
+                            ]
+                        })
+                        .collect();
+                    print_table(&headers, rows, &OutputFormat::Pretty);
+                    println!();
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+pub async fn cmd_broker_holding_detail(
+    symbol: String,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/v1/quote/broker-holding/detail",
+        &[("counter_id", cid.as_str())],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            let raw = val_str(&data["list"]);
+            if raw == "-" || raw.is_empty() {
+                println!("No broker holding detail found.");
+                return Ok(());
+            }
+            if let Ok(items) = serde_json::from_str::<Vec<Value>>(&raw) {
+                let headers = ["broker", "code", "ratio%", "shares", "chg_1d", "chg_5d"];
+                let rows: Vec<Vec<String>> = items
+                    .iter()
+                    .map(|item| {
+                        let ratio = item.get("ratio").unwrap_or(&Value::Null);
+                        let shares = item.get("shares").unwrap_or(&Value::Null);
+                        vec![
+                            val_str(&item["name"]),
+                            val_str(&item["parti_number"]),
+                            val_str(&ratio["value"]),
+                            val_str(&shares["value"]),
+                            val_str(&shares["chg_1"]),
+                            val_str(&shares["chg_5"]),
+                        ]
+                    })
+                    .collect();
+                print_table(&headers, rows, format);
+            }
+        }
+    }
+    Ok(())
+}
+
+pub async fn cmd_broker_holding_daily(
+    symbol: String,
+    broker: &str,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/v1/quote/broker-holding/daily",
+        &[("counter_id", cid.as_str()), ("parti_number", broker)],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            let raw = val_str(&data["list"]);
+            if raw == "-" || raw.is_empty() {
+                println!("No daily holding data found.");
+                return Ok(());
+            }
+            if let Ok(items) = serde_json::from_str::<Vec<Value>>(&raw) {
+                let headers = ["date", "holding", "ratio%", "change"];
+                let rows: Vec<Vec<String>> = items
+                    .iter()
+                    .map(|item| {
+                        vec![
+                            val_str(&item["date"]),
+                            val_str(&item["holding"]),
+                            val_str(&item["ratio"]),
+                            val_str(&item["chg"]),
+                        ]
+                    })
+                    .collect();
+                print_table(&headers, rows, format);
+            }
+        }
+    }
+    Ok(())
+}
+
+pub async fn cmd_ah_premium_kline(
+    symbol: String,
+    kline_type: &str,
+    count: i32,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let line_type = match kline_type {
+        "1m" => "1",
+        "5m" => "5",
+        "15m" => "15",
+        "30m" => "30",
+        "60m" => "60",
+        "week" => "2000",
+        "month" => "3000",
+        "year" => "4000",
+        _ => "1000", // day
+    };
+    let count_str = count.to_string();
+    let data = http_get(
+        "/v1/quote/ahpremium/klines",
+        &[
+            ("counter_id", cid.as_str()),
+            ("line_num", count_str.as_str()),
+            ("line_type", line_type),
+        ],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            let items = match data.get("klines").and_then(|v| v.as_array()) {
+                Some(a) if !a.is_empty() => a,
+                _ => {
+                    println!("No AH premium data found.");
+                    return Ok(());
+                }
+            };
+            let headers = [
+                "timestamp",
+                "a_price",
+                "h_price",
+                "premium%",
+                "spread",
+                "rate",
+            ];
+            let rows: Vec<Vec<String>> = items
+                .iter()
+                .map(|item| {
+                    vec![
+                        val_str(&item["timestamp"]),
+                        val_str(&item["aprice"]),
+                        val_str(&item["hprice"]),
+                        val_str(&item["ahpremium_rate"]),
+                        val_str(&item["price_spread"]),
+                        val_str(&item["currency_rate"]),
+                    ]
+                })
+                .collect();
+            print_table(&headers, rows, format);
+        }
+    }
+    Ok(())
+}
+
+pub async fn cmd_ah_premium_intraday(
+    symbol: String,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/v1/quote/ahpremium/timeshares",
+        &[("counter_id", cid.as_str())],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            let items = match data.get("minutes").and_then(|v| v.as_array()) {
+                Some(a) if !a.is_empty() => a,
+                _ => {
+                    println!("No AH premium intraday data found.");
+                    return Ok(());
+                }
+            };
+            let headers = ["timestamp", "a_price", "h_price", "premium%", "spread"];
+            let rows: Vec<Vec<String>> = items
+                .iter()
+                .map(|item| {
+                    vec![
+                        val_str(&item["timestamp"]),
+                        val_str(&item["aprice"]),
+                        val_str(&item["hprice"]),
+                        val_str(&item["ahpremium_rate"]),
+                        val_str(&item["price_spread"]),
+                    ]
+                })
+                .collect();
+            print_table(&headers, rows, format);
+        }
+    }
+    Ok(())
+}
+
+pub async fn cmd_securities_contrast(
+    symbols: Vec<String>,
+    period: &str,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cids: Vec<String> = symbols.iter().map(|s| symbol_to_counter_id(s)).collect();
+    let period_val: i32 = match period {
+        "today" => 0,
+        "half-year" => 1,
+        "ytd" => 2,
+        "3y" => 4,
+        "5y" => 5,
+        "all" => 6,
+        "week" => 7,
+        "month" => 8,
+        _ => 3, // 1y default
+    };
+    let body = serde_json::json!({ "securities": cids, "period": period_val });
+    let data = super::api::http_post("/v1/quote/securities-contrast", body, verbose).await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => print_securities_contrast(&data, &symbols),
+    }
+    Ok(())
+}
+
+fn print_securities_contrast(data: &Value, symbols: &[String]) {
+    // Print prev_data (base prices)
+    if let Some(prev) = data.get("prev_data").and_then(|v| v.as_array()) {
+        print!("Base Price: ");
+        for (i, p) in prev.iter().enumerate() {
+            let sym = symbols.get(i).map_or("-", |s| s.as_str());
+            print!(" {sym}={}", val_str(&p["price"]));
+        }
+        println!();
+        println!();
+    }
+
+    // Print coordinates as table
+    if let Some(coords) = data.get("coordinates").and_then(|v| v.as_array()) {
+        if coords.is_empty() {
+            println!("No contrast data found.");
+            return;
+        }
+        let mut headers = vec!["timestamp"];
+        let sym_refs: Vec<&str> = symbols.iter().map(String::as_str).collect();
+        headers.extend_from_slice(&sym_refs);
+
+        let rows: Vec<Vec<String>> = coords
+            .iter()
+            .map(|c| {
+                let mut row = vec![val_str(&c["timestamp"])];
+                if let Some(arr) = c.get("data").and_then(|v| v.as_array()) {
+                    for d in arr {
+                        row.push(val_str(&d["price"]));
+                    }
+                }
+                // Pad if fewer data points than symbols
+                while row.len() < symbols.len() + 1 {
+                    row.push("-".to_string());
+                }
+                row
+            })
+            .collect();
+
+        let header_refs = headers.clone();
+        print_table(&header_refs, rows, &OutputFormat::Pretty);
+    } else {
+        println!("No contrast data found.");
+    }
+}
+
+pub async fn cmd_trade_stats(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/v1/quote/trades-statistics",
+        &[("counter_id", cid.as_str())],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            // Summary stats
+            if let Some(stats) = data
+                .get("statistics")
+                .or_else(|| data.get("tradestatistics"))
+            {
+                println!("Trade Statistics");
+                println!("  Avg Price:    {}", val_str(&stats["avgprice"]));
+                println!("  Total Amount: {}", val_str(&stats["total_amount"]));
+                println!(
+                    "  Buy: {}  Sell: {}  Neutral: {}",
+                    val_str(&stats["buy"]),
+                    val_str(&stats["sell"]),
+                    val_str(&stats["neutral"]),
+                );
+                println!();
+            }
+            // Price distribution
+            if let Some(items) = data
+                .get("trades")
+                .or_else(|| data.get("pricetrades"))
+                .and_then(|v| v.as_array())
+            {
+                if !items.is_empty() {
+                    let headers = ["price", "buy", "sell", "neutral"];
+                    let rows: Vec<Vec<String>> = items
+                        .iter()
+                        .map(|item| {
+                            vec![
+                                val_str(&item["price"]),
+                                val_str(&item["buy_amount"]),
+                                val_str(&item["sell_amount"]),
+                                val_str(&item["neutral_amount"]),
+                            ]
+                        })
+                        .collect();
+                    print_table(&headers, rows, &OutputFormat::Pretty);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+pub async fn cmd_anomaly(
+    market: &str,
+    symbol: Option<String>,
+    count: i32,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let count_str = count.to_string();
+    let market_upper = market.to_uppercase();
+    let mut params = vec![
+        ("category", "0"),
+        ("size", count_str.as_str()),
+        ("market", market_upper.as_str()),
+    ];
+    let cid;
+    if let Some(ref sym) = symbol {
+        cid = symbol_to_counter_id(sym);
+        params.push(("counter_id", cid.as_str()));
+    }
+    let data = http_get("/v1/quote/changes", &params, verbose).await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            let items = match data.get("changes").and_then(|v| v.as_array()) {
+                Some(a) if !a.is_empty() => a,
+                _ => {
+                    println!("No anomalies found.");
+                    return Ok(());
+                }
+            };
+            let headers = ["time", "symbol", "name", "alert", "emotion"];
+            let rows: Vec<Vec<String>> = items
+                .iter()
+                .map(|item| {
+                    let emotion = match item["emotion"].as_i64() {
+                        Some(1) => "Bull",
+                        Some(2) => "Bear",
+                        _ => "-",
+                    };
+                    vec![
+                        val_str(&item["alert_time"]),
+                        crate::utils::counter::counter_id_to_symbol(&val_str(&item["counter_id"])),
+                        val_str(&item["name"]),
+                        val_str(&item["alert_name"]),
+                        emotion.to_string(),
+                    ]
+                })
+                .collect();
+            print_table(&headers, rows, format);
+        }
+    }
     Ok(())
 }
 

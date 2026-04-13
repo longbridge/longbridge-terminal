@@ -1186,6 +1186,161 @@ pub async fn run_max_qty(
     Ok(())
 }
 
+// ── Pending commands ─────────────────────────────────────────────────────────
+
+fn val_str(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Null => "-".to_owned(),
+        other => other.to_string(),
+    }
+}
+
+fn print_json_value(data: &serde_json::Value) {
+    println!("{}", serde_json::to_string_pretty(data).unwrap_or_default());
+}
+
+pub async fn cmd_alert_list(
+    symbol: Option<String>,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let mut params: Vec<(&str, &str)> = vec![];
+    let cid;
+    if let Some(ref sym) = symbol {
+        cid = crate::utils::counter::symbol_to_counter_id(sym);
+        params.push(("counter_id", cid.as_str()));
+    }
+    let data = super::api::http_get("/v1/notify/reminders", &params, verbose).await?;
+    match format {
+        OutputFormat::Json => print_json_value(&data),
+        OutputFormat::Pretty => {
+            let items = match data
+                .get("list")
+                .or_else(|| data.get("lists"))
+                .and_then(|v| v.as_array())
+            {
+                Some(a) if !a.is_empty() => a,
+                _ => {
+                    println!("No alerts found.");
+                    return Ok(());
+                }
+            };
+            let headers = [
+                "id",
+                "symbol",
+                "direction",
+                "type",
+                "value",
+                "enabled",
+                "note",
+            ];
+            let rows: Vec<Vec<String>> = items
+                .iter()
+                .map(|item| {
+                    let dir = match item["direction"].as_i64() {
+                        Some(1) => "Rise",
+                        Some(2) => "Fall",
+                        _ => "-",
+                    };
+                    let alert_type = match item["type"].as_i64() {
+                        Some(1) => "Price",
+                        Some(2) => "Percent",
+                        _ => "-",
+                    };
+                    let enabled = match item["enabled"].as_i64() {
+                        Some(1) => "Yes",
+                        Some(0) => "No",
+                        _ => "-",
+                    };
+                    vec![
+                        val_str(&item["id"]),
+                        crate::utils::counter::counter_id_to_symbol(&val_str(&item["counter_id"])),
+                        dir.to_string(),
+                        alert_type.to_string(),
+                        val_str(&item["value"]),
+                        enabled.to_string(),
+                        val_str(&item["note"]),
+                    ]
+                })
+                .collect();
+            print_table(&headers, rows, format);
+        }
+    }
+    Ok(())
+}
+
+pub async fn cmd_alert_add(
+    symbol: String,
+    price: &str,
+    direction: &str,
+    alert_type: &str,
+    frequency: &str,
+    note: Option<String>,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = crate::utils::counter::symbol_to_counter_id(&symbol);
+    let dir: i32 = match direction {
+        "fall" | "down" => 2,
+        _ => 1,
+    };
+    let typ: i32 = match alert_type {
+        "percent" => 2,
+        _ => 1,
+    };
+    let freq: i32 = match frequency {
+        "daily" => 1,
+        "every" => 2,
+        _ => 3, // once
+    };
+    let body = serde_json::json!({
+        "list": [{
+            "counter_id": cid,
+            "value": price,
+            "direction": dir,
+            "type": typ,
+            "frequency": freq,
+            "enabled": 1,
+            "note": note.unwrap_or_default(),
+            "name": symbol,
+            "market": "",
+        }]
+    });
+    let data = super::api::http_put("/v1/notify/reminders", body, verbose).await?;
+    match format {
+        OutputFormat::Json => print_json_value(&data),
+        OutputFormat::Pretty => println!("Alert added for {symbol} at {price} ({direction})"),
+    }
+    Ok(())
+}
+
+pub async fn cmd_alert_delete(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
+    let cid = crate::utils::counter::symbol_to_counter_id(&symbol);
+    let body = serde_json::json!({ "CounterId": cid });
+    let data = super::api::http_post("/v1/notify/reminders/delete", body, verbose).await?;
+    match format {
+        OutputFormat::Json => print_json_value(&data),
+        OutputFormat::Pretty => println!("Alert deleted for {symbol}"),
+    }
+    Ok(())
+}
+
+pub async fn cmd_profit_analysis(format: &OutputFormat, verbose: bool) -> Result<()> {
+    let data = super::api::http_get("/v1/portfolio/profit-analysis-summary", &[], verbose).await?;
+    match format {
+        OutputFormat::Json => print_json_value(&data),
+        OutputFormat::Pretty => {
+            // Generic display — API response structure may vary
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&data).unwrap_or_default()
+            );
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

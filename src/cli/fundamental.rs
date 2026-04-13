@@ -1131,3 +1131,555 @@ pub async fn cmd_finance_calendar(
     }
     Ok(())
 }
+
+// ── Pending commands ─────────────────────────────────────────────────────────
+
+pub async fn cmd_company(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/v1/quote/comp-overview",
+        &[("counter_id", cid.as_str())],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => print_company(&data),
+    }
+    Ok(())
+}
+
+fn print_company(data: &Value) {
+    let fields = [
+        ("Name", "name"),
+        ("Founded", "founded"),
+        ("Listing Date", "listing_date"),
+        ("Market", "market"),
+        ("Category", "category"),
+        ("CEO", "manager"),
+        ("Chairman", "chairman"),
+        ("Employees", "employees"),
+        ("Address", "address"),
+        ("Website", "website"),
+        ("Phone", "Phone"),
+        ("Email", "email"),
+        ("IPO Price", "issue_price"),
+        ("Year End", "year_end"),
+        ("Audit", "audit_inst"),
+        ("ADS Ratio", "ads_ratio"),
+    ];
+    for (label, key) in fields {
+        let v = val_str(&data[key]);
+        if !v.is_empty() && v != "-" {
+            println!("  {label:15} {v}");
+        }
+    }
+    let profile = val_str(&data["profile"]);
+    if !profile.is_empty() && profile != "-" {
+        println!();
+        println!("{profile}");
+    }
+}
+
+pub async fn cmd_executive(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/v1/quote/company-professionals",
+        &[("counter_ids", cid.as_str())],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => print_executives(&data),
+    }
+    Ok(())
+}
+
+fn print_executives(data: &Value) {
+    let lists = match data.get("professional_list").and_then(|v| v.as_array()) {
+        Some(a) if !a.is_empty() => a,
+        _ => {
+            println!("No executive data found.");
+            return;
+        }
+    };
+    for entry in lists {
+        let professionals = match entry.get("professionals").and_then(|v| v.as_array()) {
+            Some(a) if !a.is_empty() => a,
+            _ => continue,
+        };
+        let headers = ["name", "title"];
+        let rows: Vec<Vec<String>> = professionals
+            .iter()
+            .map(|p| vec![val_str(&p["name"]), val_str(&p["title"])])
+            .collect();
+        super::output::print_table(&headers, rows, &OutputFormat::Pretty);
+    }
+}
+
+pub async fn cmd_buyback(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/v1/quote/buy-backs",
+        &[("counter_id", cid.as_str())],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => print_buyback(&data),
+    }
+    Ok(())
+}
+
+fn print_buyback(data: &Value) {
+    // Recent buyback summary
+    if let Some(recent) = data.get("recent_buybacks") {
+        println!("Recent Buyback (TTM)");
+        println!(
+            "  Net Buyback:       {}",
+            val_str(&recent["net_buyback_ttm"])
+        );
+        println!(
+            "  Net Buyback Yield: {}",
+            val_str(&recent["net_buyback_yield_ttm"])
+        );
+        println!();
+    }
+
+    // Buyback history
+    let items = match data.get("buyback_history").and_then(|v| v.as_array()) {
+        Some(a) if !a.is_empty() => a,
+        _ => {
+            println!("No buyback history found.");
+            return;
+        }
+    };
+
+    let headers = [
+        "fiscal_year",
+        "net_buyback",
+        "net_buyback_yield",
+        "net_buyback_growth",
+        "dividend_yield",
+        "total_yield",
+    ];
+    let rows: Vec<Vec<String>> = items
+        .iter()
+        .map(|item| {
+            vec![
+                val_str(&item["fiscal_year"]),
+                val_str(&item["net_buyback"]),
+                val_str(&item["net_buyback_yield"]),
+                val_str(&item["net_buyback_growth_rate"]),
+                val_str(&item["dividend_yield"]),
+                val_str(&item["total_shareholder_yield"]),
+            ]
+        })
+        .collect();
+    super::output::print_table(&headers, rows, &OutputFormat::Pretty);
+}
+
+pub async fn cmd_shareholder_return(
+    symbol: String,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/v1/quote/shareholder-return",
+        &[("counter_id", cid.as_str())],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => print_shareholder_return(&data),
+    }
+    Ok(())
+}
+
+fn print_shareholder_return(data: &Value) {
+    // Current yield
+    if let Some(sy) = data.get("shareholder_yield") {
+        println!("Current Shareholder Yield");
+        println!("  Fiscal Year:            {}", val_str(&sy["fiscal_year"]));
+        println!(
+            "  Total Shareholder Yield: {}",
+            val_str(&sy["total_shareholder_yield"])
+        );
+        println!(
+            "  Dividend Yield:          {}",
+            val_str(&sy["dividend_yield"])
+        );
+        println!(
+            "  Net Buyback Yield:       {}",
+            val_str(&sy["net_buyback_yield"])
+        );
+        println!();
+    }
+
+    // History
+    if let Some(history) = data
+        .get("shareholder_yield_history")
+        .and_then(|v| v.as_array())
+    {
+        if !history.is_empty() {
+            let headers = [
+                "fiscal_year",
+                "total_yield",
+                "dividend_yield",
+                "buyback_yield",
+                "dividend",
+                "payout_ratio",
+            ];
+            let rows: Vec<Vec<String>> = history
+                .iter()
+                .map(|item| {
+                    vec![
+                        val_str(&item["fiscal_year"]),
+                        val_str(&item["total_shareholder_yield"]),
+                        val_str(&item["dividend_yield"]),
+                        val_str(&item["net_buyback_yield"]),
+                        val_str(&item["dividend"]),
+                        val_str(&item["dividend_payout_ratio"]),
+                    ]
+                })
+                .collect();
+            println!("Shareholder Yield History");
+            super::output::print_table(&headers, rows, &OutputFormat::Pretty);
+            println!();
+        }
+    }
+
+    // Upcoming dividends
+    if let Some(upcoming) = data.get("upcoming_dividend").and_then(|v| v.as_array()) {
+        if !upcoming.is_empty() {
+            let headers = ["dividend", "type", "currency", "ex_date", "payment_date"];
+            let rows: Vec<Vec<String>> = upcoming
+                .iter()
+                .map(|item| {
+                    vec![
+                        val_str(&item["dividend"]),
+                        val_str(&item["dividend_type"]),
+                        val_str(&item["currency"]),
+                        val_str(&item["ex_date"]),
+                        val_str(&item["payment_date"]),
+                    ]
+                })
+                .collect();
+            println!("Upcoming Dividends");
+            super::output::print_table(&headers, rows, &OutputFormat::Pretty);
+        }
+    }
+}
+
+pub async fn cmd_industry_valuation(
+    symbol: String,
+    currency: &str,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/v1/quote/industry-valuation-comparison",
+        &[("counter_id", cid.as_str()), ("currency", currency)],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            let items = match data.get("list").and_then(|v| v.as_array()) {
+                Some(a) if !a.is_empty() => a,
+                _ => {
+                    println!("No industry valuation data found.");
+                    return Ok(());
+                }
+            };
+            let headers = ["symbol", "name", "market_cap", "price", "pe"];
+            let rows: Vec<Vec<String>> = items
+                .iter()
+                .map(|item| {
+                    vec![
+                        counter_id_to_symbol(&val_str(&item["counter_id"])),
+                        val_str(&item["name"]),
+                        val_str(&item["market_value"]),
+                        val_str(&item["price_close"]),
+                        val_str(&item["pe"]),
+                    ]
+                })
+                .collect();
+            super::output::print_table(&headers, rows, &OutputFormat::Pretty);
+        }
+    }
+    Ok(())
+}
+
+pub async fn cmd_industry_valuation_dist(
+    symbol: String,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/v1/quote/industry-valuation-distribution",
+        &[("counter_id", cid.as_str())],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            if let Some(pe) = data.get("pe") {
+                println!("Industry Valuation Distribution (PE)");
+                println!("  Current:  {}", val_str(&pe["value"]));
+                println!("  Low:      {}", val_str(&pe["low"]));
+                println!("  Median:   {}", val_str(&pe["median"]));
+                println!("  High:     {}", val_str(&pe["high"]));
+                println!("  Ranking:  {}", val_str(&pe["ranking"]));
+            } else {
+                println!("No valuation distribution data found.");
+            }
+        }
+    }
+    Ok(())
+}
+
+pub async fn cmd_operating(
+    symbol: String,
+    report: Option<String>,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let mut params = vec![("counter_id", cid.as_str())];
+    let report_val;
+    if let Some(ref r) = report {
+        report_val = r.clone();
+        params.push(("report", report_val.as_str()));
+    }
+    let data = http_get("/v1/quote/operatings", &params, verbose).await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => print_operating(&data),
+    }
+    Ok(())
+}
+
+fn print_operating(data: &Value) {
+    let items = match data.get("list").and_then(|v| v.as_array()) {
+        Some(a) if !a.is_empty() => a,
+        _ => {
+            println!("No operating data found.");
+            return;
+        }
+    };
+
+    for item in items {
+        let title = val_str(&item["title"]);
+        let report = val_str(&item["report"]);
+        let latest = item["latest"].as_bool().unwrap_or(false);
+        let marker = if latest { " [latest]" } else { "" };
+        println!("{title} ({report}){marker}");
+
+        // Print financial indicators if available
+        if let Some(fin) = item.get("financial") {
+            let currency = val_str(&fin["currency"]);
+            if let Some(indicators) = fin.get("indicators").and_then(|v| v.as_array()) {
+                if !indicators.is_empty() {
+                    print!("  Currency: {currency}  |  ");
+                    for ind in indicators {
+                        let name = val_str(&ind["indicator_name"]);
+                        let value = val_str(&ind["indicator_value"]);
+                        let yoy = val_str(&ind["yoy"]);
+                        if yoy.is_empty() || yoy == "-" {
+                            print!("{name}: {value}  ");
+                        } else {
+                            print!("{name}: {value} (YoY {yoy})  ");
+                        }
+                    }
+                    println!();
+                }
+            }
+        }
+
+        // Print summary text (truncated)
+        let txt = val_str(&item["txt"]);
+        if !txt.is_empty() {
+            let clean = strip_html(&txt);
+            let truncated = if clean.len() > 200 {
+                format!("{}...", &clean[..200])
+            } else {
+                clean
+            };
+            println!("  {truncated}");
+        }
+        println!();
+    }
+}
+
+pub async fn cmd_rating_history(
+    symbol: String,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/v1/quote/ratings",
+        &[("counter_id", cid.as_str())],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => print_rating_history(&data),
+    }
+    Ok(())
+}
+
+fn print_rating_history(data: &Value) {
+    println!(
+        "Investment Style: {} (grid {})",
+        val_str(&data["invest_style_description"]),
+        data["invest_style_grid"].as_i64().unwrap_or(0),
+    );
+    println!(
+        "Multi-Score: {} ({}) — Industry Rank: {}/{}",
+        val_str(&data["multi_score"]),
+        val_str(&data["multi_letter"]),
+        val_str(&data["industry_rank"]),
+        val_str(&data["industry_total"]),
+    );
+    let change = data["multi_score_change"].as_i64().unwrap_or(0);
+    let arrow = match change {
+        1 => "↑",
+        -1 => "↓",
+        _ => "→",
+    };
+    println!("  Change: {arrow}");
+    println!();
+
+    if let Some(ratings) = data.get("ratings").and_then(|v| v.as_array()) {
+        let headers = ["dimension", "score", "grade", "change"];
+        let rows: Vec<Vec<String>> = ratings
+            .iter()
+            .filter_map(|r| {
+                let ind = r.get("indicator")?;
+                let chg = ind["change"].as_i64().unwrap_or(0);
+                let arrow = match chg {
+                    1 => "↑",
+                    -1 => "↓",
+                    _ => "→",
+                };
+                Some(vec![
+                    val_str(&ind["name"]),
+                    val_str(&ind["score"]),
+                    val_str(&ind["letter"]),
+                    arrow.to_string(),
+                ])
+            })
+            .collect();
+        super::output::print_table(&headers, rows, &OutputFormat::Pretty);
+    }
+}
+
+pub async fn cmd_corp_action(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/v1/quote/company-act",
+        &[
+            ("counter_id", cid.as_str()),
+            ("req_type", "1"),
+            ("version", "3"),
+        ],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => print_corp_action(&data),
+    }
+    Ok(())
+}
+
+fn print_corp_action(data: &Value) {
+    let items = match data
+        .get("items")
+        .or_else(|| data.get("CompanyActItem"))
+        .and_then(|v| v.as_array())
+    {
+        Some(a) if !a.is_empty() => a,
+        _ => {
+            println!("No corporate action records found.");
+            return;
+        }
+    };
+
+    let headers = ["date", "type", "description"];
+    let rows: Vec<Vec<String>> = items
+        .iter()
+        .map(|item| {
+            vec![
+                val_str(&item["date"]),
+                val_str(&item["act_type"]),
+                val_str(&item["act_desc"]),
+            ]
+        })
+        .collect();
+    super::output::print_table(&headers, rows, &OutputFormat::Pretty);
+}
+
+pub async fn cmd_invest_relation(
+    symbol: String,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/v1/quote/invest-relations",
+        &[("counter_id", cid.as_str()), ("count", "0")],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => print_invest_relation(&data),
+    }
+    Ok(())
+}
+
+fn print_invest_relation(data: &Value) {
+    let items = match data.get("invest_securities").and_then(|v| v.as_array()) {
+        Some(a) if !a.is_empty() => a,
+        _ => {
+            println!("No investment relations found.");
+            return;
+        }
+    };
+
+    let total = data["total"].as_i64().unwrap_or(0);
+    println!("Total: {total}\n");
+
+    let headers = ["company", "symbol", "% shares", "value", "rank"];
+    let rows: Vec<Vec<String>> = items
+        .iter()
+        .map(|item| {
+            let sym = val_str(&item["counter_id"]);
+            let display_sym = if sym.is_empty() || sym == "-" {
+                "-".to_string()
+            } else {
+                counter_id_to_symbol(&sym)
+            };
+            vec![
+                val_str(&item["company_name"]),
+                display_sym,
+                val_str(&item["percent_of_shares"]),
+                val_str(&item["shares_value"]),
+                val_str(&item["shares_rank"]),
+            ]
+        })
+        .collect();
+    super::output::print_table(&headers, rows, &OutputFormat::Pretty);
+}

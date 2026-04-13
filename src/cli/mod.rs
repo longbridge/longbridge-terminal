@@ -165,18 +165,23 @@ pub enum Commands {
         count: usize,
     },
 
-    /// Intraday minute-by-minute price and volume lines for today
+    /// Intraday minute-by-minute price and volume lines for today (or a historical date)
     ///
     /// Returns: timestamp, price, volume, turnover, `avg_price`.
     /// Use `--session all` to include pre-market and post-market lines.
+    /// Use `--date YYYYMMDD` to fetch a historical day's intraday data.
     /// Example: longbridge intraday TSLA.US
     /// Example: longbridge intraday TSLA.US --session all
+    /// Example: longbridge intraday TSLA.US --date 20240115
     Intraday {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
         /// Trade session filter: `intraday` (default) | `all` (includes pre/post market)
         #[arg(long, default_value = "intraday")]
         session: String,
+        /// Historical date in YYYYMMDD format (omit for today's live data)
+        #[arg(long)]
+        date: Option<String>,
     },
 
     /// OHLCV candlestick (K-line) data, or historical date-range candlesticks
@@ -678,6 +683,205 @@ pub enum Commands {
         order: String,
     },
 
+    // ── Pending Commands ──────────────────────────────────────────────────────
+    /// Company overview (founding date, employees, IPO price, address, etc.)
+    ///
+    /// Example: longbridge company AAPL.US
+    Company {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+    },
+
+    /// Company executives and key personnel
+    ///
+    /// Example: longbridge executive AAPL.US
+    Executive {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+    },
+
+    /// Share buyback records for a company
+    ///
+    /// Example: longbridge buyback AAPL.US
+    Buyback {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+    },
+
+    /// Shareholder return overview (dividend + buyback yield)
+    ///
+    /// Example: longbridge shareholder-return AAPL.US
+    ShareholderReturn {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+    },
+
+    /// Industry valuation comparison and distribution
+    ///
+    /// Default: comparison table with peers.
+    /// Use `dist` subcommand for percentile distribution.
+    /// Example: longbridge industry-valuation AAPL.US
+    /// Example: longbridge industry-valuation dist AAPL.US
+    /// Example: longbridge industry-valuation AAPL.US --currency USD
+    IndustryValuation {
+        /// Symbol in <CODE>.<MARKET> format (omit when using subcommand)
+        symbol: Option<String>,
+        /// Currency: USD | HKD | CNY | SGD
+        #[arg(long, default_value = "USD")]
+        currency: String,
+        #[command(subcommand)]
+        cmd: Option<IndustryValuationCmd>,
+    },
+
+    /// Operating reviews and financial indicators by report period
+    ///
+    /// Example: longbridge operating AAPL.US
+    /// Example: longbridge operating AAPL.US --report q1
+    Operating {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+        /// Report kind filter: af | saf | q1 | q3 (comma-separated for multiple)
+        #[arg(long)]
+        report: Option<String>,
+    },
+
+    /// Multi-dimensional investment rating scores (profitability, growth, etc.)
+    ///
+    /// Example: longbridge rating-history AAPL.US
+    RatingHistory {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+    },
+
+    /// Corporate actions (splits, dividends, rights, etc.)
+    ///
+    /// Example: longbridge corp-action 700.HK
+    CorpAction {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+    },
+
+    /// Investment relations (subsidiary/parent companies)
+    ///
+    /// Example: longbridge invest-relation 700.HK
+    InvestRelation {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+    },
+
+    /// Index or ETF constituent stocks
+    ///
+    /// Example: longbridge constituent HSI.HK
+    /// Example: longbridge constituent HSI.HK --limit 20 --sort change
+    Constituent {
+        /// Index symbol in <CODE>.<MARKET> format (e.g. HSI.HK, DJI.US)
+        symbol: String,
+        /// Number of results to return
+        #[arg(long, default_value = "50")]
+        limit: i32,
+        /// Sort indicator: change, price, turnover, inflow, turnover-rate, market-cap
+        #[arg(long, default_value = "change")]
+        sort: String,
+        /// Sort order: desc | asc
+        #[arg(long, default_value = "desc")]
+        order: String,
+    },
+
+    /// Market open/close status for each exchange
+    ///
+    /// Example: longbridge market-status
+    MarketStatus,
+
+    /// Broker holding positions for HK stocks
+    ///
+    /// Example: longbridge broker-holding 700.HK
+    /// Example: longbridge broker-holding detail 700.HK
+    /// Example: longbridge broker-holding daily 700.HK --broker B01224
+    BrokerHolding {
+        /// Symbol in <CODE>.<MARKET> format (omit when using subcommand)
+        symbol: Option<String>,
+        /// Period for top buy/sell: `rct_1`, `rct_5`, `rct_20`, `rct_60`
+        #[arg(long, default_value = "rct_1")]
+        period: String,
+        #[command(subcommand)]
+        cmd: Option<BrokerHoldingCmd>,
+    },
+
+    /// A/H premium ratio for dual-listed stocks (kline or intraday)
+    ///
+    /// Example: longbridge ah-premium 939.HK
+    /// Example: longbridge ah-premium intraday 939.HK
+    /// Example: longbridge ah-premium 939.HK --kline-type day --count 100
+    AhPremium {
+        /// Symbol in <CODE>.<MARKET> format (omit when using subcommand)
+        symbol: Option<String>,
+        /// K-line type: 1m | 5m | 15m | 30m | 60m | day | week | month | year
+        #[arg(long, default_value = "day")]
+        kline_type: String,
+        /// Number of K-lines to return
+        #[arg(long, default_value = "100")]
+        count: i32,
+        #[command(subcommand)]
+        cmd: Option<AhPremiumCmd>,
+    },
+
+    /// Multi-range adaptive securities price comparison
+    ///
+    /// The first symbol is the primary, others are compared against it.
+    /// Period: today, week, month, half-year, ytd, 1y, 3y, 5y, all
+    /// Example: longbridge securities-contrast AAPL.US MSFT.US GOOGL.US
+    /// Example: longbridge securities-contrast 700.HK 9988.HK --period 1y
+    SecuritiesContrast {
+        /// Symbols to compare (first is primary), in <CODE>.<MARKET> format
+        symbols: Vec<String>,
+        /// Period: today, week, month, half-year, ytd, 1y, 3y, 5y, all
+        #[arg(long, default_value = "1y")]
+        period: String,
+    },
+
+    /// Trade statistics (price distribution by volume)
+    ///
+    /// Example: longbridge trade-stats 700.HK
+    TradeStats {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+    },
+
+    /// Quote anomalies / unusual market movements
+    ///
+    /// Example: longbridge anomaly --market HK
+    /// Example: longbridge anomaly --market US --symbol TSLA.US
+    Anomaly {
+        /// Market: HK | US | CN | SG
+        #[arg(long, default_value = "HK")]
+        market: String,
+        /// Filter to a specific symbol
+        #[arg(long)]
+        symbol: Option<String>,
+        /// Number of results (max 100)
+        #[arg(long, default_value = "50")]
+        count: i32,
+    },
+
+    /// Price alerts (list, add, delete)
+    ///
+    /// Without subcommand: lists all alerts.
+    /// Example: longbridge alert
+    /// Example: longbridge alert add TSLA.US --price 200 --direction rise
+    /// Example: longbridge alert delete TSLA.US
+    Alert {
+        /// Filter by symbol
+        #[arg(long)]
+        symbol: Option<String>,
+        #[command(subcommand)]
+        cmd: Option<AlertCmd>,
+    },
+
+    /// Profit & loss analysis summary (realized / unrealized)
+    ///
+    /// Example: longbridge profit-analysis
+    ProfitAnalysis,
+
     /// Funds and ETFs that hold a given symbol
     ///
     /// Returns: fund name, ticker, currency, weight (position ratio), and report date.
@@ -758,6 +962,82 @@ pub enum InvestorsSubCmd {
         /// Defaults to the filing immediately before the latest one.
         #[arg(long, value_name = "PERIOD")]
         from: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum IndustryValuationCmd {
+    /// Industry valuation distribution (percentile ranking)
+    ///
+    /// Example: longbridge industry-valuation dist AAPL.US
+    Dist {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum BrokerHoldingCmd {
+    /// Full broker holding detail list
+    ///
+    /// Example: longbridge broker-holding detail 700.HK
+    Detail {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+    },
+    /// Daily holding history for a specific broker
+    ///
+    /// Example: longbridge broker-holding daily 700.HK --broker B01224
+    Daily {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+        /// Broker participant number (e.g. B01224)
+        #[arg(long)]
+        broker: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum AhPremiumCmd {
+    /// AH premium intraday timeshare data
+    ///
+    /// Example: longbridge ah-premium intraday 939.HK
+    Intraday {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum AlertCmd {
+    /// Add a price alert
+    ///
+    /// Example: longbridge alert add TSLA.US --price 200 --direction rise
+    Add {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+        /// Target price or percentage value
+        #[arg(long)]
+        price: String,
+        /// Direction: rise | fall
+        #[arg(long, default_value = "rise")]
+        direction: String,
+        /// Alert type: price | percent
+        #[arg(long, default_value = "price")]
+        alert_type: String,
+        /// Frequency: once | daily | every
+        #[arg(long, default_value = "once")]
+        frequency: String,
+        /// Optional note
+        #[arg(long)]
+        note: Option<String>,
+    },
+    /// Delete a price alert for a symbol
+    ///
+    /// Example: longbridge alert delete TSLA.US
+    Delete {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
     },
 }
 
@@ -1384,8 +1664,16 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         Commands::Depth { symbol } => quote::cmd_depth(symbol, format).await,
         Commands::Brokers { symbol } => quote::cmd_brokers(symbol, format).await,
         Commands::Trades { symbol, count } => quote::cmd_trades(symbol, count, format).await,
-        Commands::Intraday { symbol, session } => {
-            quote::cmd_intraday(symbol, &session, format).await
+        Commands::Intraday {
+            symbol,
+            session,
+            date,
+        } => {
+            if let Some(d) = date {
+                quote::cmd_history_intraday(symbol, &session, &d, format, verbose).await
+            } else {
+                quote::cmd_intraday(symbol, &session, format).await
+            }
         }
         Commands::Kline {
             symbol,
@@ -1731,6 +2019,118 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 )),
             },
         },
+        // ── New pending commands ──────────────────────────────────────────────
+        Commands::Company { symbol } => {
+            fundamental::cmd_company(symbol, format, verbose).await
+        }
+        Commands::Executive { symbol } => {
+            fundamental::cmd_executive(symbol, format, verbose).await
+        }
+        Commands::Buyback { symbol } => {
+            fundamental::cmd_buyback(symbol, format, verbose).await
+        }
+        Commands::ShareholderReturn { symbol } => {
+            fundamental::cmd_shareholder_return(symbol, format, verbose).await
+        }
+        Commands::IndustryValuation {
+            symbol,
+            currency,
+            cmd,
+        } => match cmd {
+            Some(IndustryValuationCmd::Dist { symbol: s }) => {
+                fundamental::cmd_industry_valuation_dist(s, format, verbose).await
+            }
+            None => {
+                let sym = symbol.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Symbol required. Usage: longbridge industry-valuation <SYMBOL>"
+                    )
+                })?;
+                fundamental::cmd_industry_valuation(sym, &currency, format, verbose).await
+            }
+        },
+        Commands::Operating { symbol, report } => {
+            fundamental::cmd_operating(symbol, report, format, verbose).await
+        }
+        Commands::RatingHistory { symbol } => {
+            fundamental::cmd_rating_history(symbol, format, verbose).await
+        }
+        Commands::CorpAction { symbol } => {
+            fundamental::cmd_corp_action(symbol, format, verbose).await
+        }
+        Commands::InvestRelation { symbol } => {
+            fundamental::cmd_invest_relation(symbol, format, verbose).await
+        }
+        Commands::Constituent {
+            symbol,
+            limit,
+            sort,
+            order,
+        } => quote::cmd_constituent(symbol, limit, &sort, &order, format, verbose).await,
+        Commands::MarketStatus => quote::cmd_market_status(format, verbose).await,
+        Commands::BrokerHolding {
+            symbol,
+            period,
+            cmd,
+        } => match cmd {
+            Some(BrokerHoldingCmd::Detail { symbol: s }) => {
+                quote::cmd_broker_holding_detail(s, format, verbose).await
+            }
+            Some(BrokerHoldingCmd::Daily { symbol: s, broker }) => {
+                quote::cmd_broker_holding_daily(s, &broker, format, verbose).await
+            }
+            None => {
+                let sym = symbol.ok_or_else(|| {
+                    anyhow::anyhow!("Symbol required. Usage: longbridge broker-holding <SYMBOL>")
+                })?;
+                quote::cmd_broker_holding_top(sym, &period, format, verbose).await
+            }
+        },
+        Commands::AhPremium {
+            symbol,
+            kline_type,
+            count,
+            cmd,
+        } => match cmd {
+            Some(AhPremiumCmd::Intraday { symbol: s }) => {
+                quote::cmd_ah_premium_intraday(s, format, verbose).await
+            }
+            None => {
+                let sym = symbol.ok_or_else(|| {
+                    anyhow::anyhow!("Symbol required. Usage: longbridge ah-premium <SYMBOL>")
+                })?;
+                quote::cmd_ah_premium_kline(sym, &kline_type, count, format, verbose).await
+            }
+        },
+        Commands::SecuritiesContrast { symbols, period } => {
+            quote::cmd_securities_contrast(symbols, &period, format, verbose).await
+        }
+        Commands::TradeStats { symbol } => {
+            quote::cmd_trade_stats(symbol, format, verbose).await
+        }
+        Commands::Anomaly {
+            market,
+            symbol,
+            count,
+        } => quote::cmd_anomaly(&market, symbol, count, format, verbose).await,
+        Commands::Alert { symbol, cmd } => match cmd {
+            Some(AlertCmd::Add {
+                symbol: s,
+                price,
+                direction,
+                alert_type,
+                frequency,
+                note,
+            }) => {
+                trade::cmd_alert_add(s, &price, &direction, &alert_type, &frequency, note, format, verbose).await
+            }
+            Some(AlertCmd::Delete { symbol: s }) => {
+                trade::cmd_alert_delete(s, format, verbose).await
+            }
+            None => trade::cmd_alert_list(symbol, format, verbose).await,
+        },
+        Commands::ProfitAnalysis => trade::cmd_profit_analysis(format, verbose).await,
+
         Commands::Login { .. }
         | Commands::Logout
         | Commands::Tui
