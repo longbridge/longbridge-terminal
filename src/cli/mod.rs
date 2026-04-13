@@ -977,7 +977,7 @@ pub enum BrokerHoldingCmd {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
         /// Broker participant number from the `parti_no` column (e.g. B01224)
-        #[arg(long)]
+        #[arg(long, value_name = "PARTI_NO")]
         broker: String,
     },
 }
