@@ -120,18 +120,18 @@ jobs:
         shell: pwsh
         run: (Get-Content Cargo.toml) -replace '^version = ".*"', 'version = "0.14.0"' | Set-Content Cargo.toml
 
-      - name: Build
-        run: cargo build
+      - name: Build (release to avoid stack overflow in debug async futures)
+        run: cargo build --release
 
       - name: Run update
         shell: pwsh
-        run: cargo run -- update
+        run: cargo run --release -- update
 
       - name: Verify updated binary matches CDN latest
         shell: pwsh
         run: |
           $expected = (Invoke-WebRequest -Uri "https://open.longbridge.com/github/release/longbridge-terminal/latest" -UseBasicParsing).Content.Trim()
-          $actual = (& target\debug\longbridge.exe --version) -replace '^longbridge ', ''
+          $actual = (& target\release\longbridge.exe --version) -replace '^longbridge ', ''
           Write-Host "CDN latest: $expected"
           Write-Host "Binary version: $actual"
           if ("v$actual" -ne $expected -and $actual -ne $expected) {
