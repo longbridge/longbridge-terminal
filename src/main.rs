@@ -79,6 +79,9 @@ fn print_cli_error(e: &anyhow::Error, using_api_key: bool) {
 async fn main() {
     let _guard = logger::init();
 
+    // Clean up leftover .old binary from a previous Windows update.
+    update::cleanup_old_binary();
+
     let cli = cli::Cli::parse();
     let verbose = cli.verbose;
 
@@ -149,7 +152,7 @@ async fn main() {
         }
 
         Some(cli::Commands::Update) => {
-            if let Err(e) = update::cmd_update().await {
+            if let Err(e) = update::cmd_update(verbose).await {
                 eprintln!("Error: {e}");
                 std::process::exit(1);
             }

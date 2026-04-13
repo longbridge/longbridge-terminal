@@ -14,6 +14,29 @@ const RELEASES_LATEST_URL: &str =
 const CHECK_INTERVAL_SECS: u64 = 86400; // 24 hours
 const FETCH_TIMEOUT_SECS: u64 = 5;
 
+const DOWNLOAD_TIMEOUT_SECS: u64 = 300;
+const PACKAGE_NAME: &str = "longbridge-terminal";
+
+const BASE_URL_GLOBAL: &str = "https://open.longbridge.com/github/release/longbridge-terminal";
+const BASE_URL_CN: &str = "https://open.longbridge.cn/github/release/longbridge-terminal";
+
+#[cfg(target_os = "macos")]
+const PLATFORM: &str = "darwin";
+#[cfg(target_os = "linux")]
+const PLATFORM: &str = "linux";
+#[cfg(target_os = "windows")]
+const PLATFORM: &str = "windows";
+
+#[cfg(target_os = "linux")]
+const LIBC_SUFFIX: &str = "-musl";
+#[cfg(not(target_os = "linux"))]
+const LIBC_SUFFIX: &str = "";
+
+#[cfg(target_arch = "x86_64")]
+const ARCH: &str = "amd64";
+#[cfg(target_arch = "aarch64")]
+const ARCH: &str = "arm64";
+
 fn cache_file_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".longbridge").join(".terminal-latest-version"))
 }
@@ -127,43 +150,231 @@ async fn fetch_latest_version() -> Option<String> {
     Some(version.to_string())
 }
 
-const INSTALL_SCRIPT_URL: &str =
-    "https://github.com/longbridge/longbridge-terminal/raw/main/install";
+fn get_base_url() -> &'static str {
+    if crate::region::is_cn_cached() {
+        BASE_URL_CN
+    } else {
+        BASE_URL_GLOBAL
+    }
+}
 
-/// Download the official install script with reqwest and pipe it to `sh`.
-pub async fn cmd_update() -> anyhow::Result<()> {
-    use std::io::Write as _;
-    use std::process::{Command, Stdio};
+async fn fetch_latest_version_for_update() -> anyhow::Result<String> {
+    let base = get_base_url();
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()?;
-
-    let script = client
-        .get(INSTALL_SCRIPT_URL)
+    // Both Global and CN CDN: GET {base}/latest returns plain text like "v0.15.0"
+    let url = format!("{base}/latest");
+    let resp = reqwest::Client::builder()
+        .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS))
+        .build()?
+        .get(&url)
         .send()
         .await?
         .error_for_status()?
         .text()
         .await?;
+    let version = resp.trim().trim_start_matches('v').to_string();
 
-    let mut child = Command::new("sh").stdin(Stdio::piped()).spawn()?;
-
-    if let Some(stdin) = child.stdin.as_mut() {
-        stdin.write_all(script.as_bytes())?;
+    if version.is_empty() || !version.starts_with(|c: char| c.is_ascii_digit()) {
+        anyhow::bail!("Invalid version string: {version}");
     }
 
-    let status = child.wait()?;
+    Ok(version)
+}
 
-    if status.success() {
-        // Clear the cached version so the next run re-checks and won't show
-        // a stale "update available" notification.
-        if let Some(path) = cache_file_path() {
-            let _ = std::fs::remove_file(path);
+fn build_download_url(base: &str, version: &str) -> String {
+    #[cfg(not(target_os = "windows"))]
+    let ext = "tar.gz";
+    #[cfg(target_os = "windows")]
+    let ext = "zip";
+
+    let asset = format!("{PACKAGE_NAME}-{PLATFORM}{LIBC_SUFFIX}-{ARCH}.{ext}");
+
+    // Both Global and CN CDN use the same path structure
+    format!("{base}/v{version}/{asset}")
+}
+
+async fn download_to_file(url: &str, dest: &std::path::Path) -> anyhow::Result<()> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
+        .build()?;
+
+    eprint!("Downloading...");
+    let bytes = client.get(url).send().await?.error_for_status()?.bytes().await?;
+
+    #[allow(clippy::cast_precision_loss)]
+    {
+        eprintln!(" {:.1}MB", bytes.len() as f64 / 1_048_576.0);
+    }
+
+    std::fs::write(dest, &bytes)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn extract_and_replace(
+    archive_path: &std::path::Path,
+    target_exe: &std::path::Path,
+) -> anyhow::Result<()> {
+    use flate2::read::GzDecoder;
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let file = std::fs::File::open(archive_path)?;
+    let decoder = GzDecoder::new(file);
+    let mut archive = tar::Archive::new(decoder);
+
+    let tmp_dir = tempfile::tempdir()?;
+    archive.unpack(tmp_dir.path())?;
+
+    // The archive contains a single binary named "longbridge"
+    let extracted = tmp_dir.path().join("longbridge");
+    if !extracted.exists() {
+        anyhow::bail!("Binary 'longbridge' not found in archive");
+    }
+
+    // Set executable permission
+    let perms = std::fs::Permissions::from_mode(0o755);
+    std::fs::set_permissions(&extracted, perms)?;
+
+    // Try atomic rename first (works if same filesystem)
+    if std::fs::rename(&extracted, target_exe).is_ok() {
+        return Ok(());
+    }
+
+    // Cross-device fallback: copy then remove
+    let target_dir = target_exe.parent().ok_or_else(|| {
+        anyhow::anyhow!(
+            "Cannot determine parent directory of {}",
+            target_exe.display()
+        )
+    })?;
+
+    if let Err(e) = std::fs::copy(&extracted, target_exe) {
+        if e.kind() == std::io::ErrorKind::PermissionDenied {
+            anyhow::bail!(
+                "Permission denied writing to {}.\nTry: sudo longbridge update",
+                target_dir.display()
+            );
         }
-    } else {
-        anyhow::bail!("update failed (exit code: {})", status.code().unwrap_or(-1));
+        return Err(e.into());
     }
+    std::fs::set_permissions(target_exe, std::fs::Permissions::from_mode(0o755))?;
+
+    Ok(())
+}
+
+#[cfg(windows)]
+fn extract_and_replace(
+    archive_path: &std::path::Path,
+    target_exe: &std::path::Path,
+) -> anyhow::Result<()> {
+    use std::process::Command;
+
+    let tmp_dir = tempfile::tempdir()?;
+
+    // Use PowerShell to extract zip
+    let status = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            &format!(
+                "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
+                archive_path.display(),
+                tmp_dir.path().display()
+            ),
+        ])
+        .status()?;
+
+    if !status.success() {
+        anyhow::bail!(
+            "PowerShell Expand-Archive failed (exit code: {})",
+            status.code().unwrap_or(-1)
+        );
+    }
+
+    let extracted = tmp_dir.path().join("longbridge.exe");
+    if !extracted.exists() {
+        anyhow::bail!("Binary 'longbridge.exe' not found in archive");
+    }
+
+    // Rename current running exe to .old (Windows allows renaming a running exe)
+    let old_exe = target_exe.with_extension("exe.old");
+    let _ = std::fs::remove_file(&old_exe);
+    std::fs::rename(target_exe, &old_exe)?;
+
+    // Move new exe into place (copy + remove as fallback for cross-drive)
+    if std::fs::rename(&extracted, target_exe).is_err() {
+        if let Err(e) = std::fs::copy(&extracted, target_exe) {
+            // Attempt to restore the old binary if copy fails
+            let _ = std::fs::rename(&old_exe, target_exe);
+            return Err(e.into());
+        }
+        let _ = std::fs::remove_file(&extracted);
+    }
+
+    Ok(())
+}
+
+/// On Windows, remove the `.old` binary left behind by a previous update.
+/// On Unix this is a no-op.
+pub fn cleanup_old_binary() {
+    #[cfg(windows)]
+    {
+        let Ok(exe) = std::env::current_exe().and_then(|p| p.canonicalize()) else {
+            return;
+        };
+        let old = exe.with_extension("exe.old");
+        if old.exists() {
+            let _ = std::fs::remove_file(old);
+        }
+    }
+}
+
+/// Download the latest release and replace the current binary in place.
+pub async fn cmd_update(verbose: bool) -> anyhow::Result<()> {
+    // 1. Resolve current binary path
+    let current_exe = std::env::current_exe()?.canonicalize()?;
+
+    if verbose {
+        eprintln!("* Binary: {}", current_exe.display());
+    }
+
+    // 2. Fetch latest version
+    let latest = fetch_latest_version_for_update().await?;
+
+    // 3. Check if already up to date
+    if !is_newer(CURRENT_VERSION, &latest) {
+        eprintln!("Already up to date (v{CURRENT_VERSION}).");
+        return Ok(());
+    }
+
+    eprintln!("Updating v{CURRENT_VERSION} → v{latest} ...");
+
+    // 4. Build download URL
+    let base = get_base_url();
+    let url = build_download_url(base, &latest);
+
+    if verbose {
+        eprintln!("* Download: {url}");
+    }
+
+    // 5. Download to temp file
+    // Use into_temp_path() to close the file handle — on Windows,
+    // NamedTempFile holds a lock that prevents PowerShell from reading it.
+    let tmp_path = tempfile::Builder::new()
+        .prefix("longbridge-update-")
+        .tempfile()?
+        .into_temp_path();
+    download_to_file(&url, &tmp_path).await?;
+
+    // 6. Extract and replace binary (platform-specific)
+    extract_and_replace(&tmp_path, &current_exe)?;
+
+    // 7. Clear version cache
+    if let Some(path) = cache_file_path() {
+        let _ = std::fs::remove_file(path);
+    }
+
+    eprintln!("Updated to v{latest} successfully.");
     Ok(())
 }
 

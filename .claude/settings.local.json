@@ -26,7 +26,8 @@
       "mcp__chrome-devtools__click",
       "WebFetch(domain:stockcircle.com)",
       "WebFetch(domain:fred.stlouisfed.org)",
-      "WebFetch(domain:api.stlouisfed.org)"
+      "WebFetch(domain:api.stlouisfed.org)",
+      "WebFetch(domain:open.longbridge.cn)"
     ]
   }
 }

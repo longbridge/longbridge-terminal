@@ -1,0 +1,139 @@
+name: Test Update Command
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - src/update.rs
+      - install
+      - install.ps1
+      - .github/workflows/test-update.yml
+  pull_request:
+    paths:
+      - src/update.rs
+      - install
+      - install.ps1
+      - .github/workflows/test-update.yml
+  workflow_dispatch:
+
+concurrency:
+  group: test-update-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  update-linux:
+    name: Update (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: linux-update-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Force old version to trigger update
+        run: sed -i 's/^version = ".*"/version = "0.14.0"/' Cargo.toml
+
+      - name: Build
+        run: cargo build
+
+      - name: Run update
+        run: cargo run -- update --verbose
+
+      - name: Verify updated binary matches CDN latest
+        run: |
+          expected=$(curl -sf https://open.longbridge.com/github/release/longbridge-terminal/latest | tr -d '[:space:]')
+          actual=$(target/debug/longbridge --version | awk '{print $2}')
+          echo "CDN latest: $expected"
+          echo "Binary version: $actual"
+          [ "v$actual" = "$expected" ] || [ "$actual" = "$expected" ]
+
+  update-macos:
+    name: Update (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: macos-update-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Force old version to trigger update
+        run: sed -i '' 's/^version = ".*"/version = "0.14.0"/' Cargo.toml
+
+      - name: Build
+        run: cargo build
+
+      - name: Run update
+        run: cargo run -- update --verbose
+
+      - name: Verify updated binary matches CDN latest
+        run: |
+          expected=$(curl -sf https://open.longbridge.com/github/release/longbridge-terminal/latest | tr -d '[:space:]')
+          actual=$(target/debug/longbridge --version | awk '{print $2}')
+          echo "CDN latest: $expected"
+          echo "Binary version: $actual"
+          [ "v$actual" = "$expected" ] || [ "$actual" = "$expected" ]
+
+  update-windows:
+    name: Update (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: windows-update-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Force old version to trigger update
+        shell: pwsh
+        run: (Get-Content Cargo.toml) -replace '^version = ".*"', 'version = "0.14.0"' | Set-Content Cargo.toml
+
+      - name: Build
+        run: cargo build
+
+      - name: Run update
+        shell: pwsh
+        run: cargo run -- update
+
+      - name: Verify updated binary matches CDN latest
+        shell: pwsh
+        run: |
+          $expected = (Invoke-WebRequest -Uri "https://open.longbridge.com/github/release/longbridge-terminal/latest" -UseBasicParsing).Content.Trim()
+          $actual = (& target\debug\longbridge.exe --version) -replace '^longbridge ', ''
+          Write-Host "CDN latest: $expected"
+          Write-Host "Binary version: $actual"
+          if ("v$actual" -ne $expected -and $actual -ne $expected) {
+            throw "Version mismatch: binary=$actual, CDN=$expected"
+          }
