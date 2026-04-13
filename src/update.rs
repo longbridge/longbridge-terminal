@@ -102,7 +102,11 @@ pub fn notify_if_update_available() {
     if is_newer(CURRENT_VERSION, &latest) {
         let green = "\x1b[32m";
         let reset = "\x1b[0m";
-        eprintln!("\nNew version {latest} is available, run `{green}longbridge update{reset}` to update.\n");
+        let url = release_notes_url();
+        eprintln!(
+            "\nNew version {latest} is available, run `{green}longbridge update{reset}` to update."
+        );
+        eprintln!("Release notes: {url}\n");
     }
 }
 
@@ -466,9 +470,9 @@ pub async fn cmd_release_notes() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Check if the binary version changed since the last run. If so, fetch and
-/// display release notes once, then update the marker file.
-pub async fn check_and_show_release_notes() {
+/// Check if the binary version changed since the last run. If so, print a
+/// one-line notice with the release notes URL (no network request).
+pub fn check_and_show_release_notes() {
     let last = read_last_run_version();
 
     // Always update the marker so we only show once.
@@ -483,19 +487,12 @@ pub async fn check_and_show_release_notes() {
         return;
     }
 
-    // Version changed — fetch and display release notes.
-    match fetch_release_notes().await {
-        Ok(md) => {
-            let green = "\x1b[32m";
-            let reset = "\x1b[0m";
-            eprintln!("\n{green}Updated to v{CURRENT_VERSION} (was v{last}). What's new:{reset}\n");
-            render_release_notes(&md);
-            eprintln!();
-        }
-        Err(e) => {
-            tracing::debug!("Failed to fetch release notes: {e}");
-        }
-    }
+    let green = "\x1b[32m";
+    let reset = "\x1b[0m";
+    let url = release_notes_url();
+    eprintln!(
+        "\n{green}Updated to v{CURRENT_VERSION} (was v{last}). Release notes: {url}{reset}\n"
+    );
 }
 
 #[cfg(test)]

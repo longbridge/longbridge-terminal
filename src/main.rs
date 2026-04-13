@@ -106,8 +106,8 @@ async fn main() {
     // Kick off background version check to refresh the update cache for the next run.
     update::spawn_version_check();
 
-    // Show release notes once after a version change (e.g. brew upgrade, manual install).
-    update::check_and_show_release_notes().await;
+    // Show release notes URL once after a version change (e.g. brew upgrade, manual install).
+    update::check_and_show_release_notes();
 
     match cli.command {
         None => {
