@@ -855,10 +855,9 @@ pub enum Commands {
 
     /// Profit & loss analysis
     ///
-    /// Without subcommand: shows P&L summary.
-    /// Subcommands: sublist  detail  flows  by-market
+    /// Without subcommand: shows P&L summary with stock breakdown.
+    /// Subcommands: detail  flows  by-market
     /// Example: longbridge profit-analysis
-    /// Example: longbridge profit-analysis sublist --filter profit
     /// Example: longbridge profit-analysis detail 700.HK
     /// Example: longbridge profit-analysis flows 700.HK
     /// Example: longbridge profit-analysis by-market --market HK
@@ -996,26 +995,6 @@ pub enum AhPremiumCmd {
 
 #[derive(Subcommand)]
 pub enum ProfitAnalysisCmd {
-    /// P&L sublist by stock (profit / loss / all)
-    ///
-    /// Example: longbridge profit-analysis sublist
-    /// Example: longbridge profit-analysis sublist --filter profit
-    /// Example: longbridge profit-analysis sublist --start 2025-01-01 --end 2025-12-31
-    Sublist {
-        /// Filter: profit, loss, or all (default: all)
-        #[arg(long, default_value = "all")]
-        filter: String,
-        /// Start date (YYYY-MM-DD)
-        #[arg(long)]
-        start: Option<String>,
-        /// End date (YYYY-MM-DD)
-        #[arg(long)]
-        end: Option<String>,
-        /// Currency filter (e.g. HKD, USD, CNH)
-        #[arg(long)]
-        currency: Option<String>,
-    },
-
     /// Individual stock P&L detail (underlying vs derivative breakdown)
     ///
     /// Example: longbridge profit-analysis detail 700.HK
@@ -2197,22 +2176,6 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         },
         Commands::ProfitAnalysis { cmd } => match cmd {
             None => asset::cmd_profit_analysis(format, verbose).await,
-            Some(ProfitAnalysisCmd::Sublist {
-                filter,
-                start,
-                end,
-                currency,
-            }) => {
-                asset::cmd_profit_analysis_sublist(
-                    &filter,
-                    start.as_deref(),
-                    end.as_deref(),
-                    currency.as_deref(),
-                    format,
-                    verbose,
-                )
-                .await
-            }
             Some(ProfitAnalysisCmd::Detail { symbol, start, end }) => {
                 asset::cmd_profit_analysis_detail(
                     &symbol,

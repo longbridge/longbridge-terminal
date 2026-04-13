@@ -179,41 +179,6 @@ fn print_profit_analysis_sublist(data: &Value) {
     }
 }
 
-pub async fn cmd_profit_analysis_sublist(
-    filter: &str,
-    start: Option<&str>,
-    end: Option<&str>,
-    currency: Option<&str>,
-    format: &OutputFormat,
-    verbose: bool,
-) -> Result<()> {
-    let mut params: Vec<(&str, String)> = vec![("profit_or_loss", filter.to_owned())];
-    if let Some(s) = start {
-        let ts = parse_datetime_start(s)?.unix_timestamp().to_string();
-        params.push(("start", ts));
-    }
-    if let Some(e) = end {
-        let ts = parse_datetime_end(e)?.unix_timestamp().to_string();
-        params.push(("end", ts));
-    }
-    if let Some(c) = currency {
-        params.push(("currency", c.to_owned()));
-    }
-    let params_ref: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    let data = http_get(
-        "/v1/portfolio/profit-analysis-sublist",
-        &params_ref,
-        verbose,
-    )
-    .await?;
-
-    match format {
-        OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_profit_analysis_sublist(&data),
-    }
-    Ok(())
-}
-
 pub async fn cmd_profit_analysis_detail(
     symbol: &str,
     start: Option<&str>,
@@ -246,7 +211,6 @@ fn print_pnl_detail(data: &Value, symbol: &str) {
     let currency = val_str(&data["currency"]);
     let start_date = val_str(&data["start_date"]);
     let end_date = val_str(&data["end_date"]);
-    let profit = val_str(&data["profit"]);
 
     let title = if name.is_empty() || name == "-" {
         symbol.to_owned()
@@ -261,72 +225,60 @@ fn print_pnl_detail(data: &Value, symbol: &str) {
         print!("  {start_date} ~ {end_date}");
     }
     println!("\n");
-    println!("{:24} {profit}", "Total P&L");
 
-    // Underlying details
-    let ud = &data["underlying_details"];
-    let ud_profit = val_str(&ud["profit"]);
-    if ud_profit != "0" && !ud_profit.is_empty() {
-        println!("\n  Underlying");
-        println!("  {:22} {ud_profit}", "P&L");
-        print_amount_if_set("  ", "Holding Value", &val_str(&ud["holding_value"]));
-        print_amount_if_set(
-            "  ",
-            "Total Buy",
-            &val_str(&ud["cumulative_debited_amount"]),
-        );
-        print_amount_if_set(
-            "  ",
-            "Total Sell",
-            &val_str(&ud["cumulative_credited_amount"]),
-        );
-        print_amount_if_set("  ", "Total Fee", &val_str(&ud["cumulative_fee_amount"]));
-        print_detail_items("  ", "Buys", ud.get("debited_details"));
-        print_detail_items("  ", "Sells", ud.get("credited_details"));
-        print_detail_items("  ", "Fees", ud.get("fee_details"));
-    }
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    rows.push(vec!["Total P&L".to_owned(), val_str(&data["profit"])]);
 
-    // Derivative details
-    let dd = &data["derivative_pnl_details"];
-    let dd_profit = val_str(&dd["profit"]);
-    if dd_profit != "0" && !dd_profit.is_empty() {
-        println!("\n  Derivative");
-        println!("  {:22} {dd_profit}", "P&L");
-        print_amount_if_set("  ", "Holding Value", &val_str(&dd["holding_value"]));
-        print_amount_if_set(
-            "  ",
-            "Total Buy",
-            &val_str(&dd["cumulative_debited_amount"]),
-        );
-        print_amount_if_set(
-            "  ",
-            "Total Sell",
-            &val_str(&dd["cumulative_credited_amount"]),
-        );
-        print_amount_if_set("  ", "Total Fee", &val_str(&dd["cumulative_fee_amount"]));
-        print_detail_items("  ", "Buys", dd.get("debited_details"));
-        print_detail_items("  ", "Sells", dd.get("credited_details"));
-        print_detail_items("  ", "Fees", dd.get("fee_details"));
-    }
+    collect_section_rows(&mut rows, "Underlying", &data["underlying_details"]);
+    collect_section_rows(&mut rows, "Derivative", &data["derivative_pnl_details"]);
+
+    print_table(&["", "Amount"], rows, &OutputFormat::Pretty);
 }
 
-fn print_amount_if_set(prefix: &str, label: &str, val: &str) {
+fn collect_section_rows(rows: &mut Vec<Vec<String>>, label: &str, section: &Value) {
+    let profit = val_str(&section["profit"]);
+    if profit == "0" || profit.is_empty() {
+        return;
+    }
+    rows.push(vec![format!("[{label}]"), String::new()]);
+    rows.push(vec!["  P&L".to_owned(), profit]);
+    push_if_set(rows, "  Holding Value", &val_str(&section["holding_value"]));
+    push_if_set(
+        rows,
+        "  Total Buy",
+        &val_str(&section["cumulative_debited_amount"]),
+    );
+    push_if_set(
+        rows,
+        "  Total Sell",
+        &val_str(&section["cumulative_credited_amount"]),
+    );
+    push_if_set(
+        rows,
+        "  Total Fee",
+        &val_str(&section["cumulative_fee_amount"]),
+    );
+    push_detail_items(rows, section.get("debited_details"));
+    push_detail_items(rows, section.get("credited_details"));
+    push_detail_items(rows, section.get("fee_details"));
+}
+
+fn push_if_set(rows: &mut Vec<Vec<String>>, label: &str, val: &str) {
     if !val.is_empty() && val != "-" && val != "0" {
-        println!("{prefix}{label:22} {val}");
+        rows.push(vec![label.to_owned(), val.to_owned()]);
     }
 }
 
-fn print_detail_items(prefix: &str, label: &str, items: Option<&Value>) {
+fn push_detail_items(rows: &mut Vec<Vec<String>>, items: Option<&Value>) {
     if let Some(arr) = items.and_then(|v| v.as_array()) {
         for item in arr {
             let amount = val_str(&item["amount"]);
             let desc = val_str(&item["describe"]);
             if !amount.is_empty() && amount != "0" {
-                println!("{prefix}  {desc:20} {amount}");
+                rows.push(vec![format!("    {desc}"), amount]);
             }
         }
     }
-    let _ = label; // suppress unused warning — label used for clarity in call sites
 }
 
 pub async fn cmd_profit_analysis_flows(
