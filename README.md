@@ -213,6 +213,16 @@ longbridge margin-ratio TSLA.US                        # Margin ratio requiremen
 longbridge max-qty TSLA.US --side buy --price 250      # Estimate maximum buy or sell quantity given current account balance
 ```
 
+### Profit Analysis
+
+```bash
+longbridge profit-analysis                                  # P&L summary with stock breakdown
+longbridge profit-analysis detail 700.HK                    # Stock P&L breakdown + transaction flows
+longbridge profit-analysis detail 700.HK --derivative       # Show derivative flows
+longbridge profit-analysis by-market                        # Stock P&L by market (paginated)
+longbridge profit-analysis by-market --market HK --size 50  # Filter by market
+```
+
 ### Statements
 
 ```bash

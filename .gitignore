@@ -2,6 +2,5 @@
 .env
 *.log
 .DS_Store
-docs/individual-stock-features.md
-docs/superpowers/
+docs/
 .claude/worktrees/
