@@ -1325,10 +1325,29 @@ pub async fn cmd_alert_delete(symbol: String, format: &OutputFormat, verbose: bo
 }
 
 pub async fn cmd_profit_analysis(format: &OutputFormat, verbose: bool) -> Result<()> {
-    let data = super::api::http_get("/v1/portfolio/profit-analysis-summary", &[], verbose).await?;
+    let summary_fut = super::api::http_get("/v1/portfolio/profit-analysis-summary", &[], verbose);
+    let sublist_fut = super::api::http_get(
+        "/v1/portfolio/profit-analysis-sublist",
+        &[("profit_or_loss", "all")],
+        verbose,
+    );
+    let (summary, sublist) = tokio::join!(summary_fut, sublist_fut);
+    let summary = summary?;
+    let sublist = sublist?;
+
     match format {
-        OutputFormat::Json => print_json_value(&data),
-        OutputFormat::Pretty => print_profit_analysis(&data),
+        OutputFormat::Json => {
+            let mut merged = serde_json::Map::new();
+            if let serde_json::Value::Object(m) = &summary {
+                merged.extend(m.clone());
+            }
+            merged.insert("sublist".to_owned(), sublist.clone());
+            print_json_value(&serde_json::Value::Object(merged));
+        }
+        OutputFormat::Pretty => {
+            print_profit_analysis(&summary);
+            print_profit_analysis_sublist(&sublist);
+        }
     }
     Ok(())
 }
@@ -1380,6 +1399,28 @@ fn print_profit_analysis(data: &serde_json::Value) {
     }
 }
 
+fn print_profit_analysis_sublist(data: &serde_json::Value) {
+    if let Some(items) = data.get("items").and_then(|v| v.as_array()) {
+        if items.is_empty() {
+            return;
+        }
+        println!("\nStock P&L Breakdown\n");
+        let headers = &["Symbol", "Name", "Market", "P&L"];
+        let rows: Vec<Vec<String>> = items
+            .iter()
+            .map(|item| {
+                vec![
+                    val_str(&item["code"]),
+                    val_str(&item["name"]),
+                    val_str(&item["market"]),
+                    val_str(&item["profit"]),
+                ]
+            })
+            .collect();
+        print_table(headers, rows, &OutputFormat::Pretty);
+    }
+}
+
 pub async fn cmd_profit_analysis_sublist(
     filter: &str,
     start: Option<&str>,
@@ -1410,23 +1451,7 @@ pub async fn cmd_profit_analysis_sublist(
 
     match format {
         OutputFormat::Json => print_json_value(&data),
-        OutputFormat::Pretty => {
-            if let Some(items) = data.get("items").and_then(|v| v.as_array()) {
-                let headers = &["Symbol", "Name", "Market", "P&L"];
-                let rows: Vec<Vec<String>> = items
-                    .iter()
-                    .map(|item| {
-                        vec![
-                            val_str(&item["code"]),
-                            val_str(&item["name"]),
-                            val_str(&item["market"]),
-                            val_str(&item["profit"]),
-                        ]
-                    })
-                    .collect();
-                print_table(headers, rows, format);
-            }
-        }
+        OutputFormat::Pretty => print_profit_analysis_sublist(&data),
     }
     Ok(())
 }
@@ -1455,11 +1480,26 @@ pub async fn cmd_profit_analysis_detail(
         OutputFormat::Json => print_json_value(&data),
         OutputFormat::Pretty => {
             let name = val_str(&data["name"]);
+            let currency = val_str(&data["currency"]);
+            let start_date = val_str(&data["start_date"]);
+            let end_date = val_str(&data["end_date"]);
             let profit = val_str(&data["profit"]);
             let underlying = val_str(&data["underlying_details"]["profit"]);
             let derivative = val_str(&data["derivative_pnl_details"]["profit"]);
 
-            println!("{name} ({symbol})\n");
+            let title = if name.is_empty() || name == "-" {
+                symbol.to_owned()
+            } else {
+                format!("{name} ({symbol})")
+            };
+            print!("{title}");
+            if !currency.is_empty() && currency != "-" {
+                print!("  [{currency}]");
+            }
+            if !start_date.is_empty() && start_date != "-" {
+                print!("  {start_date} ~ {end_date}");
+            }
+            println!("\n");
             println!("{:20} {profit}", "Total P&L");
             println!("{:20} {underlying}", "Underlying P&L");
             println!("{:20} {derivative}", "Derivative P&L");
@@ -1504,20 +1544,27 @@ pub async fn cmd_profit_analysis_flows(
                 let rows: Vec<Vec<String>> = flows
                     .iter()
                     .map(|f| {
-                        let ts = f["executed_timestamp"].as_i64().map_or_else(
-                            || val_str(&f["executed_timestamp"]),
-                            |t| {
-                                time::OffsetDateTime::from_unix_timestamp(t)
-                                    .map_or_else(|_| t.to_string(), fmt_datetime)
-                            },
-                        );
+                        let exec_time = {
+                            let exec_date = val_str(&f["executed_date"]);
+                            if exec_date.is_empty() || exec_date == "-" {
+                                let raw = val_str(&f["executed_timestamp"]);
+                                raw.parse::<i64>()
+                                    .ok()
+                                    .or_else(|| f["executed_timestamp"].as_i64())
+                                    .and_then(|t| time::OffsetDateTime::from_unix_timestamp(t).ok())
+                                    .map_or(raw, fmt_datetime)
+                            } else {
+                                exec_date
+                            }
+                        };
                         let direction = match val_str(&f["direction"]).as_str() {
                             "0" => "In".to_owned(),
                             "1" => "Out".to_owned(),
+                            "-1" => "-".to_owned(),
                             other => other.to_owned(),
                         };
                         vec![
-                            ts,
+                            exec_time,
                             val_str(&f["code"]),
                             direction,
                             val_str(&f["executed_quantity"]),
