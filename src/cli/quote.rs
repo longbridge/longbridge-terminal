@@ -2109,7 +2109,7 @@ pub async fn cmd_broker_holding_detail(
 ) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
-        "/v1/quote/broker-holding/detail",
+        "/v1/broker-holding/detail",
         &[("counter_id", cid.as_str())],
         verbose,
     )
@@ -2117,30 +2117,39 @@ pub async fn cmd_broker_holding_detail(
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => {
-            let raw = val_str(&data["list"]);
-            if raw == "-" || raw.is_empty() {
+            let items = match data.get("list").and_then(|v| v.as_array()) {
+                Some(a) if !a.is_empty() => a.clone(),
+                _ => {
+                    // Fallback: list might be a JSON string
+                    let raw = val_str(&data["list"]);
+                    if raw == "-" || raw.is_empty() {
+                        println!("No broker holding detail found.");
+                        return Ok(());
+                    }
+                    serde_json::from_str::<Vec<Value>>(&raw).unwrap_or_default()
+                }
+            };
+            if items.is_empty() {
                 println!("No broker holding detail found.");
                 return Ok(());
             }
-            if let Ok(items) = serde_json::from_str::<Vec<Value>>(&raw) {
-                let headers = ["broker", "code", "ratio%", "shares", "chg_1d", "chg_5d"];
-                let rows: Vec<Vec<String>> = items
-                    .iter()
-                    .map(|item| {
-                        let ratio = item.get("ratio").unwrap_or(&Value::Null);
-                        let shares = item.get("shares").unwrap_or(&Value::Null);
-                        vec![
-                            val_str(&item["name"]),
-                            val_str(&item["parti_number"]),
-                            val_str(&ratio["value"]),
-                            val_str(&shares["value"]),
-                            val_str(&shares["chg_1"]),
-                            val_str(&shares["chg_5"]),
-                        ]
-                    })
-                    .collect();
-                print_table(&headers, rows, format);
-            }
+            let headers = ["broker", "code", "ratio%", "shares", "chg_1d", "chg_5d"];
+            let rows: Vec<Vec<String>> = items
+                .iter()
+                .map(|item| {
+                    let ratio = item.get("ratio").unwrap_or(&Value::Null);
+                    let shares = item.get("shares").unwrap_or(&Value::Null);
+                    vec![
+                        val_str(&item["name"]),
+                        val_str(&item["parti_number"]),
+                        val_str(&ratio["value"]),
+                        val_str(&shares["value"]),
+                        val_str(&shares["chg_1"]),
+                        val_str(&shares["chg_5"]),
+                    ]
+                })
+                .collect();
+            print_table(&headers, rows, format);
         }
     }
     Ok(())
@@ -2262,7 +2271,7 @@ pub async fn cmd_ah_premium_intraday(
     let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
         "/v1/quote/ahpremium/timeshares",
-        &[("counter_id", cid.as_str())],
+        &[("counter_id", cid.as_str()), ("days", "1")],
         verbose,
     )
     .await?;

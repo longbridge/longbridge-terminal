@@ -1281,12 +1281,11 @@ pub async fn cmd_alert_add(
     verbose: bool,
 ) -> Result<()> {
     let cid = crate::utils::counter::symbol_to_counter_id(&symbol);
-    let dir: i32 = match direction {
-        "fall" | "down" => 2,
-        _ => 1,
-    };
-    let typ: i32 = match alert_type {
-        "percent" => 2,
+    // indicator_id: 1=price_rise, 2=price_fall, 3=change%_rise, 4=change%_fall
+    let indicator_id: i32 = match (alert_type, direction) {
+        ("percent", "fall" | "down") => 4,
+        ("percent", _) => 3,
+        (_, "fall" | "down") => 2,
         _ => 1,
     };
     let freq: i32 = match frequency {
@@ -1294,20 +1293,19 @@ pub async fn cmd_alert_add(
         "every" => 2,
         _ => 3, // once
     };
+    let setting_key = match indicator_id {
+        3 | 4 => "chg",
+        _ => "price",
+    };
     let body = serde_json::json!({
-        "list": [{
-            "counter_id": cid,
-            "value": price,
-            "direction": dir,
-            "type": typ,
-            "frequency": freq,
-            "enabled": 1,
-            "note": note.unwrap_or_default(),
-            "name": symbol,
-            "market": "",
-        }]
+        "counter_id": cid,
+        "indicator_id": indicator_id,
+        "value_map": { setting_key: price },
+        "frequency": freq,
+        "enabled": true,
+        "note": note.unwrap_or_default(),
     });
-    let data = super::api::http_put("/v1/notify/reminders", body, verbose).await?;
+    let data = super::api::http_post("/v1/notify/reminders", body, verbose).await?;
     match format {
         OutputFormat::Json => print_json_value(&data),
         OutputFormat::Pretty => println!("Alert added for {symbol} at {price} ({direction})"),
