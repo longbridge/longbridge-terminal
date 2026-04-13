@@ -2497,10 +2497,11 @@ pub async fn cmd_trade_stats(symbol: String, format: &OutputFormat, verbose: boo
                 };
 
                 println!(
-                    "Prev Close: {}  Avg Price: {}  Trades: {}",
+                    "Prev Close: {}  Avg Price: {}  Trades: {}  Updated: {}",
                     val_str(&stats["preclose"]),
                     val_str(&stats["avgprice"]),
                     val_str(&stats["trades_count"]),
+                    fmt_ts_time(&val_str(&stats["timestamp"])),
                 );
                 println!(
                     "Volume: {}  Buy: {} ({:.1}%)  Sell: {} ({:.1}%)  Neutral: {} ({:.1}%)",
