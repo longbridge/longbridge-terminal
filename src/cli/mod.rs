@@ -801,20 +801,6 @@ pub enum Commands {
         cmd: Option<AhPremiumCmd>,
     },
 
-    /// Multi-range adaptive securities price comparison
-    ///
-    /// The first symbol is the primary, others are compared against it.
-    /// Period: today, week, month, half-year, ytd, 1y, 3y, 5y, all
-    /// Example: longbridge securities-contrast AAPL.US MSFT.US GOOGL.US
-    /// Example: longbridge securities-contrast 700.HK 9988.HK --period 1y
-    SecuritiesContrast {
-        /// Symbols to compare (first is primary), in <CODE>.<MARKET> format
-        symbols: Vec<String>,
-        /// Period: today, week, month, half-year, ytd, 1y, 3y, 5y, all
-        #[arg(long, default_value = "1y")]
-        period: String,
-    },
-
     /// Trade statistics (price distribution by volume)
     ///
     /// Example: longbridge trade-stats 700.HK
@@ -2133,9 +2119,6 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 quote::cmd_ah_premium_kline(sym, &kline_type, count, format, verbose).await
             }
         },
-        Commands::SecuritiesContrast { symbols, period } => {
-            quote::cmd_securities_contrast(symbols, &period, format, verbose).await
-        }
         Commands::TradeStats { symbol } => {
             quote::cmd_trade_stats(symbol, format, verbose).await
         }
