@@ -1918,6 +1918,27 @@ fn fmt_ts(raw: &str) -> String {
         .map_or_else(|_| raw.to_string(), crate::utils::datetime::format_date)
 }
 
+/// Format unix timestamp string to ISO 8601 datetime (HH:MM)
+fn fmt_ts_time(raw: &str) -> String {
+    raw.parse::<i64>().map_or_else(
+        |_| raw.to_string(),
+        |ts| {
+            use time::OffsetDateTime;
+            match OffsetDateTime::from_unix_timestamp(ts) {
+                Ok(dt) => format!(
+                    "{:04}-{:02}-{:02} {:02}:{:02}",
+                    dt.year(),
+                    dt.month() as u8,
+                    dt.day(),
+                    dt.hour(),
+                    dt.minute()
+                ),
+                Err(_) => ts.to_string(),
+            }
+        },
+    )
+}
+
 /// Format premium rate: -0.182435 → -18.24%
 fn fmt_premium(raw: &str) -> String {
     raw.parse::<f64>()
@@ -2336,7 +2357,11 @@ pub async fn cmd_ah_premium_intraday(
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => {
-            let items = match data.get("minutes").and_then(|v| v.as_array()) {
+            let items = match data
+                .get("klines")
+                .or_else(|| data.get("minutes"))
+                .and_then(|v| v.as_array())
+            {
                 Some(a) if !a.is_empty() => a,
                 _ => {
                     println!("No AH premium intraday data found.");
@@ -2348,7 +2373,7 @@ pub async fn cmd_ah_premium_intraday(
                 .iter()
                 .map(|item| {
                     vec![
-                        fmt_ts(&val_str(&item["timestamp"])),
+                        fmt_ts_time(&val_str(&item["timestamp"])),
                         val_str(&item["aprice"]),
                         val_str(&item["hprice"]),
                         fmt_premium(&val_str(&item["ahpremium_rate"])),
