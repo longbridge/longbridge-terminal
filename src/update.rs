@@ -355,13 +355,16 @@ pub async fn cmd_update(verbose: bool) -> anyhow::Result<()> {
     }
 
     // 5. Download to temp file
-    let tmp_file = tempfile::Builder::new()
+    // Use into_temp_path() to close the file handle — on Windows,
+    // NamedTempFile holds a lock that prevents PowerShell from reading it.
+    let tmp_path = tempfile::Builder::new()
         .prefix("longbridge-update-")
-        .tempfile()?;
-    download_to_file(&url, tmp_file.path()).await?;
+        .tempfile()?
+        .into_temp_path();
+    download_to_file(&url, &tmp_path).await?;
 
     // 6. Extract and replace binary (platform-specific)
-    extract_and_replace(tmp_file.path(), &current_exe)?;
+    extract_and_replace(&tmp_path, &current_exe)?;
 
     // 7. Clear version cache
     if let Some(path) = cache_file_path() {
