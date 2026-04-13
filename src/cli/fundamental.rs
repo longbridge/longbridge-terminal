@@ -1785,12 +1785,13 @@ fn print_corp_action(data: &Value) {
         }
     };
 
-    let headers = ["date", "type", "description"];
+    let headers = ["date", "date_type", "action", "description"];
     let rows: Vec<Vec<String>> = items
         .iter()
         .map(|item| {
             vec![
                 val_str(&item["date"]),
+                val_str(&item["date_type"]),
                 val_str(&item["act_type"]),
                 val_str(&item["act_desc"]),
             ]
@@ -1830,7 +1831,7 @@ fn print_invest_relation(data: &Value) {
     let total = data["total"].as_i64().unwrap_or(0);
     println!("Total: {total}\n");
 
-    let headers = ["company", "symbol", "% shares", "value", "rank"];
+    let headers = ["company", "symbol", "% shares", "value", "currency", "rank"];
     let rows: Vec<Vec<String>> = items
         .iter()
         .map(|item| {
@@ -1840,11 +1841,14 @@ fn print_invest_relation(data: &Value) {
             } else {
                 counter_id_to_symbol(&sym)
             };
+            let raw_val = val_str(&item["shares_value"]);
+            let cur = val_str(&item["currency"]);
             vec![
                 val_str(&item["company_name"]),
                 display_sym,
-                val_str(&item["percent_of_shares"]),
-                val_str(&item["shares_value"]),
+                fmt_pct(&val_str(&item["percent_of_shares"])),
+                fmt_amount(&raw_val, ""),
+                cur,
                 val_str(&item["shares_rank"]),
             ]
         })

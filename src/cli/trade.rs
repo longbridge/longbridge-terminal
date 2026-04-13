@@ -1328,15 +1328,56 @@ pub async fn cmd_profit_analysis(format: &OutputFormat, verbose: bool) -> Result
     let data = super::api::http_get("/v1/portfolio/profit-analysis-summary", &[], verbose).await?;
     match format {
         OutputFormat::Json => print_json_value(&data),
-        OutputFormat::Pretty => {
-            // Generic display — API response structure may vary
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&data).unwrap_or_default()
-            );
-        }
+        OutputFormat::Pretty => print_profit_analysis(&data),
     }
     Ok(())
+}
+
+fn print_profit_analysis(data: &serde_json::Value) {
+    let currency = val_str(&data["currency"]);
+    let period = format!(
+        "{} ~ {}",
+        val_str(&data["start_date"]),
+        val_str(&data["end_date"])
+    );
+    println!("P&L Summary ({currency})  {period}\n");
+
+    let fields = [
+        ("Total Asset", "current_total_asset"),
+        ("Initial Asset", "initial_asset_value"),
+        ("Ending Asset", "ending_asset_value"),
+        ("Invest Amount", "invest_amount"),
+        ("Total P&L", "sum_profit"),
+        ("Total P&L Rate", "sum_profit_rate"),
+        ("Simple Yield", "total_simple_earning_yield"),
+        ("Time-Weighted Yield", "total_time_earning_yield"),
+        ("Stocks Traded", "trade_stock_num"),
+    ];
+    for (label, key) in fields {
+        let v = val_str(&data[key]);
+        if !v.is_empty() && v != "-" {
+            println!("{label:20} {v}");
+        }
+    }
+
+    if let Some(profits) = data.get("profits") {
+        println!();
+        let categories = [
+            ("Stock P&L", "stock"),
+            ("Fund P&L", "fund"),
+            ("MMF P&L", "mmf"),
+            ("Crypto P&L", "crypto"),
+            ("Other P&L", "other"),
+            ("IPO Subscription", "ipo_subscription"),
+            ("IPO Hit", "ipo_hit"),
+        ];
+        for (label, key) in categories {
+            let v = val_str(&profits[key]);
+            if !v.is_empty() && v != "-" && v != "0" {
+                println!("{label:20} {v}");
+            }
+        }
+    }
 }
 
 #[cfg(test)]

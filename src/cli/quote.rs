@@ -1987,7 +1987,10 @@ pub async fn cmd_constituent(
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => {
             let total = data["total"].as_i64().unwrap_or(0);
-            println!("Constituents ({total} total)\n");
+            let rise = data["rise_num"].as_i64().unwrap_or(0);
+            let fall = data["fall_num"].as_i64().unwrap_or(0);
+            let flat = data["flat_num"].as_i64().unwrap_or(0);
+            println!("Constituents ({total} total)  Rise: {rise}  Fall: {fall}  Flat: {flat}\n");
             let items = match data.get("stocks").and_then(|v| v.as_array()) {
                 Some(a) if !a.is_empty() => a,
                 _ => {
@@ -1995,7 +1998,15 @@ pub async fn cmd_constituent(
                     return Ok(());
                 }
             };
-            let headers = ["symbol", "name", "price", "change%", "turnover"];
+            let headers = [
+                "symbol",
+                "name",
+                "price",
+                "prev_close",
+                "change%",
+                "volume",
+                "turnover",
+            ];
             let rows: Vec<Vec<String>> = items
                 .iter()
                 .map(|item| {
@@ -2003,7 +2014,9 @@ pub async fn cmd_constituent(
                         crate::utils::counter::counter_id_to_symbol(&val_str(&item["counter_id"])),
                         val_str(&item["name"]),
                         val_str(&item["last_done"]),
+                        val_str(&item["prev_close"]),
                         val_str(&item["chg"]),
+                        val_str(&item["amount"]),
                         val_str(&item["balance"]),
                     ]
                 })
@@ -2019,38 +2032,40 @@ pub async fn cmd_market_status(format: &OutputFormat, verbose: bool) -> Result<(
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => {
-            if let Some(list) = data.as_array() {
-                let headers = ["market", "status", "trade_session"];
-                let rows: Vec<Vec<String>> = list
-                    .iter()
-                    .map(|item| {
-                        vec![
-                            val_str(&item["market"]),
-                            val_str(&item["status"]),
-                            val_str(&item["trade_session"]),
-                        ]
-                    })
-                    .collect();
-                print_table(&headers, rows, format);
-            } else if let Some(list) = data.get("list").and_then(|v| v.as_array()) {
-                let headers = ["market", "status", "trade_session"];
-                let rows: Vec<Vec<String>> = list
-                    .iter()
-                    .map(|item| {
-                        vec![
-                            val_str(&item["market"]),
-                            val_str(&item["status"]),
-                            val_str(&item["trade_session"]),
-                        ]
-                    })
-                    .collect();
-                print_table(&headers, rows, format);
-            } else {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&data).unwrap_or_default()
-                );
-            }
+            let list = data
+                .get("market_time")
+                .or_else(|| data.get("list"))
+                .and_then(|v| v.as_array());
+            let items = match list {
+                Some(a) if !a.is_empty() => a,
+                _ => {
+                    println!("No market status data found.");
+                    return Ok(());
+                }
+            };
+            let headers = ["market", "status", "trade_status"];
+            let rows: Vec<Vec<String>> = items
+                .iter()
+                .map(|item| {
+                    let status_code = item["trade_status"].as_i64().unwrap_or(0);
+                    let status = match status_code {
+                        101 => "Pre-Open",
+                        102 | 103 | 202 | 203 => "Trading",
+                        104 => "Lunch Break",
+                        105 => "Post-Trading",
+                        108 => "Closed",
+                        201 => "Pre-Market",
+                        204 => "Post-Market",
+                        _ => "Unknown",
+                    };
+                    vec![
+                        val_str(&item["market"]),
+                        status.to_string(),
+                        status_code.to_string(),
+                    ]
+                })
+                .collect();
+            print_table(&headers, rows, format);
         }
     }
     Ok(())
