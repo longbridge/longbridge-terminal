@@ -700,14 +700,6 @@ pub enum Commands {
         symbol: String,
     },
 
-    /// Share buyback records for a company
-    ///
-    /// Example: longbridge buyback AAPL.US
-    Buyback {
-        /// Symbol in <CODE>.<MARKET> format
-        symbol: String,
-    },
-
     /// Industry valuation comparison and distribution
     ///
     /// Default: comparison table with peers.
@@ -2017,9 +2009,6 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         }
         Commands::Executive { symbol } => {
             fundamental::cmd_executive(symbol, format, verbose).await
-        }
-        Commands::Buyback { symbol } => {
-            fundamental::cmd_buyback(symbol, format, verbose).await
         }
         Commands::IndustryValuation {
             symbol,

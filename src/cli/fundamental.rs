@@ -1588,47 +1588,75 @@ fn print_operating(data: &Value) {
         }
     };
 
+    // Collect rows for financial indicators table
+    let mut currency = String::new();
+    let mut rows: Vec<Vec<String>> = Vec::new();
     for item in items {
-        let title = val_str(&item["title"]);
         let report = val_str(&item["report"]);
         let latest = item["latest"].as_bool().unwrap_or(false);
-        let marker = if latest { " [latest]" } else { "" };
-        println!("{title} ({report}){marker}");
+        let marker = if latest { " *" } else { "" };
 
-        // Print financial indicators if available
         if let Some(fin) = item.get("financial") {
-            let currency = val_str(&fin["currency"]);
+            if currency.is_empty() {
+                currency = val_str(&fin["currency"]);
+            }
             if let Some(indicators) = fin.get("indicators").and_then(|v| v.as_array()) {
-                if !indicators.is_empty() {
-                    print!("  Currency: {currency}  |  ");
-                    for ind in indicators {
-                        let name = val_str(&ind["indicator_name"]);
-                        let value = val_str(&ind["indicator_value"]);
-                        let yoy = val_str(&ind["yoy"]);
-                        if yoy.is_empty() || yoy == "-" {
-                            print!("{name}: {value}  ");
-                        } else {
-                            print!("{name}: {value} (YoY {yoy})  ");
-                        }
-                    }
-                    println!();
+                let mut row = vec![format!("{report}{marker}")];
+                for ind in indicators {
+                    let value = val_str(&ind["indicator_value"]);
+                    let yoy = val_str(&ind["yoy"]);
+                    row.push(value);
+                    row.push(if yoy.is_empty() || yoy == "-" {
+                        "-".to_string()
+                    } else {
+                        format!("{yoy}%")
+                    });
                 }
+                rows.push(row);
             }
         }
+    }
 
-        // Print summary text (truncated)
-        let txt = val_str(&item["txt"]);
+    // Build dynamic headers from first item's indicators
+    let mut headers: Vec<String> = vec!["period".to_string()];
+    if let Some(first) = items.first() {
+        if let Some(indicators) = first
+            .get("financial")
+            .and_then(|f| f.get("indicators"))
+            .and_then(|v| v.as_array())
+        {
+            for ind in indicators {
+                let name = val_str(&ind["indicator_name"]);
+                headers.push(name.clone());
+                headers.push(format!("{name}_yoy"));
+            }
+        }
+    }
+
+    if !rows.is_empty() {
+        if !currency.is_empty() {
+            println!("Currency: {currency}\n");
+        }
+        let header_refs: Vec<&str> = headers.iter().map(String::as_str).collect();
+        super::output::print_table(&header_refs, rows, &OutputFormat::Pretty);
+    }
+
+    // Print latest period's management review
+    if let Some(latest) = items
+        .iter()
+        .find(|i| i["latest"].as_bool().unwrap_or(false))
+    {
+        let txt = val_str(&latest["txt"]);
         if !txt.is_empty() {
             let clean = strip_html(&txt);
-            let truncated = if clean.chars().count() > 200 {
-                let s: String = clean.chars().take(200).collect();
+            let truncated = if clean.chars().count() > 300 {
+                let s: String = clean.chars().take(300).collect();
                 format!("{s}...")
             } else {
                 clean
             };
-            println!("  {truncated}");
+            println!("\nLatest Review:\n{truncated}");
         }
-        println!();
     }
 }
 
