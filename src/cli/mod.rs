@@ -971,11 +971,12 @@ pub enum BrokerHoldingCmd {
     },
     /// Daily holding history for a specific broker
     ///
+    /// The --broker value is the `parti_no` shown in the top/detail tables.
     /// Example: longbridge broker-holding daily 700.HK --broker B01224
     Daily {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
-        /// Broker participant number (e.g. B01224)
+        /// Broker participant number from the `parti_no` column (e.g. B01224)
         #[arg(long)]
         broker: String,
     },

@@ -2128,7 +2128,7 @@ pub async fn cmd_broker_holding_top(
                 }
                 if let Ok(items) = serde_json::from_str::<Vec<Value>>(&raw) {
                     println!("{label}:");
-                    let headers = ["broker", "code", "change(shares)"];
+                    let headers = ["broker", "parti_no", "change(shares)"];
                     let rows: Vec<Vec<String>> = items
                         .iter()
                         .map(|item| {
@@ -2179,7 +2179,7 @@ pub async fn cmd_broker_holding_detail(
                 println!("No broker holding detail found.");
                 return Ok(());
             }
-            let headers = ["broker", "code", "ratio%", "shares", "chg_1d", "chg_5d"];
+            let headers = ["broker", "parti_no", "ratio%", "shares", "chg_1d", "chg_5d"];
             let rows: Vec<Vec<String>> = items
                 .iter()
                 .map(|item| {
