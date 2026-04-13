@@ -1828,7 +1828,12 @@ fn print_invest_relation(data: &Value) {
         }
     };
 
-    let total = data["total"].as_i64().unwrap_or(0);
+    let api_total = data["total"].as_u64().unwrap_or(0);
+    let total = if api_total > 0 {
+        api_total
+    } else {
+        items.len() as u64
+    };
     println!("Total: {total}\n");
 
     let headers = ["company", "symbol", "% shares", "value", "currency", "rank"];
