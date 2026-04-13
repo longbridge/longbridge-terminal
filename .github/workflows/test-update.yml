@@ -125,7 +125,7 @@ jobs:
 
       - name: Run update
         shell: pwsh
-        run: cargo run -- update --verbose
+        run: cargo run -- update
 
       - name: Verify updated binary matches CDN latest
         shell: pwsh
