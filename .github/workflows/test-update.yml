@@ -50,6 +50,34 @@ jobs:
       - name: Build
         run: cargo build
 
+      - name: Test --release-notes flag fetches content
+        run: |
+          output=$(cargo run -- update --release-notes 2>&1)
+          echo "$output"
+          [ -n "$output" ] || { echo "FAIL: --release-notes returned empty output"; exit 1; }
+
+      - name: Test first-run version detection
+        run: |
+          # Write a fake old version to trigger release notes on next run
+          mkdir -p ~/.longbridge
+          echo "0.0.1" > ~/.longbridge/.terminal-last-run-version
+          # Run with no subcommand (prints help, no auth needed) and capture output
+          output=$(cargo run 2>&1 || true)
+          echo "$output"
+          echo "$output" | grep -q "What's new" || { echo "FAIL: release notes not shown after version change"; exit 1; }
+          # Verify marker was updated so it won't show again
+          version=$(cat ~/.longbridge/.terminal-last-run-version)
+          [ "$version" = "0.14.0" ] || { echo "FAIL: last-run-version not updated (got: $version)"; exit 1; }
+
+      - name: Test release notes not shown on subsequent run
+        run: |
+          output=$(cargo run 2>&1 || true)
+          echo "$output"
+          if echo "$output" | grep -q "What's new"; then
+            echo "FAIL: release notes shown again on second run"
+            exit 1
+          fi
+
       - name: Run update
         run: cargo run -- update --verbose
 
@@ -85,6 +113,31 @@ jobs:
 
       - name: Build
         run: cargo build
+
+      - name: Test --release-notes flag fetches content
+        run: |
+          output=$(cargo run -- update --release-notes 2>&1)
+          echo "$output"
+          [ -n "$output" ] || { echo "FAIL: --release-notes returned empty output"; exit 1; }
+
+      - name: Test first-run version detection
+        run: |
+          mkdir -p ~/.longbridge
+          echo "0.0.1" > ~/.longbridge/.terminal-last-run-version
+          output=$(cargo run 2>&1 || true)
+          echo "$output"
+          echo "$output" | grep -q "What's new" || { echo "FAIL: release notes not shown after version change"; exit 1; }
+          version=$(cat ~/.longbridge/.terminal-last-run-version)
+          [ "$version" = "0.14.0" ] || { echo "FAIL: last-run-version not updated (got: $version)"; exit 1; }
+
+      - name: Test release notes not shown on subsequent run
+        run: |
+          output=$(cargo run 2>&1 || true)
+          echo "$output"
+          if echo "$output" | grep -q "What's new"; then
+            echo "FAIL: release notes shown again on second run"
+            exit 1
+          fi
 
       - name: Run update
         run: cargo run -- update --verbose
@@ -122,6 +175,40 @@ jobs:
 
       - name: Build
         run: cargo build
+
+      - name: Test --release-notes flag fetches content
+        shell: pwsh
+        run: |
+          $output = cargo run -- update --release-notes 2>&1 | Out-String
+          Write-Host $output
+          if ([string]::IsNullOrWhiteSpace($output)) {
+            throw "FAIL: --release-notes returned empty output"
+          }
+
+      - name: Test first-run version detection
+        shell: pwsh
+        run: |
+          $dir = "$env:USERPROFILE\.longbridge"
+          New-Item -ItemType Directory -Path $dir -Force | Out-Null
+          Set-Content -Path "$dir\.terminal-last-run-version" -Value "0.0.1" -NoNewline
+          $output = cargo run 2>&1 | Out-String
+          Write-Host $output
+          if ($output -notmatch "What's new") {
+            throw "FAIL: release notes not shown after version change"
+          }
+          $version = (Get-Content "$dir\.terminal-last-run-version").Trim()
+          if ($version -ne "0.14.0") {
+            throw "FAIL: last-run-version not updated (got: $version)"
+          }
+
+      - name: Test release notes not shown on subsequent run
+        shell: pwsh
+        run: |
+          $output = cargo run 2>&1 | Out-String
+          Write-Host $output
+          if ($output -match "What's new") {
+            throw "FAIL: release notes shown again on second run"
+          }
 
       - name: Run update
         shell: pwsh

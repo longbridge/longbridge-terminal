@@ -113,7 +113,12 @@ pub enum Commands {
     ///
     /// Downloads and runs the official install script to replace the current binary.
     /// Example: longbridge update
-    Update,
+    /// Example: longbridge update --release-notes
+    Update {
+        /// Show release notes instead of updating
+        #[arg(long)]
+        release_notes: bool,
+    },
 
     /// Launch the interactive full-screen TUI (terminal UI)
     ///
@@ -1735,7 +1740,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         | Commands::Logout
         | Commands::Tui
         | Commands::Check
-        | Commands::Update => {
+        | Commands::Update { .. } => {
             unreachable!()
         }
     }

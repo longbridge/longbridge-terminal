@@ -9,16 +9,18 @@
 use std::{path::PathBuf, time::Duration};
 
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
-const RELEASES_LATEST_URL: &str =
-    "https://github.com/longbridge/longbridge-terminal/releases/latest";
 const CHECK_INTERVAL_SECS: u64 = 86400; // 24 hours
 const FETCH_TIMEOUT_SECS: u64 = 5;
-
 const DOWNLOAD_TIMEOUT_SECS: u64 = 300;
-const PACKAGE_NAME: &str = "longbridge-terminal";
 
-const BASE_URL_GLOBAL: &str = "https://open.longbridge.com/github/release/longbridge-terminal";
-const BASE_URL_CN: &str = "https://open.longbridge.cn/github/release/longbridge-terminal";
+const HOST_GLOBAL: &str = "https://open.longbridge.com";
+const HOST_CN: &str = "https://open.longbridge.cn";
+const RELEASE_PATH: &str = "/github/release/longbridge-terminal";
+const RELEASE_NOTES_PATH: &str = "/docs/cli/release-notes.md";
+
+const RELEASES_LATEST_URL: &str =
+    "https://github.com/longbridge/longbridge-terminal/releases/latest";
+const PACKAGE_NAME: &str = "longbridge-terminal";
 
 #[cfg(target_os = "macos")]
 const PLATFORM: &str = "darwin";
@@ -150,19 +152,19 @@ async fn fetch_latest_version() -> Option<String> {
     Some(version.to_string())
 }
 
-fn get_base_url() -> &'static str {
+fn get_host() -> &'static str {
     if crate::region::is_cn_cached() {
-        BASE_URL_CN
+        HOST_CN
     } else {
-        BASE_URL_GLOBAL
+        HOST_GLOBAL
     }
 }
 
 async fn fetch_latest_version_for_update() -> anyhow::Result<String> {
-    let base = get_base_url();
+    let host = get_host();
 
-    // Both Global and CN CDN: GET {base}/latest returns plain text like "v0.15.0"
-    let url = format!("{base}/latest");
+    // Both Global and CN CDN: GET {host}{RELEASE_PATH}/latest returns plain text like "v0.15.0"
+    let url = format!("{host}{RELEASE_PATH}/latest");
     let resp = reqwest::Client::builder()
         .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS))
         .build()?
@@ -199,7 +201,13 @@ async fn download_to_file(url: &str, dest: &std::path::Path) -> anyhow::Result<(
         .build()?;
 
     eprint!("Downloading...");
-    let bytes = client.get(url).send().await?.error_for_status()?.bytes().await?;
+    let bytes = client
+        .get(url)
+        .send()
+        .await?
+        .error_for_status()?
+        .bytes()
+        .await?;
 
     #[allow(clippy::cast_precision_loss)]
     {
@@ -350,8 +358,9 @@ pub async fn cmd_update(verbose: bool) -> anyhow::Result<()> {
     eprintln!("Updating v{CURRENT_VERSION} → v{latest} ...");
 
     // 4. Build download URL
-    let base = get_base_url();
-    let url = build_download_url(base, &latest);
+    let host = get_host();
+    let base = format!("{host}{RELEASE_PATH}");
+    let url = build_download_url(&base, &latest);
 
     if verbose {
         eprintln!("* Download: {url}");
@@ -374,13 +383,124 @@ pub async fn cmd_update(verbose: bool) -> anyhow::Result<()> {
         let _ = std::fs::remove_file(path);
     }
 
-    eprintln!("Updated to v{latest} successfully.");
+    eprintln!("Updated to v{latest} successfully.\n");
+
+    // 8. Show release notes and update the last-run marker so the next
+    //    startup won't show them again.
+    write_last_run_version();
+    match fetch_release_notes().await {
+        Ok(md) => render_release_notes(&md),
+        Err(e) => tracing::debug!("Failed to fetch release notes: {e}"),
+    }
+
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Release notes
+// ---------------------------------------------------------------------------
+
+fn last_run_version_path() -> Option<PathBuf> {
+    dirs::home_dir().map(|h| h.join(".longbridge").join(".terminal-last-run-version"))
+}
+
+fn read_last_run_version() -> Option<String> {
+    let path = last_run_version_path()?;
+    let s = std::fs::read_to_string(&path).ok()?;
+    let v = s.trim().to_string();
+    if v.is_empty() {
+        None
+    } else {
+        Some(v)
+    }
+}
+
+fn write_last_run_version() {
+    let Some(path) = last_run_version_path() else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(&path, CURRENT_VERSION);
+}
+
+fn release_notes_url() -> String {
+    format!("{}{RELEASE_NOTES_PATH}", get_host())
+}
+
+/// Strip YAML front matter (leading `---` … `---` block) from markdown.
+fn strip_frontmatter(s: &str) -> &str {
+    let trimmed = s.trim_start();
+    if let Some(rest) = trimmed.strip_prefix("---") {
+        if let Some(end) = rest.find("\n---") {
+            return rest[end + 4..].trim_start_matches('\n');
+        }
+    }
+    s
+}
+
+async fn fetch_release_notes() -> anyhow::Result<String> {
+    let url = release_notes_url();
+    let body = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()?
+        .get(&url)
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+    Ok(strip_frontmatter(&body).to_string())
+}
+
+fn render_release_notes(markdown: &str) {
+    let skin = termimad::MadSkin::default();
+    skin.print_text(markdown);
+}
+
+/// Show release notes for the `longbridge update --release-notes` command.
+pub async fn cmd_release_notes() -> anyhow::Result<()> {
+    let markdown = fetch_release_notes().await?;
+    render_release_notes(&markdown);
+    Ok(())
+}
+
+/// Check if the binary version changed since the last run. If so, fetch and
+/// display release notes once, then update the marker file.
+pub async fn check_and_show_release_notes() {
+    let last = read_last_run_version();
+
+    // Always update the marker so we only show once.
+    write_last_run_version();
+
+    let Some(last) = last else {
+        // First-ever run — no previous version recorded, skip.
+        return;
+    };
+
+    if last == CURRENT_VERSION {
+        return;
+    }
+
+    // Version changed — fetch and display release notes.
+    match fetch_release_notes().await {
+        Ok(md) => {
+            let green = "\x1b[32m";
+            let reset = "\x1b[0m";
+            eprintln!("\n{green}Updated to v{CURRENT_VERSION} (was v{last}). What's new:{reset}\n");
+            render_release_notes(&md);
+            eprintln!();
+        }
+        Err(e) => {
+            tracing::debug!("Failed to fetch release notes: {e}");
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::is_newer;
+    use super::*;
 
     #[test]
     fn test_is_newer() {
@@ -389,5 +509,57 @@ mod tests {
         assert!(!is_newer("0.9.0", "0.9.0"));
         assert!(!is_newer("0.10.0", "0.9.0"));
         assert!(is_newer("0.9.0", "v0.9.1"));
+    }
+
+    #[test]
+    fn test_strip_frontmatter() {
+        let with_fm = "---\ntitle: Release Notes\nsidebar: 100\n---\n# Heading\nbody";
+        assert_eq!(strip_frontmatter(with_fm), "# Heading\nbody");
+
+        let no_fm = "# Heading\nbody";
+        assert_eq!(strip_frontmatter(no_fm), no_fm);
+
+        let incomplete = "---\ntitle: x\nno closing";
+        assert_eq!(strip_frontmatter(incomplete), incomplete);
+    }
+
+    #[test]
+    fn test_release_notes_url_respects_region() {
+        // Force global
+        std::env::set_var("LONGBRIDGE_REGION", "global");
+        let url_global = release_notes_url();
+        assert_eq!(
+            url_global,
+            "https://open.longbridge.com/docs/cli/release-notes.md"
+        );
+
+        // Force CN
+        std::env::set_var("LONGBRIDGE_REGION", "cn");
+        let url_cn = release_notes_url();
+        assert_eq!(
+            url_cn,
+            "https://open.longbridge.cn/docs/cli/release-notes.md"
+        );
+
+        std::env::remove_var("LONGBRIDGE_REGION");
+    }
+
+    #[test]
+    fn test_last_run_version_roundtrip() {
+        let path = last_run_version_path().expect("home dir should exist");
+        let backup = std::fs::read_to_string(&path).ok();
+
+        // Write and read back
+        write_last_run_version();
+        let v = read_last_run_version().expect("should read back");
+        assert_eq!(v, CURRENT_VERSION);
+
+        // Restore original state
+        match backup {
+            Some(original) => std::fs::write(&path, original).unwrap(),
+            None => {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
     }
 }
