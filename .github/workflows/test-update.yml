@@ -61,8 +61,8 @@ jobs:
           # Write a fake old version to trigger release notes on next run
           mkdir -p ~/.longbridge
           echo "0.0.1" > ~/.longbridge/.terminal-last-run-version
-          # Run any command (--help is fine, no auth needed) and capture stderr
-          output=$(cargo run -- --help 2>&1 >/dev/null || true)
+          # Run with no subcommand (prints help, no auth needed) and capture output
+          output=$(cargo run 2>&1 || true)
           echo "$output"
           echo "$output" | grep -q "What's new" || { echo "FAIL: release notes not shown after version change"; exit 1; }
           # Verify marker was updated so it won't show again
@@ -71,7 +71,7 @@ jobs:
 
       - name: Test release notes not shown on subsequent run
         run: |
-          output=$(cargo run -- --help 2>&1 >/dev/null || true)
+          output=$(cargo run 2>&1 || true)
           echo "$output"
           if echo "$output" | grep -q "What's new"; then
             echo "FAIL: release notes shown again on second run"
@@ -124,7 +124,7 @@ jobs:
         run: |
           mkdir -p ~/.longbridge
           echo "0.0.1" > ~/.longbridge/.terminal-last-run-version
-          output=$(cargo run -- --help 2>&1 >/dev/null || true)
+          output=$(cargo run 2>&1 || true)
           echo "$output"
           echo "$output" | grep -q "What's new" || { echo "FAIL: release notes not shown after version change"; exit 1; }
           version=$(cat ~/.longbridge/.terminal-last-run-version)
@@ -132,7 +132,7 @@ jobs:
 
       - name: Test release notes not shown on subsequent run
         run: |
-          output=$(cargo run -- --help 2>&1 >/dev/null || true)
+          output=$(cargo run 2>&1 || true)
           echo "$output"
           if echo "$output" | grep -q "What's new"; then
             echo "FAIL: release notes shown again on second run"
@@ -191,7 +191,7 @@ jobs:
           $dir = "$env:USERPROFILE\.longbridge"
           New-Item -ItemType Directory -Path $dir -Force | Out-Null
           Set-Content -Path "$dir\.terminal-last-run-version" -Value "0.0.1" -NoNewline
-          $output = cargo run -- --help 2>&1 | Out-String
+          $output = cargo run 2>&1 | Out-String
           Write-Host $output
           if ($output -notmatch "What's new") {
             throw "FAIL: release notes not shown after version change"
@@ -204,7 +204,7 @@ jobs:
       - name: Test release notes not shown on subsequent run
         shell: pwsh
         run: |
-          $output = cargo run -- --help 2>&1 | Out-String
+          $output = cargo run 2>&1 | Out-String
           Write-Host $output
           if ($output -match "What's new") {
             throw "FAIL: release notes shown again on second run"
