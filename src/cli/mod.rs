@@ -708,14 +708,6 @@ pub enum Commands {
         symbol: String,
     },
 
-    /// Shareholder return overview (dividend + buyback yield)
-    ///
-    /// Example: longbridge shareholder-return AAPL.US
-    ShareholderReturn {
-        /// Symbol in <CODE>.<MARKET> format
-        symbol: String,
-    },
-
     /// Industry valuation comparison and distribution
     ///
     /// Default: comparison table with peers.
@@ -2028,9 +2020,6 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         }
         Commands::Buyback { symbol } => {
             fundamental::cmd_buyback(symbol, format, verbose).await
-        }
-        Commands::ShareholderReturn { symbol } => {
-            fundamental::cmd_shareholder_return(symbol, format, verbose).await
         }
         Commands::IndustryValuation {
             symbol,

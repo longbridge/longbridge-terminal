@@ -1171,7 +1171,7 @@ fn print_company(data: &Value) {
     for (label, key) in fields {
         let v = val_str(&data[key]);
         if !v.is_empty() && v != "-" {
-            println!("  {label:15} {v}");
+            println!("{label:15} {v}");
         }
     }
     let profile = val_str(&data["profile"]);
@@ -1233,13 +1233,47 @@ pub async fn cmd_buyback(symbol: String, format: &OutputFormat, verbose: bool) -
     Ok(())
 }
 
+fn fmt_amount(raw: &str, currency: &str) -> String {
+    let v: f64 = raw.parse().unwrap_or(0.0);
+    if v == 0.0 {
+        return "-".to_string();
+    }
+    let (val, unit) = if v.abs() >= 1e12 {
+        (v / 1e12, "T")
+    } else if v.abs() >= 1e8 {
+        (v / 1e8, "B")
+    } else if v.abs() >= 1e6 {
+        (v / 1e6, "M")
+    } else {
+        (v, "")
+    };
+    let cur = if currency.is_empty() { "" } else { currency };
+    format!("{cur}{val:.2}{unit}")
+}
+
+fn fmt_ratio(raw: &str) -> String {
+    raw.parse::<f64>()
+        .map_or_else(|_| raw.to_string(), |v| format!("{v:.2}"))
+}
+
+fn fmt_pct(raw: &str) -> String {
+    raw.parse::<f64>()
+        .map_or_else(|_| raw.to_string(), |v| format!("{v:.2}%"))
+}
+
 fn print_buyback(data: &Value) {
     // Recent buyback summary
     if let Some(recent) = data.get("recent_buybacks") {
+        let currency = val_str(&recent["currency"]);
+        let cur = if currency.is_empty() || currency == "-" {
+            String::new()
+        } else {
+            currency
+        };
         println!("Recent Buyback (TTM)");
         println!(
             "  Net Buyback:       {}",
-            val_str(&recent["net_buyback_ttm"])
+            fmt_amount(&val_str(&recent["net_buyback_ttm"]), &cur)
         );
         println!(
             "  Net Buyback Yield: {}",
@@ -1249,7 +1283,10 @@ fn print_buyback(data: &Value) {
     }
 
     // Buyback history
-    let items = match data.get("buyback_history").and_then(|v| v.as_array()) {
+    let history = data.get("buyback_history").and_then(|v| v.as_array());
+    let ratios = data.get("buyback_ratios").and_then(|v| v.as_array());
+
+    let items = match history {
         Some(a) if !a.is_empty() => a,
         _ => {
             println!("No buyback history found.");
@@ -1259,22 +1296,40 @@ fn print_buyback(data: &Value) {
 
     let headers = [
         "fiscal_year",
+        "range",
         "net_buyback",
-        "net_buyback_yield",
-        "net_buyback_growth",
-        "dividend_yield",
-        "total_yield",
+        "yield",
+        "yoy_growth",
+        "payout_ratio",
+        "cf_ratio",
     ];
     let rows: Vec<Vec<String>> = items
         .iter()
-        .map(|item| {
+        .enumerate()
+        .map(|(i, item)| {
+            let currency = val_str(&item["currency"]);
+            let cur = if currency.is_empty() || currency == "-" {
+                String::new()
+            } else {
+                currency
+            };
+            let ratio_item = ratios.and_then(|r| r.get(i));
+            let payout = ratio_item.map_or_else(
+                || "-".to_string(),
+                |r| val_str(&r["net_buyback_payout_ratio"]),
+            );
+            let cf = ratio_item.map_or_else(
+                || "-".to_string(),
+                |r| val_str(&r["net_buyback_to_cashflow_ratio"]),
+            );
             vec![
                 val_str(&item["fiscal_year"]),
-                val_str(&item["net_buyback"]),
+                val_str(&item["fiscal_year_range"]),
+                fmt_amount(&val_str(&item["net_buyback"]), &cur),
                 val_str(&item["net_buyback_yield"]),
                 val_str(&item["net_buyback_growth_rate"]),
-                val_str(&item["dividend_yield"]),
-                val_str(&item["total_shareholder_yield"]),
+                payout,
+                cf,
             ]
         })
         .collect();
@@ -1398,16 +1453,38 @@ pub async fn cmd_industry_valuation(
                     return Ok(());
                 }
             };
-            let headers = ["symbol", "name", "market_cap", "price", "pe"];
+            let cur = items
+                .first()
+                .map(|i| val_str(&i["currency"]))
+                .unwrap_or_default();
+            let headers = [
+                "symbol",
+                "name",
+                "market_cap",
+                "price",
+                "pe",
+                "pb",
+                "eps",
+                "div_yld",
+            ];
             let rows: Vec<Vec<String>> = items
                 .iter()
                 .map(|item| {
+                    let item_cur = val_str(&item["currency"]);
+                    let c = if item_cur.is_empty() || item_cur == "-" {
+                        &cur
+                    } else {
+                        &item_cur
+                    };
                     vec![
                         counter_id_to_symbol(&val_str(&item["counter_id"])),
                         val_str(&item["name"]),
-                        val_str(&item["market_value"]),
-                        val_str(&item["price_close"]),
-                        val_str(&item["pe"]),
+                        fmt_amount(&val_str(&item["market_value"]), c),
+                        format!("{c}{}", val_str(&item["price_close"])),
+                        format!("{}x", fmt_ratio(&val_str(&item["pe"]))),
+                        format!("{}x", fmt_ratio(&val_str(&item["pb"]))),
+                        format!("{c}{}", fmt_ratio(&val_str(&item["eps"]))),
+                        fmt_pct(&val_str(&item["div_yld"])),
                     ]
                 })
                 .collect();
@@ -1432,13 +1509,47 @@ pub async fn cmd_industry_valuation_dist(
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => {
-            if let Some(pe) = data.get("pe") {
-                println!("Industry Valuation Distribution (PE)");
-                println!("  Current:  {}", val_str(&pe["value"]));
-                println!("  Low:      {}", val_str(&pe["low"]));
-                println!("  Median:   {}", val_str(&pe["median"]));
-                println!("  High:     {}", val_str(&pe["high"]));
-                println!("  Ranking:  {}", val_str(&pe["ranking"]));
+            let metrics = [("PE", "pe"), ("PB", "pb"), ("PS", "ps")];
+            let mut found = false;
+            let headers = [
+                "metric",
+                "current",
+                "low",
+                "median",
+                "high",
+                "rank",
+                "percentile",
+            ];
+            let mut rows: Vec<Vec<String>> = Vec::new();
+            for (label, key) in metrics {
+                if let Some(m) = data.get(key) {
+                    found = true;
+                    let rank_idx = val_str(&m["rank_index"]);
+                    let rank_total = val_str(&m["rank_total"]);
+                    let rank = if rank_idx != "-" && rank_total != "-" {
+                        format!("{rank_idx}/{rank_total}")
+                    } else {
+                        "-".to_string()
+                    };
+                    let ranking = val_str(&m["ranking"]);
+                    let pct = ranking
+                        .parse::<f64>()
+                        .map(|v| format!("{:.1}%", v * 100.0))
+                        .unwrap_or(ranking);
+                    let suffix = "x";
+                    rows.push(vec![
+                        label.to_string(),
+                        format!("{}{suffix}", fmt_ratio(&val_str(&m["value"]))),
+                        format!("{}{suffix}", fmt_ratio(&val_str(&m["low"]))),
+                        format!("{}{suffix}", fmt_ratio(&val_str(&m["median"]))),
+                        format!("{}{suffix}", fmt_ratio(&val_str(&m["high"]))),
+                        rank,
+                        pct,
+                    ]);
+                }
+            }
+            if found {
+                super::output::print_table(&headers, rows, &OutputFormat::Pretty);
             } else {
                 println!("No valuation distribution data found.");
             }
