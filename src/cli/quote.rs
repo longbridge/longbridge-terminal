@@ -2302,7 +2302,7 @@ pub async fn cmd_ah_premium_kline(
                     return Ok(());
                 }
             };
-            let headers = ["date", "a_price(CNY)", "h_price(HKD)", "premium", "fx_rate"];
+            let headers = ["date", "A-share(CNY)", "H-share(HKD)", "premium", "fx_rate"];
             let rows: Vec<Vec<String>> = items
                 .iter()
                 .map(|item| {
@@ -2343,7 +2343,7 @@ pub async fn cmd_ah_premium_intraday(
                     return Ok(());
                 }
             };
-            let headers = ["time", "a_price(CNY)", "h_price(HKD)", "premium", "fx_rate"];
+            let headers = ["time", "A-share(CNY)", "H-share(HKD)", "premium", "fx_rate"];
             let rows: Vec<Vec<String>> = items
                 .iter()
                 .map(|item| {
