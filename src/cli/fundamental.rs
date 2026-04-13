@@ -1679,48 +1679,76 @@ pub async fn cmd_rating_history(
     Ok(())
 }
 
+fn chg_arrow(v: &Value) -> &'static str {
+    match v.as_i64() {
+        Some(1) => "↑",
+        Some(-1) => "↓",
+        _ => "→",
+    }
+}
+
 fn print_rating_history(data: &Value) {
+    // Header: style + scale + report period
+    let style = val_str(&data["style_txt_name"]);
+    let scale = val_str(&data["scale_txt_name"]);
+    let period = val_str(&data["report_period_txt"]);
+    println!("{style} / {scale}  ({period})");
     println!(
-        "Investment Style: {} (grid {})",
-        val_str(&data["invest_style_description"]),
-        data["invest_style_grid"].as_i64().unwrap_or(0),
-    );
-    println!(
-        "Multi-Score: {} ({}) — Industry Rank: {}/{}",
+        "Multi-Score: {} ({}) {}  Industry: {} (rank {}/{}, mean {} median {})",
         val_str(&data["multi_score"]),
         val_str(&data["multi_letter"]),
+        chg_arrow(&data["multi_score_change"]),
+        val_str(&data["industry_name"]),
         val_str(&data["industry_rank"]),
         val_str(&data["industry_total"]),
+        val_str(&data["industry_mean_score"]),
+        val_str(&data["industry_median_score"]),
     );
-    let change = data["multi_score_change"].as_i64().unwrap_or(0);
-    let arrow = match change {
-        1 => "↑",
-        -1 => "↓",
-        _ => "→",
-    };
-    println!("  Change: {arrow}");
     println!();
 
+    // Flatten ratings into a table with sub-indicators
     if let Some(ratings) = data.get("ratings").and_then(|v| v.as_array()) {
-        let headers = ["dimension", "score", "grade", "change"];
-        let rows: Vec<Vec<String>> = ratings
-            .iter()
-            .filter_map(|r| {
-                let ind = r.get("indicator")?;
-                let chg = ind["change"].as_i64().unwrap_or(0);
-                let arrow = match chg {
-                    1 => "↑",
-                    -1 => "↓",
-                    _ => "→",
-                };
-                Some(vec![
-                    val_str(&ind["name"]),
-                    val_str(&ind["score"]),
-                    val_str(&ind["letter"]),
-                    arrow.to_string(),
-                ])
-            })
-            .collect();
+        let headers = ["indicator", "value", "score", "grade"];
+        let mut rows: Vec<Vec<String>> = Vec::new();
+
+        for r in ratings {
+            // Skip type=1 (style) and type=2 (scale) — only show type=3 (multi-score)
+            if r["type"].as_i64() != Some(3) {
+                continue;
+            }
+            if let Some(subs) = r.get("sub_indicators").and_then(|v| v.as_array()) {
+                for sub in subs {
+                    let Some(ind) = sub.get("indicator") else {
+                        continue;
+                    };
+                    // Category row (e.g. 盈利评分)
+                    rows.push(vec![
+                        val_str(&ind["name"]),
+                        String::new(),
+                        val_str(&ind["score"]),
+                        val_str(&ind["letter"]),
+                    ]);
+                    // Sub-indicator rows
+                    if let Some(leaf_subs) = sub.get("sub_indicators").and_then(|v| v.as_array()) {
+                        for leaf in leaf_subs {
+                            let name = val_str(&leaf["name"]);
+                            let value = val_str(&leaf["value"]);
+                            let display_val = match val_str(&leaf["value_type"]).as_str() {
+                                "percent" => format!("{value}%"),
+                                "bignumber" => format_financial_value(&value, true),
+                                _ => value,
+                            };
+                            rows.push(vec![
+                                format!("  {name}"),
+                                display_val,
+                                val_str(&leaf["score"]),
+                                val_str(&leaf["letter"]),
+                            ]);
+                        }
+                    }
+                }
+            }
+        }
         super::output::print_table(&headers, rows, &OutputFormat::Pretty);
     }
 }
