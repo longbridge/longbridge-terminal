@@ -1,0 +1,104 @@
+name: Test Update Command
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - src/update.rs
+      - .github/workflows/test-update.yml
+  pull_request:
+    paths:
+      - src/update.rs
+      - .github/workflows/test-update.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  update-linux:
+    name: Update (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: linux-update-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build
+        run: cargo build
+
+      - name: Run update
+        run: cargo run -- update --verbose
+
+      - name: Verify updated binary
+        run: target/debug/longbridge --version
+
+  update-macos:
+    name: Update (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: macos-update-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build
+        run: cargo build
+
+      - name: Run update
+        run: cargo run -- update --verbose
+
+      - name: Verify updated binary
+        run: target/debug/longbridge --version
+
+  update-windows:
+    name: Update (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: windows-update-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build
+        run: cargo build
+
+      - name: Run update
+        shell: pwsh
+        run: cargo run -- update --verbose
+
+      - name: Verify updated binary
+        shell: pwsh
+        run: target\debug\longbridge.exe --version
