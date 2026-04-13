@@ -64,7 +64,7 @@ jobs:
           # Run with no subcommand (prints help, no auth needed) and capture output
           output=$(cargo run 2>&1 || true)
           echo "$output"
-          echo "$output" | grep -q "Release notes" || { echo "FAIL: release notes not shown after version change"; exit 1; }
+          echo "$output" | grep -q "Updated to" || { echo "FAIL: release notes not shown after version change"; exit 1; }
           # Verify marker was updated so it won't show again
           version=$(cat ~/.longbridge/.terminal-last-run-version)
           [ "$version" = "0.14.0" ] || { echo "FAIL: last-run-version not updated (got: $version)"; exit 1; }
@@ -73,7 +73,7 @@ jobs:
         run: |
           output=$(cargo run 2>&1 || true)
           echo "$output"
-          if echo "$output" | grep -q "Release notes"; then
+          if echo "$output" | grep -q "Updated to"; then
             echo "FAIL: release notes shown again on second run"
             exit 1
           fi
@@ -126,7 +126,7 @@ jobs:
           echo "0.0.1" > ~/.longbridge/.terminal-last-run-version
           output=$(cargo run 2>&1 || true)
           echo "$output"
-          echo "$output" | grep -q "Release notes" || { echo "FAIL: release notes not shown after version change"; exit 1; }
+          echo "$output" | grep -q "Updated to" || { echo "FAIL: release notes not shown after version change"; exit 1; }
           version=$(cat ~/.longbridge/.terminal-last-run-version)
           [ "$version" = "0.14.0" ] || { echo "FAIL: last-run-version not updated (got: $version)"; exit 1; }
 
@@ -134,7 +134,7 @@ jobs:
         run: |
           output=$(cargo run 2>&1 || true)
           echo "$output"
-          if echo "$output" | grep -q "Release notes"; then
+          if echo "$output" | grep -q "Updated to"; then
             echo "FAIL: release notes shown again on second run"
             exit 1
           fi
@@ -193,7 +193,7 @@ jobs:
           Set-Content -Path "$dir\.terminal-last-run-version" -Value "0.0.1" -NoNewline
           $output = cargo run 2>&1 | Out-String
           Write-Host $output
-          if ($output -notmatch "Release notes") {
+          if ($output -notmatch "Updated to") {
             throw "FAIL: release notes not shown after version change"
           }
           $version = (Get-Content "$dir\.terminal-last-run-version").Trim()
@@ -206,7 +206,7 @@ jobs:
         run: |
           $output = cargo run 2>&1 | Out-String
           Write-Host $output
-          if ($output -match "Release notes") {
+          if ($output -match "Updated to") {
             throw "FAIL: release notes shown again on second run"
           }
 
