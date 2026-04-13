@@ -1926,7 +1926,7 @@ fn fmt_ts_time(raw: &str) -> String {
             use time::OffsetDateTime;
             match OffsetDateTime::from_unix_timestamp(ts) {
                 Ok(dt) => format!(
-                    "{:04}-{:02}-{:02} {:02}:{:02}",
+                    "{:04}-{:02}-{:02}T{:02}:{:02}Z",
                     dt.year(),
                     dt.month() as u8,
                     dt.day(),
