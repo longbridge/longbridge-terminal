@@ -1877,6 +1877,41 @@ pub async fn run_warrant_issuers(api: &dyn QuoteApi, format: &OutputFormat) -> R
 
 // ── Pending commands ─────────────────────────────────────────────────────────
 
+/// Format share count with thousands separator (no sign)
+fn fmt_shares(raw: &str) -> String {
+    let v: f64 = raw.parse().unwrap_or(0.0);
+    if v == 0.0 {
+        return "0".to_string();
+    }
+    format_with_commas(v.abs() as i64)
+}
+
+/// Format share change with sign and thousands separator
+fn fmt_shares_chg(raw: &str) -> String {
+    let v: f64 = raw.parse().unwrap_or(0.0);
+    if v == 0.0 {
+        return "0".to_string();
+    }
+    let formatted = format_with_commas(v.abs() as i64);
+    if v > 0.0 {
+        format!("+{formatted}")
+    } else {
+        format!("-{formatted}")
+    }
+}
+
+fn format_with_commas(n: i64) -> String {
+    let s = n.to_string();
+    let mut result = String::new();
+    for (i, c) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            result.push(',');
+        }
+        result.push(c);
+    }
+    result.chars().rev().collect()
+}
+
 fn val_str(v: &Value) -> String {
     match v {
         Value::String(s) => s.clone(),
@@ -2093,14 +2128,14 @@ pub async fn cmd_broker_holding_top(
                 }
                 if let Ok(items) = serde_json::from_str::<Vec<Value>>(&raw) {
                     println!("{label}:");
-                    let headers = ["broker", "code", "change"];
+                    let headers = ["broker", "code", "change(shares)"];
                     let rows: Vec<Vec<String>> = items
                         .iter()
                         .map(|item| {
                             vec![
                                 val_str(&item["name"]),
                                 val_str(&item["parti_number"]),
-                                val_str(&item["chg"]),
+                                fmt_shares_chg(&val_str(&item["chg"])),
                             ]
                         })
                         .collect();
@@ -2154,9 +2189,9 @@ pub async fn cmd_broker_holding_detail(
                         val_str(&item["name"]),
                         val_str(&item["parti_number"]),
                         val_str(&ratio["value"]),
-                        val_str(&shares["value"]),
-                        val_str(&shares["chg_1"]),
-                        val_str(&shares["chg_5"]),
+                        fmt_shares(&val_str(&shares["value"])),
+                        fmt_shares_chg(&val_str(&shares["chg_1"])),
+                        fmt_shares_chg(&val_str(&shares["chg_5"])),
                     ]
                 })
                 .collect();
@@ -2197,15 +2232,15 @@ pub async fn cmd_broker_holding_daily(
                 println!("No daily holding data found.");
                 return Ok(());
             }
-            let headers = ["date", "holding", "ratio%", "change"];
+            let headers = ["date", "holding(shares)", "ratio%", "change(shares)"];
             let rows: Vec<Vec<String>> = items
                 .iter()
                 .map(|item| {
                     vec![
                         val_str(&item["date"]),
-                        val_str(&item["holding"]),
+                        fmt_shares(&val_str(&item["holding"])),
                         val_str(&item["ratio"]),
-                        val_str(&item["chg"]),
+                        fmt_shares_chg(&val_str(&item["chg"])),
                     ]
                 })
                 .collect();
