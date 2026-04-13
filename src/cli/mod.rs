@@ -729,14 +729,6 @@ pub enum Commands {
         report: Option<String>,
     },
 
-    /// Multi-dimensional investment rating scores (profitability, growth, etc.)
-    ///
-    /// Example: longbridge rating-history AAPL.US
-    RatingHistory {
-        /// Symbol in <CODE>.<MARKET> format
-        symbol: String,
-    },
-
     /// Corporate actions (splits, dividends, rights, etc.)
     ///
     /// Example: longbridge corp-action 700.HK
@@ -2030,9 +2022,6 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         },
         Commands::Operating { symbol, report } => {
             fundamental::cmd_operating(symbol, report, format, verbose).await
-        }
-        Commands::RatingHistory { symbol } => {
-            fundamental::cmd_rating_history(symbol, format, verbose).await
         }
         Commands::CorpAction { symbol } => {
             fundamental::cmd_corp_action(symbol, format, verbose).await
