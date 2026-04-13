@@ -217,9 +217,8 @@ longbridge max-qty TSLA.US --side buy --price 250      # Estimate maximum buy or
 
 ```bash
 longbridge profit-analysis                                  # P&L summary with stock breakdown
-longbridge profit-analysis detail 700.HK                    # Individual stock P&L (underlying vs derivative, buy/sell/fee details)
-longbridge profit-analysis flows 700.HK                     # Transaction flows for a stock
-longbridge profit-analysis flows 700.HK --derivative        # Derivative transaction flows
+longbridge profit-analysis detail 700.HK                    # Stock P&L breakdown + transaction flows
+longbridge profit-analysis detail 700.HK --derivative       # Show derivative flows
 longbridge profit-analysis by-market                        # Stock P&L by market (paginated)
 longbridge profit-analysis by-market --market HK --size 50  # Filter by market
 ```

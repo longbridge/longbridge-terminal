@@ -843,11 +843,11 @@ pub enum Commands {
     ///
     /// Without subcommand: lists all alerts.
     /// Example: longbridge alert
+    /// Example: longbridge alert QQQ.US
     /// Example: longbridge alert add TSLA.US --price 200 --direction rise
-    /// Example: longbridge alert delete TSLA.US
+    /// Example: longbridge alert delete 486469
     Alert {
-        /// Filter by symbol
-        #[arg(long)]
+        /// Filter by symbol (omit to list all)
         symbol: Option<String>,
         #[command(subcommand)]
         cmd: Option<AlertCmd>,
@@ -856,10 +856,9 @@ pub enum Commands {
     /// Profit & loss analysis
     ///
     /// Without subcommand: shows P&L summary with stock breakdown.
-    /// Subcommands: detail  flows  by-market
+    /// Subcommands: detail  by-market
     /// Example: longbridge profit-analysis
     /// Example: longbridge profit-analysis detail 700.HK
-    /// Example: longbridge profit-analysis flows 700.HK
     /// Example: longbridge profit-analysis by-market --market HK
     ProfitAnalysis {
         #[command(subcommand)]
@@ -995,27 +994,12 @@ pub enum AhPremiumCmd {
 
 #[derive(Subcommand)]
 pub enum ProfitAnalysisCmd {
-    /// Individual stock P&L detail (underlying vs derivative breakdown)
+    /// Individual stock P&L detail with transaction flows
     ///
     /// Example: longbridge profit-analysis detail 700.HK
     /// Example: longbridge profit-analysis detail 700.HK --start 2025-01-01 --end 2025-12-31
+    /// Example: longbridge profit-analysis detail 700.HK --derivative
     Detail {
-        /// Symbol in <CODE>.<MARKET> format
-        symbol: String,
-        /// Start date (YYYY-MM-DD)
-        #[arg(long)]
-        start: Option<String>,
-        /// End date (YYYY-MM-DD)
-        #[arg(long)]
-        end: Option<String>,
-    },
-
-    /// Transaction flows for a single stock P&L
-    ///
-    /// Example: longbridge profit-analysis flows 700.HK
-    /// Example: longbridge profit-analysis flows 700.HK --start 2025-01-01 --end 2025-12-31
-    /// Example: longbridge profit-analysis flows 700.HK --derivative
-    Flows {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
         /// Start date (YYYY-MM-DD)
@@ -1027,10 +1011,10 @@ pub enum ProfitAnalysisCmd {
         /// Show derivative flows instead of underlying
         #[arg(long)]
         derivative: bool,
-        /// Page number (default: 1)
+        /// Flows page number (default: 1)
         #[arg(long, default_value = "1")]
         page: u32,
-        /// Page size (default: 30)
+        /// Flows page size (default: 30)
         #[arg(long, default_value = "30")]
         size: u32,
     },
@@ -1086,12 +1070,12 @@ pub enum AlertCmd {
         #[arg(long)]
         note: Option<String>,
     },
-    /// Delete a price alert for a symbol
+    /// Delete a price alert by id (from `longbridge alert` list)
     ///
-    /// Example: longbridge alert delete TSLA.US
+    /// Example: longbridge alert delete 486469
     Delete {
-        /// Symbol in <CODE>.<MARKET> format
-        symbol: String,
+        /// Alert id from the `id` column in `longbridge alert`
+        id: String,
     },
 }
 
@@ -2169,24 +2153,14 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             }) => {
                 trade::cmd_alert_add(s, &price, &direction, &alert_type, &frequency, note, format, verbose).await
             }
-            Some(AlertCmd::Delete { symbol: s }) => {
-                trade::cmd_alert_delete(s, format, verbose).await
+            Some(AlertCmd::Delete { id }) => {
+                trade::cmd_alert_delete(id, format, verbose).await
             }
             None => trade::cmd_alert_list(symbol, format, verbose).await,
         },
         Commands::ProfitAnalysis { cmd } => match cmd {
             None => asset::cmd_profit_analysis(format, verbose).await,
-            Some(ProfitAnalysisCmd::Detail { symbol, start, end }) => {
-                asset::cmd_profit_analysis_detail(
-                    &symbol,
-                    start.as_deref(),
-                    end.as_deref(),
-                    format,
-                    verbose,
-                )
-                .await
-            }
-            Some(ProfitAnalysisCmd::Flows {
+            Some(ProfitAnalysisCmd::Detail {
                 symbol,
                 start,
                 end,
@@ -2194,7 +2168,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 page,
                 size,
             }) => {
-                asset::cmd_profit_analysis_flows(
+                asset::cmd_profit_analysis_detail(
                     &symbol,
                     start.as_deref(),
                     end.as_deref(),

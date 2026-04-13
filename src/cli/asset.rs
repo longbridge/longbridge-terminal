@@ -183,25 +183,70 @@ pub async fn cmd_profit_analysis_detail(
     symbol: &str,
     start: Option<&str>,
     end: Option<&str>,
+    derivative: bool,
+    page: u32,
+    size: u32,
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
     let cid = crate::utils::counter::symbol_to_counter_id(symbol);
-    let mut params: Vec<(&str, String)> = vec![("counter_id", cid)];
-    if let Some(s) = start {
-        let ts = parse_datetime_start(s)?.unix_timestamp().to_string();
-        params.push(("start", ts));
+
+    // Build shared start/end timestamps
+    let start_ts = start
+        .map(|s| parse_datetime_start(s).map(|d| d.unix_timestamp().to_string()))
+        .transpose()?;
+    let end_ts = end
+        .map(|e| parse_datetime_end(e).map(|d| d.unix_timestamp().to_string()))
+        .transpose()?;
+
+    // Build params
+    let mut detail_params: Vec<(&str, String)> = vec![("counter_id", cid.clone())];
+    if let Some(ref s) = start_ts {
+        detail_params.push(("start", s.clone()));
     }
-    if let Some(e) = end {
-        let ts = parse_datetime_end(e)?.unix_timestamp().to_string();
-        params.push(("end", ts));
+    if let Some(ref e) = end_ts {
+        detail_params.push(("end", e.clone()));
     }
-    let params_ref: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    let data = http_get("/v1/portfolio/profit-analysis/detail", &params_ref, verbose).await?;
+    let detail_pr: Vec<(&str, &str)> = detail_params
+        .iter()
+        .map(|(k, v)| (*k, v.as_str()))
+        .collect();
+
+    let mut flows_params: Vec<(&str, String)> = vec![
+        ("counter_id", cid),
+        ("page", page.to_string()),
+        ("size", size.to_string()),
+        ("derivative", derivative.to_string()),
+    ];
+    if let Some(ref s) = start_ts {
+        flows_params.push(("start", s.clone()));
+    }
+    if let Some(ref e) = end_ts {
+        flows_params.push(("end", e.clone()));
+    }
+    let flows_pr: Vec<(&str, &str)> = flows_params.iter().map(|(k, v)| (*k, v.as_str())).collect();
+
+    // Fetch detail + flows concurrently
+    let (detail, flows) = tokio::join!(
+        http_get("/v1/portfolio/profit-analysis/detail", &detail_pr, verbose),
+        http_get("/v1/portfolio/profit-analysis/flows", &flows_pr, verbose),
+    );
+    let detail = detail?;
+    let flows = flows?;
 
     match format {
-        OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_pnl_detail(&data, symbol),
+        OutputFormat::Json => {
+            let mut merged = serde_json::Map::new();
+            if let Value::Object(m) = &detail {
+                merged.extend(m.clone());
+            }
+            merged.insert("flows".to_owned(), flows.clone());
+            print_json(&Value::Object(merged));
+        }
+        OutputFormat::Pretty => {
+            print_pnl_detail(&detail, symbol);
+            print_pnl_flows(&flows);
+        }
     }
     Ok(())
 }
@@ -281,77 +326,54 @@ fn push_detail_items(rows: &mut Vec<Vec<String>>, items: Option<&Value>) {
     }
 }
 
-pub async fn cmd_profit_analysis_flows(
-    symbol: &str,
-    start: Option<&str>,
-    end: Option<&str>,
-    derivative: bool,
-    page: u32,
-    size: u32,
-    format: &OutputFormat,
-    verbose: bool,
-) -> Result<()> {
-    let cid = crate::utils::counter::symbol_to_counter_id(symbol);
-    let mut params: Vec<(&str, String)> = vec![
-        ("counter_id", cid),
-        ("page", page.to_string()),
-        ("size", size.to_string()),
-        ("derivative", derivative.to_string()),
-    ];
-    if let Some(s) = start {
-        let ts = parse_datetime_start(s)?.unix_timestamp().to_string();
-        params.push(("start", ts));
-    }
-    if let Some(e) = end {
-        let ts = parse_datetime_end(e)?.unix_timestamp().to_string();
-        params.push(("end", ts));
-    }
-    let params_ref: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    let data = http_get("/v1/portfolio/profit-analysis/flows", &params_ref, verbose).await?;
-
-    match format {
-        OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => {
-            if let Some(flows) = data.get("flows_list").and_then(|v| v.as_array()) {
-                let headers = &["Time", "Code", "Direction", "Qty", "Price", "Cost", "Desc"];
-                let rows: Vec<Vec<String>> = flows
-                    .iter()
-                    .map(|f| {
-                        let exec_time = {
-                            let exec_date = val_str(&f["executed_date"]);
-                            if exec_date.is_empty() || exec_date == "-" {
-                                let raw = val_str(&f["executed_timestamp"]);
-                                raw.parse::<i64>()
-                                    .ok()
-                                    .or_else(|| f["executed_timestamp"].as_i64())
-                                    .and_then(|t| time::OffsetDateTime::from_unix_timestamp(t).ok())
-                                    .map_or(raw, fmt_datetime)
-                            } else {
-                                exec_date
-                            }
-                        };
-                        let direction = match val_str(&f["direction"]).as_str() {
-                            "0" => "In".to_owned(),
-                            "1" => "Out".to_owned(),
-                            "-1" => "-".to_owned(),
-                            other => other.to_owned(),
-                        };
-                        vec![
-                            exec_time,
-                            val_str(&f["code"]),
-                            direction,
-                            val_str(&f["executed_quantity"]),
-                            val_str(&f["executed_price"]),
-                            val_str(&f["executed_cost"]),
-                            val_str(&f["describe"]),
-                        ]
-                    })
-                    .collect();
-                print_table(headers, rows, format);
-            }
+fn print_pnl_flows(data: &Value) {
+    if let Some(flows) = data.get("flows_list").and_then(|v| v.as_array()) {
+        if flows.is_empty() {
+            return;
+        }
+        println!("\nTransaction Flows\n");
+        let headers = &["Time", "Code", "Direction", "Qty", "Price", "Cost", "Desc"];
+        let rows: Vec<Vec<String>> = flows
+            .iter()
+            .map(|f| {
+                let exec_time = {
+                    let exec_date = val_str(&f["executed_date"]);
+                    if exec_date.is_empty() || exec_date == "-" {
+                        let raw = val_str(&f["executed_timestamp"]);
+                        raw.parse::<i64>()
+                            .ok()
+                            .or_else(|| f["executed_timestamp"].as_i64())
+                            .and_then(|t| time::OffsetDateTime::from_unix_timestamp(t).ok())
+                            .map_or(raw, fmt_datetime)
+                    } else {
+                        exec_date
+                    }
+                };
+                let direction = match val_str(&f["direction"]).as_str() {
+                    "0" => "In".to_owned(),
+                    "1" => "Out".to_owned(),
+                    "-1" => "-".to_owned(),
+                    other => other.to_owned(),
+                };
+                vec![
+                    exec_time,
+                    val_str(&f["code"]),
+                    direction,
+                    val_str(&f["executed_quantity"]),
+                    val_str(&f["executed_price"]),
+                    val_str(&f["executed_cost"]),
+                    val_str(&f["describe"]),
+                ]
+            })
+            .collect();
+        let has_more = data
+            .get("has_more")
+            .is_some_and(|v| v.as_bool().unwrap_or(false));
+        print_table(headers, rows, &OutputFormat::Pretty);
+        if has_more {
+            println!("(more results available, use --page to paginate)");
         }
     }
-    Ok(())
 }
 
 pub async fn cmd_profit_analysis_by_market(
