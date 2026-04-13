@@ -429,6 +429,17 @@ fn release_notes_url() -> String {
     format!("{}{RELEASE_NOTES_PATH}", get_host())
 }
 
+/// Strip YAML front matter (leading `---` … `---` block) from markdown.
+fn strip_frontmatter(s: &str) -> &str {
+    let trimmed = s.trim_start();
+    if let Some(rest) = trimmed.strip_prefix("---") {
+        if let Some(end) = rest.find("\n---") {
+            return rest[end + 4..].trim_start_matches('\n');
+        }
+    }
+    s
+}
+
 async fn fetch_release_notes() -> anyhow::Result<String> {
     let url = release_notes_url();
     let body = reqwest::Client::builder()
@@ -440,7 +451,7 @@ async fn fetch_release_notes() -> anyhow::Result<String> {
         .error_for_status()?
         .text()
         .await?;
-    Ok(body)
+    Ok(strip_frontmatter(&body).to_string())
 }
 
 fn render_release_notes(markdown: &str) {
@@ -498,6 +509,18 @@ mod tests {
         assert!(!is_newer("0.9.0", "0.9.0"));
         assert!(!is_newer("0.10.0", "0.9.0"));
         assert!(is_newer("0.9.0", "v0.9.1"));
+    }
+
+    #[test]
+    fn test_strip_frontmatter() {
+        let with_fm = "---\ntitle: Release Notes\nsidebar: 100\n---\n# Heading\nbody";
+        assert_eq!(strip_frontmatter(with_fm), "# Heading\nbody");
+
+        let no_fm = "# Heading\nbody";
+        assert_eq!(strip_frontmatter(no_fm), no_fm);
+
+        let incomplete = "---\ntitle: x\nno closing";
+        assert_eq!(strip_frontmatter(incomplete), incomplete);
     }
 
     #[test]
