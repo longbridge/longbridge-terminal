@@ -1008,6 +1008,9 @@ pub enum ProfitAnalysisCmd {
         /// End date (YYYY-MM-DD)
         #[arg(long)]
         end: Option<String>,
+        /// Currency filter (e.g. HKD, USD, CNH)
+        #[arg(long)]
+        currency: Option<String>,
         /// Show derivative flows instead of underlying
         #[arg(long)]
         derivative: bool,
@@ -1022,11 +1025,10 @@ pub enum ProfitAnalysisCmd {
     /// Stock P&L by market with pagination
     ///
     /// Example: longbridge profit-analysis by-market
-    /// Example: longbridge profit-analysis by-market --market HK
-    /// Example: longbridge profit-analysis by-market --market US --page 1 --size 50
+    /// Example: longbridge profit-analysis by-market HK
+    /// Example: longbridge profit-analysis by-market US --page 1 --size 50
     ByMarket {
         /// Market filter (e.g. HK, US, SH, SZ)
-        #[arg(long)]
         market: Option<String>,
         /// Start date (YYYY-MM-DD)
         #[arg(long)]
@@ -2164,6 +2166,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 symbol,
                 start,
                 end,
+                currency,
                 derivative,
                 page,
                 size,
@@ -2172,6 +2175,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                     &symbol,
                     start.as_deref(),
                     end.as_deref(),
+                    currency.as_deref(),
                     derivative,
                     page,
                     size,

@@ -183,6 +183,7 @@ pub async fn cmd_profit_analysis_detail(
     symbol: &str,
     start: Option<&str>,
     end: Option<&str>,
+    currency: Option<&str>,
     derivative: bool,
     page: u32,
     size: u32,
@@ -201,6 +202,9 @@ pub async fn cmd_profit_analysis_detail(
 
     // Build params
     let mut detail_params: Vec<(&str, String)> = vec![("counter_id", cid.clone())];
+    if let Some(c) = currency {
+        detail_params.push(("currency", c.to_owned()));
+    }
     if let Some(ref s) = start_ts {
         detail_params.push(("start", s.clone()));
     }
