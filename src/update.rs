@@ -301,11 +301,14 @@ fn extract_and_replace(
     let _ = std::fs::remove_file(&old_exe);
     std::fs::rename(target_exe, &old_exe)?;
 
-    // Move new exe into place
-    if let Err(e) = std::fs::rename(&extracted, target_exe) {
-        // Attempt to restore the old binary if the move fails
-        let _ = std::fs::rename(&old_exe, target_exe);
-        return Err(e.into());
+    // Move new exe into place (copy + remove as fallback for cross-drive)
+    if std::fs::rename(&extracted, target_exe).is_err() {
+        if let Err(e) = std::fs::copy(&extracted, target_exe) {
+            // Attempt to restore the old binary if copy fails
+            let _ = std::fs::rename(&old_exe, target_exe);
+            return Err(e.into());
+        }
+        let _ = std::fs::remove_file(&extracted);
     }
 
     Ok(())
