@@ -53,8 +53,13 @@ jobs:
       - name: Run update
         run: cargo run -- update --verbose
 
-      - name: Verify updated binary
-        run: target/debug/longbridge --version
+      - name: Verify updated binary matches CDN latest
+        run: |
+          expected=$(curl -sf https://open.longbridge.com/github/release/longbridge-terminal/latest | tr -d '[:space:]')
+          actual=$(target/debug/longbridge --version | awk '{print $2}')
+          echo "CDN latest: $expected"
+          echo "Binary version: $actual"
+          [ "v$actual" = "$expected" ] || [ "$actual" = "$expected" ]
 
   update-macos:
     name: Update (macOS)
@@ -84,8 +89,13 @@ jobs:
       - name: Run update
         run: cargo run -- update --verbose
 
-      - name: Verify updated binary
-        run: target/debug/longbridge --version
+      - name: Verify updated binary matches CDN latest
+        run: |
+          expected=$(curl -sf https://open.longbridge.com/github/release/longbridge-terminal/latest | tr -d '[:space:]')
+          actual=$(target/debug/longbridge --version | awk '{print $2}')
+          echo "CDN latest: $expected"
+          echo "Binary version: $actual"
+          [ "v$actual" = "$expected" ] || [ "$actual" = "$expected" ]
 
   update-windows:
     name: Update (Windows)
@@ -117,6 +127,13 @@ jobs:
         shell: pwsh
         run: cargo run -- update --verbose
 
-      - name: Verify updated binary
+      - name: Verify updated binary matches CDN latest
         shell: pwsh
-        run: target\debug\longbridge.exe --version
+        run: |
+          $expected = (Invoke-WebRequest -Uri "https://open.longbridge.com/github/release/longbridge-terminal/latest" -UseBasicParsing).Content.Trim()
+          $actual = (& target\debug\longbridge.exe --version) -replace '^longbridge ', ''
+          Write-Host "CDN latest: $expected"
+          Write-Host "Binary version: $actual"
+          if ("v$actual" -ne $expected -and $actual -ne $expected) {
+            throw "Version mismatch: binary=$actual, CDN=$expected"
+          }
