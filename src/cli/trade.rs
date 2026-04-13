@@ -1273,7 +1273,7 @@ pub async fn cmd_alert_add(
     direction: &str,
     alert_type: &str,
     frequency: &str,
-    note: Option<String>,
+    _note: Option<String>,
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
