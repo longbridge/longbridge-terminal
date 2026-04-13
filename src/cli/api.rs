@@ -466,6 +466,32 @@ pub async fn http_post(
     Ok(resp.0)
 }
 
+pub async fn http_delete(
+    path: &str,
+    body: serde_json::Value,
+    verbose: bool,
+) -> Result<serde_json::Value> {
+    use longbridge::httpclient::Json;
+    use reqwest::Method;
+
+    if verbose {
+        eprintln!("* DELETE {path}");
+        eprintln!(
+            "* Body: {}",
+            serde_json::to_string_pretty(&body).unwrap_or_default()
+        );
+    }
+    let client = crate::openapi::http_client();
+    let resp = client
+        .request(Method::DELETE, path)
+        .body(Json(body))
+        .response::<Json<serde_json::Value>>()
+        .send()
+        .await
+        .map_err(anyhow::Error::from)?;
+    Ok(resp.0)
+}
+
 pub async fn http_put(
     path: &str,
     body: serde_json::Value,

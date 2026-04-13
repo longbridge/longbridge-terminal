@@ -1226,7 +1226,7 @@ pub async fn cmd_alert_list(
                     return Ok(());
                 }
             };
-            let headers = ["symbol", "price", "id", "alert", "enabled", "frequency"];
+            let headers = ["id", "symbol", "price", "alert", "enabled", "frequency"];
             let mut rows: Vec<Vec<String>> = Vec::new();
             for stock in stocks {
                 let sym =
@@ -1237,9 +1237,9 @@ pub async fn cmd_alert_list(
                 };
                 for ind in indicators {
                     let enabled = if ind["enabled"].as_bool().unwrap_or(false) {
-                        "Yes"
+                        "\u{2713}" // ✓
                     } else {
-                        "No"
+                        ""
                     };
                     let freq = match ind["frequency"].as_i64() {
                         Some(1) => "daily",
@@ -1248,9 +1248,9 @@ pub async fn cmd_alert_list(
                         _ => "-",
                     };
                     rows.push(vec![
+                        val_str(&ind["id"]),
                         sym.clone(),
                         price.clone(),
-                        val_str(&ind["id"]),
                         val_str(&ind["text"]),
                         enabled.to_string(),
                         freq.to_string(),
@@ -1295,14 +1295,13 @@ pub async fn cmd_alert_add(
         _ => "price",
     };
     let body = serde_json::json!({
-        "id": 0,
         "counter_id": cid,
-        "indicator_id": indicator_id,
+        "indicator_id": indicator_id.to_string(),
         "value_map": { setting_key: price },
         "frequency": freq,
         "enabled": true,
-        "scope": "",
-        "state": [],
+        "scope": 0,
+        "state": [1],
     });
     let data = super::api::http_post("/v1/notify/reminders", body, verbose).await?;
     match format {
@@ -1312,13 +1311,13 @@ pub async fn cmd_alert_add(
     Ok(())
 }
 
-pub async fn cmd_alert_delete(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
-    let cid = crate::utils::counter::symbol_to_counter_id(&symbol);
-    let body = serde_json::json!({ "counter_id": cid });
-    let data = super::api::http_post("/v1/notify/reminders/delete", body, verbose).await?;
+pub async fn cmd_alert_delete(id: String, format: &OutputFormat, verbose: bool) -> Result<()> {
+    let id_num: i64 = id.parse().unwrap_or(0);
+    let body = serde_json::json!({ "id": id_num });
+    let data = super::api::http_delete("/v1/notify/reminders", body, verbose).await?;
     match format {
         OutputFormat::Json => print_json_value(&data),
-        OutputFormat::Pretty => println!("Alert deleted for {symbol}"),
+        OutputFormat::Pretty => println!("Alert {id} deleted"),
     }
     Ok(())
 }
