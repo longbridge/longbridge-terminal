@@ -648,9 +648,7 @@ fn normalize_counter(query: &str) -> Option<String> {
         let mut parts = q.splitn(2, '.');
         let code = parts.next().unwrap_or("").trim();
         let market = parts.next().unwrap_or("").trim().to_uppercase();
-        if code.is_empty()
-            || !matches!(market.as_str(), "HK" | "US" | "SH" | "SZ" | "SG" | "HAS")
-        {
+        if code.is_empty() || !matches!(market.as_str(), "HK" | "US" | "SH" | "SZ" | "SG" | "HAS") {
             return None;
         }
         Some(format!("{}.{}", code.to_uppercase(), market))

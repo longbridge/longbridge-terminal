@@ -106,6 +106,9 @@ async fn main() {
     // Kick off background version check to refresh the update cache for the next run.
     update::spawn_version_check();
 
+    // Show release notes once after a version change (e.g. brew upgrade, manual install).
+    update::check_and_show_release_notes().await;
+
     match cli.command {
         None => {
             // No subcommand: print help and exit
@@ -151,8 +154,13 @@ async fn main() {
             }
         }
 
-        Some(cli::Commands::Update) => {
-            if let Err(e) = update::cmd_update(verbose).await {
+        Some(cli::Commands::Update { release_notes }) => {
+            if release_notes {
+                if let Err(e) = update::cmd_release_notes().await {
+                    eprintln!("Error: {e}");
+                    std::process::exit(1);
+                }
+            } else if let Err(e) = update::cmd_update(verbose).await {
                 eprintln!("Error: {e}");
                 std::process::exit(1);
             }
