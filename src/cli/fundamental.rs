@@ -1620,8 +1620,9 @@ fn print_operating(data: &Value) {
         let txt = val_str(&item["txt"]);
         if !txt.is_empty() {
             let clean = strip_html(&txt);
-            let truncated = if clean.len() > 200 {
-                format!("{}...", &clean[..200])
+            let truncated = if clean.chars().count() > 200 {
+                let s: String = clean.chars().take(200).collect();
+                format!("{s}...")
             } else {
                 clean
             };
