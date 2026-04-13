@@ -152,7 +152,7 @@ async fn main() {
         }
 
         Some(cli::Commands::Update) => {
-            if let Err(e) = update::cmd_update().await {
+            if let Err(e) = update::cmd_update(verbose).await {
                 eprintln!("Error: {e}");
                 std::process::exit(1);
             }

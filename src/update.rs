@@ -17,7 +17,7 @@ const FETCH_TIMEOUT_SECS: u64 = 5;
 const DOWNLOAD_TIMEOUT_SECS: u64 = 300;
 const PACKAGE_NAME: &str = "longbridge-terminal";
 
-const BASE_URL_GLOBAL: &str = "https://github.com/longbridge/longbridge-terminal/releases";
+const BASE_URL_GLOBAL: &str = "https://open.longbridge.com/github/release/longbridge-terminal";
 const BASE_URL_CN: &str = "https://open.longbridge.cn/github/release/longbridge-terminal";
 
 #[cfg(target_os = "macos")]
@@ -160,27 +160,19 @@ fn get_base_url() -> &'static str {
 
 async fn fetch_latest_version_for_update() -> anyhow::Result<String> {
     let base = get_base_url();
-    let is_cn = crate::region::is_cn_cached();
 
-    let version = if is_cn {
-        // CN CDN: GET {base}/latest returns plain text like "v0.15.0"
-        let url = format!("{base}/latest");
-        let resp = reqwest::Client::builder()
-            .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS))
-            .build()?
-            .get(&url)
-            .send()
-            .await?
-            .error_for_status()?
-            .text()
-            .await?;
-        resp.trim().trim_start_matches('v').to_string()
-    } else {
-        // Global: follow redirect from releases/latest -> parse tag from URL
-        fetch_latest_version()
-            .await
-            .ok_or_else(|| anyhow::anyhow!("Failed to fetch latest version from GitHub"))?
-    };
+    // Both Global and CN CDN: GET {base}/latest returns plain text like "v0.15.0"
+    let url = format!("{base}/latest");
+    let resp = reqwest::Client::builder()
+        .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS))
+        .build()?
+        .get(&url)
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+    let version = resp.trim().trim_start_matches('v').to_string();
 
     if version.is_empty() || !version.starts_with(|c: char| c.is_ascii_digit()) {
         anyhow::bail!("Invalid version string: {version}");
@@ -190,8 +182,6 @@ async fn fetch_latest_version_for_update() -> anyhow::Result<String> {
 }
 
 fn build_download_url(base: &str, version: &str) -> String {
-    let is_cn = crate::region::is_cn_cached();
-
     #[cfg(not(target_os = "windows"))]
     let ext = "tar.gz";
     #[cfg(target_os = "windows")]
@@ -199,11 +189,8 @@ fn build_download_url(base: &str, version: &str) -> String {
 
     let asset = format!("{PACKAGE_NAME}-{PLATFORM}{LIBC_SUFFIX}-{ARCH}.{ext}");
 
-    if is_cn {
-        format!("{base}/v{version}/{asset}")
-    } else {
-        format!("{base}/download/v{version}/{asset}")
-    }
+    // Both Global and CN CDN use the same path structure
+    format!("{base}/v{version}/{asset}")
 }
 
 async fn download_to_file(url: &str, dest: &std::path::Path) -> anyhow::Result<()> {
@@ -360,10 +347,13 @@ pub fn cleanup_old_binary() {
 }
 
 /// Download the latest release and replace the current binary in place.
-pub async fn cmd_update() -> anyhow::Result<()> {
+pub async fn cmd_update(verbose: bool) -> anyhow::Result<()> {
     // 1. Resolve current binary path
     let current_exe = std::env::current_exe()?.canonicalize()?;
-    eprintln!("Current binary: {}", current_exe.display());
+
+    if verbose {
+        eprintln!("* Binary: {}", current_exe.display());
+    }
 
     // 2. Fetch latest version
     let latest = fetch_latest_version_for_update().await?;
@@ -379,7 +369,10 @@ pub async fn cmd_update() -> anyhow::Result<()> {
     // 4. Build download URL
     let base = get_base_url();
     let url = build_download_url(base, &latest);
-    eprintln!("Download: {url}");
+
+    if verbose {
+        eprintln!("* Download: {url}");
+    }
 
     // 5. Download to temp file
     let tmp_file = tempfile::Builder::new()
