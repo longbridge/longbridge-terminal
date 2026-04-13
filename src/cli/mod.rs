@@ -768,8 +768,9 @@ pub enum Commands {
     /// Example: longbridge market-status
     MarketStatus,
 
-    /// Broker holding positions for HK stocks
+    /// Broker holding positions (HK market only)
     ///
+    /// Currently only supports HK-listed stocks. US and other markets are not available.
     /// Example: longbridge broker-holding 700.HK
     /// Example: longbridge broker-holding detail 700.HK
     /// Example: longbridge broker-holding daily 700.HK --broker B01224

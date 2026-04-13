@@ -1993,9 +1993,13 @@ pub async fn cmd_history_intraday(
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => {
+            let mut found = false;
             if let Some(timeshares) = data.get("timeshares").and_then(|v| v.as_array()) {
                 for ts in timeshares {
                     if let Some(minutes) = ts.get("minutes").and_then(|v| v.as_array()) {
+                        if !minutes.is_empty() {
+                            found = true;
+                        }
                         let headers = ["timestamp", "price", "volume", "turnover", "avg_price"];
                         let rows: Vec<Vec<String>> = minutes
                             .iter()
@@ -2012,8 +2016,9 @@ pub async fn cmd_history_intraday(
                         print_table(&headers, rows, format);
                     }
                 }
-            } else {
-                println!("No history intraday data found.");
+            }
+            if !found {
+                println!("No history intraday data found for this date.");
             }
         }
     }
