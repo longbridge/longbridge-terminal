@@ -233,7 +233,8 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          sed "s|https://github.com/longbridge/longbridge-terminal/releases/download/v${VERSION}|https://open.longbridge.cn/github/release/longbridge-terminal/v${VERSION}|g" \
+          sed -e "s|https://github.com/longbridge/longbridge-terminal/releases/download/v[0-9][0-9.]*|https://open.longbridge.cn/github/release/longbridge-terminal/v${VERSION}|g" \
+              -e "s|\"version\": \"[^\"]*\"|\"version\": \"${VERSION}\"|" \
             .scoop/longbridge.json > longbridge.json
           ./ossutil cp longbridge.json \
             oss://lb-assets/github/release/longbridge-terminal/longbridge.json \
