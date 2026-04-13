@@ -2196,14 +2196,14 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             None => trade::cmd_alert_list(symbol, format, verbose).await,
         },
         Commands::ProfitAnalysis { cmd } => match cmd {
-            None => trade::cmd_profit_analysis(format, verbose).await,
+            None => asset::cmd_profit_analysis(format, verbose).await,
             Some(ProfitAnalysisCmd::Sublist {
                 filter,
                 start,
                 end,
                 currency,
             }) => {
-                trade::cmd_profit_analysis_sublist(
+                asset::cmd_profit_analysis_sublist(
                     &filter,
                     start.as_deref(),
                     end.as_deref(),
@@ -2214,7 +2214,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 .await
             }
             Some(ProfitAnalysisCmd::Detail { symbol, start, end }) => {
-                trade::cmd_profit_analysis_detail(
+                asset::cmd_profit_analysis_detail(
                     &symbol,
                     start.as_deref(),
                     end.as_deref(),
@@ -2231,7 +2231,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 page,
                 size,
             }) => {
-                trade::cmd_profit_analysis_flows(
+                asset::cmd_profit_analysis_flows(
                     &symbol,
                     start.as_deref(),
                     end.as_deref(),
@@ -2251,7 +2251,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 page,
                 size,
             }) => {
-                trade::cmd_profit_analysis_by_market(
+                asset::cmd_profit_analysis_by_market(
                     market.as_deref(),
                     start.as_deref(),
                     end.as_deref(),

@@ -1215,9 +1215,9 @@ pub async fn cmd_alert_list(
     match format {
         OutputFormat::Json => print_json_value(&data),
         OutputFormat::Pretty => {
-            let items = match data
-                .get("list")
-                .or_else(|| data.get("lists"))
+            let stocks = match data
+                .get("lists")
+                .or_else(|| data.get("list"))
                 .and_then(|v| v.as_array())
             {
                 Some(a) if !a.is_empty() => a,
@@ -1226,45 +1226,42 @@ pub async fn cmd_alert_list(
                     return Ok(());
                 }
             };
-            let headers = [
-                "id",
-                "symbol",
-                "direction",
-                "type",
-                "value",
-                "enabled",
-                "note",
-            ];
-            let rows: Vec<Vec<String>> = items
-                .iter()
-                .map(|item| {
-                    let dir = match item["direction"].as_i64() {
-                        Some(1) => "Rise",
-                        Some(2) => "Fall",
+            let headers = ["symbol", "price", "id", "alert", "enabled", "frequency"];
+            let mut rows: Vec<Vec<String>> = Vec::new();
+            for stock in stocks {
+                let sym =
+                    crate::utils::counter::counter_id_to_symbol(&val_str(&stock["counter_id"]));
+                let price = val_str(&stock["price"]);
+                let Some(indicators) = stock.get("indicators").and_then(|v| v.as_array()) else {
+                    continue;
+                };
+                for ind in indicators {
+                    let enabled = if ind["enabled"].as_bool().unwrap_or(false) {
+                        "Yes"
+                    } else {
+                        "No"
+                    };
+                    let freq = match ind["frequency"].as_i64() {
+                        Some(1) => "daily",
+                        Some(2) => "every",
+                        Some(3) => "once",
                         _ => "-",
                     };
-                    let alert_type = match item["type"].as_i64() {
-                        Some(1) => "Price",
-                        Some(2) => "Percent",
-                        _ => "-",
-                    };
-                    let enabled = match item["enabled"].as_i64() {
-                        Some(1) => "Yes",
-                        Some(0) => "No",
-                        _ => "-",
-                    };
-                    vec![
-                        val_str(&item["id"]),
-                        crate::utils::counter::counter_id_to_symbol(&val_str(&item["counter_id"])),
-                        dir.to_string(),
-                        alert_type.to_string(),
-                        val_str(&item["value"]),
+                    rows.push(vec![
+                        sym.clone(),
+                        price.clone(),
+                        val_str(&ind["id"]),
+                        val_str(&ind["text"]),
                         enabled.to_string(),
-                        val_str(&item["note"]),
-                    ]
-                })
-                .collect();
-            print_table(&headers, rows, format);
+                        freq.to_string(),
+                    ]);
+                }
+            }
+            if rows.is_empty() {
+                println!("No alerts found.");
+            } else {
+                print_table(&headers, rows, format);
+            }
         }
     }
     Ok(())
@@ -1282,11 +1279,11 @@ pub async fn cmd_alert_add(
 ) -> Result<()> {
     let cid = crate::utils::counter::symbol_to_counter_id(&symbol);
     // indicator_id: 1=price_rise, 2=price_fall, 3=change%_rise, 4=change%_fall
-    let indicator_id = match (alert_type, direction) {
-        ("percent", "fall" | "down") => "4",
-        ("percent", _) => "3",
-        (_, "fall" | "down") => "2",
-        _ => "1",
+    let indicator_id: i32 = match (alert_type, direction) {
+        ("percent", "fall" | "down") => 4,
+        ("percent", _) => 3,
+        (_, "fall" | "down") => 2,
+        _ => 1,
     };
     let freq: i32 = match frequency {
         "daily" => 1,
@@ -1294,19 +1291,18 @@ pub async fn cmd_alert_add(
         _ => 3, // once
     };
     let setting_key = match indicator_id {
-        "3" | "4" => "chg",
+        3 | 4 => "chg",
         _ => "price",
     };
-    // Match the structure from GET /v1/notify/reminders response
     let body = serde_json::json!({
+        "id": 0,
         "counter_id": cid,
-        "indicators": [{
-            "indicator_id": indicator_id,
-            "value_map": { setting_key: price },
-            "frequency": freq,
-            "enabled": true,
-            "note": note.unwrap_or_default(),
-        }]
+        "indicator_id": indicator_id,
+        "value_map": { setting_key: price },
+        "frequency": freq,
+        "enabled": true,
+        "scope": "",
+        "state": [],
     });
     let data = super::api::http_post("/v1/notify/reminders", body, verbose).await?;
     match format {
@@ -1323,344 +1319,6 @@ pub async fn cmd_alert_delete(symbol: String, format: &OutputFormat, verbose: bo
     match format {
         OutputFormat::Json => print_json_value(&data),
         OutputFormat::Pretty => println!("Alert deleted for {symbol}"),
-    }
-    Ok(())
-}
-
-pub async fn cmd_profit_analysis(format: &OutputFormat, verbose: bool) -> Result<()> {
-    let summary_fut = super::api::http_get("/v1/portfolio/profit-analysis-summary", &[], verbose);
-    let sublist_fut = super::api::http_get(
-        "/v1/portfolio/profit-analysis-sublist",
-        &[("profit_or_loss", "all")],
-        verbose,
-    );
-    let (summary, sublist) = tokio::join!(summary_fut, sublist_fut);
-    let summary = summary?;
-    let sublist = sublist?;
-
-    match format {
-        OutputFormat::Json => {
-            let mut merged = serde_json::Map::new();
-            if let serde_json::Value::Object(m) = &summary {
-                merged.extend(m.clone());
-            }
-            merged.insert("sublist".to_owned(), sublist.clone());
-            print_json_value(&serde_json::Value::Object(merged));
-        }
-        OutputFormat::Pretty => {
-            print_profit_analysis(&summary);
-            print_profit_analysis_sublist(&sublist);
-        }
-    }
-    Ok(())
-}
-
-fn print_profit_analysis(data: &serde_json::Value) {
-    let currency = val_str(&data["currency"]);
-    let period = format!(
-        "{} ~ {}",
-        val_str(&data["start_date"]),
-        val_str(&data["end_date"])
-    );
-    println!("P&L Summary ({currency})  {period}\n");
-
-    let fields = [
-        ("Total Asset", "current_total_asset"),
-        ("Initial Asset", "initial_asset_value"),
-        ("Ending Asset", "ending_asset_value"),
-        ("Invest Amount", "invest_amount"),
-        ("Total P&L", "sum_profit"),
-        ("Total P&L Rate", "sum_profit_rate"),
-        ("Simple Yield", "total_simple_earning_yield"),
-        ("Time-Weighted Yield", "total_time_earning_yield"),
-        ("Stocks Traded", "trade_stock_num"),
-    ];
-    for (label, key) in fields {
-        let v = val_str(&data[key]);
-        if !v.is_empty() && v != "-" {
-            println!("{label:20} {v}");
-        }
-    }
-
-    if let Some(profits) = data.get("profits") {
-        println!();
-        let categories = [
-            ("Stock P&L", "stock"),
-            ("Fund P&L", "fund"),
-            ("MMF P&L", "mmf"),
-            ("Crypto P&L", "crypto"),
-            ("Other P&L", "other"),
-            ("IPO Subscription", "ipo_subscription"),
-            ("IPO Hit", "ipo_hit"),
-        ];
-        for (label, key) in categories {
-            let v = val_str(&profits[key]);
-            if !v.is_empty() && v != "-" && v != "0" {
-                println!("{label:20} {v}");
-            }
-        }
-    }
-}
-
-fn pnl_item_symbol(item: &serde_json::Value) -> String {
-    let code = val_str(&item["security_code"]);
-    if !code.is_empty() && code != "-" {
-        let market = val_str(&item["market"]);
-        if !market.is_empty() && market != "-" {
-            return format!("{code}.{market}");
-        }
-        return code;
-    }
-    val_str(&item["code"])
-}
-
-fn print_profit_analysis_sublist(data: &serde_json::Value) {
-    if let Some(items) = data.get("items").and_then(|v| v.as_array()) {
-        if items.is_empty() {
-            return;
-        }
-        println!("\nStock P&L Breakdown\n");
-        let headers = &["Symbol", "Name", "Market", "P&L"];
-        let rows: Vec<Vec<String>> = items
-            .iter()
-            .map(|item| {
-                vec![
-                    pnl_item_symbol(item),
-                    val_str(&item["name"]),
-                    val_str(&item["market"]),
-                    val_str(&item["profit"]),
-                ]
-            })
-            .collect();
-        print_table(headers, rows, &OutputFormat::Pretty);
-    }
-}
-
-pub async fn cmd_profit_analysis_sublist(
-    filter: &str,
-    start: Option<&str>,
-    end: Option<&str>,
-    currency: Option<&str>,
-    format: &OutputFormat,
-    verbose: bool,
-) -> Result<()> {
-    let mut params: Vec<(&str, String)> = vec![("profit_or_loss", filter.to_owned())];
-    if let Some(s) = start {
-        let ts = parse_datetime_start(s)?.unix_timestamp().to_string();
-        params.push(("start", ts));
-    }
-    if let Some(e) = end {
-        let ts = parse_datetime_end(e)?.unix_timestamp().to_string();
-        params.push(("end", ts));
-    }
-    if let Some(c) = currency {
-        params.push(("currency", c.to_owned()));
-    }
-    let params_ref: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    let data = super::api::http_get(
-        "/v1/portfolio/profit-analysis-sublist",
-        &params_ref,
-        verbose,
-    )
-    .await?;
-
-    match format {
-        OutputFormat::Json => print_json_value(&data),
-        OutputFormat::Pretty => print_profit_analysis_sublist(&data),
-    }
-    Ok(())
-}
-
-pub async fn cmd_profit_analysis_detail(
-    symbol: &str,
-    start: Option<&str>,
-    end: Option<&str>,
-    format: &OutputFormat,
-    verbose: bool,
-) -> Result<()> {
-    let cid = crate::utils::counter::symbol_to_counter_id(symbol);
-    let mut params: Vec<(&str, String)> = vec![("counter_id", cid)];
-    if let Some(s) = start {
-        let ts = parse_datetime_start(s)?.unix_timestamp().to_string();
-        params.push(("start", ts));
-    }
-    if let Some(e) = end {
-        let ts = parse_datetime_end(e)?.unix_timestamp().to_string();
-        params.push(("end", ts));
-    }
-    let params_ref: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    let data =
-        super::api::http_get("/v1/portfolio/profit-analysis/detail", &params_ref, verbose).await?;
-
-    match format {
-        OutputFormat::Json => print_json_value(&data),
-        OutputFormat::Pretty => {
-            let name = val_str(&data["name"]);
-            let currency = val_str(&data["currency"]);
-            let start_date = val_str(&data["start_date"]);
-            let end_date = val_str(&data["end_date"]);
-            let profit = val_str(&data["profit"]);
-            let underlying = val_str(&data["underlying_details"]["profit"]);
-            let derivative = val_str(&data["derivative_pnl_details"]["profit"]);
-
-            let title = if name.is_empty() || name == "-" {
-                symbol.to_owned()
-            } else {
-                format!("{name} ({symbol})")
-            };
-            print!("{title}");
-            if !currency.is_empty() && currency != "-" {
-                print!("  [{currency}]");
-            }
-            if !start_date.is_empty() && start_date != "-" {
-                print!("  {start_date} ~ {end_date}");
-            }
-            println!("\n");
-            println!("{:20} {profit}", "Total P&L");
-            println!("{:20} {underlying}", "Underlying P&L");
-            println!("{:20} {derivative}", "Derivative P&L");
-        }
-    }
-    Ok(())
-}
-
-pub async fn cmd_profit_analysis_flows(
-    symbol: &str,
-    start: Option<&str>,
-    end: Option<&str>,
-    derivative: bool,
-    page: u32,
-    size: u32,
-    format: &OutputFormat,
-    verbose: bool,
-) -> Result<()> {
-    let cid = crate::utils::counter::symbol_to_counter_id(symbol);
-    let mut params: Vec<(&str, String)> = vec![
-        ("counter_id", cid),
-        ("page", page.to_string()),
-        ("size", size.to_string()),
-        ("derivative", derivative.to_string()),
-    ];
-    if let Some(s) = start {
-        let ts = parse_datetime_start(s)?.unix_timestamp().to_string();
-        params.push(("start", ts));
-    }
-    if let Some(e) = end {
-        let ts = parse_datetime_end(e)?.unix_timestamp().to_string();
-        params.push(("end", ts));
-    }
-    let params_ref: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    let data =
-        super::api::http_get("/v1/portfolio/profit-analysis/flows", &params_ref, verbose).await?;
-
-    match format {
-        OutputFormat::Json => print_json_value(&data),
-        OutputFormat::Pretty => {
-            if let Some(flows) = data.get("flows_list").and_then(|v| v.as_array()) {
-                let headers = &["Time", "Code", "Direction", "Qty", "Price", "Cost", "Desc"];
-                let rows: Vec<Vec<String>> = flows
-                    .iter()
-                    .map(|f| {
-                        let exec_time = {
-                            let exec_date = val_str(&f["executed_date"]);
-                            if exec_date.is_empty() || exec_date == "-" {
-                                let raw = val_str(&f["executed_timestamp"]);
-                                raw.parse::<i64>()
-                                    .ok()
-                                    .or_else(|| f["executed_timestamp"].as_i64())
-                                    .and_then(|t| time::OffsetDateTime::from_unix_timestamp(t).ok())
-                                    .map_or(raw, fmt_datetime)
-                            } else {
-                                exec_date
-                            }
-                        };
-                        let direction = match val_str(&f["direction"]).as_str() {
-                            "0" => "In".to_owned(),
-                            "1" => "Out".to_owned(),
-                            "-1" => "-".to_owned(),
-                            other => other.to_owned(),
-                        };
-                        vec![
-                            exec_time,
-                            val_str(&f["code"]),
-                            direction,
-                            val_str(&f["executed_quantity"]),
-                            val_str(&f["executed_price"]),
-                            val_str(&f["executed_cost"]),
-                            val_str(&f["describe"]),
-                        ]
-                    })
-                    .collect();
-                print_table(headers, rows, format);
-            }
-        }
-    }
-    Ok(())
-}
-
-pub async fn cmd_profit_analysis_by_market(
-    market: Option<&str>,
-    start: Option<&str>,
-    end: Option<&str>,
-    currency: Option<&str>,
-    page: u32,
-    size: u32,
-    format: &OutputFormat,
-    verbose: bool,
-) -> Result<()> {
-    let mut params: Vec<(&str, String)> =
-        vec![("page", page.to_string()), ("size", size.to_string())];
-    if let Some(m) = market {
-        params.push(("market", m.to_owned()));
-    }
-    if let Some(s) = start {
-        let ts = parse_datetime_start(s)?.unix_timestamp().to_string();
-        params.push(("start", ts));
-    }
-    if let Some(e) = end {
-        let ts = parse_datetime_end(e)?.unix_timestamp().to_string();
-        params.push(("end", ts));
-    }
-    if let Some(c) = currency {
-        params.push(("currency", c.to_owned()));
-    }
-    let params_ref: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    let data = super::api::http_get(
-        "/v1/portfolio/profit-analysis/by-market",
-        &params_ref,
-        verbose,
-    )
-    .await?;
-
-    match format {
-        OutputFormat::Json => print_json_value(&data),
-        OutputFormat::Pretty => {
-            let total_profit = val_str(&data["profit"]);
-            let has_more = data
-                .get("has_more")
-                .is_some_and(|v| v.as_bool().unwrap_or(false));
-            println!("Total P&L: {total_profit}");
-            if has_more {
-                println!("(more results available, use --page to paginate)\n");
-            } else {
-                println!();
-            }
-            if let Some(items) = data.get("stock_items").and_then(|v| v.as_array()) {
-                let headers = &["Symbol", "Name", "Market", "P&L"];
-                let rows: Vec<Vec<String>> = items
-                    .iter()
-                    .map(|item| {
-                        vec![
-                            val_str(&item["code"]),
-                            val_str(&item["name"]),
-                            val_str(&item["market"]),
-                            val_str(&item["profit"]),
-                        ]
-                    })
-                    .collect();
-                print_table(headers, rows, format);
-            }
-        }
     }
     Ok(())
 }
