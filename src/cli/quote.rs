@@ -2043,7 +2043,7 @@ pub async fn cmd_market_status(format: &OutputFormat, verbose: bool) -> Result<(
                     return Ok(());
                 }
             };
-            let headers = ["market", "status", "trade_status"];
+            let headers = ["market", "status"];
             let rows: Vec<Vec<String>> = items
                 .iter()
                 .map(|item| {
@@ -2058,11 +2058,7 @@ pub async fn cmd_market_status(format: &OutputFormat, verbose: bool) -> Result<(
                         204 => "Post-Market",
                         _ => "Unknown",
                     };
-                    vec![
-                        val_str(&item["market"]),
-                        status.to_string(),
-                        status_code.to_string(),
-                    ]
+                    vec![val_str(&item["market"]), status.to_string()]
                 })
                 .collect();
             print_table(&headers, rows, format);
