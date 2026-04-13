@@ -1282,11 +1282,11 @@ pub async fn cmd_alert_add(
 ) -> Result<()> {
     let cid = crate::utils::counter::symbol_to_counter_id(&symbol);
     // indicator_id: 1=price_rise, 2=price_fall, 3=change%_rise, 4=change%_fall
-    let indicator_id: i32 = match (alert_type, direction) {
-        ("percent", "fall" | "down") => 4,
-        ("percent", _) => 3,
-        (_, "fall" | "down") => 2,
-        _ => 1,
+    let indicator_id = match (alert_type, direction) {
+        ("percent", "fall" | "down") => "4",
+        ("percent", _) => "3",
+        (_, "fall" | "down") => "2",
+        _ => "1",
     };
     let freq: i32 = match frequency {
         "daily" => 1,
@@ -1294,16 +1294,19 @@ pub async fn cmd_alert_add(
         _ => 3, // once
     };
     let setting_key = match indicator_id {
-        3 | 4 => "chg",
+        "3" | "4" => "chg",
         _ => "price",
     };
+    // Match the structure from GET /v1/notify/reminders response
     let body = serde_json::json!({
         "counter_id": cid,
-        "indicator_id": indicator_id,
-        "value_map": { setting_key: price },
-        "frequency": freq,
-        "enabled": true,
-        "note": note.unwrap_or_default(),
+        "indicators": [{
+            "indicator_id": indicator_id,
+            "value_map": { setting_key: price },
+            "frequency": freq,
+            "enabled": true,
+            "note": note.unwrap_or_default(),
+        }]
     });
     let data = super::api::http_post("/v1/notify/reminders", body, verbose).await?;
     match format {
@@ -1315,7 +1318,7 @@ pub async fn cmd_alert_add(
 
 pub async fn cmd_alert_delete(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
     let cid = crate::utils::counter::symbol_to_counter_id(&symbol);
-    let body = serde_json::json!({ "CounterId": cid });
+    let body = serde_json::json!({ "counter_id": cid });
     let data = super::api::http_post("/v1/notify/reminders/delete", body, verbose).await?;
     match format {
         OutputFormat::Json => print_json_value(&data),
@@ -1399,6 +1402,18 @@ fn print_profit_analysis(data: &serde_json::Value) {
     }
 }
 
+fn pnl_item_symbol(item: &serde_json::Value) -> String {
+    let code = val_str(&item["security_code"]);
+    if !code.is_empty() && code != "-" {
+        let market = val_str(&item["market"]);
+        if !market.is_empty() && market != "-" {
+            return format!("{code}.{market}");
+        }
+        return code;
+    }
+    val_str(&item["code"])
+}
+
 fn print_profit_analysis_sublist(data: &serde_json::Value) {
     if let Some(items) = data.get("items").and_then(|v| v.as_array()) {
         if items.is_empty() {
@@ -1410,7 +1425,7 @@ fn print_profit_analysis_sublist(data: &serde_json::Value) {
             .iter()
             .map(|item| {
                 vec![
-                    val_str(&item["code"]),
+                    pnl_item_symbol(item),
                     val_str(&item["name"]),
                     val_str(&item["market"]),
                     val_str(&item["profit"]),
@@ -1463,7 +1478,8 @@ pub async fn cmd_profit_analysis_detail(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let mut params: Vec<(&str, String)> = vec![("symbol", symbol.to_owned())];
+    let cid = crate::utils::counter::symbol_to_counter_id(symbol);
+    let mut params: Vec<(&str, String)> = vec![("counter_id", cid)];
     if let Some(s) = start {
         let ts = parse_datetime_start(s)?.unix_timestamp().to_string();
         params.push(("start", ts));
@@ -1518,8 +1534,9 @@ pub async fn cmd_profit_analysis_flows(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
+    let cid = crate::utils::counter::symbol_to_counter_id(symbol);
     let mut params: Vec<(&str, String)> = vec![
-        ("symbol", symbol.to_owned()),
+        ("counter_id", cid),
         ("page", page.to_string()),
         ("size", size.to_string()),
         ("derivative", derivative.to_string()),
