@@ -199,7 +199,13 @@ async fn download_to_file(url: &str, dest: &std::path::Path) -> anyhow::Result<(
         .build()?;
 
     eprint!("Downloading...");
-    let bytes = client.get(url).send().await?.error_for_status()?.bytes().await?;
+    let bytes = client
+        .get(url)
+        .send()
+        .await?
+        .error_for_status()?
+        .bytes()
+        .await?;
 
     #[allow(clippy::cast_precision_loss)]
     {

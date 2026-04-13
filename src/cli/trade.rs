@@ -1380,6 +1380,227 @@ fn print_profit_analysis(data: &serde_json::Value) {
     }
 }
 
+pub async fn cmd_profit_analysis_sublist(
+    filter: &str,
+    start: Option<&str>,
+    end: Option<&str>,
+    currency: Option<&str>,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let mut params: Vec<(&str, String)> = vec![("profit_or_loss", filter.to_owned())];
+    if let Some(s) = start {
+        let ts = parse_datetime_start(s)?.unix_timestamp().to_string();
+        params.push(("start", ts));
+    }
+    if let Some(e) = end {
+        let ts = parse_datetime_end(e)?.unix_timestamp().to_string();
+        params.push(("end", ts));
+    }
+    if let Some(c) = currency {
+        params.push(("currency", c.to_owned()));
+    }
+    let params_ref: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let data = super::api::http_get(
+        "/v1/portfolio/profit-analysis-sublist",
+        &params_ref,
+        verbose,
+    )
+    .await?;
+
+    match format {
+        OutputFormat::Json => print_json_value(&data),
+        OutputFormat::Pretty => {
+            if let Some(items) = data.get("items").and_then(|v| v.as_array()) {
+                let headers = &["Symbol", "Name", "Market", "P&L"];
+                let rows: Vec<Vec<String>> = items
+                    .iter()
+                    .map(|item| {
+                        vec![
+                            val_str(&item["code"]),
+                            val_str(&item["name"]),
+                            val_str(&item["market"]),
+                            val_str(&item["profit"]),
+                        ]
+                    })
+                    .collect();
+                print_table(headers, rows, format);
+            }
+        }
+    }
+    Ok(())
+}
+
+pub async fn cmd_profit_analysis_detail(
+    symbol: &str,
+    start: Option<&str>,
+    end: Option<&str>,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let mut params: Vec<(&str, String)> = vec![("symbol", symbol.to_owned())];
+    if let Some(s) = start {
+        let ts = parse_datetime_start(s)?.unix_timestamp().to_string();
+        params.push(("start", ts));
+    }
+    if let Some(e) = end {
+        let ts = parse_datetime_end(e)?.unix_timestamp().to_string();
+        params.push(("end", ts));
+    }
+    let params_ref: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let data =
+        super::api::http_get("/v1/portfolio/profit-analysis/detail", &params_ref, verbose).await?;
+
+    match format {
+        OutputFormat::Json => print_json_value(&data),
+        OutputFormat::Pretty => {
+            let name = val_str(&data["name"]);
+            let profit = val_str(&data["profit"]);
+            let underlying = val_str(&data["underlying_details"]["profit"]);
+            let derivative = val_str(&data["derivative_pnl_details"]["profit"]);
+
+            println!("{name} ({symbol})\n");
+            println!("{:20} {profit}", "Total P&L");
+            println!("{:20} {underlying}", "Underlying P&L");
+            println!("{:20} {derivative}", "Derivative P&L");
+        }
+    }
+    Ok(())
+}
+
+pub async fn cmd_profit_analysis_flows(
+    symbol: &str,
+    start: Option<&str>,
+    end: Option<&str>,
+    derivative: bool,
+    page: u32,
+    size: u32,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let mut params: Vec<(&str, String)> = vec![
+        ("symbol", symbol.to_owned()),
+        ("page", page.to_string()),
+        ("size", size.to_string()),
+        ("derivative", derivative.to_string()),
+    ];
+    if let Some(s) = start {
+        let ts = parse_datetime_start(s)?.unix_timestamp().to_string();
+        params.push(("start", ts));
+    }
+    if let Some(e) = end {
+        let ts = parse_datetime_end(e)?.unix_timestamp().to_string();
+        params.push(("end", ts));
+    }
+    let params_ref: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let data =
+        super::api::http_get("/v1/portfolio/profit-analysis/flows", &params_ref, verbose).await?;
+
+    match format {
+        OutputFormat::Json => print_json_value(&data),
+        OutputFormat::Pretty => {
+            if let Some(flows) = data.get("flows_list").and_then(|v| v.as_array()) {
+                let headers = &["Time", "Code", "Direction", "Qty", "Price", "Cost", "Desc"];
+                let rows: Vec<Vec<String>> = flows
+                    .iter()
+                    .map(|f| {
+                        let ts = f["executed_timestamp"].as_i64().map_or_else(
+                            || val_str(&f["executed_timestamp"]),
+                            |t| {
+                                time::OffsetDateTime::from_unix_timestamp(t)
+                                    .map_or_else(|_| t.to_string(), fmt_datetime)
+                            },
+                        );
+                        let direction = match val_str(&f["direction"]).as_str() {
+                            "0" => "In".to_owned(),
+                            "1" => "Out".to_owned(),
+                            other => other.to_owned(),
+                        };
+                        vec![
+                            ts,
+                            val_str(&f["code"]),
+                            direction,
+                            val_str(&f["executed_quantity"]),
+                            val_str(&f["executed_price"]),
+                            val_str(&f["executed_cost"]),
+                            val_str(&f["describe"]),
+                        ]
+                    })
+                    .collect();
+                print_table(headers, rows, format);
+            }
+        }
+    }
+    Ok(())
+}
+
+pub async fn cmd_profit_analysis_by_market(
+    market: Option<&str>,
+    start: Option<&str>,
+    end: Option<&str>,
+    currency: Option<&str>,
+    page: u32,
+    size: u32,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let mut params: Vec<(&str, String)> =
+        vec![("page", page.to_string()), ("size", size.to_string())];
+    if let Some(m) = market {
+        params.push(("market", m.to_owned()));
+    }
+    if let Some(s) = start {
+        let ts = parse_datetime_start(s)?.unix_timestamp().to_string();
+        params.push(("start", ts));
+    }
+    if let Some(e) = end {
+        let ts = parse_datetime_end(e)?.unix_timestamp().to_string();
+        params.push(("end", ts));
+    }
+    if let Some(c) = currency {
+        params.push(("currency", c.to_owned()));
+    }
+    let params_ref: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let data = super::api::http_get(
+        "/v1/portfolio/profit-analysis/by-market",
+        &params_ref,
+        verbose,
+    )
+    .await?;
+
+    match format {
+        OutputFormat::Json => print_json_value(&data),
+        OutputFormat::Pretty => {
+            let total_profit = val_str(&data["profit"]);
+            let has_more = data
+                .get("has_more")
+                .is_some_and(|v| v.as_bool().unwrap_or(false));
+            println!("Total P&L: {total_profit}");
+            if has_more {
+                println!("(more results available, use --page to paginate)\n");
+            } else {
+                println!();
+            }
+            if let Some(items) = data.get("stock_items").and_then(|v| v.as_array()) {
+                let headers = &["Symbol", "Name", "Market", "P&L"];
+                let rows: Vec<Vec<String>> = items
+                    .iter()
+                    .map(|item| {
+                        vec![
+                            val_str(&item["code"]),
+                            val_str(&item["name"]),
+                            val_str(&item["market"]),
+                            val_str(&item["profit"]),
+                        ]
+                    })
+                    .collect();
+                print_table(headers, rows, format);
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

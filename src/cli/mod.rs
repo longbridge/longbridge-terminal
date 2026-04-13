@@ -853,10 +853,19 @@ pub enum Commands {
         cmd: Option<AlertCmd>,
     },
 
-    /// Profit & loss analysis summary (realized / unrealized)
+    /// Profit & loss analysis
     ///
+    /// Without subcommand: shows P&L summary.
+    /// Subcommands: sublist  detail  flows  by-market
     /// Example: longbridge profit-analysis
-    ProfitAnalysis,
+    /// Example: longbridge profit-analysis sublist --filter profit
+    /// Example: longbridge profit-analysis detail 700.HK
+    /// Example: longbridge profit-analysis flows 700.HK
+    /// Example: longbridge profit-analysis by-market --market HK
+    ProfitAnalysis {
+        #[command(subcommand)]
+        cmd: Option<ProfitAnalysisCmd>,
+    },
 
     /// Funds and ETFs that hold a given symbol
     ///
@@ -982,6 +991,95 @@ pub enum AhPremiumCmd {
     Intraday {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ProfitAnalysisCmd {
+    /// P&L sublist by stock (profit / loss / all)
+    ///
+    /// Example: longbridge profit-analysis sublist
+    /// Example: longbridge profit-analysis sublist --filter profit
+    /// Example: longbridge profit-analysis sublist --start 2025-01-01 --end 2025-12-31
+    Sublist {
+        /// Filter: profit, loss, or all (default: all)
+        #[arg(long, default_value = "all")]
+        filter: String,
+        /// Start date (YYYY-MM-DD)
+        #[arg(long)]
+        start: Option<String>,
+        /// End date (YYYY-MM-DD)
+        #[arg(long)]
+        end: Option<String>,
+        /// Currency filter (e.g. HKD, USD, CNH)
+        #[arg(long)]
+        currency: Option<String>,
+    },
+
+    /// Individual stock P&L detail (underlying vs derivative breakdown)
+    ///
+    /// Example: longbridge profit-analysis detail 700.HK
+    /// Example: longbridge profit-analysis detail 700.HK --start 2025-01-01 --end 2025-12-31
+    Detail {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+        /// Start date (YYYY-MM-DD)
+        #[arg(long)]
+        start: Option<String>,
+        /// End date (YYYY-MM-DD)
+        #[arg(long)]
+        end: Option<String>,
+    },
+
+    /// Transaction flows for a single stock P&L
+    ///
+    /// Example: longbridge profit-analysis flows 700.HK
+    /// Example: longbridge profit-analysis flows 700.HK --start 2025-01-01 --end 2025-12-31
+    /// Example: longbridge profit-analysis flows 700.HK --derivative
+    Flows {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+        /// Start date (YYYY-MM-DD)
+        #[arg(long)]
+        start: Option<String>,
+        /// End date (YYYY-MM-DD)
+        #[arg(long)]
+        end: Option<String>,
+        /// Show derivative flows instead of underlying
+        #[arg(long)]
+        derivative: bool,
+        /// Page number (default: 1)
+        #[arg(long, default_value = "1")]
+        page: u32,
+        /// Page size (default: 30)
+        #[arg(long, default_value = "30")]
+        size: u32,
+    },
+
+    /// Stock P&L by market with pagination
+    ///
+    /// Example: longbridge profit-analysis by-market
+    /// Example: longbridge profit-analysis by-market --market HK
+    /// Example: longbridge profit-analysis by-market --market US --page 1 --size 50
+    ByMarket {
+        /// Market filter (e.g. HK, US, SH, SZ)
+        #[arg(long)]
+        market: Option<String>,
+        /// Start date (YYYY-MM-DD)
+        #[arg(long)]
+        start: Option<String>,
+        /// End date (YYYY-MM-DD)
+        #[arg(long)]
+        end: Option<String>,
+        /// Currency filter (e.g. HKD, USD, CNH)
+        #[arg(long)]
+        currency: Option<String>,
+        /// Page number (default: 1)
+        #[arg(long, default_value = "1")]
+        page: u32,
+        /// Page size (default: 50)
+        #[arg(long, default_value = "50")]
+        size: u32,
     },
 }
 
@@ -2097,7 +2195,75 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             }
             None => trade::cmd_alert_list(symbol, format, verbose).await,
         },
-        Commands::ProfitAnalysis => trade::cmd_profit_analysis(format, verbose).await,
+        Commands::ProfitAnalysis { cmd } => match cmd {
+            None => trade::cmd_profit_analysis(format, verbose).await,
+            Some(ProfitAnalysisCmd::Sublist {
+                filter,
+                start,
+                end,
+                currency,
+            }) => {
+                trade::cmd_profit_analysis_sublist(
+                    &filter,
+                    start.as_deref(),
+                    end.as_deref(),
+                    currency.as_deref(),
+                    format,
+                    verbose,
+                )
+                .await
+            }
+            Some(ProfitAnalysisCmd::Detail { symbol, start, end }) => {
+                trade::cmd_profit_analysis_detail(
+                    &symbol,
+                    start.as_deref(),
+                    end.as_deref(),
+                    format,
+                    verbose,
+                )
+                .await
+            }
+            Some(ProfitAnalysisCmd::Flows {
+                symbol,
+                start,
+                end,
+                derivative,
+                page,
+                size,
+            }) => {
+                trade::cmd_profit_analysis_flows(
+                    &symbol,
+                    start.as_deref(),
+                    end.as_deref(),
+                    derivative,
+                    page,
+                    size,
+                    format,
+                    verbose,
+                )
+                .await
+            }
+            Some(ProfitAnalysisCmd::ByMarket {
+                market,
+                start,
+                end,
+                currency,
+                page,
+                size,
+            }) => {
+                trade::cmd_profit_analysis_by_market(
+                    market.as_deref(),
+                    start.as_deref(),
+                    end.as_deref(),
+                    currency.as_deref(),
+                    page,
+                    size,
+                    format,
+                    verbose,
+                )
+                .await
+            }
+        },
 
         Commands::Login { .. }
         | Commands::Logout

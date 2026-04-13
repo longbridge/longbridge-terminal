@@ -135,8 +135,9 @@ impl TradeStatusExt for TradeStatus {
             TradeStatus::SplitStockHalts => t!("TradeStatus.SplitStockHalts"),
             TradeStatus::Expired => t!("TradeStatus.Expired"),
             TradeStatus::WarrantPrepareList => t!("TradeStatus.WarrantPrepareList"),
-           TradeStatus::SuspendTrade => t!("TradeStatus.SuspendTrade"),
-        }.to_string()
+            TradeStatus::SuspendTrade => t!("TradeStatus.SuspendTrade"),
+        }
+        .to_string()
     }
 }
 
