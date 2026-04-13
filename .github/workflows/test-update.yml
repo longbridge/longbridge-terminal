@@ -36,6 +36,9 @@ jobs:
             target/
           key: linux-update-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Force old version to trigger update
+        run: sed -i 's/^version = ".*"/version = "0.14.0"/' Cargo.toml
+
       - name: Build
         run: cargo build
 
@@ -64,6 +67,9 @@ jobs:
             target/
           key: macos-update-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Force old version to trigger update
+        run: sed -i '' 's/^version = ".*"/version = "0.14.0"/' Cargo.toml
+
       - name: Build
         run: cargo build
 
@@ -91,6 +97,10 @@ jobs:
             ~/.cargo/git/db/
             target/
           key: windows-update-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Force old version to trigger update
+        shell: pwsh
+        run: (Get-Content Cargo.toml) -replace '^version = ".*"', 'version = "0.14.0"' | Set-Content Cargo.toml
 
       - name: Build
         run: cargo build
