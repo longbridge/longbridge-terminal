@@ -6,7 +6,7 @@ use bevy_ecs::{
 };
 use ratatui::{
     layout::{Constraint, Direction, Layout, Margin, Rect},
-    style::Modifier,
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Cell, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table},
     Frame,
@@ -182,7 +182,10 @@ pub fn watch(frame: &mut Frame, rect: Rect, full_mode: bool) {
     let mut scrollbar_state = ScrollbarState::new(counters.len()).position(selected.unwrap_or(0));
     let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
         .begin_symbol(None)
-        .end_symbol(None);
+        .end_symbol(None)
+        .track_symbol(None)
+        .thumb_symbol("▐")
+        .thumb_style(Style::default().fg(Color::DarkGray));
     let scrollbar_area = Rect {
         x: block_inner.x + block_inner.width - 1,
         y: block_inner.y,
@@ -364,8 +367,11 @@ pub fn exit_watchlist() {
     crate::tui::app::LAST_STATE.store(AppState::Watchlist, std::sync::atomic::Ordering::Relaxed);
 }
 
-pub fn enter_watchlist_common(command: Res<Command>) {
-    refresh_watchlist(command.0.clone());
+pub fn enter_watchlist_common(_command: Res<Command>) {
+    // Do not reload on every navigation. The initial load is handled by the explicit
+    // refresh_watchlist() call during startup, and subsequent reloads are triggered
+    // by the R key. Reloading here causes sort jumps because each API response arrives
+    // at a different time, potentially seeing different trade_session states.
 }
 
 pub fn exit_watchlist_common() {
