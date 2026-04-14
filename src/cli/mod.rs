@@ -743,10 +743,10 @@ pub enum Commands {
         symbol: String,
     },
 
-    /// Corporate structure (subsidiary/parent companies)
+    /// Investment relations (subsidiary/parent companies)
     ///
-    /// Example: longbridge subsidiaries 700.HK
-    Subsidiaries {
+    /// Example: longbridge invest-relation 700.HK
+    InvestRelation {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
     },
@@ -2066,7 +2066,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         Commands::CorpAction { symbol } => {
             fundamental::cmd_corp_action(symbol, format, verbose).await
         }
-        Commands::Subsidiaries { symbol } => {
+        Commands::InvestRelation { symbol } => {
             fundamental::cmd_invest_relation(symbol, format, verbose).await
         }
         Commands::Constituent {
