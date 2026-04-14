@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use super::{
     api::{http_get, QuoteApi},
-    output::{fmt_date, fmt_datetime, fmt_dec, fmt_decimal, parse_date, print_table},
+    output::{fmt_date, fmt_datetime, fmt_dec, fmt_decimal, fmt_decimal_div100, parse_date, print_table},
     OutputFormat,
 };
 use crate::utils::counter::symbol_to_counter_id;
@@ -110,9 +110,9 @@ fn calc_index_column(key: &str) -> Option<(&'static str, CalcIndexExtractor)> {
         "implied_volatility" => Some(("Impl. Vol.", |r| fmt_decimal(&r.implied_volatility))),
         "delta" => Some(("Delta", |r| fmt_decimal(&r.delta))),
         "gamma" => Some(("Gamma", |r| fmt_decimal(&r.gamma))),
-        "theta" => Some(("Theta", |r| fmt_decimal(&r.theta))),
-        "vega" => Some(("Vega", |r| fmt_decimal(&r.vega))),
-        "rho" => Some(("Rho", |r| fmt_decimal(&r.rho))),
+        "theta" => Some(("Theta", |r| fmt_decimal_div100(&r.theta))),
+        "vega" => Some(("Vega", |r| fmt_decimal_div100(&r.vega))),
+        "rho" => Some(("Rho", |r| fmt_decimal_div100(&r.rho))),
         "open_interest" => Some(("Open Interest", |r| {
             r.open_interest
                 .map_or_else(|| "-".to_string(), |v| v.to_string())
@@ -657,6 +657,9 @@ pub async fn cmd_static(symbols: Vec<String>, format: &OutputFormat) -> Result<(
     Ok(())
 }
 
+const STOCK_DEFAULT_FIELDS: &[&str] = &["pe", "pb", "dps_rate", "turnover_rate", "total_market_value"];
+const OPTION_DEFAULT_FIELDS: &[&str] = &["delta", "gamma", "theta", "vega", "rho", "implied_volatility", "open_interest"];
+
 pub async fn cmd_calc_index(
     symbols: Vec<String>,
     index: Vec<String>,
@@ -666,8 +669,29 @@ pub async fn cmd_calc_index(
         bail!("At least one symbol is required");
     }
     let ctx = crate::openapi::quote();
+
+    // Check if using stock defaults; if results are all empty, retry with option fields
+    let is_stock_default = index.iter().map(String::as_str).collect::<Vec<_>>() == STOCK_DEFAULT_FIELDS;
     let indexes = parse_calc_indexes(&index);
-    let results = ctx.calc_indexes(symbols, indexes).await?;
+    let results = ctx.calc_indexes(symbols.clone(), indexes).await?;
+
+    let all_empty = is_stock_default
+        && results.iter().all(|r| {
+            r.pe_ttm_ratio.is_none()
+                && r.pb_ratio.is_none()
+                && r.dividend_ratio_ttm.is_none()
+                && r.turnover_rate.is_none()
+                && r.total_market_value.is_none()
+        });
+
+    let (index, results) = if all_empty {
+        let option_index: Vec<String> = OPTION_DEFAULT_FIELDS.iter().map(|s| (*s).to_string()).collect();
+        let option_indexes = parse_calc_indexes(&option_index);
+        let results = ctx.calc_indexes(symbols, option_indexes).await?;
+        (option_index, results)
+    } else {
+        (index, results)
+    };
 
     // Deduplicate columns (e.g. "pe" and "pe_ttm" map to the same field)
     let columns: Vec<(&str, &str, CalcIndexExtractor)> = {

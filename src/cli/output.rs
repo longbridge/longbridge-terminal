@@ -77,6 +77,12 @@ pub fn fmt_decimal(v: &Option<rust_decimal::Decimal>) -> String {
     v.map(|d| d.to_string()).unwrap_or_else(|| "-".to_string())
 }
 
+/// Format optional decimal divided by 100 (API returns per-contract values for Theta/Vega)
+pub fn fmt_decimal_div100(v: &Option<rust_decimal::Decimal>) -> String {
+    v.map(|d| (d / rust_decimal::Decimal::ONE_HUNDRED).normalize().to_string())
+        .unwrap_or_else(|| "-".to_string())
+}
+
 /// Format decimal
 pub fn fmt_dec(v: rust_decimal::Decimal) -> String {
     v.to_string()
