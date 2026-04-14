@@ -103,11 +103,9 @@ impl Watchlist {
             .collect();
 
         let mut indices: Vec<usize> = (0..self.counters.len()).collect();
-        indices.sort_by(|&i, &j| {
-            keys[i]
-                .cmp(&keys[j])
-                .then_with(|| self.counters[i].as_str().cmp(self.counters[j].as_str()))
-        });
+        // Stable sort: equal keys preserve the original API order, giving the user
+        // a predictable layout without an arbitrary alphabetical tiebreaker.
+        indices.sort_by(|&i, &j| keys[i].cmp(&keys[j]));
         let sorted = indices
             .into_iter()
             .map(|i| self.counters[i].clone())
