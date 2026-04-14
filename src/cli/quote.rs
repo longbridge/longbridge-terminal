@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use super::{
     api::{http_get, QuoteApi},
-    output::{fmt_date, fmt_datetime, fmt_dec, fmt_decimal, parse_date, print_table},
+    output::{fmt_date, fmt_datetime, fmt_dec, fmt_decimal, fmt_decimal_div100, parse_date, print_table},
     OutputFormat,
 };
 use crate::utils::counter::symbol_to_counter_id;
@@ -110,9 +110,9 @@ fn calc_index_column(key: &str) -> Option<(&'static str, CalcIndexExtractor)> {
         "implied_volatility" => Some(("Impl. Vol.", |r| fmt_decimal(&r.implied_volatility))),
         "delta" => Some(("Delta", |r| fmt_decimal(&r.delta))),
         "gamma" => Some(("Gamma", |r| fmt_decimal(&r.gamma))),
-        "theta" => Some(("Theta", |r| fmt_decimal(&r.theta))),
-        "vega" => Some(("Vega", |r| fmt_decimal(&r.vega))),
-        "rho" => Some(("Rho", |r| fmt_decimal(&r.rho))),
+        "theta" => Some(("Theta", |r| fmt_decimal_div100(&r.theta))),
+        "vega" => Some(("Vega", |r| fmt_decimal_div100(&r.vega))),
+        "rho" => Some(("Rho", |r| fmt_decimal_div100(&r.rho))),
         "open_interest" => Some(("Open Interest", |r| {
             r.open_interest
                 .map_or_else(|| "-".to_string(), |v| v.to_string())
