@@ -2793,7 +2793,7 @@ mod tests {
             assert_eq!(quantity, 100);
             assert_eq!(price, Some("250.00".to_string()));
             assert_eq!(order_type, "LO");
-            assert_eq!(tif, "Day");
+            assert_eq!(tif, "day");
         } else {
             panic!("expected Order Buy command");
         }
