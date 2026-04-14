@@ -5,7 +5,7 @@ AI-native CLI for the [Longbridge](https://longbridge.com) trading platform — 
 Covers every Longbridge OpenAPI endpoint: real-time quotes, depth, K-lines, options, and warrants for market data; account balances, stock and fund positions for portfolio management; and order submission, modification, cancellation, and execution history for trading. Designed for scripting, AI-agent tool-calling, and daily trading workflows from the terminal.
 
 ```bash
-$ longbridge overview NVDA.US
+$ longbridge static NVDA.US
 | Symbol  | Last    | Prev Close | Open    | High    | Low     | Volume    | Turnover        | Status |
 |---------|---------|------------|---------|---------|---------|-----------|-----------------|--------|
 | TSLA.US | 395.560 | 391.200    | 396.220 | 403.730 | 394.420 | 58068343  | 23138752546.000 | Normal |
@@ -115,8 +115,8 @@ longbridge trades TSLA.US [--count 50]              # Recent tick-by-tick trades
 longbridge intraday TSLA.US                         # Intraday minute-by-minute price and volume lines for today
 longbridge kline TSLA.US [--period day]             # OHLCV candlestick (K-line) data [--adjust none|forward]
 longbridge kline history TSLA.US --start 2024-01-01 # Historical OHLCV candlestick data within a date range
-longbridge overview TSLA.US                       # Static reference info for one or more symbols
-longbridge metrics TSLA.US --fields pe,pb,eps       # Calculated financial metrics (PE, PB, EPS, turnover rate, etc.)
+longbridge static TSLA.US                            # Static reference info for one or more symbols
+longbridge calc-index TSLA.US --fields pe,pb,eps     # Calculated financial indexes (PE, PB, EPS, turnover rate, etc.)
 longbridge capital TSLA.US                          # Capital distribution snapshot (large/medium/small inflow and outflow)
 longbridge capital TSLA.US --flow                   # Intraday capital flow time series (large/medium/small money in vs out)
 longbridge market-temp [HK|US|CN|SG]                # Market sentiment temperature index (0–100, higher = more bullish)
