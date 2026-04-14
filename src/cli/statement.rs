@@ -9,6 +9,24 @@ use unicode_width::UnicodeWidthStr;
 
 use super::{output::print_table, ExportFormat, OutputFormat, StatementCmd, StatementSection};
 
+/// Parse a YYYY-MM-DD date string into YYYYMMDD integer required by the SDK.
+fn parse_date_to_yyyymmdd(s: &str) -> anyhow::Result<i32> {
+    let parts: Vec<&str> = s.split('-').collect();
+    if parts.len() != 3 {
+        anyhow::bail!("Invalid date '{s}': expected YYYY-MM-DD format (e.g. 2026-01-21)");
+    }
+    let year: i32 = parts[0]
+        .parse()
+        .map_err(|_| anyhow::anyhow!("Invalid year in date '{s}'"))?;
+    let month: i32 = parts[1]
+        .parse()
+        .map_err(|_| anyhow::anyhow!("Invalid month in date '{s}'"))?;
+    let day: i32 = parts[2]
+        .parse()
+        .map_err(|_| anyhow::anyhow!("Invalid day in date '{s}'"))?;
+    Ok(year * 10000 + month * 100 + day)
+}
+
 /// Return the first non-empty string from the candidates, or `""`.
 fn first_non_empty<'a>(candidates: &[&'a str]) -> &'a str {
     candidates
@@ -26,18 +44,21 @@ pub async fn cmd_statement(cmd: StatementCmd, format: &OutputFormat) -> Result<(
             limit,
         } => {
             let is_monthly = matches!(statement_type.to_lowercase().as_str(), "monthly" | "m");
-            let start_date = start_date.unwrap_or_else(|| {
-                let now = OffsetDateTime::now_utc();
-                if is_monthly {
-                    let total_months = now.year() * 12 + now.month() as i32 - 1 - 12;
-                    let year = total_months / 12;
-                    let month = total_months % 12 + 1;
-                    year * 10000 + month * 100 + 1
-                } else {
-                    let d = now - time::Duration::days(30);
-                    d.year() * 10000 + i32::from(d.month() as u8) * 100 + i32::from(d.day())
+            let start_date = match start_date {
+                Some(s) => parse_date_to_yyyymmdd(&s)?,
+                None => {
+                    let now = OffsetDateTime::now_utc();
+                    if is_monthly {
+                        let total_months = now.year() * 12 + now.month() as i32 - 1 - 12;
+                        let year = total_months / 12;
+                        let month = total_months % 12 + 1;
+                        year * 10000 + month * 100 + 1
+                    } else {
+                        let d = now - time::Duration::days(30);
+                        d.year() * 10000 + i32::from(d.month() as u8) * 100 + i32::from(d.day())
+                    }
                 }
-            });
+            };
             let limit = limit.unwrap_or(if is_monthly { 12 } else { 30 });
             cmd_list(&statement_type, start_date, limit, format).await
         }

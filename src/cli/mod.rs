@@ -18,7 +18,7 @@ pub mod watchlist;
 #[derive(ValueEnum, Clone, Default, Debug)]
 pub enum OutputFormat {
     #[default]
-    #[value(alias = "table")]
+    #[value(name = "table", alias = "pretty")]
     Pretty,
     Json,
 }
@@ -197,7 +197,7 @@ pub enum Commands {
     /// Use --session all to include pre/post-market candles (adds a Session column).
     /// Use the `history` subcommand to fetch a specific date range.
     /// Example: longbridge kline TSLA.US --period day --count 100
-    /// Example: longbridge kline TSLA.US --period 1h --adjust `forward_adjust`
+    /// Example: longbridge kline TSLA.US --period 1h --adjust forward
     /// Example: longbridge kline TSLA.US --period 1m --session all
     /// Example: longbridge kline history TSLA.US --start 2024-01-01 --end 2024-12-31
     Kline {
@@ -210,9 +210,8 @@ pub enum Commands {
         /// Number of candles to return (default: 100)
         #[arg(long, default_value = "100")]
         count: usize,
-        /// Price adjustment: `no_adjust` (default) | `forward_adjust`
-        /// Aliases: none=`no_adjust`, forward=`forward_adjust`
-        #[arg(long, default_value = "no_adjust")]
+        /// Price adjustment: `none` (default) | `forward`
+        #[arg(long, default_value = "none")]
         adjust: String,
         /// Trade session filter: `intraday` (default) | `all` (includes pre/post market)
         #[arg(long, default_value = "intraday")]
@@ -224,15 +223,15 @@ pub enum Commands {
     /// Static reference info for one or more symbols
     ///
     /// Returns: name, exchange, currency, `lot_size`, `total_shares`, `circulating_shares`, EPS, BPS, dividend.
-    /// Example: longbridge static TSLA.US 700.HK
-    Static {
+    /// Example: longbridge overview TSLA.US 700.HK
+    Overview {
         /// One or more symbols in <CODE>.<MARKET> format
         symbols: Vec<String>,
     },
 
-    /// Calculated financial indexes (PE, PB, DPS rate, turnover rate, etc.)
+    /// Calculated financial metrics (PE, PB, DPS rate, turnover rate, etc.)
     ///
-    /// Full index list:
+    /// Full field list:
     ///   `last_done`  `change_value`  `change_rate`  volume  turnover  `ytd_change_rate`
     ///   `turnover_rate`  `total_market_value`  `capital_flow`  amplitude  `volume_ratio`
     ///   pe (alias: `pe_ttm`)  pb  `dps_rate` (alias: `dividend_yield`)
@@ -242,18 +241,18 @@ pub enum Commands {
     ///   `outstanding_qty`  `outstanding_ratio`  premium  `itm_otm`
     ///   `warrant_delta`  `call_price`  `to_call_price`  `effective_leverage`
     ///   `leverage_ratio`  `conversion_ratio`  `balance_point`
-    /// Example: longbridge calc-index TSLA.US AAPL.US --index pe,pb,`turnover_rate`
-    CalcIndex {
+    /// Example: longbridge metrics TSLA.US AAPL.US --fields pe,pb,`turnover_rate`
+    Metrics {
         /// One or more symbols in <CODE>.<MARKET> format
         symbols: Vec<String>,
-        /// Comma-separated indexes to compute (default: pe,pb,`dps_rate`,`turnover_rate`,`total_market_value`)
-        /// Unknown index names are silently ignored.
+        /// Comma-separated fields to compute (default: pe,pb,`dps_rate`,`turnover_rate`,`total_market_value`)
+        /// Unknown field names are silently ignored.
         #[arg(
             long,
             value_delimiter = ',',
             default_value = "pe,pb,dps_rate,turnover_rate,total_market_value"
         )]
-        index: Vec<String>,
+        fields: Vec<String>,
     },
 
     /// Intraday capital distribution snapshot, or flow time series with --flow
@@ -430,10 +429,10 @@ pub enum Commands {
         market: Vec<String>,
         /// Start date (YYYY-MM-DD), defaults to today
         #[arg(long)]
-        date: Option<String>,
+        start: Option<String>,
         /// End date (YYYY-MM-DD), defaults to no limit
         #[arg(long)]
-        end_date: Option<String>,
+        end: Option<String>,
         /// Max events returned (default: 100)
         #[arg(long, default_value = "100")]
         count: u32,
@@ -548,9 +547,9 @@ pub enum Commands {
         /// Statement type: daily (default) | monthly
         #[arg(long = "type", default_value = "daily")]
         statement_type: String,
-        /// Start date of query in YYYYMMDD format (e.g. 20260121). Defaults to 30 days ago.
+        /// Start date (YYYY-MM-DD, e.g. 2026-01-21). Defaults to 30 days ago.
         #[arg(long)]
-        start_date: Option<i32>,
+        start_date: Option<String>,
         /// Number of records to return. Defaults to 30 for daily, 12 for monthly.
         #[arg(long)]
         limit: Option<i32>,
@@ -1240,9 +1239,9 @@ pub enum StatementCmd {
         /// Statement type: daily (default) | monthly
         #[arg(long = "type", default_value = "daily")]
         statement_type: String,
-        /// Start date of query in YYYYMMDD format (e.g. 20260121). Defaults to 30 days ago.
+        /// Start date (YYYY-MM-DD, e.g. 2026-01-21). Defaults to 30 days ago.
         #[arg(long)]
-        start_date: Option<i32>,
+        start_date: Option<String>,
         /// Number of records to return. Defaults to 30 for daily, 12 for monthly.
         #[arg(long)]
         limit: Option<i32>,
@@ -1357,9 +1356,9 @@ pub enum OrderCmd {
         ///   (case-insensitive, default: LO)
         #[arg(long, default_value = "LO")]
         order_type: String,
-        /// Time in force: Day | `GoodTilCanceled` (alias: gtc) | `GoodTilDate` (alias: gtd)
-        /// (case-insensitive, default: Day)
-        #[arg(long, default_value = "Day")]
+        /// Time in force: day | gtc (GoodTilCanceled) | gtd (GoodTilDate)
+        /// (case-insensitive)
+        #[arg(long, default_value = "day")]
         tif: String,
         /// Skip confirmation prompt (useful for scripting and AI agents)
         #[arg(long, short = 'y')]
@@ -1410,9 +1409,9 @@ pub enum OrderCmd {
         ///   (case-insensitive, default: LO)
         #[arg(long, default_value = "LO")]
         order_type: String,
-        /// Time in force: Day | `GoodTilCanceled` (alias: gtc) | `GoodTilDate` (alias: gtd)
-        /// (case-insensitive, default: Day)
-        #[arg(long, default_value = "Day")]
+        /// Time in force: day | gtc (GoodTilCanceled) | gtd (GoodTilDate)
+        /// (case-insensitive)
+        #[arg(long, default_value = "day")]
         tif: String,
         /// Skip confirmation prompt (useful for scripting and AI agents)
         #[arg(long, short = 'y')]
@@ -1640,8 +1639,8 @@ pub enum KlineCmd {
         /// End date (YYYY-MM-DD). Must be used together with --start.
         #[arg(long)]
         end: Option<String>,
-        /// Price adjustment: `no_adjust` (default) | `forward_adjust`
-        #[arg(long, default_value = "no_adjust")]
+        /// Price adjustment: `none` (default) | `forward`
+        #[arg(long, default_value = "none")]
         adjust: String,
         /// Trade session filter: intraday (default) | all (includes pre/post market)
         #[arg(long, default_value = "intraday")]
@@ -1718,9 +1717,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 quote::cmd_kline(sym, &period, count, &adjust, &session, format).await
             }
         },
-        Commands::Static { symbols } => quote::cmd_static(symbols, format).await,
-        Commands::CalcIndex { symbols, index } => {
-            quote::cmd_calc_index(symbols, index, format).await
+        Commands::Overview { symbols } => quote::cmd_static(symbols, format).await,
+        Commands::Metrics { symbols, fields } => {
+            quote::cmd_calc_index(symbols, fields, format).await
         }
         Commands::Capital { symbol, flow } => {
             if flow {
@@ -1800,15 +1799,15 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             event_type,
             symbol,
             market,
-            date,
-            end_date,
+            start,
+            end,
             count,
             star,
             next,
             offset,
         } => {
             fundamental::cmd_finance_calendar(
-                event_type, symbol, market, date, end_date, count, star, next, offset, format,
+                event_type, symbol, market, start, end, count, star, next, offset, format,
                 verbose,
             )
             .await
@@ -2311,7 +2310,7 @@ mod tests {
             assert_eq!(symbol, Some("TSLA.US".to_string()));
             assert_eq!(period, "day");
             assert_eq!(count, 100);
-            assert_eq!(adjust, "no_adjust");
+            assert_eq!(adjust, "none");
         } else {
             panic!("expected Kline command");
         }
@@ -2366,40 +2365,40 @@ mod tests {
     }
 
     #[test]
-    fn test_static_subcommand() {
-        let cli = parse(&["longbridge", "static", "TSLA.US", "700.HK"]).unwrap();
-        if let Some(Commands::Static { symbols }) = cli.command {
+    fn test_overview_subcommand() {
+        let cli = parse(&["longbridge", "overview", "TSLA.US", "700.HK"]).unwrap();
+        if let Some(Commands::Overview { symbols }) = cli.command {
             assert_eq!(symbols.len(), 2);
         } else {
-            panic!("expected Static command");
+            panic!("expected Overview command");
         }
     }
 
     #[test]
-    fn test_calc_index_default_indexes() {
-        let cli = parse(&["longbridge", "calc-index", "TSLA.US"]).unwrap();
-        if let Some(Commands::CalcIndex { symbols, index }) = cli.command {
+    fn test_metrics_default_fields() {
+        let cli = parse(&["longbridge", "metrics", "TSLA.US"]).unwrap();
+        if let Some(Commands::Metrics { symbols, fields }) = cli.command {
             assert_eq!(symbols, vec!["TSLA.US"]);
-            assert!(index.contains(&"pe".to_string()));
+            assert!(fields.contains(&"pe".to_string()));
         } else {
-            panic!("expected CalcIndex command");
+            panic!("expected Metrics command");
         }
     }
 
     #[test]
-    fn test_calc_index_custom_indexes() {
+    fn test_metrics_custom_fields() {
         let cli = parse(&[
             "longbridge",
-            "calc-index",
+            "metrics",
             "TSLA.US",
-            "--index",
+            "--fields",
             "pe,pb,eps",
         ])
         .unwrap();
-        if let Some(Commands::CalcIndex { index, .. }) = cli.command {
-            assert_eq!(index, vec!["pe", "pb", "eps"]);
+        if let Some(Commands::Metrics { fields, .. }) = cli.command {
+            assert_eq!(fields, vec!["pe", "pb", "eps"]);
         } else {
-            panic!("expected CalcIndex command");
+            panic!("expected Metrics command");
         }
     }
 
@@ -2794,7 +2793,7 @@ mod tests {
             assert_eq!(quantity, 100);
             assert_eq!(price, Some("250.00".to_string()));
             assert_eq!(order_type, "LO");
-            assert_eq!(tif, "Day");
+            assert_eq!(tif, "day");
         } else {
             panic!("expected Order Buy command");
         }

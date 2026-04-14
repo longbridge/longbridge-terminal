@@ -48,7 +48,7 @@ fn parse_tif(s: &str) -> Result<TimeInForceType> {
         "day" => Ok(TimeInForceType::Day),
         "gtc" | "goodtilcanceled" => Ok(TimeInForceType::GoodTilCanceled),
         "gtd" | "goodtildate" => Ok(TimeInForceType::GoodTilDate),
-        _ => bail!("Unknown time in force '{s}'. Use: Day GoodTilCanceled GoodTilDate"),
+        _ => bail!("Unknown time in force '{s}'. Use: day gtc gtd"),
     }
 }
 
