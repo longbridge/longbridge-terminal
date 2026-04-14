@@ -1578,8 +1578,9 @@ pub enum TopicCmd {
 pub enum OptionCmd {
     /// Real-time quotes for option contracts
     ///
-    /// Returns standard quote fields plus `implied_volatility`, delta, `strike_price`,
-    /// `expiry_date`, `contract_type`.
+    /// Returns all fields from the option quote API: price, volume, implied/historical
+    /// volatility, open interest, strike, expiry, contract type/size/multiplier, direction,
+    /// and underlying symbol.
     /// Example: longbridge option quote AAPL240119C190000
     Quote {
         /// Option contract symbols (OCC format for US, e.g. AAPL240119C190000)

@@ -1002,41 +1002,82 @@ pub async fn cmd_option_quote(symbols: Vec<String>, format: &OutputFormat) -> Re
     let ctx = crate::openapi::quote();
     let quotes = ctx.option_quote(symbols).await?;
 
-    let headers = &[
-        "Symbol",
-        "Last",
-        "Prev Close",
-        "Open",
-        "High",
-        "Low",
-        "Volume",
-        "Turnover",
-        "Implied Vol",
-        "Strike",
-        "Expiry",
-        "Type",
-    ];
-    let rows = quotes
-        .iter()
-        .map(|q| {
-            vec![
-                q.symbol.clone(),
-                fmt_dec(q.last_done),
-                fmt_dec(q.prev_close),
-                fmt_dec(q.open),
-                fmt_dec(q.high),
-                fmt_dec(q.low),
-                q.volume.to_string(),
-                fmt_dec(q.turnover),
-                fmt_dec(q.implied_volatility),
-                fmt_dec(q.strike_price),
-                fmt_date(q.expiry_date),
-                format!("{:?}", q.contract_type),
-            ]
-        })
-        .collect();
-
-    print_table(headers, rows, format);
+    match format {
+        OutputFormat::Json => {
+            let records: Vec<serde_json::Value> = quotes
+                .iter()
+                .map(|q| {
+                    serde_json::json!({
+                        "symbol": q.symbol,
+                        "last": q.last_done.to_string(),
+                        "prev_close": q.prev_close.to_string(),
+                        "open": q.open.to_string(),
+                        "high": q.high.to_string(),
+                        "low": q.low.to_string(),
+                        "timestamp": fmt_datetime(q.timestamp),
+                        "volume": q.volume,
+                        "turnover": q.turnover.to_string(),
+                        "trade_status": format!("{:?}", q.trade_status),
+                        "implied_volatility": q.implied_volatility.to_string(),
+                        "open_interest": q.open_interest,
+                        "expiry_date": fmt_date(q.expiry_date),
+                        "strike_price": q.strike_price.to_string(),
+                        "contract_multiplier": q.contract_multiplier.to_string(),
+                        "contract_type": format!("{:?}", q.contract_type),
+                        "contract_size": q.contract_size.to_string(),
+                        "direction": format!("{:?}", q.direction),
+                        "historical_volatility": q.historical_volatility.to_string(),
+                        "underlying_symbol": q.underlying_symbol,
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&records)?);
+        }
+        OutputFormat::Pretty => {
+            let headers = &[
+                "Symbol",
+                "Last",
+                "Prev Close",
+                "Open",
+                "High",
+                "Low",
+                "Volume",
+                "Turnover",
+                "Impl Vol",
+                "Hist Vol",
+                "OI",
+                "Strike",
+                "Expiry",
+                "Type",
+                "Direction",
+                "Underlying",
+            ];
+            let rows = quotes
+                .iter()
+                .map(|q| {
+                    vec![
+                        q.symbol.clone(),
+                        fmt_dec(q.last_done),
+                        fmt_dec(q.prev_close),
+                        fmt_dec(q.open),
+                        fmt_dec(q.high),
+                        fmt_dec(q.low),
+                        q.volume.to_string(),
+                        fmt_dec(q.turnover),
+                        fmt_dec(q.implied_volatility),
+                        fmt_dec(q.historical_volatility),
+                        q.open_interest.to_string(),
+                        fmt_dec(q.strike_price),
+                        fmt_date(q.expiry_date),
+                        format!("{:?}", q.contract_type),
+                        format!("{:?}", q.direction),
+                        q.underlying_symbol.clone(),
+                    ]
+                })
+                .collect();
+            print_table(headers, rows, format);
+        }
+    }
     Ok(())
 }
 
