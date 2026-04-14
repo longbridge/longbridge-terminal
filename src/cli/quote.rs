@@ -2100,38 +2100,56 @@ pub async fn cmd_constituent(
     Ok(())
 }
 
+fn market_trade_status_label(code: i64) -> &'static str {
+    match code {
+        101 => "Pre-Open",
+        102 | 103 | 105 | 202 | 203 => "Trading",
+        104 => "Lunch Break",
+        106 => "Post-Trading",
+        108 => "Closed",
+        201 => "Pre-Market",
+        204 => "Post-Market",
+        _ => "Unknown",
+    }
+}
+
 pub async fn cmd_market_status(format: &OutputFormat, verbose: bool) -> Result<()> {
     let data = http_get("/v1/quote/market-status", &[], verbose).await?;
+    let list = data
+        .get("market_time")
+        .or_else(|| data.get("list"))
+        .and_then(|v| v.as_array());
+    let items = match list {
+        Some(a) if !a.is_empty() => a,
+        _ => {
+            println!("No market status data found.");
+            return Ok(());
+        }
+    };
     match format {
-        OutputFormat::Json => print_json(&data),
+        OutputFormat::Json => {
+            let out: Vec<Value> = items
+                .iter()
+                .map(|item| {
+                    let code = item["trade_status"].as_i64().unwrap_or(0);
+                    serde_json::json!({
+                        "market": val_str(&item["market"]),
+                        "status": market_trade_status_label(code),
+                    })
+                })
+                .collect();
+            print_json(&serde_json::json!(out));
+        }
         OutputFormat::Pretty => {
-            let list = data
-                .get("market_time")
-                .or_else(|| data.get("list"))
-                .and_then(|v| v.as_array());
-            let items = match list {
-                Some(a) if !a.is_empty() => a,
-                _ => {
-                    println!("No market status data found.");
-                    return Ok(());
-                }
-            };
             let headers = ["market", "status"];
             let rows: Vec<Vec<String>> = items
                 .iter()
                 .map(|item| {
-                    let status_code = item["trade_status"].as_i64().unwrap_or(0);
-                    let status = match status_code {
-                        101 => "Pre-Open",
-                        102 | 103 | 202 | 203 => "Trading",
-                        104 => "Lunch Break",
-                        105 => "Post-Trading",
-                        108 => "Closed",
-                        201 => "Pre-Market",
-                        204 => "Post-Market",
-                        _ => "Unknown",
-                    };
-                    vec![val_str(&item["market"]), status.to_string()]
+                    let code = item["trade_status"].as_i64().unwrap_or(0);
+                    vec![
+                        val_str(&item["market"]),
+                        market_trade_status_label(code).to_string(),
+                    ]
                 })
                 .collect();
             print_table(&headers, rows, format);
