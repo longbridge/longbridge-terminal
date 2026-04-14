@@ -256,14 +256,16 @@ pub enum Commands {
         index: Vec<String>,
     },
 
-    /// Intraday capital flow and distribution
+    /// Intraday capital distribution snapshot, or flow time series with --flow
     ///
-    /// Subcommands: flow  dist
-    /// Example: longbridge capital flow TSLA.US
-    /// Example: longbridge capital dist TSLA.US
+    /// Example: longbridge capital TSLA.US
+    /// Example: longbridge capital TSLA.US --flow
     Capital {
-        #[command(subcommand)]
-        cmd: CapitalCmd,
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+        /// Show intraday capital flow time series instead of distribution snapshot
+        #[arg(long)]
+        flow: bool,
     },
 
     /// Market sentiment temperature index (0–100, higher = more bullish)
@@ -1648,27 +1650,6 @@ pub enum KlineCmd {
 }
 
 #[derive(Subcommand)]
-pub enum CapitalCmd {
-    /// Intraday capital flow time series (large/medium/small money in vs out)
-    ///
-    /// Returns a time series of inflow values for today's session.
-    /// Example: longbridge capital flow TSLA.US
-    Flow {
-        /// Symbol in <CODE>.<MARKET> format
-        symbol: String,
-    },
-
-    /// Capital distribution snapshot (large/medium/small inflow and outflow)
-    ///
-    /// Returns total inflow/outflow broken down by order size for the current session.
-    /// Example: longbridge capital dist TSLA.US
-    Dist {
-        /// Symbol in <CODE>.<MARKET> format
-        symbol: String,
-    },
-}
-
-#[derive(Subcommand)]
 pub enum TradingCmd {
     /// Trading session schedule (open/close times) for all markets
     ///
@@ -1741,10 +1722,13 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         Commands::CalcIndex { symbols, index } => {
             quote::cmd_calc_index(symbols, index, format).await
         }
-        Commands::Capital { cmd } => match cmd {
-            CapitalCmd::Flow { symbol } => quote::cmd_capital_flow(symbol, format).await,
-            CapitalCmd::Dist { symbol } => quote::cmd_capital_dist(symbol, format).await,
-        },
+        Commands::Capital { symbol, flow } => {
+            if flow {
+                quote::cmd_capital_flow(symbol, format).await
+            } else {
+                quote::cmd_capital_dist(symbol, format).await
+            }
+        }
         Commands::MarketTemp {
             market,
             history,
@@ -2420,18 +2404,18 @@ mod tests {
     }
 
     #[test]
-    fn test_capital_flow_subcommand() {
-        let cli = parse(&["longbridge", "capital", "flow", "TSLA.US"]).unwrap();
+    fn test_capital_default_dist() {
+        let cli = parse(&["longbridge", "capital", "TSLA.US"]).unwrap();
         assert!(
-            matches!(cli.command, Some(Commands::Capital { cmd: CapitalCmd::Flow { symbol } }) if symbol == "TSLA.US")
+            matches!(cli.command, Some(Commands::Capital { ref symbol, flow }) if symbol == "TSLA.US" && !flow)
         );
     }
 
     #[test]
-    fn test_capital_dist_subcommand() {
-        let cli = parse(&["longbridge", "capital", "dist", "TSLA.US"]).unwrap();
+    fn test_capital_flow_flag() {
+        let cli = parse(&["longbridge", "capital", "TSLA.US", "--flow"]).unwrap();
         assert!(
-            matches!(cli.command, Some(Commands::Capital { cmd: CapitalCmd::Dist { symbol } }) if symbol == "TSLA.US")
+            matches!(cli.command, Some(Commands::Capital { ref symbol, flow }) if symbol == "TSLA.US" && flow)
         );
     }
 
