@@ -41,9 +41,9 @@ fn parse_period(s: &str) -> Result<Period> {
 
 fn parse_adjust(s: &str) -> Result<AdjustType> {
     match s {
-        "no_adjust" | "none" => Ok(AdjustType::NoAdjust),
-        "forward_adjust" | "forward" => Ok(AdjustType::ForwardAdjust),
-        _ => bail!("Unknown adjust type '{s}'. Use: no_adjust forward_adjust"),
+        "none" | "no_adjust" => Ok(AdjustType::NoAdjust),
+        "forward" | "forward_adjust" => Ok(AdjustType::ForwardAdjust),
+        _ => bail!("Unknown adjust type '{s}'. Use: none forward"),
     }
 }
 

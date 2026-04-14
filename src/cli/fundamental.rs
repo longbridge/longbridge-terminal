@@ -1067,8 +1067,8 @@ pub async fn cmd_finance_calendar(
     event_type: String,
     symbols: Vec<String>,
     markets: Vec<String>,
-    date: Option<String>,
-    date_end: Option<String>,
+    start: Option<String>,
+    end: Option<String>,
     count: u32,
     star: Vec<u32>,
     next: String,
@@ -1077,7 +1077,7 @@ pub async fn cmd_finance_calendar(
     verbose: bool,
 ) -> Result<()> {
     let today = time::OffsetDateTime::now_utc().date();
-    let start = date.unwrap_or_else(|| {
+    let start = start.unwrap_or_else(|| {
         if symbols.is_empty() {
             format!("{today}")
         } else {
@@ -1119,7 +1119,7 @@ pub async fn cmd_finance_calendar(
     for s in &star_strs {
         params.push(("star[]", s.as_str()));
     }
-    if let Some(ref end) = date_end {
+    if let Some(ref end) = end {
         params.push(("date_end", end.as_str()));
     }
 

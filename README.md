@@ -5,7 +5,7 @@ AI-native CLI for the [Longbridge](https://longbridge.com) trading platform — 
 Covers every Longbridge OpenAPI endpoint: real-time quotes, depth, K-lines, options, and warrants for market data; account balances, stock and fund positions for portfolio management; and order submission, modification, cancellation, and execution history for trading. Designed for scripting, AI-agent tool-calling, and daily trading workflows from the terminal.
 
 ```bash
-$ longbridge static NVDA.US
+$ longbridge overview NVDA.US
 | Symbol  | Last    | Prev Close | Open    | High    | Low     | Volume    | Turnover        | Status |
 |---------|---------|------------|---------|---------|---------|-----------|-----------------|--------|
 | TSLA.US | 395.560 | 391.200    | 396.220 | 403.730 | 394.420 | 58068343  | 23138752546.000 | Normal |
@@ -113,12 +113,12 @@ longbridge depth TSLA.US                            # Level 2 order book depth (
 longbridge brokers 700.HK                           # Broker queue at each price level (HK market)
 longbridge trades TSLA.US [--count 50]              # Recent tick-by-tick trades
 longbridge intraday TSLA.US                         # Intraday minute-by-minute price and volume lines for today
-longbridge kline TSLA.US [--period day]             # OHLCV candlestick (K-line) data
+longbridge kline TSLA.US [--period day]             # OHLCV candlestick (K-line) data [--adjust none|forward]
 longbridge kline history TSLA.US --start 2024-01-01 # Historical OHLCV candlestick data within a date range
-longbridge static TSLA.US                           # Static reference info for one or more symbols
-longbridge calc-index TSLA.US --index pe,pb,eps     # Calculated financial indexes (PE, PB, EPS, turnover rate, etc.)
-longbridge capital flow TSLA.US                     # Intraday capital flow time series (large/medium/small money in vs out)
-longbridge capital dist TSLA.US                     # Capital distribution snapshot (large/medium/small inflow and outflow)
+longbridge overview TSLA.US                       # Static reference info for one or more symbols
+longbridge metrics TSLA.US --fields pe,pb,eps       # Calculated financial metrics (PE, PB, EPS, turnover rate, etc.)
+longbridge capital TSLA.US                          # Capital distribution snapshot (large/medium/small inflow and outflow)
+longbridge capital TSLA.US --flow                   # Intraday capital flow time series (large/medium/small money in vs out)
 longbridge market-temp [HK|US|CN|SG]                # Market sentiment temperature index (0–100, higher = more bullish)
 longbridge trading session                          # Trading session schedule (open/close times) for all markets
 longbridge trading days HK                          # Trading days and half-trading days for a market
@@ -149,7 +149,7 @@ longbridge option quote AAPL240119C190000          # Real-time quotes for option
 longbridge option chain AAPL.US                   # Option chain: list all expiry dates
 longbridge option chain AAPL.US --date 2024-01-19 # Option chain: strike prices for a given expiry
 longbridge warrant quote 12345.HK                 # Real-time quotes for warrant contracts
-longbridge warrant list 700.HK                    # Warrants linked to an underlying security
+longbridge warrant 700.HK                         # Warrants linked to an underlying security
 longbridge warrant issuers                        # Warrant issuer list (HK market)
 ```
 
@@ -197,20 +197,20 @@ longbridge watchlist pin --remove 700.HK           # Unpin securities
 ### Trading
 
 ```bash
-longbridge orders                                      # Today's orders, or historical orders with --history
-longbridge orders --history [--start 2024-01-01]       # Historical orders (use --symbol to filter)
-longbridge order <order_id>                            # Full detail for a single order including charges and history
-longbridge executions                                  # Today's trade executions (fills), or historical with --history
-longbridge buy TSLA.US 100 --price 250.00              # Submit a buy order (prompts for confirmation)
-longbridge sell TSLA.US 100 --price 260.00             # Submit a sell order (prompts for confirmation)
-longbridge cancel <order_id>                           # Cancel a pending order (prompts for confirmation)
-longbridge replace <order_id> --qty 200 --price 255.00 # Modify quantity or price of a pending order
-longbridge assets [--currency USD]                     # Asset overview: net assets, cash, buy power, margins, and per-currency breakdown
-longbridge cash-flow [--start 2024-01-01]              # Cash flow records (deposits, withdrawals, dividends, settlements)
-longbridge positions                                   # Current stock (equity) positions across all sub-accounts
-longbridge fund-positions                              # Current fund (mutual fund) positions across all sub-accounts
-longbridge margin-ratio TSLA.US                        # Margin ratio requirements for a symbol
-longbridge max-qty TSLA.US --side buy --price 250      # Estimate maximum buy or sell quantity given current account balance
+longbridge order                                           # Today's orders, or historical with --history
+longbridge order --history [--start 2024-01-01]            # Historical orders (use --symbol to filter)
+longbridge order detail <order_id>                         # Full detail for a single order including charges and history
+longbridge order executions                                # Today's trade executions (fills), or historical with --history
+longbridge order buy TSLA.US 100 --price 250.00            # Submit a buy order (prompts for confirmation)
+longbridge order sell TSLA.US 100 --price 260.00           # Submit a sell order (prompts for confirmation)
+longbridge order cancel <order_id>                         # Cancel a pending order (prompts for confirmation)
+longbridge order replace <order_id> --qty 200 --price 255.00 # Modify quantity or price of a pending order
+longbridge assets [--currency USD]                         # Asset overview: net assets, cash, buy power, margins, and per-currency breakdown
+longbridge cash-flow [--start 2024-01-01]                  # Cash flow records (deposits, withdrawals, dividends, settlements)
+longbridge positions                                       # Current stock (equity) positions across all sub-accounts
+longbridge fund-positions                                  # Current fund (mutual fund) positions across all sub-accounts
+longbridge margin-ratio TSLA.US                            # Margin ratio requirements for a symbol
+longbridge max-qty TSLA.US --side buy --price 250          # Estimate maximum buy or sell quantity given current account balance
 ```
 
 ### Profit Analysis
