@@ -223,15 +223,15 @@ pub enum Commands {
     /// Static reference info for one or more symbols
     ///
     /// Returns: name, exchange, currency, `lot_size`, `total_shares`, `circulating_shares`, EPS, BPS, dividend.
-    /// Example: longbridge overview TSLA.US 700.HK
-    Overview {
+    /// Example: longbridge static TSLA.US 700.HK
+    Static {
         /// One or more symbols in <CODE>.<MARKET> format
         symbols: Vec<String>,
     },
 
-    /// Calculated financial metrics (PE, PB, DPS rate, turnover rate, etc.)
+    /// Calculated financial indexes (PE, PB, DPS rate, turnover rate, etc.)
     ///
-    /// Full field list:
+    /// Full index list:
     ///   `last_done`  `change_value`  `change_rate`  volume  turnover  `ytd_change_rate`
     ///   `turnover_rate`  `total_market_value`  `capital_flow`  amplitude  `volume_ratio`
     ///   pe (alias: `pe_ttm`)  pb  `dps_rate` (alias: `dividend_yield`)
@@ -241,8 +241,8 @@ pub enum Commands {
     ///   `outstanding_qty`  `outstanding_ratio`  premium  `itm_otm`
     ///   `warrant_delta`  `call_price`  `to_call_price`  `effective_leverage`
     ///   `leverage_ratio`  `conversion_ratio`  `balance_point`
-    /// Example: longbridge metrics TSLA.US AAPL.US --fields pe,pb,`turnover_rate`
-    Metrics {
+    /// Example: longbridge calc-index TSLA.US AAPL.US --fields pe,pb,`turnover_rate`
+    CalcIndex {
         /// One or more symbols in <CODE>.<MARKET> format
         symbols: Vec<String>,
         /// Comma-separated fields to compute (default: pe,pb,`dps_rate`,`turnover_rate`,`total_market_value`)
@@ -1717,8 +1717,8 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 quote::cmd_kline(sym, &period, count, &adjust, &session, format).await
             }
         },
-        Commands::Overview { symbols } => quote::cmd_static(symbols, format).await,
-        Commands::Metrics { symbols, fields } => {
+        Commands::Static { symbols } => quote::cmd_static(symbols, format).await,
+        Commands::CalcIndex { symbols, fields } => {
             quote::cmd_calc_index(symbols, fields, format).await
         }
         Commands::Capital { symbol, flow } => {
@@ -2365,40 +2365,40 @@ mod tests {
     }
 
     #[test]
-    fn test_overview_subcommand() {
-        let cli = parse(&["longbridge", "overview", "TSLA.US", "700.HK"]).unwrap();
-        if let Some(Commands::Overview { symbols }) = cli.command {
+    fn test_static_subcommand() {
+        let cli = parse(&["longbridge", "static", "TSLA.US", "700.HK"]).unwrap();
+        if let Some(Commands::Static { symbols }) = cli.command {
             assert_eq!(symbols.len(), 2);
         } else {
-            panic!("expected Overview command");
+            panic!("expected Static command");
         }
     }
 
     #[test]
-    fn test_metrics_default_fields() {
-        let cli = parse(&["longbridge", "metrics", "TSLA.US"]).unwrap();
-        if let Some(Commands::Metrics { symbols, fields }) = cli.command {
+    fn test_calc_index_default_fields() {
+        let cli = parse(&["longbridge", "calc-index", "TSLA.US"]).unwrap();
+        if let Some(Commands::CalcIndex { symbols, fields }) = cli.command {
             assert_eq!(symbols, vec!["TSLA.US"]);
             assert!(fields.contains(&"pe".to_string()));
         } else {
-            panic!("expected Metrics command");
+            panic!("expected CalcIndex command");
         }
     }
 
     #[test]
-    fn test_metrics_custom_fields() {
+    fn test_calc_index_custom_fields() {
         let cli = parse(&[
             "longbridge",
-            "metrics",
+            "calc-index",
             "TSLA.US",
             "--fields",
             "pe,pb,eps",
         ])
         .unwrap();
-        if let Some(Commands::Metrics { fields, .. }) = cli.command {
+        if let Some(Commands::CalcIndex { fields, .. }) = cli.command {
             assert_eq!(fields, vec!["pe", "pb", "eps"]);
         } else {
-            panic!("expected Metrics command");
+            panic!("expected CalcIndex command");
         }
     }
 
