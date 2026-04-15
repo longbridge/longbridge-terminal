@@ -1,5 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use tabled::{builder::Builder, settings::Style};
 use time::OffsetDateTime;
 
 use anyhow::Result;
@@ -15,20 +16,6 @@ const DIM: &str = "\x1b[2m";
 const RESET: &str = "\x1b[0m";
 
 /// Format a duration in seconds as a human-readable string (e.g. "2h 14m", "45m", "30s").
-/// Titleize a snake_case or lowercase string: "level2" → "Level2", "standard_cn" → "Standard Cn".
-fn titleize(s: &str) -> String {
-    s.split('_')
-        .map(|word| {
-            let mut chars = word.chars();
-            match chars.next() {
-                None => String::new(),
-                Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 fn format_duration(secs: u64) -> String {
     if secs >= 3600 {
         let h = secs / 3600;
@@ -237,7 +224,7 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
             println!("Token");
             println!(
                 "{W$:<W$} {color}{status_str}{RESET}  {}",
-                "status",
+                "Status",
                 token.detail,
                 W = W,
                 color = status_color,
@@ -246,49 +233,54 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
                 if let Ok(dt) = OffsetDateTime::from_unix_timestamp(ts as i64) {
                     println!(
                         "{W$:<W$} {}-{:02}-{:02} {:02}:{:02}",
-                        "logged in",
+                        "Logged In",
                         dt.year(), dt.month() as u8, dt.day(),
                         dt.hour(), dt.minute(),
                         W = W,
                     );
                 }
             }
-            println!("{W$:<W$} {DIM}{}{RESET}", "path", token_path.display(), W = W);
+            println!("{W$:<W$} {DIM}{}{RESET}", "Path", token_path.display(), W = W);
 
             // ── Account ────────────────────────────────────────────────────────
             if let Some(acc) = &account {
                 println!();
 
                 if let Some(name) = &acc.name {
-                    println!("{W$:<W$} {name}", "name", W = W);
+                    println!("{W$:<W$} {name}", "Name", W = W);
                 }
                 // account_no and account_type on one line
                 let mut acct_parts = Vec::new();
                 if let Some(no) = &acc.account_no { acct_parts.push(no.as_str()); }
                 if let Some(at) = &acc.account_type { acct_parts.push(at.as_str()); }
                 if !acct_parts.is_empty() {
-                    println!("{W$:<W$} {}", "account", acct_parts.join("  ·  "), W = W);
+                    println!("{W$:<W$} {}", "Account", acct_parts.join("  ·  "), W = W);
                 }
-                println!("{W$:<W$} {}", "member_id", acc.member_id, W = W);
+                println!("{W$:<W$} {}", "Member Id", acc.member_id, W = W);
 
-                // ── Quote packages ──────────────────────────────────────────────
+                // ── Quote Level ─────────────────────────────────────────────────
                 println!();
+                println!("Quote Level");
                 if !acc.quote_packages.is_empty() {
+                    let has_desc = acc.quote_packages.iter().any(|p| !p.description.is_empty());
+                    let mut builder = Builder::default();
+                    if has_desc {
+                        builder.push_record(["Package", "Start", "End", "Description"]);
+                    } else {
+                        builder.push_record(["Package", "Start", "End"]);
+                    }
                     for pkg in &acc.quote_packages {
-                        let start = pkg.start_at.date();
-                        let end   = pkg.end_at.date();
-                        println!("{}", pkg.name);
-                        println!(
-                            "{W$:<W$} {DIM}{start}  →  {end}{RESET}",
-                            "",
-                            W = W,
-                        );
-                        if !pkg.description.is_empty() {
-                            println!("{W$:<W$} {DIM}{}{RESET}", "", pkg.description, W = W);
+                        let start = pkg.start_at.date().to_string();
+                        let end   = pkg.end_at.date().to_string();
+                        if has_desc {
+                            builder.push_record([&pkg.name, &start, &end, &pkg.description]);
+                        } else {
+                            builder.push_record([&pkg.name, &start, &end]);
                         }
                     }
+                    println!("{}", builder.build().with(Style::markdown()));
                 } else {
-                    println!("{W$:<W$} {}", "quote_level", titleize(&acc.quote_level), W = W);
+                    println!("{W$:<W$} {}", "Level", acc.quote_level, W = W);
                 }
             }
         }
