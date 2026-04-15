@@ -10,7 +10,8 @@ use serde_json::Value;
 use super::{
     api::{http_get, QuoteApi},
     output::{
-        fmt_date, fmt_datetime, fmt_dec, fmt_decimal, fmt_decimal_div100, parse_date, print_table,
+        fmt_date, fmt_datetime, fmt_dec, fmt_decimal, fmt_decimal_div100, fmt_decimal_div252,
+        parse_date, print_table,
     },
     OutputFormat,
 };
@@ -112,7 +113,7 @@ fn calc_index_column(key: &str) -> Option<(&'static str, CalcIndexExtractor)> {
         "implied_volatility" => Some(("Impl. Vol.", |r| fmt_decimal(&r.implied_volatility))),
         "delta" => Some(("Delta", |r| fmt_decimal(&r.delta))),
         "gamma" => Some(("Gamma", |r| fmt_decimal(&r.gamma))),
-        "theta" => Some(("Theta", |r| fmt_decimal_div100(&r.theta))),
+        "theta" => Some(("Theta", |r| fmt_decimal_div252(&r.theta))),
         "vega" => Some(("Vega", |r| fmt_decimal_div100(&r.vega))),
         "rho" => Some(("Rho", |r| fmt_decimal_div100(&r.rho))),
         "open_interest" => Some(("Open Interest", |r| {
