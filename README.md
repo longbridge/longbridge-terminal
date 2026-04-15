@@ -262,7 +262,7 @@ longbridge aip update <plan-id> --cycle monthly --cycle-day 1                   
 longbridge aip pause <plan-id>                                                             # Pause an active plan
 longbridge aip resume <plan-id>                                                            # Resume a paused plan
 longbridge aip terminate <plan-id> --yes                                                   # Terminate a plan (irreversible)
-longbridge aip next-time --counter-id FD/HK/LB00001 --cycle monthly --cycle-day 15        # Preview next investment date
+longbridge aip next-time QQQ.US --cycle monthly --cycle-day 15                             # Preview next investment date
 ```
 
 <!-- COMMANDS_END -->

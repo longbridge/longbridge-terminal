@@ -1037,13 +1037,12 @@ pub enum AipCmd {
 
     /// Preview next investment date for a given cycle configuration
     ///
-    /// Example: longbridge aip next-time --counter-id FD/HK/LB00001 --cycle monthly --cycle-day 15
+    /// Example: longbridge aip next-time QQQ.US --cycle monthly --cycle-day 15
     /// Example: longbridge aip next-time --plan-id abc123 --cycle weekly --cycle-day 1
     NextTime {
-        /// Fund counter ID (required when --plan-id is omitted)
-        #[arg(long)]
-        counter_id: Option<String>,
-        /// Existing plan ID (alternative to --counter-id)
+        /// Symbol in <CODE>.<MARKET> format (e.g. QQQ.US, 700.HK); required when --plan-id is omitted
+        symbol: Option<String>,
+        /// Existing plan ID (alternative to symbol)
         #[arg(long)]
         plan_id: Option<String>,
         /// Cycle frequency: daily | weekly | biweekly | monthly

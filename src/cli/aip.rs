@@ -165,13 +165,13 @@ pub async fn cmd_aip(cmd: AipCmd, format: &OutputFormat, verbose: bool) -> Resul
             cmd_operate(&plan_id, 3, "Terminate", yes, verbose).await
         }
         AipCmd::NextTime {
-            counter_id,
+            symbol,
             plan_id,
             cycle,
             cycle_day,
         } => {
             cmd_next_time(
-                counter_id.as_deref(),
+                symbol.as_deref(),
                 plan_id.as_deref(),
                 &cycle,
                 cycle_day,
@@ -197,7 +197,7 @@ async fn cmd_list(status: Option<&str>, format: &OutputFormat, verbose: bool) ->
     .await?;
     check_api_error(&resp)?;
 
-    let data = &resp["data"];
+    let data = &resp;
 
     if matches!(format, OutputFormat::Json) {
         println!("{}", serde_json::to_string_pretty(data)?);
@@ -287,8 +287,8 @@ async fn cmd_detail(plan_id: &str, limit: u32, format: &OutputFormat, verbose: b
     check_api_error(&detail_resp)?;
     check_api_error(&records_resp)?;
 
-    let plan = &detail_resp["data"]["plan"];
-    let records_data = &records_resp["data"];
+    let plan = &detail_resp["plan"];
+    let records_data = &records_resp;
 
     if matches!(format, OutputFormat::Json) {
         let tasks = records_data["tasks"].clone();
@@ -431,7 +431,11 @@ async fn cmd_create(
     let invest_now_display = if invest_now { "Yes" } else { "No" };
 
     println!("Create AIP Plan:");
-    println!("  Fund:       {symbol} ({counter_id})");
+    if counter_id == symbol {
+        println!("  Fund:       {counter_id}");
+    } else {
+        println!("  Fund:       {symbol} ({counter_id})");
+    }
     println!("  Amount:     {amount}");
     println!("  Cycle:      {cycle_display}");
     println!("  Invest Now: {invest_now_display}");
@@ -492,7 +496,7 @@ async fn cmd_update(
     // Fetch current plan for display/validation
     let detail_resp = http_get("/v1/aip/detail", &[("id", plan_id)], verbose).await?;
     check_api_error(&detail_resp)?;
-    let plan = &detail_resp["data"]["plan"];
+    let plan = &detail_resp["plan"];
 
     let current_status = plan["status"].as_u64().unwrap_or(0);
     if current_status != 1 {
@@ -588,7 +592,7 @@ async fn cmd_operate(
     }
 
     let body = json!({ "id": plan_id, "type": op_type });
-    let resp = http_post("/aip/operate", body, verbose).await?;
+    let resp = http_post("/v1/aip/operate", body, verbose).await?;
     check_api_error(&resp)?;
 
     println!("{op_name} operation successful.");
@@ -598,35 +602,37 @@ async fn cmd_operate(
 // ── 9. Next investment time ───────────────────────────────────────────────────
 
 async fn cmd_next_time(
-    counter_id: Option<&str>,
+    symbol: Option<&str>,
     plan_id: Option<&str>,
     cycle: &str,
     cycle_day: Option<u32>,
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
+    if plan_id.is_none() && symbol.is_none() {
+        bail!("Either a symbol (e.g. QQQ.US) or --plan-id is required");
+    }
+
     let cycle_val = parse_cycle(cycle)?;
     let cycle_val_str = cycle_val.to_string();
     let cycle_day_val = cycle_day.unwrap_or(0);
     let cycle_day_str = cycle_day_val.to_string();
 
+    let counter_id_owned;
     let mut params: Vec<(&str, &str)> =
         vec![("cycle", &cycle_val_str), ("cycle_day", &cycle_day_str)];
     if let Some(pid) = plan_id {
         params.push(("plan_id", pid));
     }
-    if let Some(cid) = counter_id {
-        params.push(("counter_id", cid));
+    if let Some(sym) = symbol {
+        counter_id_owned = crate::utils::counter::symbol_to_counter_id(sym);
+        params.push(("counter_id", counter_id_owned.as_str()));
     }
 
-    if plan_id.is_none() && counter_id.is_none() {
-        bail!("Either --counter-id or --plan-id is required");
-    }
-
-    let resp = http_get("/aip/next_time", &params, verbose).await?;
+    let resp = http_get("/v1/aip/next_time", &params, verbose).await?;
     check_api_error(&resp)?;
 
-    let next_ts = resp["data"]["next_invest_time"].as_u64().unwrap_or(0);
+    let next_ts = resp["next_invest_time"].as_u64().unwrap_or(0);
     let next_date = fmt_timestamp(next_ts);
 
     match format {
