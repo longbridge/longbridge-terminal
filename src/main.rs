@@ -88,18 +88,6 @@ async fn main() {
     locale::init(cli.lang.as_deref());
     rust_i18n::set_locale(locale::get());
 
-    // Handle legacy --logout flag
-    if cli.logout {
-        match auth::clear_token() {
-            Ok(()) => println!("Successfully logged out."),
-            Err(e) => {
-                eprintln!("Failed to clear credentials: {e}");
-                std::process::exit(1);
-            }
-        }
-        return;
-    }
-
     // Kick off background geotest check to refresh the region cache for the next run.
     region::spawn_region_update();
 
