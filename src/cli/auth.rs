@@ -257,7 +257,12 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
                 if let Some(no) = &acc.account_no { acct_parts.push(no.as_str()); }
                 if let Some(at) = &acc.account_type { acct_parts.push(at.as_str()); }
                 if !acct_parts.is_empty() {
-                    println!("{:<W$} {}", "Account", acct_parts.join("  ·  "), W = W);
+                    let acct_str = if acct_parts.len() >= 2 {
+                        format!("{} [{}]", acct_parts[0], acct_parts[1..].join(", "))
+                    } else {
+                        acct_parts[0].to_string()
+                    };
+                    println!("{:<W$} {acct_str}", "Account", W = W);
                 }
                 println!("{:<W$} {}", "Member Id", acc.member_id, W = W);
 
