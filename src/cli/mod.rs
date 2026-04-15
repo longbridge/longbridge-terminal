@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 
+pub mod aip;
 pub mod api;
 pub mod asset;
 pub mod auth;
@@ -897,6 +898,29 @@ pub enum Commands {
         #[command(subcommand)]
         subcmd: Option<InvestorsSubCmd>,
     },
+
+    // ── AIP (Automatic Investment Plan) ───────────────────────────────────────
+    /// Automatic Investment Plan (AIP / 定投) management
+    ///
+    /// Without subcommand: lists all your AIP plans.
+    /// Subcommands: detail  records  create  edit  pause  resume  terminate  next-time
+    ///
+    /// Example: longbridge aip
+    /// Example: longbridge aip --status active
+    /// Example: longbridge aip detail <plan-id>
+    /// Example: longbridge aip records <plan-id>
+    /// Example: longbridge aip create FD/HK/LB00001 --amount 1000 --cycle monthly --cycle-day 15
+    /// Example: longbridge aip edit <plan-id> --amount 2000
+    /// Example: longbridge aip pause <plan-id>
+    /// Example: longbridge aip resume <plan-id>
+    /// Example: longbridge aip terminate <plan-id> --yes
+    Aip {
+        /// Filter by status: all (default) | active | paused | ended
+        #[arg(long, default_value = "all")]
+        status: Option<String>,
+        #[command(subcommand)]
+        cmd: Option<AipCmd>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -919,6 +943,124 @@ pub enum InvestorsSubCmd {
         /// Defaults to the filing immediately before the latest one.
         #[arg(long, value_name = "PERIOD")]
         from: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum AipCmd {
+    /// Show detail for a single AIP plan
+    ///
+    /// Example: longbridge aip detail abc123
+    Detail {
+        /// Plan unique ID
+        plan_id: String,
+    },
+
+    /// List execution records for a plan
+    ///
+    /// Example: longbridge aip records abc123
+    /// Example: longbridge aip records abc123 --limit 20
+    Records {
+        /// Plan unique ID
+        plan_id: String,
+        /// Maximum number of records to show (default: all)
+        #[arg(long)]
+        limit: Option<u32>,
+    },
+
+    /// Create a new AIP plan
+    ///
+    /// Example: longbridge aip create FD/HK/LB00001 --amount 1000 --cycle monthly --cycle-day 15
+    /// Example: longbridge aip create FD/HK/LB00001 --amount 500 --cycle weekly --invest-now --yes
+    /// Example: longbridge aip create FD/HK/LB00001 --amount 200 --cycle daily --yes
+    Create {
+        /// Fund counter ID (e.g. FD/HK/LB00001)
+        symbol: String,
+        /// Investment amount per cycle (e.g. 1000)
+        #[arg(long)]
+        amount: String,
+        /// Cycle frequency: daily | weekly | biweekly | monthly
+        #[arg(long)]
+        cycle: String,
+        /// Day within cycle: 1–5 (Mon–Fri) for weekly/biweekly; 1–31 or 32 (month-end) for monthly
+        #[arg(long)]
+        cycle_day: Option<u32>,
+        /// Execute first investment immediately
+        #[arg(long)]
+        invest_now: bool,
+        /// Skip confirmation prompt
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
+
+    /// Modify an existing AIP plan (active plans only)
+    ///
+    /// Example: longbridge aip edit abc123 --amount 2000
+    /// Example: longbridge aip edit abc123 --cycle monthly --cycle-day 1
+    Edit {
+        /// Plan unique ID
+        plan_id: String,
+        /// New investment amount
+        #[arg(long)]
+        amount: Option<String>,
+        /// New cycle frequency: daily | weekly | biweekly | monthly
+        #[arg(long)]
+        cycle: Option<String>,
+        /// New cycle day
+        #[arg(long)]
+        cycle_day: Option<u32>,
+    },
+
+    /// Pause an active AIP plan
+    ///
+    /// Example: longbridge aip pause abc123
+    Pause {
+        /// Plan unique ID
+        plan_id: String,
+        /// Skip confirmation prompt
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
+
+    /// Resume a paused AIP plan
+    ///
+    /// Example: longbridge aip resume abc123
+    Resume {
+        /// Plan unique ID
+        plan_id: String,
+        /// Skip confirmation prompt
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
+
+    /// Terminate an AIP plan (irreversible)
+    ///
+    /// Example: longbridge aip terminate abc123 --yes
+    Terminate {
+        /// Plan unique ID
+        plan_id: String,
+        /// Skip confirmation prompt
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
+
+    /// Preview next investment date for a given cycle configuration
+    ///
+    /// Example: longbridge aip next-time --counter-id FD/HK/LB00001 --cycle monthly --cycle-day 15
+    /// Example: longbridge aip next-time --plan-id abc123 --cycle weekly --cycle-day 1
+    NextTime {
+        /// Fund counter ID (required when --plan-id is omitted)
+        #[arg(long)]
+        counter_id: Option<String>,
+        /// Existing plan ID (alternative to --counter-id)
+        #[arg(long)]
+        plan_id: Option<String>,
+        /// Cycle frequency: daily | weekly | biweekly | monthly
+        #[arg(long)]
+        cycle: String,
+        /// Day within cycle
+        #[arg(long)]
+        cycle_day: Option<u32>,
     },
 }
 
@@ -2213,6 +2355,11 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 )
                 .await
             }
+        },
+
+        Commands::Aip { status, cmd } => match cmd {
+            Some(c) => aip::cmd_aip(c, format, verbose).await,
+            None => aip::cmd_list_plans(status.as_deref(), format, verbose).await,
         },
 
         Commands::Auth { .. }

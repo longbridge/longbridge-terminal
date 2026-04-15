@@ -72,6 +72,21 @@ fn print_cli_error(e: &anyhow::Error, using_api_key: bool) {
             _ => {}
         }
     }
+
+    // http_get / http_post return HttpClientError directly (not wrapped in LbError)
+    if let Some(HttpClientError::OpenApi {
+        code,
+        message,
+        trace_id,
+    }) = e.downcast_ref::<HttpClientError>()
+    {
+        eprintln!("Error: API error (code {code}): {message}");
+        if !trace_id.is_empty() {
+            eprintln!("  trace_id: {trace_id}");
+        }
+        return;
+    }
+
     eprintln!("Error: {e:#}");
 }
 
@@ -156,7 +171,9 @@ async fn main() {
         }
 
         Some(cli::Commands::Auth {
-            cmd: cli::AuthCmd::Login { auth_code: true, .. },
+            cmd: cli::AuthCmd::Login {
+                auth_code: true, ..
+            },
         }) => match openapi::init_contexts().await {
             Ok(_) => println!("Successfully authenticated."),
             Err(e) => {
@@ -166,7 +183,11 @@ async fn main() {
         },
 
         Some(cli::Commands::Auth {
-            cmd: cli::AuthCmd::Login { auth_code: false, verbose },
+            cmd:
+                cli::AuthCmd::Login {
+                    auth_code: false,
+                    verbose,
+                },
         }) => {
             if let Err(e) = auth::device_login(verbose).await {
                 eprintln!("Authentication failed: {e:#}");

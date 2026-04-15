@@ -250,6 +250,22 @@ longbridge investors changes 0001067983                       # Quarter-over-qua
 longbridge investors changes 0001067983 --from 2024-12-31     # Compare latest vs a specific period
 ```
 
+### AIP (Automatic Investment Plan / 定投)
+
+```bash
+longbridge aip [--status active|paused|ended]                                              # List all AIP plans (filter by status)
+longbridge aip detail <plan-id>                                                            # Full detail for a single plan
+longbridge aip records <plan-id> [--limit 20]                                              # Execution history for a plan
+longbridge aip create FD/HK/LB00001 --amount 1000 --cycle monthly --cycle-day 15          # Create a new AIP plan
+longbridge aip create FD/HK/LB00001 --amount 500 --cycle weekly --invest-now --yes        # Create and invest immediately (skip confirm)
+longbridge aip edit <plan-id> --amount 2000                                                # Change investment amount (active plans only)
+longbridge aip edit <plan-id> --cycle monthly --cycle-day 1                                # Change cycle settings
+longbridge aip pause <plan-id>                                                             # Pause an active plan
+longbridge aip resume <plan-id>                                                            # Resume a paused plan
+longbridge aip terminate <plan-id> --yes                                                   # Terminate a plan (irreversible)
+longbridge aip next-time --counter-id FD/HK/LB00001 --cycle monthly --cycle-day 15        # Preview next investment date
+```
+
 <!-- COMMANDS_END -->
 
 ### Symbol Format
