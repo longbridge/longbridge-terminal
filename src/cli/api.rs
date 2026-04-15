@@ -492,7 +492,6 @@ pub async fn http_delete(
     Ok(resp.0)
 }
 
-
 pub async fn http_put(
     path: &str,
     body: serde_json::Value,
