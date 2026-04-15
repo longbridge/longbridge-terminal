@@ -223,7 +223,7 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
             };
             println!("Token");
             println!(
-                "{W$:<W$} {color}{status_str}{RESET}  {}",
+                "{:<W$} {color}{status_str}{RESET}  {}",
                 "Status",
                 token.detail,
                 W = W,
@@ -232,7 +232,7 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
             if let Some(ts) = token.logged_in_at {
                 if let Ok(dt) = OffsetDateTime::from_unix_timestamp(ts as i64) {
                     println!(
-                        "{W$:<W$} {}-{:02}-{:02} {:02}:{:02}",
+                        "{:<W$} {}-{:02}-{:02} {:02}:{:02}",
                         "Logged In",
                         dt.year(), dt.month() as u8, dt.day(),
                         dt.hour(), dt.minute(),
@@ -240,23 +240,23 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
                     );
                 }
             }
-            println!("{W$:<W$} {DIM}{}{RESET}", "Path", token_path.display(), W = W);
+            println!("{:<W$} {DIM}{}{RESET}", "Path", token_path.display(), W = W);
 
             // ── Account ────────────────────────────────────────────────────────
             if let Some(acc) = &account {
                 println!();
 
                 if let Some(name) = &acc.name {
-                    println!("{W$:<W$} {name}", "Name", W = W);
+                    println!("{:<W$} {name}", "Name", W = W);
                 }
                 // account_no and account_type on one line
                 let mut acct_parts = Vec::new();
                 if let Some(no) = &acc.account_no { acct_parts.push(no.as_str()); }
                 if let Some(at) = &acc.account_type { acct_parts.push(at.as_str()); }
                 if !acct_parts.is_empty() {
-                    println!("{W$:<W$} {}", "Account", acct_parts.join("  ·  "), W = W);
+                    println!("{:<W$} {}", "Account", acct_parts.join("  ·  "), W = W);
                 }
-                println!("{W$:<W$} {}", "Member Id", acc.member_id, W = W);
+                println!("{:<W$} {}", "Member Id", acc.member_id, W = W);
 
                 // ── Quote Level ─────────────────────────────────────────────────
                 println!();
@@ -280,7 +280,7 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
                     }
                     println!("{}", builder.build().with(Style::markdown()));
                 } else {
-                    println!("{W$:<W$} {}", "Level", acc.quote_level, W = W);
+                    println!("{:<W$} {}", "Level", acc.quote_level, W = W);
                 }
             }
         }
