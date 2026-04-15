@@ -240,7 +240,10 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
                     );
                 }
             }
-            println!("{:<W$} {DIM}{}{RESET}", "Path", token_path.display(), W = W);
+            let display_path = dirs::home_dir()
+                .and_then(|h| token_path.strip_prefix(&h).ok().map(|p| format!("~/{}", p.display())))
+                .unwrap_or_else(|| token_path.display().to_string());
+            println!("{:<W$} {DIM}{display_path}{RESET}", "Session Path", W = W);
 
             // ── Account ────────────────────────────────────────────────────────
             if let Some(acc) = &account {
