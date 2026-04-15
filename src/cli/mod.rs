@@ -41,7 +41,7 @@ Symbol format: <CODE>.<MARKET>\n\
 Note: crypto symbols use the .HAS suffix (Longbridge-specific). If a .HAS symbol returns no\n\
 data, crypto market access may not be enabled for this account — the data exists but is\n\
 restricted by account type.\n\n\
-Authentication: run `longbridge login` once; the token is stored at \
+Authentication: run `longbridge auth login` once; the token is stored at \
 ~/.longbridge/openapi/tokens/<client_id> and reused automatically by all commands.\n\n\
 Use --format json on any command for machine-readable output suitable for AI agents:\n\
   longbridge quote TSLA.US --format json\n\
@@ -59,7 +59,7 @@ pub struct Cli {
     #[arg(long, global = true, default_value = "pretty")]
     pub format: OutputFormat,
 
-    /// Clear stored OAuth token and exit (same as `longbridge logout`)
+    /// Clear stored OAuth token and exit (same as `longbridge auth logout`)
     #[arg(long)]
     pub logout: bool,
 
@@ -75,31 +75,13 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Authenticate via Device Authorization Flow (default) or browser OAuth
-    ///
-    /// By default uses the Device Authorization Flow (RFC 8628): displays a URL,
-    /// the user opens it in any browser (no localhost redirect needed), and the
-    /// CLI polls until authorization is complete. Works on any machine including
-    /// SSH sessions and headless servers.
-    ///
-    /// Use `--auth-code` for the Authorization Code flow: opens a browser on this
-    /// machine and listens on `localhost:60355` for the OAuth callback.
+    /// Authenticate or clear credentials
     ///
     /// Token is stored at `~/.longbridge/openapi/tokens/<client_id>` and shared with the TUI.
-    Login {
-        /// Authorization Code flow: opens a browser and handles the localhost callback.
-        /// Requires the browser to be on the same machine (local use only).
-        #[arg(long)]
-        auth_code: bool,
-        /// Print request/response details for each OAuth step.
-        #[arg(short, long)]
-        verbose: bool,
+    Auth {
+        #[command(subcommand)]
+        cmd: AuthCmd,
     },
-
-    /// Clear the locally stored OAuth token
-    ///
-    /// Next command or TUI launch will trigger re-authentication.
-    Logout,
 
     /// Check token validity, and API connectivity
     ///
@@ -1687,6 +1669,33 @@ pub enum TradingCmd {
     },
 }
 
+#[derive(Subcommand)]
+pub enum AuthCmd {
+    /// Authenticate via Device Authorization Flow (default) or browser OAuth
+    ///
+    /// By default uses the Device Authorization Flow (RFC 8628): displays a URL,
+    /// the user opens it in any browser (no localhost redirect needed), and the
+    /// CLI polls until authorization is complete. Works on any machine including
+    /// SSH sessions and headless servers.
+    ///
+    /// Use `--auth-code` for the Authorization Code flow: opens a browser on this
+    /// machine and listens on `localhost:60355` for the OAuth callback.
+    Login {
+        /// Authorization Code flow: opens a browser and handles the localhost callback.
+        /// Requires the browser to be on the same machine (local use only).
+        #[arg(long)]
+        auth_code: bool,
+        /// Print request/response details for each OAuth step.
+        #[arg(short, long)]
+        verbose: bool,
+    },
+
+    /// Clear the locally stored OAuth token
+    ///
+    /// Next command or TUI launch will trigger re-authentication.
+    Logout,
+}
+
 pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Result<()> {
     match cmd {
         Commands::Quote { symbols } => quote::cmd_quote(symbols, format).await,
@@ -2201,8 +2210,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             }
         },
 
-        Commands::Login { .. }
-        | Commands::Logout
+        Commands::Auth { .. }
         | Commands::Tui
         | Commands::Check
         | Commands::Update { .. } => {
@@ -2237,15 +2245,25 @@ mod tests {
     // ─── Auth ─────────────────────────────────────────────────────────────────
 
     #[test]
-    fn test_login_subcommand() {
-        let cli = parse(&["longbridge", "login"]).unwrap();
-        assert!(matches!(cli.command, Some(Commands::Login { .. })));
+    fn test_auth_login_subcommand() {
+        let cli = parse(&["longbridge", "auth", "login"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Auth {
+                cmd: AuthCmd::Login { .. }
+            })
+        ));
     }
 
     #[test]
-    fn test_logout_subcommand() {
-        let cli = parse(&["longbridge", "logout"]).unwrap();
-        assert!(matches!(cli.command, Some(Commands::Logout)));
+    fn test_auth_logout_subcommand() {
+        let cli = parse(&["longbridge", "auth", "logout"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Auth {
+                cmd: AuthCmd::Logout
+            })
+        ));
     }
 
     #[test]

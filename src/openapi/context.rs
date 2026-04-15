@@ -83,7 +83,7 @@ pub async fn init_contexts() -> Result<(
                     tracing::warn!("Token refresh failed, clearing stale token: {msg}");
                     let _ = crate::auth::clear_token();
                     return Err(anyhow::anyhow!(
-                            "Stored token is invalid or expired. Please run 'longbridge login' to re-authenticate."
+                            "Stored token is invalid or expired. Please run 'longbridge auth login' to re-authenticate."
                         ));
                 }
                 return Err(anyhow::anyhow!("OAuth failed: {e}"));

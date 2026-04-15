@@ -167,8 +167,8 @@ async fn main() {
             return;
         }
 
-        Some(cli::Commands::Login {
-            auth_code: true, ..
+        Some(cli::Commands::Auth {
+            cmd: cli::AuthCmd::Login { auth_code: true, .. },
         }) => match openapi::init_contexts().await {
             Ok(_) => println!("Successfully authenticated."),
             Err(e) => {
@@ -177,9 +177,8 @@ async fn main() {
             }
         },
 
-        Some(cli::Commands::Login {
-            auth_code: false,
-            verbose,
+        Some(cli::Commands::Auth {
+            cmd: cli::AuthCmd::Login { auth_code: false, verbose },
         }) => {
             if let Err(e) = auth::device_login(verbose).await {
                 eprintln!("Authentication failed: {e:#}");
@@ -187,7 +186,9 @@ async fn main() {
             }
         }
 
-        Some(cli::Commands::Logout) => match auth::clear_token() {
+        Some(cli::Commands::Auth {
+            cmd: cli::AuthCmd::Logout,
+        }) => match auth::clear_token() {
             Ok(()) => println!("Successfully logged out."),
             Err(e) => {
                 eprintln!("Failed to clear credentials: {e}");
