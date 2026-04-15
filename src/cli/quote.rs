@@ -110,7 +110,10 @@ fn calc_index_column(key: &str) -> Option<(&'static str, CalcIndexExtractor)> {
         "five_minutes_change_rate" => Some(("5Min Chg Rate", |r| {
             fmt_decimal(&r.five_minutes_change_rate)
         })),
-        "implied_volatility" => Some(("Impl. Vol.", |r| fmt_decimal(&r.implied_volatility))),
+        "implied_volatility" => Some(("Impl. Vol.", |r| {
+            r.implied_volatility
+                .map_or_else(|| "-".to_string(), |d| format!("{d:.2}%"))
+        })),
         "delta" => Some(("Delta", |r| fmt_decimal(&r.delta))),
         "gamma" => Some(("Gamma", |r| fmt_decimal(&r.gamma))),
         "theta" => Some(("Theta", |r| fmt_decimal_div252(&r.theta))),
@@ -677,39 +680,6 @@ const OPTION_DEFAULT_FIELDS: &[&str] = &[
     "open_interest",
 ];
 
-/// Locally-computed Black-Scholes greeks for one option symbol.
-struct LocalGreeks {
-    delta: f64,
-    gamma: f64,
-    theta: f64,
-    vega: f64,
-    rho: f64,
-}
-
-fn fmt_greek(v: f64) -> String {
-    format!("{v:.3}")
-}
-
-/// Return locally-computed greek value when available, otherwise fall back to server value.
-fn resolve_greek(
-    key: &str,
-    symbol: &str,
-    extract: CalcIndexExtractor,
-    r: &longbridge::quote::SecurityCalcIndex,
-    local_greeks: &std::collections::HashMap<String, LocalGreeks>,
-) -> String {
-    if let Some(g) = local_greeks.get(symbol) {
-        match key {
-            "delta" => return fmt_greek(g.delta),
-            "gamma" => return fmt_greek(g.gamma),
-            "theta" => return fmt_greek(g.theta),
-            "vega" => return fmt_greek(g.vega),
-            "rho" => return fmt_greek(g.rho),
-            _ => {}
-        }
-    }
-    extract(r)
-}
 
 pub async fn cmd_calc_index(
     symbols: Vec<String>,
@@ -737,90 +707,16 @@ pub async fn cmd_calc_index(
                 && r.total_market_value.is_none()
         });
 
-    let (index, results, is_options) = if all_empty {
+    let (index, results) = if all_empty {
         let option_index: Vec<String> = OPTION_DEFAULT_FIELDS
             .iter()
             .map(|s| (*s).to_string())
             .collect();
         let option_indexes = parse_calc_indexes(&option_index);
         let results = ctx.calc_indexes(symbols.clone(), option_indexes).await?;
-        (option_index, results, true)
+        (option_index, results)
     } else {
-        (index, results, false)
-    };
-
-    // For option results, compute greeks locally using Black-Scholes.
-    // Fetch option quotes (for direction + underlying symbol), underlying prices,
-    // and the server interest rate from app_config in parallel.
-    // If any prerequisite fetch fails, fall back to server-provided calc-index values.
-    let local_greeks: std::collections::HashMap<String, LocalGreeks> = if is_options {
-        async {
-            let (opt_quotes_res, interest_rate_res) = tokio::join!(
-                ctx.option_quote(symbols.clone()),
-                super::api::fetch_interest_rate(),
-            );
-
-            let opt_quotes = opt_quotes_res?;
-
-            // If the interest rate is unavailable (API not yet deployed), skip local
-            // computation entirely and fall back to the server-provided calc-index values.
-            let interest_rate = interest_rate_res?;
-
-            // Collect unique underlying symbols to fetch in one round-trip.
-            let underlying_syms: Vec<String> = {
-                let mut seen = std::collections::HashSet::new();
-                opt_quotes
-                    .iter()
-                    .filter(|q| seen.insert(q.underlying_symbol.clone()))
-                    .map(|q| q.underlying_symbol.clone())
-                    .collect()
-            };
-            let underlying_quotes = ctx.quote(underlying_syms).await?;
-            let underlying_price: std::collections::HashMap<String, rust_decimal::Decimal> =
-                underlying_quotes
-                    .into_iter()
-                    .map(|q| (q.symbol, q.last_done))
-                    .collect();
-
-            let opt_info: std::collections::HashMap<String, &longbridge::quote::OptionQuote> =
-                opt_quotes.iter().map(|q| (q.symbol.clone(), q)).collect();
-
-            let map: std::collections::HashMap<String, LocalGreeks> = results
-                .iter()
-                .filter_map(|r| {
-                    let opt = opt_info.get(&r.symbol)?;
-                    let underlying_price = underlying_price.get(&opt.underlying_symbol)?;
-                    let iv_pct = r.implied_volatility?;
-                    let iv_frac = iv_pct / rust_decimal::Decimal::ONE_HUNDRED;
-                    let is_call =
-                        matches!(opt.direction, longbridge::quote::OptionDirection::Call);
-                    let greeks = crate::utils::option_greeks::OptionGreeks::new(
-                        opt.strike_price,
-                        *underlying_price,
-                        rust_decimal::Decimal::ZERO,
-                        opt.expiry_date,
-                        iv_frac,
-                        interest_rate,
-                        is_call,
-                    )?;
-                    Some((
-                        r.symbol.clone(),
-                        LocalGreeks {
-                            delta: greeks.delta(),
-                            gamma: greeks.gamma(),
-                            theta: greeks.theta(),
-                            vega: greeks.vega(),
-                            rho: greeks.rho(),
-                        },
-                    ))
-                })
-                .collect();
-            Ok::<_, anyhow::Error>(map)
-        }
-        .await
-        .unwrap_or_default()
-    } else {
-        std::collections::HashMap::new()
+        (index, results)
     };
 
     // Deduplicate columns (e.g. "pe" and "pe_ttm" map to the same field)
@@ -846,9 +742,7 @@ pub async fn cmd_calc_index(
                         serde_json::Value::String(r.symbol.clone()),
                     );
                     for (key, _, extract) in &columns {
-                        let val =
-                            resolve_greek(key, &r.symbol, *extract, r, &local_greeks);
-                        map.insert(key.to_string(), serde_json::Value::String(val));
+                        map.insert(key.to_string(), serde_json::Value::String(extract(r)));
                     }
                     serde_json::Value::Object(map)
                 })
@@ -862,13 +756,7 @@ pub async fn cmd_calc_index(
                 .iter()
                 .map(|r| {
                     let mut row = vec![r.symbol.clone()];
-                    row.extend(
-                        columns
-                            .iter()
-                            .map(|(key, _, extract)| {
-                                resolve_greek(key, &r.symbol, *extract, r, &local_greeks)
-                            }),
-                    );
+                    row.extend(columns.iter().map(|(_, _, extract)| extract(r)));
                     row
                 })
                 .collect();
