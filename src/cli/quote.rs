@@ -109,12 +109,12 @@ fn calc_index_column(key: &str) -> Option<(&'static str, CalcIndexExtractor)> {
         "five_minutes_change_rate" => Some(("5Min Chg Rate", |r| {
             fmt_decimal(&r.five_minutes_change_rate)
         })),
-        "implied_volatility" => Some(("Impl. Vol.", |r| fmt_decimal_div100(&r.implied_volatility))),
+        "implied_volatility" => Some(("Impl. Vol.", |r| fmt_decimal(&r.implied_volatility))),
         "delta" => Some(("Delta", |r| fmt_decimal(&r.delta))),
         "gamma" => Some(("Gamma", |r| fmt_decimal(&r.gamma))),
-        "theta" => Some(("Theta", |r| fmt_decimal(&r.theta))),
-        "vega" => Some(("Vega", |r| fmt_decimal(&r.vega))),
-        "rho" => Some(("Rho", |r| fmt_decimal(&r.rho))),
+        "theta" => Some(("Theta", |r| fmt_decimal_div100(&r.theta))),
+        "vega" => Some(("Vega", |r| fmt_decimal_div100(&r.vega))),
+        "rho" => Some(("Rho", |r| fmt_decimal_div100(&r.rho))),
         "open_interest" => Some(("Open Interest", |r| {
             r.open_interest
                 .map_or_else(|| "-".to_string(), |v| v.to_string())
@@ -668,9 +668,9 @@ const STOCK_DEFAULT_FIELDS: &[&str] = &[
 ];
 const OPTION_DEFAULT_FIELDS: &[&str] = &[
     "delta",
+    "vega",
     "gamma",
     "theta",
-    "vega",
     "rho",
     "implied_volatility",
     "open_interest",
