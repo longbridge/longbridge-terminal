@@ -15,6 +15,20 @@ const DIM: &str = "\x1b[2m";
 const RESET: &str = "\x1b[0m";
 
 /// Format a duration in seconds as a human-readable string (e.g. "2h 14m", "45m", "30s").
+/// Titleize a snake_case or lowercase string: "level2" → "Level2", "standard_cn" → "Standard Cn".
+fn titleize(s: &str) -> String {
+    s.split('_')
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn format_duration(secs: u64) -> String {
     if secs >= 3600 {
         let h = secs / 3600;
@@ -212,47 +226,69 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
         }
 
         OutputFormat::Pretty => {
-            // Token section
-            let (icon, label) = match token.status {
-                "not_found" => (format!("{RED}✗{RESET}"), format!("{RED}not found{RESET}")),
-                "expired" => (format!("{YELLOW}!{RESET}"), format!("{YELLOW}expired{RESET}")),
-                _ => (format!("{GREEN}✓{RESET}"), format!("{GREEN}{}{RESET}", token.status)),
+            const W: usize = 12; // key column width
+
+            // ── Token ──────────────────────────────────────────────────────────
+            let (status_str, status_color) = match token.status {
+                "not_found" => ("not found", RED),
+                "expired"   => ("expired",   YELLOW),
+                _           => ("valid",     GREEN),
             };
             println!("Token");
-            println!("{icon}  {label}  {}", token.detail);
+            println!(
+                "{W$:<W$} {color}{status_str}{RESET}  {}",
+                "status",
+                token.detail,
+                W = W,
+                color = status_color,
+            );
             if let Some(ts) = token.logged_in_at {
                 if let Ok(dt) = OffsetDateTime::from_unix_timestamp(ts as i64) {
                     println!(
-                        "{DIM}logged in {}-{:02}-{:02} {:02}:{:02}{RESET}",
+                        "{W$:<W$} {}-{:02}-{:02} {:02}:{:02}",
+                        "logged in",
                         dt.year(), dt.month() as u8, dt.day(),
                         dt.hour(), dt.minute(),
+                        W = W,
                     );
                 }
             }
-            println!("{DIM}{}{RESET}", token_path.display());
+            println!("{W$:<W$} {DIM}{}{RESET}", "path", token_path.display(), W = W);
 
-            // Account section
+            // ── Account ────────────────────────────────────────────────────────
             if let Some(acc) = &account {
                 println!();
-                println!("Account");
+
                 if let Some(name) = &acc.name {
-                    println!("{:<14} {name}", "name");
+                    println!("{W$:<W$} {name}", "name", W = W);
                 }
-                if let Some(account_no) = &acc.account_no {
-                    println!("{:<14} {account_no}", "account_no");
+                // account_no and account_type on one line
+                let mut acct_parts = Vec::new();
+                if let Some(no) = &acc.account_no { acct_parts.push(no.as_str()); }
+                if let Some(at) = &acc.account_type { acct_parts.push(at.as_str()); }
+                if !acct_parts.is_empty() {
+                    println!("{W$:<W$} {}", "account", acct_parts.join("  ·  "), W = W);
                 }
-                if let Some(account_type) = &acc.account_type {
-                    println!("{:<14} {account_type}", "account_type");
-                }
-                println!("{:<14} {}", "member_id", acc.member_id);
-                println!("{:<14} {}", "quote_level", acc.quote_level);
-                for pkg in &acc.quote_packages {
-                    let end = pkg.end_at.date();
-                    println!(
-                        "{:<14} {DIM}{} (until {end}){RESET}",
-                        "",
-                        pkg.name,
-                    );
+                println!("{W$:<W$} {}", "member_id", acc.member_id, W = W);
+
+                // ── Quote packages ──────────────────────────────────────────────
+                println!();
+                if !acc.quote_packages.is_empty() {
+                    for pkg in &acc.quote_packages {
+                        let start = pkg.start_at.date();
+                        let end   = pkg.end_at.date();
+                        println!("{}", pkg.name);
+                        println!(
+                            "{W$:<W$} {DIM}{start}  →  {end}{RESET}",
+                            "",
+                            W = W,
+                        );
+                        if !pkg.description.is_empty() {
+                            println!("{W$:<W$} {DIM}{}{RESET}", "", pkg.description, W = W);
+                        }
+                    }
+                } else {
+                    println!("{W$:<W$} {}", "quote_level", titleize(&acc.quote_level), W = W);
                 }
             }
         }
