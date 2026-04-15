@@ -492,6 +492,63 @@ pub async fn http_delete(
     Ok(resp.0)
 }
 
+// ── app_config / interest rate ───────────────────────────────────────────────
+
+static APP_CONFIG_CACHE: crate::utils::api_cache::ApiCache =
+    crate::utils::api_cache::ApiCache::new("app-config", 7 * 24 * 3600);
+
+/// Fetch the raw interest rate from `/v2/quote/app_config` (no caching).
+async fn fetch_interest_rate_remote() -> Result<rust_decimal::Decimal> {
+    use base64::prelude::{Engine as _, BASE64_STANDARD};
+
+    let resp = http_get("/v2/quote/app_config", &[], false).await?;
+
+    let file_data = resp["file_data"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing file_data in app_config response"))?;
+
+    let bytes = BASE64_STANDARD
+        .decode(file_data)
+        .map_err(|e| anyhow::anyhow!("failed to decode app_config file_data: {e}"))?;
+
+    let config: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|e| anyhow::anyhow!("failed to parse app_config JSON: {e}"))?;
+
+    let rate_str = config["extra_config"]["interest_rate"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing extra_config.interest_rate in app_config"))?;
+
+    rate_str
+        .parse::<rust_decimal::Decimal>()
+        .map_err(|e| anyhow::anyhow!("failed to parse interest_rate '{rate_str}': {e}"))
+}
+
+/// Return the server-provided interest rate, using a 7-day on-disk cache.
+///
+/// - Cache hit, age < 7 days: return immediately, no network request.
+/// - Cache hit, age >= 7 days: return stale value immediately, refresh in background.
+/// - Cache miss: fetch synchronously and populate the cache.
+pub async fn fetch_interest_rate() -> Result<rust_decimal::Decimal> {
+    if let Some((rate, is_fresh)) = APP_CONFIG_CACHE.load::<rust_decimal::Decimal>() {
+        if is_fresh {
+            return Ok(rate);
+        }
+        // Stale: return cached value and kick off a background refresh.
+        tokio::spawn(async {
+            match fetch_interest_rate_remote().await {
+                Ok(r) => APP_CONFIG_CACHE.save(&r),
+                Err(e) => tracing::warn!("background app_config refresh failed: {e}"),
+            }
+        });
+        return Ok(rate);
+    }
+
+    // No cache: fetch synchronously.
+    let rate = fetch_interest_rate_remote().await?;
+    APP_CONFIG_CACHE.save(&rate);
+    Ok(rate)
+}
+
 pub async fn http_put(
     path: &str,
     body: serde_json::Value,
