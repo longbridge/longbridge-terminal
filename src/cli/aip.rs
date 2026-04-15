@@ -129,8 +129,7 @@ pub async fn cmd_list_plans(
 
 pub async fn cmd_aip(cmd: AipCmd, format: &OutputFormat, verbose: bool) -> Result<()> {
     match cmd {
-        AipCmd::Detail { plan_id } => cmd_detail(&plan_id, format, verbose).await,
-        AipCmd::Records { plan_id, limit } => cmd_records(&plan_id, limit, format, verbose).await,
+        AipCmd::Detail { plan_id, limit } => cmd_detail(&plan_id, limit, format, verbose).await,
         AipCmd::Create {
             symbol,
             amount,
@@ -144,13 +143,13 @@ pub async fn cmd_aip(cmd: AipCmd, format: &OutputFormat, verbose: bool) -> Resul
             )
             .await
         }
-        AipCmd::Edit {
+        AipCmd::Update {
             plan_id,
             amount,
             cycle,
             cycle_day,
         } => {
-            cmd_edit(
+            cmd_update(
                 &plan_id,
                 amount.as_deref(),
                 cycle.as_deref(),
@@ -271,19 +270,39 @@ async fn cmd_list(status: Option<&str>, format: &OutputFormat, verbose: bool) ->
     Ok(())
 }
 
-// ── 2. Plan detail ────────────────────────────────────────────────────────────
+// ── 2. Plan detail (includes execution records) ───────────────────────────────
 
-async fn cmd_detail(plan_id: &str, format: &OutputFormat, verbose: bool) -> Result<()> {
-    let resp = http_get("/v1/aip/detail", &[("id", plan_id)], verbose).await?;
-    check_api_error(&resp)?;
+async fn cmd_detail(plan_id: &str, limit: u32, format: &OutputFormat, verbose: bool) -> Result<()> {
+    let page_size_str = limit.to_string();
+    let detail_params = [("id", plan_id)];
+    let records_params = [("plan_id", plan_id), ("page_size", page_size_str.as_str())];
 
-    let plan = &resp["data"]["plan"];
+    // Fetch plan detail and execution records concurrently
+    let (detail_resp, records_resp) = tokio::join!(
+        http_get("/v1/aip/detail", &detail_params, verbose),
+        http_get("/v1/aip/records", &records_params, verbose),
+    );
+    let detail_resp = detail_resp?;
+    let records_resp = records_resp?;
+    check_api_error(&detail_resp)?;
+    check_api_error(&records_resp)?;
+
+    let plan = &detail_resp["data"]["plan"];
+    let records_data = &records_resp["data"];
 
     if matches!(format, OutputFormat::Json) {
-        println!("{}", serde_json::to_string_pretty(plan)?);
+        let tasks = records_data["tasks"].clone();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "plan": plan,
+                "records": tasks,
+            }))?
+        );
         return Ok(());
     }
 
+    // Plan info
     let cycle = plan["cycle"].as_u64().unwrap_or(0);
     let cycle_day = plan["cycle_day"].as_u64().unwrap_or(0);
     let status = plan["status"].as_u64().unwrap_or(0);
@@ -341,51 +360,26 @@ async fn cmd_detail(plan_id: &str, format: &OutputFormat, verbose: bool) -> Resu
         ],
     ];
     print_table(headers, rows, format);
-    Ok(())
-}
 
-// ── 3. Execution records ──────────────────────────────────────────────────────
+    // Execution records
+    println!();
+    let task_count = records_data["task_count"].as_u64().unwrap_or(0);
+    let tasks = records_data["tasks"]
+        .as_array()
+        .map_or(&[][..], Vec::as_slice);
+    println!("Execution Records (total: {task_count})");
+    println!();
 
-async fn cmd_records(
-    plan_id: &str,
-    limit: Option<u32>,
-    format: &OutputFormat,
-    verbose: bool,
-) -> Result<()> {
-    let page_size_str = limit.unwrap_or(20).to_string();
-    let params: Vec<(&str, &str)> = vec![("plan_id", plan_id), ("page_size", &page_size_str)];
-
-    let resp = http_get("/v1/aip/records", &params, verbose).await?;
-    check_api_error(&resp)?;
-
-    let data = &resp["data"];
-
-    if matches!(format, OutputFormat::Json) {
-        println!("{}", serde_json::to_string_pretty(data)?);
-        return Ok(());
-    }
-
-    let task_count = data["task_count"].as_u64().unwrap_or(0);
-    let tasks = data["tasks"].as_array().map_or(&[][..], Vec::as_slice);
-
-    // Print plan header from first task if available
-    if let Some(first) = tasks.first() {
-        let name = first["name"].as_str().unwrap_or("-");
-        println!("Plan: {plan_id} — {name} | Total executions: {task_count}");
-        println!();
-    }
-
-    let headers = &["Date", "Amount", "Status", "Order ID"];
-    let rows: Vec<Vec<String>> = tasks
+    let rec_headers = &["Date", "Amount", "Status", "Order ID"];
+    let rec_rows: Vec<Vec<String>> = tasks
         .iter()
         .map(|t| {
-            let ts = t["invest_time"].as_u64().unwrap_or(0);
-            let invest_date = fmt_timestamp(ts);
-            let currency = t["currency"].as_str().unwrap_or("");
-            let invest_amount = t["invest_amount"].as_str().unwrap_or("-");
-            let amount = format!("{currency} {invest_amount}").trim().to_string();
-            let status = t["status"].as_u64().unwrap_or(0);
-            let status_str = task_status_name(status).to_string();
+            let invest_date = fmt_timestamp(t["invest_time"].as_u64().unwrap_or(0));
+            let cur = t["currency"].as_str().unwrap_or("");
+            let amount = format!("{cur} {}", t["invest_amount"].as_str().unwrap_or("-"))
+                .trim()
+                .to_string();
+            let status_str = task_status_name(t["status"].as_u64().unwrap_or(0)).to_string();
             let order_id = t["order_id"].as_str().unwrap_or("").to_string();
             let order_id_str = if order_id.is_empty() {
                 "—".to_string()
@@ -395,8 +389,7 @@ async fn cmd_records(
             vec![invest_date, amount, status_str, order_id_str]
         })
         .collect();
-
-    print_table(headers, rows, format);
+    print_table(rec_headers, rec_rows, format);
     Ok(())
 }
 
@@ -483,9 +476,9 @@ async fn cmd_create(
     Ok(())
 }
 
-// ── 5. Edit plan ──────────────────────────────────────────────────────────────
+// ── 5. Update plan ────────────────────────────────────────────────────────────
 
-async fn cmd_edit(
+async fn cmd_update(
     plan_id: &str,
     amount: Option<&str>,
     cycle: Option<&str>,
@@ -521,7 +514,7 @@ async fn cmd_edit(
     let effective_amount = amount.unwrap_or(current_amount);
 
     // Show diff
-    println!("Edit AIP Plan: {plan_id}");
+    println!("Update AIP Plan: {plan_id}");
     if let Some(a) = amount {
         println!("  Amount:    {currency} {current_amount}  →  {currency} {a}");
     }

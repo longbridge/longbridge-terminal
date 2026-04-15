@@ -903,14 +903,13 @@ pub enum Commands {
     /// Automatic Investment Plan (AIP / 定投) management
     ///
     /// Without subcommand: lists all your AIP plans.
-    /// Subcommands: detail  records  create  edit  pause  resume  terminate  next-time
+    /// Subcommands: detail  create  update  pause  resume  terminate  next-time
     ///
     /// Example: longbridge aip
     /// Example: longbridge aip --status active
     /// Example: longbridge aip detail <plan-id>
-    /// Example: longbridge aip records <plan-id>
     /// Example: longbridge aip create FD/HK/LB00001 --amount 1000 --cycle monthly --cycle-day 15
-    /// Example: longbridge aip edit <plan-id> --amount 2000
+    /// Example: longbridge aip update <plan-id> --amount 2000
     /// Example: longbridge aip pause <plan-id>
     /// Example: longbridge aip resume <plan-id>
     /// Example: longbridge aip terminate <plan-id> --yes
@@ -948,24 +947,16 @@ pub enum InvestorsSubCmd {
 
 #[derive(Subcommand)]
 pub enum AipCmd {
-    /// Show detail for a single AIP plan
+    /// Show detail for a single AIP plan, including execution history
     ///
     /// Example: longbridge aip detail abc123
+    /// Example: longbridge aip detail abc123 --limit 50
     Detail {
         /// Plan unique ID
         plan_id: String,
-    },
-
-    /// List execution records for a plan
-    ///
-    /// Example: longbridge aip records abc123
-    /// Example: longbridge aip records abc123 --limit 20
-    Records {
-        /// Plan unique ID
-        plan_id: String,
-        /// Maximum number of records to show (default: all)
-        #[arg(long)]
-        limit: Option<u32>,
+        /// Maximum number of execution records to show (default: 20)
+        #[arg(long, default_value = "20")]
+        limit: u32,
     },
 
     /// Create a new AIP plan
@@ -995,9 +986,9 @@ pub enum AipCmd {
 
     /// Modify an existing AIP plan (active plans only)
     ///
-    /// Example: longbridge aip edit abc123 --amount 2000
-    /// Example: longbridge aip edit abc123 --cycle monthly --cycle-day 1
-    Edit {
+    /// Example: longbridge aip update abc123 --amount 2000
+    /// Example: longbridge aip update abc123 --cycle monthly --cycle-day 1
+    Update {
         /// Plan unique ID
         plan_id: String,
         /// New investment amount
