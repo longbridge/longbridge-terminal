@@ -1,5 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use time::OffsetDateTime;
+
 use anyhow::Result;
 use longbridge::asset::{GetStatementListOptions, GetStatementOptions, StatementType};
 use serde_json::json;
@@ -38,6 +40,8 @@ fn format_duration(secs: u64) -> String {
 struct TokenState {
     status: &'static str,
     detail: String,
+    /// Unix timestamp of when the token file was last written (login time).
+    logged_in_at: Option<u64>,
 }
 
 fn read_token_state() -> Result<TokenState> {
@@ -51,8 +55,15 @@ fn read_token_state() -> Result<TokenState> {
         return Ok(TokenState {
             status: "not_found",
             detail: format!("run {DIM}longbridge auth login{RESET} to authenticate"),
+            logged_in_at: None,
         });
     }
+
+    let logged_in_at = std::fs::metadata(&token_path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs());
 
     let contents = std::fs::read_to_string(&token_path)?;
     let data: serde_json::Value = serde_json::from_str(&contents)?;
@@ -62,6 +73,7 @@ fn read_token_state() -> Result<TokenState> {
         return Ok(TokenState {
             status: "present",
             detail: String::new(),
+            logged_in_at,
         });
     }
 
@@ -69,6 +81,7 @@ fn read_token_state() -> Result<TokenState> {
         Ok(TokenState {
             status: "valid",
             detail: format!("expires in {}", format_duration(expires_at - now)),
+            logged_in_at,
         })
     } else {
         Ok(TokenState {
@@ -77,6 +90,7 @@ fn read_token_state() -> Result<TokenState> {
                 "{} ago — run {DIM}longbridge auth login{RESET} to re-authenticate",
                 format_duration(now - expires_at)
             ),
+            logged_in_at,
         })
     }
 }
@@ -84,6 +98,7 @@ fn read_token_state() -> Result<TokenState> {
 struct AccountInfo {
     member_id: i64,
     quote_level: String,
+    quote_packages: Vec<longbridge::quote::QuotePackageDetail>,
     account_no: Option<String>,
     account_type: Option<String>,
     name: Option<String>,
@@ -137,9 +152,10 @@ async fn fetch_account_info_from_statement() -> Option<(String, String, String)>
 }
 
 async fn fetch_account_info() -> Result<AccountInfo> {
-    let (member_id, quote_level, statement_info) = tokio::join!(
+    let (member_id, quote_level, quote_packages, statement_info) = tokio::join!(
         crate::openapi::quote().member_id(),
         crate::openapi::quote().quote_level(),
+        crate::openapi::quote().quote_package_details(),
         fetch_account_info_from_statement(),
     );
 
@@ -151,6 +167,7 @@ async fn fetch_account_info() -> Result<AccountInfo> {
     Ok(AccountInfo {
         member_id: member_id?,
         quote_level: quote_level?,
+        quote_packages: quote_packages.unwrap_or_default(),
         account_no,
         account_type,
         name,
@@ -176,6 +193,7 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
             let mut value = json!({
                 "token": {
                     "status": token.status,
+                    "logged_in_at": token.logged_in_at,
                     "path": token_path.display().to_string(),
                 },
             });
@@ -201,24 +219,41 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
                 _ => (format!("{GREEN}✓{RESET}"), format!("{GREEN}{}{RESET}", token.status)),
             };
             println!("Token");
-            println!("  {icon}  {label}  {}", token.detail);
-            println!("  {DIM}{}{RESET}", token_path.display());
+            println!("{icon}  {label}  {}", token.detail);
+            if let Some(ts) = token.logged_in_at {
+                if let Ok(dt) = OffsetDateTime::from_unix_timestamp(ts as i64) {
+                    println!(
+                        "{DIM}logged in {}-{:02}-{:02} {:02}:{:02}{RESET}",
+                        dt.year(), dt.month() as u8, dt.day(),
+                        dt.hour(), dt.minute(),
+                    );
+                }
+            }
+            println!("{DIM}{}{RESET}", token_path.display());
 
             // Account section
             if let Some(acc) = &account {
                 println!();
                 println!("Account");
                 if let Some(name) = &acc.name {
-                    println!("  {:<14} {name}", "name");
+                    println!("{:<14} {name}", "name");
                 }
                 if let Some(account_no) = &acc.account_no {
-                    println!("  {:<14} {account_no}", "account_no");
+                    println!("{:<14} {account_no}", "account_no");
                 }
                 if let Some(account_type) = &acc.account_type {
-                    println!("  {:<14} {account_type}", "account_type");
+                    println!("{:<14} {account_type}", "account_type");
                 }
-                println!("  {:<14} {}", "member_id", acc.member_id);
-                println!("  {:<14} {}", "quote_level", acc.quote_level);
+                println!("{:<14} {}", "member_id", acc.member_id);
+                println!("{:<14} {}", "quote_level", acc.quote_level);
+                for pkg in &acc.quote_packages {
+                    let end = pkg.end_at.date();
+                    println!(
+                        "{:<14} {DIM}{} (until {end}){RESET}",
+                        "",
+                        pkg.name,
+                    );
+                }
             }
         }
     }
