@@ -1322,6 +1322,60 @@ pub async fn cmd_alert_delete(id: String, format: &OutputFormat, verbose: bool) 
     Ok(())
 }
 
+pub async fn cmd_alert_set_enabled(
+    id: String,
+    enabled: bool,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    // Fetch the existing alert to get all required fields
+    let list_data = super::api::http_get("/v1/notify/reminders", &[], verbose).await?;
+    let stocks = list_data["lists"].as_array().unwrap_or(&Vec::new()).clone();
+
+    let id_num: i64 = id.parse().unwrap_or(0);
+    let mut found = false;
+
+    for stock in &stocks {
+        let counter_id = stock["counter_id"].as_str().unwrap_or("");
+        if let Some(indicators) = stock["indicators"].as_array() {
+            for ind in indicators {
+                let ind_id = ind["id"].as_str().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+                if ind_id == id_num {
+                    let body = serde_json::json!({
+                        "id": ind_id,
+                        "counter_id": counter_id,
+                        "indicator_id": ind["indicator_id"].as_str().unwrap_or("1"),
+                        "value_map": ind["value_map"],
+                        "frequency": ind["frequency"],
+                        "enabled": enabled,
+                        "scope": ind["scope"],
+                        "state": ind["state"],
+                    });
+                    super::api::http_post("/v1/notify/reminders", body, verbose).await?;
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if found {
+            break;
+        }
+    }
+
+    if !found {
+        bail!("Alert id {id} not found");
+    }
+
+    let action = if enabled { "enabled" } else { "disabled" };
+    match format {
+        OutputFormat::Json => {
+            println!("{}", serde_json::json!({"id": id, "status": action}));
+        }
+        OutputFormat::Pretty => println!("Alert {id} {action}"),
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

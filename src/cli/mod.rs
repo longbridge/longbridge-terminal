@@ -1074,6 +1074,20 @@ pub enum AlertCmd {
         /// Alert id from the `id` column in `longbridge alert`
         id: String,
     },
+    /// Enable a price alert by id
+    ///
+    /// Example: longbridge alert enable 486469
+    Enable {
+        /// Alert id from the `id` column in `longbridge alert`
+        id: String,
+    },
+    /// Disable a price alert by id
+    ///
+    /// Example: longbridge alert disable 486469
+    Disable {
+        /// Alert id from the `id` column in `longbridge alert`
+        id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2132,6 +2146,12 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             }
             Some(AlertCmd::Delete { id }) => {
                 trade::cmd_alert_delete(id, format, verbose).await
+            }
+            Some(AlertCmd::Enable { id }) => {
+                trade::cmd_alert_set_enabled(id, true, format, verbose).await
+            }
+            Some(AlertCmd::Disable { id }) => {
+                trade::cmd_alert_set_enabled(id, false, format, verbose).await
             }
             None => trade::cmd_alert_list(symbol, format, verbose).await,
         },
