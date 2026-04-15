@@ -734,42 +734,9 @@ const OPTION_DEFAULT_FIELDS: &[&str] = &[
 ///
 /// Returns the rate as a decimal fraction (e.g. 0.043 for 4.3%).
 /// Falls back to 0.0 on any error so greeks computation is still attempted.
-async fn fetch_interest_rate() -> f64 {
-    use base64::prelude::{Engine, BASE64_STANDARD};
-    use longbridge::httpclient::Json;
-    use reqwest::Method;
-
-    let client = crate::openapi::http_client();
-    let Ok(resp) = client
-        .request(Method::GET, "/v2/quote/app_config")
-        .response::<Json<serde_json::Value>>()
-        .send()
-        .await
-    else {
-        return 0.0;
-    };
-
-    let file_data = resp
-        .0
-        .get("data")
-        .and_then(|d| d.get("file_data"))
-        .and_then(|v| v.as_str())
-        .unwrap_or_default();
-
-    let Ok(bytes) = BASE64_STANDARD.decode(file_data) else {
-        return 0.0;
-    };
-
-    serde_json::from_slice::<serde_json::Value>(&bytes)
-        .ok()
-        .and_then(|cfg| {
-            cfg.get("extra_config")
-                .and_then(|e| e.get("interest_rate"))
-                .and_then(|v| v.as_str())
-                .and_then(|s| s.parse::<f64>().ok())
-        })
-        .unwrap_or(0.0)
-}
+/// Approximate US risk-free interest rate used for Black-Scholes greeks computation.
+/// This matches the rate used by the mobile client engine.
+const US_RISK_FREE_RATE: f64 = 0.043;
 
 /// Enrich `SecurityCalcIndex` results with locally-computed Black-Scholes greeks.
 ///
@@ -896,9 +863,7 @@ pub async fn cmd_calc_index(
         (index, results)
     };
 
-    // Fetch interest rate and compute greeks locally for option symbols
-    let interest_rate = fetch_interest_rate().await;
-    let enriched = enrich_calc_indexes(&results, interest_rate).await;
+    let enriched = enrich_calc_indexes(&results, US_RISK_FREE_RATE).await;
 
     // Deduplicate columns (e.g. "pe" and "pe_ttm" map to the same field)
     let columns: Vec<(&str, &str, CalcIndexExtractor)> = {
