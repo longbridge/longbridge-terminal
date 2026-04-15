@@ -42,7 +42,7 @@ fn oauth_base_url() -> String {
 /// Token file path: `~/.longbridge/openapi/tokens/<client_id>`
 ///
 /// Must stay in sync with `longbridge-oauth` crate internals (`token_path_for_client_id`).
-fn token_file_path() -> Result<PathBuf> {
+pub fn token_file_path() -> Result<PathBuf> {
     Ok(dirs::home_dir()
         .ok_or_else(|| anyhow::anyhow!("Failed to get home directory"))?
         .join(".longbridge")

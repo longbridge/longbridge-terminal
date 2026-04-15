@@ -88,18 +88,6 @@ async fn main() {
     locale::init(cli.lang.as_deref());
     rust_i18n::set_locale(locale::get());
 
-    // Handle legacy --logout flag
-    if cli.logout {
-        match auth::clear_token() {
-            Ok(()) => println!("Successfully logged out."),
-            Err(e) => {
-                eprintln!("Failed to clear credentials: {e}");
-                std::process::exit(1);
-            }
-        }
-        return;
-    }
-
     // Kick off background geotest check to refresh the region cache for the next run.
     region::spawn_region_update();
 
@@ -167,8 +155,8 @@ async fn main() {
             return;
         }
 
-        Some(cli::Commands::Login {
-            auth_code: true, ..
+        Some(cli::Commands::Auth {
+            cmd: cli::AuthCmd::Login { auth_code: true, .. },
         }) => match openapi::init_contexts().await {
             Ok(_) => println!("Successfully authenticated."),
             Err(e) => {
@@ -177,9 +165,8 @@ async fn main() {
             }
         },
 
-        Some(cli::Commands::Login {
-            auth_code: false,
-            verbose,
+        Some(cli::Commands::Auth {
+            cmd: cli::AuthCmd::Login { auth_code: false, verbose },
         }) => {
             if let Err(e) = auth::device_login(verbose).await {
                 eprintln!("Authentication failed: {e:#}");
@@ -187,13 +174,24 @@ async fn main() {
             }
         }
 
-        Some(cli::Commands::Logout) => match auth::clear_token() {
+        Some(cli::Commands::Auth {
+            cmd: cli::AuthCmd::Logout,
+        }) => match auth::clear_token() {
             Ok(()) => println!("Successfully logged out."),
             Err(e) => {
                 eprintln!("Failed to clear credentials: {e}");
                 std::process::exit(1);
             }
         },
+
+        Some(cli::Commands::Auth {
+            cmd: cli::AuthCmd::Status,
+        }) => {
+            if let Err(e) = cli::auth::cmd_auth_status(&cli.format).await {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        }
 
         Some(cmd) => {
             let start = verbose.then(Instant::now);
