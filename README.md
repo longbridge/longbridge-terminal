@@ -255,8 +255,8 @@ longbridge investors changes 0001067983 --from 2024-12-31     # Compare latest v
 ```bash
 longbridge aip [--status active|paused|ended]                                              # List all AIP plans (filter by status)
 longbridge aip detail <plan-id> [--limit 20]                                               # Full detail for a single plan + execution history
-longbridge aip create FD/HK/LB00001 --amount 1000 --cycle monthly --cycle-day 15          # Create a new AIP plan
-longbridge aip create FD/HK/LB00001 --amount 500 --cycle weekly --invest-now --yes        # Create and invest immediately (skip confirm)
+longbridge aip create QQQ.US --amount 1000 --cycle monthly --cycle-day 15                  # Create a new AIP plan
+longbridge aip create QQQ.US --amount 500 --cycle weekly --invest-now --yes               # Create and invest immediately (skip confirm)
 longbridge aip update <plan-id> --amount 2000                                              # Change investment amount (active plans only)
 longbridge aip update <plan-id> --cycle monthly --cycle-day 1                              # Change cycle settings
 longbridge aip pause <plan-id>                                                             # Pause an active plan

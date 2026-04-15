@@ -908,7 +908,7 @@ pub enum Commands {
     /// Example: longbridge aip
     /// Example: longbridge aip --status active
     /// Example: longbridge aip detail <plan-id>
-    /// Example: longbridge aip create FD/HK/LB00001 --amount 1000 --cycle monthly --cycle-day 15
+    /// Example: longbridge aip create QQQ.US --amount 1000 --cycle monthly --cycle-day 15
     /// Example: longbridge aip update <plan-id> --amount 2000
     /// Example: longbridge aip pause <plan-id>
     /// Example: longbridge aip resume <plan-id>
@@ -961,11 +961,11 @@ pub enum AipCmd {
 
     /// Create a new AIP plan
     ///
-    /// Example: longbridge aip create FD/HK/LB00001 --amount 1000 --cycle monthly --cycle-day 15
-    /// Example: longbridge aip create FD/HK/LB00001 --amount 500 --cycle weekly --invest-now --yes
-    /// Example: longbridge aip create FD/HK/LB00001 --amount 200 --cycle daily --yes
+    /// Example: longbridge aip create QQQ.US --amount 1000 --cycle monthly --cycle-day 15
+    /// Example: longbridge aip create QQQ.US --amount 500 --cycle weekly --invest-now --yes
+    /// Example: longbridge aip create 700.HK --amount 2000 --cycle monthly --yes
     Create {
-        /// Fund counter ID (e.g. FD/HK/LB00001)
+        /// Symbol in <CODE>.<MARKET> format (e.g. QQQ.US, 700.HK)
         symbol: String,
         /// Investment amount per cycle (e.g. 1000)
         #[arg(long)]

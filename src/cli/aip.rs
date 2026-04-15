@@ -425,14 +425,13 @@ async fn cmd_create(
         }
     };
 
-    // counter_id for AIP is the symbol itself (e.g. FD/HK/LB00001)
-    let counter_id = symbol;
+    let counter_id = crate::utils::counter::symbol_to_counter_id(symbol);
 
     let cycle_display = fmt_cycle(cycle_freq, effective_cycle_day);
     let invest_now_display = if invest_now { "Yes" } else { "No" };
 
     println!("Create AIP Plan:");
-    println!("  Fund:       {counter_id}");
+    println!("  Fund:       {symbol} ({counter_id})");
     println!("  Amount:     {amount}");
     println!("  Cycle:      {cycle_display}");
     println!("  Invest Now: {invest_now_display}");
