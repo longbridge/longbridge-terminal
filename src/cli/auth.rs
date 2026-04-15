@@ -265,21 +265,12 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
                 println!();
                 println!("Quote Level");
                 if !acc.quote_packages.is_empty() {
-                    let has_desc = acc.quote_packages.iter().any(|p| !p.description.is_empty());
                     let mut builder = Builder::default();
-                    if has_desc {
-                        builder.push_record(["Package", "Start", "End", "Description"]);
-                    } else {
-                        builder.push_record(["Package", "Start", "End"]);
-                    }
+                    builder.push_record(["Package", "Start", "End"]);
                     for pkg in &acc.quote_packages {
                         let start = pkg.start_at.date().to_string();
                         let end   = pkg.end_at.date().to_string();
-                        if has_desc {
-                            builder.push_record([&pkg.name, &start, &end, &pkg.description]);
-                        } else {
-                            builder.push_record([&pkg.name, &start, &end]);
-                        }
+                        builder.push_record([&pkg.name, &start, &end]);
                     }
                     println!("{}", builder.build().with(Style::markdown()));
                 } else {
