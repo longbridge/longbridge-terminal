@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 pub mod api;
 pub mod asset;
+pub mod auth;
 pub mod check;
 pub mod fundamental;
 pub mod insider_trades;
@@ -1690,6 +1691,14 @@ pub enum AuthCmd {
     ///
     /// Next command or TUI launch will trigger re-authentication.
     Logout,
+
+    /// Show authentication status
+    ///
+    /// Checks whether a token is stored locally and whether it is still valid.
+    /// Does not make any network requests.
+    /// Example: longbridge auth status
+    /// Example: longbridge auth status --format json
+    Status,
 }
 
 pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Result<()> {

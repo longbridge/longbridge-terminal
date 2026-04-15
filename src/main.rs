@@ -184,6 +184,15 @@ async fn main() {
             }
         },
 
+        Some(cli::Commands::Auth {
+            cmd: cli::AuthCmd::Status,
+        }) => {
+            if let Err(e) = cli::auth::cmd_auth_status(&cli.format) {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        }
+
         Some(cmd) => {
             let start = verbose.then(Instant::now);
             // CLI mode: init contexts (auth), then dispatch
