@@ -1349,7 +1349,7 @@ pub enum OrderCmd {
         ///   (case-insensitive, default: LO)
         #[arg(long, default_value = "LO")]
         order_type: String,
-        /// Time in force: day | gtc (GoodTilCanceled) | gtd (GoodTilDate)
+        /// Time in force: day | gtc (`GoodTilCanceled`) | gtd (`GoodTilDate`)
         /// (case-insensitive)
         #[arg(long, default_value = "day")]
         tif: String,
@@ -1402,7 +1402,7 @@ pub enum OrderCmd {
         ///   (case-insensitive, default: LO)
         #[arg(long, default_value = "LO")]
         order_type: String,
-        /// Time in force: day | gtc (GoodTilCanceled) | gtd (GoodTilDate)
+        /// Time in force: day | gtc (`GoodTilCanceled`) | gtd (`GoodTilDate`)
         /// (case-insensitive)
         #[arg(long, default_value = "day")]
         tif: String,

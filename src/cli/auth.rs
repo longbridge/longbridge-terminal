@@ -105,7 +105,7 @@ struct AccountInfo {
     name: Option<String>,
 }
 
-/// Fetch account_no and account_type from the most recent daily statement.
+/// Fetch `account_no` and `account_type` from the most recent daily statement.
 /// Returns None if no statement is available or the fetch fails.
 async fn fetch_account_info_from_statement() -> Option<(String, String, String)> {
     let ctx = crate::openapi::statement();
@@ -138,11 +138,11 @@ async fn fetch_account_info_from_statement() -> Option<(String, String, String)>
     let value: serde_json::Value = serde_json::from_str(&body).ok()?;
     let mi = &value["MemberInfo"];
 
-    let account_no = mi["AccountNo"].as_str().filter(|s| !s.is_empty())?.to_owned();
-    let account_type = mi["AccountType"]
+    let account_no = mi["AccountNo"]
         .as_str()
-        .unwrap_or("")
+        .filter(|s| !s.is_empty())?
         .to_owned();
+    let account_type = mi["AccountType"].as_str().unwrap_or("").to_owned();
     let name = mi["NameEn"]
         .as_str()
         .or_else(|| mi["Name"].as_str())
@@ -161,7 +161,11 @@ async fn fetch_account_info() -> Result<AccountInfo> {
     );
 
     let (account_no, account_type, name) = match statement_info {
-        Some((no, t, n)) => (Some(no), Some(t).filter(|s| !s.is_empty()), Some(n).filter(|s| !s.is_empty())),
+        Some((no, t, n)) => (
+            Some(no),
+            Some(t).filter(|s| !s.is_empty()),
+            Some(n).filter(|s| !s.is_empty()),
+        ),
         None => (None, None, None),
     };
 
@@ -182,10 +186,7 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
 
     // ── Connect and fetch account info ────────────────────────────────────────
     let account = match crate::openapi::init_contexts().await {
-        Ok(_) => match fetch_account_info().await {
-            Ok(info) => Some(info),
-            Err(_) => None,
-        },
+        Ok(_) => fetch_account_info().await.ok(),
         Err(_) => None,
     };
 
@@ -218,8 +219,8 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
             // ── Token ──────────────────────────────────────────────────────────
             let (status_str, status_color) = match token.status {
                 "not_found" => ("not found", RED),
-                "expired"   => ("expired",   YELLOW),
-                _           => ("valid",     GREEN),
+                "expired" => ("expired", YELLOW),
+                _ => ("valid", GREEN),
             };
             println!("Token");
             println!(
@@ -230,18 +231,26 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
                 color = status_color,
             );
             if let Some(ts) = token.logged_in_at {
-                if let Ok(dt) = OffsetDateTime::from_unix_timestamp(ts as i64) {
+                if let Ok(dt) = OffsetDateTime::from_unix_timestamp(ts.cast_signed()) {
                     println!(
                         "{:<W$} {}-{:02}-{:02} {:02}:{:02}",
                         "Logged In",
-                        dt.year(), dt.month() as u8, dt.day(),
-                        dt.hour(), dt.minute(),
+                        dt.year(),
+                        dt.month() as u8,
+                        dt.day(),
+                        dt.hour(),
+                        dt.minute(),
                         W = W,
                     );
                 }
             }
             let display_path = dirs::home_dir()
-                .and_then(|h| token_path.strip_prefix(&h).ok().map(|p| format!("~/{}", p.display())))
+                .and_then(|h| {
+                    token_path
+                        .strip_prefix(&h)
+                        .ok()
+                        .map(|p| format!("~/{}", p.display()))
+                })
                 .unwrap_or_else(|| token_path.display().to_string());
             println!("{:<W$} {DIM}{display_path}{RESET}", "Session Path", W = W);
 
@@ -254,8 +263,12 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
                 }
                 // account_no and account_type on one line
                 let mut acct_parts = Vec::new();
-                if let Some(no) = &acc.account_no { acct_parts.push(no.as_str()); }
-                if let Some(at) = &acc.account_type { acct_parts.push(at.as_str()); }
+                if let Some(no) = &acc.account_no {
+                    acct_parts.push(no.as_str());
+                }
+                if let Some(at) = &acc.account_type {
+                    acct_parts.push(at.as_str());
+                }
                 if !acct_parts.is_empty() {
                     let acct_str = if acct_parts.len() >= 2 {
                         format!("{} [{}]", acct_parts[0], acct_parts[1..].join(", "))
@@ -269,17 +282,17 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
                 // ── Quote Level ─────────────────────────────────────────────────
                 println!();
                 println!("Quote Level");
-                if !acc.quote_packages.is_empty() {
+                if acc.quote_packages.is_empty() {
+                    println!("{:<W$} {}", "Level", acc.quote_level, W = W);
+                } else {
                     let mut builder = Builder::default();
                     builder.push_record(["Package", "Start", "End"]);
                     for pkg in &acc.quote_packages {
                         let start = pkg.start_at.date().to_string();
-                        let end   = pkg.end_at.date().to_string();
+                        let end = pkg.end_at.date().to_string();
                         builder.push_record([&pkg.name, &start, &end]);
                     }
                     println!("{}", builder.build().with(Style::markdown()));
-                } else {
-                    println!("{:<W$} {}", "Level", acc.quote_level, W = W);
                 }
             }
         }

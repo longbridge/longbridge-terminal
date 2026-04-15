@@ -3,7 +3,6 @@ use longbridge::quote::{
     AdjustType, CalcIndex, Period, PrePostQuote, SecurityListCategory, TradeSession, TradeSessions,
 };
 use longbridge::Market;
-use rust_decimal::prelude::ToPrimitive;
 use time::Date;
 
 use serde_json::Value;
@@ -16,20 +15,6 @@ use super::{
     OutputFormat,
 };
 use crate::utils::counter::symbol_to_counter_id;
-use crate::utils::option_greeks::{parse_us_option_symbol, remaining_days, OptionGreeks};
-
-/// `SecurityCalcIndex` enriched with locally-computed Black-Scholes option greeks.
-///
-/// When greeks can be computed locally (US equity options with available underlying price),
-/// the `computed_*` fields are populated and take precedence over the API-returned values.
-struct EnrichedCalcIndex<'a> {
-    inner: &'a longbridge::quote::SecurityCalcIndex,
-    computed_delta: Option<f64>,
-    computed_gamma: Option<f64>,
-    computed_theta: Option<f64>,
-    computed_vega: Option<f64>,
-    computed_rho: Option<f64>,
-}
 
 /// Return the locale-appropriate display name for a security.
 ///
@@ -93,109 +78,70 @@ fn pre_post_quote_to_json(q: &PrePostQuote) -> serde_json::Value {
     })
 }
 
-type CalcIndexExtractor = fn(&EnrichedCalcIndex) -> String;
-
-fn fmt_computed_or_decimal(computed: Option<f64>, api: Option<&rust_decimal::Decimal>) -> String {
-    computed.map_or_else(
-        || api.map_or_else(|| "-".to_string(), |d| format!("{d:.3}")),
-        |v| format!("{v:.3}"),
-    )
-}
+type CalcIndexExtractor = fn(&longbridge::quote::SecurityCalcIndex) -> String;
 
 fn calc_index_column(key: &str) -> Option<(&'static str, CalcIndexExtractor)> {
     match key {
-        "last_done" => Some(("Last Done", |r| fmt_decimal(&r.inner.last_done))),
-        "change_value" => Some(("Change Value", |r| fmt_decimal(&r.inner.change_value))),
-        "change_rate" => Some(("Change Rate", |r| fmt_decimal(&r.inner.change_rate))),
+        "last_done" => Some(("Last Done", |r| fmt_decimal(&r.last_done))),
+        "change_value" => Some(("Change Value", |r| fmt_decimal(&r.change_value))),
+        "change_rate" => Some(("Change Rate", |r| fmt_decimal(&r.change_rate))),
         "volume" => Some(("Volume", |r| {
-            r.inner
-                .volume
-                .map_or_else(|| "-".to_string(), |v| v.to_string())
+            r.volume.map_or_else(|| "-".to_string(), |v| v.to_string())
         })),
-        "turnover" => Some(("Turnover", |r| fmt_decimal(&r.inner.turnover))),
-        "ytd_change_rate" => Some(("YTD Change Rate", |r| fmt_decimal(&r.inner.ytd_change_rate))),
-        "turnover_rate" => Some(("Turnover Rate", |r| fmt_decimal(&r.inner.turnover_rate))),
-        "total_market_value" => Some(("Total Market Value", |r| {
-            fmt_decimal(&r.inner.total_market_value)
-        })),
-        "capital_flow" => Some(("Capital Flow", |r| fmt_decimal(&r.inner.capital_flow))),
-        "amplitude" => Some(("Amplitude", |r| fmt_decimal(&r.inner.amplitude))),
-        "volume_ratio" => Some(("Volume Ratio", |r| fmt_decimal(&r.inner.volume_ratio))),
-        "pe" | "pe_ttm" => Some(("PE TTM", |r| fmt_decimal(&r.inner.pe_ttm_ratio))),
-        "pb" => Some(("PB", |r| fmt_decimal(&r.inner.pb_ratio))),
+        "turnover" => Some(("Turnover", |r| fmt_decimal(&r.turnover))),
+        "ytd_change_rate" => Some(("YTD Change Rate", |r| fmt_decimal(&r.ytd_change_rate))),
+        "turnover_rate" => Some(("Turnover Rate", |r| fmt_decimal(&r.turnover_rate))),
+        "total_market_value" => {
+            Some(("Total Market Value", |r| fmt_decimal(&r.total_market_value)))
+        }
+        "capital_flow" => Some(("Capital Flow", |r| fmt_decimal(&r.capital_flow))),
+        "amplitude" => Some(("Amplitude", |r| fmt_decimal(&r.amplitude))),
+        "volume_ratio" => Some(("Volume Ratio", |r| fmt_decimal(&r.volume_ratio))),
+        "pe" | "pe_ttm" => Some(("PE TTM", |r| fmt_decimal(&r.pe_ttm_ratio))),
+        "pb" => Some(("PB", |r| fmt_decimal(&r.pb_ratio))),
         "dps_rate" | "dividend_yield" => Some(("DPS Rate", |r| {
-            r.inner
-                .dividend_ratio_ttm
+            r.dividend_ratio_ttm
                 .map_or_else(|| "-".to_string(), |d| d.round_dp(2).to_string())
         })),
-        "five_day_change_rate" => Some(("5D Chg Rate", |r| {
-            fmt_decimal(&r.inner.five_day_change_rate)
-        })),
-        "ten_day_change_rate" => Some(("10D Chg Rate", |r| {
-            fmt_decimal(&r.inner.ten_day_change_rate)
-        })),
-        "half_year_change_rate" => Some(("6M Chg Rate", |r| {
-            fmt_decimal(&r.inner.half_year_change_rate)
-        })),
+        "five_day_change_rate" => Some(("5D Chg Rate", |r| fmt_decimal(&r.five_day_change_rate))),
+        "ten_day_change_rate" => Some(("10D Chg Rate", |r| fmt_decimal(&r.ten_day_change_rate))),
+        "half_year_change_rate" => Some(("6M Chg Rate", |r| fmt_decimal(&r.half_year_change_rate))),
         "five_minutes_change_rate" => Some(("5Min Chg Rate", |r| {
-            fmt_decimal(&r.inner.five_minutes_change_rate)
+            fmt_decimal(&r.five_minutes_change_rate)
         })),
-        "implied_volatility" => Some(("Impl. Vol.", |r| {
-            fmt_decimal_div100(&r.inner.implied_volatility)
-        })),
-        "delta" => Some(("Delta", |r| {
-            fmt_computed_or_decimal(r.computed_delta, r.inner.delta.as_ref())
-        })),
-        "gamma" => Some(("Gamma", |r| {
-            fmt_computed_or_decimal(r.computed_gamma, r.inner.gamma.as_ref())
-        })),
-        "theta" => Some(("Theta", |r| {
-            fmt_computed_or_decimal(r.computed_theta, r.inner.theta.as_ref())
-        })),
-        "vega" => Some(("Vega", |r| {
-            fmt_computed_or_decimal(r.computed_vega, r.inner.vega.as_ref())
-        })),
-        "rho" => Some(("Rho", |r| {
-            fmt_computed_or_decimal(r.computed_rho, r.inner.rho.as_ref())
-        })),
+        "implied_volatility" => Some(("Impl. Vol.", |r| fmt_decimal_div100(&r.implied_volatility))),
+        "delta" => Some(("Delta", |r| fmt_decimal(&r.delta))),
+        "gamma" => Some(("Gamma", |r| fmt_decimal(&r.gamma))),
+        "theta" => Some(("Theta", |r| fmt_decimal(&r.theta))),
+        "vega" => Some(("Vega", |r| fmt_decimal(&r.vega))),
+        "rho" => Some(("Rho", |r| fmt_decimal(&r.rho))),
         "open_interest" => Some(("Open Interest", |r| {
-            r.inner
-                .open_interest
+            r.open_interest
                 .map_or_else(|| "-".to_string(), |v| v.to_string())
         })),
         "expiry_date" => Some(("Expiry Date", |r| {
-            r.inner
-                .expiry_date
+            r.expiry_date
                 .map_or_else(|| "-".to_string(), |d| d.to_string())
         })),
-        "strike_price" => Some(("Strike Price", |r| fmt_decimal(&r.inner.strike_price))),
-        "upper_strike_price" => {
-            Some(("Upper Strike", |r| fmt_decimal(&r.inner.upper_strike_price)))
-        }
-        "lower_strike_price" => {
-            Some(("Lower Strike", |r| fmt_decimal(&r.inner.lower_strike_price)))
-        }
+        "strike_price" => Some(("Strike Price", |r| fmt_decimal(&r.strike_price))),
+        "upper_strike_price" => Some(("Upper Strike", |r| fmt_decimal(&r.upper_strike_price))),
+        "lower_strike_price" => Some(("Lower Strike", |r| fmt_decimal(&r.lower_strike_price))),
         "outstanding_qty" => Some(("Outst. Qty", |r| {
-            r.inner
-                .outstanding_qty
+            r.outstanding_qty
                 .map_or_else(|| "-".to_string(), |v| v.to_string())
         })),
-        "outstanding_ratio" => Some(("Outstanding Ratio", |r| {
-            fmt_decimal(&r.inner.outstanding_ratio)
-        })),
-        "premium" => Some(("Premium", |r| fmt_decimal(&r.inner.premium))),
-        "itm_otm" => Some(("ITM/OTM", |r| fmt_decimal(&r.inner.itm_otm))),
-        "warrant_delta" => Some(("Warrant Delta", |r| fmt_decimal(&r.inner.warrant_delta))),
-        "call_price" => Some(("Call Price", |r| fmt_decimal(&r.inner.call_price))),
-        "to_call_price" => Some(("To Call Price", |r| fmt_decimal(&r.inner.to_call_price))),
-        "effective_leverage" => Some(("Effective Leverage", |r| {
-            fmt_decimal(&r.inner.effective_leverage)
-        })),
-        "leverage_ratio" => Some(("Leverage Ratio", |r| fmt_decimal(&r.inner.leverage_ratio))),
-        "conversion_ratio" => Some(("Conversion Ratio", |r| {
-            fmt_decimal(&r.inner.conversion_ratio)
-        })),
-        "balance_point" => Some(("Balance Point", |r| fmt_decimal(&r.inner.balance_point))),
+        "outstanding_ratio" => Some(("Outstanding Ratio", |r| fmt_decimal(&r.outstanding_ratio))),
+        "premium" => Some(("Premium", |r| fmt_decimal(&r.premium))),
+        "itm_otm" => Some(("ITM/OTM", |r| fmt_decimal(&r.itm_otm))),
+        "warrant_delta" => Some(("Warrant Delta", |r| fmt_decimal(&r.warrant_delta))),
+        "call_price" => Some(("Call Price", |r| fmt_decimal(&r.call_price))),
+        "to_call_price" => Some(("To Call Price", |r| fmt_decimal(&r.to_call_price))),
+        "effective_leverage" => {
+            Some(("Effective Leverage", |r| fmt_decimal(&r.effective_leverage)))
+        }
+        "leverage_ratio" => Some(("Leverage Ratio", |r| fmt_decimal(&r.leverage_ratio))),
+        "conversion_ratio" => Some(("Conversion Ratio", |r| fmt_decimal(&r.conversion_ratio))),
+        "balance_point" => Some(("Balance Point", |r| fmt_decimal(&r.balance_point))),
         _ => None,
     }
 }
@@ -730,84 +676,6 @@ const OPTION_DEFAULT_FIELDS: &[&str] = &[
     "open_interest",
 ];
 
-/// Fetch the risk-free interest rate from the Longbridge quote app config.
-///
-/// Returns the rate as a decimal fraction (e.g. 0.043 for 4.3%).
-/// Falls back to 0.0 on any error so greeks computation is still attempted.
-/// Approximate US risk-free interest rate used for Black-Scholes greeks computation.
-/// This matches the rate used by the mobile client engine.
-const US_RISK_FREE_RATE: f64 = 0.043;
-
-/// Enrich `SecurityCalcIndex` results with locally-computed Black-Scholes greeks.
-///
-/// For each US equity option symbol that has the necessary data (strike price, expiry date,
-/// IV, and a fetchable underlying quote), greeks are computed and stored in `EnrichedCalcIndex`.
-/// For all other symbols the `computed_*` fields remain `None` and the API values are used.
-async fn enrich_calc_indexes(
-    results: &[longbridge::quote::SecurityCalcIndex],
-    interest_rate: f64,
-) -> Vec<EnrichedCalcIndex<'_>> {
-    // Collect the unique underlying symbols we need to fetch quotes for
-    let mut underlying_symbols: Vec<String> = results
-        .iter()
-        .filter_map(|r| {
-            let (underlying, _) = parse_us_option_symbol(&r.symbol)?;
-            Some(underlying)
-        })
-        .collect();
-    underlying_symbols.sort();
-    underlying_symbols.dedup();
-
-    // Fetch underlying prices in one batch call
-    let mut underlying_prices: std::collections::HashMap<String, f64> =
-        std::collections::HashMap::new();
-    if !underlying_symbols.is_empty() {
-        if let Ok(quotes) = crate::openapi::quote().quote(underlying_symbols).await {
-            for q in quotes {
-                if let Some(price) = q.last_done.to_f64() {
-                    underlying_prices.insert(q.symbol, price);
-                }
-            }
-        }
-    }
-
-    results
-        .iter()
-        .map(|r| {
-            let computed = (|| {
-                let (underlying, is_call) = parse_us_option_symbol(&r.symbol)?;
-                let underlying_price = *underlying_prices.get(&underlying)?;
-                let strike = r.strike_price?.to_f64()?;
-                let expiry = r.expiry_date?;
-                let days = remaining_days(expiry)?;
-                // implied_volatility from API is ×100; convert to decimal fraction
-                let iv = r.implied_volatility?.to_f64()? / 100.0;
-                let greeks =
-                    OptionGreeks::new(strike, underlying_price, iv, interest_rate, days, is_call)?;
-                Some((
-                    greeks.delta(),
-                    greeks.gamma(),
-                    greeks.theta(),
-                    greeks.vega(),
-                    greeks.rho(),
-                ))
-            })();
-            let (d, g, t, v, ro) = computed
-                .map_or((None, None, None, None, None), |(d, g, t, v, ro)| {
-                    (Some(d), Some(g), Some(t), Some(v), Some(ro))
-                });
-            EnrichedCalcIndex {
-                inner: r,
-                computed_delta: d,
-                computed_gamma: g,
-                computed_theta: t,
-                computed_vega: v,
-                computed_rho: ro,
-            }
-        })
-        .collect()
-}
-
 pub async fn cmd_calc_index(
     symbols: Vec<String>,
     index: Vec<String>,
@@ -822,24 +690,7 @@ pub async fn cmd_calc_index(
     let is_stock_default =
         index.iter().map(String::as_str).collect::<Vec<_>>() == STOCK_DEFAULT_FIELDS;
 
-    // Always request these auxiliary fields so greeks enrichment always has the data it needs,
-    // even when the user didn't explicitly ask for them.
-    let aux_fields = [
-        CalcIndex::StrikePrice,
-        CalcIndex::ExpiryDate,
-        CalcIndex::ImpliedVolatility,
-    ];
-    let make_indexes_with_aux = |base: &[CalcIndex]| -> Vec<CalcIndex> {
-        let mut result = base.to_vec();
-        for &aux in &aux_fields {
-            if !result.contains(&aux) {
-                result.push(aux);
-            }
-        }
-        result
-    };
-
-    let indexes = make_indexes_with_aux(&parse_calc_indexes(&index));
+    let indexes = parse_calc_indexes(&index);
     let results = ctx.calc_indexes(symbols.clone(), indexes).await?;
 
     let all_empty = is_stock_default
@@ -856,14 +707,12 @@ pub async fn cmd_calc_index(
             .iter()
             .map(|s| (*s).to_string())
             .collect();
-        let option_indexes = make_indexes_with_aux(&parse_calc_indexes(&option_index));
+        let option_indexes = parse_calc_indexes(&option_index);
         let results = ctx.calc_indexes(symbols, option_indexes).await?;
         (option_index, results)
     } else {
         (index, results)
     };
-
-    let enriched = enrich_calc_indexes(&results, US_RISK_FREE_RATE).await;
 
     // Deduplicate columns (e.g. "pe" and "pe_ttm" map to the same field)
     let columns: Vec<(&str, &str, CalcIndexExtractor)> = {
@@ -879,13 +728,13 @@ pub async fn cmd_calc_index(
 
     match format {
         OutputFormat::Json => {
-            let records: Vec<serde_json::Value> = enriched
+            let records: Vec<serde_json::Value> = results
                 .iter()
                 .map(|r| {
                     let mut map = serde_json::Map::new();
                     map.insert(
                         "symbol".to_string(),
-                        serde_json::Value::String(r.inner.symbol.clone()),
+                        serde_json::Value::String(r.symbol.clone()),
                     );
                     for (key, _, extract) in &columns {
                         map.insert(key.to_string(), serde_json::Value::String(extract(r)));
@@ -898,10 +747,10 @@ pub async fn cmd_calc_index(
         OutputFormat::Pretty => {
             let mut headers = vec!["Symbol"];
             headers.extend(columns.iter().map(|(_, h, _)| *h));
-            let rows = enriched
+            let rows = results
                 .iter()
                 .map(|r| {
-                    let mut row = vec![r.inner.symbol.clone()];
+                    let mut row = vec![r.symbol.clone()];
                     row.extend(columns.iter().map(|(_, _, extract)| extract(r)));
                     row
                 })

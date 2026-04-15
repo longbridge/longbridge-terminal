@@ -156,7 +156,9 @@ async fn main() {
         }
 
         Some(cli::Commands::Auth {
-            cmd: cli::AuthCmd::Login { auth_code: true, .. },
+            cmd: cli::AuthCmd::Login {
+                auth_code: true, ..
+            },
         }) => match openapi::init_contexts().await {
             Ok(_) => println!("Successfully authenticated."),
             Err(e) => {
@@ -166,7 +168,11 @@ async fn main() {
         },
 
         Some(cli::Commands::Auth {
-            cmd: cli::AuthCmd::Login { auth_code: false, verbose },
+            cmd:
+                cli::AuthCmd::Login {
+                    auth_code: false,
+                    verbose,
+                },
         }) => {
             if let Err(e) = auth::device_login(verbose).await {
                 eprintln!("Authentication failed: {e:#}");
