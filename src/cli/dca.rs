@@ -102,7 +102,7 @@ async fn cmd_list(
         }
         OutputFormat::Pretty => {
             if plans.is_empty() {
-                println!("No DCA plans found.");
+                println!("No recurring investment plans found.");
                 return Ok(());
             }
             let headers = &[
@@ -175,7 +175,7 @@ async fn cmd_create(
 
     let resp = http_post("/v1/dailycoins/create", body, false).await?;
     let plan_id = resp["plan_id"].as_str().unwrap_or("");
-    println!("DCA plan created. Plan ID: {plan_id}");
+    println!("Recurring investment plan created. Plan ID: {plan_id}");
     Ok(())
 }
 
@@ -206,7 +206,7 @@ async fn cmd_update(
     }
 
     http_post("/v1/dailycoins/update", body, false).await?;
-    println!("DCA plan {plan_id} updated.");
+    println!("Recurring investment plan {plan_id} updated.");
     Ok(())
 }
 
@@ -216,7 +216,7 @@ async fn cmd_toggle(plan_id: String, status: &str) -> Result<()> {
         "status": status,
     });
     http_post("/v1/dailycoins/toggle", body, false).await?;
-    println!("DCA plan {plan_id} status set to {status}.");
+    println!("Recurring investment plan {plan_id} status set to {status}.");
     Ok(())
 }
 
@@ -387,7 +387,7 @@ async fn cmd_check(symbols: Vec<String>, format: &OutputFormat) -> Result<()> {
                 println!("No results.");
                 return Ok(());
             }
-            let headers = &["Symbol", "Supports DCA"];
+            let headers = &["Symbol", "Supports Recurring Investment"];
             let rows: Vec<Vec<String>> = infos
                 .iter()
                 .map(|info| {
