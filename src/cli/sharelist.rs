@@ -15,11 +15,7 @@ pub async fn cmd_sharelist(
     match cmd {
         None => cmd_list(count, None, format).await,
         Some(SharelistCmd::Detail { id }) => cmd_detail(id, format).await,
-        Some(SharelistCmd::Create {
-            name,
-            description,
-            stock_group_id,
-        }) => cmd_create(name, description, stock_group_id).await,
+        Some(SharelistCmd::Create { name, description }) => cmd_create(name, description).await,
         Some(SharelistCmd::Delete { id }) => cmd_delete(id).await,
         Some(SharelistCmd::Add { id, symbols }) => cmd_add(id, symbols).await,
         Some(SharelistCmd::Remove { id, symbols }) => cmd_remove(id, symbols).await,
@@ -142,12 +138,12 @@ async fn cmd_detail(id: String, format: &OutputFormat) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_create(name: String, description: String, stock_group_id: String) -> Result<()> {
+async fn cmd_create(name: String, description: String) -> Result<()> {
     let body = serde_json::json!({
         "name": name,
         "description": description,
         "cover": "https://pub.pbkrs.com/files/202107/kaJSk6BsvPt6NJ3Q/sharelist_v1.png",
-        "stock_group_id": stock_group_id,
+        "stock_group_id": "0",
     });
     let resp = http_post("/v1/sharelists", body, false).await?;
     let sharelist_id = resp["sharelist_id"].as_str().unwrap_or("");

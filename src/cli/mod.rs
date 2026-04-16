@@ -929,7 +929,7 @@ pub enum Commands {
     /// Example: longbridge sharelist
     /// Example: longbridge sharelist --count 50
     /// Example: longbridge sharelist detail `<ID>`
-    /// Example: longbridge sharelist create --name "My Picks" --stock-group-id `<GROUP_ID>`
+    /// Example: longbridge sharelist create --name "My Picks"
     /// Example: longbridge sharelist delete `<ID>`
     /// Example: longbridge sharelist add `<ID>` TSLA.US AAPL.US
     /// Example: longbridge sharelist remove `<ID>` TSLA.US
@@ -1501,8 +1501,7 @@ pub enum SharelistCmd {
 
     /// Create a new sharelist
     ///
-    /// Requires a watchlist group ID to link the sharelist to an existing watchlist group.
-    /// Example: longbridge sharelist create --name "My Tech Picks" --stock-group-id `<GROUP_ID>`
+    /// Example: longbridge sharelist create --name "My Tech Picks"
     Create {
         /// Sharelist name
         #[arg(long)]
@@ -1510,9 +1509,6 @@ pub enum SharelistCmd {
         /// Sharelist description
         #[arg(long, default_value = "")]
         description: String,
-        /// Watchlist group ID to link this sharelist to
-        #[arg(long)]
-        stock_group_id: String,
     },
 
     /// Delete a sharelist
