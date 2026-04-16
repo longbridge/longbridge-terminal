@@ -3,27 +3,23 @@ use anyhow::Result;
 use super::{
     api::{http_get, http_post},
     output::{print_json_value, print_table},
-    DailyCoinCmd, DailyCoinDayOfWeek, DailyCoinFrequency, DailyCoinReminderHours, OutputFormat,
+    DcaCmd, DcaDayOfWeek, DcaFrequency, DcaReminderHours, OutputFormat,
 };
 
 use crate::utils::counter::{counter_id_to_symbol, symbol_to_counter_id};
+use crate::utils::datetime::format_timestamp;
 
-pub async fn cmd_daily_coin(cmd: Option<DailyCoinCmd>, format: &OutputFormat) -> Result<()> {
+pub async fn cmd_dca(
+    cmd: Option<DcaCmd>,
+    status: Option<&str>,
+    symbol: Option<&str>,
+    page: u32,
+    limit: u32,
+    format: &OutputFormat,
+) -> Result<()> {
     match cmd {
-        None
-        | Some(DailyCoinCmd::List {
-            status: None,
-            symbol: None,
-            page: _,
-            limit: _,
-        }) => cmd_list(None, None, 1, 20, format).await,
-        Some(DailyCoinCmd::List {
-            status,
-            symbol,
-            page,
-            limit,
-        }) => cmd_list(status.as_deref(), symbol.as_deref(), page, limit, format).await,
-        Some(DailyCoinCmd::Create {
+        None => cmd_list(status, symbol, page, limit, format).await,
+        Some(DcaCmd::Create {
             symbol,
             amount,
             frequency,
@@ -41,7 +37,7 @@ pub async fn cmd_daily_coin(cmd: Option<DailyCoinCmd>, format: &OutputFormat) ->
             )
             .await
         }
-        Some(DailyCoinCmd::Update {
+        Some(DcaCmd::Update {
             plan_id,
             amount,
             frequency,
@@ -59,23 +55,23 @@ pub async fn cmd_daily_coin(cmd: Option<DailyCoinCmd>, format: &OutputFormat) ->
             )
             .await
         }
-        Some(DailyCoinCmd::Pause { plan_id }) => cmd_toggle(plan_id, "Suspended").await,
-        Some(DailyCoinCmd::Resume { plan_id }) => cmd_toggle(plan_id, "Active").await,
-        Some(DailyCoinCmd::Stop { plan_id }) => cmd_toggle(plan_id, "Finished").await,
-        Some(DailyCoinCmd::Records {
+        Some(DcaCmd::Pause { plan_id }) => cmd_toggle(plan_id, "Suspended").await,
+        Some(DcaCmd::Resume { plan_id }) => cmd_toggle(plan_id, "Active").await,
+        Some(DcaCmd::Stop { plan_id }) => cmd_toggle(plan_id, "Finished").await,
+        Some(DcaCmd::History {
             plan_id,
             page,
             limit,
         }) => cmd_records(plan_id, page, limit, format).await,
-        Some(DailyCoinCmd::Stats { symbol }) => cmd_stats(symbol.as_deref(), format).await,
-        Some(DailyCoinCmd::CalcDate {
+        Some(DcaCmd::Stats { symbol }) => cmd_stats(symbol.as_deref(), format).await,
+        Some(DcaCmd::CalcDate {
             symbol,
             frequency,
             day_of_week,
             day_of_month,
         }) => cmd_calc_date(symbol, frequency, day_of_week, day_of_month, format).await,
-        Some(DailyCoinCmd::Check { symbols }) => cmd_check(symbols, format).await,
-        Some(DailyCoinCmd::SetReminder { hours }) => cmd_set_reminder(&hours).await,
+        Some(DcaCmd::Check { symbols }) => cmd_check(symbols, format).await,
+        Some(DcaCmd::SetReminder { hours }) => cmd_set_reminder(&hours).await,
     }
 }
 
@@ -115,6 +111,8 @@ async fn cmd_list(
                 "Status",
                 "Amount",
                 "Frequency",
+                "Day of Week",
+                "Day of Month",
                 "Next Trade Date",
                 "Issues",
                 "Cum Amount",
@@ -132,7 +130,12 @@ async fn cmd_list(
                         p["status"].as_str().unwrap_or("-").to_string(),
                         p["per_invest_amount"].as_str().unwrap_or("-").to_string(),
                         p["invest_frequency"].as_str().unwrap_or("-").to_string(),
-                        p["next_trd_date"].as_str().unwrap_or("-").to_string(),
+                        p["invest_day_of_week"].as_str().unwrap_or("-").to_string(),
+                        p["invest_day_of_month"].as_str().unwrap_or("-").to_string(),
+                        p["next_trd_date"]
+                            .as_str()
+                            .and_then(|s| s.parse::<i64>().ok())
+                            .map_or_else(|| "-".to_string(), format_timestamp),
                         p["issue_number"]
                             .as_u64()
                             .map_or_else(|| "-".to_string(), |n| n.to_string()),
@@ -151,8 +154,8 @@ async fn cmd_list(
 async fn cmd_create(
     symbol: String,
     amount: String,
-    frequency: DailyCoinFrequency,
-    day_of_week: Option<DailyCoinDayOfWeek>,
+    frequency: DcaFrequency,
+    day_of_week: Option<DcaDayOfWeek>,
     day_of_month: Option<String>,
     allow_margin: bool,
 ) -> Result<()> {
@@ -168,9 +171,7 @@ async fn cmd_create(
     if let Some(dom) = day_of_month {
         body["invest_day_of_month"] = serde_json::Value::String(dom);
     }
-    if allow_margin {
-        body["allow_margin_finance"] = serde_json::Value::Number(1.into());
-    }
+    body["allow_margin_finance"] = serde_json::Value::Number(i32::from(allow_margin).into());
 
     let resp = http_post("/v1/dailycoins/create", body, false).await?;
     let plan_id = resp["plan_id"].as_str().unwrap_or("");
@@ -181,8 +182,8 @@ async fn cmd_create(
 async fn cmd_update(
     plan_id: String,
     amount: Option<String>,
-    frequency: Option<DailyCoinFrequency>,
-    day_of_week: Option<DailyCoinDayOfWeek>,
+    frequency: Option<DcaFrequency>,
+    day_of_week: Option<DcaDayOfWeek>,
     day_of_month: Option<String>,
     allow_margin: Option<bool>,
 ) -> Result<()> {
@@ -241,11 +242,12 @@ async fn cmd_records(plan_id: String, page: u32, limit: u32, format: &OutputForm
         }
         OutputFormat::Pretty => {
             if records.is_empty() {
-                println!("No execution records found.");
+                println!("No trade history found.");
                 return Ok(());
             }
             let headers = &[
                 "Date",
+                "Symbol",
                 "Order ID",
                 "Status",
                 "Action",
@@ -258,7 +260,13 @@ async fn cmd_records(plan_id: String, page: u32, limit: u32, format: &OutputForm
                 .iter()
                 .map(|r| {
                     vec![
-                        r["created_at"].as_str().unwrap_or("-").to_string(),
+                        r["created_at"]
+                            .as_str()
+                            .and_then(|s| s.parse::<i64>().ok())
+                            .map_or_else(|| "-".to_string(), format_timestamp),
+                        r["counter_id"]
+                            .as_str()
+                            .map_or_else(|| "-".to_string(), counter_id_to_symbol),
                         r["order_id"].as_str().unwrap_or("-").to_string(),
                         r["status"].as_str().unwrap_or("-").to_string(),
                         r["action"].as_str().unwrap_or("-").to_string(),
@@ -329,8 +337,8 @@ async fn cmd_stats(symbol: Option<&str>, format: &OutputFormat) -> Result<()> {
 
 async fn cmd_calc_date(
     symbol: String,
-    frequency: DailyCoinFrequency,
-    day_of_week: Option<DailyCoinDayOfWeek>,
+    frequency: DcaFrequency,
+    day_of_week: Option<DcaDayOfWeek>,
     day_of_month: Option<String>,
     format: &OutputFormat,
 ) -> Result<()> {
@@ -354,16 +362,9 @@ async fn cmd_calc_date(
         }
         OutputFormat::Pretty => {
             let trade_date = resp["trade_date"].as_str().unwrap_or("-");
-            // Convert Unix timestamp to YYYY-MM-DD for display
             let readable = trade_date
                 .parse::<i64>()
-                .ok()
-                .and_then(|ts| time::OffsetDateTime::from_unix_timestamp(ts).ok())
-                .and_then(|dt| {
-                    dt.format(&time::format_description::well_known::Rfc3339)
-                        .ok()
-                })
-                .unwrap_or_else(|| trade_date.to_string());
+                .map_or_else(|_| trade_date.to_string(), format_timestamp);
             println!("Next trade date: {readable}");
         }
     }
@@ -409,7 +410,7 @@ async fn cmd_check(symbols: Vec<String>, format: &OutputFormat) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_set_reminder(hours: &DailyCoinReminderHours) -> Result<()> {
+async fn cmd_set_reminder(hours: &DcaReminderHours) -> Result<()> {
     let h = hours.as_api_str();
     let body = serde_json::json!({ "alter_hours": h });
     http_post("/v1/dailycoins/update-alter-hours", body, false).await?;
