@@ -937,8 +937,8 @@ pub enum Commands {
         limit: u32,
     },
 
-    // ── Sharelist (股单) ───────────────────────────────────────────────────────
-    /// Sharelist (股单): community stock lists — list, detail, create, delete, and manage stocks
+    // ── Sharelist ───────────────────────────────────────────────────────
+    /// Sharelist: community stock lists — list, detail, create, delete, and manage stocks
     ///
     /// Without a subcommand, lists the current user's own and subscribed sharelists.
     /// Without a subcommand, lists own and subscribed sharelists.
