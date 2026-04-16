@@ -26,17 +26,18 @@ pub enum OutputFormat {
 
 #[derive(Parser)]
 #[command(name = "longbridge")]
-#[command(
-    about = "AI-native CLI for the Longbridge trading platform — real-time market data, portfolio, and trading"
-)]
+#[command(about = "\
+AI-native CLI for the Longbridge trading platform — real-time market data, portfolio, and trading.\n\n\
+Symbol e.g.: TSLA.US 700.HK D05.SG 600519.SH 000568.SZ .VIX.US BTCUSD.HAS ETHBTC.HAS")]
 #[command(long_about = "\
 AI-native CLI for the Longbridge trading platform — real-time market data, portfolio, and trading.\n\n\
 Symbol format: <CODE>.<MARKET>\n\
-  700.HK       Hong Kong (HK)\n\
   TSLA.US      United States (US)\n\
+  700.HK       Hong Kong (HK)\n\
   D05.SG       Singapore (SG)\n\
   600519.SH    China A-share Shanghai (SH)\n\
   000568.SZ    China A-share Shenzhen (SZ)\n\
+  .VIX.US      Index (US)\n\
   BTCUSD.HAS   Crypto — Longbridge-specific suffix (.HAS); not available to all accounts\n\
   ETHBTC.HAS   Crypto pair (e.g. ETH priced in BTC)\n\n\
 Note: crypto symbols use the .HAS suffix (Longbridge-specific). If a .HAS symbol returns no\n\
@@ -114,7 +115,7 @@ pub enum Commands {
     /// Example: longbridge quote TSLA.US 700.HK AAPL.US
     /// Example: longbridge quote TSLA.US NVDA.US --format json
     Quote {
-        /// Symbols in <CODE>.<MARKET> format, e.g. TSLA.US 700.HK 600519.SH
+        /// Symbols in <CODE>.<MARKET> format, e.g. TSLA.US QQQ.US 700.HK .VIX.US
         symbols: Vec<String>,
     },
 

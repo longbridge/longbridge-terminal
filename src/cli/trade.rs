@@ -1339,7 +1339,10 @@ pub async fn cmd_alert_set_enabled(
         let counter_id = stock["counter_id"].as_str().unwrap_or("");
         if let Some(indicators) = stock["indicators"].as_array() {
             for ind in indicators {
-                let ind_id = ind["id"].as_str().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+                let ind_id = ind["id"]
+                    .as_str()
+                    .and_then(|s| s.parse::<i64>().ok())
+                    .unwrap_or(0);
                 if ind_id == id_num {
                     let body = serde_json::json!({
                         "id": ind_id,

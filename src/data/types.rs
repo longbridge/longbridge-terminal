@@ -22,11 +22,22 @@ impl Counter {
     }
 
     pub fn code(&self) -> &str {
-        self.as_str().split('.').nth(0).unwrap_or("")
+        let s = self.as_str();
+        // Split at the last dot to separate the market suffix.
+        // For leading-dot symbols (e.g. `.DJI.US`), this correctly returns `.DJI`.
+        // For regular symbols (e.g. `700.HK`), it returns `700`.
+        match s.rfind('.') {
+            Some(pos) => &s[..pos],
+            None => s,
+        }
     }
 
     pub fn market(&self) -> &str {
-        self.as_str().split('.').nth(1).unwrap_or("")
+        let s = self.as_str();
+        match s.rfind('.') {
+            Some(pos) => &s[pos + 1..],
+            None => "",
+        }
     }
 
     /// Get region/market

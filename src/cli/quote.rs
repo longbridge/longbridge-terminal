@@ -219,6 +219,7 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
         bail!("At least one symbol is required");
     }
     let ctx = crate::openapi::quote();
+    let input = symbols.clone();
     let quotes = ctx.quote(symbols).await?;
 
     match format {
@@ -321,12 +322,17 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
             }
         }
     }
+    let found: Vec<&str> = quotes.iter().map(|q| q.symbol.as_str()).collect();
+    hint_symbols_do_you_mean(&input, &found);
     Ok(())
 }
 
 pub async fn cmd_depth(symbol: String, format: &OutputFormat) -> Result<()> {
     let ctx = crate::openapi::quote();
     let depth = ctx.depth(symbol.clone()).await?;
+    if depth.asks.is_empty() && depth.bids.is_empty() {
+        hint_symbol_do_you_mean(&symbol);
+    }
 
     match format {
         OutputFormat::Json => {
@@ -446,7 +452,7 @@ pub async fn cmd_brokers(symbol: String, format: &OutputFormat) -> Result<()> {
 
 pub async fn cmd_trades(symbol: String, count: usize, format: &OutputFormat) -> Result<()> {
     let ctx = crate::openapi::quote();
-    let trades = ctx.trades(symbol, count).await?;
+    let trades = ctx.trades(symbol.clone(), count).await?;
 
     let headers = &["Time", "Price", "Volume", "Direction", "Type"];
     let rows = trades
@@ -463,13 +469,16 @@ pub async fn cmd_trades(symbol: String, count: usize, format: &OutputFormat) -> 
         .collect();
 
     print_table(headers, rows, format);
+    if trades.is_empty() {
+        hint_symbol_do_you_mean(&symbol);
+    }
     Ok(())
 }
 
 pub async fn cmd_intraday(symbol: String, session: &str, format: &OutputFormat) -> Result<()> {
     let ctx = crate::openapi::quote();
     let trade_sessions = parse_trade_sessions(session)?;
-    let lines = ctx.intraday(symbol, trade_sessions).await?;
+    let lines = ctx.intraday(symbol.clone(), trade_sessions).await?;
 
     let headers = &["Time", "Price", "Volume", "Turnover", "Avg Price"];
     let rows = lines
@@ -486,6 +495,9 @@ pub async fn cmd_intraday(symbol: String, session: &str, format: &OutputFormat) 
         .collect();
 
     print_table(headers, rows, format);
+    if lines.is_empty() {
+        hint_symbol_do_you_mean(&symbol);
+    }
     Ok(())
 }
 
@@ -502,7 +514,7 @@ pub async fn cmd_kline(
     let adj = parse_adjust(adjust)?;
     let trade_sessions = parse_trade_sessions(session)?;
     let candles = ctx
-        .candlesticks(symbol, p, count, adj, trade_sessions)
+        .candlesticks(symbol.clone(), p, count, adj, trade_sessions)
         .await?;
 
     let show_session = matches!(trade_sessions, TradeSessions::All);
@@ -544,6 +556,9 @@ pub async fn cmd_kline(
             .collect();
         print_table(headers, rows, format);
     }
+    if candles.is_empty() {
+        hint_symbol_do_you_mean(&symbol);
+    }
     Ok(())
 }
 
@@ -560,6 +575,7 @@ pub async fn cmd_kline_history(
     let p = parse_period(period)?;
     let adj = parse_adjust(adjust)?;
     let trade_sessions = parse_trade_sessions(session)?;
+    let sym = symbol.clone();
 
     let candles = if let (Some(s), Some(e)) = (start, end) {
         let start_date = parse_date(&s)?;
@@ -617,6 +633,9 @@ pub async fn cmd_kline_history(
             .collect();
         print_table(headers, rows, format);
     }
+    if candles.is_empty() {
+        hint_symbol_do_you_mean(&sym);
+    }
     Ok(())
 }
 
@@ -625,6 +644,7 @@ pub async fn cmd_static(symbols: Vec<String>, format: &OutputFormat) -> Result<(
         bail!("At least one symbol is required");
     }
     let ctx = crate::openapi::quote();
+    let input = symbols.clone();
     let infos = ctx.static_info(symbols).await?;
 
     let headers = &[
@@ -660,6 +680,8 @@ pub async fn cmd_static(symbols: Vec<String>, format: &OutputFormat) -> Result<(
         .collect();
 
     print_table(headers, rows, format);
+    let found: Vec<&str> = infos.iter().map(|i| i.symbol.as_str()).collect();
+    hint_symbols_do_you_mean(&input, &found);
     Ok(())
 }
 
@@ -679,7 +701,6 @@ const OPTION_DEFAULT_FIELDS: &[&str] = &[
     "implied_volatility",
     "open_interest",
 ];
-
 
 pub async fn cmd_calc_index(
     symbols: Vec<String>,
@@ -1295,6 +1316,52 @@ pub async fn cmd_warrant_issuers(format: &OutputFormat) -> Result<()> {
 
 // ─── Testable run_* functions ─────────────────────────────────────────────────
 
+/// Print a "did you mean …?" hint to stderr when a symbol returns no data.
+///
+/// Handles three cases:
+/// - No market suffix at all (e.g. `TSLA`, `700`) — suggests adding `.US` or `.HK`.
+/// - US symbol missing the leading dot for an index (e.g. `DJI.US`) — suggests `.DJI.US`.
+/// - Other malformed symbols — generic format reminder.
+fn hint_symbol_do_you_mean(symbol: &str) {
+    eprintln!();
+    if let Some((code, market)) = symbol.rsplit_once('.') {
+        // Has a market suffix — check for missing leading dot on US indexes.
+        if market.eq_ignore_ascii_case("US") && !code.starts_with('.') {
+            eprintln!(
+                "Hint: no data for \"{symbol}\". Did you mean \".{code}.{}\"? (US market indexes require a leading dot, e.g. .DJI.US, .VIX.US)",
+                market.to_uppercase()
+            );
+        }
+    } else {
+        // No market suffix — guess from the code pattern.
+
+        if symbol.chars().all(|c| c.is_ascii_digit()) {
+            // All digits are almost always HK stocks (e.g. 700, 9988).
+            eprintln!(
+                "Hint: no data for \"{symbol}\". Did you mean \"{symbol}.HK\"? \n\
+                Symbols require a market suffix, e.g. TSLA.US, 700.HK, .DJI.US"
+            );
+        } else {
+            // Letters: could be a US stock (TSLA.US) or a US index (.VIX.US).
+            eprintln!(
+                "Hint: no data for \"{symbol}\". Did you mean \"{symbol}.US\" or \".{symbol}.US\" (if it's a US market index)? \n\
+                Symbols require a market suffix, e.g. TSLA.US, 700.HK, .DJI.US"
+            );
+        }
+    }
+}
+
+/// For multi-symbol queries: print hints for each input symbol that is absent
+/// from the returned results.
+fn hint_symbols_do_you_mean(queried: &[String], found_symbols: &[&str]) {
+    let found: std::collections::HashSet<&str> = found_symbols.iter().copied().collect();
+    for sym in queried {
+        if !found.contains(sym.as_str()) {
+            hint_symbol_do_you_mean(sym);
+        }
+    }
+}
+
 pub async fn run_quote(
     api: &dyn QuoteApi,
     symbols: Vec<String>,
@@ -1303,6 +1370,7 @@ pub async fn run_quote(
     if symbols.is_empty() {
         bail!("At least one symbol is required");
     }
+    let input = symbols.clone();
     let quotes = api.quote(symbols).await?;
     let headers = &[
         "Symbol",
@@ -1332,6 +1400,8 @@ pub async fn run_quote(
         })
         .collect();
     print_table(headers, rows, format);
+    let found: Vec<&str> = quotes.iter().map(|q| q.symbol.as_str()).collect();
+    hint_symbols_do_you_mean(&input, &found);
     Ok(())
 }
 
@@ -1437,7 +1507,7 @@ pub async fn run_trades(
     count: usize,
     format: &OutputFormat,
 ) -> Result<()> {
-    let trades = api.trades(symbol, count).await?;
+    let trades = api.trades(symbol.clone(), count).await?;
     let headers = &["Time", "Price", "Volume", "Direction", "Type"];
     let rows = trades
         .iter()
@@ -1452,11 +1522,14 @@ pub async fn run_trades(
         })
         .collect();
     print_table(headers, rows, format);
+    if trades.is_empty() {
+        hint_symbol_do_you_mean(&symbol);
+    }
     Ok(())
 }
 
 pub async fn run_intraday(api: &dyn QuoteApi, symbol: String, format: &OutputFormat) -> Result<()> {
-    let lines = api.intraday(symbol).await?;
+    let lines = api.intraday(symbol.clone()).await?;
     let headers = &["Time", "Price", "Volume", "Turnover", "Avg Price"];
     let rows = lines
         .iter()
@@ -1471,6 +1544,9 @@ pub async fn run_intraday(api: &dyn QuoteApi, symbol: String, format: &OutputFor
         })
         .collect();
     print_table(headers, rows, format);
+    if lines.is_empty() {
+        hint_symbol_do_you_mean(&symbol);
+    }
     Ok(())
 }
 
@@ -1482,7 +1558,9 @@ pub async fn run_kline(
     adjust: AdjustType,
     format: &OutputFormat,
 ) -> Result<()> {
-    let candles = api.candlesticks(symbol, period, count, adjust).await?;
+    let candles = api
+        .candlesticks(symbol.clone(), period, count, adjust)
+        .await?;
     let headers = &["Time", "Open", "High", "Low", "Close", "Volume", "Turnover"];
     let rows = candles
         .iter()
@@ -1499,6 +1577,9 @@ pub async fn run_kline(
         })
         .collect();
     print_table(headers, rows, format);
+    if candles.is_empty() {
+        hint_symbol_do_you_mean(&symbol);
+    }
     Ok(())
 }
 
@@ -1512,10 +1593,10 @@ pub async fn run_kline_history(
     format: &OutputFormat,
 ) -> Result<()> {
     let candles = if let (Some(s), Some(e)) = (start, end) {
-        api.history_candlesticks_by_date(symbol, period, adjust, Some(s), Some(e))
+        api.history_candlesticks_by_date(symbol.clone(), period, adjust, Some(s), Some(e))
             .await?
     } else {
-        api.history_candlesticks_by_offset(symbol, period, adjust, 100)
+        api.history_candlesticks_by_offset(symbol.clone(), period, adjust, 100)
             .await?
     };
     let headers = &["Time", "Open", "High", "Low", "Close", "Volume", "Turnover"];
@@ -1534,6 +1615,9 @@ pub async fn run_kline_history(
         })
         .collect();
     print_table(headers, rows, format);
+    if candles.is_empty() {
+        hint_symbol_do_you_mean(&symbol);
+    }
     Ok(())
 }
 
@@ -1545,6 +1629,7 @@ pub async fn run_static(
     if symbols.is_empty() {
         bail!("At least one symbol is required");
     }
+    let input = symbols.clone();
     let infos = api.static_info(symbols).await?;
     let headers = &["Symbol", "Name", "Exchange", "Currency", "Lot Size"];
     let rows = infos
@@ -1560,6 +1645,8 @@ pub async fn run_static(
         })
         .collect();
     print_table(headers, rows, format);
+    let found: Vec<&str> = infos.iter().map(|i| i.symbol.as_str()).collect();
+    hint_symbols_do_you_mean(&input, &found);
     Ok(())
 }
 
@@ -2048,10 +2135,14 @@ fn print_json(data: &Value) {
     println!("{}", serde_json::to_string_pretty(data).unwrap_or_default());
 }
 
-/// Convert index symbol to IX/ prefix `counter_id` (e.g. `HSI.HK` → `IX/HK/HSI`)
+/// Convert index symbol to IX/ prefix `counter_id` (e.g. `HSI.HK` → `IX/HK/HSI`,
+/// `.DJI.US` → `IX/US/DJI`).
 fn index_symbol_to_counter_id(symbol: &str) -> String {
     if let Some((code, market)) = symbol.rsplit_once('.') {
-        format!("IX/{}/{code}", market.to_uppercase())
+        let market = market.to_uppercase();
+        // Strip leading dot from code (e.g. `.DJI.US` → code part is `.DJI`, strip to `DJI`)
+        let code = code.trim_start_matches('.');
+        format!("IX/{market}/{code}")
     } else {
         symbol.to_string()
     }
