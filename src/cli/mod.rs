@@ -901,14 +901,14 @@ pub enum Commands {
         subcmd: Option<InvestorsSubCmd>,
     },
 
-    // ── DCA ──────────────────────────────────────────────────────
-    /// Dollar-Cost Averaging (DCA): automatically invest a fixed amount at regular intervals
+    // ── Recurring Investment ──────────────────────────────────────────────────────
+    /// Recurring Investment: automatically invest a fixed amount at regular intervals
     ///
-    /// Create and manage DCA plans that execute recurring stock purchases on a daily, weekly,
+    /// Create and manage recurring investment plans that execute stock purchases on a daily, weekly,
     /// fortnightly, or monthly schedule. Track trade history, monitor cumulative profit,
     /// and check upcoming trade dates.
     ///
-    /// Without a subcommand, lists all DCA plans.
+    /// Without a subcommand, lists all recurring investment plans.
     /// Example: longbridge dca
     /// Example: longbridge dca --status Active
     /// Example: longbridge dca --symbol TSLA.US
@@ -985,7 +985,7 @@ pub enum InvestorsSubCmd {
 
 #[derive(Subcommand)]
 pub enum DcaCmd {
-    /// Create a new DCA plan
+    /// Create a new recurring investment plan
     ///
     /// Frequency: daily | weekly | fortnightly (every two weeks) | monthly
     /// Day of week (weekly/fortnightly): mon tue wed thu fri
@@ -1012,7 +1012,7 @@ pub enum DcaCmd {
         allow_margin: bool,
     },
 
-    /// Update an existing DCA plan
+    /// Update an existing recurring investment plan
     ///
     /// Only the fields provided will be updated.
     /// Example: longbridge dca update `<PLAN_ID>` --amount 800
@@ -1037,7 +1037,7 @@ pub enum DcaCmd {
         allow_margin: Option<bool>,
     },
 
-    /// Pause a DCA plan
+    /// Pause a recurring investment plan
     ///
     /// Example: longbridge dca pause `<PLAN_ID>`
     Pause {
@@ -1045,7 +1045,7 @@ pub enum DcaCmd {
         plan_id: String,
     },
 
-    /// Resume a paused DCA plan
+    /// Resume a paused recurring investment plan
     ///
     /// Example: longbridge dca resume `<PLAN_ID>`
     Resume {
@@ -1053,7 +1053,7 @@ pub enum DcaCmd {
         plan_id: String,
     },
 
-    /// Permanently stop a DCA plan
+    /// Permanently stop a recurring investment plan
     ///
     /// Example: longbridge dca stop `<PLAN_ID>`
     Stop {
@@ -1061,7 +1061,7 @@ pub enum DcaCmd {
         plan_id: String,
     },
 
-    /// Show trade history for a DCA plan
+    /// Show trade history for a recurring investment plan
     ///
     /// Example: longbridge dca history `<PLAN_ID>`
     /// Example: longbridge dca history `<PLAN_ID>` --page 2 --limit 50
@@ -1076,7 +1076,7 @@ pub enum DcaCmd {
         limit: u32,
     },
 
-    /// Show DCA statistics summary
+    /// Show recurring investment statistics summary
     ///
     /// Returns total invested amount, total profit, plan counts, and nearest upcoming plans.
     /// Example: longbridge dca stats
@@ -1106,7 +1106,7 @@ pub enum DcaCmd {
         day_of_month: Option<String>,
     },
 
-    /// Check whether symbols support DCA
+    /// Check whether symbols support recurring investment
     ///
     /// Example: longbridge dca check AAPL.US 700.HK TSLA.US
     Check {
