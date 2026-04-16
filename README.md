@@ -194,6 +194,20 @@ longbridge watchlist pin TSLA.US AAPL.US           # Pin securities to the top o
 longbridge watchlist pin --remove 700.HK           # Unpin securities
 ```
 
+### Sharelist
+
+```bash
+longbridge sharelist                                              # List own and subscribed sharelists
+longbridge sharelist [--count 50]                                 # List with custom page size
+longbridge sharelist detail <id>                                  # Show full details and constituent stocks
+longbridge sharelist create --name "My Picks" [--description "…"] # Create a new sharelist
+longbridge sharelist delete <id>                                  # Delete a sharelist
+longbridge sharelist add <id> TSLA.US AAPL.US 700.HK             # Add stocks to a sharelist
+longbridge sharelist remove <id> TSLA.US                          # Remove stocks from a sharelist
+longbridge sharelist sort <id> TSLA.US AAPL.US 700.HK            # Reorder stocks in a sharelist
+longbridge sharelist popular [--count 10]                         # Get popular (trending) sharelists
+```
+
 ### Trading
 
 ```bash
@@ -248,6 +262,21 @@ longbridge investors 0001067983 --top 20                      # Show top 20 posi
 longbridge investors 0001067983 --format json                 # Export holdings as JSON
 longbridge investors changes 0001067983                       # Quarter-over-quarter changes (NEW/ADDED/REDUCED/EXITED)
 longbridge investors changes 0001067983 --from 2024-12-31     # Compare latest vs a specific period
+
+longbridge daily-coin                                         # List all DCA plans
+longbridge daily-coin list --status Active                    # Filter by status: Active | Suspended | Finished
+longbridge daily-coin list --symbol TSLA.US                   # Filter by symbol
+longbridge daily-coin create TSLA.US --amount 500 --frequency weekly --day-of-week mon  # Create weekly DCA plan
+longbridge daily-coin create 700.HK --amount 1000 --frequency monthly --day-of-month 15  # Monthly DCA plan
+longbridge daily-coin update <PLAN_ID> --amount 800           # Update plan amount
+longbridge daily-coin pause <PLAN_ID>                         # Suspend a DCA plan
+longbridge daily-coin resume <PLAN_ID>                        # Resume a suspended plan
+longbridge daily-coin stop <PLAN_ID>                          # Terminate a DCA plan
+longbridge daily-coin records <PLAN_ID>                       # Execution records for a plan
+longbridge daily-coin stats                                   # DCA statistics summary
+longbridge daily-coin calc-date TSLA.US --frequency weekly --day-of-week fri  # Calculate next trade date
+longbridge daily-coin check TSLA.US AAPL.US 700.HK           # Check which symbols support DCA
+longbridge daily-coin set-reminder 6                          # Set reminder hours before trade (1 | 6 | 12)
 ```
 
 <!-- COMMANDS_END -->

@@ -105,7 +105,7 @@ struct AccountInfo {
     name: Option<String>,
 }
 
-/// Fetch account_no and account_type from the most recent daily statement.
+/// Fetch `account_no` and `account_type` from the most recent daily statement.
 /// Returns None if no statement is available or the fetch fails.
 async fn fetch_account_info_from_statement() -> Option<(String, String, String)> {
     let ctx = crate::openapi::statement();
@@ -186,10 +186,7 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
 
     // ── Connect and fetch account info ────────────────────────────────────────
     let account = match crate::openapi::init_contexts().await {
-        Ok(_) => match fetch_account_info().await {
-            Ok(info) => Some(info),
-            Err(_) => None,
-        },
+        Ok(_) => fetch_account_info().await.ok(),
         Err(_) => None,
     };
 
@@ -234,7 +231,7 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
                 color = status_color,
             );
             if let Some(ts) = token.logged_in_at {
-                if let Ok(dt) = OffsetDateTime::from_unix_timestamp(ts as i64) {
+                if let Ok(dt) = OffsetDateTime::from_unix_timestamp(ts.cast_signed()) {
                     println!(
                         "{:<W$} {}-{:02}-{:02} {:02}:{:02}",
                         "Logged In",
@@ -285,7 +282,9 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
                 // ── Quote Level ─────────────────────────────────────────────────
                 println!();
                 println!("Quote Level");
-                if !acc.quote_packages.is_empty() {
+                if acc.quote_packages.is_empty() {
+                    println!("{:<W$} {}", "Level", acc.quote_level, W = W);
+                } else {
                     let mut builder = Builder::default();
                     builder.push_record(["Package", "Start", "End"]);
                     for pkg in &acc.quote_packages {
@@ -294,8 +293,6 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
                         builder.push_record([&pkg.name, &start, &end]);
                     }
                     println!("{}", builder.build().with(Style::markdown()));
-                } else {
-                    println!("{:<W$} {}", "Level", acc.quote_level, W = W);
                 }
             }
         }

@@ -5,12 +5,14 @@ pub mod api;
 pub mod asset;
 pub mod auth;
 pub mod check;
+pub mod daily_coin;
 pub mod fundamental;
 pub mod insider_trades;
 pub mod investors;
 pub mod news;
 pub mod output;
 pub mod quote;
+pub mod sharelist;
 pub mod statement;
 pub mod topic;
 pub mod trade;
@@ -898,6 +900,48 @@ pub enum Commands {
         #[command(subcommand)]
         subcmd: Option<InvestorsSubCmd>,
     },
+
+    // ── DCA (Daily Coins) ──────────────────────────────────────────────────────
+    /// Stock DCA (daily-coin) plans: list, create, update, pause/resume/stop, records, stats
+    ///
+    /// Without a subcommand, lists all active DCA plans.
+    /// Subcommands: list  create  update  pause  resume  stop  records  stats  calc-date  check  set-reminder
+    /// Example: longbridge daily-coin
+    /// Example: longbridge daily-coin list --status Active
+    /// Example: longbridge daily-coin create AAPL.US --amount 500 --frequency monthly --day-of-month 15
+    /// Example: longbridge daily-coin create 700.HK --amount 1000 --frequency weekly --day-of-week mon
+    /// Example: longbridge daily-coin pause `<PLAN_ID>`
+    /// Example: longbridge daily-coin stop `<PLAN_ID>`
+    /// Example: longbridge daily-coin records `<PLAN_ID>`
+    /// Example: longbridge daily-coin stats
+    /// Example: longbridge daily-coin check AAPL.US 700.HK
+    #[command(name = "daily-coin")]
+    DailyCoin {
+        #[command(subcommand)]
+        cmd: Option<DailyCoinCmd>,
+    },
+
+    // ── Sharelist (股单) ───────────────────────────────────────────────────────
+    /// Sharelist (股单): community stock lists — list, detail, create, delete, and manage stocks
+    ///
+    /// Without a subcommand, lists the current user's own and subscribed sharelists.
+    /// Without a subcommand, lists own and subscribed sharelists.
+    /// Example: longbridge sharelist
+    /// Example: longbridge sharelist --count 50
+    /// Example: longbridge sharelist detail `<ID>`
+    /// Example: longbridge sharelist create --name "My Picks"
+    /// Example: longbridge sharelist delete `<ID>`
+    /// Example: longbridge sharelist add `<ID>` TSLA.US AAPL.US
+    /// Example: longbridge sharelist remove `<ID>` TSLA.US
+    /// Example: longbridge sharelist sort `<ID>` TSLA.US AAPL.US 700.HK
+    /// Example: longbridge sharelist popular --count 10
+    Sharelist {
+        #[command(subcommand)]
+        cmd: Option<SharelistCmd>,
+        /// Number of sharelists to return (default: 20)
+        #[arg(long, default_value = "20")]
+        count: u32,
+    },
 }
 
 #[derive(Subcommand)]
@@ -920,6 +964,168 @@ pub enum InvestorsSubCmd {
         /// Defaults to the filing immediately before the latest one.
         #[arg(long, value_name = "PERIOD")]
         from: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum DailyCoinCmd {
+    /// List DCA plans (default when no subcommand is given)
+    ///
+    /// Example: longbridge daily-coin list
+    /// Example: longbridge daily-coin list --status Active
+    /// Example: longbridge daily-coin list --symbol AAPL.US
+    List {
+        /// Filter by status: Active | Suspended | Finished
+        #[arg(long)]
+        status: Option<String>,
+        /// Filter by symbol (e.g. AAPL.US)
+        #[arg(long)]
+        symbol: Option<String>,
+        /// Page number (default: 1)
+        #[arg(long, default_value = "1")]
+        page: u32,
+        /// Records per page (default: 20)
+        #[arg(long, default_value = "20")]
+        limit: u32,
+    },
+
+    /// Create a new DCA plan
+    ///
+    /// Frequency: daily | weekly | fortnightly | monthly
+    /// Day of week (weekly/fortnightly): mon tue wed thu fri
+    /// Day of month (monthly): 1–28
+    /// Example: longbridge daily-coin create AAPL.US --amount 500 --frequency monthly --day-of-month 15
+    /// Example: longbridge daily-coin create 700.HK --amount 1000 --frequency weekly --day-of-week mon
+    Create {
+        /// Symbol in <CODE>.<MARKET> format (e.g. AAPL.US 700.HK)
+        symbol: String,
+        /// Amount per investment period (as a decimal string, e.g. 500)
+        #[arg(long)]
+        amount: String,
+        /// Investment frequency: daily | weekly | fortnightly | monthly
+        #[arg(long)]
+        frequency: DailyCoinFrequency,
+        /// Day of week for weekly/fortnightly: mon tue wed thu fri
+        #[arg(long)]
+        day_of_week: Option<DailyCoinDayOfWeek>,
+        /// Day of month for monthly plans (1–28)
+        #[arg(long)]
+        day_of_month: Option<String>,
+        /// Allow margin financing (default: false)
+        #[arg(long)]
+        allow_margin: bool,
+    },
+
+    /// Update an existing DCA plan
+    ///
+    /// Only the fields provided will be updated.
+    /// Example: longbridge daily-coin update `<PLAN_ID>` --amount 800
+    /// Example: longbridge daily-coin update `<PLAN_ID>` --frequency weekly --day-of-week fri
+    Update {
+        /// Plan ID (from `longbridge daily-coin list`)
+        plan_id: String,
+        /// New amount per investment period
+        #[arg(long)]
+        amount: Option<String>,
+        /// New investment frequency: daily | weekly | fortnightly | monthly
+        #[arg(long)]
+        frequency: Option<DailyCoinFrequency>,
+        /// Day of week for weekly/fortnightly: mon tue wed thu fri
+        #[arg(long)]
+        day_of_week: Option<DailyCoinDayOfWeek>,
+        /// Day of month for monthly plans (1–28)
+        #[arg(long)]
+        day_of_month: Option<String>,
+        /// Allow margin financing
+        #[arg(long)]
+        allow_margin: Option<bool>,
+    },
+
+    /// Suspend (pause) a DCA plan
+    ///
+    /// Example: longbridge daily-coin pause `<PLAN_ID>`
+    Pause {
+        /// Plan ID to suspend
+        plan_id: String,
+    },
+
+    /// Resume a suspended DCA plan
+    ///
+    /// Example: longbridge daily-coin resume `<PLAN_ID>`
+    Resume {
+        /// Plan ID to resume
+        plan_id: String,
+    },
+
+    /// Terminate (permanently stop) a DCA plan
+    ///
+    /// Example: longbridge daily-coin stop `<PLAN_ID>`
+    Stop {
+        /// Plan ID to terminate
+        plan_id: String,
+    },
+
+    /// Show execution records for a DCA plan
+    ///
+    /// Example: longbridge daily-coin records `<PLAN_ID>`
+    /// Example: longbridge daily-coin records `<PLAN_ID>` --page 2 --limit 50
+    Records {
+        /// Plan ID (from `longbridge daily-coin list`)
+        plan_id: String,
+        /// Page number (default: 1)
+        #[arg(long, default_value = "1")]
+        page: u32,
+        /// Records per page (default: 20)
+        #[arg(long, default_value = "20")]
+        limit: u32,
+    },
+
+    /// Show DCA statistics summary
+    ///
+    /// Returns total investment amount, total profit, plan counts, and nearest upcoming plans.
+    /// Example: longbridge daily-coin stats
+    /// Example: longbridge daily-coin stats --symbol AAPL.US
+    Stats {
+        /// Filter statistics by symbol
+        #[arg(long)]
+        symbol: Option<String>,
+    },
+
+    /// Calculate the next trade date for a DCA configuration
+    ///
+    /// Example: longbridge daily-coin calc-date AAPL.US --frequency monthly --day-of-month 15
+    /// Example: longbridge daily-coin calc-date 700.HK --frequency weekly --day-of-week mon
+    #[command(name = "calc-date")]
+    CalcDate {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+        /// Investment frequency: daily | weekly | fortnightly | monthly
+        #[arg(long)]
+        frequency: DailyCoinFrequency,
+        /// Day of week for weekly/fortnightly: mon tue wed thu fri
+        #[arg(long)]
+        day_of_week: Option<DailyCoinDayOfWeek>,
+        /// Day of month for monthly plans (1–28)
+        #[arg(long)]
+        day_of_month: Option<String>,
+    },
+
+    /// Check whether symbols support DCA investing
+    ///
+    /// Example: longbridge daily-coin check AAPL.US 700.HK TSLA.US
+    Check {
+        /// One or more symbols in <CODE>.<MARKET> format
+        symbols: Vec<String>,
+    },
+
+    /// Set the pre-trade reminder hours
+    ///
+    /// Valid values: 1 | 6 | 12
+    /// Example: longbridge daily-coin set-reminder 6
+    #[command(name = "set-reminder")]
+    SetReminder {
+        /// Hours before trade to send reminder: 1 | 6 | 12
+        hours: DailyCoinReminderHours,
     },
 }
 
@@ -1215,6 +1421,147 @@ pub enum StatementSection {
 }
 
 #[derive(ValueEnum, Clone, Debug)]
+pub enum DailyCoinFrequency {
+    #[value(name = "daily")]
+    Daily,
+    #[value(name = "weekly")]
+    Weekly,
+    #[value(name = "fortnightly")]
+    Fortnightly,
+    #[value(name = "monthly")]
+    Monthly,
+}
+
+impl DailyCoinFrequency {
+    pub fn as_api_str(&self) -> &'static str {
+        match self {
+            Self::Daily => "Daily",
+            Self::Weekly => "Weekly",
+            Self::Fortnightly => "Fortnightly",
+            Self::Monthly => "Monthly",
+        }
+    }
+}
+
+#[derive(ValueEnum, Clone, Debug)]
+pub enum DailyCoinDayOfWeek {
+    #[value(name = "mon")]
+    Mon,
+    #[value(name = "tue")]
+    Tue,
+    #[value(name = "wed")]
+    Wed,
+    #[value(name = "thu")]
+    Thu,
+    #[value(name = "fri")]
+    Fri,
+}
+
+impl DailyCoinDayOfWeek {
+    pub fn as_api_str(&self) -> &'static str {
+        match self {
+            Self::Mon => "Mon",
+            Self::Tue => "Tue",
+            Self::Wed => "Wed",
+            Self::Thu => "Thu",
+            Self::Fri => "Fri",
+        }
+    }
+}
+
+#[derive(ValueEnum, Clone, Debug)]
+pub enum DailyCoinReminderHours {
+    #[value(name = "1")]
+    One,
+    #[value(name = "6")]
+    Six,
+    #[value(name = "12")]
+    Twelve,
+}
+
+impl DailyCoinReminderHours {
+    pub fn as_api_str(&self) -> &'static str {
+        match self {
+            Self::One => "1",
+            Self::Six => "6",
+            Self::Twelve => "12",
+        }
+    }
+}
+
+#[derive(Subcommand)]
+pub enum SharelistCmd {
+    /// Show full details for a sharelist including its constituent stocks
+    ///
+    /// Example: longbridge sharelist detail `<ID>`
+    Detail {
+        /// Sharelist ID
+        id: String,
+    },
+
+    /// Create a new sharelist
+    ///
+    /// Example: longbridge sharelist create --name "My Tech Picks"
+    Create {
+        /// Sharelist name
+        #[arg(long)]
+        name: String,
+        /// Sharelist description
+        #[arg(long, default_value = "")]
+        description: String,
+    },
+
+    /// Delete a sharelist
+    ///
+    /// Example: longbridge sharelist delete `<ID>`
+    Delete {
+        /// Sharelist ID to delete
+        id: String,
+    },
+
+    /// Add stocks to a sharelist
+    ///
+    /// Example: longbridge sharelist add `<ID>` TSLA.US AAPL.US 700.HK
+    Add {
+        /// Sharelist ID
+        id: String,
+        /// Symbols to add (e.g. TSLA.US AAPL.US 700.HK)
+        symbols: Vec<String>,
+    },
+
+    /// Remove stocks from a sharelist
+    ///
+    /// Example: longbridge sharelist remove `<ID>` TSLA.US AAPL.US
+    Remove {
+        /// Sharelist ID
+        id: String,
+        /// Symbols to remove (e.g. TSLA.US AAPL.US)
+        symbols: Vec<String>,
+    },
+
+    /// Reorder the stocks in a sharelist
+    ///
+    /// Pass all symbol in the desired order; the full list replaces the existing order.
+    /// Example: longbridge sharelist sort `<ID>` TSLA.US AAPL.US 700.HK
+    Sort {
+        /// Sharelist ID
+        id: String,
+        /// Symbols in the desired order (e.g. TSLA.US AAPL.US 700.HK)
+        symbols: Vec<String>,
+    },
+
+    /// Get popular (trending) sharelists
+    ///
+    /// Example: longbridge sharelist popular
+    /// Example: longbridge sharelist popular --count 10
+    Popular {
+        /// Number of results to return (default: 20)
+        #[arg(long, default_value = "20")]
+        count: u32,
+    },
+}
+
+#[derive(ValueEnum, Clone, Debug)]
 pub enum ExportFormat {
     #[value(name = "csv")]
     Csv,
@@ -1350,7 +1697,7 @@ pub enum OrderCmd {
         ///   (case-insensitive, default: LO)
         #[arg(long, default_value = "LO")]
         order_type: String,
-        /// Time in force: day | gtc (GoodTilCanceled) | gtd (GoodTilDate)
+        /// Time in force: day | gtc (`GoodTilCanceled`) | gtd (`GoodTilDate`)
         /// (case-insensitive)
         #[arg(long, default_value = "day")]
         tif: String,
@@ -1403,7 +1750,7 @@ pub enum OrderCmd {
         ///   (case-insensitive, default: LO)
         #[arg(long, default_value = "LO")]
         order_type: String,
-        /// Time in force: day | gtc (GoodTilCanceled) | gtd (GoodTilDate)
+        /// Time in force: day | gtc (`GoodTilCanceled`) | gtd (`GoodTilDate`)
         /// (case-insensitive)
         #[arg(long, default_value = "day")]
         tif: String,
@@ -2215,6 +2562,12 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 .await
             }
         },
+
+        Commands::DailyCoin { cmd } => daily_coin::cmd_daily_coin(cmd, format).await,
+
+        Commands::Sharelist { cmd, count } => {
+            sharelist::cmd_sharelist(cmd, count, format).await
+        }
 
         Commands::Auth { .. }
         | Commands::Tui
