@@ -159,7 +159,11 @@ async fn cmd_delete(id: String) -> Result<()> {
 }
 
 async fn cmd_add(id: String, symbols: Vec<String>) -> Result<()> {
-    let counter_ids: Vec<String> = symbols.iter().map(|s| symbol_to_counter_id(s)).collect();
+    let counter_ids = symbols
+        .iter()
+        .map(|s| symbol_to_counter_id(s))
+        .collect::<Vec<_>>()
+        .join(",");
     let path = format!("/v1/sharelists/{id}/items");
     let body = serde_json::json!({ "counter_ids": counter_ids });
     http_post(&path, body, false).await?;
@@ -168,7 +172,11 @@ async fn cmd_add(id: String, symbols: Vec<String>) -> Result<()> {
 }
 
 async fn cmd_remove(id: String, symbols: Vec<String>) -> Result<()> {
-    let counter_ids: Vec<String> = symbols.iter().map(|s| symbol_to_counter_id(s)).collect();
+    let counter_ids = symbols
+        .iter()
+        .map(|s| symbol_to_counter_id(s))
+        .collect::<Vec<_>>()
+        .join(",");
     let path = format!("/v1/sharelists/{id}/items");
     let body = serde_json::json!({ "counter_ids": counter_ids });
     http_delete(&path, body, false).await?;
@@ -177,7 +185,11 @@ async fn cmd_remove(id: String, symbols: Vec<String>) -> Result<()> {
 }
 
 async fn cmd_sort(id: String, symbols: Vec<String>) -> Result<()> {
-    let counter_ids: Vec<String> = symbols.iter().map(|s| symbol_to_counter_id(s)).collect();
+    let counter_ids = symbols
+        .iter()
+        .map(|s| symbol_to_counter_id(s))
+        .collect::<Vec<_>>()
+        .join(",");
     let path = format!("/v1/sharelists/{id}/items/sort");
     let body = serde_json::json!({ "counter_ids": counter_ids });
     http_post(&path, body, false).await?;
