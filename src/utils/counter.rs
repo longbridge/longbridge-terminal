@@ -16,7 +16,7 @@ fn us_etf_set() -> &'static HashSet<&'static str> {
 /// Convert a `counter_id` (e.g. `ST/US/TSLA`, `ETF/US/SPY`, `IX/US/DJI`, `ST/HK/700`) back to
 /// a display symbol (e.g. `TSLA.US`, `SPY.US`, `.DJI.US`, `700.HK`).
 ///
-/// US index counter_ids (`IX/US/...`) map to leading-dot symbols (e.g. `.DJI.US`).
+/// US index `counter_ids` (`IX/US/...`) map to leading-dot symbols (e.g. `.DJI.US`).
 pub fn counter_id_to_symbol(counter_id: &str) -> String {
     let parts: Vec<&str> = counter_id.splitn(3, '/').collect();
     if parts.len() == 3 {

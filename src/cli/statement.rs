@@ -44,19 +44,18 @@ pub async fn cmd_statement(cmd: StatementCmd, format: &OutputFormat) -> Result<(
             limit,
         } => {
             let is_monthly = matches!(statement_type.to_lowercase().as_str(), "monthly" | "m");
-            let start_date = match start_date {
-                Some(s) => parse_date_to_yyyymmdd(&s)?,
-                None => {
-                    let now = OffsetDateTime::now_utc();
-                    if is_monthly {
-                        let total_months = now.year() * 12 + now.month() as i32 - 1 - 12;
-                        let year = total_months / 12;
-                        let month = total_months % 12 + 1;
-                        year * 10000 + month * 100 + 1
-                    } else {
-                        let d = now - time::Duration::days(30);
-                        d.year() * 10000 + i32::from(d.month() as u8) * 100 + i32::from(d.day())
-                    }
+            let start_date = if let Some(s) = start_date {
+                parse_date_to_yyyymmdd(&s)?
+            } else {
+                let now = OffsetDateTime::now_utc();
+                if is_monthly {
+                    let total_months = now.year() * 12 + now.month() as i32 - 1 - 12;
+                    let year = total_months / 12;
+                    let month = total_months % 12 + 1;
+                    year * 10000 + month * 100 + 1
+                } else {
+                    let d = now - time::Duration::days(30);
+                    d.year() * 10000 + i32::from(d.month() as u8) * 100 + i32::from(d.day())
                 }
             };
             let limit = limit.unwrap_or(if is_monthly { 12 } else { 30 });

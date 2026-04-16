@@ -58,20 +58,22 @@ pub async fn init_contexts() -> Result<(
         )
     } else {
         tracing::info!("No API key env vars found, using OAuth authentication");
-        // Build OAuth client: loads token from ~/.longbridge/openapi/tokens/<client_id>
-        // or starts browser authorization. Token refresh is automatic inside the SDK.
+        // If no token file exists, refuse to start a browser/callback-server flow.
+        // CLI commands require a stored token; users must run `longbridge auth login` first.
+        let token_path = crate::auth::token_file_path()?;
+        if !token_path.exists() {
+            return Err(anyhow::anyhow!(
+                "Not authenticated. Please run 'longbridge auth login' first."
+            ));
+        }
+        // Token file exists: load it via OAuthBuilder (SDK handles refresh automatically).
         let oauth_result = longbridge::oauth::OAuthBuilder::new(crate::auth::client_id())
             .callback_port(crate::auth::CALLBACK_PORT)
-            .build(|url| {
-                println!("Open the following URL in your browser to authorize:");
-                println!();
-                println!("  {url}");
-                println!();
-                if crate::auth::open_browser(url) {
-                    println!("Browser opened. Waiting for authorization...");
-                } else {
-                    println!("Waiting for authorization...");
-                }
+            .build(|_url| {
+                // This callback is only invoked if the token file is missing or fully
+                // expired and cannot be refreshed — in practice, we guard above, so
+                // reaching here would be a race condition.  Just log; do not open browser.
+                tracing::warn!("OAuth browser flow triggered unexpectedly");
             })
             .await;
 
