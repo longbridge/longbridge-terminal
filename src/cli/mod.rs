@@ -925,18 +925,22 @@ pub enum Commands {
     /// Sharelist (股单): community stock lists — list, detail, create, delete, and manage stocks
     ///
     /// Without a subcommand, lists the current user's own and subscribed sharelists.
-    /// Subcommands: list  detail  create  delete  add  remove  sort  popular
+    /// Without a subcommand, lists own and subscribed sharelists.
     /// Example: longbridge sharelist
+    /// Example: longbridge sharelist --count 50
     /// Example: longbridge sharelist detail `<ID>`
     /// Example: longbridge sharelist create --name "My Picks" --stock-group-id `<GROUP_ID>`
     /// Example: longbridge sharelist delete `<ID>`
     /// Example: longbridge sharelist add `<ID>` TSLA.US AAPL.US
     /// Example: longbridge sharelist remove `<ID>` TSLA.US
     /// Example: longbridge sharelist sort `<ID>` TSLA.US AAPL.US 700.HK
-    /// Example: longbridge sharelist popular --size 10
+    /// Example: longbridge sharelist popular --count 10
     Sharelist {
         #[command(subcommand)]
         cmd: Option<SharelistCmd>,
+        /// Number of sharelists to return (default: 20)
+        #[arg(long, default_value = "20")]
+        count: u32,
     },
 }
 
@@ -1487,18 +1491,6 @@ impl DailyCoinReminderHours {
 
 #[derive(Subcommand)]
 pub enum SharelistCmd {
-    /// List the current user's own and subscribed sharelists
-    ///
-    /// Example: longbridge sharelist
-    List {
-        /// Number of results per page (default: 20)
-        #[arg(long, default_value = "20")]
-        count: u32,
-        /// Pagination cursor from a previous response
-        #[arg(long)]
-        tail_mark: Option<String>,
-    },
-
     /// Show full details for a sharelist including its constituent stocks
     ///
     /// Example: longbridge sharelist detail `<ID>`
@@ -1510,7 +1502,7 @@ pub enum SharelistCmd {
     /// Create a new sharelist
     ///
     /// Requires a watchlist group ID to link the sharelist to an existing watchlist group.
-    /// Example: longbridge sharelist create --name "My Tech Picks" --description "Top tech stocks" --cover "" --stock-group-id `<GROUP_ID>`
+    /// Example: longbridge sharelist create --name "My Tech Picks" --stock-group-id `<GROUP_ID>`
     Create {
         /// Sharelist name
         #[arg(long)]
@@ -1518,9 +1510,6 @@ pub enum SharelistCmd {
         /// Sharelist description
         #[arg(long, default_value = "")]
         description: String,
-        /// Cover image URL (can be empty)
-        #[arg(long, default_value = "")]
-        cover: String,
         /// Watchlist group ID to link this sharelist to
         #[arg(long)]
         stock_group_id: String,
@@ -1568,11 +1557,11 @@ pub enum SharelistCmd {
     /// Get popular (trending) sharelists
     ///
     /// Example: longbridge sharelist popular
-    /// Example: longbridge sharelist popular --size 10
+    /// Example: longbridge sharelist popular --count 10
     Popular {
         /// Number of results to return (default: 20)
         #[arg(long, default_value = "20")]
-        size: u32,
+        count: u32,
     },
 }
 
@@ -2580,7 +2569,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
 
         Commands::DailyCoin { cmd } => daily_coin::cmd_daily_coin(cmd, format).await,
 
-        Commands::Sharelist { cmd } => sharelist::cmd_sharelist(cmd, format).await,
+        Commands::Sharelist { cmd, count } => {
+            sharelist::cmd_sharelist(cmd, count, format).await
+        }
 
         Commands::Auth { .. }
         | Commands::Tui

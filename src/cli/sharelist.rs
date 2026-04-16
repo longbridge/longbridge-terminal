@@ -7,24 +7,24 @@ use super::{
 };
 use crate::utils::counter::{counter_id_to_symbol, symbol_to_counter_id};
 
-pub async fn cmd_sharelist(cmd: Option<SharelistCmd>, format: &OutputFormat) -> Result<()> {
+pub async fn cmd_sharelist(
+    cmd: Option<SharelistCmd>,
+    count: u32,
+    format: &OutputFormat,
+) -> Result<()> {
     match cmd {
-        None => cmd_list(20, None, format).await,
-        Some(SharelistCmd::List { count, tail_mark }) => {
-            cmd_list(count, tail_mark.as_deref(), format).await
-        }
+        None => cmd_list(count, None, format).await,
         Some(SharelistCmd::Detail { id }) => cmd_detail(id, format).await,
         Some(SharelistCmd::Create {
             name,
             description,
-            cover,
             stock_group_id,
-        }) => cmd_create(name, description, cover, stock_group_id).await,
+        }) => cmd_create(name, description, stock_group_id).await,
         Some(SharelistCmd::Delete { id }) => cmd_delete(id).await,
         Some(SharelistCmd::Add { id, symbols }) => cmd_add(id, symbols).await,
         Some(SharelistCmd::Remove { id, symbols }) => cmd_remove(id, symbols).await,
         Some(SharelistCmd::Sort { id, symbols }) => cmd_sort(id, symbols).await,
-        Some(SharelistCmd::Popular { size }) => cmd_popular(size, format).await,
+        Some(SharelistCmd::Popular { count }) => cmd_popular(count, format).await,
     }
 }
 
@@ -99,7 +99,7 @@ async fn cmd_detail(id: String, format: &OutputFormat) -> Result<()> {
                 4 => "Industry",
                 _ => "-",
             };
-            println!("ID:          {}", sl["id"].as_u64().unwrap_or(0));
+            println!("ID:          {}", sl["id"].as_str().unwrap_or("-"));
             println!("Name:        {}", sl["name"].as_str().unwrap_or("-"));
             println!("Type:        {sl_type}");
             println!("Description: {}", sl["description"].as_str().unwrap_or("-"));
@@ -142,16 +142,11 @@ async fn cmd_detail(id: String, format: &OutputFormat) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_create(
-    name: String,
-    description: String,
-    cover: String,
-    stock_group_id: String,
-) -> Result<()> {
+async fn cmd_create(name: String, description: String, stock_group_id: String) -> Result<()> {
     let body = serde_json::json!({
         "name": name,
         "description": description,
-        "cover": cover,
+        "cover": "https://pub.pbkrs.com/files/202107/kaJSk6BsvPt6NJ3Q/sharelist_v1.png",
         "stock_group_id": stock_group_id,
     });
     let resp = http_post("/v1/sharelists", body, false).await?;
@@ -168,11 +163,7 @@ async fn cmd_delete(id: String) -> Result<()> {
 }
 
 async fn cmd_add(id: String, symbols: Vec<String>) -> Result<()> {
-    let counter_ids = symbols
-        .iter()
-        .map(|s| symbol_to_counter_id(s))
-        .collect::<Vec<_>>()
-        .join(",");
+    let counter_ids: Vec<String> = symbols.iter().map(|s| symbol_to_counter_id(s)).collect();
     let path = format!("/v1/sharelists/{id}/items");
     let body = serde_json::json!({ "counter_ids": counter_ids });
     http_post(&path, body, false).await?;
@@ -181,11 +172,7 @@ async fn cmd_add(id: String, symbols: Vec<String>) -> Result<()> {
 }
 
 async fn cmd_remove(id: String, symbols: Vec<String>) -> Result<()> {
-    let counter_ids = symbols
-        .iter()
-        .map(|s| symbol_to_counter_id(s))
-        .collect::<Vec<_>>()
-        .join(",");
+    let counter_ids: Vec<String> = symbols.iter().map(|s| symbol_to_counter_id(s)).collect();
     let path = format!("/v1/sharelists/{id}/items");
     let body = serde_json::json!({ "counter_ids": counter_ids });
     http_delete(&path, body, false).await?;
@@ -194,11 +181,7 @@ async fn cmd_remove(id: String, symbols: Vec<String>) -> Result<()> {
 }
 
 async fn cmd_sort(id: String, symbols: Vec<String>) -> Result<()> {
-    let counter_ids = symbols
-        .iter()
-        .map(|s| symbol_to_counter_id(s))
-        .collect::<Vec<_>>()
-        .join(",");
+    let counter_ids: Vec<String> = symbols.iter().map(|s| symbol_to_counter_id(s)).collect();
     let path = format!("/v1/sharelists/{id}/items/sort");
     let body = serde_json::json!({ "counter_ids": counter_ids });
     http_post(&path, body, false).await?;
@@ -206,8 +189,8 @@ async fn cmd_sort(id: String, symbols: Vec<String>) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_popular(size: u32, format: &OutputFormat) -> Result<()> {
-    let size_str = size.to_string();
+async fn cmd_popular(count: u32, format: &OutputFormat) -> Result<()> {
+    let size_str = count.to_string();
     let resp = http_get("/v1/sharelists/popular", &[("size", &size_str)], false).await?;
 
     let sharelists = resp["sharelists"].as_array().cloned().unwrap_or_default();
