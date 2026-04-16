@@ -12,6 +12,7 @@ pub mod investors;
 pub mod news;
 pub mod output;
 pub mod quote;
+pub mod sharelist;
 pub mod statement;
 pub mod topic;
 pub mod trade;
@@ -919,6 +920,26 @@ pub enum Commands {
         #[command(subcommand)]
         cmd: Option<DailyCoinCmd>,
     },
+
+    // ── Sharelist (股单) ───────────────────────────────────────────────────────
+    /// Sharelist (股单): community stock lists — browse, members, logs, and management
+    ///
+    /// Without a subcommand, lists the current user's own and subscribed sharelists.
+    /// Subcommands: hot  official  stock  members  logs  mark-read  sort  remove-stocks  index
+    /// Example: longbridge sharelist
+    /// Example: longbridge sharelist hot --size 10
+    /// Example: longbridge sharelist official
+    /// Example: longbridge sharelist stock TSLA.US --count 5
+    /// Example: longbridge sharelist members `<ID>`
+    /// Example: longbridge sharelist logs `<ID>` --year 2024
+    /// Example: longbridge sharelist mark-read `<ID>` `<LOG_ID>`
+    /// Example: longbridge sharelist sort `<ID>` TSLA.US AAPL.US 700.HK
+    /// Example: longbridge sharelist remove-stocks `<ID>` TSLA.US
+    /// Example: longbridge sharelist index 8111112-US
+    Sharelist {
+        #[command(subcommand)]
+        cmd: Option<SharelistCmd>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1444,6 +1465,137 @@ impl DailyCoinDayOfWeek {
             Self::Fri => "Fri",
         }
     }
+}
+
+#[derive(Subcommand)]
+pub enum SharelistCmd {
+    /// List the current user's own and subscribed sharelists
+    ///
+    /// Returns public sharelists created by the user and sharelists they have subscribed to.
+    /// Example: longbridge sharelist
+    /// Example: longbridge sharelist list --subscription
+    /// Example: longbridge sharelist list --own
+    List {
+        /// Return subscribed sharelists
+        #[arg(long)]
+        subscription: bool,
+        /// Return own public sharelists
+        #[arg(long)]
+        own: bool,
+        /// Number of results per page (default: 20)
+        #[arg(long, default_value = "20")]
+        size: u32,
+        /// Pagination cursor from a previous response
+        #[arg(long)]
+        tail_mark: Option<String>,
+    },
+
+    /// Get hot (trending) sharelists
+    ///
+    /// Returns community sharelists ranked by popularity.
+    /// Example: longbridge sharelist hot
+    /// Example: longbridge sharelist hot --size 10
+    Hot {
+        /// Number of results to return (default: 20)
+        #[arg(long, default_value = "20")]
+        size: u32,
+    },
+
+    /// Get official (Longbridge-curated) sharelists
+    ///
+    /// Returns sharelists maintained by Longbridge.
+    /// Example: longbridge sharelist official
+    /// Example: longbridge sharelist official --size 10
+    Official {
+        /// Number of results per page (default: 20)
+        #[arg(long, default_value = "20")]
+        size: u32,
+        /// Pagination cursor from a previous response
+        #[arg(long)]
+        tail_mark: Option<String>,
+    },
+
+    /// Get sharelists that contain a specific stock
+    ///
+    /// Example: longbridge sharelist stock TSLA.US
+    /// Example: longbridge sharelist stock TSLA.US --count 10
+    Stock {
+        /// Symbol in `<CODE>.<MARKET>` format (e.g. TSLA.US 700.HK)
+        symbol: String,
+        /// Number of results to return (default: 10)
+        #[arg(long, default_value = "10")]
+        count: u32,
+    },
+
+    /// Get the follower list for a sharelist
+    ///
+    /// Example: longbridge sharelist members `<ID>`
+    /// Example: longbridge sharelist members `<ID>` --count 50
+    Members {
+        /// Sharelist ID
+        id: String,
+        /// Number of results per page (default: 20)
+        #[arg(long, default_value = "20")]
+        count: u32,
+        /// Pagination cursor from a previous response
+        #[arg(long)]
+        tail_mark: Option<String>,
+    },
+
+    /// Get the change log for a sharelist
+    ///
+    /// Shows stock additions and removals over a year. Defaults to the current year.
+    /// Example: longbridge sharelist logs `<ID>`
+    /// Example: longbridge sharelist logs `<ID>` --year 2024
+    Logs {
+        /// Sharelist ID
+        id: String,
+        /// Year to query (default: current year)
+        #[arg(long)]
+        year: Option<String>,
+    },
+
+    /// Mark a sharelist change-log entry as read
+    ///
+    /// Example: longbridge sharelist mark-read `<SHARELIST_ID>` `<LOG_ID>`
+    #[command(name = "mark-read")]
+    MarkRead {
+        /// Sharelist ID
+        id: String,
+        /// Log entry ID to mark as read
+        log_id: String,
+    },
+
+    /// Reorder the stocks in a group sharelist
+    ///
+    /// Pass all stock symbols in the desired order.
+    /// Example: longbridge sharelist sort `<ID>` TSLA.US AAPL.US 700.HK
+    Sort {
+        /// Sharelist ID
+        id: String,
+        /// Symbols in the desired order (e.g. TSLA.US AAPL.US 700.HK)
+        symbols: Vec<String>,
+    },
+
+    /// Remove stocks from a group sharelist
+    ///
+    /// Example: longbridge sharelist remove-stocks `<ID>` TSLA.US AAPL.US
+    #[command(name = "remove-stocks")]
+    RemoveStocks {
+        /// Sharelist ID
+        id: String,
+        /// Symbols to remove (e.g. TSLA.US AAPL.US)
+        symbols: Vec<String>,
+    },
+
+    /// Get index data for a sharelist (day change, YTD change)
+    ///
+    /// The symbol is the sharelist identifier in `<NUMBER>-<MARKET>` format (e.g. `8111112-US`).
+    /// Example: longbridge sharelist index 8111112-US
+    Index {
+        /// Sharelist symbol (e.g. 8111112-US)
+        symbol: String,
+    },
 }
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -2449,6 +2601,8 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         },
 
         Commands::DailyCoin { cmd } => daily_coin::cmd_daily_coin(cmd, format).await,
+
+        Commands::Sharelist { cmd } => sharelist::cmd_sharelist(cmd, format).await,
 
         Commands::Auth { .. }
         | Commands::Tui
