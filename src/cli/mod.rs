@@ -925,7 +925,7 @@ pub enum Commands {
     /// Sharelist (股单): community stock lists — list, detail, create, delete, and manage stocks
     ///
     /// Without a subcommand, lists the current user's own and subscribed sharelists.
-    /// Subcommands: list  detail  create  delete  add  remove  sort  hot
+    /// Subcommands: list  detail  create  delete  add  remove  sort  popular
     /// Example: longbridge sharelist
     /// Example: longbridge sharelist detail `<ID>`
     /// Example: longbridge sharelist create --name "My Picks" --stock-group-id `<GROUP_ID>`
@@ -933,7 +933,7 @@ pub enum Commands {
     /// Example: longbridge sharelist add `<ID>` TSLA.US AAPL.US
     /// Example: longbridge sharelist remove `<ID>` TSLA.US
     /// Example: longbridge sharelist sort `<ID>` TSLA.US AAPL.US 700.HK
-    /// Example: longbridge sharelist hot --size 10
+    /// Example: longbridge sharelist popular --size 10
     Sharelist {
         #[command(subcommand)]
         cmd: Option<SharelistCmd>,
@@ -1489,21 +1489,11 @@ impl DailyCoinReminderHours {
 pub enum SharelistCmd {
     /// List the current user's own and subscribed sharelists
     ///
-    /// Without flags, returns both own and subscribed sharelists.
-    /// Use --subscription to show only subscribed, --own to show only own public sharelists.
     /// Example: longbridge sharelist
-    /// Example: longbridge sharelist list --subscription
-    /// Example: longbridge sharelist list --own
     List {
-        /// Return subscribed sharelists
-        #[arg(long)]
-        subscription: bool,
-        /// Return own public sharelists
-        #[arg(long)]
-        own: bool,
         /// Number of results per page (default: 20)
         #[arg(long, default_value = "20")]
-        size: u32,
+        count: u32,
         /// Pagination cursor from a previous response
         #[arg(long)]
         tail_mark: Option<String>,
@@ -1575,11 +1565,11 @@ pub enum SharelistCmd {
         symbols: Vec<String>,
     },
 
-    /// Get hot (trending) sharelists
+    /// Get popular (trending) sharelists
     ///
-    /// Example: longbridge sharelist hot
-    /// Example: longbridge sharelist hot --size 10
-    Hot {
+    /// Example: longbridge sharelist popular
+    /// Example: longbridge sharelist popular --size 10
+    Popular {
         /// Number of results to return (default: 20)
         #[arg(long, default_value = "20")]
         size: u32,

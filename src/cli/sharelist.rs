@@ -9,13 +9,10 @@ use crate::utils::counter::{counter_id_to_symbol, symbol_to_counter_id};
 
 pub async fn cmd_sharelist(cmd: Option<SharelistCmd>, format: &OutputFormat) -> Result<()> {
     match cmd {
-        None => cmd_list(false, false, 20, None, format).await,
-        Some(SharelistCmd::List {
-            subscription,
-            own,
-            size,
-            tail_mark,
-        }) => cmd_list(subscription, own, size, tail_mark.as_deref(), format).await,
+        None => cmd_list(20, None, format).await,
+        Some(SharelistCmd::List { count, tail_mark }) => {
+            cmd_list(count, tail_mark.as_deref(), format).await
+        }
         Some(SharelistCmd::Detail { id }) => cmd_detail(id, format).await,
         Some(SharelistCmd::Create {
             name,
@@ -27,25 +24,13 @@ pub async fn cmd_sharelist(cmd: Option<SharelistCmd>, format: &OutputFormat) -> 
         Some(SharelistCmd::Add { id, symbols }) => cmd_add(id, symbols).await,
         Some(SharelistCmd::Remove { id, symbols }) => cmd_remove(id, symbols).await,
         Some(SharelistCmd::Sort { id, symbols }) => cmd_sort(id, symbols).await,
-        Some(SharelistCmd::Hot { size }) => cmd_hot(size, format).await,
+        Some(SharelistCmd::Popular { size }) => cmd_popular(size, format).await,
     }
 }
 
-async fn cmd_list(
-    subscription: bool,
-    own: bool,
-    size: u32,
-    tail_mark: Option<&str>,
-    format: &OutputFormat,
-) -> Result<()> {
-    let size_str = size.to_string();
+async fn cmd_list(count: u32, tail_mark: Option<&str>, format: &OutputFormat) -> Result<()> {
+    let size_str = count.to_string();
     let mut params: Vec<(&str, &str)> = vec![("size", &size_str)];
-    if subscription {
-        params.push(("subscription", "true"));
-    }
-    if own {
-        params.push(("self", "true"));
-    }
     if let Some(tm) = tail_mark {
         params.push(("tail_mark", tm));
     }
@@ -221,7 +206,7 @@ async fn cmd_sort(id: String, symbols: Vec<String>) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_hot(size: u32, format: &OutputFormat) -> Result<()> {
+async fn cmd_popular(size: u32, format: &OutputFormat) -> Result<()> {
     let size_str = size.to_string();
     let resp = http_get("/v1/sharelists/popular", &[("size", &size_str)], false).await?;
 
@@ -233,7 +218,7 @@ async fn cmd_hot(size: u32, format: &OutputFormat) -> Result<()> {
         }
         OutputFormat::Pretty => {
             if sharelists.is_empty() {
-                println!("No hot sharelists found.");
+                println!("No popular sharelists found.");
                 return Ok(());
             }
             print_sharelist_table(&sharelists, format);
