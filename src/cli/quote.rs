@@ -8,7 +8,7 @@ use time::Date;
 use serde_json::Value;
 
 use super::{
-    api::{http_get, QuoteApi},
+    api::{http_get, LbQuoteApi, QuoteApi},
     output::{
         fmt_date, fmt_datetime, fmt_dec, fmt_decimal, fmt_decimal_div100, fmt_decimal_div252,
         parse_date, print_table,
@@ -1157,74 +1157,8 @@ pub async fn cmd_option_chain(
     date: Option<String>,
     format: &OutputFormat,
 ) -> Result<()> {
-    let ctx = crate::openapi::quote();
-
-    let expiry = if let Some(date_str) = date {
-        parse_date(&date_str)?
-    } else {
-        let dates = ctx.option_chain_expiry_date_list(symbol.clone()).await?;
-        *dates
-            .first()
-            .ok_or_else(|| anyhow::anyhow!("No expiry dates available for {symbol}"))?
-    };
-
-    let strikes = ctx.option_chain_info_by_date(symbol, expiry).await?;
-
-    let all_symbols: Vec<String> = strikes
-        .iter()
-        .flat_map(|s| [s.call_symbol.clone(), s.put_symbol.clone()])
-        .filter(|sym| !sym.is_empty())
-        .collect();
-
-    let quotes = ctx.option_quote(all_symbols).await.unwrap_or_default();
-    let quote_map: std::collections::HashMap<&str, &longbridge::quote::OptionQuote> =
-        quotes.iter().map(|q| (q.symbol.as_str(), q)).collect();
-
-    if quote_map.is_empty() {
-        let headers = &["Strike", "Call Symbol", "Put Symbol", "Standard"];
-        let rows = strikes
-            .iter()
-            .map(|s| {
-                vec![
-                    fmt_dec(s.price),
-                    s.call_symbol.clone(),
-                    s.put_symbol.clone(),
-                    s.standard.to_string(),
-                ]
-            })
-            .collect();
-        print_table(headers, rows, format);
-    } else {
-        let headers = &[
-            "Strike",
-            "Call Last",
-            "Call IV",
-            "Call Vol",
-            "Put Last",
-            "Put IV",
-            "Put Vol",
-            "Standard",
-        ];
-        let rows = strikes
-            .iter()
-            .map(|s| {
-                let call = quote_map.get(s.call_symbol.as_str());
-                let put = quote_map.get(s.put_symbol.as_str());
-                vec![
-                    fmt_dec(s.price),
-                    call.map_or_else(|| "-".to_string(), |q| fmt_dec(q.last_done)),
-                    call.map_or_else(|| "-".to_string(), |q| fmt_dec(q.implied_volatility)),
-                    call.map_or_else(|| "-".to_string(), |q| q.volume.to_string()),
-                    put.map_or_else(|| "-".to_string(), |q| fmt_dec(q.last_done)),
-                    put.map_or_else(|| "-".to_string(), |q| fmt_dec(q.implied_volatility)),
-                    put.map_or_else(|| "-".to_string(), |q| q.volume.to_string()),
-                    s.standard.to_string(),
-                ]
-            })
-            .collect();
-        print_table(headers, rows, format);
-    }
-    Ok(())
+    let api = LbQuoteApi::new(crate::openapi::quote());
+    run_option_chain(&api, symbol, date, format).await
 }
 
 pub async fn cmd_warrant_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()> {
@@ -1895,6 +1829,20 @@ pub async fn run_option_quote(
         .collect();
     print_table(headers, rows, format);
     Ok(())
+}
+
+pub async fn run_option_chain(
+    api: &dyn QuoteApi,
+    symbol: String,
+    date: Option<String>,
+    format: &OutputFormat,
+) -> Result<()> {
+    match date {
+        Some(date_str) => {
+            run_option_chain_strikes(api, symbol, parse_date(&date_str)?, format).await
+        }
+        None => run_option_chain_dates(api, symbol, format).await,
+    }
 }
 
 pub async fn run_option_chain_dates(
@@ -2999,6 +2947,43 @@ mod tests {
         run_option_chain_dates(&mock, "AAPL.US".to_string(), &OutputFormat::Pretty)
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_run_option_chain_dispatches_dates_without_date_arg() {
+        let mut mock = MockQuoteApi::new();
+        mock.expect_option_chain_expiry_date_list()
+            .with(mockall::predicate::eq("AAPL.US".to_string()))
+            .times(1)
+            .returning(|_| Ok(vec![]));
+        mock.expect_option_chain_info_by_date().times(0);
+
+        run_option_chain(&mock, "AAPL.US".to_string(), None, &OutputFormat::Pretty)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_run_option_chain_dispatches_strikes_with_date_arg() {
+        let mut mock = MockQuoteApi::new();
+        let date = time::macros::date!(2024 - 01 - 19);
+        mock.expect_option_chain_expiry_date_list().times(0);
+        mock.expect_option_chain_info_by_date()
+            .with(
+                mockall::predicate::eq("AAPL.US".to_string()),
+                mockall::predicate::eq(date),
+            )
+            .times(1)
+            .returning(|_, _| Ok(vec![]));
+
+        run_option_chain(
+            &mock,
+            "AAPL.US".to_string(),
+            Some("2024-01-19".to_string()),
+            &OutputFormat::Pretty,
+        )
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
