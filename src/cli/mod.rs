@@ -1123,7 +1123,7 @@ pub enum DailyCoinCmd {
     #[command(name = "set-reminder")]
     SetReminder {
         /// Hours before trade to send reminder: 1 | 6 | 12
-        hours: String,
+        hours: DailyCoinReminderHours,
     },
 }
 
@@ -1463,6 +1463,26 @@ impl DailyCoinDayOfWeek {
             Self::Wed => "Wed",
             Self::Thu => "Thu",
             Self::Fri => "Fri",
+        }
+    }
+}
+
+#[derive(ValueEnum, Clone, Debug)]
+pub enum DailyCoinReminderHours {
+    #[value(name = "1")]
+    One,
+    #[value(name = "6")]
+    Six,
+    #[value(name = "12")]
+    Twelve,
+}
+
+impl DailyCoinReminderHours {
+    pub fn as_api_str(&self) -> &'static str {
+        match self {
+            Self::One => "1",
+            Self::Six => "6",
+            Self::Twelve => "12",
         }
     }
 }

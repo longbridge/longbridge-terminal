@@ -3,7 +3,7 @@ use anyhow::Result;
 use super::{
     api::{http_get, http_post},
     output::{print_json_value, print_table},
-    DailyCoinCmd, DailyCoinDayOfWeek, DailyCoinFrequency, OutputFormat,
+    DailyCoinCmd, DailyCoinDayOfWeek, DailyCoinFrequency, DailyCoinReminderHours, OutputFormat,
 };
 
 use crate::utils::counter::{counter_id_to_symbol, symbol_to_counter_id};
@@ -75,7 +75,7 @@ pub async fn cmd_daily_coin(cmd: Option<DailyCoinCmd>, format: &OutputFormat) ->
             day_of_month,
         }) => cmd_calc_date(symbol, frequency, day_of_week, day_of_month, format).await,
         Some(DailyCoinCmd::Check { symbols }) => cmd_check(symbols, format).await,
-        Some(DailyCoinCmd::SetReminder { hours }) => cmd_set_reminder(hours).await,
+        Some(DailyCoinCmd::SetReminder { hours }) => cmd_set_reminder(&hours).await,
     }
 }
 
@@ -118,6 +118,7 @@ async fn cmd_list(
                 "Next Trade Date",
                 "Issues",
                 "Cum Amount",
+                "Cum Profit",
                 "Avg Cost",
             ];
             let rows: Vec<Vec<String>> = plans
@@ -136,6 +137,7 @@ async fn cmd_list(
                             .as_u64()
                             .map_or_else(|| "-".to_string(), |n| n.to_string()),
                         p["cum_amount"].as_str().unwrap_or("-").to_string(),
+                        p["cum_profit"].as_str().unwrap_or("-").to_string(),
                         p["average_cost"].as_str().unwrap_or("-").to_string(),
                     ]
                 })
@@ -250,6 +252,7 @@ async fn cmd_records(plan_id: String, page: u32, limit: u32, format: &OutputForm
                 "Exec Qty",
                 "Exec Price",
                 "Exec Amount",
+                "Reject Reason",
             ];
             let rows: Vec<Vec<String>> = records
                 .iter()
@@ -262,6 +265,7 @@ async fn cmd_records(plan_id: String, page: u32, limit: u32, format: &OutputForm
                         r["executed_qty"].as_str().unwrap_or("-").to_string(),
                         r["executed_price"].as_str().unwrap_or("-").to_string(),
                         r["executed_amount"].as_str().unwrap_or("-").to_string(),
+                        r["rejected_reason"].as_str().unwrap_or("").to_string(),
                     ]
                 })
                 .collect();
@@ -297,6 +301,27 @@ async fn cmd_stats(symbol: Option<&str>, format: &OutputFormat) -> Result<()> {
                 }),
                 format,
             );
+
+            let nearest = resp["nearest_plans"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            if !nearest.is_empty() {
+                println!("\nNearest Plans:");
+                let headers = &["Plan ID", "Symbol"];
+                let rows: Vec<Vec<String>> = nearest
+                    .iter()
+                    .map(|p| {
+                        vec![
+                            p["plan_id"].as_str().unwrap_or("-").to_string(),
+                            p["counter_id"]
+                                .as_str()
+                                .map_or_else(|| "-".to_string(), counter_id_to_symbol),
+                        ]
+                    })
+                    .collect();
+                print_table(headers, rows, format);
+            }
         }
     }
     Ok(())
@@ -329,7 +354,17 @@ async fn cmd_calc_date(
         }
         OutputFormat::Pretty => {
             let trade_date = resp["trade_date"].as_str().unwrap_or("-");
-            println!("Next trade date (Unix timestamp): {trade_date}");
+            // Convert Unix timestamp to YYYY-MM-DD for display
+            let readable = trade_date
+                .parse::<i64>()
+                .ok()
+                .and_then(|ts| time::OffsetDateTime::from_unix_timestamp(ts).ok())
+                .and_then(|dt| {
+                    dt.format(&time::format_description::well_known::Rfc3339)
+                        .ok()
+                })
+                .unwrap_or_else(|| trade_date.to_string());
+            println!("Next trade date: {readable}");
         }
     }
     Ok(())
@@ -374,9 +409,10 @@ async fn cmd_check(symbols: Vec<String>, format: &OutputFormat) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_set_reminder(hours: String) -> Result<()> {
-    let body = serde_json::json!({ "alter_hours": hours });
+async fn cmd_set_reminder(hours: &DailyCoinReminderHours) -> Result<()> {
+    let h = hours.as_api_str();
+    let body = serde_json::json!({ "alter_hours": h });
     http_post("/v1/dailycoins/update-alter-hours", body, false).await?;
-    println!("Reminder hours updated to {hours}h before trade.");
+    println!("Reminder hours updated to {h}h before trade.");
     Ok(())
 }
