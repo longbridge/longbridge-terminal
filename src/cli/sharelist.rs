@@ -169,7 +169,7 @@ async fn cmd_create(
         "cover": cover,
         "stock_group_id": stock_group_id,
     });
-    let resp = http_post("/v2/sharelists", body, false).await?;
+    let resp = http_post("/v1/sharelists", body, false).await?;
     let sharelist_id = resp["sharelist_id"].as_str().unwrap_or("");
     println!("Sharelist created. ID: {sharelist_id}");
     Ok(())
@@ -177,7 +177,7 @@ async fn cmd_create(
 
 async fn cmd_delete(id: String) -> Result<()> {
     let body = serde_json::json!({ "id": id });
-    http_post("/v2/sharelist/delete", body, false).await?;
+    http_post("/v1/sharelist/delete", body, false).await?;
     println!("Sharelist {id} deleted.");
     Ok(())
 }
