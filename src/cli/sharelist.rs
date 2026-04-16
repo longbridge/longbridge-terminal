@@ -141,9 +141,8 @@ async fn cmd_detail(id: String, format: &OutputFormat) -> Result<()> {
 async fn cmd_create(name: String, description: String) -> Result<()> {
     let body = serde_json::json!({
         "name": name,
-        "description": description,
+        "description": if description.is_empty() { name } else { description },
         "cover": "https://pub.pbkrs.com/files/202107/kaJSk6BsvPt6NJ3Q/sharelist_v1.png",
-        "stock_group_id": "0",
     });
     let resp = http_post("/v1/sharelists", body, false).await?;
     let sharelist_id = resp["sharelist_id"].as_str().unwrap_or("");
