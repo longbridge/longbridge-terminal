@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 use super::{
-    api::{http_delete, http_get, http_post, http_put},
+    api::{http_delete, http_get, http_post},
     output::print_table,
     OutputFormat, SharelistCmd,
 };
@@ -169,7 +169,7 @@ async fn cmd_create(
         "cover": cover,
         "stock_group_id": stock_group_id,
     });
-    let resp = http_put("/v1/sharelists", body, false).await?;
+    let resp = http_post("/v1/sharelists", body, false).await?;
     let sharelist_id = resp["sharelist_id"].as_str().unwrap_or("");
     println!("Sharelist created. ID: {sharelist_id}");
     Ok(())
@@ -188,11 +188,9 @@ async fn cmd_add(id: String, symbols: Vec<String>) -> Result<()> {
         .map(|s| symbol_to_counter_id(s))
         .collect::<Vec<_>>()
         .join(",");
-    let body = serde_json::json!({
-        "id": id,
-        "counter_ids": counter_ids,
-    });
-    http_post("/v1/sharelist/add_stock", body, false).await?;
+    let path = format!("/v1/sharelists/{id}/items");
+    let body = serde_json::json!({ "counter_ids": counter_ids });
+    http_post(&path, body, false).await?;
     println!("Added {} stock(s) to sharelist {id}.", symbols.len());
     Ok(())
 }
@@ -203,11 +201,9 @@ async fn cmd_remove(id: String, symbols: Vec<String>) -> Result<()> {
         .map(|s| symbol_to_counter_id(s))
         .collect::<Vec<_>>()
         .join(",");
-    let body = serde_json::json!({
-        "id": id,
-        "counter_ids": counter_ids,
-    });
-    http_post("/v1/sharelist/delete_stock", body, false).await?;
+    let path = format!("/v1/sharelists/{id}/items");
+    let body = serde_json::json!({ "counter_ids": counter_ids });
+    http_delete(&path, body, false).await?;
     println!("Removed {} stock(s) from sharelist {id}.", symbols.len());
     Ok(())
 }
@@ -218,18 +214,16 @@ async fn cmd_sort(id: String, symbols: Vec<String>) -> Result<()> {
         .map(|s| symbol_to_counter_id(s))
         .collect::<Vec<_>>()
         .join(",");
-    let body = serde_json::json!({
-        "id": id,
-        "counter_ids": counter_ids,
-    });
-    http_post("/v1/sharelist/sort_stock", body, false).await?;
+    let path = format!("/v1/sharelists/{id}/items/sort");
+    let body = serde_json::json!({ "counter_ids": counter_ids });
+    http_post(&path, body, false).await?;
     println!("Stocks reordered in sharelist {id}.");
     Ok(())
 }
 
 async fn cmd_hot(size: u32, format: &OutputFormat) -> Result<()> {
     let size_str = size.to_string();
-    let resp = http_get("/v1/sharelists/hot", &[("size", &size_str)], false).await?;
+    let resp = http_get("/v1/sharelists/popular", &[("size", &size_str)], false).await?;
 
     let sharelists = resp["sharelists"].as_array().cloned().unwrap_or_default();
 
