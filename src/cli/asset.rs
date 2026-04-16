@@ -63,11 +63,51 @@ fn print_exchange_rates(data: &Value) {
 
 // ── profit analysis ──────────────────────────────────────────────────────────
 
-pub async fn cmd_profit_analysis(format: &OutputFormat, verbose: bool) -> Result<()> {
-    let summary_fut = http_get("/v1/portfolio/profit-analysis-summary", &[], verbose);
+pub async fn cmd_profit_analysis(
+    start: Option<&str>,
+    end: Option<&str>,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let start_ts = start
+        .map(|s| parse_datetime_start(s).map(|d| d.unix_timestamp().to_string()))
+        .transpose()?;
+    let end_ts = end
+        .map(|e| parse_datetime_end(e).map(|d| d.unix_timestamp().to_string()))
+        .transpose()?;
+
+    let mut summary_params: Vec<(&str, String)> = Vec::new();
+    if let Some(ref ts) = start_ts {
+        summary_params.push(("start", ts.clone()));
+    }
+    if let Some(ref ts) = end_ts {
+        summary_params.push(("end", ts.clone()));
+    }
+    let summary_pr: Vec<(&str, &str)> = summary_params
+        .iter()
+        .map(|(k, v)| (*k, v.as_str()))
+        .collect();
+
+    let mut sublist_params: Vec<(&str, String)> = vec![("profit_or_loss", "all".to_owned())];
+    if let Some(ref ts) = start_ts {
+        sublist_params.push(("start", ts.clone()));
+    }
+    if let Some(ref ts) = end_ts {
+        sublist_params.push(("end", ts.clone()));
+    }
+    let sublist_pr: Vec<(&str, &str)> = sublist_params
+        .iter()
+        .map(|(k, v)| (*k, v.as_str()))
+        .collect();
+
+    let summary_fut = http_get(
+        "/v1/portfolio/profit-analysis-summary",
+        &summary_pr,
+        verbose,
+    );
     let sublist_fut = http_get(
         "/v1/portfolio/profit-analysis-sublist",
-        &[("profit_or_loss", "all")],
+        &sublist_pr,
         verbose,
     );
     let (summary, sublist) = tokio::join!(summary_fut, sublist_fut);
@@ -100,21 +140,32 @@ fn print_profit_analysis_summary(data: &Value) {
     );
     println!("P&L Summary ({currency})  {period}\n");
 
-    let fields = [
+    let plain_fields = [
         ("Total Asset", "current_total_asset"),
         ("Initial Asset", "initial_asset_value"),
         ("Ending Asset", "ending_asset_value"),
         ("Invest Amount", "invest_amount"),
         ("Total P&L", "sum_profit"),
-        ("Total P&L Rate", "sum_profit_rate"),
-        ("Simple Yield", "total_simple_earning_yield"),
-        ("Time-Weighted Yield", "total_time_earning_yield"),
         ("Stocks Traded", "trade_stock_num"),
     ];
-    for (label, key) in fields {
+    for (label, key) in plain_fields {
         let v = val_str(&data[key]);
         if !v.is_empty() && v != "-" {
             println!("{label:20} {v}");
+        }
+    }
+    let rate_fields = [
+        ("Simple Yield", "total_simple_earning_yield"),
+        ("TWR", "total_time_earning_yield"),
+    ];
+    for (label, key) in rate_fields {
+        let raw = val_str(&data[key]);
+        if !raw.is_empty() && raw != "-" {
+            let pct = raw
+                .parse::<f64>()
+                .map(|r| format!("{:.2}%", r * 100.0))
+                .unwrap_or(raw);
+            println!("{label:20} {pct}");
         }
     }
 
@@ -162,7 +213,7 @@ fn print_profit_analysis_sublist(data: &Value) {
         if items.is_empty() {
             return;
         }
-        println!("\nStock P&L Breakdown\n");
+        println!("\nP&L Breakdown\n");
         let headers = &["Symbol", "Name", "Market", "P&L"];
         let rows: Vec<Vec<String>> = items
             .iter()

@@ -832,12 +832,20 @@ pub enum Commands {
 
     /// Profit & loss analysis
     ///
-    /// Without subcommand: shows P&L summary with stock breakdown.
+    /// Without subcommand: shows full account P&L summary (stocks + funds + MMF)
+    /// including simple yield and time-weighted return (TWR).
     /// Subcommands: detail  by-market
     /// Example: longbridge profit-analysis
+    /// Example: longbridge profit-analysis --start 2026-01-01 --end 2026-04-16
     /// Example: longbridge profit-analysis detail 700.HK
     /// Example: longbridge profit-analysis by-market --market HK
     ProfitAnalysis {
+        /// Start date (YYYY-MM-DD)
+        #[arg(long)]
+        start: Option<String>,
+        /// End date (YYYY-MM-DD)
+        #[arg(long)]
+        end: Option<String>,
         #[command(subcommand)]
         cmd: Option<ProfitAnalysisCmd>,
     },
@@ -2513,8 +2521,8 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             }
             None => trade::cmd_alert_list(symbol, format, verbose).await,
         },
-        Commands::ProfitAnalysis { cmd } => match cmd {
-            None => asset::cmd_profit_analysis(format, verbose).await,
+        Commands::ProfitAnalysis { start, end, cmd } => match cmd {
+            None => asset::cmd_profit_analysis(start.as_deref(), end.as_deref(), format, verbose).await,
             Some(ProfitAnalysisCmd::Detail {
                 symbol,
                 start,
