@@ -13,7 +13,7 @@ pub async fn cmd_sharelist(
     format: &OutputFormat,
 ) -> Result<()> {
     match cmd {
-        None => cmd_list(count, None, format).await,
+        None => cmd_list(count, format).await,
         Some(SharelistCmd::Detail { id }) => cmd_detail(id, format).await,
         Some(SharelistCmd::Create { name, description }) => cmd_create(name, description).await,
         Some(SharelistCmd::Delete { id }) => cmd_delete(id).await,
@@ -24,12 +24,13 @@ pub async fn cmd_sharelist(
     }
 }
 
-async fn cmd_list(count: u32, tail_mark: Option<&str>, format: &OutputFormat) -> Result<()> {
+async fn cmd_list(count: u32, format: &OutputFormat) -> Result<()> {
     let size_str = count.to_string();
-    let mut params: Vec<(&str, &str)> = vec![("size", &size_str)];
-    if let Some(tm) = tail_mark {
-        params.push(("tail_mark", tm));
-    }
+    let params: Vec<(&str, &str)> = vec![
+        ("size", &size_str),
+        ("self", "true"),
+        ("subscription", "true"),
+    ];
 
     let resp = http_get("/v1/sharelists", &params, false).await?;
 

@@ -194,6 +194,20 @@ longbridge watchlist pin TSLA.US AAPL.US           # Pin securities to the top o
 longbridge watchlist pin --remove 700.HK           # Unpin securities
 ```
 
+### Sharelist
+
+```bash
+longbridge sharelist                                              # List own and subscribed sharelists
+longbridge sharelist [--count 50]                                 # List with custom page size
+longbridge sharelist detail <id>                                  # Show full details and constituent stocks
+longbridge sharelist create --name "My Picks" [--description "…"] # Create a new sharelist
+longbridge sharelist delete <id>                                  # Delete a sharelist
+longbridge sharelist add <id> TSLA.US AAPL.US 700.HK             # Add stocks to a sharelist
+longbridge sharelist remove <id> TSLA.US                          # Remove stocks from a sharelist
+longbridge sharelist sort <id> TSLA.US AAPL.US 700.HK            # Reorder stocks in a sharelist
+longbridge sharelist popular [--count 10]                         # Get popular (trending) sharelists
+```
+
 ### Trading
 
 ```bash
