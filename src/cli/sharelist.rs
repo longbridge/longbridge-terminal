@@ -1,8 +1,11 @@
+use std::collections::HashMap;
+
 use anyhow::Result;
+use rust_decimal::Decimal;
 
 use super::{
     api::{http_delete, http_get, http_post},
-    output::print_table,
+    output::{fmt_dec, print_table},
     OutputFormat, SharelistCmd,
 };
 use crate::utils::counter::{counter_id_to_symbol, symbol_to_counter_id};
@@ -116,6 +119,32 @@ async fn cmd_detail(id: String, format: &OutputFormat) -> Result<()> {
 
             let stocks = sl["stocks"].as_array().cloned().unwrap_or_default();
             if !stocks.is_empty() {
+                let symbols: Vec<String> = stocks
+                    .iter()
+                    .filter_map(|s| s["counter_id"].as_str())
+                    .map(counter_id_to_symbol)
+                    .collect();
+
+                let quote_map: HashMap<String, (String, String)> = {
+                    let ctx = crate::openapi::quote();
+                    ctx.quote(symbols)
+                        .await
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|q| {
+                            let price = fmt_dec(q.last_done);
+                            let chg = if q.prev_close.is_zero() {
+                                "-".to_string()
+                            } else {
+                                let pct = (q.last_done - q.prev_close) / q.prev_close
+                                    * Decimal::ONE_HUNDRED;
+                                format!("{pct:.2}%")
+                            };
+                            (q.symbol, (price, chg))
+                        })
+                        .collect()
+                };
+
                 println!("\nConstituents ({}):", stocks.len());
                 let headers = &["Symbol", "Name", "Price", "Day Chg"];
                 let rows: Vec<Vec<String>> = stocks
@@ -124,11 +153,15 @@ async fn cmd_detail(id: String, format: &OutputFormat) -> Result<()> {
                         let symbol = s["counter_id"]
                             .as_str()
                             .map_or_else(|| "-".to_string(), counter_id_to_symbol);
+                        let (price, chg) = quote_map
+                            .get(&symbol)
+                            .cloned()
+                            .unwrap_or_else(|| ("-".to_string(), "-".to_string()));
                         vec![
                             symbol,
                             s["name"].as_str().unwrap_or("-").to_string(),
-                            s["price"].as_str().unwrap_or("-").to_string(),
-                            s["chg"].as_str().unwrap_or("-").to_string(),
+                            price,
+                            chg,
                         ]
                     })
                     .collect();
