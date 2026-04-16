@@ -13,25 +13,37 @@ fn us_etf_set() -> &'static HashSet<&'static str> {
     })
 }
 
-/// Convert a `counter_id` (e.g. `ST/US/TSLA`, `ETF/US/SPY`, `ST/HK/700`) back to
-/// a display symbol (e.g. `TSLA.US`, `SPY.US`, `700.HK`).
+/// Convert a `counter_id` (e.g. `ST/US/TSLA`, `ETF/US/SPY`, `IX/US/DJI`, `ST/HK/700`) back to
+/// a display symbol (e.g. `TSLA.US`, `SPY.US`, `.DJI.US`, `700.HK`).
+///
+/// US index counter_ids (`IX/US/...`) map to leading-dot symbols (e.g. `.DJI.US`).
 pub fn counter_id_to_symbol(counter_id: &str) -> String {
     let parts: Vec<&str> = counter_id.splitn(3, '/').collect();
     if parts.len() == 3 {
-        format!("{}.{}", parts[2], parts[1])
+        let (prefix, market, code) = (parts[0], parts[1], parts[2]);
+        if prefix == "IX" && market == "US" {
+            format!(".{code}.{market}")
+        } else {
+            format!("{code}.{market}")
+        }
     } else {
         counter_id.to_string()
     }
 }
 
-/// Convert a user-supplied symbol (e.g. `TSLA.US`, `700.HK`) to a `counter_id`
-/// (e.g. `ST/US/TSLA`, `ST/HK/700`, `ETF/US/SPY`).
+/// Convert a user-supplied symbol (e.g. `TSLA.US`, `700.HK`, `.DJI.US`) to a `counter_id`
+/// (e.g. `ST/US/TSLA`, `ST/HK/700`, `ETF/US/SPY`, `IX/US/DJI`).
 ///
-/// US symbols are checked against the embedded ETF list; matching symbols use
-/// the `ETF/` prefix.  All other symbols default to `ST/`.
+/// Leading-dot symbols (e.g. `.DJI.US`, `.VIX.US`) are US market indexes and map to
+/// the `IX/` prefix.  US symbols are checked against the embedded ETF list; matching
+/// symbols use the `ETF/` prefix.  All other symbols default to `ST/`.
 pub fn symbol_to_counter_id(symbol: &str) -> String {
     if let Some((code, market)) = symbol.rsplit_once('.') {
         let market = market.to_uppercase();
+        // Leading-dot symbols are US market indexes (e.g. `.DJI.US` → `IX/US/DJI`)
+        if let Some(ix_code) = code.strip_prefix('.') {
+            return format!("IX/{market}/{ix_code}");
+        }
         let etf_candidate = format!("ETF/{market}/{code}");
         if us_etf_set().contains(etf_candidate.as_str()) {
             etf_candidate
@@ -75,5 +87,35 @@ mod tests {
     #[test]
     fn no_dot_passthrough() {
         assert_eq!(symbol_to_counter_id("NODOT"), "NODOT");
+    }
+
+    #[test]
+    fn ix_us_dji() {
+        assert_eq!(symbol_to_counter_id(".DJI.US"), "IX/US/DJI");
+    }
+
+    #[test]
+    fn ix_us_vix() {
+        assert_eq!(symbol_to_counter_id(".VIX.US"), "IX/US/VIX");
+    }
+
+    #[test]
+    fn ix_us_ixic() {
+        assert_eq!(symbol_to_counter_id(".IXIC.US"), "IX/US/IXIC");
+    }
+
+    #[test]
+    fn counter_id_ix_us_to_symbol() {
+        assert_eq!(counter_id_to_symbol("IX/US/DJI"), ".DJI.US");
+    }
+
+    #[test]
+    fn counter_id_ix_hk_to_symbol() {
+        assert_eq!(counter_id_to_symbol("IX/HK/HSI"), "HSI.HK");
+    }
+
+    #[test]
+    fn counter_id_st_to_symbol() {
+        assert_eq!(counter_id_to_symbol("ST/US/TSLA"), "TSLA.US");
     }
 }
