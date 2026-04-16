@@ -5,7 +5,7 @@ pub mod api;
 pub mod asset;
 pub mod auth;
 pub mod check;
-pub mod daily_coin;
+pub mod dca;
 pub mod fundamental;
 pub mod insider_trades;
 pub mod investors;
@@ -901,24 +901,40 @@ pub enum Commands {
         subcmd: Option<InvestorsSubCmd>,
     },
 
-    // ── DCA (Daily Coins) ──────────────────────────────────────────────────────
-    /// Stock DCA (daily-coin) plans: list, create, update, pause/resume/stop, records, stats
+    // ── DCA ──────────────────────────────────────────────────────
+    /// Dollar-Cost Averaging (DCA): automatically invest a fixed amount at regular intervals
     ///
-    /// Without a subcommand, lists all active DCA plans.
-    /// Subcommands: list  create  update  pause  resume  stop  records  stats  calc-date  check  set-reminder
-    /// Example: longbridge daily-coin
-    /// Example: longbridge daily-coin list --status Active
-    /// Example: longbridge daily-coin create AAPL.US --amount 500 --frequency monthly --day-of-month 15
-    /// Example: longbridge daily-coin create 700.HK --amount 1000 --frequency weekly --day-of-week mon
-    /// Example: longbridge daily-coin pause `<PLAN_ID>`
-    /// Example: longbridge daily-coin stop `<PLAN_ID>`
-    /// Example: longbridge daily-coin records `<PLAN_ID>`
-    /// Example: longbridge daily-coin stats
-    /// Example: longbridge daily-coin check AAPL.US 700.HK
-    #[command(name = "daily-coin")]
-    DailyCoin {
+    /// Create and manage DCA plans that execute recurring stock purchases on a daily, weekly,
+    /// fortnightly, or monthly schedule. Track trade history, monitor cumulative profit,
+    /// and check upcoming trade dates.
+    ///
+    /// Without a subcommand, lists all DCA plans.
+    /// Example: longbridge dca
+    /// Example: longbridge dca --status Active
+    /// Example: longbridge dca --symbol TSLA.US
+    /// Example: longbridge dca create AAPL.US --amount 500 --frequency monthly --day-of-month 15
+    /// Example: longbridge dca create 700.HK --amount 1000 --frequency weekly --day-of-week mon
+    /// Example: longbridge dca pause `<PLAN_ID>`
+    /// Example: longbridge dca stop `<PLAN_ID>`
+    /// Example: longbridge dca history `<PLAN_ID>`
+    /// Example: longbridge dca stats
+    /// Example: longbridge dca check AAPL.US 700.HK
+    #[command(name = "dca")]
+    Dca {
         #[command(subcommand)]
-        cmd: Option<DailyCoinCmd>,
+        cmd: Option<DcaCmd>,
+        /// Filter plans by status: Active | Suspended | Finished
+        #[arg(long)]
+        status: Option<String>,
+        /// Filter plans by symbol (e.g. AAPL.US)
+        #[arg(long)]
+        symbol: Option<String>,
+        /// Page number (default: 1)
+        #[arg(long, default_value = "1")]
+        page: u32,
+        /// Records per page (default: 20)
+        #[arg(long, default_value = "20")]
+        limit: u32,
     },
 
     // ── Sharelist (股单) ───────────────────────────────────────────────────────
@@ -968,50 +984,30 @@ pub enum InvestorsSubCmd {
 }
 
 #[derive(Subcommand)]
-pub enum DailyCoinCmd {
-    /// List DCA plans (default when no subcommand is given)
-    ///
-    /// Example: longbridge daily-coin list
-    /// Example: longbridge daily-coin list --status Active
-    /// Example: longbridge daily-coin list --symbol AAPL.US
-    List {
-        /// Filter by status: Active | Suspended | Finished
-        #[arg(long)]
-        status: Option<String>,
-        /// Filter by symbol (e.g. AAPL.US)
-        #[arg(long)]
-        symbol: Option<String>,
-        /// Page number (default: 1)
-        #[arg(long, default_value = "1")]
-        page: u32,
-        /// Records per page (default: 20)
-        #[arg(long, default_value = "20")]
-        limit: u32,
-    },
-
+pub enum DcaCmd {
     /// Create a new DCA plan
     ///
-    /// Frequency: daily | weekly | fortnightly | monthly
+    /// Frequency: daily | weekly | fortnightly (every two weeks) | monthly
     /// Day of week (weekly/fortnightly): mon tue wed thu fri
     /// Day of month (monthly): 1–28
-    /// Example: longbridge daily-coin create AAPL.US --amount 500 --frequency monthly --day-of-month 15
-    /// Example: longbridge daily-coin create 700.HK --amount 1000 --frequency weekly --day-of-week mon
+    /// Example: longbridge dca create AAPL.US --amount 500 --frequency monthly --day-of-month 15
+    /// Example: longbridge dca create 700.HK --amount 1000 --frequency weekly --day-of-week mon
     Create {
         /// Symbol in <CODE>.<MARKET> format (e.g. AAPL.US 700.HK)
         symbol: String,
         /// Amount per investment period (as a decimal string, e.g. 500)
         #[arg(long)]
         amount: String,
-        /// Investment frequency: daily | weekly | fortnightly | monthly
+        /// Investment frequency: daily | weekly | fortnightly (every two weeks) | monthly
         #[arg(long)]
-        frequency: DailyCoinFrequency,
+        frequency: DcaFrequency,
         /// Day of week for weekly/fortnightly: mon tue wed thu fri
         #[arg(long)]
-        day_of_week: Option<DailyCoinDayOfWeek>,
+        day_of_week: Option<DcaDayOfWeek>,
         /// Day of month for monthly plans (1–28)
         #[arg(long)]
         day_of_month: Option<String>,
-        /// Allow margin financing (default: false)
+        /// Allow margin financing for the investment amount (default: false)
         #[arg(long)]
         allow_margin: bool,
     },
@@ -1019,20 +1015,20 @@ pub enum DailyCoinCmd {
     /// Update an existing DCA plan
     ///
     /// Only the fields provided will be updated.
-    /// Example: longbridge daily-coin update `<PLAN_ID>` --amount 800
-    /// Example: longbridge daily-coin update `<PLAN_ID>` --frequency weekly --day-of-week fri
+    /// Example: longbridge dca update `<PLAN_ID>` --amount 800
+    /// Example: longbridge dca update `<PLAN_ID>` --frequency weekly --day-of-week fri
     Update {
-        /// Plan ID (from `longbridge daily-coin list`)
+        /// Plan ID (from `longbridge dca`)
         plan_id: String,
         /// New amount per investment period
         #[arg(long)]
         amount: Option<String>,
-        /// New investment frequency: daily | weekly | fortnightly | monthly
+        /// New investment frequency: daily | weekly | fortnightly (every two weeks) | monthly
         #[arg(long)]
-        frequency: Option<DailyCoinFrequency>,
+        frequency: Option<DcaFrequency>,
         /// Day of week for weekly/fortnightly: mon tue wed thu fri
         #[arg(long)]
-        day_of_week: Option<DailyCoinDayOfWeek>,
+        day_of_week: Option<DcaDayOfWeek>,
         /// Day of month for monthly plans (1–28)
         #[arg(long)]
         day_of_month: Option<String>,
@@ -1041,36 +1037,36 @@ pub enum DailyCoinCmd {
         allow_margin: Option<bool>,
     },
 
-    /// Suspend (pause) a DCA plan
+    /// Pause a DCA plan
     ///
-    /// Example: longbridge daily-coin pause `<PLAN_ID>`
+    /// Example: longbridge dca pause `<PLAN_ID>`
     Pause {
         /// Plan ID to suspend
         plan_id: String,
     },
 
-    /// Resume a suspended DCA plan
+    /// Resume a paused DCA plan
     ///
-    /// Example: longbridge daily-coin resume `<PLAN_ID>`
+    /// Example: longbridge dca resume `<PLAN_ID>`
     Resume {
         /// Plan ID to resume
         plan_id: String,
     },
 
-    /// Terminate (permanently stop) a DCA plan
+    /// Permanently stop a DCA plan
     ///
-    /// Example: longbridge daily-coin stop `<PLAN_ID>`
+    /// Example: longbridge dca stop `<PLAN_ID>`
     Stop {
         /// Plan ID to terminate
         plan_id: String,
     },
 
-    /// Show execution records for a DCA plan
+    /// Show trade history for a DCA plan
     ///
-    /// Example: longbridge daily-coin records `<PLAN_ID>`
-    /// Example: longbridge daily-coin records `<PLAN_ID>` --page 2 --limit 50
-    Records {
-        /// Plan ID (from `longbridge daily-coin list`)
+    /// Example: longbridge dca history `<PLAN_ID>`
+    /// Example: longbridge dca history `<PLAN_ID>` --page 2 --limit 50
+    History {
+        /// Plan ID (from `longbridge dca`)
         plan_id: String,
         /// Page number (default: 1)
         #[arg(long, default_value = "1")]
@@ -1082,37 +1078,37 @@ pub enum DailyCoinCmd {
 
     /// Show DCA statistics summary
     ///
-    /// Returns total investment amount, total profit, plan counts, and nearest upcoming plans.
-    /// Example: longbridge daily-coin stats
-    /// Example: longbridge daily-coin stats --symbol AAPL.US
+    /// Returns total invested amount, total profit, plan counts, and nearest upcoming plans.
+    /// Example: longbridge dca stats
+    /// Example: longbridge dca stats --symbol AAPL.US
     Stats {
         /// Filter statistics by symbol
         #[arg(long)]
         symbol: Option<String>,
     },
 
-    /// Calculate the next trade date for a DCA configuration
+    /// Calculate the next trade date for given plan parameters
     ///
-    /// Example: longbridge daily-coin calc-date AAPL.US --frequency monthly --day-of-month 15
-    /// Example: longbridge daily-coin calc-date 700.HK --frequency weekly --day-of-week mon
+    /// Example: longbridge dca calc-date AAPL.US --frequency monthly --day-of-month 15
+    /// Example: longbridge dca calc-date 700.HK --frequency weekly --day-of-week mon
     #[command(name = "calc-date")]
     CalcDate {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
         /// Investment frequency: daily | weekly | fortnightly | monthly
         #[arg(long)]
-        frequency: DailyCoinFrequency,
+        frequency: DcaFrequency,
         /// Day of week for weekly/fortnightly: mon tue wed thu fri
         #[arg(long)]
-        day_of_week: Option<DailyCoinDayOfWeek>,
+        day_of_week: Option<DcaDayOfWeek>,
         /// Day of month for monthly plans (1–28)
         #[arg(long)]
         day_of_month: Option<String>,
     },
 
-    /// Check whether symbols support DCA investing
+    /// Check whether symbols support DCA
     ///
-    /// Example: longbridge daily-coin check AAPL.US 700.HK TSLA.US
+    /// Example: longbridge dca check AAPL.US 700.HK TSLA.US
     Check {
         /// One or more symbols in <CODE>.<MARKET> format
         symbols: Vec<String>,
@@ -1121,11 +1117,11 @@ pub enum DailyCoinCmd {
     /// Set the pre-trade reminder hours
     ///
     /// Valid values: 1 | 6 | 12
-    /// Example: longbridge daily-coin set-reminder 6
+    /// Example: longbridge dca set-reminder 6
     #[command(name = "set-reminder")]
     SetReminder {
         /// Hours before trade to send reminder: 1 | 6 | 12
-        hours: DailyCoinReminderHours,
+        hours: DcaReminderHours,
     },
 }
 
@@ -1421,7 +1417,7 @@ pub enum StatementSection {
 }
 
 #[derive(ValueEnum, Clone, Debug)]
-pub enum DailyCoinFrequency {
+pub enum DcaFrequency {
     #[value(name = "daily")]
     Daily,
     #[value(name = "weekly")]
@@ -1432,7 +1428,7 @@ pub enum DailyCoinFrequency {
     Monthly,
 }
 
-impl DailyCoinFrequency {
+impl DcaFrequency {
     pub fn as_api_str(&self) -> &'static str {
         match self {
             Self::Daily => "Daily",
@@ -1444,7 +1440,7 @@ impl DailyCoinFrequency {
 }
 
 #[derive(ValueEnum, Clone, Debug)]
-pub enum DailyCoinDayOfWeek {
+pub enum DcaDayOfWeek {
     #[value(name = "mon")]
     Mon,
     #[value(name = "tue")]
@@ -1457,7 +1453,7 @@ pub enum DailyCoinDayOfWeek {
     Fri,
 }
 
-impl DailyCoinDayOfWeek {
+impl DcaDayOfWeek {
     pub fn as_api_str(&self) -> &'static str {
         match self {
             Self::Mon => "Mon",
@@ -1470,7 +1466,7 @@ impl DailyCoinDayOfWeek {
 }
 
 #[derive(ValueEnum, Clone, Debug)]
-pub enum DailyCoinReminderHours {
+pub enum DcaReminderHours {
     #[value(name = "1")]
     One,
     #[value(name = "6")]
@@ -1479,7 +1475,7 @@ pub enum DailyCoinReminderHours {
     Twelve,
 }
 
-impl DailyCoinReminderHours {
+impl DcaReminderHours {
     pub fn as_api_str(&self) -> &'static str {
         match self {
             Self::One => "1",
@@ -2563,7 +2559,13 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             }
         },
 
-        Commands::DailyCoin { cmd } => daily_coin::cmd_daily_coin(cmd, format).await,
+        Commands::Dca {
+            cmd,
+            status,
+            symbol,
+            page,
+            limit,
+        } => dca::cmd_dca(cmd, status.as_deref(), symbol.as_deref(), page, limit, format).await,
 
         Commands::Sharelist { cmd, count } => {
             sharelist::cmd_sharelist(cmd, count, format).await

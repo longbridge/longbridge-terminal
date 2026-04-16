@@ -263,20 +263,20 @@ longbridge investors 0001067983 --format json                 # Export holdings 
 longbridge investors changes 0001067983                       # Quarter-over-quarter changes (NEW/ADDED/REDUCED/EXITED)
 longbridge investors changes 0001067983 --from 2024-12-31     # Compare latest vs a specific period
 
-longbridge daily-coin                                         # List all DCA plans
-longbridge daily-coin list --status Active                    # Filter by status: Active | Suspended | Finished
-longbridge daily-coin list --symbol TSLA.US                   # Filter by symbol
-longbridge daily-coin create TSLA.US --amount 500 --frequency weekly --day-of-week mon  # Create weekly DCA plan
-longbridge daily-coin create 700.HK --amount 1000 --frequency monthly --day-of-month 15  # Monthly DCA plan
-longbridge daily-coin update <PLAN_ID> --amount 800           # Update plan amount
-longbridge daily-coin pause <PLAN_ID>                         # Suspend a DCA plan
-longbridge daily-coin resume <PLAN_ID>                        # Resume a suspended plan
-longbridge daily-coin stop <PLAN_ID>                          # Terminate a DCA plan
-longbridge daily-coin records <PLAN_ID>                       # Execution records for a plan
-longbridge daily-coin stats                                   # DCA statistics summary
-longbridge daily-coin calc-date TSLA.US --frequency weekly --day-of-week fri  # Calculate next trade date
-longbridge daily-coin check TSLA.US AAPL.US 700.HK           # Check which symbols support DCA
-longbridge daily-coin set-reminder 6                          # Set reminder hours before trade (1 | 6 | 12)
+longbridge dca                                                # List all DCA plans
+longbridge dca --status Active                                # Filter by status: Active | Suspended | Finished
+longbridge dca --symbol TSLA.US                               # Filter by symbol
+longbridge dca create TSLA.US --amount 500 --frequency weekly --day-of-week mon  # Create weekly DCA plan
+longbridge dca create 700.HK --amount 1000 --frequency monthly --day-of-month 15  # Monthly DCA plan
+longbridge dca update <PLAN_ID> --amount 800                  # Update plan amount
+longbridge dca pause <PLAN_ID>                                # Pause a DCA plan
+longbridge dca resume <PLAN_ID>                               # Resume a paused DCA plan
+longbridge dca stop <PLAN_ID>                                 # Permanently stop a DCA plan
+longbridge dca history <PLAN_ID>                              # Trade history for a plan
+longbridge dca stats                                          # DCA statistics summary
+longbridge dca calc-date TSLA.US --frequency weekly --day-of-week fri  # Calculate next trade date
+longbridge dca check TSLA.US AAPL.US 700.HK                  # Check which symbols support DCA
+longbridge dca set-reminder 6                                 # Set reminder hours before trade (1 | 6 | 12)
 ```
 
 <!-- COMMANDS_END -->
