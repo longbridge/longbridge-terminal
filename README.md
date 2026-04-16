@@ -265,22 +265,6 @@ longbridge daily-coin check TSLA.US AAPL.US 700.HK           # Check which symbo
 longbridge daily-coin set-reminder 6                          # Set reminder hours before trade (1 | 6 | 12)
 ```
 
-### Sharelist (股单)
-
-```bash
-longbridge sharelist                                          # List own and subscribed sharelists
-longbridge sharelist list --subscription                      # Show subscribed sharelists only
-longbridge sharelist list --own                               # Show own public sharelists only
-longbridge sharelist list --size 50 --tail-mark <CURSOR>      # Paginate results
-longbridge sharelist detail <ID>                              # Full details including constituent stocks
-longbridge sharelist create --name "My Picks" --description "..." --cover "url" --stock-group-id <GID>  # Create a sharelist
-longbridge sharelist delete <ID>                              # Delete a sharelist
-longbridge sharelist add <ID> TSLA.US AAPL.US                # Add stocks to a sharelist
-longbridge sharelist remove <ID> TSLA.US                     # Remove stocks from a sharelist
-longbridge sharelist sort <ID> TSLA.US AAPL.US 700.HK        # Reorder stocks in a sharelist
-longbridge sharelist hot [--size 20]                          # Hot (trending) sharelists
-```
-
 <!-- COMMANDS_END -->
 
 ### Symbol Format
