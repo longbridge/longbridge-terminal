@@ -1018,6 +1018,9 @@ pub enum DcaCmd {
         /// Allow margin financing for the investment amount (default: false)
         #[arg(long)]
         allow_margin: bool,
+        /// Agree to the Terms and Conditions without interactive prompt
+        #[arg(long)]
+        agree_terms: bool,
     },
 
     /// Update an existing recurring investment plan
