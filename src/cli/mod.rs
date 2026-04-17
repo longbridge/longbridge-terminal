@@ -307,11 +307,13 @@ pub enum Commands {
     Subscriptions,
 
     // ── Options & Warrants ──────────────────────────────────────────────────────
-    /// Option quotes and option chain
+    /// Option quotes, option chain, and option volume statistics
     ///
-    /// Subcommands: quote  chain
+    /// Subcommands: chain  quote  volume
     /// Example: longbridge option quote AAPL240119C190000
     /// Example: longbridge option chain AAPL.US --date 2024-01-19
+    /// Example: longbridge option volume AAPL.US
+    /// Example: longbridge option volume daily AAPL.US
     Option {
         #[command(subcommand)]
         cmd: OptionCmd,
@@ -943,6 +945,20 @@ pub enum Commands {
         /// Records per page (default: 20)
         #[arg(long, default_value = "20")]
         limit: u32,
+    },
+
+    // ── Short positions ─────────────────────────────────────────────────
+    /// US stock short selling data (short interest, short ratio, days to cover)
+    ///
+    /// Only supports US-listed stocks and ETFs.
+    /// Example: longbridge short-positions AAPL.US
+    /// Example: longbridge short-positions TSLA.US --count 50
+    ShortPositions {
+        /// Symbol in <CODE>.<MARKET> format (US market only, e.g. AAPL.US)
+        symbol: String,
+        /// Number of records to return (1–100, default: 20)
+        #[arg(long, default_value = "20")]
+        count: u32,
     },
 
     // ── Sharelist ───────────────────────────────────────────────────────
@@ -1921,17 +1937,6 @@ pub enum TopicCmd {
 
 #[derive(Subcommand)]
 pub enum OptionCmd {
-    /// Real-time quotes for option contracts
-    ///
-    /// Returns all fields from the option quote API: price, volume, implied/historical
-    /// volatility, open interest, strike, expiry, contract type/size/multiplier, direction,
-    /// and underlying symbol.
-    /// Example: longbridge option quote AAPL240119C190000
-    Quote {
-        /// Option contract symbols (OCC format for US, e.g. AAPL240119C190000)
-        symbols: Vec<String>,
-    },
-
     /// Option chain: expiry dates, or strike prices for a given expiry
     ///
     /// Without --date: returns all available expiry dates.
@@ -1944,6 +1949,45 @@ pub enum OptionCmd {
         /// Expiry date (YYYY-MM-DD). Omit to list all expiry dates.
         #[arg(long)]
         date: Option<String>,
+    },
+
+    /// Real-time quotes for option contracts
+    ///
+    /// Returns all fields from the option quote API: price, volume, implied/historical
+    /// volatility, open interest, strike, expiry, contract type/size/multiplier, direction,
+    /// and underlying symbol.
+    /// Example: longbridge option quote AAPL240119C190000
+    Quote {
+        /// Option contract symbols (OCC format for US, e.g. AAPL240119C190000)
+        symbols: Vec<String>,
+    },
+
+    /// Real-time Call/Put volume snapshot; with `daily` subcommand shows historical data
+    ///
+    /// Without subcommand: returns today's real-time Call/Put volume and Put/Call ratio.
+    /// Example: longbridge option volume AAPL.US
+    /// Example: longbridge option volume daily AAPL.US
+    /// Example: longbridge option volume daily AAPL.US --count 60
+    Volume {
+        /// Symbol in <CODE>.<MARKET> format (US market only). Omit when using a subcommand.
+        symbol: Option<String>,
+        #[command(subcommand)]
+        cmd: Option<VolumeSubCmd>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum VolumeSubCmd {
+    /// Daily Call/Put volume and open interest history
+    ///
+    /// Example: longbridge option volume daily AAPL.US
+    /// Example: longbridge option volume daily AAPL.US --count 60
+    Daily {
+        /// Symbol in <CODE>.<MARKET> format (US market only, e.g. AAPL.US)
+        symbol: String,
+        /// Number of trading days to return (default: 20)
+        #[arg(long, default_value = "20")]
+        count: u32,
     },
 }
 
@@ -2132,6 +2176,19 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             OptionCmd::Chain { symbol, date } => {
                 quote::cmd_option_chain(symbol, date, format).await
             }
+            OptionCmd::Volume { symbol, cmd } => match cmd {
+                Some(VolumeSubCmd::Daily { symbol: s, count }) => {
+                    quote::cmd_option_volume_daily(s, count, format, verbose).await
+                }
+                None => {
+                    let sym = symbol.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Symbol required. Usage: longbridge option volume <SYMBOL>"
+                        )
+                    })?;
+                    quote::cmd_option_volume_stats(sym, format, verbose).await
+                }
+            },
         },
         Commands::Warrant { symbol, cmd } => match cmd {
             Some(WarrantCmd::Quote { symbols }) => quote::cmd_warrant_quote(symbols, format).await,
@@ -2574,6 +2631,10 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             page,
             limit,
         } => dca::cmd_dca(cmd, status.as_deref(), symbol.as_deref(), page, limit, format).await,
+
+        Commands::ShortPositions { symbol, count } => {
+            quote::cmd_short_positions(symbol, count, format, verbose).await
+        }
 
         Commands::Sharelist { cmd, count } => {
             sharelist::cmd_sharelist(cmd, count, format).await

@@ -2676,6 +2676,192 @@ pub async fn cmd_anomaly(
     Ok(())
 }
 
+pub async fn cmd_option_volume_stats(
+    symbol: String,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/v1/quote/option-volume-stats",
+        &[("underlying_counter_id", cid.as_str())],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            let call: i64 = val_str(&data["c"]).parse().unwrap_or(0);
+            let put: i64 = val_str(&data["p"]).parse().unwrap_or(0);
+            let pc_ratio = if call > 0 {
+                format!("{:.4}", put as f64 / call as f64)
+            } else {
+                "-".to_string()
+            };
+            println!("Option Volume Stats — {symbol}\n");
+            print_table(
+                &["call_vol", "put_vol", "pc_ratio"],
+                vec![vec![
+                    format_with_commas(call),
+                    format_with_commas(put),
+                    pc_ratio,
+                ]],
+                format,
+            );
+        }
+    }
+    Ok(())
+}
+
+pub async fn cmd_option_volume_daily(
+    symbol: String,
+    count: u32,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        .to_string();
+    let count_str = count.to_string();
+    let data = http_get(
+        "/v1/quote/option-volume-stats/daily",
+        &[
+            ("counter_id", cid.as_str()),
+            ("timestamp", now.as_str()),
+            ("line_num", count_str.as_str()),
+            ("direction", "1"),
+        ],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            let mut items = match data.get("stats").and_then(|v| v.as_array()) {
+                Some(a) if !a.is_empty() => a.clone(),
+                _ => {
+                    println!("No option volume data found for {symbol}.");
+                    return Ok(());
+                }
+            };
+            items.reverse();
+            println!("Option Volume Daily — {symbol}\n");
+            let headers = [
+                "date",
+                "total_vol",
+                "call_vol",
+                "put_vol",
+                "pc_vol",
+                "call_oi",
+                "put_oi",
+                "pc_oi",
+            ];
+            let rows: Vec<Vec<String>> = items
+                .iter()
+                .map(|item| {
+                    let total_vol: i64 = val_str(&item["total_volume"]).parse().unwrap_or(0);
+                    let call_vol: i64 = val_str(&item["total_call_volume"]).parse().unwrap_or(0);
+                    let put_vol: i64 = val_str(&item["total_put_volume"]).parse().unwrap_or(0);
+                    let call_oi: i64 = val_str(&item["total_call_open_interest"])
+                        .parse()
+                        .unwrap_or(0);
+                    let put_oi: i64 = val_str(&item["total_put_open_interest"])
+                        .parse()
+                        .unwrap_or(0);
+                    vec![
+                        fmt_ts(&val_str(&item["timestamp"])),
+                        format_with_commas(total_vol),
+                        format_with_commas(call_vol),
+                        format_with_commas(put_vol),
+                        val_str(&item["put_call_volume_ratio"]),
+                        format_with_commas(call_oi),
+                        format_with_commas(put_oi),
+                        val_str(&item["put_call_open_interest_ratio"]),
+                    ]
+                })
+                .collect();
+            print_table(&headers, rows, format);
+        }
+    }
+    Ok(())
+}
+
+pub async fn cmd_short_positions(
+    symbol: String,
+    count: u32,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        .to_string();
+    let count_str = count.clamp(1, 100).to_string();
+    let data = http_get(
+        "/v1/quote/short-positions/us",
+        &[
+            ("counter_id", cid.as_str()),
+            ("last_timestamp", now.as_str()),
+            ("page_size", count_str.as_str()),
+        ],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            let mut items = match data.get("data").and_then(|v| v.as_array()) {
+                Some(a) if !a.is_empty() => a.clone(),
+                _ => {
+                    println!("No short selling data found for {symbol}.");
+                    return Ok(());
+                }
+            };
+            items.reverse();
+            println!("Short Selling Data — {symbol}\n");
+            let headers = [
+                "date",
+                "rate%",
+                "short_shares",
+                "avg_daily_vol",
+                "days_cover",
+                "close",
+            ];
+            let rows: Vec<Vec<String>> = items
+                .iter()
+                .map(|item| {
+                    let ts = val_str(&item["timestamp"]);
+                    let rate = val_str(&item["rate"])
+                        .parse::<f64>()
+                        .map_or_else(|_| val_str(&item["rate"]), |v| format!("{:.2}%", v * 100.0));
+                    let short_shares: i64 =
+                        val_str(&item["current_shares_short"]).parse().unwrap_or(0);
+                    let avg_vol: i64 = val_str(&item["avg_daily_share_volume"])
+                        .parse()
+                        .unwrap_or(0);
+                    let days = val_str(&item["days_to_cover"]);
+                    let close = val_str(&item["close"]);
+                    vec![
+                        fmt_ts(&ts),
+                        rate,
+                        format_with_commas(short_shares),
+                        format_with_commas(avg_vol),
+                        days,
+                        close,
+                    ]
+                })
+                .collect();
+            print_table(&headers, rows, format);
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
