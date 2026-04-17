@@ -8,7 +8,6 @@ use super::{
 
 use crate::utils::counter::{counter_id_to_symbol, symbol_to_counter_id};
 use crate::utils::datetime::format_timestamp;
-use crate::utils::text::hyperlink;
 
 pub async fn cmd_dca(
     cmd: Option<DcaCmd>,
@@ -166,8 +165,8 @@ fn confirm_terms() -> Result<bool> {
     const URL_HK: &str = "https://pub.lbkrs.com/static/offline/202510/Cbq7M3dMEsABF2tU/Terms_and_Conditions_for_the_Recurring_Investment-en.pdf";
     const URL_SG: &str = "https://pub.lbkrs.com/static/offline/202511/QLnmVqLGUtvfQiFv/_SG__Terms_and_Conditions_for_the_Recurring_Investment.pdf";
 
-    let link_hk = format!("{CYAN}{}{RESET}", hyperlink(URL_HK, URL_HK));
-    let link_sg = format!("{CYAN}{}{RESET}", hyperlink(URL_SG, URL_SG));
+    let link_hk = format!("{CYAN}{URL_HK}{RESET}");
+    let link_sg = format!("{CYAN}{URL_SG}{RESET}");
 
     println!(
         "\n{BOLD}{YELLOW}Terms and Conditions — Recurring Investment{RESET}\n\n\
@@ -175,7 +174,7 @@ fn confirm_terms() -> Result<bool> {
         {BOLD}Longbridge SG:{RESET}\n  {link_sg}\n\n\
         {BOLD}Longbridge HK:{RESET}\n  {link_hk}\n\n\
         {DIM}Tip: pass --agree-terms to skip this prompt.\n\
-        By using that flag you confirm you have read and agreed to the Terms and Conditions.{RESET}\n"
+        BY USING THAT FLAG YOU CONFIRM YOU HAVE READ AND AGREED TO THE TERMS AND CONDITIONS.{RESET}\n"
     );
     print!("Do you agree to the Terms and Conditions? [y/N]: ");
     std::io::stdout().flush()?;
