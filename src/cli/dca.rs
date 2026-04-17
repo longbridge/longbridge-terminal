@@ -172,8 +172,8 @@ fn confirm_terms() -> Result<bool> {
     println!(
         "\n{BOLD}{YELLOW}Terms and Conditions — Recurring Investment{RESET}\n\n\
         Please read the Terms and Conditions before proceeding:\n\n\
-        {BOLD}Longbridge HK:{RESET}\n  {link_hk}\n\n\
         {BOLD}Longbridge SG:{RESET}\n  {link_sg}\n\n\
+        {BOLD}Longbridge HK:{RESET}\n  {link_hk}\n\n\
         {DIM}Tip: pass --agree-terms to skip this prompt.\n\
         By using that flag you confirm you have read and agreed to the Terms and Conditions.{RESET}\n"
     );
