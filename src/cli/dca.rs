@@ -26,6 +26,7 @@ pub async fn cmd_dca(
             day_of_week,
             day_of_month,
             allow_margin,
+            agree_terms,
         }) => {
             cmd_create(
                 symbol,
@@ -34,6 +35,7 @@ pub async fn cmd_dca(
                 day_of_week,
                 day_of_month,
                 allow_margin,
+                agree_terms,
             )
             .await
         }
@@ -151,6 +153,36 @@ async fn cmd_list(
     Ok(())
 }
 
+fn confirm_terms() -> Result<bool> {
+    use std::io::Write;
+
+    const BOLD: &str = "\x1b[1m";
+    const YELLOW: &str = "\x1b[33m";
+    const CYAN: &str = "\x1b[36m";
+    const DIM: &str = "\x1b[2m";
+    const RESET: &str = "\x1b[0m";
+
+    const URL_HK: &str = "https://pub.lbkrs.com/static/offline/202510/Cbq7M3dMEsABF2tU/Terms_and_Conditions_for_the_Recurring_Investment-en.pdf";
+    const URL_SG: &str = "https://pub.lbkrs.com/static/offline/202511/QLnmVqLGUtvfQiFv/_SG__Terms_and_Conditions_for_the_Recurring_Investment.pdf";
+
+    let link_hk = format!("{CYAN}{URL_HK}{RESET}");
+    let link_sg = format!("{CYAN}{URL_SG}{RESET}");
+
+    println!(
+        "\n{BOLD}{YELLOW}Terms and Conditions — Recurring Investment{RESET}\n\n\
+        Please read the Terms and Conditions before proceeding:\n\n\
+        {BOLD}Longbridge SG:{RESET}\n  {link_sg}\n\n\
+        {BOLD}Longbridge HK:{RESET}\n  {link_hk}\n\n\
+        {DIM}Tip: pass --agree-terms to skip this prompt.\n\
+        BY USING THAT FLAG YOU CONFIRM YOU HAVE READ AND AGREED TO THE TERMS AND CONDITIONS.{RESET}\n"
+    );
+    print!("Do you agree to the Terms and Conditions? [y/N]: ");
+    std::io::stdout().flush()?;
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    Ok(input.trim().eq_ignore_ascii_case("y"))
+}
+
 async fn cmd_create(
     symbol: String,
     amount: String,
@@ -158,7 +190,13 @@ async fn cmd_create(
     day_of_week: Option<DcaDayOfWeek>,
     day_of_month: Option<String>,
     allow_margin: bool,
+    agree_terms: bool,
 ) -> Result<()> {
+    if !agree_terms && !confirm_terms()? {
+        println!("Recurring investment plan creation cancelled.");
+        return Ok(());
+    }
+
     let mut body = serde_json::json!({
         "counter_id": symbol_to_counter_id(&symbol),
         "per_invest_amount": amount,
