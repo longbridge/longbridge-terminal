@@ -278,9 +278,9 @@ longbridge dca calc-date TSLA.US --frequency weekly --day-of-week fri  # Calcula
 longbridge dca check TSLA.US AAPL.US 700.HK                  # Check which symbols support recurring investment
 longbridge dca set-reminder 6                                 # Set reminder hours before trade (1 | 6 | 12)
 
-longbridge option volume-stats AAPL.US                        # Option Call/Put volume and Put/Call ratio for a US stock
-longbridge option volume-daily AAPL.US                        # Daily option Call/Put volume and open interest history
-longbridge option volume-daily AAPL.US --count 60             # Return last 60 trading days
+longbridge option volume AAPL.US                              # Real-time option Call/Put volume and Put/Call ratio
+longbridge option volume daily AAPL.US                        # Daily option Call/Put volume and open interest history
+longbridge option volume daily AAPL.US --count 60             # Return last 60 trading days
 longbridge short-positions AAPL.US                            # US stock short selling data (short interest, ratio, days to cover)
 longbridge short-positions TSLA.US --count 50                 # Return last 50 short interest records
 ```

@@ -309,11 +309,11 @@ pub enum Commands {
     // ── Options & Warrants ──────────────────────────────────────────────────────
     /// Option quotes, option chain, and option volume statistics
     ///
-    /// Subcommands: quote  chain  volume-stats  volume-daily
+    /// Subcommands: chain  quote  volume
     /// Example: longbridge option quote AAPL240119C190000
     /// Example: longbridge option chain AAPL.US --date 2024-01-19
-    /// Example: longbridge option volume-stats AAPL.US
-    /// Example: longbridge option volume-daily AAPL.US
+    /// Example: longbridge option volume AAPL.US
+    /// Example: longbridge option volume daily AAPL.US
     Option {
         #[command(subcommand)]
         cmd: OptionCmd,
@@ -1962,24 +1962,32 @@ pub enum OptionCmd {
         symbols: Vec<String>,
     },
 
+    /// Real-time Call/Put volume snapshot; with `daily` subcommand shows historical data
+    ///
+    /// Without subcommand: returns today's real-time Call/Put volume and Put/Call ratio.
+    /// Example: longbridge option volume AAPL.US
+    /// Example: longbridge option volume daily AAPL.US
+    /// Example: longbridge option volume daily AAPL.US --count 60
+    Volume {
+        /// Symbol in <CODE>.<MARKET> format (US market only). Omit when using a subcommand.
+        symbol: Option<String>,
+        #[command(subcommand)]
+        cmd: Option<VolumeSubCmd>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum VolumeSubCmd {
     /// Daily Call/Put volume and open interest history
     ///
-    /// Example: longbridge option volume-daily AAPL.US
-    /// Example: longbridge option volume-daily AAPL.US --count 60
-    VolumeDaily {
+    /// Example: longbridge option volume daily AAPL.US
+    /// Example: longbridge option volume daily AAPL.US --count 60
+    Daily {
         /// Symbol in <CODE>.<MARKET> format (US market only, e.g. AAPL.US)
         symbol: String,
         /// Number of trading days to return (default: 20)
         #[arg(long, default_value = "20")]
         count: u32,
-    },
-
-    /// Current Call/Put volume and Put/Call ratio
-    ///
-    /// Example: longbridge option volume-stats AAPL.US
-    VolumeStats {
-        /// Symbol in <CODE>.<MARKET> format (US market only, e.g. AAPL.US)
-        symbol: String,
     },
 }
 
@@ -2168,12 +2176,19 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             OptionCmd::Chain { symbol, date } => {
                 quote::cmd_option_chain(symbol, date, format).await
             }
-            OptionCmd::VolumeStats { symbol } => {
-                quote::cmd_option_volume_stats(symbol, format, verbose).await
-            }
-            OptionCmd::VolumeDaily { symbol, count } => {
-                quote::cmd_option_volume_daily(symbol, count, format, verbose).await
-            }
+            OptionCmd::Volume { symbol, cmd } => match cmd {
+                Some(VolumeSubCmd::Daily { symbol: s, count }) => {
+                    quote::cmd_option_volume_daily(s, count, format, verbose).await
+                }
+                None => {
+                    let sym = symbol.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Symbol required. Usage: longbridge option volume <SYMBOL>"
+                        )
+                    })?;
+                    quote::cmd_option_volume_stats(sym, format, verbose).await
+                }
+            },
         },
         Commands::Warrant { symbol, cmd } => match cmd {
             Some(WarrantCmd::Quote { symbols }) => quote::cmd_warrant_quote(symbols, format).await,
