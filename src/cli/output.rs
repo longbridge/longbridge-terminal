@@ -79,14 +79,18 @@ pub fn fmt_decimal(v: &Option<rust_decimal::Decimal>) -> String {
 
 /// Format optional decimal divided by 100 with 3 decimal places (API returns percentage values, e.g. implied volatility, rho)
 pub fn fmt_decimal_div100(v: &Option<rust_decimal::Decimal>) -> String {
-    v.map(|d| format!("{:.3}", d / rust_decimal::Decimal::ONE_HUNDRED))
-        .unwrap_or_else(|| "-".to_string())
+    v.map_or_else(
+        || "-".to_string(),
+        |d| format!("{:.3}", d / rust_decimal::Decimal::ONE_HUNDRED),
+    )
 }
 
 /// Format optional decimal divided by 252 with 3 decimal places (convert annualized greek to per-trading-day, e.g. theta, vega)
 pub fn fmt_decimal_div252(v: &Option<rust_decimal::Decimal>) -> String {
-    v.map(|d| format!("{:.3}", d / rust_decimal::Decimal::from(252u32)))
-        .unwrap_or_else(|| "-".to_string())
+    v.map_or_else(
+        || "-".to_string(),
+        |d| format!("{:.3}", d / rust_decimal::Decimal::from(252u32)),
+    )
 }
 
 /// Format decimal

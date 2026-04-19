@@ -42,7 +42,7 @@ impl Watchlist {
         let mut seen = HashSet::new();
         let mut all = Vec::new();
 
-        for counter in watchlist_counters.into_iter().chain(holdings.into_iter()) {
+        for counter in watchlist_counters.into_iter().chain(holdings) {
             if seen.insert(counter.clone()) {
                 all.push(counter);
             }

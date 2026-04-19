@@ -427,7 +427,7 @@ pub async fn cmd_investors_list(top: usize, format: &OutputFormat) -> Result<()>
             .into_iter()
             .map(|(cik, (period, aum))| (cik, period, aum))
             .collect();
-        all_ranked.sort_unstable_by(|a, b| b.2.cmp(&a.2));
+        all_ranked.sort_unstable_by_key(|b| std::cmp::Reverse(b.2));
         all_ranked.truncate(200);
         let padded_ciks: Vec<String> = all_ranked
             .iter()
@@ -1052,7 +1052,7 @@ async fn show_holdings(
     let mut holdings = consolidate_holdings(raw_holdings);
     apply_value_multiplier(&mut holdings);
 
-    holdings.sort_unstable_by(|a, b| b.value.cmp(&a.value));
+    holdings.sort_unstable_by_key(|b| std::cmp::Reverse(b.value));
 
     #[allow(clippy::cast_precision_loss)]
     let total_value: u64 = holdings.iter().map(|h| h.value).sum();

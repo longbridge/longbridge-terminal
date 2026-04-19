@@ -2694,7 +2694,9 @@ pub async fn cmd_option_volume_stats(
             let call: i64 = val_str(&data["c"]).parse().unwrap_or(0);
             let put: i64 = val_str(&data["p"]).parse().unwrap_or(0);
             let pc_ratio = if call > 0 {
-                format!("{:.4}", put as f64 / call as f64)
+                #[allow(clippy::cast_precision_loss)]
+                let ratio = put as f64 / call as f64;
+                format!("{ratio:.4}")
             } else {
                 "-".to_string()
             };
