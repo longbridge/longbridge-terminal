@@ -3,6 +3,10 @@ name: Release to OSS
 on:
   workflow_dispatch:
     inputs:
+      ref:
+        description: "Git ref to run with (branch, tag, or SHA). Leave empty to use selected branch."
+        required: false
+        type: string
       tag:
         description: "Release tag (e.g. v0.8.0). Leave empty to use the latest release."
         required: false
@@ -18,6 +22,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref_name }}
 
       - name: Resolve release tag
         id: release
