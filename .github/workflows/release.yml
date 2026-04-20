@@ -233,9 +233,31 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          sed -e "s|https://github.com/longbridge/longbridge-terminal/releases/download/v[0-9][0-9.]*|https://open.longbridge.cn/github/release/longbridge-terminal/v${VERSION}|g" \
-              -e "s|\"version\": \"[^\"]*\"|\"version\": \"${VERSION}\"|" \
-            .scoop/longbridge.json > longbridge.json
+          WINDOWS_ZIP="release-dist/longbridge-terminal-windows-amd64.zip"
+          WINDOWS_SHA256="$(sha256sum "$WINDOWS_ZIP" | awk '{print $1}')"
+          python3 - <<'PY'
+          import json
+          import os
+
+          version = os.environ["VERSION"]
+          windows_sha256 = os.environ["WINDOWS_SHA256"]
+          manifest_path = ".scoop/longbridge.json"
+          output_path = "longbridge.json"
+
+          with open(manifest_path, "r", encoding="utf-8") as f:
+              manifest = json.load(f)
+
+          manifest["version"] = version
+          manifest["architecture"]["64bit"]["url"] = (
+              "https://open.longbridge.cn/github/release/longbridge-terminal/"
+              f"v{version}/longbridge-terminal-windows-amd64.zip"
+          )
+          manifest["architecture"]["64bit"]["hash"] = windows_sha256
+
+          with open(output_path, "w", encoding="utf-8") as f:
+              json.dump(manifest, f, indent=2, ensure_ascii=False)
+              f.write("\n")
+          PY
           ./ossutil cp longbridge.json \
             oss://lb-assets/github/release/longbridge-terminal/longbridge.json \
             -f \
