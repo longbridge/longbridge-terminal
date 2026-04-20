@@ -82,5 +82,5 @@ if ($userPath -notlike "*$installDir*") {
 Write-Host ""
 Write-Host "Longbridge CLI $version has been installed successfully."
 Write-Host ""
-Write-Host "Run 'longbridge login' to authenticate, then 'longbridge -h' for help."
+Write-Host "Run 'longbridge auth login' to authenticate, then 'longbridge -h' for help."
 Write-Host ""

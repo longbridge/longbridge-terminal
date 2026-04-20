@@ -41,7 +41,7 @@ Symbol format: <CODE>.<MARKET>\n\
 Note: crypto symbols use the .HAS suffix (Longbridge-specific). If a .HAS symbol returns no\n\
 data, crypto market access may not be enabled for this account — the data exists but is\n\
 restricted by account type.\n\n\
-Authentication: run `longbridge login` once; the token is stored at \
+Authentication: run `longbridge auth login` once; the token is stored at \
 ~/.longbridge/openapi/tokens/<client_id> and reused automatically by all commands.\n\n\
 Use --format json on any command for machine-readable output suitable for AI agents:\n\
   longbridge quote TSLA.US --format json\n\
@@ -59,7 +59,7 @@ pub struct Cli {
     #[arg(long, global = true, default_value = "pretty")]
     pub format: OutputFormat,
 
-    /// Clear stored OAuth token and exit (same as `longbridge logout`)
+    /// Clear stored OAuth token and exit (same as `longbridge auth logout`)
     #[arg(long)]
     pub logout: bool,
 
