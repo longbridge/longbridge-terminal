@@ -128,6 +128,30 @@ pub async fn init_contexts() -> Result<(
         effective_http_url = "https://openapi.longbridge.com";
     }
 
+    // Extract x-cli-cmd: first positional (non-flag) arg; skip --format / --lang values.
+    let cli_cmd = {
+        let mut iter = std::env::args().skip(1);
+        let mut found = String::new();
+        while let Some(arg) = iter.next() {
+            if arg == "--format" || arg == "--lang" {
+                iter.next();
+            } else if !arg.starts_with('-') {
+                found = arg;
+                break;
+            }
+        }
+        found
+    };
+    let channel_key = crate::auth::read_channel();
+
+    // Inject into Config so headers appear in WebSocket upgrade requests too.
+    if !cli_cmd.is_empty() {
+        config_builder = config_builder.header("x-cli-cmd", &cli_cmd);
+    }
+    if let Some(ref ch) = channel_key {
+        config_builder = config_builder.header("x-channel-key", ch);
+    }
+
     let config = Arc::new(config_builder);
 
     let content_ctx = longbridge::ContentContext::new(Arc::clone(&config));
@@ -140,7 +164,15 @@ pub async fn init_contexts() -> Result<(
         .set(statement_ctx)
         .map_err(|_| anyhow::anyhow!("AssetContext already initialized"))?;
 
-    let http_client = longbridge::httpclient::HttpClient::new(http_client_config);
+    // Also inject into the standalone HttpClient used for direct REST calls.
+    let mut http_client = longbridge::httpclient::HttpClient::new(http_client_config);
+    if !cli_cmd.is_empty() {
+        http_client = http_client.header("x-cli-cmd", cli_cmd.as_str());
+    }
+    if let Some(ref ch) = channel_key {
+        http_client = http_client.header("x-channel-key", ch.as_str());
+    }
+
     HTTP_CLIENT
         .set(http_client)
         .map_err(|_| anyhow::anyhow!("HttpClient already initialized"))?;
