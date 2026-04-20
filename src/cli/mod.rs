@@ -8,6 +8,7 @@ pub mod check;
 pub mod completion;
 pub mod dca;
 pub mod fundamental;
+pub mod init;
 pub mod insider_trades;
 pub mod investors;
 pub mod news;
@@ -82,6 +83,17 @@ pub enum Commands {
     Auth {
         #[command(subcommand)]
         cmd: AuthCmd,
+    },
+
+    /// Set a channel key for affiliate tracking
+    ///
+    /// Stores the given channel key locally. The key is sent during device authentication
+    /// so the server can associate the user with the referral channel (e.g. a KOL campaign).
+    /// It is also included as a header in subsequent API requests.
+    /// Example: longbridge init KOL-ABC123
+    Init {
+        /// Channel key provided by the referral channel
+        channel_key: String,
     },
 
     /// Check token validity, and API connectivity
@@ -2662,7 +2674,8 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         | Commands::Tui
         | Commands::Check
         | Commands::Update { .. }
-        | Commands::Completion { .. } => {
+        | Commands::Completion { .. }
+        | Commands::Init { .. } => {
             unreachable!()
         }
     }

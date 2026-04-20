@@ -115,8 +115,14 @@ pub async fn init_contexts() -> Result<(
             .trade_ws_url(crate::region::TRADE_WS_URL_TEST);
         http_client_config = http_client_config.http_url(crate::region::HTTP_URL_TEST);
         effective_http_url = crate::region::HTTP_URL_TEST;
-    } else if crate::region::is_cn_cached() {
+    } else if crate::region::is_cn_cached()
+        && (cfg!(not(debug_assertions))
+            || std::env::var("LONGBRIDGE_HTTP_URL")
+                .or_else(|_| std::env::var("LONGPORT_HTTP_URL"))
+                .is_err())
+    {
         // If last geotest indicated China Mainland, use CN endpoints directly.
+        // In debug builds, skip if LONGBRIDGE_HTTP_URL is set (allows local mock server testing).
         tracing::debug!("Using CN region endpoints (cached)");
         config_builder = config_builder
             .http_url(crate::region::HTTP_URL_CN)
@@ -126,6 +132,29 @@ pub async fn init_contexts() -> Result<(
         effective_http_url = crate::region::HTTP_URL_CN;
     } else {
         effective_http_url = "https://openapi.longbridge.com";
+    }
+
+    // Extract x-cli-cmd: first positional (non-flag) arg; skip --format / --lang values.
+    let cli_cmd = {
+        let mut iter = std::env::args().skip(1);
+        let mut found = String::new();
+        while let Some(arg) = iter.next() {
+            if arg == "--format" || arg == "--lang" {
+                iter.next();
+            } else if !arg.starts_with('-') {
+                found = arg;
+                break;
+            }
+        }
+        found
+    };
+
+    let user_agent = concat!("longbridge-cli/", env!("CARGO_PKG_VERSION"));
+
+    // Inject into Config so headers appear in WebSocket upgrade requests too.
+    config_builder = config_builder.header("user-agent", user_agent);
+    if !cli_cmd.is_empty() {
+        config_builder = config_builder.header("x-cli-cmd", &cli_cmd);
     }
 
     let config = Arc::new(config_builder);
@@ -140,7 +169,13 @@ pub async fn init_contexts() -> Result<(
         .set(statement_ctx)
         .map_err(|_| anyhow::anyhow!("AssetContext already initialized"))?;
 
-    let http_client = longbridge::httpclient::HttpClient::new(http_client_config);
+    // Also inject into the standalone HttpClient used for direct REST calls.
+    let mut http_client = longbridge::httpclient::HttpClient::new(http_client_config);
+    http_client = http_client.header("user-agent", user_agent);
+    if !cli_cmd.is_empty() {
+        http_client = http_client.header("x-cli-cmd", cli_cmd.as_str());
+    }
+
     HTTP_CLIENT
         .set(http_client)
         .map_err(|_| anyhow::anyhow!("HttpClient already initialized"))?;
