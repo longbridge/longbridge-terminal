@@ -149,7 +149,10 @@ pub async fn init_contexts() -> Result<(
         found
     };
 
+    let user_agent = concat!("longbridge-cli/", env!("CARGO_PKG_VERSION"));
+
     // Inject into Config so headers appear in WebSocket upgrade requests too.
+    config_builder = config_builder.header("user-agent", user_agent);
     if !cli_cmd.is_empty() {
         config_builder = config_builder.header("x-cli-cmd", &cli_cmd);
     }
@@ -168,6 +171,7 @@ pub async fn init_contexts() -> Result<(
 
     // Also inject into the standalone HttpClient used for direct REST calls.
     let mut http_client = longbridge::httpclient::HttpClient::new(http_client_config);
+    http_client = http_client.header("user-agent", user_agent);
     if !cli_cmd.is_empty() {
         http_client = http_client.header("x-cli-cmd", cli_cmd.as_str());
     }

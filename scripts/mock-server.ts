@@ -29,6 +29,7 @@ const CYAN = "\x1b[36m";
 const INTERESTING = new Set([
   "x-cli-cmd",
   "x-channel-id",
+  "user-agent",
   "accept-language",
   "authorization",
   "upgrade",
