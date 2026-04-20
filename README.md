@@ -94,29 +94,16 @@ Enable tab-completion for `longbridge` commands and flags in your shell:
 eval "$(longbridge completion bash)"
 ```
 
-Or generate a static file (faster startup):
-
-```bash
-longbridge completion bash > ~/.bash_completion
-# then add to ~/.bashrc:  source ~/.bash_completion
-```
-
 **Zsh** — add to `~/.zshrc`:
 
 ```zsh
-# Create the completion directory if it doesn't exist
-mkdir -p ~/.zfunc
-longbridge completion zsh > ~/.zfunc/_longbridge
-
-# Add before compinit in ~/.zshrc:
-fpath=(~/.zfunc $fpath)
-autoload -Uz compinit && compinit
+eval "$(longbridge completion zsh)"
 ```
 
-**Fish**:
+**Fish** — add to `~/.config/fish/config.fish`:
 
 ```fish
-longbridge completion fish > ~/.config/fish/completions/longbridge.fish
+longbridge completion fish | source
 ```
 
 After reloading your shell, `longbridge <TAB>` will suggest subcommands, flags, and values.
