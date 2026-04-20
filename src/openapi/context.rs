@@ -150,11 +150,15 @@ pub async fn init_contexts() -> Result<(
     };
 
     let user_agent = concat!("longbridge-cli/", env!("CARGO_PKG_VERSION"));
+    let channel = crate::auth::read_channel();
 
     // Inject into Config so headers appear in WebSocket upgrade requests too.
     config_builder = config_builder.header("user-agent", user_agent);
     if !cli_cmd.is_empty() {
         config_builder = config_builder.header("x-cli-cmd", &cli_cmd);
+    }
+    if let Some(ref ch) = channel {
+        config_builder = config_builder.header("x-channel-id", ch.as_str());
     }
 
     let config = Arc::new(config_builder);
@@ -174,6 +178,9 @@ pub async fn init_contexts() -> Result<(
     http_client = http_client.header("user-agent", user_agent);
     if !cli_cmd.is_empty() {
         http_client = http_client.header("x-cli-cmd", cli_cmd.as_str());
+    }
+    if let Some(ref ch) = channel {
+        http_client = http_client.header("x-channel-id", ch.as_str());
     }
 
     HTTP_CLIENT
