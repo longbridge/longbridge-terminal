@@ -235,7 +235,7 @@ jobs:
           set -euo pipefail
           WINDOWS_ZIP="release-dist/longbridge-terminal-windows-amd64.zip"
           WINDOWS_SHA256="$(sha256sum "$WINDOWS_ZIP" | awk '{print $1}')"
-          python3 - <<'PY'
+          WINDOWS_SHA256="$WINDOWS_SHA256" python3 - <<'PY'
           import json
           import os
 
