@@ -91,13 +91,13 @@ Enable tab-completion for `longbridge` commands and flags in your shell:
 **Bash** — add to `~/.bashrc` or `~/.bash_profile`:
 
 ```bash
-eval "$(longbridge completion bash)"
+source <(longbridge completion bash)
 ```
 
 **Zsh** — add to `~/.zshrc`:
 
 ```zsh
-eval "$(longbridge completion zsh)"
+source <(longbridge completion zsh)
 ```
 
 **Fish** — add to `~/.config/fish/config.fish`:
