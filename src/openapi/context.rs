@@ -115,8 +115,13 @@ pub async fn init_contexts() -> Result<(
             .trade_ws_url(crate::region::TRADE_WS_URL_TEST);
         http_client_config = http_client_config.http_url(crate::region::HTTP_URL_TEST);
         effective_http_url = crate::region::HTTP_URL_TEST;
-    } else if crate::region::is_cn_cached() {
+    } else if crate::region::is_cn_cached()
+        && std::env::var("LONGBRIDGE_HTTP_URL")
+            .or_else(|_| std::env::var("LONGPORT_HTTP_URL"))
+            .is_err()
+    {
         // If last geotest indicated China Mainland, use CN endpoints directly.
+        // Skip if the caller explicitly set LONGBRIDGE_HTTP_URL (e.g. for local testing).
         tracing::debug!("Using CN region endpoints (cached)");
         config_builder = config_builder
             .http_url(crate::region::HTTP_URL_CN)
