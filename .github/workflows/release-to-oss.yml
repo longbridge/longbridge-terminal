@@ -92,7 +92,11 @@ jobs:
           version = os.environ["VERSION"]
           scoop_url = os.environ["SCOOP_URL"]
 
-          sha256 = hashlib.sha256(zip_path.read_bytes()).hexdigest()
+          sha256_hash = hashlib.sha256()
+          with zip_path.open("rb") as f:
+              for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                  sha256_hash.update(chunk)
+          sha256 = sha256_hash.hexdigest()
 
           with manifest_path.open("r", encoding="utf-8") as f:
               manifest = json.load(f)
