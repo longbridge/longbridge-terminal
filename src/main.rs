@@ -135,6 +135,13 @@ async fn main() {
             return;
         }
 
+        Some(cli::Commands::Init { channel_key }) => {
+            if let Err(e) = cli::init::cmd_init(&channel_key) {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        }
+
         Some(cli::Commands::Check) => {
             if let Err(e) = cli::check::cmd_check(&cli.format).await {
                 print_cli_error(&e, false);
