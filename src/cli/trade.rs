@@ -755,7 +755,7 @@ pub async fn cmd_portfolio(format: &OutputFormat) -> Result<()> {
                 // Sort by value descending
                 let mut dist: Vec<(String, rust_decimal::Decimal)> =
                     market_values.into_iter().collect();
-                dist.sort_by(|a, b| b.1.cmp(&a.1));
+                dist.sort_by_key(|b| std::cmp::Reverse(b.1));
 
                 let dist_headers = &["Market", "Value (USD)", "%"];
                 let dist_rows = dist

@@ -199,6 +199,10 @@ async fn main() {
             }
         }
 
+        Some(cli::Commands::Completion { shell }) => {
+            cli::completion::cmd_completion(shell);
+        }
+
         Some(cmd) => {
             let start = verbose.then(Instant::now);
             // CLI mode: init contexts (auth), then dispatch

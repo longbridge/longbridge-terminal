@@ -252,7 +252,7 @@ pub fn render_portfolio(
                     .map(|(m, v)| (format!("{m:?}"), v, Some(m)))
                     .collect();
                 entries.push(("Cash".to_string(), overview.total_cash, None));
-                entries.sort_by(|a, b| b.1.cmp(&a.1));
+                entries.sort_by_key(|b| std::cmp::Reverse(b.1));
 
                 let mut spans: Vec<Span> = Vec::new();
                 for (label, value, market_opt) in &entries {

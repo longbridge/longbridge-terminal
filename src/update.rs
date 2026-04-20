@@ -77,8 +77,7 @@ fn cache_is_fresh() -> bool {
     };
     modified
         .elapsed()
-        .map(|d| d.as_secs() < CHECK_INTERVAL_SECS)
-        .unwrap_or(false)
+        .is_ok_and(|d| d.as_secs() < CHECK_INTERVAL_SECS)
 }
 
 /// Compare two version strings (e.g., "0.9.0" vs "0.10.0").

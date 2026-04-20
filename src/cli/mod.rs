@@ -5,6 +5,7 @@ pub mod api;
 pub mod asset;
 pub mod auth;
 pub mod check;
+pub mod completion;
 pub mod dca;
 pub mod fundamental;
 pub mod insider_trades;
@@ -107,6 +108,20 @@ pub enum Commands {
     /// Real-time watchlist, candlestick charts, portfolio view, stock search, Vim-like keybindings.
     /// Example: longbridge tui
     Tui,
+
+    /// Generate shell completion script
+    ///
+    /// Prints a shell completion script to stdout.
+    /// Redirect the output to the appropriate file and reload your shell to enable tab-completion.
+    ///
+    /// Example (bash):  `longbridge completion bash >> ~/.bash_completion`
+    /// Example (zsh):   `longbridge completion zsh  > ~/.zfunc/_longbridge`
+    ///                  (add `fpath=(~/.zfunc $fpath)` and `autoload -Uz compinit && compinit` to `~/.zshrc`)
+    /// Example (fish):  `longbridge completion fish > ~/.config/fish/completions/longbridge.fish`
+    Completion {
+        /// Target shell: bash, zsh, fish, elvish, or powershell
+        shell: clap_complete::Shell,
+    },
 
     // ── Quote ──────────────────────────────────────────────────────────────────
     /// Real-time quotes for one or more symbols
@@ -2646,7 +2661,8 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         Commands::Auth { .. }
         | Commands::Tui
         | Commands::Check
-        | Commands::Update { .. } => {
+        | Commands::Update { .. }
+        | Commands::Completion { .. } => {
             unreachable!()
         }
     }

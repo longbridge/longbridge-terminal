@@ -13,9 +13,7 @@ pub const CALLBACK_PORT: u16 = 60355;
 
 /// Whether the staging environment is active (`LONGBRIDGE_ENV=staging`).
 pub fn is_test_env() -> bool {
-    std::env::var("LONGBRIDGE_ENV")
-        .map(|v| v == "staging")
-        .unwrap_or(false)
+    std::env::var("LONGBRIDGE_ENV").is_ok_and(|v| v == "staging")
 }
 
 /// Return the OAuth client ID for the current environment.

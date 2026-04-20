@@ -23,6 +23,7 @@ bevy_app = "0.11"
 bevy_ecs = "0.11"
 bytemuck = { version = "1.14", features = ["derive"] }
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
 tabled = "0.20"
 tar = "0.4"
 cli-candlestick-chart = { version = "0.4.1", path = "crates/cli-candlestick-chart", default-features = false }

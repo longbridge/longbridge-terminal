@@ -84,6 +84,30 @@ Token is shared between CLI and TUI. After `login`, all commands work without re
 
 The CLI auto-detects China Mainland on each startup by probing `geotest.lbkrs.com` in the background and caches the result. If detected, CN API endpoints are used automatically on the next run.
 
+## Shell Completion
+
+Enable tab-completion for `longbridge` commands and flags in your shell:
+
+**Bash** — add to `~/.bashrc` or `~/.bash_profile`:
+
+```bash
+source <(longbridge completion bash)
+```
+
+**Zsh** — add to `~/.zshrc`:
+
+```zsh
+source <(longbridge completion zsh)
+```
+
+**Fish** — add to `~/.config/fish/config.fish`:
+
+```fish
+longbridge completion fish | source
+```
+
+After reloading your shell, `longbridge <TAB>` will suggest subcommands, flags, and values.
+
 ## CLI Usage
 
 ```
