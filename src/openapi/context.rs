@@ -142,14 +142,10 @@ pub async fn init_contexts() -> Result<(
         }
         found
     };
-    let channel_key = crate::auth::read_channel();
 
     // Inject into Config so headers appear in WebSocket upgrade requests too.
     if !cli_cmd.is_empty() {
         config_builder = config_builder.header("x-cli-cmd", &cli_cmd);
-    }
-    if let Some(ref ch) = channel_key {
-        config_builder = config_builder.header("x-channel-id", ch);
     }
 
     let config = Arc::new(config_builder);
@@ -168,9 +164,6 @@ pub async fn init_contexts() -> Result<(
     let mut http_client = longbridge::httpclient::HttpClient::new(http_client_config);
     if !cli_cmd.is_empty() {
         http_client = http_client.header("x-cli-cmd", cli_cmd.as_str());
-    }
-    if let Some(ref ch) = channel_key {
-        http_client = http_client.header("x-channel-id", ch.as_str());
     }
 
     HTTP_CLIENT
