@@ -49,6 +49,34 @@ pub fn token_file_path() -> Result<PathBuf> {
         .join(client_id()))
 }
 
+/// Channel key file path: `~/.longbridge/openapi/channel`
+fn channel_file_path() -> Result<PathBuf> {
+    Ok(dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("Failed to get home directory"))?
+        .join(".longbridge")
+        .join("openapi")
+        .join("channel"))
+}
+
+/// Persist the channel key to disk.
+pub fn save_channel(channel_key: &str) -> Result<()> {
+    let path = channel_file_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).context("Failed to create config directory")?;
+    }
+    fs::write(&path, channel_key).context("Failed to write channel file")?;
+    Ok(())
+}
+
+/// Read the stored channel key. Returns `None` if not set.
+pub fn read_channel() -> Option<String> {
+    let path = channel_file_path().ok()?;
+    fs::read_to_string(path)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 /// Try to open a URL in the system browser. Returns `true` if the command was
 /// launched successfully (the browser may still fail to load the page).
 ///
@@ -128,15 +156,20 @@ pub async fn device_login(verbose: bool) -> Result<()> {
     let oauth_base = oauth_base_url();
     let client_id = client_id();
     let http_client = reqwest::Client::new();
+    let channel = read_channel();
 
     // Step 1: request device & user codes.
     let url = format!("{oauth_base}/device/authorize");
     if verbose {
         eprintln!("POST {url}");
     }
+    let mut device_auth_form: Vec<(&str, &str)> = vec![("client_id", client_id)];
+    if let Some(ref ch) = channel {
+        device_auth_form.push(("channel", ch.as_str()));
+    }
     let raw = http_client
         .post(&url)
-        .form(&[("client_id", client_id)])
+        .form(&device_auth_form)
         .send()
         .await
         .context("Device authorization request failed")?;
@@ -156,9 +189,18 @@ pub async fn device_login(verbose: bool) -> Result<()> {
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("No device_code in response"))?
         .to_owned();
-    let verification_url = device_resp["verification_uri_complete"]
+    let verification_url_base = device_resp["verification_uri_complete"]
         .as_str()
         .unwrap_or_else(|| device_resp["verification_uri"].as_str().unwrap_or(""));
+    let verification_url_owned;
+    let verification_url = if let Some(ref ch) = channel {
+        let sep = if verification_url_base.contains('?') { '&' } else { '?' };
+        verification_url_owned =
+            format!("{verification_url_base}{sep}channel={}", percent_encoding::utf8_percent_encode(ch, percent_encoding::NON_ALPHANUMERIC));
+        verification_url_owned.as_str()
+    } else {
+        verification_url_base
+    };
     let expires_in = device_resp["expires_in"].as_u64().unwrap_or(300);
     let interval = device_resp["interval"].as_u64().unwrap_or(5);
 
