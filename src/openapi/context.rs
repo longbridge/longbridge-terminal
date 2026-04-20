@@ -149,7 +149,7 @@ pub async fn init_contexts() -> Result<(
         config_builder = config_builder.header("x-cli-cmd", &cli_cmd);
     }
     if let Some(ref ch) = channel_key {
-        config_builder = config_builder.header("x-channel-key", ch);
+        config_builder = config_builder.header("x-channel-id", ch);
     }
 
     let config = Arc::new(config_builder);
@@ -170,7 +170,7 @@ pub async fn init_contexts() -> Result<(
         http_client = http_client.header("x-cli-cmd", cli_cmd.as_str());
     }
     if let Some(ref ch) = channel_key {
-        http_client = http_client.header("x-channel-key", ch.as_str());
+        http_client = http_client.header("x-channel-id", ch.as_str());
     }
 
     HTTP_CLIENT
