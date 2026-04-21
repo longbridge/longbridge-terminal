@@ -2413,6 +2413,7 @@ dependencies = [
  "arrayvec",
  "async-trait",
  "atomic",
+ "base64 0.22.1",
  "bevy_app",
  "bevy_ecs",
  "bitflags 2.10.0",

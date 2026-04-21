@@ -17,6 +17,7 @@ split-debuginfo = "packed" # 将 Debug Info 单独打包为 .pdb (Windows) 或 .
 ansi-parser = "0.9.1"
 ansi-to-tui = "8.0.1"
 anyhow = "1.0"
+base64 = "0.22"
 arrayvec = "0.7"
 atomic = "0.6.0"
 bevy_app = "0.11"
