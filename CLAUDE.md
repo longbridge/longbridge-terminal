@@ -231,7 +231,8 @@ let order = ctx.submit_order(opts).await?;
 
 1. **Rate Limiting**: Longbridge OpenAPI rate limits to "no more than 10 calls per second"
 2. **Token Expiration**: The SDK automatically refreshes the access token when needed
-3. **Market Support**: Supports Hong Kong, US, and China A-share markets
+3. **CN / Global token interoperability**: The `.cn` and `.com` OAuth endpoints share the same user data and token validation. A token issued by one endpoint is accepted by the other. The two regions differ only in routing/acceleration, not in auth logic. Do not treat region as a token-refresh issue.
+4. **Market Support**: Supports Hong Kong, US, and China A-share markets
 4. **Testing**: Per user instructions, update flow has no test coverage
 5. **Logging**: Uses `tracing` library, log files configured via `logger::init()`
 
