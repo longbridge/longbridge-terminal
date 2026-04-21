@@ -45,6 +45,17 @@ struct TokenState {
     logged_in_at: Option<u64>,
 }
 
+/// Decode the `exp` field from a JWT payload without verifying the signature.
+fn jwt_exp(token: &str) -> Option<u64> {
+    use base64::Engine as _;
+    let payload = token.split('.').nth(1)?;
+    let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload)
+        .ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
+    v["exp"].as_u64()
+}
+
 fn read_token_state() -> Result<TokenState> {
     let token_path = crate::auth::token_file_path()?;
     let now = SystemTime::now()
@@ -79,9 +90,26 @@ fn read_token_state() -> Result<TokenState> {
     }
 
     if expires_at > now {
-        Ok(TokenState {
+        return Ok(TokenState {
             status: "valid",
             detail: format!("expires in {}", format_duration(expires_at - now)),
+            logged_in_at,
+        });
+    }
+
+    // Access token is expired — check if the refresh token is still usable.
+    let refresh_token_valid = data["refresh_token"]
+        .as_str()
+        .and_then(jwt_exp)
+        .is_some_and(|exp| exp > now);
+
+    if refresh_token_valid {
+        Ok(TokenState {
+            status: "refresh_pending",
+            detail: format!(
+                "access token expired {} ago, will auto-refresh on next command",
+                format_duration(now - expires_at)
+            ),
             logged_in_at,
         })
     } else {
@@ -219,7 +247,8 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
             // ── Token ──────────────────────────────────────────────────────────
             let (status_str, status_color) = match token.status {
                 "not_found" => ("not found", RED),
-                "expired" => ("expired", YELLOW),
+                "expired" => ("expired", RED),
+                "refresh_pending" => ("refresh pending", YELLOW),
                 _ => ("valid", GREEN),
             };
             println!("Token");

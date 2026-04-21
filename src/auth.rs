@@ -194,9 +194,15 @@ pub async fn device_login(verbose: bool) -> Result<()> {
         .unwrap_or_else(|| device_resp["verification_uri"].as_str().unwrap_or(""));
     let verification_url_owned;
     let verification_url = if let Some(ref ch) = channel {
-        let sep = if verification_url_base.contains('?') { '&' } else { '?' };
-        verification_url_owned =
-            format!("{verification_url_base}{sep}channel={}", percent_encoding::utf8_percent_encode(ch, percent_encoding::NON_ALPHANUMERIC));
+        let sep = if verification_url_base.contains('?') {
+            '&'
+        } else {
+            '?'
+        };
+        verification_url_owned = format!(
+            "{verification_url_base}{sep}channel={}",
+            percent_encoding::utf8_percent_encode(ch, percent_encoding::NON_ALPHANUMERIC)
+        );
         verification_url_owned.as_str()
     } else {
         verification_url_base
@@ -261,6 +267,94 @@ pub async fn device_login(verbose: bool) -> Result<()> {
             None => anyhow::bail!("Unexpected token poll response"),
         }
     }
+}
+
+/// Refresh the access token in-place if it has expired.
+///
+/// - Not expired → returns `Ok(())` immediately (no network call).
+/// - Expired, refresh succeeds → writes new token to disk, returns `Ok(())`.
+/// - Expired, server says invalid/expired refresh token → clears token file,
+///   returns an error directing the user to re-authenticate.
+/// - Expired, network/transient error → returns an error asking the user to
+///   retry (token file is **not** cleared; the refresh token is still valid).
+pub async fn refresh_if_expired() -> Result<()> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let token_path = token_file_path()?;
+    let Ok(contents) = fs::read_to_string(&token_path) else {
+        return Ok(()); // unreadable — let OAuthBuilder handle it
+    };
+    let Ok(data) = serde_json::from_str::<serde_json::Value>(&contents) else {
+        return Ok(()); // unparseable — let OAuthBuilder handle it
+    };
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    if data["expires_at"].as_u64().unwrap_or(0) > now {
+        return Ok(()); // still valid
+    }
+
+    let Some(refresh_token) = data["refresh_token"].as_str().filter(|s| !s.is_empty()) else {
+        let _ = clear_token();
+        return Err(anyhow::anyhow!(
+            "No refresh token found. Please run 'longbridge auth login' to re-authenticate."
+        ));
+    };
+    let refresh_token = refresh_token.to_string();
+
+    let client_id = client_id();
+    let http_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .context("Failed to build HTTP client for token refresh")?;
+
+    let url = format!("{}/token", oauth_base_url());
+    tracing::debug!("Refreshing expired access token via {url}");
+
+    let resp = http_client
+        .post(&url)
+        .form(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh_token.as_str()),
+            ("client_id", client_id),
+        ])
+        .send()
+        .await
+        .context("Token refresh request failed — please retry")?;
+
+    let status = resp.status();
+    if status.is_success() {
+        let mut token_resp = resp
+            .json::<serde_json::Value>()
+            .await
+            .context("Failed to parse token refresh response")?;
+
+        // Preserve the existing refresh token if the server did not rotate it.
+        if token_resp["refresh_token"].is_null() || token_resp["refresh_token"].as_str().is_none() {
+            token_resp["refresh_token"] = serde_json::Value::String(refresh_token);
+        }
+
+        save_token(client_id, &token_resp)?;
+        tracing::debug!("Access token refreshed successfully");
+        return Ok(());
+    }
+
+    let err_resp = resp.json::<serde_json::Value>().await.unwrap_or_default();
+    let error = err_resp["error"].as_str().unwrap_or("unknown");
+
+    if error == "invalid_grant" {
+        let _ = clear_token();
+        return Err(anyhow::anyhow!(
+            "Refresh token has expired. Please run 'longbridge auth login' to re-authenticate."
+        ));
+    }
+
+    // Other server errors (5xx etc.) — keep token intact, let the user retry.
+    Err(anyhow::anyhow!(
+        "Token refresh failed ({status}): {error} — please retry"
+    ))
 }
 
 /// Clear the stored OAuth token (logout). Deletes the token file used by the longbridge SDK.

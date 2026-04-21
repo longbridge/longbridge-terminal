@@ -66,13 +66,17 @@ pub async fn init_contexts() -> Result<(
                 "Not authenticated. Please run 'longbridge auth login' first."
             ));
         }
-        // Token file exists: load it via OAuthBuilder (SDK handles refresh automatically).
+        // Refresh the access token ourselves if it has expired, before handing
+        // off to the SDK.  This avoids a 5-minute browser-callback timeout that
+        // the SDK would trigger when its own refresh fallback fires.
+        crate::auth::refresh_if_expired().await?;
+
+        // Token file exists and is fresh: load it via OAuthBuilder.
+        // The browser-flow callback below should never fire because we handled
+        // expiry above; it is kept as a last-resort safety net.
         let oauth_result = longbridge::oauth::OAuthBuilder::new(crate::auth::client_id())
             .callback_port(crate::auth::CALLBACK_PORT)
             .build(|_url| {
-                // This callback is only invoked if the token file is missing or fully
-                // expired and cannot be refreshed — in practice, we guard above, so
-                // reaching here would be a race condition.  Just log; do not open browser.
                 tracing::warn!("OAuth browser flow triggered unexpectedly");
             })
             .await;
@@ -80,15 +84,7 @@ pub async fn init_contexts() -> Result<(
         let oauth = match oauth_result {
             Ok(o) => o,
             Err(e) => {
-                let msg = e.to_string();
-                if msg.contains("refresh token") || msg.contains("parse server response") {
-                    tracing::warn!("Token refresh failed, clearing stale token: {msg}");
-                    let _ = crate::auth::clear_token();
-                    return Err(anyhow::anyhow!(
-                            "Stored token is invalid or expired. Please run 'longbridge auth login' to re-authenticate."
-                        ));
-                }
-                return Err(anyhow::anyhow!("OAuth failed: {e}"));
+                return Err(anyhow::anyhow!("OAuth initialization failed: {e}"));
             }
         };
 
