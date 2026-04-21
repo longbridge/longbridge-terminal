@@ -98,6 +98,23 @@ jobs:
           echo "--- Updated manifest (.scoop/longbridge.json) ---"
           cat .scoop/longbridge.json
 
+      - name: Setup ossutil
+        run: |
+          wget -q https://github.com/aliyun/ossutil/releases/download/v1.7.17/ossutil-v1.7.17-linux-amd64.zip
+          unzip -q ossutil-v1.7.17-linux-amd64.zip
+          cp ./ossutil-v1.7.17-linux-amd64/ossutil . && chmod +x ./ossutil
+
+      - name: Upload scoop manifest to OSS
+        run: |
+          set -euo pipefail
+          ./ossutil cp longbridge.json \
+            oss://lb-assets/github/release/longbridge-terminal/longbridge.json \
+            -f \
+            -e oss-cn-hangzhou.aliyuncs.com \
+            -i ${{ secrets.FE_LB_ASSET_ACCESS_KEY_ID }} \
+            -k ${{ secrets.FE_LB_ASSET_ACCESS_KEY_SECRET }} \
+            --meta "Cache-Control:no-cache#Content-Type:application/json;charset=utf-8"
+
       - name: Commit and push
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -118,20 +135,3 @@ jobs:
 
           Automated version bump triggered by https://github.com/${REPO}/actions/runs/${RUN_ID}"
           git push origin main
-
-      - name: Setup ossutil
-        run: |
-          wget -q https://github.com/aliyun/ossutil/releases/download/v1.7.17/ossutil-v1.7.17-linux-amd64.zip
-          unzip -q ossutil-v1.7.17-linux-amd64.zip
-          cp ./ossutil-v1.7.17-linux-amd64/ossutil . && chmod +x ./ossutil
-
-      - name: Upload scoop manifest to OSS
-        run: |
-          set -euo pipefail
-          ./ossutil cp longbridge.json \
-            oss://lb-assets/github/release/longbridge-terminal/longbridge.json \
-            -f \
-            -e oss-cn-hangzhou.aliyuncs.com \
-            -i ${{ secrets.FE_LB_ASSET_ACCESS_KEY_ID }} \
-            -k ${{ secrets.FE_LB_ASSET_ACCESS_KEY_SECRET }} \
-            --meta "Cache-Control:no-cache#Content-Type:application/json;charset=utf-8"
