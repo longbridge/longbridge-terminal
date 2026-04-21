@@ -1,6 +1,6 @@
 {
   "version": "0.17.1",
-  "description": "AI-native CLI for the Longbridge trading platform \u2014 real-time market data, portfolio, and trading.",
+  "description": "AI-native CLI for the Longbridge trading platform — real-time market data, portfolio, and trading.",
   "homepage": "https://github.com/longbridge/longbridge-terminal",
   "license": "MIT",
   "architecture": {
