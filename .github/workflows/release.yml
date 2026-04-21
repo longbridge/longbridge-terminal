@@ -228,18 +228,3 @@ jobs:
             -k ${{ secrets.FE_LB_ASSET_ACCESS_KEY_SECRET }} \
             --meta "Cache-Control:no-cache#Content-Type:text/plain;charset=utf-8"
 
-      - name: Upload scoop manifest to OSS
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          set -euo pipefail
-          bash scripts/update-scoop-manifest.sh \
-            "$VERSION" \
-            "release-dist/longbridge-terminal-windows-amd64.zip"
-          ./ossutil cp longbridge.json \
-            oss://lb-assets/github/release/longbridge-terminal/longbridge.json \
-            -f \
-            -e oss-cn-hangzhou.aliyuncs.com \
-            -i ${{ secrets.FE_LB_ASSET_ACCESS_KEY_ID }} \
-            -k ${{ secrets.FE_LB_ASSET_ACCESS_KEY_SECRET }} \
-            --meta "Cache-Control:no-cache#Content-Type:application/json;charset=utf-8"
