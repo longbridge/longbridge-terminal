@@ -72,35 +72,48 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
           TAG: ${{ steps.version.outputs.tag }}
-          WINDOWS_AMD64_SHA256: ${{ steps.checksum.outputs.windows_amd64_sha256 }}
+          SHA256: ${{ steps.checksum.outputs.windows_amd64_sha256 }}
           REPO: ${{ github.repository }}
         run: |
-          python3 - <<'PYEOF'
-          import json, os
+          GITHUB_URL="https://github.com/${REPO}/releases/download/${TAG}/longbridge-terminal-windows-amd64.zip"
+          CDN_URL="https://open.longbridge.cn/github/release/longbridge-terminal/v${VERSION}/longbridge-terminal-windows-amd64.zip"
 
-          manifest_path = ".scoop/longbridge.json"
-          version  = os.environ["VERSION"]
-          tag      = os.environ["TAG"]
-          repo     = os.environ["REPO"]
-          sha      = os.environ["WINDOWS_AMD64_SHA256"]
-          base_url = f"https://github.com/{repo}/releases/download/{tag}"
+          # Update .scoop/longbridge.json (GitHub URL, committed back to repo)
+          jq \
+            --arg version "$VERSION" \
+            --arg url     "$GITHUB_URL" \
+            --arg hash    "$SHA256" \
+            '.version = $version | .architecture["64bit"].url = $url | .architecture["64bit"].hash = $hash' \
+            .scoop/longbridge.json > .scoop/longbridge.json.tmp
+          mv .scoop/longbridge.json.tmp .scoop/longbridge.json
 
-          with open(manifest_path) as f:
-              manifest = json.load(f)
+          # Generate longbridge.json for OSS (CDN URL)
+          jq \
+            --arg version "$VERSION" \
+            --arg url     "$CDN_URL" \
+            --arg hash    "$SHA256" \
+            '.version = $version | .architecture["64bit"].url = $url | .architecture["64bit"].hash = $hash' \
+            .scoop/longbridge.json > longbridge.json
 
-          manifest["version"] = version
-          manifest["architecture"]["64bit"]["url"] = f"{base_url}/longbridge-terminal-windows-amd64.zip"
-          manifest["architecture"]["64bit"]["hash"] = sha
-
-          with open(manifest_path, "w") as f:
-              json.dump(manifest, f, indent=2)
-              f.write("\n")
-
-          print("Manifest updated successfully")
-          PYEOF
-
-          echo "--- Updated manifest ---"
+          echo "--- Updated manifest (.scoop/longbridge.json) ---"
           cat .scoop/longbridge.json
+
+      - name: Setup ossutil
+        run: |
+          wget -q https://github.com/aliyun/ossutil/releases/download/v1.7.17/ossutil-v1.7.17-linux-amd64.zip
+          unzip -q ossutil-v1.7.17-linux-amd64.zip
+          cp ./ossutil-v1.7.17-linux-amd64/ossutil . && chmod +x ./ossutil
+
+      - name: Upload scoop manifest to OSS
+        run: |
+          set -euo pipefail
+          ./ossutil cp longbridge.json \
+            oss://lb-assets/github/release/longbridge-terminal/longbridge.json \
+            -f \
+            -e oss-cn-hangzhou.aliyuncs.com \
+            -i ${{ secrets.FE_LB_ASSET_ACCESS_KEY_ID }} \
+            -k ${{ secrets.FE_LB_ASSET_ACCESS_KEY_SECRET }} \
+            --meta "Cache-Control:no-cache#Content-Type:application/json;charset=utf-8"
 
       - name: Commit and push
         env:
