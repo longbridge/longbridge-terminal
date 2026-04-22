@@ -127,6 +127,7 @@ longbridge positions --format json | jq '.[] | {symbol, quantity}'
 
 ```bash
 longbridge check   # Check token validity, and API connectivity
+longbridge mcp     # Show Longbridge MCP setup guide (server endpoints and client configuration)
 ```
 
 ### Quotes

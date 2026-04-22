@@ -209,6 +209,54 @@ async fn main() {
             cli::completion::cmd_completion(shell);
         }
 
+        Some(cli::Commands::Mcp) => {
+            print!(
+                "\
+Longbridge MCP — Model Context Protocol
+========================================
+Connect AI tools to Longbridge market data, account info, and trading.
+
+Server Endpoints
+  Global:         https://openapi.longbridge.com/mcp
+  China Mainland: https://openapi.longbridge.cn/mcp
+
+Capabilities
+  • Market data  — real-time quotes, candlesticks, historical data
+  • Account info — assets, positions
+  • Trading      — place, modify, cancel orders (subject to account permissions)
+
+Authentication
+  OAuth 2.1 — authenticate once through your browser; credentials refresh
+  automatically. To revoke access, visit Longbridge account security settings.
+
+Quick Setup
+
+  Claude Code
+    claude mcp add --transport http longbridge https://openapi.longbridge.com/mcp
+    Then run /mcp in Claude Code to authenticate.
+
+  Cursor
+    Settings → MCP Servers → Add Remote MCP Server
+    Enter: https://openapi.longbridge.com/mcp
+
+  Codex
+    Settings → MCP Servers → Add Server
+    Name: longbridge  Type: Streamable HTTP
+    URL:  https://openapi.longbridge.com/mcp
+
+  Zed
+    Add to settings.json under mcpServers:
+      \"longbridge\": {{ \"url\": \"https://openapi.longbridge.com/mcp\" }}
+
+  Cherry Studio
+    Settings → MCP Servers → Add
+    URL: https://openapi.longbridge.com/mcp
+
+Full documentation: https://open.longbridge.com/docs/mcp
+"
+            );
+        }
+
         Some(cmd) => {
             let start = verbose.then(Instant::now);
             // CLI mode: init contexts (auth), then dispatch

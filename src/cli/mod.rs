@@ -135,6 +135,13 @@ pub enum Commands {
         shell: clap_complete::Shell,
     },
 
+    /// Show Longbridge MCP setup guide (server endpoints and client configuration)
+    ///
+    /// Prints connection endpoints and quick-setup instructions for Claude Code,
+    /// Cursor, Codex, Zed, and Cherry Studio. No authentication required.
+    /// Example: longbridge mcp
+    Mcp,
+
     // ── Quote ──────────────────────────────────────────────────────────────────
     /// Real-time quotes for one or more symbols
     ///
@@ -2675,7 +2682,8 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         | Commands::Check
         | Commands::Update { .. }
         | Commands::Completion { .. }
-        | Commands::Init { .. } => {
+        | Commands::Init { .. }
+        | Commands::Mcp => {
             unreachable!()
         }
     }
