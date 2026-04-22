@@ -166,13 +166,12 @@ async fn main() {
             cmd: cli::AuthCmd::Login {
                 auth_code: true, ..
             },
-        }) => match openapi::init_contexts().await {
-            Ok(_) => println!("Successfully authenticated."),
-            Err(e) => {
+        }) => {
+            if let Err(e) = auth::auth_code_login().await {
                 eprintln!("Authentication failed: {e:#}");
                 std::process::exit(1);
             }
-        },
+        }
 
         Some(cli::Commands::Auth {
             cmd:
