@@ -99,19 +99,29 @@ pub fn open_browser(url: &str) -> bool {
     #[cfg(target_os = "macos")]
     let mut cmd = std::process::Command::new("open");
     #[cfg(target_os = "windows")]
-    let mut cmd = {
-        let mut c = std::process::Command::new("cmd");
-        c.args(["/c", "start"]);
-        c
-    };
+    {
+        // `cmd /c start "" "URL"` — the empty string is the window title required when
+        // the target starts with a quote; without it, cmd.exe misparses the argument.
+        // Quoting the URL prevents `&` in query strings from being treated as a
+        // command separator, which would silently drop everything after the first `&`.
+        return std::process::Command::new("cmd")
+            .args(["/c", "start", "", url])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .is_ok();
+    }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let mut cmd = std::process::Command::new("xdg-open");
 
-    cmd.arg(url)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .is_ok()
+    #[cfg(not(target_os = "windows"))]
+    {
+        cmd.arg(url)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .is_ok()
+    }
 }
 
 /// Write a token JSON blob to the SDK token file path.
@@ -355,6 +365,36 @@ pub async fn refresh_if_expired() -> Result<()> {
     Err(anyhow::anyhow!(
         "Token refresh failed ({status}): {error} — please retry"
     ))
+}
+
+/// Authorization Code Flow: opens a browser on this machine and listens on
+/// `localhost:CALLBACK_PORT` for the OAuth callback.
+///
+/// Unlike `device_login`, this requires the browser to be on the same machine.
+/// The SDK handles the local callback server and token persistence.
+pub async fn auth_code_login() -> Result<()> {
+    println!("Opening browser for authorization...");
+    println!("Listening on localhost:{CALLBACK_PORT} for the OAuth callback.");
+
+    let oauth_result = longbridge::oauth::OAuthBuilder::new(client_id())
+        .callback_port(CALLBACK_PORT)
+        .build(|url| {
+            println!();
+            println!("Authorization URL: {url}");
+            println!();
+            if !open_browser(url) {
+                println!("Could not open browser automatically. Please visit the URL above.");
+            }
+        })
+        .await;
+
+    match oauth_result {
+        Ok(_) => {
+            println!("Successfully authenticated.");
+            Ok(())
+        }
+        Err(e) => Err(anyhow::anyhow!("OAuth authorization failed: {e}")),
+    }
 }
 
 /// Clear the stored OAuth token (logout). Deletes the token file used by the longbridge SDK.
