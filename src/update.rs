@@ -246,12 +246,6 @@ fn extract_and_replace(
     let perms = std::fs::Permissions::from_mode(0o755);
     std::fs::set_permissions(&extracted, perms)?;
 
-    // Try atomic rename first (works if same filesystem)
-    if std::fs::rename(&extracted, target_exe).is_ok() {
-        return Ok(());
-    }
-
-    // Cross-device fallback: copy then remove
     let target_dir = target_exe.parent().ok_or_else(|| {
         anyhow::anyhow!(
             "Cannot determine parent directory of {}",
@@ -259,7 +253,21 @@ fn extract_and_replace(
         )
     })?;
 
-    if let Err(e) = std::fs::copy(&extracted, target_exe) {
+    // Try atomic rename first (works if same filesystem)
+    if std::fs::rename(&extracted, target_exe).is_ok() {
+        return Ok(());
+    }
+
+    // Cross-device fallback:
+    // 1) copy the new binary into the target directory under a temporary name
+    // 2) atomically rename it over the running executable
+    // This avoids writing directly to a running binary (ETXTBUSY).
+    let staged_path = tempfile::Builder::new()
+        .prefix(".longbridge-update-")
+        .tempfile_in(target_dir)?
+        .into_temp_path();
+
+    if let Err(e) = std::fs::copy(&extracted, &staged_path) {
         if e.kind() == std::io::ErrorKind::PermissionDenied {
             anyhow::bail!(
                 "Permission denied writing to {}.\nTry: sudo longbridge update",
@@ -268,7 +276,17 @@ fn extract_and_replace(
         }
         return Err(e.into());
     }
-    std::fs::set_permissions(target_exe, std::fs::Permissions::from_mode(0o755))?;
+    std::fs::set_permissions(&staged_path, std::fs::Permissions::from_mode(0o755))?;
+
+    if let Err(e) = std::fs::rename(&staged_path, target_exe) {
+        if e.kind() == std::io::ErrorKind::PermissionDenied {
+            anyhow::bail!(
+                "Permission denied writing to {}.\nTry: sudo longbridge update",
+                target_dir.display()
+            );
+        }
+        return Err(e.into());
+    }
 
     Ok(())
 }
