@@ -77,51 +77,9 @@ pub fn read_channel() -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-/// Try to open a URL in the system browser. Returns `true` if the command was
-/// launched successfully (the browser may still fail to load the page).
-///
-/// Checks the `BROWSER` environment variable first; falls back to the
-/// platform default (`open` on macOS, `cmd /c start` on Windows, `xdg-open`
-/// on Linux).
+/// Try to open a URL in the system browser. Returns `true` if launched successfully.
 pub fn open_browser(url: &str) -> bool {
-    // Honor the BROWSER environment variable if set.
-    if let Ok(browser) = std::env::var("BROWSER") {
-        if !browser.is_empty() {
-            return std::process::Command::new(&browser)
-                .arg(url)
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn()
-                .is_ok();
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    let mut cmd = std::process::Command::new("open");
-    #[cfg(target_os = "windows")]
-    {
-        // `cmd /c start "" "URL"` — the empty string is the window title required when
-        // the target starts with a quote; without it, cmd.exe misparses the argument.
-        // Quoting the URL prevents `&` in query strings from being treated as a
-        // command separator, which would silently drop everything after the first `&`.
-        return std::process::Command::new("cmd")
-            .args(["/c", "start", "", url])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .is_ok();
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    let mut cmd = std::process::Command::new("xdg-open");
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        cmd.arg(url)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .is_ok()
-    }
+    open::that(url).is_ok()
 }
 
 /// Write a token JSON blob to the SDK token file path.
