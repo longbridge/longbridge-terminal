@@ -307,6 +307,9 @@ longbridge option volume daily AAPL.US                        # Daily option Cal
 longbridge option volume daily AAPL.US --count 60             # Return last 60 trading days
 longbridge short-positions AAPL.US                            # US stock short selling data (short interest, ratio, days to cover)
 longbridge short-positions TSLA.US --count 50                 # Return last 50 short interest records
+
+longbridge mcp serve                                          # Start a local MCP server over stdio (for Claude Desktop, Cursor, etc.)
+longbridge mcp guide                                          # Show MCP client setup guide
 ```
 
 <!-- COMMANDS_END -->

@@ -121,6 +121,17 @@ pub enum Commands {
     /// Example: longbridge tui
     Tui,
 
+    /// Run a local MCP server or show setup guide for the hosted MCP service
+    ///
+    /// longbridge mcp serve   Start a local stdio MCP server (for Claude Desktop, Cursor, etc.)
+    /// longbridge mcp guide   Show remote MCP setup guide
+    ///
+    /// Example: longbridge mcp serve
+    Mcp {
+        #[command(subcommand)]
+        cmd: McpCmd,
+    },
+
     /// Generate shell completion script
     ///
     /// Prints a shell completion script to stdout.
@@ -2127,6 +2138,25 @@ pub enum AuthCmd {
     Status,
 }
 
+#[derive(Subcommand)]
+pub enum McpCmd {
+    /// Start a local MCP server over stdio
+    ///
+    /// Exposes Longbridge market data and trading as MCP tools.
+    /// Configure your MCP client to run: longbridge mcp serve
+    ///
+    /// Example (Claude Desktop mcpServers):
+    ///   { "command": "longbridge", "args": ["mcp", "serve"] }
+    ///
+    /// Example: longbridge mcp serve
+    Serve,
+
+    /// Show setup guide for the Longbridge hosted MCP service
+    ///
+    /// Example: longbridge mcp guide
+    Guide,
+}
+
 pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Result<()> {
     match cmd {
         Commands::Quote { symbols } => quote::cmd_quote(symbols, format).await,
@@ -2675,7 +2705,8 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         | Commands::Check
         | Commands::Update { .. }
         | Commands::Completion { .. }
-        | Commands::Init { .. } => {
+        | Commands::Init { .. }
+        | Commands::Mcp { .. } => {
             unreachable!()
         }
     }

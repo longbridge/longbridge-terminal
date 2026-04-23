@@ -8,6 +8,7 @@ pub mod cli;
 pub mod data;
 pub mod locale;
 pub mod logger;
+pub mod mcp;
 pub mod openapi;
 #[cfg_attr(target_family = "windows", path = "os/windows.rs")]
 #[cfg_attr(target_family = "unix", path = "os/unix.rs")]
@@ -207,6 +208,29 @@ async fn main() {
 
         Some(cli::Commands::Completion { shell }) => {
             cli::completion::cmd_completion(shell);
+        }
+
+        Some(cli::Commands::Mcp {
+            cmd: cli::McpCmd::Guide,
+        }) => {
+            mcp::print_guide();
+        }
+
+        Some(cli::Commands::Mcp {
+            cmd: cli::McpCmd::Serve,
+        }) => {
+            let (quote_receiver, _, _) = match openapi::init_contexts().await {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Authentication failed: {e}");
+                    std::process::exit(1);
+                }
+            };
+            if let Err(e) = mcp::serve(quote_receiver).await {
+                eprintln!("MCP server error: {e}");
+                std::process::exit(1);
+            }
+            return;
         }
 
         Some(cmd) => {
