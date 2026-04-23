@@ -5,8 +5,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::Mutex;
 
 use crate::mcp::protocol::{
-    ERR_INVALID_REQUEST, ERR_METHOD_NOT_FOUND, ERR_NOT_INITIALIZED, ERR_PARSE,
-    PROTOCOL_VERSION,
+    ERR_INVALID_REQUEST, ERR_METHOD_NOT_FOUND, ERR_NOT_INITIALIZED, ERR_PARSE, PROTOCOL_VERSION,
 };
 use crate::mcp::{
     protocol::{Capabilities, InitializeResult, Notification, Request, Response, ServerInfo},
@@ -98,7 +97,11 @@ impl Server {
 
         // Validate JSON-RPC version
         if req.jsonrpc != "2.0" {
-            return Some(Response::err(id, ERR_INVALID_REQUEST, "jsonrpc must be '2.0'".into()));
+            return Some(Response::err(
+                id,
+                ERR_INVALID_REQUEST,
+                "jsonrpc must be '2.0'".into(),
+            ));
         }
 
         // Handle notifications (no id) — no response required
@@ -208,8 +211,8 @@ fn push_event_to_notification(event: longbridge::quote::PushEvent) -> Option<Not
         PushEventDetail::Depth(d) => json!({
             "type": "depth",
             "symbol": event.symbol,
-            "asks": d.asks.iter().map(|x| json!({"price": x.price.to_string(), "volume": x.volume})).collect::<Vec<_>>(),
-            "bids": d.bids.iter().map(|x| json!({"price": x.price.to_string(), "volume": x.volume})).collect::<Vec<_>>(),
+            "asks": d.asks.iter().map(|x| json!({"price": x.price.map(|p| p.to_string()).unwrap_or_default(), "volume": x.volume})).collect::<Vec<_>>(),
+            "bids": d.bids.iter().map(|x| json!({"price": x.price.map(|p| p.to_string()).unwrap_or_default(), "volume": x.volume})).collect::<Vec<_>>(),
         }),
         _ => return None,
     };

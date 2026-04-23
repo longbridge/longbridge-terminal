@@ -33,14 +33,22 @@ pub enum Outcome {
 
 impl Response {
     pub fn ok(id: Value, result: Value) -> Self {
-        Self { jsonrpc: "2.0", id, outcome: Outcome::Result(result) }
+        Self {
+            jsonrpc: "2.0",
+            id,
+            outcome: Outcome::Result(result),
+        }
     }
 
     pub fn err(id: Value, code: i64, message: String) -> Self {
         Self {
             jsonrpc: "2.0",
             id,
-            outcome: Outcome::Error(ErrorObject { code, message, data: None }),
+            outcome: Outcome::Error(ErrorObject {
+                code,
+                message,
+                data: None,
+            }),
         }
     }
 }

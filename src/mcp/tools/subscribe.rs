@@ -50,7 +50,7 @@ pub async fn handle_subscribe(args: Value) -> Result<Value, (i64, String)> {
     let symbols = require_strings(&args, "symbols")?;
     let ctx = crate::openapi::quote();
 
-    ctx.subscribe(&symbols, SubFlags::QUOTE, true)
+    ctx.subscribe(&symbols, SubFlags::QUOTE)
         .await
         .map_err(api_err)?;
 

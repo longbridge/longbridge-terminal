@@ -26,11 +26,7 @@ impl ToolRegistry {
         &self.tools
     }
 
-    pub async fn call(
-        &self,
-        name: &str,
-        params: Option<Value>,
-    ) -> Result<Value, (i64, String)> {
+    pub async fn call(&self, name: &str, params: Option<Value>) -> Result<Value, (i64, String)> {
         let args = params.unwrap_or(Value::Object(Default::default()));
 
         match name {
@@ -68,13 +64,20 @@ pub fn require_string(args: &Value, key: &str) -> Result<String, (i64, String)> 
 pub fn require_strings(args: &Value, key: &str) -> Result<Vec<String>, (i64, String)> {
     args.get(key)
         .and_then(Value::as_array)
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_owned))
+                .collect()
+        })
         .filter(|v: &Vec<String>| !v.is_empty())
         .ok_or_else(|| (ERR_INVALID_PARAMS, format!("missing required param: {key}")))
 }
 
 pub fn opt_u32(args: &Value, key: &str, default: u32) -> u32 {
-    args.get(key).and_then(Value::as_u64).map(|v| v as u32).unwrap_or(default)
+    args.get(key)
+        .and_then(Value::as_u64)
+        .map(|v| v as u32)
+        .unwrap_or(default)
 }
 
 pub fn opt_string<'a>(args: &'a Value, key: &str) -> Option<&'a str> {

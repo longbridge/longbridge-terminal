@@ -71,7 +71,7 @@ pub fn tool_definitions() -> Vec<Tool> {
                     "count": {"type": "integer", "description": "Number of candles (default 100)", "default": 100},
                     "adjust": {
                         "type": "string",
-                        "description": "Price adjustment: none, forward, backward",
+                        "description": "Price adjustment: none or forward",
                         "default": "none"
                     }
                 },
@@ -98,8 +98,8 @@ pub fn tool_definitions() -> Vec<Tool> {
 
 pub async fn handle_quote(args: Value) -> Result<Value, (i64, String)> {
     let symbols = require_strings(&args, "symbols")?;
-    let ctx = crate::openapi::quote_limited();
-    let quotes = ctx.quote(symbols).await.map_err(api_err)?;
+    let ctx = crate::openapi::quote();
+    let quotes = ctx.quote(&symbols).await.map_err(api_err)?;
 
     let result: Vec<Value> = quotes
         .iter()
@@ -123,8 +123,8 @@ pub async fn handle_quote(args: Value) -> Result<Value, (i64, String)> {
 
 pub async fn handle_depth(args: Value) -> Result<Value, (i64, String)> {
     let symbol = require_string(&args, "symbol")?;
-    let ctx = crate::openapi::quote_limited();
-    let depth = ctx.depth(&symbol).await.map_err(api_err)?;
+    let ctx = crate::openapi::quote();
+    let depth = ctx.depth(symbol.clone()).await.map_err(api_err)?;
 
     let map_levels = |levels: &[longbridge::quote::Depth]| -> Vec<Value> {
         levels
@@ -132,7 +132,7 @@ pub async fn handle_depth(args: Value) -> Result<Value, (i64, String)> {
             .map(|d| {
                 json!({
                     "position": d.position,
-                    "price": d.price.to_string(),
+                    "price": d.price.map(|p| p.to_string()).unwrap_or_default(),
                     "volume": d.volume,
                     "order_num": d.order_num,
                 })
@@ -141,7 +141,7 @@ pub async fn handle_depth(args: Value) -> Result<Value, (i64, String)> {
     };
 
     Ok(json!({
-        "symbol": depth.symbol,
+        "symbol": symbol,
         "asks": map_levels(&depth.asks),
         "bids": map_levels(&depth.bids),
     }))
@@ -149,8 +149,8 @@ pub async fn handle_depth(args: Value) -> Result<Value, (i64, String)> {
 
 pub async fn handle_trades(args: Value) -> Result<Value, (i64, String)> {
     let symbol = require_string(&args, "symbol")?;
-    let count = opt_u32(&args, "count", 50);
-    let ctx = crate::openapi::quote_limited();
+    let count = opt_u32(&args, "count", 50) as usize;
+    let ctx = crate::openapi::quote();
     let trades = ctx.trades(&symbol, count).await.map_err(api_err)?;
 
     let result: Vec<Value> = trades
@@ -171,9 +171,14 @@ pub async fn handle_trades(args: Value) -> Result<Value, (i64, String)> {
 }
 
 pub async fn handle_intraday(args: Value) -> Result<Value, (i64, String)> {
+    use longbridge::quote::TradeSessions;
+
     let symbol = require_string(&args, "symbol")?;
-    let ctx = crate::openapi::quote_limited();
-    let lines = ctx.intraday(&symbol).await.map_err(api_err)?;
+    let ctx = crate::openapi::quote();
+    let lines = ctx
+        .intraday(symbol, TradeSessions::Intraday)
+        .await
+        .map_err(api_err)?;
 
     let result: Vec<Value> = lines
         .iter()
@@ -192,18 +197,18 @@ pub async fn handle_intraday(args: Value) -> Result<Value, (i64, String)> {
 }
 
 pub async fn handle_kline(args: Value) -> Result<Value, (i64, String)> {
-    use longbridge::quote::{AdjustType, Period};
+    use longbridge::quote::{AdjustType, Period, TradeSessions};
 
     let symbol = require_string(&args, "symbol")?;
     let count = opt_u32(&args, "count", 100) as usize;
 
     let period_str = opt_string(&args, "period").unwrap_or("day");
     let period = match period_str {
-        "1m" | "minute" => Period::Min_1,
-        "5m" => Period::Min_5,
-        "15m" => Period::Min_15,
-        "30m" => Period::Min_30,
-        "1h" | "hour" => Period::Hour,
+        "1m" | "minute" => Period::OneMinute,
+        "5m" => Period::FiveMinute,
+        "15m" => Period::FifteenMinute,
+        "30m" => Period::ThirtyMinute,
+        "1h" | "hour" => Period::SixtyMinute,
         "week" | "w" => Period::Week,
         "month" | "1mo" | "m" => Period::Month,
         "year" | "y" => Period::Year,
@@ -212,13 +217,15 @@ pub async fn handle_kline(args: Value) -> Result<Value, (i64, String)> {
 
     let adjust_str = opt_string(&args, "adjust").unwrap_or("none");
     let adjust = match adjust_str {
-        "forward" => Some(AdjustType::ForwardAdj),
-        "backward" => Some(AdjustType::BackwardAdj),
-        _ => None,
+        "forward" => AdjustType::ForwardAdjust,
+        _ => AdjustType::NoAdjust,
     };
 
-    let ctx = crate::openapi::quote_limited();
-    let klines = ctx.candlesticks(&symbol, period, count, adjust).await.map_err(api_err)?;
+    let ctx = crate::openapi::quote();
+    let klines = ctx
+        .candlesticks(symbol, period, count, adjust, TradeSessions::Intraday)
+        .await
+        .map_err(api_err)?;
 
     let result: Vec<Value> = klines
         .iter()
@@ -240,8 +247,8 @@ pub async fn handle_kline(args: Value) -> Result<Value, (i64, String)> {
 
 pub async fn handle_static_info(args: Value) -> Result<Value, (i64, String)> {
     let symbols = require_strings(&args, "symbols")?;
-    let ctx = crate::openapi::quote_limited();
-    let infos = ctx.static_info(symbols).await.map_err(api_err)?;
+    let ctx = crate::openapi::quote();
+    let infos = ctx.static_info(&symbols).await.map_err(api_err)?;
 
     let result: Vec<Value> = infos
         .iter()

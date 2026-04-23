@@ -8,11 +8,11 @@ pub mod cli;
 pub mod data;
 pub mod locale;
 pub mod logger;
+pub mod mcp;
 pub mod openapi;
 #[cfg_attr(target_family = "windows", path = "os/windows.rs")]
 #[cfg_attr(target_family = "unix", path = "os/unix.rs")]
 pub mod os;
-pub mod mcp;
 pub mod region;
 pub mod tui;
 pub mod update;
@@ -212,7 +212,9 @@ async fn main() {
             }
         },
 
-        Some(cli::Commands::Mcp { cmd: cli::McpCmd::Guide }) => {
+        Some(cli::Commands::Mcp {
+            cmd: cli::McpCmd::Guide,
+        }) => {
             print!(
                 "\
 Longbridge MCP — Model Context Protocol
@@ -262,7 +264,9 @@ Local MCP server: longbridge mcp serve
             );
         }
 
-        Some(cli::Commands::Mcp { cmd: cli::McpCmd::Serve }) => {
+        Some(cli::Commands::Mcp {
+            cmd: cli::McpCmd::Serve,
+        }) => {
             let (quote_receiver, _, _) = match openapi::init_contexts().await {
                 Ok(r) => r,
                 Err(e) => {

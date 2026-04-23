@@ -28,15 +28,10 @@ pub fn tool_definitions() -> Vec<Tool> {
         },
         Tool {
             name: "orders",
-            description: "Get today's order list. Use status to filter by order state.",
+            description: "Get today's order list.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "status": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Filter by status: NotReported, ReportReject, FilledPart, FilledAll, WaitToCancel, PendingCancel, Rejected, Canceled, PartialWithdrawal"
-                    },
                     "symbol": {
                         "type": "string",
                         "description": "Filter by symbol, e.g. \"700.HK\""
@@ -48,23 +43,23 @@ pub fn tool_definitions() -> Vec<Tool> {
 }
 
 pub async fn handle_positions(_args: Value) -> Result<Value, (i64, String)> {
-    let ctx = crate::openapi::trade_limited();
+    let ctx = crate::openapi::trade();
     let resp = ctx.stock_positions(None).await.map_err(api_err)?;
 
     let positions: Vec<Value> = resp
         .channels
         .iter()
-        .flat_map(|ch| ch.positions.iter().map(|p| {
-            json!({
-                "symbol": p.symbol,
-                "symbol_name": p.symbol_name,
-                "quantity": p.quantity.to_string(),
-                "available_quantity": p.available_quantity.to_string(),
-                "cost_price": p.cost_price.to_string(),
-                "market_value": p.market_value.to_string(),
-                "currency": p.currency,
+        .flat_map(|ch| {
+            ch.positions.iter().map(|p| {
+                json!({
+                    "symbol": p.symbol,
+                    "symbol_name": p.symbol_name,
+                    "quantity": p.quantity.to_string(),
+                    "available_quantity": p.available_quantity.to_string(),
+                    "currency": p.currency,
+                })
             })
-        }))
+        })
         .collect();
 
     Ok(json!({ "positions": positions }))
@@ -72,7 +67,7 @@ pub async fn handle_positions(_args: Value) -> Result<Value, (i64, String)> {
 
 pub async fn handle_account_balance(args: Value) -> Result<Value, (i64, String)> {
     let currency = opt_string(&args, "currency");
-    let ctx = crate::openapi::trade_limited();
+    let ctx = crate::openapi::trade();
     let balances = ctx.account_balance(currency).await.map_err(api_err)?;
 
     let result: Vec<Value> = balances
@@ -96,27 +91,15 @@ pub async fn handle_account_balance(args: Value) -> Result<Value, (i64, String)>
 }
 
 pub async fn handle_orders(args: Value) -> Result<Value, (i64, String)> {
-    use longbridge::trade::OrderStatus;
+    use longbridge::trade::GetTodayOrdersOptions;
 
-    let symbol = opt_string(&args, "symbol").map(str::to_owned);
-    let status_filter: Vec<OrderStatus> = args
-        .get("status")
-        .and_then(Value::as_array)
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str())
-                .filter_map(|s| parse_order_status(s))
-                .collect()
-        })
-        .unwrap_or_default();
+    let mut opts = GetTodayOrdersOptions::new();
+    if let Some(s) = opt_string(&args, "symbol") {
+        opts = opts.symbol(s.to_owned());
+    }
 
-    let status_opt = if status_filter.is_empty() { None } else { Some(status_filter) };
-
-    let ctx = crate::openapi::trade_limited();
-    let orders = ctx
-        .today_orders(symbol.as_deref(), status_opt, None, None, None)
-        .await
-        .map_err(api_err)?;
+    let ctx = crate::openapi::trade();
+    let orders = ctx.today_orders(opts).await.map_err(api_err)?;
 
     let result: Vec<Value> = orders
         .iter()
@@ -132,27 +115,11 @@ pub async fn handle_orders(args: Value) -> Result<Value, (i64, String)> {
                 "executed_price": o.executed_price.map(|p| p.to_string()),
                 "status": format!("{:?}", o.status),
                 "submitted_at": o.submitted_at.to_string(),
-                "updated_at": o.updated_at.to_string(),
+                "updated_at": o.updated_at.map(|t| t.to_string()),
                 "currency": o.currency,
             })
         })
         .collect();
 
     Ok(json!({ "orders": result }))
-}
-
-fn parse_order_status(s: &str) -> Option<longbridge::trade::OrderStatus> {
-    use longbridge::trade::OrderStatus;
-    match s {
-        "NotReported" => Some(OrderStatus::NotReported),
-        "ReportReject" => Some(OrderStatus::ReportReject),
-        "FilledPart" => Some(OrderStatus::PartialFilled),
-        "FilledAll" => Some(OrderStatus::Filled),
-        "WaitToCancel" => Some(OrderStatus::WaitToCancel),
-        "PendingCancel" => Some(OrderStatus::PendingCancel),
-        "Rejected" => Some(OrderStatus::Rejected),
-        "Canceled" => Some(OrderStatus::Canceled),
-        "PartialWithdrawal" => Some(OrderStatus::PartialWithdrawal),
-        _ => None,
-    }
 }
