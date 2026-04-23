@@ -5,10 +5,13 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::Mutex;
 
 use crate::mcp::protocol::{
-    Capabilities, InitializeResult, Notification, Request, Response, ServerInfo,
-    ERR_INVALID_REQUEST, ERR_METHOD_NOT_FOUND, ERR_NOT_INITIALIZED, ERR_PARSE, PROTOCOL_VERSION,
+    ERR_INVALID_REQUEST, ERR_METHOD_NOT_FOUND, ERR_NOT_INITIALIZED, ERR_PARSE,
+    PROTOCOL_VERSION,
 };
-use crate::mcp::tools::ToolRegistry;
+use crate::mcp::{
+    protocol::{Capabilities, InitializeResult, Notification, Request, Response, ServerInfo},
+    tools::ToolRegistry,
+};
 
 pub struct Server {
     registry: ToolRegistry,
@@ -34,10 +37,12 @@ impl Server {
     ) -> Result<()> {
         let stdout = Arc::clone(&self.stdout);
 
+        // Spawn background task: forward WS push events as MCP notifications.
         tokio::spawn(async move {
             use tokio_stream::StreamExt;
             while let Some(event) = quote_stream.next().await {
-                if let Some(n) = push_event_to_notification(event) {
+                let notif = push_event_to_notification(event);
+                if let Some(n) = notif {
                     if let Ok(json) = serde_json::to_string(&n) {
                         let mut out = stdout.lock().await;
                         let _ = out.write_all(json.as_bytes()).await;
@@ -56,6 +61,7 @@ impl Server {
             line.clear();
             let n = reader.read_line(&mut line).await?;
             if n == 0 {
+                // EOF — client closed the connection
                 break;
             }
             let trimmed = line.trim();
@@ -63,7 +69,8 @@ impl Server {
                 continue;
             }
 
-            if let Some(resp) = self.handle_line(trimmed).await {
+            let response = self.handle_line(trimmed).await;
+            if let Some(resp) = response {
                 let json = serde_json::to_string(&resp)?;
                 let mut out = self.stdout.lock().await;
                 out.write_all(json.as_bytes()).await?;
@@ -89,16 +96,13 @@ impl Server {
 
         let id = req.id.clone().unwrap_or(Value::Null);
 
+        // Validate JSON-RPC version
         if req.jsonrpc != "2.0" {
-            return Some(Response::err(
-                id,
-                ERR_INVALID_REQUEST,
-                "jsonrpc must be '2.0'".into(),
-            ));
+            return Some(Response::err(id, ERR_INVALID_REQUEST, "jsonrpc must be '2.0'".into()));
         }
 
-        // Notifications have no id — no response needed
-        if req.id.is_none() {
+        // Handle notifications (no id) — no response required
+        if req.id.is_none() && req.method == "notifications/initialized" {
             return None;
         }
 
@@ -204,14 +208,8 @@ fn push_event_to_notification(event: longbridge::quote::PushEvent) -> Option<Not
         PushEventDetail::Depth(d) => json!({
             "type": "depth",
             "symbol": event.symbol,
-            "asks": d.asks.iter().map(|x| json!({
-                "price": x.price.map(|p| p.to_string()).unwrap_or_default(),
-                "volume": x.volume,
-            })).collect::<Vec<_>>(),
-            "bids": d.bids.iter().map(|x| json!({
-                "price": x.price.map(|p| p.to_string()).unwrap_or_default(),
-                "volume": x.volume,
-            })).collect::<Vec<_>>(),
+            "asks": d.asks.iter().map(|x| json!({"price": x.price.to_string(), "volume": x.volume})).collect::<Vec<_>>(),
+            "bids": d.bids.iter().map(|x| json!({"price": x.price.to_string(), "volume": x.volume})).collect::<Vec<_>>(),
         }),
         _ => return None,
     };

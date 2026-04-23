@@ -8,7 +8,6 @@ pub mod check;
 pub mod completion;
 pub mod dca;
 pub mod fundamental;
-pub mod init;
 pub mod insider_trades;
 pub mod investors;
 pub mod news;
@@ -121,17 +120,6 @@ pub enum Commands {
     /// Example: longbridge tui
     Tui,
 
-    /// Run a local MCP server or show setup guide for the hosted MCP service
-    ///
-    /// longbridge mcp serve   Start a local stdio MCP server (for Claude Desktop, Cursor, etc.)
-    /// longbridge mcp guide   Show remote MCP setup guide
-    ///
-    /// Example: longbridge mcp serve
-    Mcp {
-        #[command(subcommand)]
-        cmd: McpCmd,
-    },
-
     /// Generate shell completion script
     ///
     /// Prints a shell completion script to stdout.
@@ -144,6 +132,18 @@ pub enum Commands {
     Completion {
         /// Target shell: bash, zsh, fish, elvish, or powershell
         shell: clap_complete::Shell,
+    },
+
+    /// Longbridge MCP (Model Context Protocol) commands
+    ///
+    /// Run a local MCP server or view the remote setup guide.
+    ///
+    /// Examples:
+    ///   longbridge mcp serve    Start local MCP server (stdio)
+    ///   longbridge mcp guide    Show remote MCP setup guide
+    Mcp {
+        #[command(subcommand)]
+        cmd: McpCmd,
     },
 
     // ── Quote ──────────────────────────────────────────────────────────────────
@@ -2142,16 +2142,22 @@ pub enum AuthCmd {
 pub enum McpCmd {
     /// Start a local MCP server over stdio
     ///
-    /// Exposes Longbridge market data and trading as MCP tools.
-    /// Configure your MCP client to run: longbridge mcp serve
+    /// Exposes Longbridge market data and trading as MCP tools accessible to
+    /// AI clients (Claude Desktop, Cursor, Codex CLI, Zed, Cherry Studio).
     ///
-    /// Example (Claude Desktop mcpServers):
+    /// Add to your MCP client config:
     ///   { "command": "longbridge", "args": ["mcp", "serve"] }
+    ///
+    /// Requires prior authentication: longbridge auth login
+    /// All output is via stdout (JSON-RPC); diagnostics go to stderr.
     ///
     /// Example: longbridge mcp serve
     Serve,
 
-    /// Show setup guide for the Longbridge hosted MCP service
+    /// Show Longbridge remote MCP service setup guide
+    ///
+    /// Prints endpoints and quick-start config for connecting AI tools to
+    /// Longbridge's hosted MCP service (no local auth required for remote mode).
     ///
     /// Example: longbridge mcp guide
     Guide,

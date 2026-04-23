@@ -8,11 +8,11 @@ pub mod cli;
 pub mod data;
 pub mod locale;
 pub mod logger;
-pub mod mcp;
 pub mod openapi;
 #[cfg_attr(target_family = "windows", path = "os/windows.rs")]
 #[cfg_attr(target_family = "unix", path = "os/unix.rs")]
 pub mod os;
+pub mod mcp;
 pub mod region;
 pub mod tui;
 pub mod update;
@@ -136,13 +136,6 @@ async fn main() {
             return;
         }
 
-        Some(cli::Commands::Init { channel_key }) => {
-            if let Err(e) = cli::init::cmd_init(&channel_key) {
-                eprintln!("Error: {e}");
-                std::process::exit(1);
-            }
-        }
-
         Some(cli::Commands::Check) => {
             if let Err(e) = cli::check::cmd_check(&cli.format).await {
                 print_cli_error(&e, false);
@@ -167,12 +160,13 @@ async fn main() {
             cmd: cli::AuthCmd::Login {
                 auth_code: true, ..
             },
-        }) => {
-            if let Err(e) = auth::auth_code_login().await {
+        }) => match openapi::init_contexts().await {
+            Ok(_) => println!("Successfully authenticated."),
+            Err(e) => {
                 eprintln!("Authentication failed: {e:#}");
                 std::process::exit(1);
             }
-        }
+        },
 
         Some(cli::Commands::Auth {
             cmd:
@@ -210,19 +204,70 @@ async fn main() {
             cli::completion::cmd_completion(shell);
         }
 
-        Some(cli::Commands::Mcp {
-            cmd: cli::McpCmd::Guide,
-        }) => {
-            mcp::print_guide();
+        Some(cli::Commands::Init { channel_key }) => match auth::save_channel(&channel_key) {
+            Ok(()) => println!("Channel key '{channel_key}' saved."),
+            Err(e) => {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        },
+
+        Some(cli::Commands::Mcp { cmd: cli::McpCmd::Guide }) => {
+            print!(
+                "\
+Longbridge MCP — Model Context Protocol
+========================================
+Connect AI tools to Longbridge market data, account info, and trading.
+
+Server Endpoints
+  Global:         https://openapi.longbridge.com/mcp
+  China Mainland: https://openapi.longbridge.cn/mcp
+
+Capabilities
+  • Market data  — real-time quotes, candlesticks, historical data
+  • Account info — assets, positions
+  • Trading      — place, modify, cancel orders (subject to account permissions)
+
+Authentication
+  OAuth 2.1 — authenticate once through your browser; credentials refresh
+  automatically. To revoke access, visit Longbridge account security settings.
+
+Quick Setup
+
+  Claude Code
+    claude mcp add --transport http longbridge https://openapi.longbridge.com/mcp
+    Then run /mcp in Claude Code to authenticate.
+
+  Cursor
+    Settings → MCP Servers → Add Remote MCP Server
+    Enter: https://openapi.longbridge.com/mcp
+
+  Codex
+    Settings → MCP Servers → Add Server
+    Name: longbridge  Type: Streamable HTTP
+    URL:  https://openapi.longbridge.com/mcp
+
+  Zed
+    Add to settings.json under mcpServers:
+      \"longbridge\": {{ \"url\": \"https://openapi.longbridge.com/mcp\" }}
+
+  Cherry Studio
+    Settings → MCP Servers → Add
+    URL: https://openapi.longbridge.com/mcp
+
+Full documentation: https://open.longbridge.com/docs/mcp
+
+Local MCP server: longbridge mcp serve
+"
+            );
         }
 
-        Some(cli::Commands::Mcp {
-            cmd: cli::McpCmd::Serve,
-        }) => {
+        Some(cli::Commands::Mcp { cmd: cli::McpCmd::Serve }) => {
             let (quote_receiver, _, _) = match openapi::init_contexts().await {
                 Ok(r) => r,
                 Err(e) => {
                     eprintln!("Authentication failed: {e}");
+                    eprintln!("Run 'longbridge auth login' first.");
                     std::process::exit(1);
                 }
             };

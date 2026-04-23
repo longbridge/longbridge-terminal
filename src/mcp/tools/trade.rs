@@ -34,8 +34,7 @@ pub fn tool_definitions() -> Vec<Tool> {
         },
         Tool {
             name: "cancel_order",
-            description:
-                "CAUTION: This tool cancels a real order. Confirm with the user before calling.",
+            description: "CAUTION: This tool cancels a real order. Confirm with the user before calling.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -75,10 +74,7 @@ pub async fn handle_submit_order(args: Value) -> Result<Value, (i64, String)> {
         _ => OrderType::LO,
     };
 
-    let tif_str = args
-        .get("time_in_force")
-        .and_then(Value::as_str)
-        .unwrap_or("Day");
+    let tif_str = args.get("time_in_force").and_then(Value::as_str).unwrap_or("Day");
     let tif = match tif_str {
         "GTC" => TimeInForceType::GoodTilCanceled,
         _ => TimeInForceType::Day,
@@ -96,7 +92,7 @@ pub async fn handle_submit_order(args: Value) -> Result<Value, (i64, String)> {
         opts = opts.remark(remark.to_owned());
     }
 
-    let ctx = crate::openapi::trade();
+    let ctx = crate::openapi::trade_limited();
     let resp = ctx.submit_order(opts).await.map_err(api_err)?;
 
     Ok(json!({ "order_id": resp.order_id }))
@@ -104,7 +100,7 @@ pub async fn handle_submit_order(args: Value) -> Result<Value, (i64, String)> {
 
 pub async fn handle_cancel_order(args: Value) -> Result<Value, (i64, String)> {
     let order_id = require_string(&args, "order_id")?;
-    let ctx = crate::openapi::trade();
-    ctx.cancel_order(order_id.clone()).await.map_err(api_err)?;
+    let ctx = crate::openapi::trade_limited();
+    ctx.cancel_order(&order_id).await.map_err(api_err)?;
     Ok(json!({ "cancelled": true, "order_id": order_id }))
 }

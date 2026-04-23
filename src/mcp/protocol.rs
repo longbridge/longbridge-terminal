@@ -3,6 +3,8 @@ use serde_json::Value;
 
 pub const PROTOCOL_VERSION: &str = "2024-11-05";
 
+// ── JSON-RPC 2.0 request ──────────────────────────────────────────────────────
+
 #[derive(Debug, Deserialize)]
 pub struct Request {
     #[allow(dead_code)]
@@ -11,6 +13,8 @@ pub struct Request {
     pub method: String,
     pub params: Option<Value>,
 }
+
+// ── JSON-RPC 2.0 response ─────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
 pub struct Response {
@@ -29,22 +33,14 @@ pub enum Outcome {
 
 impl Response {
     pub fn ok(id: Value, result: Value) -> Self {
-        Self {
-            jsonrpc: "2.0",
-            id,
-            outcome: Outcome::Result(result),
-        }
+        Self { jsonrpc: "2.0", id, outcome: Outcome::Result(result) }
     }
 
     pub fn err(id: Value, code: i64, message: String) -> Self {
         Self {
             jsonrpc: "2.0",
             id,
-            outcome: Outcome::Error(ErrorObject {
-                code,
-                message,
-                data: None,
-            }),
+            outcome: Outcome::Error(ErrorObject { code, message, data: None }),
         }
     }
 }
@@ -56,6 +52,8 @@ pub struct ErrorObject {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<Value>,
 }
+
+// ── JSON-RPC 2.0 notification ─────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
 pub struct Notification {
@@ -74,6 +72,8 @@ impl Notification {
     }
 }
 
+// ── MCP tool schema types ─────────────────────────────────────────────────────
+
 #[derive(Debug, Serialize, Clone)]
 pub struct Tool {
     pub name: &'static str,
@@ -81,6 +81,8 @@ pub struct Tool {
     #[serde(rename = "inputSchema")]
     pub input_schema: Value,
 }
+
+// ── MCP initialize result ─────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
 pub struct InitializeResult {
@@ -102,6 +104,8 @@ pub struct ServerInfo {
     pub name: &'static str,
     pub version: String,
 }
+
+// ── Error codes ───────────────────────────────────────────────────────────────
 
 pub const ERR_PARSE: i64 = -32700;
 pub const ERR_INVALID_REQUEST: i64 = -32600;
