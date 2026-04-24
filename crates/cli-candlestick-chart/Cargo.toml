@@ -46,3 +46,4 @@ required-features = ["serde"]
 
 [[example]]
 name = "tui-renderer"
+required-features = ["serde", "csv"]

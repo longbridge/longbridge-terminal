@@ -175,7 +175,7 @@ pub enum Commands {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
         /// Number of trades to return (default: 20, max: 1000)
-        #[arg(long, default_value = "20")]
+        #[arg(long, alias = "limit", default_value = "20")]
         count: usize,
     },
 
@@ -217,7 +217,7 @@ pub enum Commands {
         #[arg(long, default_value = "day")]
         period: String,
         /// Number of candles to return (default: 100)
-        #[arg(long, default_value = "100")]
+        #[arg(long, alias = "limit", default_value = "100")]
         count: usize,
         /// Price adjustment: `none` (default) | `forward`
         #[arg(long, default_value = "none")]
@@ -445,7 +445,7 @@ pub enum Commands {
         #[arg(long)]
         end: Option<String>,
         /// Max events returned (default: 100)
-        #[arg(long, default_value = "100")]
+        #[arg(long, alias = "limit", default_value = "100")]
         count: u32,
         /// Macro data importance filter, repeatable (1, 2, 3); only effective for macrodata type
         #[arg(long, value_name = "LEVEL")]
@@ -493,7 +493,7 @@ pub enum Commands {
         /// Symbol in <CODE>.<MARKET> format (e.g. TSLA.US 700.HK). Omit when using a subcommand.
         symbol: Option<String>,
         /// Maximum number of articles to show (default: 20)
-        #[arg(long, default_value = "20")]
+        #[arg(long, alias = "limit", default_value = "20")]
         count: usize,
         #[command(subcommand)]
         cmd: Option<NewsCmd>,
@@ -510,7 +510,7 @@ pub enum Commands {
         /// Symbol in <CODE>.<MARKET> format (e.g. AAPL.US 700.HK). Omit when using a subcommand.
         symbol: Option<String>,
         /// Maximum number of filings to show (default: 20)
-        #[arg(long, default_value = "20")]
+        #[arg(long, alias = "limit", default_value = "20")]
         count: usize,
         #[command(subcommand)]
         cmd: Option<FilingCmd>,
@@ -528,7 +528,7 @@ pub enum Commands {
         /// Symbol in <CODE>.<MARKET> format (e.g. TSLA.US 700.HK). Omit when using a subcommand.
         symbol: Option<String>,
         /// Maximum number of topics to show (default: 20)
-        #[arg(long, default_value = "20")]
+        #[arg(long, alias = "limit", default_value = "20")]
         count: usize,
         #[command(subcommand)]
         cmd: Option<TopicCmd>,
@@ -815,7 +815,7 @@ pub enum Commands {
         #[arg(long, default_value = "day")]
         kline_type: String,
         /// Number of K-lines to return
-        #[arg(long, default_value = "100")]
+        #[arg(long, alias = "limit", default_value = "100")]
         count: i32,
         #[command(subcommand)]
         cmd: Option<AhPremiumCmd>,
@@ -841,7 +841,7 @@ pub enum Commands {
         #[arg(long)]
         symbol: Option<String>,
         /// Number of results (max 100)
-        #[arg(long, default_value = "50")]
+        #[arg(long, alias = "limit", default_value = "50")]
         count: i32,
     },
 
@@ -890,7 +890,7 @@ pub enum Commands {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
         /// Number of results to return (-1 for all)
-        #[arg(long, default_value = "20")]
+        #[arg(long, alias = "limit", default_value = "20")]
         count: i32,
     },
 
@@ -911,7 +911,7 @@ pub enum Commands {
         /// Symbol in <CODE>.<MARKET> format (US market only, e.g. TSLA.US AAPL.US)
         symbol: String,
         /// Number of Form 4 filings to fetch (default: 20)
-        #[arg(long, default_value = "20")]
+        #[arg(long, alias = "limit", default_value = "20")]
         count: usize,
     },
 
@@ -984,7 +984,7 @@ pub enum Commands {
         /// Symbol in <CODE>.<MARKET> format (US market only, e.g. AAPL.US)
         symbol: String,
         /// Number of records to return (1–100, default: 20)
-        #[arg(long, default_value = "20")]
+        #[arg(long, alias = "limit", default_value = "20")]
         count: u32,
     },
 
@@ -1006,7 +1006,7 @@ pub enum Commands {
         #[command(subcommand)]
         cmd: Option<SharelistCmd>,
         /// Number of sharelists to return (default: 20)
-        #[arg(long, default_value = "20")]
+        #[arg(long, alias = "limit", default_value = "20")]
         count: u32,
     },
 }
@@ -1606,7 +1606,7 @@ pub enum SharelistCmd {
     /// Example: longbridge sharelist popular --count 10
     Popular {
         /// Number of results to return (default: 20)
-        #[arg(long, default_value = "20")]
+        #[arg(long, alias = "limit", default_value = "20")]
         count: u32,
     },
 }
@@ -2016,7 +2016,7 @@ pub enum VolumeSubCmd {
         /// Symbol in <CODE>.<MARKET> format (US market only, e.g. AAPL.US)
         symbol: String,
         /// Number of trading days to return (default: 20)
-        #[arg(long, default_value = "20")]
+        #[arg(long, alias = "limit", default_value = "20")]
         count: u32,
     },
 }
