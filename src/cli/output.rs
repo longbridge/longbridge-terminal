@@ -128,3 +128,107 @@ pub fn fmt_date(d: time::Date) -> String {
     let fmt = time::macros::format_description!("[year]-[month]-[day]");
     d.format(&fmt).unwrap_or_else(|_| d.to_string())
 }
+
+/// Recursively remove non-public internal fields from a JSON value.
+///
+/// Longbridge API responses may include fields like `aaid` that are internal
+/// identifiers not intended for external consumers. This function strips them
+/// in-place from any JSON object, at any nesting depth.
+pub fn strip_private_fields(v: &mut serde_json::Value) {
+    const PRIVATE_FIELDS: &[&str] = &["aaid", "account_channel"];
+    match v {
+        serde_json::Value::Object(map) => {
+            for key in PRIVATE_FIELDS {
+                map.remove(*key);
+            }
+            for val in map.values_mut() {
+                strip_private_fields(val);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for item in arr {
+                strip_private_fields(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_private_fields;
+    use serde_json::json;
+
+    #[test]
+    fn flat_object_aaid_removed() {
+        let mut v = json!({"aaid": "abc123", "name": "foo", "value": 42});
+        strip_private_fields(&mut v);
+        assert_eq!(v, json!({"name": "foo", "value": 42}));
+    }
+
+    #[test]
+    fn object_without_aaid_unchanged() {
+        let mut v = json!({"name": "foo", "value": 42});
+        strip_private_fields(&mut v);
+        assert_eq!(v, json!({"name": "foo", "value": 42}));
+    }
+
+    #[test]
+    fn nested_object_aaid_removed() {
+        let mut v = json!({"data": {"aaid": "secret", "price": "1.23"}, "total": 1});
+        strip_private_fields(&mut v);
+        assert_eq!(v, json!({"data": {"price": "1.23"}, "total": 1}));
+    }
+
+    #[test]
+    fn array_of_objects_aaid_removed() {
+        let mut v = json!([
+            {"aaid": "x", "symbol": "700.HK"},
+            {"aaid": "y", "symbol": "AAPL.US"}
+        ]);
+        strip_private_fields(&mut v);
+        assert_eq!(v, json!([{"symbol": "700.HK"}, {"symbol": "AAPL.US"}]));
+    }
+
+    #[test]
+    fn deeply_nested_aaid_removed() {
+        let mut v = json!({"a": {"b": {"aaid": "deep", "c": 1}}});
+        strip_private_fields(&mut v);
+        assert_eq!(v, json!({"a": {"b": {"c": 1}}}));
+    }
+
+    #[test]
+    fn aaid_with_numeric_value_removed() {
+        let mut v = json!({"aaid": 99999, "name": "bar"});
+        strip_private_fields(&mut v);
+        assert_eq!(v, json!({"name": "bar"}));
+    }
+
+    #[test]
+    fn empty_object_no_panic() {
+        let mut v = json!({});
+        strip_private_fields(&mut v);
+        assert_eq!(v, json!({}));
+    }
+
+    #[test]
+    fn scalar_value_unchanged() {
+        let mut v = json!("just a string");
+        strip_private_fields(&mut v);
+        assert_eq!(v, json!("just a string"));
+    }
+
+    #[test]
+    fn array_nested_in_object_aaid_removed() {
+        let mut v = json!({"items": [{"aaid": "1", "x": 10}, {"aaid": "2", "x": 20}]});
+        strip_private_fields(&mut v);
+        assert_eq!(v, json!({"items": [{"x": 10}, {"x": 20}]}));
+    }
+
+    #[test]
+    fn account_channel_removed() {
+        let mut v = json!({"account_channel": "lb", "name": "foo", "aaid": "x"});
+        strip_private_fields(&mut v);
+        assert_eq!(v, json!({"name": "foo"}));
+    }
+}

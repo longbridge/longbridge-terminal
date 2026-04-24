@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct User {
     pub account_channel: String,
+    #[serde(skip_serializing)]
     pub aaid: String,
     pub base_currency: String,
 }
@@ -34,6 +35,7 @@ pub struct OrgInfo {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Account {
     pub account_channel: String,
+    #[serde(skip_serializing)]
     pub aaid: String,
     pub account_name: String,
     pub account_type: String,
