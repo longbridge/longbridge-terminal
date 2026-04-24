@@ -135,7 +135,7 @@ pub fn fmt_date(d: time::Date) -> String {
 /// identifiers not intended for external consumers. This function strips them
 /// in-place from any JSON object, at any nesting depth.
 pub fn strip_private_fields(v: &mut serde_json::Value) {
-    const PRIVATE_FIELDS: &[&str] = &["aaid"];
+    const PRIVATE_FIELDS: &[&str] = &["aaid", "account_channel"];
     match v {
         serde_json::Value::Object(map) => {
             for key in PRIVATE_FIELDS {
@@ -223,5 +223,12 @@ mod tests {
         let mut v = json!({"items": [{"aaid": "1", "x": 10}, {"aaid": "2", "x": 20}]});
         strip_private_fields(&mut v);
         assert_eq!(v, json!({"items": [{"x": 10}, {"x": 20}]}));
+    }
+
+    #[test]
+    fn account_channel_removed() {
+        let mut v = json!({"account_channel": "lb", "name": "foo", "aaid": "x"});
+        strip_private_fields(&mut v);
+        assert_eq!(v, json!({"name": "foo"}));
     }
 }
