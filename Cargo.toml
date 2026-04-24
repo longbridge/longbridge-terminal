@@ -1,3 +1,6 @@
+[workspace]
+members = [".", "crates/cli-candlestick-chart", "crates/sec2md"]
+
 [package]
 edition = "2021"
 name = "longbridge-terminal"
