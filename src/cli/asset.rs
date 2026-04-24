@@ -2,13 +2,15 @@ use anyhow::Result;
 use serde_json::Value;
 
 use super::api::http_get;
-use super::output::{fmt_datetime, parse_datetime_end, parse_datetime_start, print_table};
+use super::output::{fmt_datetime, parse_datetime_end, parse_datetime_start, print_table, strip_private_fields};
 use super::OutputFormat;
 
 fn print_json(value: &Value) {
+    let mut filtered = value.clone();
+    strip_private_fields(&mut filtered);
     println!(
         "{}",
-        serde_json::to_string_pretty(value).unwrap_or_default()
+        serde_json::to_string_pretty(&filtered).unwrap_or_default()
     );
 }
 

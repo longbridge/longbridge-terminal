@@ -128,3 +128,28 @@ pub fn fmt_date(d: time::Date) -> String {
     let fmt = time::macros::format_description!("[year]-[month]-[day]");
     d.format(&fmt).unwrap_or_else(|_| d.to_string())
 }
+
+/// Recursively remove non-public internal fields from a JSON value.
+///
+/// Longbridge API responses may include fields like `aaid` that are internal
+/// identifiers not intended for external consumers. This function strips them
+/// in-place from any JSON object, at any nesting depth.
+pub fn strip_private_fields(v: &mut serde_json::Value) {
+    const PRIVATE_FIELDS: &[&str] = &["aaid"];
+    match v {
+        serde_json::Value::Object(map) => {
+            for key in PRIVATE_FIELDS {
+                map.remove(*key);
+            }
+            for val in map.values_mut() {
+                strip_private_fields(val);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for item in arr {
+                strip_private_fields(item);
+            }
+        }
+        _ => {}
+    }
+}
