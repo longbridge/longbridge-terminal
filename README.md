@@ -114,7 +114,7 @@ After reloading your shell, `longbridge <TAB>` will suggest subcommands, flags, 
 longbridge <command> [options]
 ```
 
-All commands support `--format json` for machine-readable output:
+All commands support `--format json` for machine-readable output. Commands that accept `--count` also accept `--limit` as an alias (for AI agent compatibility):
 
 ```bash
 longbridge quote TSLA.US --format json
