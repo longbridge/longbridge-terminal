@@ -437,7 +437,9 @@ pub async fn http_get(
         .send()
         .await
         .map_err(anyhow::Error::from)?;
-    Ok(resp.0)
+    let mut v = resp.0;
+    super::output::strip_private_fields(&mut v);
+    Ok(v)
 }
 
 pub async fn http_post(
@@ -463,7 +465,9 @@ pub async fn http_post(
         .send()
         .await
         .map_err(anyhow::Error::from)?;
-    Ok(resp.0)
+    let mut v = resp.0;
+    super::output::strip_private_fields(&mut v);
+    Ok(v)
 }
 
 pub async fn http_delete(
@@ -489,7 +493,9 @@ pub async fn http_delete(
         .send()
         .await
         .map_err(anyhow::Error::from)?;
-    Ok(resp.0)
+    let mut v = resp.0;
+    super::output::strip_private_fields(&mut v);
+    Ok(v)
 }
 
 pub async fn http_put(
@@ -515,5 +521,7 @@ pub async fn http_put(
         .send()
         .await
         .map_err(anyhow::Error::from)?;
-    Ok(resp.0)
+    let mut v = resp.0;
+    super::output::strip_private_fields(&mut v);
+    Ok(v)
 }
