@@ -147,9 +147,8 @@ fn walk(elem: ElementRef<'_>, conv: &mut Converter) {
         "h4" | "h5" | "h6" => heading(elem, conv, "#### "),
 
         // Block containers.
-        "p" | "div" | "section" | "article" | "header" | "footer" | "main" | "aside"
-        | "nav" | "blockquote" | "pre" | "address" | "figure" | "figcaption"
-        | "details" | "summary" => {
+        "p" | "div" | "section" | "article" | "header" | "footer" | "main" | "aside" | "nav"
+        | "blockquote" | "pre" | "address" | "figure" | "figcaption" | "details" | "summary" => {
             conv.begin_block();
             walk_children(elem, conv);
             conv.end_block();
@@ -227,8 +226,8 @@ fn walk(elem: ElementRef<'_>, conv: &mut Converter) {
         }
 
         // Inline containers: handle style-based bold/italic.
-        "span" | "a" | "label" | "sup" | "sub" | "u" | "s" | "del" | "mark" | "cite"
-        | "abbr" | "code" | "samp" | "kbd" | "var" | "time" | "data" => {
+        "span" | "a" | "label" | "sup" | "sub" | "u" | "s" | "del" | "mark" | "cite" | "abbr"
+        | "code" | "samp" | "kbd" | "var" | "time" | "data" => {
             let bold = is_bold_style(el);
             let italic = is_italic_style(el);
             if bold || italic {
@@ -358,7 +357,6 @@ fn html_escape(s: &str) -> String {
         .replace('>', "&gt;")
 }
 
-
 // ---------------------------------------------------------------------------
 // Text collection (for tables, bold, etc.)
 // ---------------------------------------------------------------------------
@@ -417,7 +415,11 @@ fn collect_text_rec(elem: ElementRef<'_>, parts: &mut Vec<String>) {
 // ---------------------------------------------------------------------------
 
 fn is_hidden(el: &scraper::node::Element) -> bool {
-    let style = el.attr("style").unwrap_or("").replace(' ', "").to_lowercase();
+    let style = el
+        .attr("style")
+        .unwrap_or("")
+        .replace(' ', "")
+        .to_lowercase();
     style.contains("display:none")
 }
 
@@ -461,31 +463,46 @@ fn is_xbrl_inline(tag: &str) -> bool {
     let local = tag.rfind(':').map_or(tag, |i| &tag[i + 1..]);
     matches!(
         local,
-        "nonnumeric" | "nonfraction" | "continuation" | "fraction" | "numerator"
-            | "denominator"
+        "nonnumeric" | "nonfraction" | "continuation" | "fraction" | "numerator" | "denominator"
     ) || tag.starts_with("ixt:")
         || tag.starts_with("ixt-sec:")
 }
 
 fn is_bold_style(el: &scraper::node::Element) -> bool {
-    let style = el.attr("style").unwrap_or("").replace(' ', "").to_lowercase();
+    let style = el
+        .attr("style")
+        .unwrap_or("")
+        .replace(' ', "")
+        .to_lowercase();
     style.contains("font-weight:bold") || style.contains("font-weight:700")
 }
 
 fn is_italic_style(el: &scraper::node::Element) -> bool {
-    let style = el.attr("style").unwrap_or("").replace(' ', "").to_lowercase();
+    let style = el
+        .attr("style")
+        .unwrap_or("")
+        .replace(' ', "")
+        .to_lowercase();
     style.contains("font-style:italic")
 }
 
 fn has_page_break_before(el: &scraper::node::Element) -> bool {
-    let style = el.attr("style").unwrap_or("").replace(' ', "").to_lowercase();
+    let style = el
+        .attr("style")
+        .unwrap_or("")
+        .replace(' ', "")
+        .to_lowercase();
     style.contains("page-break-before:always")
         || style.contains("break-before:page")
         || style.contains("break-before:always")
 }
 
 fn has_page_break_after(el: &scraper::node::Element) -> bool {
-    let style = el.attr("style").unwrap_or("").replace(' ', "").to_lowercase();
+    let style = el
+        .attr("style")
+        .unwrap_or("")
+        .replace(' ', "")
+        .to_lowercase();
     style.contains("page-break-after:always")
         || style.contains("break-after:page")
         || style.contains("break-after:always")
