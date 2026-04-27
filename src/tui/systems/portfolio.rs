@@ -304,7 +304,14 @@ pub fn render_portfolio(
             let holdings_block = Block::default()
                 .borders(Borders::ALL)
                 .border_style(styles::border())
-                .title(format!(" {} ", t!("Holding.Holding")));
+                .title(format!(" {} ", t!("Holding.Holding")))
+                .title_bottom(
+                    Line::from(vec![
+                        Span::styled(format!(" {} ", t!("Trade.BuyKey")), styles::dark_gray()),
+                        Span::styled(format!(" {} ", t!("Trade.SellKey")), styles::dark_gray()),
+                    ])
+                    .right_aligned(),
+                );
 
             if holdings.is_empty() {
                 let message = Paragraph::new(vec![

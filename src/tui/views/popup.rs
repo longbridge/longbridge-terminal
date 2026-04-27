@@ -35,6 +35,12 @@ pub fn render(
         searching(frame, rect, search);
     } else if popup == crate::tui::app::POPUP_WATCHLIST_SEARCH {
         search_watchlist(frame, rect, watchlist_search);
+    } else if popup & crate::tui::app::POPUP_ORDER_ENTRY != 0 {
+        crate::tui::systems::render_order_entry_popup(frame, rect);
+    } else if popup & crate::tui::app::POPUP_CANCEL_ORDER != 0 {
+        crate::tui::systems::render_cancel_order_popup(frame, rect);
+    } else if popup & crate::tui::app::POPUP_REPLACE_ORDER != 0 {
+        crate::tui::systems::render_replace_order_popup(frame, rect);
     }
 }
 

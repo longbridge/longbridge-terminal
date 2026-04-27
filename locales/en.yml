@@ -238,6 +238,8 @@ Currency.CNY: "Chinese Yuan"
 tabs.Orders: ORDERS
 Trade.Buy: "Buy"
 Trade.Sell: "Sell"
+Trade.BuyKey: "[b] Buy"
+Trade.SellKey: "[s] Sell"
 Trade.PlaceOrder: "Place Order"
 Trade.Submit: "Enter [confirm]"
 Trade.Cancel: "Esc [cancel]"

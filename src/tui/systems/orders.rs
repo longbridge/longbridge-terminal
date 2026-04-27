@@ -1,7 +1,10 @@
 use std::sync::atomic::Ordering;
 use std::sync::{LazyLock, Mutex, RwLock};
 
-use bevy_ecs::prelude::*;
+use bevy_ecs::{
+    prelude::*,
+    system::{CommandQueue, InsertResource},
+};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -15,12 +18,12 @@ use rust_decimal::Decimal;
 use std::str::FromStr;
 
 use crate::{
-    tui::app::{AppState, POPUP, POPUP_CANCEL_ORDER, POPUP_ORDER_ENTRY, POPUP_REPLACE_ORDER, RT},
+    tui::app::{AppState, POPUP, POPUP_CANCEL_ORDER, POPUP_REPLACE_ORDER, RT},
     tui::ui::styles,
     tui::widgets::{toast::{set_toast, ToastKind}, Terminal},
 };
 
-use super::{NavFooter, PopUp};
+use super::{Command, NavFooter, PopUp, StockDetail};
 
 pub static ORDERS_VIEW: LazyLock<RwLock<Vec<longbridge::trade::Order>>> =
     LazyLock::new(|| RwLock::new(vec![]));
@@ -495,6 +498,7 @@ pub fn exit_orders() {
 pub fn render_orders(
     mut terminal: ResMut<Terminal>,
     mut events: EventReader<super::Key>,
+    command: Res<Command>,
     (state, indexes, ws): NavFooter,
     (mut account, mut currency, mut search, mut watchgroup, mut watchlist_search): PopUp,
     mut log_panel: Local<crate::tui::widgets::LogPanel>,
@@ -521,22 +525,19 @@ pub fn render_orders(
                 }
             }
             super::Key::Enter => {
-                // open cancel or replace based on selected order status
                 let selected = ORDERS_TABLE.lock().expect("poison").selected();
                 if let Some(idx) = selected {
                     let orders = ORDERS_VIEW.read().expect("poison");
                     if let Some(order) = orders.get(idx) {
-                        let cancellable = matches!(
-                            order.status,
-                            longbridge::trade::OrderStatus::WaitToNew
-                                | longbridge::trade::OrderStatus::New
-                                | longbridge::trade::OrderStatus::WaitToReplace
-                                | longbridge::trade::OrderStatus::PartialFilled
-                        );
-                        if cancellable {
-                            *CANCEL_TARGET.write().expect("poison") = Some(order.clone());
-                            POPUP.store(POPUP_CANCEL_ORDER, Ordering::Relaxed);
-                        }
+                        let symbol = order.symbol.clone();
+                        drop(orders);
+                        let counter = crate::data::Counter::new(&symbol);
+                        let mut queue = CommandQueue::default();
+                        queue.push(InsertResource { resource: StockDetail(counter) });
+                        queue.push(InsertResource {
+                            resource: NextState(Some(AppState::WatchlistStock)),
+                        });
+                        _ = command.0.send(queue);
                     }
                 }
             }
@@ -566,25 +567,15 @@ pub fn render_orders(
 
         render_orders_list(frame, content_rect);
 
-        // Trade popups
-        let popup = POPUP.load(Ordering::Relaxed);
-        if popup == POPUP_ORDER_ENTRY {
-            render_order_entry_popup(frame, rect);
-        } else if popup == POPUP_CANCEL_ORDER {
-            render_cancel_order_popup(frame, rect);
-        } else if popup == POPUP_REPLACE_ORDER {
-            render_replace_order_popup(frame, rect);
-        } else {
-            crate::tui::views::popup::render(
-                frame,
-                rect,
-                &mut account,
-                &mut currency,
-                &mut search,
-                &mut watchgroup,
-                &mut watchlist_search,
-            );
-        }
+        crate::tui::views::popup::render(
+            frame,
+            rect,
+            &mut account,
+            &mut currency,
+            &mut search,
+            &mut watchgroup,
+            &mut watchlist_search,
+        );
 
         crate::tui::widgets::toast::render_toast(frame, rect);
 
