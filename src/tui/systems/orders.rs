@@ -76,12 +76,22 @@ pub fn open_order_entry(
     side: longbridge::trade::OrderSide,
     available_qty: Option<Decimal>,
 ) {
+    let price_str = crate::data::STOCKS
+        .get(&crate::data::Counter::new(&symbol))
+        .and_then(|s| s.quote.last_done)
+        .map(|p| p.to_string())
+        .unwrap_or_default();
+
     let state = OrderEntryState {
         symbol: symbol.clone(),
         side,
         order_type: longbridge::trade::OrderType::LO,
         quantity_input: tui_input::Input::default(),
-        price_input: tui_input::Input::default(),
+        price_input: if price_str.is_empty() {
+            tui_input::Input::default()
+        } else {
+            tui_input::Input::new(price_str)
+        },
         tif: longbridge::trade::TimeInForceType::Day,
         focused_field: OrderEntryField::Quantity,
         max_qty: available_qty,
@@ -257,6 +267,50 @@ pub fn fetch_max_qty(
 
 // ─────────────────────────── keyboard handlers ──────────────────────────────
 
+fn order_entry_next_field(
+    current: OrderEntryField,
+    order_type: longbridge::trade::OrderType,
+) -> OrderEntryField {
+    let price_editable = matches!(
+        order_type,
+        longbridge::trade::OrderType::LO | longbridge::trade::OrderType::ELO
+    );
+    match current {
+        OrderEntryField::OrderType => OrderEntryField::Quantity,
+        OrderEntryField::Quantity => {
+            if price_editable {
+                OrderEntryField::Price
+            } else {
+                OrderEntryField::Tif
+            }
+        }
+        OrderEntryField::Price => OrderEntryField::Tif,
+        OrderEntryField::Tif => OrderEntryField::OrderType,
+    }
+}
+
+fn order_entry_prev_field(
+    current: OrderEntryField,
+    order_type: longbridge::trade::OrderType,
+) -> OrderEntryField {
+    let price_editable = matches!(
+        order_type,
+        longbridge::trade::OrderType::LO | longbridge::trade::OrderType::ELO
+    );
+    match current {
+        OrderEntryField::OrderType => OrderEntryField::Tif,
+        OrderEntryField::Quantity => OrderEntryField::OrderType,
+        OrderEntryField::Price => OrderEntryField::Quantity,
+        OrderEntryField::Tif => {
+            if price_editable {
+                OrderEntryField::Price
+            } else {
+                OrderEntryField::Quantity
+            }
+        }
+    }
+}
+
 pub fn handle_order_entry_key(event: KeyEvent) {
     let close = || {
         POPUP.store(0, Ordering::Relaxed);
@@ -272,27 +326,21 @@ pub fn handle_order_entry_key(event: KeyEvent) {
             close();
         }
         KeyEvent {
-            code: KeyCode::Tab,
+            code: KeyCode::Tab | KeyCode::Down | KeyCode::Char('j'),
             modifiers: KeyModifiers::NONE,
             ..
         } => {
             if let Some(s) = ORDER_ENTRY_STATE.write().expect("poison").as_mut() {
-                s.focused_field = match s.focused_field {
-                    OrderEntryField::OrderType => OrderEntryField::Quantity,
-                    OrderEntryField::Quantity => {
-                        let price_editable = matches!(
-                            s.order_type,
-                            longbridge::trade::OrderType::LO | longbridge::trade::OrderType::ELO
-                        );
-                        if price_editable {
-                            OrderEntryField::Price
-                        } else {
-                            OrderEntryField::Tif
-                        }
-                    }
-                    OrderEntryField::Price => OrderEntryField::Tif,
-                    OrderEntryField::Tif => OrderEntryField::OrderType,
-                };
+                s.focused_field = order_entry_next_field(s.focused_field, s.order_type);
+            }
+        }
+        KeyEvent {
+            code: KeyCode::BackTab | KeyCode::Up | KeyCode::Char('k'),
+            modifiers: KeyModifiers::NONE,
+            ..
+        } => {
+            if let Some(s) = ORDER_ENTRY_STATE.write().expect("poison").as_mut() {
+                s.focused_field = order_entry_prev_field(s.focused_field, s.order_type);
             }
         }
         KeyEvent {
@@ -755,12 +803,20 @@ pub fn render_order_entry_popup(frame: &mut Frame, rect: Rect) {
         _ => std::borrow::Cow::Borrowed("–"),
     };
 
-    let title = format!(" {} — {} ", t!("Trade.PlaceOrder"), side_label);
+    let side_style = match state.side {
+        longbridge::trade::OrderSide::Buy => styles::up(std::cmp::Ordering::Greater),
+        longbridge::trade::OrderSide::Sell => styles::up(std::cmp::Ordering::Less),
+        _ => styles::text(),
+    };
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(styles::border())
-        .title(title);
+        .border_style(side_style)
+        .title(Line::from(vec![
+            Span::raw(format!(" {} — ", t!("Trade.PlaceOrder"))),
+            Span::styled(side_label.to_string(), side_style),
+            Span::raw(" "),
+        ]));
 
     let inner = block.inner(popup_rect);
     frame.render_widget(block, popup_rect);
@@ -823,17 +879,20 @@ pub fn render_order_entry_popup(frame: &mut Frame, rect: Rect) {
         _ => "Day",
     };
 
+    // "  Qty     : [" = 13 chars; cursor offset from row start
+    const INPUT_PREFIX_LEN: u16 = 13;
+
     let rows = vec![
         format!("  Symbol  : {}", state.symbol),
         format!("  Side    : {}", side_label),
-        format!("  Type    : [{}]", type_label),
+        format!("  Type    : ← {} →", type_label),
         format!("  Qty     : [{}]{}", state.quantity_input.value(), max_label),
         if price_editable {
             format!("  Price   : [{}]", state.price_input.value())
         } else {
-            format!("  Price   : [–]  (not required)")
+            "  Price   : [–]  (market order)".to_string()
         },
-        format!("  TIF     : [{}]", tif_label),
+        format!("  TIF     : ← {} →", tif_label),
         String::new(),
         format!("  {}   {}", t!("Trade.Submit"), t!("Trade.Cancel")),
     ];
@@ -858,6 +917,25 @@ pub fn render_order_entry_popup(frame: &mut Frame, rect: Rect) {
             styles::text()
         };
         frame.render_widget(Paragraph::new(row.as_str()).style(style), *chunk);
+    }
+
+    // Show cursor inside the focused text input field
+    match state.focused_field {
+        OrderEntryField::Quantity => {
+            let chunk = chunks[3];
+            frame.set_cursor_position((
+                chunk.x + INPUT_PREFIX_LEN + state.quantity_input.visual_cursor() as u16,
+                chunk.y,
+            ));
+        }
+        OrderEntryField::Price if price_editable => {
+            let chunk = chunks[4];
+            frame.set_cursor_position((
+                chunk.x + INPUT_PREFIX_LEN + state.price_input.visual_cursor() as u16,
+                chunk.y,
+            ));
+        }
+        _ => {}
     }
 }
 
