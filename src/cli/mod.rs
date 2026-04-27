@@ -394,10 +394,18 @@ pub enum Commands {
     /// Dividend history and distribution details for a symbol
     ///
     /// Example: longbridge dividend AAPL.US
+    /// Example: longbridge dividend AAPL.US --page 2
+    /// Example: longbridge dividend AAPL.US --year 2025
     /// Example: longbridge dividend detail AAPL.US
     Dividend {
         /// Symbol in <CODE>.<MARKET> format (omit when using a subcommand)
         symbol: Option<String>,
+        /// Page number (default: 1)
+        #[arg(long, default_value = "1")]
+        page: u32,
+        /// Filter by year (e.g. 2025)
+        #[arg(long)]
+        year: Option<u32>,
         #[command(subcommand)]
         cmd: Option<DividendCmd>,
     },
@@ -2248,7 +2256,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 fundamental::cmd_institution_rating(sym, format, verbose).await
             }
         },
-        Commands::Dividend { symbol, cmd } => match cmd {
+        Commands::Dividend { symbol, page, year, cmd } => match cmd {
             Some(DividendCmd::Detail { symbol: s }) => {
                 fundamental::cmd_dividend_detail(s, format, verbose).await
             }
@@ -2256,7 +2264,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 let sym = symbol.ok_or_else(|| {
                     anyhow::anyhow!("Symbol required. Usage: longbridge dividend <SYMBOL>")
                 })?;
-                fundamental::cmd_dividend(sym, format, verbose).await
+                fundamental::cmd_dividend(sym, page, year, format, verbose).await
             }
         },
         Commands::ForecastEps { symbol } => {

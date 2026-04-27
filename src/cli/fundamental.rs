@@ -466,14 +466,25 @@ fn print_dividends(value: &Value) {
 }
 
 /// Fetch dividend history for a symbol.
-pub async fn cmd_dividend(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
+pub async fn cmd_dividend(
+    symbol: String,
+    page: u32,
+    year: Option<u32>,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
-    let data = http_get(
-        "/v1/quote/dividends",
-        &[("counter_id", cid.as_str())],
-        verbose,
-    )
-    .await?;
+    let page_str = page.to_string();
+    let year_str = year.map(|y| y.to_string());
+    let mut params = vec![
+        ("counter_id", cid.as_str()),
+        ("size", "50"),
+        ("page", &page_str),
+    ];
+    if let Some(ref y) = year_str {
+        params.push(("year", y.as_str()));
+    }
+    let data = http_get("/v1/quote/dividends", &params, verbose).await?;
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => print_dividends(&data),
