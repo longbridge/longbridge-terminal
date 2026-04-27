@@ -51,7 +51,7 @@ pub struct OrderEntryState {
     pub tif: longbridge::trade::TimeInForceType,
     pub focused_field: OrderEntryField,
     pub max_qty: Option<Decimal>,
-    pub confirming: bool,
+    pub confirm_button: ConfirmButton,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -60,7 +60,27 @@ pub enum OrderEntryField {
     Quantity,
     Price,
     Tif,
+    Buttons,
 }
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ConfirmButton {
+    Submit,
+    Cancel,
+}
+
+const ORDER_TYPES: &[longbridge::trade::OrderType] = &[
+    longbridge::trade::OrderType::LO,
+    longbridge::trade::OrderType::ELO,
+    longbridge::trade::OrderType::MO,
+    longbridge::trade::OrderType::AO,
+    longbridge::trade::OrderType::ALO,
+];
+
+const TIF_TYPES: &[longbridge::trade::TimeInForceType] = &[
+    longbridge::trade::TimeInForceType::Day,
+    longbridge::trade::TimeInForceType::GoodTilCanceled,
+];
 
 pub struct ReplaceOrderState {
     pub order_id: String,
@@ -95,7 +115,7 @@ pub fn open_order_entry(
         tif: longbridge::trade::TimeInForceType::Day,
         focused_field: OrderEntryField::Quantity,
         max_qty: available_qty,
-        confirming: false,
+        confirm_button: ConfirmButton::Submit,
     };
     *ORDER_ENTRY_STATE.write().expect("poison") = Some(state);
 
@@ -169,9 +189,6 @@ pub fn submit_order() {
             }
             Err(e) => {
                 set_toast(ToastKind::Error, e.to_string());
-                if let Some(s) = ORDER_ENTRY_STATE.write().expect("poison").as_mut() {
-                    s.confirming = false;
-                }
             }
         }
     });
@@ -285,7 +302,8 @@ fn order_entry_next_field(
             }
         }
         OrderEntryField::Price => OrderEntryField::Tif,
-        OrderEntryField::Tif => OrderEntryField::OrderType,
+        OrderEntryField::Tif => OrderEntryField::Buttons,
+        OrderEntryField::Buttons => OrderEntryField::OrderType,
     }
 }
 
@@ -298,7 +316,7 @@ fn order_entry_prev_field(
         longbridge::trade::OrderType::LO | longbridge::trade::OrderType::ELO
     );
     match current {
-        OrderEntryField::OrderType => OrderEntryField::Tif,
+        OrderEntryField::OrderType => OrderEntryField::Buttons,
         OrderEntryField::Quantity => OrderEntryField::OrderType,
         OrderEntryField::Price => OrderEntryField::Quantity,
         OrderEntryField::Tif => {
@@ -308,7 +326,25 @@ fn order_entry_prev_field(
                 OrderEntryField::Quantity
             }
         }
+        OrderEntryField::Buttons => OrderEntryField::Tif,
     }
+}
+
+fn cycle_order_type(current: longbridge::trade::OrderType, forward: bool) -> longbridge::trade::OrderType {
+    let idx = ORDER_TYPES.iter().position(|&t| t == current).unwrap_or(0);
+    let len = ORDER_TYPES.len();
+    let new_idx = if forward { (idx + 1) % len } else { (idx + len - 1) % len };
+    ORDER_TYPES[new_idx]
+}
+
+fn cycle_tif(
+    current: longbridge::trade::TimeInForceType,
+    forward: bool,
+) -> longbridge::trade::TimeInForceType {
+    let idx = TIF_TYPES.iter().position(|&t| t == current).unwrap_or(0);
+    let len = TIF_TYPES.len();
+    let new_idx = if forward { (idx + 1) % len } else { (idx + len - 1) % len };
+    TIF_TYPES[new_idx]
 }
 
 pub fn handle_order_entry_key(event: KeyEvent) {
@@ -344,87 +380,97 @@ pub fn handle_order_entry_key(event: KeyEvent) {
             }
         }
         KeyEvent {
+            code: KeyCode::Left,
+            modifiers: KeyModifiers::NONE,
+            ..
+        } => {
+            if let Some(s) = ORDER_ENTRY_STATE.write().expect("poison").as_mut() {
+                match s.focused_field {
+                    OrderEntryField::OrderType => {
+                        s.order_type = cycle_order_type(s.order_type, false);
+                    }
+                    OrderEntryField::Tif => {
+                        s.tif = cycle_tif(s.tif, false);
+                    }
+                    OrderEntryField::Buttons => {
+                        s.confirm_button = ConfirmButton::Submit;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        KeyEvent {
+            code: KeyCode::Right,
+            modifiers: KeyModifiers::NONE,
+            ..
+        } => {
+            if let Some(s) = ORDER_ENTRY_STATE.write().expect("poison").as_mut() {
+                match s.focused_field {
+                    OrderEntryField::OrderType => {
+                        s.order_type = cycle_order_type(s.order_type, true);
+                    }
+                    OrderEntryField::Tif => {
+                        s.tif = cycle_tif(s.tif, true);
+                    }
+                    OrderEntryField::Buttons => {
+                        s.confirm_button = ConfirmButton::Cancel;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        KeyEvent {
             code: KeyCode::Enter,
             modifiers: KeyModifiers::NONE,
             ..
         } => {
-            let confirming = ORDER_ENTRY_STATE
+            let (focused, btn) = ORDER_ENTRY_STATE
                 .read()
                 .expect("poison")
                 .as_ref()
-                .map_or(false, |s| s.confirming);
-            if confirming {
-                submit_order();
-            } else if let Some(s) = ORDER_ENTRY_STATE.write().expect("poison").as_mut() {
-                s.confirming = true;
-            }
-        }
-        KeyEvent {
-            code: KeyCode::Char('y'),
-            modifiers: KeyModifiers::NONE,
-            ..
-        } => {
-            let confirming = ORDER_ENTRY_STATE
-                .read()
-                .expect("poison")
-                .as_ref()
-                .map_or(false, |s| s.confirming);
-            if confirming {
-                submit_order();
-            } else {
-                forward_char_to_focused('y');
-            }
-        }
-        KeyEvent {
-            code: KeyCode::Char('n'),
-            modifiers: KeyModifiers::NONE,
-            ..
-        } => {
-            let confirming = ORDER_ENTRY_STATE
-                .read()
-                .expect("poison")
-                .as_ref()
-                .map_or(false, |s| s.confirming);
-            if confirming {
-                if let Some(s) = ORDER_ENTRY_STATE.write().expect("poison").as_mut() {
-                    s.confirming = false;
+                .map_or(
+                    (OrderEntryField::Quantity, ConfirmButton::Submit),
+                    |s| (s.focused_field, s.confirm_button),
+                );
+            if focused == OrderEntryField::Buttons {
+                match btn {
+                    ConfirmButton::Submit => submit_order(),
+                    ConfirmButton::Cancel => close(),
                 }
-            } else {
-                forward_char_to_focused('n');
+            } else if let Some(s) = ORDER_ENTRY_STATE.write().expect("poison").as_mut() {
+                s.focused_field = order_entry_next_field(s.focused_field, s.order_type);
+            }
+        }
+        KeyEvent {
+            code: KeyCode::Char('='),
+            modifiers: KeyModifiers::NONE,
+            ..
+        } => {
+            if let Some(s) = ORDER_ENTRY_STATE.write().expect("poison").as_mut() {
+                let price_str = crate::data::STOCKS
+                    .get(&crate::data::Counter::new(&s.symbol))
+                    .and_then(|st| st.quote.last_done)
+                    .map(|p| p.to_string())
+                    .unwrap_or_default();
+                if !price_str.is_empty() {
+                    s.price_input = tui_input::Input::new(price_str);
+                }
             }
         }
         _ => {
             let evt = crossterm::event::Event::Key(event);
             if let Some(req) = tui_input::backend::crossterm::to_input_request(&evt) {
                 if let Some(s) = ORDER_ENTRY_STATE.write().expect("poison").as_mut() {
-                    if !s.confirming {
-                        match s.focused_field {
-                            OrderEntryField::Quantity => {
-                                s.quantity_input.handle(req);
-                            }
-                            OrderEntryField::Price => {
-                                s.price_input.handle(req);
-                            }
-                            _ => {}
+                    match s.focused_field {
+                        OrderEntryField::Quantity => {
+                            s.quantity_input.handle(req);
                         }
+                        OrderEntryField::Price => {
+                            s.price_input.handle(req);
+                        }
+                        _ => {}
                     }
                 }
-            }
-        }
-    }
-}
-
-fn forward_char_to_focused(c: char) {
-    let evt = crossterm::event::Event::Key(KeyEvent::new(
-        KeyCode::Char(c),
-        KeyModifiers::NONE,
-    ));
-    if let Some(req) = tui_input::backend::crossterm::to_input_request(&evt) {
-        if let Some(s) = ORDER_ENTRY_STATE.write().expect("poison").as_mut() {
-            match s.focused_field {
-                OrderEntryField::Quantity => { s.quantity_input.handle(req); }
-                OrderEntryField::Price => { s.price_input.handle(req); }
-                _ => {}
             }
         }
     }
@@ -792,8 +838,8 @@ pub fn render_order_entry_popup(frame: &mut Frame, rect: Rect) {
     let state_lock = ORDER_ENTRY_STATE.read().expect("poison");
     let Some(state) = &*state_lock else { return };
 
-    const W: u16 = 44;
-    const H: u16 = 14;
+    const W: u16 = 52;
+    const H: u16 = 10;
     let popup_rect = crate::tui::ui::rect::centered(W, H, rect);
     frame.render_widget(Clear, popup_rect);
 
@@ -816,7 +862,17 @@ pub fn render_order_entry_popup(frame: &mut Frame, rect: Rect) {
             Span::raw(format!(" {} — ", t!("Trade.PlaceOrder"))),
             Span::styled(side_label.to_string(), side_style),
             Span::raw(" "),
-        ]));
+        ]))
+        .title_bottom(
+            Line::from(vec![
+                Span::styled(" [←][→] ", styles::dark_gray()),
+                Span::styled(t!("Trade.SelectHint").to_string(), styles::dark_gray()),
+                Span::styled("  [=] ", styles::dark_gray()),
+                Span::styled(t!("Trade.FillPrice").to_string(), styles::dark_gray()),
+                Span::raw(" "),
+            ])
+            .right_aligned(),
+        );
 
     let inner = block.inner(popup_rect);
     frame.render_widget(block, popup_rect);
@@ -826,52 +882,6 @@ pub fn render_order_entry_popup(frame: &mut Frame, rect: Rect) {
         longbridge::trade::OrderType::LO | longbridge::trade::OrderType::ELO
     );
 
-    if state.confirming {
-        let price_display = if price_editable {
-            format!(" @ {}", state.price_input.value())
-        } else {
-            String::new()
-        };
-        let confirm_line = format!(
-            "{} {} × {}{}",
-            side_label,
-            state.quantity_input.value(),
-            state.symbol,
-            price_display,
-        );
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1)])
-            .split(inner);
-        frame.render_widget(
-            Paragraph::new(confirm_line).style(styles::text()),
-            chunks[0],
-        );
-        frame.render_widget(
-            Paragraph::new(format!(
-                "{}  {}  {}",
-                t!("Trade.Confirm"),
-                t!("Trade.Yes"),
-                t!("Trade.No")
-            ))
-            .style(styles::label()),
-            chunks[1],
-        );
-        return;
-    }
-
-    let max_label = match state.side {
-        longbridge::trade::OrderSide::Buy => state
-            .max_qty
-            .map_or(String::new(), |q| format!("  {} {}", t!("Trade.MaxQty"), q)),
-        longbridge::trade::OrderSide::Sell => state
-            .max_qty
-            .map_or(String::new(), |q| {
-                format!("  {} {}", t!("Trade.AvailableQty"), q)
-            }),
-        _ => String::new(),
-    };
-
     let type_label = order_type_label(state.order_type);
     let tif_label = match state.tif {
         longbridge::trade::TimeInForceType::Day => "Day",
@@ -879,22 +889,122 @@ pub fn render_order_entry_popup(frame: &mut Frame, rect: Rect) {
         _ => "Day",
     };
 
-    // "  Qty     : [" = 13 chars; cursor offset from row start
-    const INPUT_PREFIX_LEN: u16 = 13;
+    let max_str = match state.side {
+        longbridge::trade::OrderSide::Buy => state
+            .max_qty
+            .map_or(String::new(), |q| format!("  {} {q}", t!("Trade.MaxQty"))),
+        longbridge::trade::OrderSide::Sell => state
+            .max_qty
+            .map_or(String::new(), |q| format!("  {} {q}", t!("Trade.AvailableQty"))),
+        _ => String::new(),
+    };
 
-    let rows = vec![
-        format!("  Symbol  : {}", state.symbol),
-        format!("  Side    : {}", side_label),
-        format!("  Type    : ← {} →", type_label),
-        format!("  Qty     : [{}]{}", state.quantity_input.value(), max_label),
-        if price_editable {
-            format!("  Price   : [{}]", state.price_input.value())
-        } else {
-            "  Price   : [–]  (market order)".to_string()
-        },
-        format!("  TIF     : ← {} →", tif_label),
-        String::new(),
-        format!("  {}   {}", t!("Trade.Submit"), t!("Trade.Cancel")),
+    let lbl = styles::label();
+    let val = styles::text();
+    let focused_val = Style::default()
+        .add_modifier(Modifier::BOLD)
+        .add_modifier(Modifier::UNDERLINED);
+    let dim = styles::dark_gray();
+
+    // Row 0: Symbol
+    let row_symbol = Line::from(vec![
+        Span::styled("  Symbol   ", lbl),
+        Span::styled(state.symbol.clone(), styles::primary()),
+    ]);
+
+    // Row 1: Side
+    let row_side = Line::from(vec![
+        Span::styled("  Side     ", lbl),
+        Span::styled(side_label.to_string(), side_style),
+    ]);
+
+    // Row 2: Type — ◀ LO ▶ when focused (uses side color for discoverability)
+    let type_val_style = if state.focused_field == OrderEntryField::OrderType { side_style } else { val };
+    let type_str = if state.focused_field == OrderEntryField::OrderType {
+        format!("◀ {type_label} ▶")
+    } else {
+        type_label.to_string()
+    };
+    let row_type = Line::from(vec![
+        Span::styled("  Type     ", lbl),
+        Span::styled(type_str, type_val_style),
+    ]);
+
+    // Row 3: Qty
+    let qty_focused = state.focused_field == OrderEntryField::Quantity;
+    let qty_val_style = if qty_focused { focused_val } else { val };
+    let mut qty_spans = vec![
+        Span::styled("  Qty      ", lbl),
+        Span::raw("["),
+        Span::styled(state.quantity_input.value().to_string(), qty_val_style),
+        Span::raw("]"),
+    ];
+    if !max_str.is_empty() {
+        qty_spans.push(Span::styled(max_str, dim));
+    }
+    let row_qty = Line::from(qty_spans);
+
+    // Row 4: Price
+    let price_focused = state.focused_field == OrderEntryField::Price;
+    let price_val_style = if price_focused { focused_val } else { val };
+    let row_price = if price_editable {
+        Line::from(vec![
+            Span::styled("  Price    ", lbl),
+            Span::raw("["),
+            Span::styled(state.price_input.value().to_string(), price_val_style),
+            Span::raw("]"),
+            Span::styled("  [=] fill", dim),
+        ])
+    } else {
+        Line::from(vec![
+            Span::styled("  Price    ", lbl),
+            Span::styled("–  (market order)", dim),
+        ])
+    };
+
+    // Row 5: TIF — ◀ Day ▶ when focused
+    let tif_val_style = if state.focused_field == OrderEntryField::Tif { side_style } else { val };
+    let tif_str = if state.focused_field == OrderEntryField::Tif {
+        format!("◀ {tif_label} ▶")
+    } else {
+        tif_label.to_string()
+    };
+    let row_tif = Line::from(vec![
+        Span::styled("  TIF      ", lbl),
+        Span::styled(tif_str, tif_val_style),
+    ]);
+
+    // Row 6: spacer
+    let row_spacer = Line::from("");
+
+    // Row 7: Submit / Cancel buttons — REVERSED on focused button
+    let on_buttons = state.focused_field == OrderEntryField::Buttons;
+    let submit_style = if on_buttons && state.confirm_button == ConfirmButton::Submit {
+        styles::text_selected()
+    } else {
+        val
+    };
+    let cancel_style = if on_buttons && state.confirm_button == ConfirmButton::Cancel {
+        styles::text_selected()
+    } else {
+        val
+    };
+    let row_buttons = Line::from(vec![
+        Span::raw("  "),
+        Span::styled(format!(" {} ", t!("Trade.Submit")), submit_style),
+        Span::raw("   "),
+        Span::styled(format!(" {} ", t!("Trade.Cancel")), cancel_style),
+    ]);
+
+    let rows: Vec<Line> = vec![
+        row_symbol,
+        row_side,
+        row_type,
+        row_qty,
+        row_price,
+        row_tif,
+        row_spacer,
+        row_buttons,
     ];
 
     let constraints: Vec<Constraint> = rows.iter().map(|_| Constraint::Length(1)).collect();
@@ -903,35 +1013,25 @@ pub fn render_order_entry_popup(frame: &mut Frame, rect: Rect) {
         .constraints(constraints)
         .split(inner);
 
-    for (i, (row, chunk)) in rows.iter().zip(chunks.iter()).enumerate() {
-        let focused = match (i, state.focused_field) {
-            (2, OrderEntryField::OrderType)
-            | (3, OrderEntryField::Quantity)
-            | (4, OrderEntryField::Price)
-            | (5, OrderEntryField::Tif) => true,
-            _ => false,
-        };
-        let style = if focused {
-            styles::text_selected()
-        } else {
-            styles::text()
-        };
-        frame.render_widget(Paragraph::new(row.as_str()).style(style), *chunk);
+    for (line, chunk) in rows.iter().zip(chunks.iter()) {
+        frame.render_widget(Paragraph::new(line.clone()), *chunk);
     }
 
-    // Show cursor inside the focused text input field
+    // "  Qty      [" = 11 + 1 = 12 chars before cursor
+    const INPUT_X_OFFSET: u16 = 12;
+
     match state.focused_field {
         OrderEntryField::Quantity => {
             let chunk = chunks[3];
             frame.set_cursor_position((
-                chunk.x + INPUT_PREFIX_LEN + state.quantity_input.visual_cursor() as u16,
+                chunk.x + INPUT_X_OFFSET + state.quantity_input.visual_cursor() as u16,
                 chunk.y,
             ));
         }
         OrderEntryField::Price if price_editable => {
             let chunk = chunks[4];
             frame.set_cursor_position((
-                chunk.x + INPUT_PREFIX_LEN + state.price_input.visual_cursor() as u16,
+                chunk.x + INPUT_X_OFFSET + state.price_input.visual_cursor() as u16,
                 chunk.y,
             ));
         }
