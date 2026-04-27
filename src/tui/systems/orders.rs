@@ -663,11 +663,8 @@ fn render_orders_list(frame: &mut Frame, rect: Rect) {
             let price_str = order
                 .price
                 .map_or("–".to_string(), |p| format!("{p:.2}"));
-            let time_str = order
-                .submitted_at
-                .map_or_else(|| "–".to_string(), |t| {
-                    format!("{:02}:{:02}:{:02}", t.hour(), t.minute(), t.second())
-                });
+            let t = order.submitted_at;
+            let time_str = format!("{:02}:{:02}:{:02}", t.hour(), t.minute(), t.second());
 
             Row::new(vec![
                 Cell::from(order.symbol.clone()),
@@ -713,11 +710,11 @@ fn order_status_style(status: longbridge::trade::OrderStatus) -> Style {
         longbridge::trade::OrderStatus::PartialFilled => Style::default().fg(Color::Cyan),
         longbridge::trade::OrderStatus::Filled => Style::default().fg(Color::Green),
         longbridge::trade::OrderStatus::Canceled
-        | longbridge::trade::OrderStatus::ReplaceCanceled
+        | longbridge::trade::OrderStatus::Replaced
         | longbridge::trade::OrderStatus::PartialWithdrawal => {
             Style::default().fg(Color::DarkGray)
         }
-        longbridge::trade::OrderStatus::Rejected | longbridge::trade::OrderStatus::Failed => {
+        longbridge::trade::OrderStatus::Rejected => {
             Style::default().fg(Color::Red)
         }
         _ => Style::default(),
@@ -732,10 +729,9 @@ fn order_status_label(status: longbridge::trade::OrderStatus) -> &'static str {
         longbridge::trade::OrderStatus::PartialFilled => "PartialFill",
         longbridge::trade::OrderStatus::Filled => "Filled",
         longbridge::trade::OrderStatus::Canceled => "Cancelled",
-        longbridge::trade::OrderStatus::ReplaceCanceled => "ReplaceCancelled",
+        longbridge::trade::OrderStatus::Replaced => "Replaced",
         longbridge::trade::OrderStatus::PartialWithdrawal => "PartialWithdrawal",
         longbridge::trade::OrderStatus::Rejected => "Rejected",
-        longbridge::trade::OrderStatus::Failed => "Failed",
         _ => "–",
     }
 }
@@ -832,7 +828,7 @@ pub fn render_order_entry_popup(frame: &mut Frame, rect: Rect) {
     let type_label = order_type_label(state.order_type);
     let tif_label = match state.tif {
         longbridge::trade::TimeInForceType::Day => "Day",
-        longbridge::trade::TimeInForceType::GoodTillCanceled => "GTC",
+        longbridge::trade::TimeInForceType::GoodTilCanceled => "GTC",
         _ => "Day",
     };
 
