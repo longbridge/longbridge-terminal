@@ -6,12 +6,12 @@ use crate::{
 use bevy_ecs::prelude::*;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Cell, List, ListItem, Paragraph, Row, Table},
 };
 use rust_decimal::Decimal;
-use std::{collections::HashMap, sync::atomic::Ordering};
+use std::{collections::HashMap, sync::atomic::Ordering, sync::Mutex};
 
 use crate::{
     data::{Account, Counter, STOCKS},
@@ -31,17 +31,44 @@ pub static PORTFOLIO_VIEW: std::sync::LazyLock<
     std::sync::RwLock<Option<crate::data::PortfolioView>>,
 > = std::sync::LazyLock::new(|| std::sync::RwLock::new(None));
 
+pub static PORTFOLIO_TABLE: std::sync::LazyLock<Mutex<ratatui::widgets::TableState>> =
+    std::sync::LazyLock::new(Mutex::default);
+
 pub fn render_portfolio(
     mut terminal: ResMut<Terminal>,
-    mut _events: EventReader<super::Key>,
+    mut events: EventReader<super::Key>,
     _portfolio: Res<Portfolio>,
     _accounts: Res<crate::tui::widgets::Select<Account>>,
     _command: Res<super::Command>,
     (state, indexes, ws): NavFooter,
     (mut account, mut currency, mut search, mut watchgroup, mut watchlist_search): PopUp,
-    _table_state: Local<ratatui::widgets::TableState>,
     mut log_panel: Local<crate::tui::widgets::LogPanel>,
 ) {
+    for event in &mut events {
+        let len = PORTFOLIO_VIEW
+            .read()
+            .expect("poison")
+            .as_ref()
+            .map_or(0, |v| v.holdings.len());
+        match event {
+            super::Key::Up => {
+                let mut table = PORTFOLIO_TABLE.lock().expect("poison");
+                let idx = table.selected();
+                if len > 0 {
+                    table.select(Some(idx.map_or(0, |i| if i == 0 { 0 } else { i - 1 })));
+                }
+            }
+            super::Key::Down => {
+                let mut table = PORTFOLIO_TABLE.lock().expect("poison");
+                let idx = table.selected();
+                if len > 0 {
+                    table.select(Some(idx.map_or(0, |i| if i + 1 < len { i + 1 } else { i })));
+                }
+            }
+            _ => {}
+        }
+    }
+
     _ = terminal.draw(|frame| {
         let rect = frame.area();
 
@@ -359,16 +386,6 @@ pub fn render_portfolio(
                     })
                     .collect();
 
-                // Render block and get inner area with horizontal margin
-                frame.render_widget(holdings_block, chunks[1]);
-                let block_inner = Block::default().borders(Borders::ALL).inner(chunks[1]);
-                let table_area = Rect {
-                    x: block_inner.x + 1,
-                    y: block_inner.y,
-                    width: block_inner.width.saturating_sub(2),
-                    height: block_inner.height,
-                };
-
                 let table = Table::new(
                     rows,
                     [
@@ -383,9 +400,15 @@ pub fn render_portfolio(
                     ],
                 )
                 .header(header)
+                .block(holdings_block)
+                .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
                 .column_spacing(1);
 
-                frame.render_widget(table, table_area);
+                frame.render_stateful_widget(
+                    table,
+                    chunks[1],
+                    &mut *PORTFOLIO_TABLE.lock().expect("poison"),
+                );
             }
         }
 
@@ -399,6 +422,8 @@ pub fn render_portfolio(
             &mut watchgroup,
             &mut watchlist_search,
         );
+
+        crate::tui::widgets::render_toast(frame, rect);
 
         // Render floating log panel if visible
         let log_panel_visible =

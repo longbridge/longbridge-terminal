@@ -18,6 +18,7 @@ use crate::{
 };
 
 mod common;
+mod orders;
 mod portfolio;
 mod stock_detail;
 mod stock_news;
@@ -26,6 +27,7 @@ mod watchlist_stock;
 
 // Re-export render functions
 pub use common::*;
+pub use orders::*;
 pub use portfolio::*;
 pub use stock_detail::*;
 pub use stock_news::*;
