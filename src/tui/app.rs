@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{OnceLock, RwLock};
 use std::time::Duration;
 
@@ -16,7 +16,7 @@ use crate::{openapi, tui::systems};
 
 pub static RT: OnceLock<tokio::runtime::Handle> = OnceLock::new();
 pub static UPDATE_TX: OnceLock<mpsc::UnboundedSender<CommandQueue>> = OnceLock::new();
-pub static POPUP: AtomicU8 = AtomicU8::new(0);
+pub static POPUP: AtomicU16 = AtomicU16::new(0);
 pub static LAST_STATE: Atomic<AppState> = Atomic::new(AppState::Watchlist);
 pub static QUOTE_BMP: Atomic<bool> = Atomic::new(false);
 pub static LOG_PANEL_VISIBLE: Atomic<bool> = Atomic::new(false);
@@ -24,12 +24,16 @@ pub static WATCHLIST: std::sync::LazyLock<RwLock<Watchlist>> =
     std::sync::LazyLock::new(Default::default);
 pub static USER: std::sync::LazyLock<RwLock<User>> = std::sync::LazyLock::new(Default::default);
 
-pub const POPUP_HELP: u8 = 0b1;
-pub const POPUP_SEARCH: u8 = 0b10;
-pub const POPUP_ACCOUNT: u8 = 0b100;
-pub const POPUP_CURRENCY: u8 = 0b1000;
-pub const POPUP_WATCHLIST: u8 = 0b10000;
-pub const POPUP_WATCHLIST_SEARCH: u8 = 0b10_0000;
+pub const POPUP_HELP: u16 = 0b1;
+pub const POPUP_SEARCH: u16 = 0b10;
+pub const POPUP_ACCOUNT: u16 = 0b100;
+pub const POPUP_CURRENCY: u16 = 0b1000;
+pub const POPUP_WATCHLIST: u16 = 0b10000;
+pub const POPUP_WATCHLIST_SEARCH: u16 = 0b10_0000;
+pub const POPUP_ORDER_ENTRY: u16 = 0b0000_0001_0000_0000;
+pub const POPUP_CANCEL_ORDER: u16 = 0b0000_0010_0000_0000;
+pub const POPUP_REPLACE_ORDER: u16 = 0b0000_0100_0000_0000;
+pub const POPUP_DATE_FILTER: u16 = 0b0000_1000_0000_0000;
 
 #[derive(
     Clone, Copy, PartialEq, Eq, Hash, Debug, Default, States, strum::EnumIter, bytemuck::NoUninit,
@@ -44,6 +48,7 @@ pub enum AppState {
     Stock,
     Watchlist,
     WatchlistStock,
+    Orders,
 }
 
 #[allow(clippy::too_many_lines)]
@@ -167,6 +172,12 @@ pub async fn run(
         .add_systems(
             Update,
             systems::render_portfolio.run_if(in_state(AppState::Portfolio)),
+        )
+        .add_systems(OnEnter(AppState::Orders), systems::enter_orders)
+        .add_systems(OnExit(AppState::Orders), systems::exit_orders)
+        .add_systems(
+            Update,
+            systems::render_orders.run_if(in_state(AppState::Orders)),
         );
 
     // Don't refresh watchlist when transitioning between Watchlist and WatchlistStock
@@ -489,7 +500,7 @@ pub async fn run(
                         }
                         continue;
                     }
-                    AppState::Portfolio | AppState::Stock | AppState::Watchlist | AppState::WatchlistStock => (),
+                    AppState::Portfolio | AppState::Stock | AppState::Watchlist | AppState::WatchlistStock | AppState::Orders => (),
                 }
 
                 // Handle global keyboard shortcuts
@@ -501,7 +512,7 @@ pub async fn run(
 
 fn handle_popup_input(
     app: &mut bevy_app::App,
-    popup: u8,
+    popup: u16,
     event: crossterm::event::KeyEvent,
     update_tx: mpsc::UnboundedSender<CommandQueue>,
 ) {
@@ -589,6 +600,14 @@ fn handle_popup_input(
         POPUP.store(0, Ordering::Relaxed);
     } else if popup == POPUP_WATCHLIST_SEARCH {
         handle_watchlist_search_input(app, event);
+    } else if popup & POPUP_ORDER_ENTRY != 0 {
+        systems::handle_order_entry_key(event);
+    } else if popup & POPUP_CANCEL_ORDER != 0 {
+        systems::handle_cancel_order_key(event);
+    } else if popup & POPUP_REPLACE_ORDER != 0 {
+        systems::handle_replace_order_key(event);
+    } else if popup & POPUP_DATE_FILTER != 0 {
+        systems::handle_date_filter_key(event);
     }
 }
 
@@ -672,6 +691,33 @@ fn navigate_to_counter(app: &mut bevy_app::App, counter: crate::data::Counter) {
     app.world.insert_resource(NextState(Some(next_state)));
 }
 
+fn get_active_symbol(app: &bevy_app::App, state: AppState) -> Option<String> {
+    match state {
+        AppState::Stock | AppState::WatchlistStock => app
+            .world
+            .get_resource::<systems::StockDetail>()
+            .map(|sd| sd.0.to_string()),
+        AppState::Portfolio => {
+            let idx = systems::PORTFOLIO_TABLE
+                .lock()
+                .expect("poison")
+                .selected()?;
+            let view = systems::PORTFOLIO_VIEW.read().expect("poison");
+            view.as_ref()?.holdings.get(idx).map(|h| h.symbol.clone())
+        }
+        AppState::Watchlist => {
+            let idx = systems::WATCHLIST_TABLE
+                .lock()
+                .expect("poison")
+                .selected()?;
+            let watchlist = crate::tui::app::WATCHLIST.read().expect("poison");
+            let counters = watchlist.counters();
+            counters.get(idx).map(std::string::ToString::to_string)
+        }
+        _ => None,
+    }
+}
+
 #[allow(clippy::too_many_lines)]
 fn handle_global_keys(
     app: &mut bevy_app::App,
@@ -694,6 +740,75 @@ fn handle_global_keys(
             }
             app.world
                 .insert_resource(NextState(Some(AppState::Portfolio)));
+            render_state.mark_dirty(DirtyFlags::ALL);
+        }
+        key!('3') if state != AppState::Orders => {
+            app.world.insert_resource(NextState(Some(AppState::Orders)));
+            render_state.mark_dirty(DirtyFlags::ALL);
+        }
+        ::crossterm::event::KeyEvent {
+            code: ::crossterm::event::KeyCode::Char('b'),
+            modifiers: ::crossterm::event::KeyModifiers::NONE,
+            kind: ::crossterm::event::KeyEventKind::Press,
+            state: ::crossterm::event::KeyEventState::NONE,
+        } if matches!(
+            state,
+            AppState::Watchlist | AppState::WatchlistStock | AppState::Stock | AppState::Portfolio
+        ) =>
+        {
+            if let Some(symbol) = get_active_symbol(app, state) {
+                systems::open_order_entry(symbol, longbridge::trade::OrderSide::Buy, None);
+                POPUP.store(POPUP_ORDER_ENTRY, Ordering::Relaxed);
+                render_state.mark_dirty(DirtyFlags::ALL);
+            }
+        }
+        ::crossterm::event::KeyEvent {
+            code: ::crossterm::event::KeyCode::Char('s'),
+            modifiers: ::crossterm::event::KeyModifiers::NONE,
+            kind: ::crossterm::event::KeyEventKind::Press,
+            state: ::crossterm::event::KeyEventState::NONE,
+        } if matches!(
+            state,
+            AppState::Watchlist | AppState::WatchlistStock | AppState::Stock | AppState::Portfolio
+        ) =>
+        {
+            if let Some(symbol) = get_active_symbol(app, state) {
+                systems::open_order_entry(symbol, longbridge::trade::OrderSide::Sell, None);
+                POPUP.store(POPUP_ORDER_ENTRY, Ordering::Relaxed);
+                render_state.mark_dirty(DirtyFlags::ALL);
+            }
+        }
+        ::crossterm::event::KeyEvent {
+            code: ::crossterm::event::KeyCode::Char('c'),
+            modifiers: ::crossterm::event::KeyModifiers::NONE,
+            kind: ::crossterm::event::KeyEventKind::Press,
+            state: ::crossterm::event::KeyEventState::NONE,
+        } if state == AppState::Orders
+            && !systems::ORDERS_MODE.load(std::sync::atomic::Ordering::Relaxed) =>
+        {
+            systems::try_open_cancel_for_selected();
+            render_state.mark_dirty(DirtyFlags::ALL);
+        }
+        ::crossterm::event::KeyEvent {
+            code: ::crossterm::event::KeyCode::Char('m'),
+            modifiers: ::crossterm::event::KeyModifiers::NONE,
+            kind: ::crossterm::event::KeyEventKind::Press,
+            state: ::crossterm::event::KeyEventState::NONE,
+        } if state == AppState::Orders
+            && !systems::ORDERS_MODE.load(std::sync::atomic::Ordering::Relaxed) =>
+        {
+            systems::try_open_replace_for_selected();
+            render_state.mark_dirty(DirtyFlags::ALL);
+        }
+        ::crossterm::event::KeyEvent {
+            code: ::crossterm::event::KeyCode::Char('f'),
+            modifiers: ::crossterm::event::KeyModifiers::NONE,
+            kind: ::crossterm::event::KeyEventKind::Press,
+            state: ::crossterm::event::KeyEventState::NONE,
+        } if state == AppState::Orders
+            && systems::ORDERS_MODE.load(std::sync::atomic::Ordering::Relaxed) =>
+        {
+            systems::open_date_filter();
             render_state.mark_dirty(DirtyFlags::ALL);
         }
         ::crossterm::event::KeyEvent {
@@ -813,6 +928,14 @@ fn handle_global_keys(
                     app.world.resource::<systems::StockDetail>().0.clone(),
                 );
                 render_state.mark_dirty(DirtyFlags::STOCK_DETAIL);
+            }
+            AppState::Orders => {
+                if systems::ORDERS_MODE.load(std::sync::atomic::Ordering::Relaxed) {
+                    systems::refresh_history_orders();
+                } else {
+                    systems::refresh_orders();
+                }
+                render_state.mark_dirty(DirtyFlags::ALL);
             }
             _ => {}
         },
@@ -942,7 +1065,7 @@ fn handle_global_keys(
                         render_state.mark_dirty(DirtyFlags::ALL);
                     }
                 }
-            } else if state == AppState::Stock {
+            } else if state == AppState::Stock || state == AppState::Orders {
                 app.world
                     .insert_resource(NextState(Some(AppState::Watchlist)));
                 render_state.mark_dirty(DirtyFlags::ALL);
