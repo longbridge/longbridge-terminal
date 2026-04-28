@@ -85,15 +85,15 @@ pub enum Commands {
         cmd: AuthCmd,
     },
 
-    /// Set a channel key for affiliate tracking
+    /// Set an invite code for affiliate tracking
     ///
-    /// Stores the given channel key locally. The key is sent during device authentication
+    /// Stores the given invite code locally. The code is sent during OAuth authorization
     /// so the server can associate the user with the referral channel (e.g. a KOL campaign).
     /// It is also included as a header in subsequent API requests.
     /// Example: longbridge init KOL-ABC123
     Init {
-        /// Channel key provided by the referral channel
-        channel_key: String,
+        /// Invite code provided by the referral channel
+        invite_code: String,
     },
 
     /// Check token validity, and API connectivity

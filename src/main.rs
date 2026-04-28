@@ -135,8 +135,8 @@ async fn main() {
             return;
         }
 
-        Some(cli::Commands::Init { channel_key }) => {
-            if let Err(e) = cli::init::cmd_init(&channel_key) {
+        Some(cli::Commands::Init { invite_code }) => {
+            if let Err(e) = cli::init::cmd_init(&invite_code) {
                 eprintln!("Error: {e}");
                 std::process::exit(1);
             }

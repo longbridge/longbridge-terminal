@@ -49,32 +49,43 @@ pub fn token_file_path() -> Result<PathBuf> {
         .join(client_id()))
 }
 
-/// Channel key file path: `~/.longbridge/openapi/channel`
-fn channel_file_path() -> Result<PathBuf> {
+/// Invite code file path: `~/.longbridge/openapi/invite-code`
+fn invite_code_file_path() -> Result<PathBuf> {
     Ok(dirs::home_dir()
         .ok_or_else(|| anyhow::anyhow!("Failed to get home directory"))?
         .join(".longbridge")
         .join("openapi")
-        .join("channel"))
+        .join("invite-code"))
 }
 
-/// Persist the channel key to disk.
-pub fn save_channel(channel_key: &str) -> Result<()> {
-    let path = channel_file_path()?;
+/// Persist the invite code to disk.
+pub fn save_invite_code(invite_code: &str) -> Result<()> {
+    let path = invite_code_file_path()?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).context("Failed to create config directory")?;
     }
-    fs::write(&path, channel_key).context("Failed to write channel file")?;
+    fs::write(&path, invite_code).context("Failed to write invite code file")?;
     Ok(())
 }
 
-/// Read the stored channel key. Returns `None` if not set.
-pub fn read_channel() -> Option<String> {
-    let path = channel_file_path().ok()?;
+fn read_non_empty_file(path: PathBuf) -> Option<String> {
     fs::read_to_string(path)
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+}
+
+/// Read the stored invite code. Returns `None` if not set.
+pub fn read_invite_code() -> Option<String> {
+    invite_code_file_path().ok().and_then(read_non_empty_file)
+}
+
+fn append_query_param(url: &str, key: &str, value: &str) -> String {
+    let sep = if url.contains('?') { '&' } else { '?' };
+    format!(
+        "{url}{sep}{key}={}",
+        percent_encoding::utf8_percent_encode(value, percent_encoding::NON_ALPHANUMERIC)
+    )
 }
 
 /// Try to open a URL in the system browser. Returns `true` if launched successfully.
@@ -124,7 +135,7 @@ pub async fn device_login(verbose: bool) -> Result<()> {
     let oauth_base = oauth_base_url();
     let client_id = client_id();
     let http_client = reqwest::Client::new();
-    let channel = read_channel();
+    let invite_code = read_invite_code();
 
     // Step 1: request device & user codes.
     let url = format!("{oauth_base}/device/authorize");
@@ -132,8 +143,8 @@ pub async fn device_login(verbose: bool) -> Result<()> {
         eprintln!("POST {url}");
     }
     let mut device_auth_form: Vec<(&str, &str)> = vec![("client_id", client_id)];
-    if let Some(ref ch) = channel {
-        device_auth_form.push(("channel", ch.as_str()));
+    if let Some(ref invite_code) = invite_code {
+        device_auth_form.push(("invite-code", invite_code.as_str()));
     }
     let raw = http_client
         .post(&url)
@@ -161,16 +172,9 @@ pub async fn device_login(verbose: bool) -> Result<()> {
         .as_str()
         .unwrap_or_else(|| device_resp["verification_uri"].as_str().unwrap_or(""));
     let verification_url_owned;
-    let verification_url = if let Some(ref ch) = channel {
-        let sep = if verification_url_base.contains('?') {
-            '&'
-        } else {
-            '?'
-        };
-        verification_url_owned = format!(
-            "{verification_url_base}{sep}channel={}",
-            percent_encoding::utf8_percent_encode(ch, percent_encoding::NON_ALPHANUMERIC)
-        );
+    let verification_url = if let Some(ref invite_code) = invite_code {
+        verification_url_owned =
+            append_query_param(verification_url_base, "invite-code", invite_code);
         verification_url_owned.as_str()
     } else {
         verification_url_base
@@ -333,14 +337,19 @@ pub async fn refresh_if_expired() -> Result<()> {
 pub async fn auth_code_login() -> Result<()> {
     println!("Opening browser for authorization...");
     println!("Listening on localhost:{CALLBACK_PORT} for the OAuth callback.");
+    let invite_code = read_invite_code();
 
     let oauth_result = longbridge::oauth::OAuthBuilder::new(client_id())
         .callback_port(CALLBACK_PORT)
         .build(|url| {
+            let authorization_url = invite_code
+                .as_deref()
+                .map(|invite_code| append_query_param(url, "invite-code", invite_code))
+                .unwrap_or_else(|| url.to_string());
             println!();
-            println!("Authorization URL: {url}");
+            println!("Authorization URL: {authorization_url}");
             println!();
-            if !open_browser(url) {
+            if !open_browser(&authorization_url) {
                 println!("Could not open browser automatically. Please visit the URL above.");
             }
         })
