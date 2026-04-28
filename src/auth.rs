@@ -58,15 +58,6 @@ fn invite_code_file_path() -> Result<PathBuf> {
         .join("invite-code"))
 }
 
-/// Legacy channel file path: `~/.longbridge/openapi/channel`
-fn legacy_channel_file_path() -> Result<PathBuf> {
-    Ok(dirs::home_dir()
-        .ok_or_else(|| anyhow::anyhow!("Failed to get home directory"))?
-        .join(".longbridge")
-        .join("openapi")
-        .join("channel"))
-}
-
 /// Persist the invite code to disk.
 pub fn save_invite_code(invite_code: &str) -> Result<()> {
     let path = invite_code_file_path()?;
@@ -84,12 +75,9 @@ fn read_non_empty_file(path: PathBuf) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-/// Read the stored invite code. Falls back to the legacy `channel` file if present.
+/// Read the stored invite code. Returns `None` if not set.
 pub fn read_invite_code() -> Option<String> {
-    invite_code_file_path()
-        .ok()
-        .and_then(read_non_empty_file)
-        .or_else(|| legacy_channel_file_path().ok().and_then(read_non_empty_file))
+    invite_code_file_path().ok().and_then(read_non_empty_file)
 }
 
 fn append_query_param(url: &str, key: &str, value: &str) -> String {
