@@ -13,6 +13,7 @@ pub mod insider_trades;
 pub mod investors;
 pub mod news;
 pub mod output;
+pub mod quant_render;
 pub mod quote;
 pub mod run_script;
 pub mod sharelist;
