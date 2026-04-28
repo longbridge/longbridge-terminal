@@ -55,6 +55,7 @@ pub static CANCEL_TARGET: LazyLock<RwLock<Option<longbridge::trade::Order>>> =
     LazyLock::new(|| RwLock::new(None));
 
 pub static ORDERS_TABLE: LazyLock<Mutex<TableState>> = LazyLock::new(Mutex::default);
+pub static HISTORY_ORDERS_TABLE: LazyLock<Mutex<TableState>> = LazyLock::new(Mutex::default);
 
 // ────────────────────────────── state structs ───────────────────────────────
 
@@ -68,7 +69,7 @@ impl Default for HistoryDateRange {
         let today = time::OffsetDateTime::now_utc().date();
         let fmt = time::macros::format_description!("[year]-[month]-[day]");
         let end = today.format(&fmt).unwrap_or_else(|_| today.to_string());
-        let start_date = today - time::Duration::days(30);
+        let start_date = today - time::Duration::days(365);
         let start = start_date
             .format(&fmt)
             .unwrap_or_else(|_| start_date.to_string());
@@ -234,12 +235,6 @@ pub fn refresh_history_orders() {
 pub fn toggle_orders_mode() {
     let new_history = !ORDERS_MODE.load(Ordering::Relaxed);
     ORDERS_MODE.store(new_history, Ordering::Relaxed);
-    ORDERS_TABLE.lock().expect("poison").select(None);
-    if new_history {
-        refresh_history_orders();
-    } else {
-        refresh_orders();
-    }
 }
 
 pub fn open_date_filter() {
@@ -766,11 +761,8 @@ pub fn handle_date_filter_key(event: KeyEvent) {
 // ─────────────────────────── Bevy ECS systems ───────────────────────────────
 
 pub fn enter_orders() {
-    if ORDERS_MODE.load(Ordering::Relaxed) {
-        refresh_history_orders();
-    } else {
-        refresh_orders();
-    }
+    refresh_orders();
+    refresh_history_orders();
 }
 
 pub fn exit_orders() {
@@ -797,24 +789,37 @@ pub fn render_orders(
                 toggle_orders_mode();
             }
             super::Key::Up => {
-                let mut table = ORDERS_TABLE.lock().expect("poison");
-                let idx = table.selected();
-                let new_idx = idx.map_or(0, |i| if i == 0 { 0 } else { i - 1 });
                 if orders_len > 0 {
-                    table.select(Some(new_idx));
+                    if is_history {
+                        let mut table = HISTORY_ORDERS_TABLE.lock().expect("poison");
+                        let cur = table.selected();
+                        table.select(Some(cur.map_or(0, |i| i.saturating_sub(1))));
+                    } else {
+                        let mut table = ORDERS_TABLE.lock().expect("poison");
+                        let cur = table.selected();
+                        table.select(Some(cur.map_or(0, |i| i.saturating_sub(1))));
+                    }
                 }
             }
             super::Key::Down => {
-                let mut table = ORDERS_TABLE.lock().expect("poison");
-                let idx = table.selected();
-                let new_idx =
-                    idx.map_or(0, |i| if i + 1 < orders_len { i + 1 } else { i });
                 if orders_len > 0 {
-                    table.select(Some(new_idx));
+                    if is_history {
+                        let mut table = HISTORY_ORDERS_TABLE.lock().expect("poison");
+                        let cur = table.selected();
+                        table.select(Some(cur.map_or(0, |i| if i + 1 < orders_len { i + 1 } else { i })));
+                    } else {
+                        let mut table = ORDERS_TABLE.lock().expect("poison");
+                        let cur = table.selected();
+                        table.select(Some(cur.map_or(0, |i| if i + 1 < orders_len { i + 1 } else { i })));
+                    }
                 }
             }
             super::Key::Enter => {
-                let selected = ORDERS_TABLE.lock().expect("poison").selected();
+                let selected = if is_history {
+                    HISTORY_ORDERS_TABLE.lock().expect("poison").selected()
+                } else {
+                    ORDERS_TABLE.lock().expect("poison").selected()
+                };
                 if let Some(idx) = selected {
                     let symbol = if is_history {
                         HISTORY_ORDERS_VIEW
@@ -895,106 +900,38 @@ pub fn render_orders(
     });
 }
 
-fn render_orders_list(frame: &mut Frame, rect: Rect) {
-    let is_history = ORDERS_MODE.load(Ordering::Relaxed);
-
-    let orders_guard;
-    let history_guard;
-    let orders: &[longbridge::trade::Order] = if is_history {
-        history_guard = HISTORY_ORDERS_VIEW.read().expect("poison");
-        &*history_guard
-    } else {
-        orders_guard = ORDERS_VIEW.read().expect("poison");
-        &*orders_guard
-    };
-
-    let mut table_state = ORDERS_TABLE.lock().expect("poison");
-
-    // Mode tabs in title: [Today] [History YYYY-MM-DD ~ YYYY-MM-DD]
-    let title = if is_history {
-        let range = HISTORY_DATE_RANGE.read().expect("poison");
-        if orders.is_empty() {
-            format!(
-                " {} | {} {} ~ {} ",
-                t!("Orders.TodayTab"),
-                t!("Orders.HistoryTab"),
-                range.start,
-                range.end
-            )
-        } else {
-            format!(
-                " {} | {} {} ~ {} ({}) ",
-                t!("Orders.TodayTab"),
-                t!("Orders.HistoryTab"),
-                range.start,
-                range.end,
-                orders.len()
-            )
-        }
-    } else {
-        let count_part = if orders.is_empty() {
-            String::new()
-        } else {
-            format!(" ({})", orders.len())
-        };
-        format!(
-            " {}{}  | {} ",
-            t!("Orders.TodayTab"),
-            count_part,
-            t!("Orders.HistoryTab")
-        )
-    };
-
-    let bottom_hints = if is_history {
-        Line::from(vec![
-            Span::styled(format!(" {} ", t!("Orders.Refresh")), styles::dark_gray()),
-            Span::styled(
-                format!(" {} ", t!("Orders.FilterKey")),
-                styles::dark_gray(),
-            ),
-            Span::styled(
-                format!(" {} ", t!("Orders.TabSwitch")),
-                styles::dark_gray(),
-            ),
-        ])
-        .right_aligned()
-    } else {
-        Line::from(vec![
-            Span::styled(format!(" {} ", t!("Orders.Refresh")), styles::dark_gray()),
-            Span::styled(format!(" {} ", t!("Orders.CancelKey")), styles::dark_gray()),
-            Span::styled(
-                format!(" {} ", t!("Orders.ReplaceKey")),
-                styles::dark_gray(),
-            ),
-            Span::styled(
-                format!(" {} ", t!("Orders.TabSwitch")),
-                styles::dark_gray(),
-            ),
-        ])
-        .right_aligned()
-    };
-
-    let block = Block::default()
+fn make_orders_table<'a>(
+    orders: &'a [longbridge::trade::Order],
+    is_history: bool,
+    active: bool,
+    title: String,
+    bottom_hints: Option<Line<'a>>,
+) -> (Table<'a>, bool) {
+    let _ = active;
+    let border_style = styles::border();
+    let mut block = Block::default()
         .borders(Borders::ALL)
-        .border_style(styles::border())
-        .title(title)
-        .title_bottom(bottom_hints);
-
-    let empty_msg = if is_history {
-        t!("Orders.NoHistoryOrders").to_string()
-    } else {
-        t!("Orders.NoOrders").to_string()
-    };
+        .border_style(border_style)
+        .title(title);
+    if let Some(hints) = bottom_hints {
+        block = block.title_bottom(hints);
+    }
 
     if orders.is_empty() {
-        let msg = Paragraph::new(Span::styled(
-            empty_msg,
-            Style::default().fg(Color::DarkGray),
-        ))
-        .block(block)
-        .alignment(ratatui::layout::Alignment::Center);
-        frame.render_widget(msg, rect);
-        return;
+        let empty_msg = if is_history {
+            t!("Orders.NoHistoryOrders").to_string()
+        } else {
+            t!("Orders.NoOrders").to_string()
+        };
+        let table = Table::new(
+            vec![Row::new(vec![Cell::from(Span::styled(
+                empty_msg,
+                Style::default().fg(Color::DarkGray),
+            ))])],
+            [Constraint::Percentage(100)],
+        )
+        .block(block);
+        return (table, false);
     }
 
     let time_header = if is_history {
@@ -1028,12 +965,7 @@ fn render_orders_list(frame: &mut Frame, rect: Rect) {
             let price_str = order.price.map_or("–".to_string(), |p| format!("{p:.2}"));
             let t = order.submitted_at;
             let time_str = if is_history {
-                format!(
-                    "{:04}-{:02}-{:02}",
-                    t.year(),
-                    t.month() as u8,
-                    t.day()
-                )
+                format!("{:04}-{:02}-{:02}", t.year(), t.month() as u8, t.day())
             } else {
                 format!("{:02}:{:02}:{:02}", t.hour(), t.minute(), t.second())
             };
@@ -1069,7 +1001,98 @@ fn render_orders_list(frame: &mut Frame, rect: Rect) {
     .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
     .column_spacing(1);
 
-    frame.render_stateful_widget(table, rect, &mut *table_state);
+    (table, true)
+}
+
+fn render_orders_list(frame: &mut Frame, rect: Rect) {
+    let is_history_active = ORDERS_MODE.load(Ordering::Relaxed);
+
+    let today_guard = ORDERS_VIEW.read().expect("poison");
+    let history_guard = HISTORY_ORDERS_VIEW.read().expect("poison");
+    let today_orders: &[longbridge::trade::Order] = &today_guard;
+    let history_orders: &[longbridge::trade::Order] = &history_guard;
+
+    // Allocate height: today gets enough for its rows (capped), history gets the rest
+    let today_height = {
+        let preferred = today_orders.len() as u16 + 3; // 2 borders + 1 header
+        preferred.clamp(6, 8) // min 3 data rows, max 5 data rows
+    };
+    let [today_rect, history_rect] =
+        Layout::vertical([Constraint::Length(today_height), Constraint::Min(4)])
+            .areas(rect);
+
+    // Today table title
+    let today_title = if today_orders.is_empty() {
+        format!(" {} ", t!("Orders.TodayTab"))
+    } else {
+        format!(" {} ({}) ", t!("Orders.TodayTab"), today_orders.len())
+    };
+
+    // History table title + bottom hints
+    let range = HISTORY_DATE_RANGE.read().expect("poison");
+    let history_title = if history_orders.is_empty() {
+        format!(
+            " {} {} ~ {} ",
+            t!("Orders.HistoryTab"),
+            range.start,
+            range.end
+        )
+    } else {
+        format!(
+            " {} {} ~ {} ({}) ",
+            t!("Orders.HistoryTab"),
+            range.start,
+            range.end,
+            history_orders.len()
+        )
+    };
+    drop(range);
+
+    let bottom_hints = Line::from(vec![
+        Span::styled(format!(" {} ", t!("Orders.Refresh")), styles::dark_gray()),
+        Span::styled(format!(" {} ", t!("Orders.CancelKey")), styles::dark_gray()),
+        Span::styled(format!(" {} ", t!("Orders.ReplaceKey")), styles::dark_gray()),
+        Span::styled(format!(" {} ", t!("Orders.FilterKey")), styles::dark_gray()),
+        Span::styled(format!(" {} ", t!("Orders.TabSwitch")), styles::dark_gray()),
+    ])
+    .right_aligned();
+
+    let (today_table, today_has_rows) = make_orders_table(
+        today_orders,
+        false,
+        !is_history_active,
+        today_title,
+        None,
+    );
+    let (history_table, history_has_rows) = make_orders_table(
+        history_orders,
+        true,
+        is_history_active,
+        history_title,
+        Some(bottom_hints),
+    );
+
+    let mut today_state = ORDERS_TABLE.lock().expect("poison");
+    let mut history_state = HISTORY_ORDERS_TABLE.lock().expect("poison");
+
+    if today_has_rows {
+        if is_history_active {
+            frame.render_stateful_widget(today_table, today_rect, &mut TableState::default());
+        } else {
+            frame.render_stateful_widget(today_table, today_rect, &mut *today_state);
+        }
+    } else {
+        frame.render_widget(today_table, today_rect);
+    }
+    if history_has_rows {
+        if is_history_active {
+            frame.render_stateful_widget(history_table, history_rect, &mut *history_state);
+        } else {
+            frame.render_stateful_widget(history_table, history_rect, &mut TableState::default());
+        }
+    } else {
+        frame.render_widget(history_table, history_rect);
+    }
 }
 
 fn order_status_style(status: longbridge::trade::OrderStatus) -> Style {

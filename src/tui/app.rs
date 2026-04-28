@@ -930,11 +930,8 @@ fn handle_global_keys(
                 render_state.mark_dirty(DirtyFlags::STOCK_DETAIL);
             }
             AppState::Orders => {
-                if systems::ORDERS_MODE.load(std::sync::atomic::Ordering::Relaxed) {
-                    systems::refresh_history_orders();
-                } else {
-                    systems::refresh_orders();
-                }
+                systems::refresh_orders();
+                systems::refresh_history_orders();
                 render_state.mark_dirty(DirtyFlags::ALL);
             }
             _ => {}
