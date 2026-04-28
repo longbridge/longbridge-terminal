@@ -718,33 +718,6 @@ fn navigate_to_counter(app: &mut bevy_app::App, counter: crate::data::Counter) {
     app.world.insert_resource(NextState(Some(next_state)));
 }
 
-fn get_active_symbol(app: &bevy_app::App, state: AppState) -> Option<String> {
-    match state {
-        AppState::Stock | AppState::WatchlistStock => app
-            .world
-            .get_resource::<systems::StockDetail>()
-            .map(|sd| sd.0.to_string()),
-        AppState::Portfolio => {
-            let idx = systems::PORTFOLIO_TABLE
-                .lock()
-                .expect("poison")
-                .selected()?;
-            let view = systems::PORTFOLIO_VIEW.read().expect("poison");
-            view.as_ref()?.holdings.get(idx).map(|h| h.symbol.clone())
-        }
-        AppState::Watchlist => {
-            let idx = systems::WATCHLIST_TABLE
-                .lock()
-                .expect("poison")
-                .selected()?;
-            let watchlist = crate::tui::app::WATCHLIST.read().expect("poison");
-            let counters = watchlist.counters();
-            counters.get(idx).map(std::string::ToString::to_string)
-        }
-        _ => None,
-    }
-}
-
 #[allow(clippy::too_many_lines)]
 fn handle_global_keys(
     app: &mut bevy_app::App,
