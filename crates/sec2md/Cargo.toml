@@ -1,6 +1,6 @@
 [package]
 name = "sec2md"
-version = "0.17.4"
+version = "0.18.0"
 edition = "2021"
 
 [dependencies]
