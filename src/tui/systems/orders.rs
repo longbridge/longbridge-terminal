@@ -8,10 +8,10 @@ use bevy_ecs::{
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::widgets::TableState;
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table},
+    widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table},
     Frame,
 };
 use rust_decimal::Decimal;
@@ -1081,6 +1081,20 @@ fn render_orders_list(frame: &mut Frame, rect: Rect) {
         } else {
             frame.render_stateful_widget(today_table, today_rect, &mut *today_state);
         }
+        let inner = today_rect.inner(Margin { horizontal: 1, vertical: 1 });
+        let scrollbar_area = Rect { x: inner.x + inner.width, y: inner.y, width: 1, height: inner.height };
+        let mut sb = ScrollbarState::new(today_orders.len())
+            .position(today_state.selected().unwrap_or(0));
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None)
+                .track_symbol(None)
+                .thumb_symbol("▐")
+                .thumb_style(Style::default().fg(Color::DarkGray)),
+            scrollbar_area,
+            &mut sb,
+        );
     } else {
         frame.render_widget(today_table, today_rect);
     }
@@ -1090,6 +1104,20 @@ fn render_orders_list(frame: &mut Frame, rect: Rect) {
         } else {
             frame.render_stateful_widget(history_table, history_rect, &mut TableState::default());
         }
+        let inner = history_rect.inner(Margin { horizontal: 1, vertical: 1 });
+        let scrollbar_area = Rect { x: inner.x + inner.width, y: inner.y, width: 1, height: inner.height };
+        let mut sb = ScrollbarState::new(history_orders.len())
+            .position(history_state.selected().unwrap_or(0));
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None)
+                .track_symbol(None)
+                .thumb_symbol("▐")
+                .thumb_style(Style::default().fg(Color::DarkGray)),
+            scrollbar_area,
+            &mut sb,
+        );
     } else {
         frame.render_widget(history_table, history_rect);
     }
