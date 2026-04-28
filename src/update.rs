@@ -476,25 +476,70 @@ async fn fetch_release_notes() -> anyhow::Result<String> {
     Ok(strip_frontmatter(&body).to_string())
 }
 
-fn truncate_to_n_releases(markdown: &str, n: usize) -> String {
-    let mut count = 0;
-    let mut lines = Vec::new();
-    for line in markdown.lines() {
-        if line.starts_with("## ") {
-            count += 1;
-            if count > n {
-                break;
+fn render_release_notes(markdown: &str) {
+    use crossterm::{
+        event::{self, Event, KeyCode, KeyEventKind},
+        terminal,
+    };
+    use std::io::Write;
+
+    let (term_width, term_height) = terminal::size().unwrap_or((80, 24));
+    let page_height = (term_height as usize).saturating_sub(1);
+
+    let skin = termimad::MadSkin::default();
+    let rendered = format!("{}", skin.text(markdown, term_width as usize));
+    let lines: Vec<&str> = rendered.lines().collect();
+
+    if lines.len() <= page_height {
+        print!("{rendered}");
+        return;
+    }
+
+    if terminal::enable_raw_mode().is_err() {
+        print!("{rendered}");
+        return;
+    }
+
+    let mut stdout = std::io::stdout();
+    let mut pos = 0;
+
+    'outer: loop {
+        let end = (pos + page_height).min(lines.len());
+        for line in &lines[pos..end] {
+            let _ = write!(stdout, "{line}\r\n");
+        }
+        pos = end;
+
+        if pos >= lines.len() {
+            break;
+        }
+
+        let _ = write!(
+            stdout,
+            "\x1b[7m--More-- (Space/Enter: next page, q: quit)\x1b[0m"
+        );
+        let _ = stdout.flush();
+
+        loop {
+            match event::read() {
+                Ok(Event::Key(key)) if key.kind == KeyEventKind::Press => match key.code {
+                    KeyCode::Enter | KeyCode::Char(' ') => {
+                        let _ = write!(stdout, "\r\x1b[2K");
+                        break;
+                    }
+                    KeyCode::Char('q' | 'Q') | KeyCode::Esc => {
+                        let _ = write!(stdout, "\r\x1b[2K\r\n");
+                        break 'outer;
+                    }
+                    _ => {}
+                },
+                Err(_) => break 'outer,
+                _ => {}
             }
         }
-        lines.push(line);
     }
-    lines.join("\n")
-}
 
-fn render_release_notes(markdown: &str) {
-    let truncated = truncate_to_n_releases(markdown, 10);
-    let skin = termimad::MadSkin::default();
-    skin.print_text(&truncated);
+    let _ = terminal::disable_raw_mode();
 }
 
 /// Show release notes for the `longbridge update --release-notes` command.
