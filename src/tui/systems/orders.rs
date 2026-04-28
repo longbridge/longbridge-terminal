@@ -1,4 +1,4 @@
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex, RwLock};
 
 use bevy_ecs::{
@@ -8,17 +8,17 @@ use bevy_ecs::{
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::widgets::TableState;
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table},
+    widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table},
     Frame,
 };
 use rust_decimal::Decimal;
 use std::str::FromStr;
 
 use crate::{
-    tui::app::{AppState, POPUP, POPUP_CANCEL_ORDER, POPUP_REPLACE_ORDER, RT},
+    tui::app::{AppState, POPUP, POPUP_CANCEL_ORDER, POPUP_DATE_FILTER, POPUP_REPLACE_ORDER, RT},
     tui::ui::styles,
     tui::widgets::{
         toast::{set_toast, ToastKind},
@@ -28,8 +28,22 @@ use crate::{
 
 use super::{Command, NavFooter, PopUp, StockDetail};
 
+// ──────────────────────────── mode & history state ──────────────────────────
+
+/// false = Today mode, true = History mode
+pub static ORDERS_MODE: AtomicBool = AtomicBool::new(false);
+
 pub static ORDERS_VIEW: LazyLock<RwLock<Vec<longbridge::trade::Order>>> =
     LazyLock::new(|| RwLock::new(vec![]));
+
+pub static HISTORY_ORDERS_VIEW: LazyLock<RwLock<Vec<longbridge::trade::Order>>> =
+    LazyLock::new(|| RwLock::new(vec![]));
+
+pub static HISTORY_DATE_RANGE: LazyLock<RwLock<HistoryDateRange>> =
+    LazyLock::new(|| RwLock::new(HistoryDateRange::default()));
+
+pub static DATE_FILTER_STATE: LazyLock<RwLock<DateFilterState>> =
+    LazyLock::new(|| RwLock::new(DateFilterState::default()));
 
 pub static ORDER_ENTRY_STATE: LazyLock<RwLock<Option<OrderEntryState>>> =
     LazyLock::new(|| RwLock::new(None));
@@ -41,8 +55,50 @@ pub static CANCEL_TARGET: LazyLock<RwLock<Option<longbridge::trade::Order>>> =
     LazyLock::new(|| RwLock::new(None));
 
 pub static ORDERS_TABLE: LazyLock<Mutex<TableState>> = LazyLock::new(Mutex::default);
+pub static HISTORY_ORDERS_TABLE: LazyLock<Mutex<TableState>> = LazyLock::new(Mutex::default);
 
 // ────────────────────────────── state structs ───────────────────────────────
+
+pub struct HistoryDateRange {
+    pub start: String,
+    pub end: String,
+}
+
+impl Default for HistoryDateRange {
+    fn default() -> Self {
+        let today = time::OffsetDateTime::now_utc().date();
+        let fmt = time::macros::format_description!("[year]-[month]-[day]");
+        let end = today.format(&fmt).unwrap_or_else(|_| today.to_string());
+        let start_date = today - time::Duration::days(365);
+        let start = start_date
+            .format(&fmt)
+            .unwrap_or_else(|_| start_date.to_string());
+        Self { start, end }
+    }
+}
+
+pub struct DateFilterState {
+    pub start_input: tui_input::Input,
+    pub end_input: tui_input::Input,
+    pub focused: DateFilterField,
+}
+
+impl Default for DateFilterState {
+    fn default() -> Self {
+        let range = HISTORY_DATE_RANGE.read().expect("poison");
+        Self {
+            start_input: tui_input::Input::new(range.start.clone()),
+            end_input: tui_input::Input::new(range.end.clone()),
+            focused: DateFilterField::Start,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum DateFilterField {
+    Start,
+    End,
+}
 
 pub struct OrderEntryState {
     pub symbol: String,
@@ -144,6 +200,65 @@ pub fn refresh_orders() {
             }
         }
     });
+}
+
+pub fn refresh_history_orders() {
+    let range = {
+        let r = HISTORY_DATE_RANGE.read().expect("poison");
+        (r.start.clone(), r.end.clone())
+    };
+    RT.get().unwrap().spawn(async move {
+        let ctx = crate::openapi::trade();
+        let fmt = time::macros::format_description!("[year]-[month]-[day]");
+        let mut opts = longbridge::trade::GetHistoryOrdersOptions::new();
+        if let Ok(date) = time::Date::parse(&range.0, &fmt) {
+            opts = opts.start_at(date.with_time(time::Time::MIDNIGHT).assume_utc());
+        }
+        if let Ok(date) = time::Date::parse(&range.1, &fmt) {
+            let end_time = time::Time::from_hms(23, 59, 59).expect("valid time");
+            opts = opts.end_at(date.with_time(end_time).assume_utc());
+        }
+        match ctx.history_orders(opts).await {
+            Ok(orders) => {
+                *HISTORY_ORDERS_VIEW.write().expect("poison") = orders;
+            }
+            Err(e) => {
+                set_toast(
+                    ToastKind::Error,
+                    format!("{}: {e}", t!("Trade.FailedLoadHistoryOrders")),
+                );
+            }
+        }
+    });
+}
+
+pub fn toggle_orders_mode() {
+    let new_history = !ORDERS_MODE.load(Ordering::Relaxed);
+    ORDERS_MODE.store(new_history, Ordering::Relaxed);
+}
+
+pub fn open_date_filter() {
+    let range = HISTORY_DATE_RANGE.read().expect("poison");
+    *DATE_FILTER_STATE.write().expect("poison") = DateFilterState {
+        start_input: tui_input::Input::new(range.start.clone()),
+        end_input: tui_input::Input::new(range.end.clone()),
+        focused: DateFilterField::Start,
+    };
+    POPUP.store(POPUP_DATE_FILTER, Ordering::Relaxed);
+}
+
+pub fn apply_date_filter() {
+    let (start, end) = {
+        let s = DATE_FILTER_STATE.read().expect("poison");
+        (s.start_input.value().to_string(), s.end_input.value().to_string())
+    };
+    {
+        let mut range = HISTORY_DATE_RANGE.write().expect("poison");
+        range.start = start;
+        range.end = end;
+    }
+    POPUP.store(0, Ordering::Relaxed);
+    refresh_history_orders();
 }
 
 pub fn submit_order() {
@@ -529,10 +644,9 @@ pub fn handle_replace_order_key(event: KeyEvent) {
             ..
         } => {
             if let Some(s) = REPLACE_ORDER_STATE.write().expect("poison").as_mut() {
-                // toggle between qty and price
                 let currently_qty = s.qty_input.cursor() >= s.price_input.cursor()
                     || s.qty_input.value().len() == s.price_input.value().len();
-                let _ = currently_qty; // simple: just focus alternates via convention
+                let _ = currently_qty;
             }
         }
         KeyEvent {
@@ -589,10 +703,66 @@ pub fn handle_replace_order_key(event: KeyEvent) {
     }
 }
 
+pub fn handle_date_filter_key(event: KeyEvent) {
+    match event {
+        KeyEvent {
+            code: KeyCode::Esc,
+            modifiers: KeyModifiers::NONE,
+            ..
+        } => {
+            POPUP.store(0, Ordering::Relaxed);
+        }
+        KeyEvent {
+            code: KeyCode::Enter,
+            modifiers: KeyModifiers::NONE,
+            ..
+        } => {
+            apply_date_filter();
+        }
+        KeyEvent {
+            code: KeyCode::Tab | KeyCode::Down,
+            modifiers: KeyModifiers::NONE,
+            ..
+        } => {
+            let mut s = DATE_FILTER_STATE.write().expect("poison");
+            s.focused = match s.focused {
+                DateFilterField::Start => DateFilterField::End,
+                DateFilterField::End => DateFilterField::Start,
+            };
+        }
+        KeyEvent {
+            code: KeyCode::BackTab | KeyCode::Up,
+            modifiers: KeyModifiers::NONE,
+            ..
+        } => {
+            let mut s = DATE_FILTER_STATE.write().expect("poison");
+            s.focused = match s.focused {
+                DateFilterField::Start => DateFilterField::End,
+                DateFilterField::End => DateFilterField::Start,
+            };
+        }
+        _ => {
+            let evt = crossterm::event::Event::Key(event);
+            if let Some(req) = tui_input::backend::crossterm::to_input_request(&evt) {
+                let mut s = DATE_FILTER_STATE.write().expect("poison");
+                match s.focused {
+                    DateFilterField::Start => {
+                        s.start_input.handle(req);
+                    }
+                    DateFilterField::End => {
+                        s.end_input.handle(req);
+                    }
+                }
+            }
+        }
+    }
+}
+
 // ─────────────────────────── Bevy ECS systems ───────────────────────────────
 
 pub fn enter_orders() {
     refresh_orders();
+    refresh_history_orders();
 }
 
 pub fn exit_orders() {
@@ -608,33 +778,63 @@ pub fn render_orders(
     mut log_panel: Local<crate::tui::widgets::LogPanel>,
 ) {
     for event in &mut events {
-        let orders = ORDERS_VIEW.read().expect("poison");
-        let len = orders.len();
-        drop(orders);
+        let is_history = ORDERS_MODE.load(Ordering::Relaxed);
+        let orders_len = if is_history {
+            HISTORY_ORDERS_VIEW.read().expect("poison").len()
+        } else {
+            ORDERS_VIEW.read().expect("poison").len()
+        };
         match event {
+            super::Key::Tab => {
+                toggle_orders_mode();
+            }
             super::Key::Up => {
-                let mut table = ORDERS_TABLE.lock().expect("poison");
-                let idx = table.selected();
-                let new_idx = idx.map_or(0, |i| if i == 0 { 0 } else { i - 1 });
-                if len > 0 {
-                    table.select(Some(new_idx));
+                if orders_len > 0 {
+                    if is_history {
+                        let mut table = HISTORY_ORDERS_TABLE.lock().expect("poison");
+                        let cur = table.selected();
+                        table.select(Some(cur.map_or(0, |i| i.saturating_sub(1))));
+                    } else {
+                        let mut table = ORDERS_TABLE.lock().expect("poison");
+                        let cur = table.selected();
+                        table.select(Some(cur.map_or(0, |i| i.saturating_sub(1))));
+                    }
                 }
             }
             super::Key::Down => {
-                let mut table = ORDERS_TABLE.lock().expect("poison");
-                let idx = table.selected();
-                let new_idx = idx.map_or(0, |i| if i + 1 < len { i + 1 } else { i });
-                if len > 0 {
-                    table.select(Some(new_idx));
+                if orders_len > 0 {
+                    if is_history {
+                        let mut table = HISTORY_ORDERS_TABLE.lock().expect("poison");
+                        let cur = table.selected();
+                        table.select(Some(cur.map_or(0, |i| if i + 1 < orders_len { i + 1 } else { i })));
+                    } else {
+                        let mut table = ORDERS_TABLE.lock().expect("poison");
+                        let cur = table.selected();
+                        table.select(Some(cur.map_or(0, |i| if i + 1 < orders_len { i + 1 } else { i })));
+                    }
                 }
             }
             super::Key::Enter => {
-                let selected = ORDERS_TABLE.lock().expect("poison").selected();
+                let selected = if is_history {
+                    HISTORY_ORDERS_TABLE.lock().expect("poison").selected()
+                } else {
+                    ORDERS_TABLE.lock().expect("poison").selected()
+                };
                 if let Some(idx) = selected {
-                    let orders = ORDERS_VIEW.read().expect("poison");
-                    if let Some(order) = orders.get(idx) {
-                        let symbol = order.symbol.clone();
-                        drop(orders);
+                    let symbol = if is_history {
+                        HISTORY_ORDERS_VIEW
+                            .read()
+                            .expect("poison")
+                            .get(idx)
+                            .map(|o| o.symbol.clone())
+                    } else {
+                        ORDERS_VIEW
+                            .read()
+                            .expect("poison")
+                            .get(idx)
+                            .map(|o| o.symbol.clone())
+                    };
+                    if let Some(symbol) = symbol {
                         let counter = crate::data::Counter::new(&symbol);
                         let mut queue = CommandQueue::default();
                         queue.push(InsertResource {
@@ -700,42 +900,45 @@ pub fn render_orders(
     });
 }
 
-fn render_orders_list(frame: &mut Frame, rect: Rect) {
-    let orders = ORDERS_VIEW.read().expect("poison");
-    let mut table_state = ORDERS_TABLE.lock().expect("poison");
-
-    let title = if orders.is_empty() {
-        format!(" {} ", t!("Orders.Title"))
-    } else {
-        format!(" {} ({}) ", t!("Orders.Title"), orders.len())
-    };
-
-    let block = Block::default()
+fn make_orders_table<'a>(
+    orders: &'a [longbridge::trade::Order],
+    is_history: bool,
+    active: bool,
+    title: String,
+    bottom_hints: Option<Line<'a>>,
+) -> (Table<'a>, bool) {
+    let _ = active;
+    let border_style = styles::border();
+    let mut block = Block::default()
         .borders(Borders::ALL)
-        .border_style(styles::border())
-        .title(title)
-        .title_bottom(
-            Line::from(vec![
-                Span::styled(format!(" {} ", t!("Orders.Refresh")), styles::dark_gray()),
-                Span::styled(format!(" {} ", t!("Orders.CancelKey")), styles::dark_gray()),
-                Span::styled(
-                    format!(" {} ", t!("Orders.ReplaceKey")),
-                    styles::dark_gray(),
-                ),
-            ])
-            .right_aligned(),
-        );
+        .border_style(border_style)
+        .title(title);
+    if let Some(hints) = bottom_hints {
+        block = block.title_bottom(hints);
+    }
 
     if orders.is_empty() {
-        let msg = Paragraph::new(Span::styled(
-            t!("Orders.NoOrders"),
-            Style::default().fg(Color::DarkGray),
-        ))
-        .block(block)
-        .alignment(ratatui::layout::Alignment::Center);
-        frame.render_widget(msg, rect);
-        return;
+        let empty_msg = if is_history {
+            t!("Orders.NoHistoryOrders").to_string()
+        } else {
+            t!("Orders.NoOrders").to_string()
+        };
+        let table = Table::new(
+            vec![Row::new(vec![Cell::from(Span::styled(
+                empty_msg,
+                Style::default().fg(Color::DarkGray),
+            ))])],
+            [Constraint::Percentage(100)],
+        )
+        .block(block);
+        return (table, false);
     }
+
+    let time_header = if is_history {
+        t!("Orders.Date")
+    } else {
+        t!("Orders.SubmittedAt")
+    };
 
     let header = Row::new(vec![
         Cell::from(t!("Orders.Symbol")).style(styles::header()),
@@ -745,7 +948,7 @@ fn render_orders_list(frame: &mut Frame, rect: Rect) {
         Cell::from(t!("Orders.Qty")).style(styles::header()),
         Cell::from(t!("Orders.ExecQty")).style(styles::header()),
         Cell::from(t!("Orders.Price")).style(styles::header()),
-        Cell::from(t!("Orders.SubmittedAt")).style(styles::header()),
+        Cell::from(time_header).style(styles::header()),
     ]);
 
     let rows: Vec<Row> = orders
@@ -761,7 +964,11 @@ fn render_orders_list(frame: &mut Frame, rect: Rect) {
             let type_label = order_type_label(order.order_type);
             let price_str = order.price.map_or("–".to_string(), |p| format!("{p:.2}"));
             let t = order.submitted_at;
-            let time_str = format!("{:02}:{:02}:{:02}", t.hour(), t.minute(), t.second());
+            let time_str = if is_history {
+                format!("{:04}-{:02}-{:02}", t.year(), t.month() as u8, t.day())
+            } else {
+                format!("{:02}:{:02}:{:02}", t.hour(), t.minute(), t.second())
+            };
 
             Row::new(vec![
                 Cell::from(order.symbol.clone()),
@@ -794,7 +1001,126 @@ fn render_orders_list(frame: &mut Frame, rect: Rect) {
     .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
     .column_spacing(1);
 
-    frame.render_stateful_widget(table, rect, &mut *table_state);
+    (table, true)
+}
+
+fn render_orders_list(frame: &mut Frame, rect: Rect) {
+    let is_history_active = ORDERS_MODE.load(Ordering::Relaxed);
+
+    let today_guard = ORDERS_VIEW.read().expect("poison");
+    let history_guard = HISTORY_ORDERS_VIEW.read().expect("poison");
+    let today_orders: &[longbridge::trade::Order] = &today_guard;
+    let history_orders: &[longbridge::trade::Order] = &history_guard;
+
+    // Allocate height: today gets enough for its rows (capped), history gets the rest
+    let today_height = {
+        let preferred = today_orders.len() as u16 + 3; // 2 borders + 1 header
+        preferred.clamp(6, 8) // min 3 data rows, max 5 data rows
+    };
+    let [today_rect, history_rect] =
+        Layout::vertical([Constraint::Length(today_height), Constraint::Min(4)])
+            .areas(rect);
+
+    // Today table title
+    let today_title = if today_orders.is_empty() {
+        format!(" {} ", t!("Orders.TodayTab"))
+    } else {
+        format!(" {} ({}) ", t!("Orders.TodayTab"), today_orders.len())
+    };
+
+    // History table title + bottom hints
+    let range = HISTORY_DATE_RANGE.read().expect("poison");
+    let history_title = if history_orders.is_empty() {
+        format!(
+            " {} {} ~ {} ",
+            t!("Orders.HistoryTab"),
+            range.start,
+            range.end
+        )
+    } else {
+        format!(
+            " {} {} ~ {} ({}) ",
+            t!("Orders.HistoryTab"),
+            range.start,
+            range.end,
+            history_orders.len()
+        )
+    };
+    drop(range);
+
+    let bottom_hints = Line::from(vec![
+        Span::styled(format!(" {} ", t!("Orders.Refresh")), styles::dark_gray()),
+        Span::styled(format!(" {} ", t!("Orders.CancelKey")), styles::dark_gray()),
+        Span::styled(format!(" {} ", t!("Orders.ReplaceKey")), styles::dark_gray()),
+        Span::styled(format!(" {} ", t!("Orders.FilterKey")), styles::dark_gray()),
+        Span::styled(format!(" {} ", t!("Orders.TabSwitch")), styles::dark_gray()),
+    ])
+    .right_aligned();
+
+    let (today_table, today_has_rows) = make_orders_table(
+        today_orders,
+        false,
+        !is_history_active,
+        today_title,
+        None,
+    );
+    let (history_table, history_has_rows) = make_orders_table(
+        history_orders,
+        true,
+        is_history_active,
+        history_title,
+        Some(bottom_hints),
+    );
+
+    let mut today_state = ORDERS_TABLE.lock().expect("poison");
+    let mut history_state = HISTORY_ORDERS_TABLE.lock().expect("poison");
+
+    if today_has_rows {
+        if is_history_active {
+            frame.render_stateful_widget(today_table, today_rect, &mut TableState::default());
+        } else {
+            frame.render_stateful_widget(today_table, today_rect, &mut *today_state);
+        }
+        let inner = today_rect.inner(Margin { horizontal: 1, vertical: 1 });
+        let scrollbar_area = Rect { x: inner.x + inner.width, y: inner.y, width: 1, height: inner.height };
+        let mut sb = ScrollbarState::new(today_orders.len())
+            .position(today_state.selected().unwrap_or(0));
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None)
+                .track_symbol(None)
+                .thumb_symbol("▐")
+                .thumb_style(Style::default().fg(Color::DarkGray)),
+            scrollbar_area,
+            &mut sb,
+        );
+    } else {
+        frame.render_widget(today_table, today_rect);
+    }
+    if history_has_rows {
+        if is_history_active {
+            frame.render_stateful_widget(history_table, history_rect, &mut *history_state);
+        } else {
+            frame.render_stateful_widget(history_table, history_rect, &mut TableState::default());
+        }
+        let inner = history_rect.inner(Margin { horizontal: 1, vertical: 1 });
+        let scrollbar_area = Rect { x: inner.x + inner.width, y: inner.y, width: 1, height: inner.height };
+        let mut sb = ScrollbarState::new(history_orders.len())
+            .position(history_state.selected().unwrap_or(0));
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None)
+                .track_symbol(None)
+                .thumb_symbol("▐")
+                .thumb_style(Style::default().fg(Color::DarkGray)),
+            scrollbar_area,
+            &mut sb,
+        );
+    } else {
+        frame.render_widget(history_table, history_rect);
+    }
 }
 
 fn order_status_style(status: longbridge::trade::OrderStatus) -> Style {
@@ -912,19 +1238,16 @@ pub fn render_order_entry_popup(frame: &mut Frame, rect: Rect) {
         .add_modifier(Modifier::UNDERLINED);
     let dim = styles::dark_gray();
 
-    // Row 0: Symbol
     let row_symbol = Line::from(vec![
         Span::styled("  Symbol   ", lbl),
         Span::styled(state.symbol.clone(), styles::primary()),
     ]);
 
-    // Row 1: Side
     let row_side = Line::from(vec![
         Span::styled("  Side     ", lbl),
         Span::styled(side_label.to_string(), side_style),
     ]);
 
-    // Row 2: Type — ◀ LO ▶ when focused (uses side color for discoverability)
     let type_val_style = if state.focused_field == OrderEntryField::OrderType {
         side_style
     } else {
@@ -940,7 +1263,6 @@ pub fn render_order_entry_popup(frame: &mut Frame, rect: Rect) {
         Span::styled(type_str, type_val_style),
     ]);
 
-    // Row 3: Qty
     let qty_focused = state.focused_field == OrderEntryField::Quantity;
     let qty_val_style = if qty_focused { focused_val } else { val };
     let mut qty_spans = vec![
@@ -954,7 +1276,6 @@ pub fn render_order_entry_popup(frame: &mut Frame, rect: Rect) {
     }
     let row_qty = Line::from(qty_spans);
 
-    // Row 4: Price
     let price_focused = state.focused_field == OrderEntryField::Price;
     let price_val_style = if price_focused { focused_val } else { val };
     let row_price = if price_editable {
@@ -972,7 +1293,6 @@ pub fn render_order_entry_popup(frame: &mut Frame, rect: Rect) {
         ])
     };
 
-    // Row 5: TIF — ◀ Day ▶ when focused
     let tif_val_style = if state.focused_field == OrderEntryField::Tif {
         side_style
     } else {
@@ -988,10 +1308,8 @@ pub fn render_order_entry_popup(frame: &mut Frame, rect: Rect) {
         Span::styled(tif_str, tif_val_style),
     ]);
 
-    // Row 6: spacer
     let row_spacer = Line::from("");
 
-    // Row 7: Submit / Cancel buttons — REVERSED on focused button
     let on_buttons = state.focused_field == OrderEntryField::Buttons;
     let submit_style = if on_buttons && state.confirm_button == ConfirmButton::Submit {
         styles::text_selected()
@@ -1031,7 +1349,6 @@ pub fn render_order_entry_popup(frame: &mut Frame, rect: Rect) {
         frame.render_widget(Paragraph::new(line.clone()), *chunk);
     }
 
-    // "  Qty      [" = 11 + 1 = 12 chars before cursor
     const INPUT_X_OFFSET: u16 = 12;
 
     match state.focused_field {
@@ -1176,6 +1493,102 @@ pub fn render_replace_order_popup(frame: &mut Frame, rect: Rect) {
 
     for (row, chunk) in rows.iter().zip(chunks.iter()) {
         frame.render_widget(Paragraph::new(row.as_str()).style(styles::text()), *chunk);
+    }
+}
+
+pub fn render_date_filter_popup(frame: &mut Frame, rect: Rect) {
+    const W: u16 = 44;
+    const H: u16 = 8;
+    let popup_rect = crate::tui::ui::rect::centered(W, H, rect);
+    frame.render_widget(Clear, popup_rect);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(styles::border())
+        .title(format!(" {} ", t!("Orders.DateFilterTitle")))
+        .title_bottom(
+            Line::from(vec![
+                Span::styled(
+                    format!(" [Tab] {} ", t!("Orders.DateFilterSwitch")),
+                    styles::dark_gray(),
+                ),
+                Span::styled(
+                    format!(" [Enter] {} ", t!("Orders.DateFilterApply")),
+                    styles::dark_gray(),
+                ),
+                Span::styled(" [Esc] ", styles::dark_gray()),
+            ])
+            .right_aligned(),
+        );
+
+    let inner = block.inner(popup_rect);
+    frame.render_widget(block, popup_rect);
+
+    let s = DATE_FILTER_STATE.read().expect("poison");
+
+    let lbl = styles::label();
+    let focused_val = Style::default()
+        .add_modifier(Modifier::BOLD)
+        .add_modifier(Modifier::UNDERLINED);
+    let val = styles::text();
+
+    let start_style = if s.focused == DateFilterField::Start {
+        focused_val
+    } else {
+        val
+    };
+    let end_style = if s.focused == DateFilterField::End {
+        focused_val
+    } else {
+        val
+    };
+
+    let rows: Vec<Line> = vec![
+        Line::from(vec![
+            Span::styled(format!("  {} ", t!("Orders.StartDate")), lbl),
+            Span::raw("["),
+            Span::styled(s.start_input.value().to_string(), start_style),
+            Span::raw("]"),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(format!("  {} ", t!("Orders.EndDate")), lbl),
+            Span::raw("["),
+            Span::styled(s.end_input.value().to_string(), end_style),
+            Span::raw("]"),
+        ]),
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            format!("  {}", t!("Orders.DateHint")),
+            styles::dark_gray(),
+        )]),
+    ];
+
+    let constraints: Vec<Constraint> = rows.iter().map(|_| Constraint::Length(1)).collect();
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
+        .split(inner);
+
+    for (line, chunk) in rows.iter().zip(chunks.iter()) {
+        frame.render_widget(Paragraph::new(line.clone()), *chunk);
+    }
+
+    // Show cursor on focused input
+    let input_prefix_len: u16 = 2 + t!("Orders.StartDate").len() as u16 + 1 + 1; // "  {label} ["
+    match s.focused {
+        DateFilterField::Start => {
+            frame.set_cursor_position((
+                chunks[0].x + input_prefix_len + s.start_input.visual_cursor() as u16,
+                chunks[0].y,
+            ));
+        }
+        DateFilterField::End => {
+            frame.set_cursor_position((
+                chunks[2].x + input_prefix_len + s.end_input.visual_cursor() as u16,
+                chunks[2].y,
+            ));
+        }
     }
 }
 

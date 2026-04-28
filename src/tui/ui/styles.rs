@@ -65,6 +65,11 @@ pub fn border() -> Style {
 }
 
 #[inline]
+pub fn active_border() -> Style {
+    Style::default().fg(Color::Gray)
+}
+
+#[inline]
 pub fn market(m: Market) -> Style {
     use crate::data::Market as M;
     let color = match m {

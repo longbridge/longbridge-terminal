@@ -33,6 +33,7 @@ pub const POPUP_WATCHLIST_SEARCH: u16 = 0b10_0000;
 pub const POPUP_ORDER_ENTRY: u16 = 0b0000_0001_0000_0000;
 pub const POPUP_CANCEL_ORDER: u16 = 0b0000_0010_0000_0000;
 pub const POPUP_REPLACE_ORDER: u16 = 0b0000_0100_0000_0000;
+pub const POPUP_DATE_FILTER: u16 = 0b0000_1000_0000_0000;
 
 #[derive(
     Clone, Copy, PartialEq, Eq, Hash, Debug, Default, States, strum::EnumIter, bytemuck::NoUninit,
@@ -605,6 +606,8 @@ fn handle_popup_input(
         systems::handle_cancel_order_key(event);
     } else if popup & POPUP_REPLACE_ORDER != 0 {
         systems::handle_replace_order_key(event);
+    } else if popup & POPUP_DATE_FILTER != 0 {
+        systems::handle_date_filter_key(event);
     }
 }
 
@@ -677,17 +680,6 @@ fn normalize_counter(query: &str) -> Option<String> {
     }
 }
 
-fn navigate_to_counter(app: &mut bevy_app::App, counter: crate::data::Counter) {
-    app.world.insert_resource(systems::StockDetail(counter));
-    let state = *app.world.resource::<State<AppState>>().get();
-    let next_state = if state == AppState::Stock {
-        AppState::Stock
-    } else {
-        AppState::WatchlistStock
-    };
-    app.world.insert_resource(NextState(Some(next_state)));
-}
-
 fn get_active_symbol(app: &bevy_app::App, state: AppState) -> Option<String> {
     match state {
         AppState::Stock | AppState::WatchlistStock => app
@@ -713,6 +705,17 @@ fn get_active_symbol(app: &bevy_app::App, state: AppState) -> Option<String> {
         }
         _ => None,
     }
+}
+
+fn navigate_to_counter(app: &mut bevy_app::App, counter: crate::data::Counter) {
+    app.world.insert_resource(systems::StockDetail(counter));
+    let state = *app.world.resource::<State<AppState>>().get();
+    let next_state = if state == AppState::Stock {
+        AppState::Stock
+    } else {
+        AppState::WatchlistStock
+    };
+    app.world.insert_resource(NextState(Some(next_state)));
 }
 
 #[allow(clippy::too_many_lines)]
@@ -780,7 +783,9 @@ fn handle_global_keys(
             modifiers: ::crossterm::event::KeyModifiers::NONE,
             kind: ::crossterm::event::KeyEventKind::Press,
             state: ::crossterm::event::KeyEventState::NONE,
-        } if state == AppState::Orders => {
+        } if state == AppState::Orders
+            && !systems::ORDERS_MODE.load(std::sync::atomic::Ordering::Relaxed) =>
+        {
             systems::try_open_cancel_for_selected();
             render_state.mark_dirty(DirtyFlags::ALL);
         }
@@ -789,8 +794,21 @@ fn handle_global_keys(
             modifiers: ::crossterm::event::KeyModifiers::NONE,
             kind: ::crossterm::event::KeyEventKind::Press,
             state: ::crossterm::event::KeyEventState::NONE,
-        } if state == AppState::Orders => {
+        } if state == AppState::Orders
+            && !systems::ORDERS_MODE.load(std::sync::atomic::Ordering::Relaxed) =>
+        {
             systems::try_open_replace_for_selected();
+            render_state.mark_dirty(DirtyFlags::ALL);
+        }
+        ::crossterm::event::KeyEvent {
+            code: ::crossterm::event::KeyCode::Char('f'),
+            modifiers: ::crossterm::event::KeyModifiers::NONE,
+            kind: ::crossterm::event::KeyEventKind::Press,
+            state: ::crossterm::event::KeyEventState::NONE,
+        } if state == AppState::Orders
+            && systems::ORDERS_MODE.load(std::sync::atomic::Ordering::Relaxed) =>
+        {
+            systems::open_date_filter();
             render_state.mark_dirty(DirtyFlags::ALL);
         }
         ::crossterm::event::KeyEvent {
@@ -913,6 +931,7 @@ fn handle_global_keys(
             }
             AppState::Orders => {
                 systems::refresh_orders();
+                systems::refresh_history_orders();
                 render_state.mark_dirty(DirtyFlags::ALL);
             }
             _ => {}
