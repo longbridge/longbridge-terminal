@@ -31,6 +31,7 @@ pub async fn cmd_run_script(
     end: &str,
     script_arg: Option<String>,
     input: Option<String>,
+    chart: bool,
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
@@ -75,8 +76,9 @@ pub async fn cmd_run_script(
         "start_time": start_time,
         "end_time": end_time,
         "script": script,
-        "input_json": input_json,
+        "inputs_json": input_json,
         "line_type": line_type,
+        "exclude_chart": !chart,
     });
 
     if verbose {
