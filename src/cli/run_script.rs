@@ -31,7 +31,6 @@ pub async fn cmd_run_script(
     end: &str,
     script_arg: Option<String>,
     input: Option<String>,
-    chart: bool,
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
@@ -71,8 +70,7 @@ pub async fn cmd_run_script(
         None => "[]".to_string(),
     };
 
-    // Pretty format always needs chart data for terminal rendering.
-    let want_chart = chart || matches!(format, OutputFormat::Pretty);
+    let exclude_chart = matches!(format, OutputFormat::Json);
     let body = serde_json::json!({
         "counter_id": counter_id,
         "start_time": start_time,
@@ -80,7 +78,7 @@ pub async fn cmd_run_script(
         "script": script,
         "inputs_json": input_json,
         "line_type": line_type,
-        "exclude_chart": !want_chart,
+        "exclude_chart": exclude_chart,
     });
 
     if verbose {
@@ -92,7 +90,7 @@ pub async fn cmd_run_script(
     let resp = http_post("/v1/quant/run_script", body, verbose).await?;
     match format {
         OutputFormat::Json => print_json_value(&resp, format),
-        OutputFormat::Pretty => quant_render::render_terminal(&resp, chart),
+        OutputFormat::Pretty => quant_render::render_terminal(&resp),
     }
     Ok(())
 }

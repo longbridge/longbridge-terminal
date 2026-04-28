@@ -371,7 +371,7 @@ fn render_braille(out: &mut Out<'_>, series_list: &[Series], term_w: usize) {
 
 // ── Table ─────────────────────────────────────────────────────────────────────
 
-pub fn render_terminal(resp: &Value, show_chart: bool) {
+pub fn render_terminal(resp: &Value) {
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     let w = term_width();
@@ -444,10 +444,6 @@ pub fn render_terminal(resp: &Value, show_chart: bool) {
         &mut out,
         &format!("  {} series  ·  {} bars\n\n", series_list.len(), total_bars),
     );
-
-    if !show_chart {
-        return;
-    }
 
     render_braille(&mut out, &series_list, w);
 }
