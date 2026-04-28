@@ -6,6 +6,7 @@ use bevy_ecs::{
     system::{CommandQueue, InsertResource},
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::widgets::TableState;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -13,14 +14,16 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table},
     Frame,
 };
-use ratatui::widgets::TableState;
 use rust_decimal::Decimal;
 use std::str::FromStr;
 
 use crate::{
     tui::app::{AppState, POPUP, POPUP_CANCEL_ORDER, POPUP_REPLACE_ORDER, RT},
     tui::ui::styles,
-    tui::widgets::{toast::{set_toast, ToastKind}, Terminal},
+    tui::widgets::{
+        toast::{set_toast, ToastKind},
+        Terminal,
+    },
 };
 
 use super::{Command, NavFooter, PopUp, StockDetail};
@@ -37,8 +40,7 @@ pub static REPLACE_ORDER_STATE: LazyLock<RwLock<Option<ReplaceOrderState>>> =
 pub static CANCEL_TARGET: LazyLock<RwLock<Option<longbridge::trade::Order>>> =
     LazyLock::new(|| RwLock::new(None));
 
-pub static ORDERS_TABLE: LazyLock<Mutex<TableState>> =
-    LazyLock::new(Mutex::default);
+pub static ORDERS_TABLE: LazyLock<Mutex<TableState>> = LazyLock::new(Mutex::default);
 
 // ────────────────────────────── state structs ───────────────────────────────
 
@@ -135,7 +137,10 @@ pub fn refresh_orders() {
                 *ORDERS_VIEW.write().expect("poison") = orders;
             }
             Err(e) => {
-                set_toast(ToastKind::Error, format!("{}: {e}", t!("Trade.FailedLoadOrders")));
+                set_toast(
+                    ToastKind::Error,
+                    format!("{}: {e}", t!("Trade.FailedLoadOrders")),
+                );
             }
         }
     });
@@ -160,13 +165,8 @@ pub fn submit_order() {
     };
     let qty = Decimal::from_str(&qty_str).unwrap_or_default();
     RT.get().unwrap().spawn(async move {
-        let mut opts = longbridge::trade::SubmitOrderOptions::new(
-            symbol,
-            order_type,
-            side,
-            qty,
-            tif,
-        );
+        let mut opts =
+            longbridge::trade::SubmitOrderOptions::new(symbol, order_type, side, qty, tif);
         let price_only_for_lo = matches!(
             order_type,
             longbridge::trade::OrderType::LO | longbridge::trade::OrderType::ELO
@@ -330,10 +330,17 @@ fn order_entry_prev_field(
     }
 }
 
-fn cycle_order_type(current: longbridge::trade::OrderType, forward: bool) -> longbridge::trade::OrderType {
+fn cycle_order_type(
+    current: longbridge::trade::OrderType,
+    forward: bool,
+) -> longbridge::trade::OrderType {
     let idx = ORDER_TYPES.iter().position(|&t| t == current).unwrap_or(0);
     let len = ORDER_TYPES.len();
-    let new_idx = if forward { (idx + 1) % len } else { (idx + len - 1) % len };
+    let new_idx = if forward {
+        (idx + 1) % len
+    } else {
+        (idx + len - 1) % len
+    };
     ORDER_TYPES[new_idx]
 }
 
@@ -343,7 +350,11 @@ fn cycle_tif(
 ) -> longbridge::trade::TimeInForceType {
     let idx = TIF_TYPES.iter().position(|&t| t == current).unwrap_or(0);
     let len = TIF_TYPES.len();
-    let new_idx = if forward { (idx + 1) % len } else { (idx + len - 1) % len };
+    let new_idx = if forward {
+        (idx + 1) % len
+    } else {
+        (idx + len - 1) % len
+    };
     TIF_TYPES[new_idx]
 }
 
@@ -428,10 +439,9 @@ pub fn handle_order_entry_key(event: KeyEvent) {
                 .read()
                 .expect("poison")
                 .as_ref()
-                .map_or(
-                    (OrderEntryField::Quantity, ConfirmButton::Submit),
-                    |s| (s.focused_field, s.confirm_button),
-                );
+                .map_or((OrderEntryField::Quantity, ConfirmButton::Submit), |s| {
+                    (s.focused_field, s.confirm_button)
+                });
             if focused == OrderEntryField::Buttons {
                 match btn {
                     ConfirmButton::Submit => submit_order(),
@@ -627,7 +637,9 @@ pub fn render_orders(
                         drop(orders);
                         let counter = crate::data::Counter::new(&symbol);
                         let mut queue = CommandQueue::default();
-                        queue.push(InsertResource { resource: StockDetail(counter) });
+                        queue.push(InsertResource {
+                            resource: StockDetail(counter),
+                        });
                         queue.push(InsertResource {
                             resource: NextState(Some(AppState::WatchlistStock)),
                         });
@@ -673,8 +685,7 @@ pub fn render_orders(
 
         crate::tui::widgets::toast::render_toast(frame, rect);
 
-        let log_panel_visible =
-            crate::tui::app::LOG_PANEL_VISIBLE.load(Ordering::Relaxed);
+        let log_panel_visible = crate::tui::app::LOG_PANEL_VISIBLE.load(Ordering::Relaxed);
         if log_panel_visible {
             log_panel.set_visible(true);
             let panel_height = 15;
@@ -707,7 +718,10 @@ fn render_orders_list(frame: &mut Frame, rect: Rect) {
             Line::from(vec![
                 Span::styled(format!(" {} ", t!("Orders.Refresh")), styles::dark_gray()),
                 Span::styled(format!(" {} ", t!("Orders.CancelKey")), styles::dark_gray()),
-                Span::styled(format!(" {} ", t!("Orders.ReplaceKey")), styles::dark_gray()),
+                Span::styled(
+                    format!(" {} ", t!("Orders.ReplaceKey")),
+                    styles::dark_gray(),
+                ),
             ])
             .right_aligned(),
         );
@@ -740,14 +754,12 @@ fn render_orders_list(frame: &mut Frame, rect: Rect) {
             let status_style = order_status_style(order.status);
             let status_label = order_status_label(order.status);
             let side_label = match order.side {
-                longbridge::trade::OrderSide::Buy => "Buy",
-                longbridge::trade::OrderSide::Sell => "Sell",
-                _ => "–",
+                longbridge::trade::OrderSide::Buy => t!("Trade.Buy"),
+                longbridge::trade::OrderSide::Sell => t!("Trade.Sell"),
+                _ => std::borrow::Cow::Borrowed("–"),
             };
             let type_label = order_type_label(order.order_type);
-            let price_str = order
-                .price
-                .map_or("–".to_string(), |p| format!("{p:.2}"));
+            let price_str = order.price.map_or("–".to_string(), |p| format!("{p:.2}"));
             let t = order.submitted_at;
             let time_str = format!("{:02}:{:02}:{:02}", t.hour(), t.minute(), t.second());
 
@@ -789,19 +801,13 @@ fn order_status_style(status: longbridge::trade::OrderStatus) -> Style {
     match status {
         longbridge::trade::OrderStatus::WaitToNew
         | longbridge::trade::OrderStatus::New
-        | longbridge::trade::OrderStatus::WaitToReplace => {
-            Style::default().fg(Color::Yellow)
-        }
+        | longbridge::trade::OrderStatus::WaitToReplace => Style::default().fg(Color::Yellow),
         longbridge::trade::OrderStatus::PartialFilled => Style::default().fg(Color::Cyan),
         longbridge::trade::OrderStatus::Filled => Style::default().fg(Color::Green),
         longbridge::trade::OrderStatus::Canceled
         | longbridge::trade::OrderStatus::Replaced
-        | longbridge::trade::OrderStatus::PartialWithdrawal => {
-            Style::default().fg(Color::DarkGray)
-        }
-        longbridge::trade::OrderStatus::Rejected => {
-            Style::default().fg(Color::Red)
-        }
+        | longbridge::trade::OrderStatus::PartialWithdrawal => Style::default().fg(Color::DarkGray),
+        longbridge::trade::OrderStatus::Rejected => Style::default().fg(Color::Red),
         _ => Style::default(),
     }
 }
@@ -893,9 +899,9 @@ pub fn render_order_entry_popup(frame: &mut Frame, rect: Rect) {
         longbridge::trade::OrderSide::Buy => state
             .max_qty
             .map_or(String::new(), |q| format!("  {} {q}", t!("Trade.MaxQty"))),
-        longbridge::trade::OrderSide::Sell => state
-            .max_qty
-            .map_or(String::new(), |q| format!("  {} {q}", t!("Trade.AvailableQty"))),
+        longbridge::trade::OrderSide::Sell => state.max_qty.map_or(String::new(), |q| {
+            format!("  {} {q}", t!("Trade.AvailableQty"))
+        }),
         _ => String::new(),
     };
 
@@ -919,7 +925,11 @@ pub fn render_order_entry_popup(frame: &mut Frame, rect: Rect) {
     ]);
 
     // Row 2: Type — ◀ LO ▶ when focused (uses side color for discoverability)
-    let type_val_style = if state.focused_field == OrderEntryField::OrderType { side_style } else { val };
+    let type_val_style = if state.focused_field == OrderEntryField::OrderType {
+        side_style
+    } else {
+        val
+    };
     let type_str = if state.focused_field == OrderEntryField::OrderType {
         format!("◀ {type_label} ▶")
     } else {
@@ -963,7 +973,11 @@ pub fn render_order_entry_popup(frame: &mut Frame, rect: Rect) {
     };
 
     // Row 5: TIF — ◀ Day ▶ when focused
-    let tif_val_style = if state.focused_field == OrderEntryField::Tif { side_style } else { val };
+    let tif_val_style = if state.focused_field == OrderEntryField::Tif {
+        side_style
+    } else {
+        val
+    };
     let tif_str = if state.focused_field == OrderEntryField::Tif {
         format!("◀ {tif_label} ▶")
     } else {
@@ -1069,13 +1083,17 @@ pub fn render_cancel_order_popup(frame: &mut Frame, rect: Rect) {
             price_str,
             t!("CancelOrder.Side"),
             match order.side {
-                longbridge::trade::OrderSide::Buy => "Buy",
-                longbridge::trade::OrderSide::Sell => "Sell",
-                _ => "–",
+                longbridge::trade::OrderSide::Buy => t!("Trade.Buy").to_string(),
+                longbridge::trade::OrderSide::Sell => t!("Trade.Sell").to_string(),
+                _ => "–".to_string(),
             }
         ),
         String::new(),
-        format!("  {}   {}", t!("CancelOrder.Confirm"), t!("CancelOrder.Cancel")),
+        format!(
+            "  {}   {}",
+            t!("CancelOrder.Confirm"),
+            t!("CancelOrder.Cancel")
+        ),
     ];
 
     let constraints: Vec<Constraint> = rows.iter().map(|_| Constraint::Length(1)).collect();
@@ -1136,8 +1154,16 @@ pub fn render_replace_order_popup(frame: &mut Frame, rect: Rect) {
 
     let rows = vec![
         format!("  {}: {}", t!("ReplaceOrder.OrderId"), state.order_id),
-        format!("  {}: [{}]", t!("ReplaceOrder.NewQty"), state.qty_input.value()),
-        format!("  {}: [{}]", t!("ReplaceOrder.NewPrice"), state.price_input.value()),
+        format!(
+            "  {}: [{}]",
+            t!("ReplaceOrder.NewQty"),
+            state.qty_input.value()
+        ),
+        format!(
+            "  {}: [{}]",
+            t!("ReplaceOrder.NewPrice"),
+            state.price_input.value()
+        ),
         String::new(),
         format!("  {}   {}", t!("Trade.Submit"), t!("Trade.Cancel")),
     ];

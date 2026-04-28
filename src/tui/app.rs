@@ -695,12 +695,18 @@ fn get_active_symbol(app: &bevy_app::App, state: AppState) -> Option<String> {
             .get_resource::<systems::StockDetail>()
             .map(|sd| sd.0.to_string()),
         AppState::Portfolio => {
-            let idx = systems::PORTFOLIO_TABLE.lock().expect("poison").selected()?;
+            let idx = systems::PORTFOLIO_TABLE
+                .lock()
+                .expect("poison")
+                .selected()?;
             let view = systems::PORTFOLIO_VIEW.read().expect("poison");
             view.as_ref()?.holdings.get(idx).map(|h| h.symbol.clone())
         }
         AppState::Watchlist => {
-            let idx = systems::WATCHLIST_TABLE.lock().expect("poison").selected()?;
+            let idx = systems::WATCHLIST_TABLE
+                .lock()
+                .expect("poison")
+                .selected()?;
             let watchlist = crate::tui::app::WATCHLIST.read().expect("poison");
             let counters = watchlist.counters();
             counters.get(idx).map(std::string::ToString::to_string)
@@ -734,8 +740,7 @@ fn handle_global_keys(
             render_state.mark_dirty(DirtyFlags::ALL);
         }
         key!('3') if state != AppState::Orders => {
-            app.world
-                .insert_resource(NextState(Some(AppState::Orders)));
+            app.world.insert_resource(NextState(Some(AppState::Orders)));
             render_state.mark_dirty(DirtyFlags::ALL);
         }
         ::crossterm::event::KeyEvent {
@@ -743,7 +748,11 @@ fn handle_global_keys(
             modifiers: ::crossterm::event::KeyModifiers::NONE,
             kind: ::crossterm::event::KeyEventKind::Press,
             state: ::crossterm::event::KeyEventState::NONE,
-        } if matches!(state, AppState::Watchlist | AppState::WatchlistStock | AppState::Stock | AppState::Portfolio) => {
+        } if matches!(
+            state,
+            AppState::Watchlist | AppState::WatchlistStock | AppState::Stock | AppState::Portfolio
+        ) =>
+        {
             if let Some(symbol) = get_active_symbol(app, state) {
                 systems::open_order_entry(symbol, longbridge::trade::OrderSide::Buy, None);
                 POPUP.store(POPUP_ORDER_ENTRY, Ordering::Relaxed);
@@ -755,7 +764,11 @@ fn handle_global_keys(
             modifiers: ::crossterm::event::KeyModifiers::NONE,
             kind: ::crossterm::event::KeyEventKind::Press,
             state: ::crossterm::event::KeyEventState::NONE,
-        } if matches!(state, AppState::Watchlist | AppState::WatchlistStock | AppState::Stock | AppState::Portfolio) => {
+        } if matches!(
+            state,
+            AppState::Watchlist | AppState::WatchlistStock | AppState::Stock | AppState::Portfolio
+        ) =>
+        {
             if let Some(symbol) = get_active_symbol(app, state) {
                 systems::open_order_entry(symbol, longbridge::trade::OrderSide::Sell, None);
                 POPUP.store(POPUP_ORDER_ENTRY, Ordering::Relaxed);

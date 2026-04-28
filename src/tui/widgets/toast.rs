@@ -2,16 +2,15 @@ use std::sync::LazyLock;
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
 
+use ratatui::layout::Rect;
 use ratatui::{
     style::{Color, Style},
     text::Span,
     widgets::{Clear, Paragraph},
     Frame,
 };
-use ratatui::layout::Rect;
 
-pub static TOAST: LazyLock<RwLock<Option<ToastMessage>>> =
-    LazyLock::new(|| RwLock::new(None));
+pub static TOAST: LazyLock<RwLock<Option<ToastMessage>>> = LazyLock::new(|| RwLock::new(None));
 
 pub struct ToastMessage {
     pub text: String,
