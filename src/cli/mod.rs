@@ -13,6 +13,7 @@ pub mod insider_trades;
 pub mod investors;
 pub mod news;
 pub mod output;
+pub mod quant_render;
 pub mod quote;
 pub mod run_script;
 pub mod sharelist;
@@ -1071,9 +1072,6 @@ pub enum QuantCmd {
         /// Must match the order of input.*() calls in the script.
         #[arg(long)]
         input: Option<String>,
-        /// Include chart data in the response (excluded by default)
-        #[arg(long, default_value_t = false)]
-        chart: bool,
     },
 }
 
@@ -2744,8 +2742,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 end,
                 script,
                 input,
-                chart,
-            } => run_script::cmd_run_script(symbol, &period, &start, &end, script, input, chart, format, verbose).await,
+            } => run_script::cmd_run_script(symbol, &period, &start, &end, script, input, format, verbose).await,
         },
 
         Commands::Auth { .. }
