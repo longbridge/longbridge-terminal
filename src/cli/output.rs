@@ -111,8 +111,7 @@ fn parse_datetime_with_fallback(
     fallback: time::Time,
 ) -> anyhow::Result<time::OffsetDateTime> {
     if s.contains(' ') {
-        let fmt =
-            time::macros::format_description!("[year]-[month]-[day] [hour]:[minute]");
+        let fmt = time::macros::format_description!("[year]-[month]-[day] [hour]:[minute]");
         let dt = time::PrimitiveDateTime::parse(s, &fmt)
             .map_err(|e| anyhow::anyhow!("Invalid datetime '{s}': {e}"))?;
         Ok(dt.assume_utc())
