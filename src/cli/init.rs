@@ -1,7 +1,7 @@
 use anyhow::Result;
 
-pub fn cmd_init(channel_key: &str) -> Result<()> {
-    crate::auth::save_channel(channel_key)?;
+pub fn cmd_init(invite_code: &str) -> Result<()> {
+    crate::auth::save_invite_code(invite_code)?;
     println!("Initialized successfully.");
     Ok(())
 }
