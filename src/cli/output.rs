@@ -104,17 +104,35 @@ pub fn parse_date(s: &str) -> anyhow::Result<time::Date> {
     time::Date::parse(s, &fmt).map_err(|e| anyhow::anyhow!("Invalid date '{s}': {e}"))
 }
 
-/// Parse a date string into `OffsetDateTime` at start of day UTC
-pub fn parse_datetime_start(s: &str) -> anyhow::Result<time::OffsetDateTime> {
-    let date = parse_date(s)?;
-    Ok(date.with_time(time::Time::MIDNIGHT).assume_utc())
+/// Parse a datetime string (YYYY-MM-DD or YYYY-MM-DD HH:MM) into `OffsetDateTime`.
+/// Returns the exact time if minutes are provided, otherwise uses the given fallback time.
+fn parse_datetime_with_fallback(
+    s: &str,
+    fallback: time::Time,
+) -> anyhow::Result<time::OffsetDateTime> {
+    if s.contains(' ') {
+        let fmt =
+            time::macros::format_description!("[year]-[month]-[day] [hour]:[minute]");
+        let dt = time::PrimitiveDateTime::parse(s, &fmt)
+            .map_err(|e| anyhow::anyhow!("Invalid datetime '{s}': {e}"))?;
+        Ok(dt.assume_utc())
+    } else {
+        let date = parse_date(s)?;
+        Ok(date.with_time(fallback).assume_utc())
+    }
 }
 
-/// Parse a date string into `OffsetDateTime` at end of day UTC
+/// Parse a date/datetime string into `OffsetDateTime` at start of day UTC.
+/// Accepts YYYY-MM-DD or YYYY-MM-DD HH:MM.
+pub fn parse_datetime_start(s: &str) -> anyhow::Result<time::OffsetDateTime> {
+    parse_datetime_with_fallback(s, time::Time::MIDNIGHT)
+}
+
+/// Parse a date/datetime string into `OffsetDateTime` at end of day UTC.
+/// Accepts YYYY-MM-DD or YYYY-MM-DD HH:MM.
 pub fn parse_datetime_end(s: &str) -> anyhow::Result<time::OffsetDateTime> {
-    let date = parse_date(s)?;
-    let end_time = time::Time::from_hms(23, 59, 59).unwrap();
-    Ok(date.with_time(end_time).assume_utc())
+    let end_of_day = time::Time::from_hms(23, 59, 59).unwrap();
+    parse_datetime_with_fallback(s, end_of_day)
 }
 
 /// Format an `OffsetDateTime` as a readable string

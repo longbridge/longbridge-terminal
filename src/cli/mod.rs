@@ -14,6 +14,7 @@ pub mod investors;
 pub mod news;
 pub mod output;
 pub mod quote;
+pub mod run_script;
 pub mod sharelist;
 pub mod statement;
 pub mod topic;
@@ -1016,6 +1017,63 @@ pub enum Commands {
         /// Number of sharelists to return (default: 20)
         #[arg(long, alias = "limit", default_value = "20")]
         count: u32,
+    },
+
+    // ── Quant ────────────────────────────────────────────────────────────────
+    /// Quantitative analysis: run indicator scripts against K-line data
+    ///
+    /// Subcommands: run
+    /// Example: longbridge quant run TSLA.US --start 2024-01-01 --end 2024-12-31 --script "..."
+    /// Example: cat script.pine | longbridge quant run TSLA.US --start 2024-01-01 --end 2024-12-31
+    Quant {
+        #[command(subcommand)]
+        cmd: QuantCmd,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum QuantCmd {
+    /// Run a quant indicator script against historical K-line data on the server
+    ///
+    /// Executes the script server-side and returns the computed indicator/plot values as JSON.
+    /// The script language is compatible with `PineScript` V6 syntax (minor exceptions may apply).
+    ///
+    /// Periods: 1m  5m  15m  30m  1h  day  week  month  year
+    ///
+    /// Script source (--script takes priority over stdin):
+    ///   --script TEXT   inline script text
+    ///   stdin           cat script.pine | longbridge quant run TSLA.US ...
+    ///
+    /// The optional --input flag accepts a JSON array matching the
+    /// order of input.*() calls in the script, e.g. --input '[14,2.0]'
+    ///
+    /// Example: longbridge quant run TSLA.US --start 2024-01-01 --end 2024-12-31 --script "..."
+    /// Example: cat script.pine | longbridge quant run TSLA.US --start 2024-01-01 --end 2024-12-31
+    /// Example: longbridge quant run 700.HK --period 1h --start 2024-01-01 --end 2024-06-30 --script "..." --input '[14]'
+    /// Example: longbridge quant run TSLA.US --start 2024-01-01 --end 2024-12-31 --script "..." --format json
+    /// Example: longbridge quant run 700.HK --period 1m --start "2024-01-02 09:30" --end "2024-01-02 16:00" --script "..."
+    Run {
+        /// Symbol in <CODE>.<MARKET> format, e.g. TSLA.US 700.HK
+        symbol: String,
+        /// K-line period: 1m 5m 15m 30m 1h day week month year (default: day)
+        #[arg(long, default_value = "day")]
+        period: String,
+        /// Start date/datetime for the K-line range (YYYY-MM-DD or "YYYY-MM-DD HH:MM")
+        #[arg(long)]
+        start: String,
+        /// End date/datetime for the K-line range (YYYY-MM-DD or "YYYY-MM-DD HH:MM")
+        #[arg(long)]
+        end: String,
+        /// Script text. Omit to read from stdin (e.g. echo "..." | longbridge quant run ...)
+        #[arg(long)]
+        script: Option<String>,
+        /// Script input values as a JSON array, e.g. '[14,2.0]'
+        /// Must match the order of input.*() calls in the script.
+        #[arg(long)]
+        input: Option<String>,
+        /// Include chart data in the response (excluded by default)
+        #[arg(long, default_value_t = false)]
+        chart: bool,
     },
 }
 
@@ -2677,6 +2735,18 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         Commands::Sharelist { cmd, count } => {
             sharelist::cmd_sharelist(cmd, count, format).await
         }
+
+        Commands::Quant { cmd } => match cmd {
+            QuantCmd::Run {
+                symbol,
+                period,
+                start,
+                end,
+                script,
+                input,
+                chart,
+            } => run_script::cmd_run_script(symbol, &period, &start, &end, script, input, chart, format, verbose).await,
+        },
 
         Commands::Auth { .. }
         | Commands::Tui
