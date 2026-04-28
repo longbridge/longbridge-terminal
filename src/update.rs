@@ -487,7 +487,7 @@ fn render_release_notes(markdown: &str) {
     let page_height = (term_height as usize).saturating_sub(1);
 
     let skin = termimad::MadSkin::default();
-    let rendered = format!("{}", skin.text(markdown, term_width as usize));
+    let rendered = format!("{}", skin.text(markdown, Some(term_width as usize)));
     let lines: Vec<&str> = rendered.lines().collect();
 
     if lines.len() <= page_height {
