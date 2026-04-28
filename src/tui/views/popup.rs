@@ -41,6 +41,8 @@ pub fn render(
         crate::tui::systems::render_cancel_order_popup(frame, rect);
     } else if popup & crate::tui::app::POPUP_REPLACE_ORDER != 0 {
         crate::tui::systems::render_replace_order_popup(frame, rect);
+    } else if popup & crate::tui::app::POPUP_DATE_FILTER != 0 {
+        crate::tui::systems::render_date_filter_popup(frame, rect);
     }
 }
 
