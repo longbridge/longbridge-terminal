@@ -264,7 +264,17 @@ fn extract_and_replace(
     // This avoids writing directly to a running binary (ETXTBUSY).
     let staged_path = tempfile::Builder::new()
         .prefix(".longbridge-update-")
-        .tempfile_in(target_dir)?
+        .tempfile_in(target_dir)
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                anyhow::anyhow!(
+                    "Permission denied writing to {}.\nTry: sudo longbridge update",
+                    target_dir.display()
+                )
+            } else {
+                e.into()
+            }
+        })?
         .into_temp_path();
 
     if let Err(e) = std::fs::copy(&extracted, &staged_path) {
