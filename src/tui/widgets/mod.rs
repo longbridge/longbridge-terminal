@@ -5,6 +5,7 @@ mod log_panel;
 mod logo;
 mod search;
 mod terminal;
+pub mod toast;
 
 pub use ansi::Ansi;
 pub use gadget::{Carousel, Select};
@@ -13,3 +14,4 @@ pub use log_panel::LogPanel;
 pub use logo::Logo;
 pub use search::{LocalSearch, Search};
 pub use terminal::Terminal;
+pub use toast::render_toast;

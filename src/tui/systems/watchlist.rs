@@ -118,6 +118,8 @@ pub fn render_watchlist(
             &mut watchlist_search,
         );
 
+        crate::tui::widgets::render_toast(frame, rect);
+
         // Render floating log panel if visible
         let log_panel_visible =
             crate::tui::app::LOG_PANEL_VISIBLE.load(std::sync::atomic::Ordering::Relaxed);
@@ -150,7 +152,14 @@ pub fn watch(frame: &mut Frame, rect: Rect, full_mode: bool) {
     let background = Block::default()
         .borders(Borders::ALL)
         .border_style(styles::border())
-        .title(format!(" {} ─── {}[g] ", t!("Watchlist"), group_name));
+        .title(format!(" {} ─── {}[g] ", t!("Watchlist"), group_name))
+        .title_bottom(
+            Line::from(vec![
+                Span::styled(format!(" {} ", t!("Trade.BuyKey")), styles::dark_gray()),
+                Span::styled(format!(" {} ", t!("Trade.SellKey")), styles::dark_gray()),
+            ])
+            .right_aligned(),
+        );
     frame.render_widget(background, rect);
 
     // Lock WATCHLIST_TABLE once for both reading and rendering

@@ -80,7 +80,7 @@ impl DirtyFlags {
     /// Mark components for a popup change
     #[inline]
     #[must_use]
-    pub fn mark_popup_change(mut self, popup: u8) -> Self {
+    pub fn mark_popup_change(mut self, popup: u16) -> Self {
         if popup & crate::tui::app::POPUP_HELP != 0 {
             self.insert(Self::POPUP_HELP);
         }

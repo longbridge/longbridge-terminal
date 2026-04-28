@@ -16,6 +16,7 @@ pub fn render(frame: &mut Frame, rect: Rect, state: AppState) {
     let tabs = vec![
         Line::from(format!(" {} [1] ", t!("tabs.Watchlist"))),
         Line::from(format!(" {} [2] ", t!("tabs.Portfolio"))),
+        Line::from(format!(" {} [3] ", t!("tabs.Orders"))),
     ];
 
     let tabs = Tabs::new(tabs)
@@ -25,7 +26,8 @@ pub fn render(frame: &mut Frame, rect: Rect, state: AppState) {
         .select(match state {
             AppState::Watchlist | AppState::WatchlistStock | AppState::Stock => 0,
             AppState::Portfolio => 1,
-            _ => panic!("invalid state"),
+            AppState::Orders => 2,
+            _ => 0,
         });
 
     // Simplified implementation: use fixed username
