@@ -476,9 +476,25 @@ async fn fetch_release_notes() -> anyhow::Result<String> {
     Ok(strip_frontmatter(&body).to_string())
 }
 
+fn truncate_to_n_releases(markdown: &str, n: usize) -> String {
+    let mut count = 0;
+    let mut lines = Vec::new();
+    for line in markdown.lines() {
+        if line.starts_with("## ") {
+            count += 1;
+            if count > n {
+                break;
+            }
+        }
+        lines.push(line);
+    }
+    lines.join("\n")
+}
+
 fn render_release_notes(markdown: &str) {
+    let truncated = truncate_to_n_releases(markdown, 10);
     let skin = termimad::MadSkin::default();
-    skin.print_text(markdown);
+    skin.print_text(&truncated);
 }
 
 /// Show release notes for the `longbridge update --release-notes` command.
