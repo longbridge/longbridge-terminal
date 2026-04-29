@@ -827,10 +827,12 @@ pub async fn cmd_portfolio(format: &OutputFormat) -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&portfolio)?);
         }
         OutputFormat::Html => {
-            return crate::cli::html_render::open_html_raw(
-                "Portfolio",
-                "portfolio",
-                serde_json::to_value(&portfolio)?,
+            return crate::cli::html_render::open_html(
+                crate::cli::html_render::HtmlPayload::Portfolio {
+                    title: "Portfolio".to_string(),
+                    command: "portfolio".to_string(),
+                    data: serde_json::to_value(&portfolio)?,
+                },
             );
         }
         OutputFormat::Pretty => {

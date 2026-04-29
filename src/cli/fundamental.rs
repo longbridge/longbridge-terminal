@@ -227,10 +227,12 @@ pub async fn cmd_financial_report(
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Html => {
-            return crate::cli::html_render::open_html_raw(
-                &format!("{symbol} Financial Report"),
-                &format!("financial-report {symbol}"),
-                data,
+            return crate::cli::html_render::open_html(
+                crate::cli::html_render::HtmlPayload::FinancialReport {
+                    title: format!("{symbol} Financial Report"),
+                    command: format!("financial-report {symbol}"),
+                    data,
+                },
             );
         }
         OutputFormat::Pretty => print_financials(&data),
@@ -405,10 +407,12 @@ pub async fn cmd_institution_rating(
             "instratings": instratings,
         })),
         OutputFormat::Html => {
-            return crate::cli::html_render::open_html_raw(
-                &format!("{symbol} Institution Rating"),
-                &format!("institution-rating {symbol}"),
-                serde_json::json!({ "analyst": ratings, "instratings": instratings }),
+            return crate::cli::html_render::open_html(
+                crate::cli::html_render::HtmlPayload::InstitutionRating {
+                    title: format!("{symbol} Institution Rating"),
+                    command: format!("institution-rating {symbol}"),
+                    data: serde_json::json!({ "analyst": ratings, "instratings": instratings }),
+                },
             );
         }
         OutputFormat::Pretty => print_institution_rating(&ratings, &instratings),
@@ -1470,10 +1474,12 @@ pub async fn cmd_industry_valuation(
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Html => {
-            return crate::cli::html_render::open_html_raw(
-                &format!("{symbol} Industry Valuation"),
-                &format!("industry-valuation {symbol}"),
-                data,
+            return crate::cli::html_render::open_html(
+                crate::cli::html_render::HtmlPayload::IndustryValuation {
+                    title: format!("{symbol} Industry Valuation"),
+                    command: format!("industry-valuation {symbol}"),
+                    data,
+                },
             );
         }
         OutputFormat::Pretty => {
@@ -1540,10 +1546,12 @@ pub async fn cmd_industry_valuation_dist(
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Html => {
-            return crate::cli::html_render::open_html_raw(
-                &format!("{symbol} Industry Valuation Distribution"),
-                &format!("industry-valuation-dist {symbol}"),
-                data,
+            return crate::cli::html_render::open_html(
+                crate::cli::html_render::HtmlPayload::IndustryValuationDist {
+                    title: format!("{symbol} Industry Valuation Distribution"),
+                    command: format!("industry-valuation-dist {symbol}"),
+                    data,
+                },
             );
         }
         OutputFormat::Pretty => {

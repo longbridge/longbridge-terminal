@@ -3009,27 +3009,12 @@ pub async fn cmd_ah_premium_kline(
     )
     .await?;
     if matches!(format, OutputFormat::Html) {
-        let items: Vec<Vec<String>> = data
-            .get("klines")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default()
-            .iter()
-            .map(|item| {
-                vec![
-                    fmt_ts(&val_str(&item["timestamp"])),
-                    val_str(&item["aprice"]),
-                    val_str(&item["hprice"]),
-                    fmt_premium(&val_str(&item["ahpremium_rate"])),
-                    val_str(&item["currency_rate"]),
-                ]
-            })
-            .collect();
-        return crate::cli::html_render::open_html_table(
-            &format!("{symbol} AH Premium K Line"),
-            &format!("ah-premium kline {symbol}"),
-            &["date", "A-share(CNY)", "H-share(HKD)", "premium", "fx_rate"],
-            items,
+        return crate::cli::html_render::open_html(
+            crate::cli::html_render::HtmlPayload::AhPremium {
+                title: format!("{symbol} A/H Premium"),
+                command: format!("ah-premium {symbol}"),
+                data,
+            },
         );
     }
 
@@ -3076,28 +3061,12 @@ pub async fn cmd_ah_premium_intraday(
     .await?;
 
     if matches!(format, OutputFormat::Html) {
-        let items: Vec<Vec<String>> = data
-            .get("klines")
-            .or_else(|| data.get("minutes"))
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default()
-            .iter()
-            .map(|item| {
-                vec![
-                    fmt_ts_time(&val_str(&item["timestamp"])),
-                    val_str(&item["aprice"]),
-                    val_str(&item["hprice"]),
-                    fmt_premium(&val_str(&item["ahpremium_rate"])),
-                    val_str(&item["currency_rate"]),
-                ]
-            })
-            .collect();
-        return crate::cli::html_render::open_html_table(
-            &format!("{symbol} AH Premium Intraday"),
-            &format!("ah-premium intraday {symbol}"),
-            &["time", "A-share(CNY)", "H-share(HKD)", "premium", "fx_rate"],
-            items,
+        return crate::cli::html_render::open_html(
+            crate::cli::html_render::HtmlPayload::AhPremium {
+                title: format!("{symbol} A/H Premium (Intraday)"),
+                command: format!("ah-premium {symbol} --type intraday"),
+                data,
+            },
         );
     }
 
@@ -3143,10 +3112,12 @@ pub async fn cmd_trade_stats(symbol: String, format: &OutputFormat, verbose: boo
     )
     .await?;
     if matches!(format, OutputFormat::Html) {
-        return crate::cli::html_render::open_html_raw(
-            &format!("{symbol} Trade Statistics"),
-            &format!("trade-stats {symbol}"),
-            data,
+        return crate::cli::html_render::open_html(
+            crate::cli::html_render::HtmlPayload::TradeStats {
+                title: format!("{symbol} Trade Statistics"),
+                command: format!("trade-stats {symbol}"),
+                data,
+            },
         );
     }
 
