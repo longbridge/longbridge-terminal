@@ -138,6 +138,12 @@ pub enum HtmlPayload {
         command: String,
         data: Value,
     },
+    /// Renders profit analysis summary + category bar chart + per-stock table.
+    ProfitAnalysis {
+        title: String,
+        command: String,
+        data: Value,
+    },
 }
 
 /// Convenience wrapper for rendering a plain table as HTML.
@@ -295,6 +301,11 @@ fn build_html(payload: &HtmlPayload, generated_at: &str) -> String {
             command,
             data,
         } => render_portfolio_page(title, command, generated_at, data),
+        HtmlPayload::ProfitAnalysis {
+            title,
+            command,
+            data,
+        } => render_profit_analysis_page(title, command, generated_at, data),
     }
 }
 
@@ -666,5 +677,34 @@ fn render_portfolio_page(title: &str, command: &str, generated_at: &str, data: &
     data_js.push('\n');
     let json = serde_json::to_string(data).unwrap_or_default();
     data_js.push_str(&include_str!("html_render/portfolio.js").replace("__JSON__", &json));
+    fill_template(title, command, generated_at, &cdn, main, &data_js)
+}
+
+// ── Profit Analysis ───────────────────────────────────────────────────────────
+
+fn render_profit_analysis_page(
+    title: &str,
+    command: &str,
+    generated_at: &str,
+    data: &Value,
+) -> String {
+    let cdn = format!(r#"<script src="{ECHARTS_CDN}"></script>"#);
+    let main = r#"<div class="bg-[#171717] border border-[#282828] px-[18px] py-[14px] mb-7">
+<div id="pa-stats" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-x-6 gap-y-4"></div>
+</div>
+<div class="w-full h-[300px] mb-7 border border-[#282828] bg-[#040404]" id="chart"></div>
+<div class="border border-[#282828] mb-7">
+<div class="bg-[#171717] px-3.5 py-2 text-[10px] text-[#677179] uppercase tracking-[.08em] border-b border-[#282828]">P&amp;L Breakdown</div>
+<div class="tbl-wrap"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div>
+</div>"#;
+
+    let mut data_js = String::new();
+    data_js.push_str(THEME_JS);
+    data_js.push_str(
+        "\nvar chart=echarts.init(document.getElementById('chart'),'lb',{renderer:'canvas'});\n",
+    );
+    let json = serde_json::to_string(data).unwrap_or_default();
+    data_js.push_str(&include_str!("html_render/profit_analysis.js").replace("__JSON__", &json));
+    data_js.push_str("\nwindow.addEventListener('resize',function(){chart.resize()});");
     fill_template(title, command, generated_at, &cdn, main, &data_js)
 }

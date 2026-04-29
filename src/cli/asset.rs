@@ -155,10 +155,12 @@ pub async fn cmd_profit_analysis(
                 merged.extend(m.clone());
             }
             merged.insert("sublist".to_owned(), sublist.clone());
-            return crate::cli::html_render::open_html_raw(
-                "Profit Analysis",
-                "profit-analysis",
-                Value::Object(merged),
+            return crate::cli::html_render::open_html(
+                crate::cli::html_render::HtmlPayload::ProfitAnalysis {
+                    title: "Profit Analysis".to_string(),
+                    command: "profit-analysis".to_string(),
+                    data: Value::Object(merged),
+                },
             );
         }
         OutputFormat::Pretty => {
