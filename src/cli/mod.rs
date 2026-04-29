@@ -11,6 +11,7 @@ pub mod fundamental;
 pub mod init;
 pub mod insider_trades;
 pub mod investors;
+pub mod my_quote;
 pub mod news;
 pub mod output;
 pub mod quant_render;
@@ -258,8 +259,8 @@ pub enum Commands {
     ///     `warrant_delta`  `call_price`  `to_call_price`
     ///     `effective_leverage`  `leverage_ratio`  `conversion_ratio`  `balance_point`
     ///
-    /// Example: longbridge calc-index TSLA.US AAPL.US --fields pe,pb,turnover_rate
-    /// Example: longbridge calc-index SOXL260619C52000.US --fields delta,iv,oi,exp,strike
+    /// Example: `longbridge calc-index TSLA.US AAPL.US --fields pe,pb,turnover_rate`
+    /// Example: `longbridge calc-index SOXL260619C52000.US --fields delta,iv,oi,exp,strike`
     CalcIndex {
         /// One or more symbols in <CODE>.<MARKET> format
         symbols: Vec<String>,

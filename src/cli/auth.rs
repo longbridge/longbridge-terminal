@@ -229,9 +229,23 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
             });
 
             if let Some(acc) = &account {
+                let packages: Vec<_> = acc
+                    .quote_packages
+                    .iter()
+                    .map(|p| {
+                        json!({
+                            "key": p.key,
+                            "name": p.name,
+                            "description": p.description,
+                            "start_at": p.start_at.to_string(),
+                            "end_at": p.end_at.to_string(),
+                        })
+                    })
+                    .collect();
                 value["account"] = json!({
                     "member_id": acc.member_id,
                     "quote_level": acc.quote_level,
+                    "quote_packages": packages,
                     "account_no": acc.account_no,
                     "account_type": acc.account_type,
                     "name": acc.name,
@@ -314,15 +328,26 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
                 if acc.quote_packages.is_empty() {
                     println!("{:<W$} {}", "Level", acc.quote_level, W = W);
                 } else {
-                    let mut builder = Builder::default();
-                    builder.push_record(["Package", "Start", "End"]);
                     for pkg in &acc.quote_packages {
-                        let start = pkg.start_at.date().to_string();
-                        let end = pkg.end_at.date().to_string();
-                        builder.push_record([&pkg.name, &start, &end]);
+                        let market = pkg.key.split('_').next().unwrap_or("");
+                        let start = pkg.start_at.date();
+                        let end = pkg.end_at.date();
+                        println!(
+                            "  {}  {GREEN}{}{RESET}  ({start} ~ {end})",
+                            market, pkg.name
+                        );
+                        let sub = if pkg.description.is_empty() {
+                            pkg.key.clone()
+                        } else {
+                            format!("{} · {}", pkg.key, pkg.description)
+                        };
+                        println!("      {DIM}{sub}{RESET}");
                     }
-                    println!("{}", builder.build().with(Style::markdown()));
                 }
+
+                // ── Quote Mall QR code ───────────────────────────────────────────
+                println!();
+                let _ = super::my_quote::print_mall_qr("lb");
             }
         }
     }
