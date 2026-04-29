@@ -11,7 +11,10 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table},
+    widgets::{
+        Block, Borders, Cell, Clear, Paragraph, Row, Scrollbar, ScrollbarOrientation,
+        ScrollbarState, Table,
+    },
     Frame,
 };
 use rust_decimal::Decimal;
@@ -140,10 +143,17 @@ const TIF_TYPES: &[longbridge::trade::TimeInForceType] = &[
     longbridge::trade::TimeInForceType::GoodTilCanceled,
 ];
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ReplaceField {
+    Qty,
+    Price,
+}
+
 pub struct ReplaceOrderState {
     pub order_id: String,
     pub qty_input: tui_input::Input,
     pub price_input: tui_input::Input,
+    pub focused: ReplaceField,
     pub confirming: bool,
 }
 
@@ -250,7 +260,10 @@ pub fn open_date_filter() {
 pub fn apply_date_filter() {
     let (start, end) = {
         let s = DATE_FILTER_STATE.read().expect("poison");
-        (s.start_input.value().to_string(), s.end_input.value().to_string())
+        (
+            s.start_input.value().to_string(),
+            s.end_input.value().to_string(),
+        )
     };
     {
         let mut range = HISTORY_DATE_RANGE.write().expect("poison");
@@ -639,14 +652,31 @@ pub fn handle_replace_order_key(event: KeyEvent) {
             *REPLACE_ORDER_STATE.write().expect("poison") = None;
         }
         KeyEvent {
-            code: KeyCode::Tab,
+            code: KeyCode::Tab | KeyCode::Down,
             modifiers: KeyModifiers::NONE,
             ..
         } => {
             if let Some(s) = REPLACE_ORDER_STATE.write().expect("poison").as_mut() {
-                let currently_qty = s.qty_input.cursor() >= s.price_input.cursor()
-                    || s.qty_input.value().len() == s.price_input.value().len();
-                let _ = currently_qty;
+                if !s.confirming {
+                    s.focused = match s.focused {
+                        ReplaceField::Qty => ReplaceField::Price,
+                        ReplaceField::Price => ReplaceField::Qty,
+                    };
+                }
+            }
+        }
+        KeyEvent {
+            code: KeyCode::BackTab | KeyCode::Up,
+            modifiers: KeyModifiers::NONE,
+            ..
+        } => {
+            if let Some(s) = REPLACE_ORDER_STATE.write().expect("poison").as_mut() {
+                if !s.confirming {
+                    s.focused = match s.focused {
+                        ReplaceField::Qty => ReplaceField::Price,
+                        ReplaceField::Price => ReplaceField::Qty,
+                    };
+                }
             }
         }
         KeyEvent {
@@ -695,7 +725,10 @@ pub fn handle_replace_order_key(event: KeyEvent) {
             if let Some(req) = tui_input::backend::crossterm::to_input_request(&evt) {
                 if let Some(s) = REPLACE_ORDER_STATE.write().expect("poison").as_mut() {
                     if !s.confirming {
-                        s.qty_input.handle(req);
+                        match s.focused {
+                            ReplaceField::Qty => s.qty_input.handle(req),
+                            ReplaceField::Price => s.price_input.handle(req),
+                        }
                     }
                 }
             }
@@ -806,11 +839,23 @@ pub fn render_orders(
                     if is_history {
                         let mut table = HISTORY_ORDERS_TABLE.lock().expect("poison");
                         let cur = table.selected();
-                        table.select(Some(cur.map_or(0, |i| if i + 1 < orders_len { i + 1 } else { i })));
+                        table.select(Some(cur.map_or(0, |i| {
+                            if i + 1 < orders_len {
+                                i + 1
+                            } else {
+                                i
+                            }
+                        })));
                     } else {
                         let mut table = ORDERS_TABLE.lock().expect("poison");
                         let cur = table.selected();
-                        table.select(Some(cur.map_or(0, |i| if i + 1 < orders_len { i + 1 } else { i })));
+                        table.select(Some(cur.map_or(0, |i| {
+                            if i + 1 < orders_len {
+                                i + 1
+                            } else {
+                                i
+                            }
+                        })));
                     }
                 }
             }
@@ -1018,8 +1063,7 @@ fn render_orders_list(frame: &mut Frame, rect: Rect) {
         preferred.clamp(6, 8) // min 3 data rows, max 5 data rows
     };
     let [today_rect, history_rect] =
-        Layout::vertical([Constraint::Length(today_height), Constraint::Min(4)])
-            .areas(rect);
+        Layout::vertical([Constraint::Length(today_height), Constraint::Min(4)]).areas(rect);
 
     // Today table title
     let today_title = if today_orders.is_empty() {
@@ -1051,19 +1095,17 @@ fn render_orders_list(frame: &mut Frame, rect: Rect) {
     let bottom_hints = Line::from(vec![
         Span::styled(format!(" {} ", t!("Orders.Refresh")), styles::dark_gray()),
         Span::styled(format!(" {} ", t!("Orders.CancelKey")), styles::dark_gray()),
-        Span::styled(format!(" {} ", t!("Orders.ReplaceKey")), styles::dark_gray()),
+        Span::styled(
+            format!(" {} ", t!("Orders.ReplaceKey")),
+            styles::dark_gray(),
+        ),
         Span::styled(format!(" {} ", t!("Orders.FilterKey")), styles::dark_gray()),
         Span::styled(format!(" {} ", t!("Orders.TabSwitch")), styles::dark_gray()),
     ])
     .right_aligned();
 
-    let (today_table, today_has_rows) = make_orders_table(
-        today_orders,
-        false,
-        !is_history_active,
-        today_title,
-        None,
-    );
+    let (today_table, today_has_rows) =
+        make_orders_table(today_orders, false, !is_history_active, today_title, None);
     let (history_table, history_has_rows) = make_orders_table(
         history_orders,
         true,
@@ -1081,10 +1123,18 @@ fn render_orders_list(frame: &mut Frame, rect: Rect) {
         } else {
             frame.render_stateful_widget(today_table, today_rect, &mut *today_state);
         }
-        let inner = today_rect.inner(Margin { horizontal: 1, vertical: 1 });
-        let scrollbar_area = Rect { x: inner.x + inner.width, y: inner.y, width: 1, height: inner.height };
-        let mut sb = ScrollbarState::new(today_orders.len())
-            .position(today_state.selected().unwrap_or(0));
+        let inner = today_rect.inner(Margin {
+            horizontal: 1,
+            vertical: 1,
+        });
+        let scrollbar_area = Rect {
+            x: inner.x + inner.width,
+            y: inner.y,
+            width: 1,
+            height: inner.height,
+        };
+        let mut sb =
+            ScrollbarState::new(today_orders.len()).position(today_state.selected().unwrap_or(0));
         frame.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(None)
@@ -1104,8 +1154,16 @@ fn render_orders_list(frame: &mut Frame, rect: Rect) {
         } else {
             frame.render_stateful_widget(history_table, history_rect, &mut TableState::default());
         }
-        let inner = history_rect.inner(Margin { horizontal: 1, vertical: 1 });
-        let scrollbar_area = Rect { x: inner.x + inner.width, y: inner.y, width: 1, height: inner.height };
+        let inner = history_rect.inner(Margin {
+            horizontal: 1,
+            vertical: 1,
+        });
+        let scrollbar_area = Rect {
+            x: inner.x + inner.width,
+            y: inner.y,
+            width: 1,
+            height: inner.height,
+        };
         let mut sb = ScrollbarState::new(history_orders.len())
             .position(history_state.selected().unwrap_or(0));
         frame.render_stateful_widget(
@@ -1469,20 +1527,53 @@ pub fn render_replace_order_popup(frame: &mut Frame, rect: Rect) {
         return;
     }
 
-    let rows = vec![
-        format!("  {}: {}", t!("ReplaceOrder.OrderId"), state.order_id),
-        format!(
-            "  {}: [{}]",
-            t!("ReplaceOrder.NewQty"),
-            state.qty_input.value()
-        ),
-        format!(
-            "  {}: [{}]",
-            t!("ReplaceOrder.NewPrice"),
-            state.price_input.value()
-        ),
-        String::new(),
-        format!("  {}   {}", t!("Trade.Submit"), t!("Trade.Cancel")),
+    let lbl = styles::label();
+    let val = styles::text();
+    let focused_val = Style::default()
+        .add_modifier(Modifier::BOLD)
+        .add_modifier(Modifier::UNDERLINED);
+
+    let qty_label = t!("ReplaceOrder.NewQty");
+    let price_label = t!("ReplaceOrder.NewPrice");
+
+    let rows: Vec<Line> = vec![
+        Line::from(vec![
+            Span::styled(format!("  {}: ", t!("ReplaceOrder.OrderId")), lbl),
+            Span::styled(state.order_id.clone(), val),
+        ]),
+        Line::from(vec![
+            Span::styled(format!("  {}: ", qty_label), lbl),
+            Span::raw("["),
+            Span::styled(
+                state.qty_input.value().to_string(),
+                if state.focused == ReplaceField::Qty {
+                    focused_val
+                } else {
+                    val
+                },
+            ),
+            Span::raw("]"),
+        ]),
+        Line::from(vec![
+            Span::styled(format!("  {}: ", price_label), lbl),
+            Span::raw("["),
+            Span::styled(
+                state.price_input.value().to_string(),
+                if state.focused == ReplaceField::Price {
+                    focused_val
+                } else {
+                    val
+                },
+            ),
+            Span::raw("]"),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::raw("  "),
+            Span::styled(format!(" {} ", t!("Trade.Submit")), val),
+            Span::raw("   "),
+            Span::styled(format!(" {} ", t!("Trade.Cancel")), val),
+        ]),
     ];
 
     let constraints: Vec<Constraint> = rows.iter().map(|_| Constraint::Length(1)).collect();
@@ -1491,8 +1582,26 @@ pub fn render_replace_order_popup(frame: &mut Frame, rect: Rect) {
         .constraints(constraints)
         .split(inner);
 
-    for (row, chunk) in rows.iter().zip(chunks.iter()) {
-        frame.render_widget(Paragraph::new(row.as_str()).style(styles::text()), *chunk);
+    for (line, chunk) in rows.iter().zip(chunks.iter()) {
+        frame.render_widget(Paragraph::new(line.clone()), *chunk);
+    }
+
+    // "  {label}: [" prefix length for cursor positioning
+    match state.focused {
+        ReplaceField::Qty => {
+            let prefix = 2 + qty_label.len() as u16 + 3;
+            frame.set_cursor_position((
+                chunks[1].x + prefix + state.qty_input.visual_cursor() as u16,
+                chunks[1].y,
+            ));
+        }
+        ReplaceField::Price => {
+            let prefix = 2 + price_label.len() as u16 + 3;
+            frame.set_cursor_position((
+                chunks[2].x + prefix + state.price_input.visual_cursor() as u16,
+                chunks[2].y,
+            ));
+        }
     }
 }
 
@@ -1633,6 +1742,7 @@ pub fn try_open_replace_for_selected() {
                     price_input: tui_input::Input::new(
                         order.price.map(|p| format!("{p:.2}")).unwrap_or_default(),
                     ),
+                    focused: ReplaceField::Qty,
                     confirming: false,
                 };
                 *REPLACE_ORDER_STATE.write().expect("poison") = Some(state);
