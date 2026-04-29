@@ -242,26 +242,32 @@ pub enum Commands {
 
     /// Calculated financial indexes (PE, PB, DPS rate, turnover rate, etc.)
     ///
-    /// Full index list:
-    ///   `last_done`  `change_value`  `change_rate`  volume  turnover  `ytd_change_rate`
-    ///   `turnover_rate`  `total_market_value`  `capital_flow`  amplitude  `volume_ratio`
-    ///   pe (alias: `pe_ttm`)  pb  `dps_rate` (alias: `dividend_yield`)
-    ///   `five_day_change_rate`  `ten_day_change_rate`  `half_year_change_rate`  `five_minutes_change_rate`
-    ///   `implied_volatility`  delta  gamma  theta  vega  rho  `open_interest`
-    ///   `expiry_date`  `strike_price`  `upper_strike_price`  `lower_strike_price`
-    ///   `outstanding_qty`  `outstanding_ratio`  premium  `itm_otm`
-    ///   `warrant_delta`  `call_price`  `to_call_price`  `effective_leverage`
-    ///   `leverage_ratio`  `conversion_ratio`  `balance_point`
-    /// Example: longbridge calc-index TSLA.US AAPL.US --fields pe,pb,`turnover_rate`
+    /// Full field list:
+    ///
+    ///   General:
+    ///     `last_done`  `change_value`  `change_rate`  `vol`  `turnover`
+    ///     `ytd_change_rate`  `turnover_rate`  `mktcap`  `capital_flow`
+    ///     `amplitude`  `volume_ratio`  `pe`  `pb`  `dps_rate`
+    ///     `five_day_change_rate`  `ten_day_change_rate`  `half_year_change_rate`
+    ///     `five_minutes_change_rate`
+    ///
+    ///   Options / Warrants:
+    ///     `iv`  `delta`  `gamma`  `theta`  `vega`  `rho`
+    ///     `oi`  `exp`  `strike`  `upper_strike_price`  `lower_strike_price`
+    ///     `outstanding_qty`  `outstanding_ratio`  `premium`  `itm_otm`
+    ///     `warrant_delta`  `call_price`  `to_call_price`
+    ///     `effective_leverage`  `leverage_ratio`  `conversion_ratio`  `balance_point`
+    ///
+    /// Example: longbridge calc-index TSLA.US AAPL.US --fields pe,pb,turnover_rate
+    /// Example: longbridge calc-index SOXL260619C52000.US --fields delta,iv,oi,exp,strike
     CalcIndex {
         /// One or more symbols in <CODE>.<MARKET> format
         symbols: Vec<String>,
-        /// Comma-separated fields to compute (default: pe,pb,`dps_rate`,`turnover_rate`,`total_market_value`)
-        /// Unknown field names are silently ignored.
+        /// Comma-separated fields to compute. Use --help to see the full field list.
         #[arg(
             long,
             value_delimiter = ',',
-            default_value = "pe,pb,dps_rate,turnover_rate,total_market_value"
+            default_value = "pe,pb,dps_rate,turnover_rate,mktcap"
         )]
         fields: Vec<String>,
     },
