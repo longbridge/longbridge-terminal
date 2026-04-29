@@ -1,6 +1,4 @@
 use std::time::{SystemTime, UNIX_EPOCH};
-
-use tabled::{builder::Builder, settings::Style};
 use time::OffsetDateTime;
 
 use anyhow::Result;
