@@ -337,6 +337,38 @@ pub async fn cmd_insider_trades(symbol: &str, count: usize, format: &OutputForma
                 serde_json::to_string_pretty(&json).unwrap_or_default()
             );
         }
+        OutputFormat::Html => {
+            let rows: Vec<Vec<String>> = trades
+                .iter()
+                .map(|t| {
+                    vec![
+                        t.date.clone(),
+                        t.owner.clone(),
+                        t.title.clone(),
+                        tx_label(&t.code).to_string(),
+                        fmt_shares(t.shares),
+                        fmt_price(t.price),
+                        fmt_value(t.value),
+                        fmt_shares(t.shares_after),
+                    ]
+                })
+                .collect();
+            return crate::cli::html_render::open_html_table(
+                &format!("{ticker} Insider Trades"),
+                &format!("insider-trades {ticker}"),
+                &[
+                    "date",
+                    "filer",
+                    "title",
+                    "type",
+                    "shares",
+                    "price",
+                    "value",
+                    "owned_after",
+                ],
+                rows,
+            );
+        }
         OutputFormat::Pretty => {
             println!();
             let rows: Vec<Vec<String>> = trades

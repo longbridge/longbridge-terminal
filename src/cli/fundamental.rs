@@ -226,6 +226,13 @@ pub async fn cmd_financial_report(
     let data = http_get("/v1/quote/financial-reports", &params, verbose).await?;
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw(
+                &format!("{symbol} Financial Report"),
+                &format!("financial-report {symbol}"),
+                data,
+            );
+        }
         OutputFormat::Pretty => print_financials(&data),
     }
     Ok(())
@@ -397,6 +404,13 @@ pub async fn cmd_institution_rating(
             "analyst": ratings,
             "instratings": instratings,
         })),
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw(
+                &format!("{symbol} Institution Rating"),
+                &format!("institution-rating {symbol}"),
+                serde_json::json!({ "analyst": ratings, "instratings": instratings }),
+            );
+        }
         OutputFormat::Pretty => print_institution_rating(&ratings, &instratings),
     }
     Ok(())
@@ -417,6 +431,13 @@ pub async fn cmd_institution_rating_detail(
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw(
+                &format!("{symbol} Institution Rating Detail"),
+                &format!("institution-rating-detail {symbol}"),
+                data,
+            );
+        }
         OutputFormat::Pretty => print_institution_rating_detail(&data),
     }
     Ok(())
@@ -487,6 +508,13 @@ pub async fn cmd_dividend(
     let data = http_get("/v1/quote/dividends", &params, verbose).await?;
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw(
+                &format!("{symbol} Dividends"),
+                &format!("dividend {symbol}"),
+                data,
+            );
+        }
         OutputFormat::Pretty => print_dividends(&data),
     }
     Ok(())
@@ -612,6 +640,13 @@ pub async fn cmd_forecast_eps(symbol: String, format: &OutputFormat, verbose: bo
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw(
+                &format!("{symbol} EPS Forecast"),
+                &format!("forecast-eps {symbol}"),
+                data,
+            );
+        }
         OutputFormat::Pretty => print_forecast_eps(&data),
     }
     Ok(())
@@ -628,6 +663,13 @@ pub async fn cmd_consensus(symbol: String, format: &OutputFormat, verbose: bool)
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw(
+                &format!("{symbol} Consensus"),
+                &format!("consensus {symbol}"),
+                data,
+            );
+        }
         OutputFormat::Pretty => print_consensus(&data),
     }
     Ok(())
@@ -765,6 +807,13 @@ pub async fn cmd_valuation(
     let data = http_get("/v1/quote/valuation", &params, verbose).await?;
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw(
+                &format!("{symbol} Valuation"),
+                &format!("valuation {symbol}"),
+                data,
+            );
+        }
         OutputFormat::Pretty => {
             let has_data = data["metrics"].as_object().is_some_and(|m| {
                 m.values()
@@ -795,6 +844,13 @@ pub async fn cmd_valuation_detail(
     let data = http_get("/v1/quote/valuation/detail", &params, verbose).await?;
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw(
+                &format!("{symbol} Valuation Detail"),
+                &format!("valuation-detail {symbol}"),
+                data,
+            );
+        }
         OutputFormat::Pretty => print_valuation_detail(&data),
     }
     Ok(())
@@ -840,6 +896,13 @@ pub async fn cmd_dividend_detail(
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw(
+                &format!("{symbol} Dividend Detail"),
+                &format!("dividend-detail {symbol}"),
+                data,
+            );
+        }
         OutputFormat::Pretty => print_dividend_detail(&data),
     }
     Ok(())
@@ -961,6 +1024,13 @@ pub async fn cmd_shareholders(
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw(
+                &format!("{symbol} Shareholders"),
+                &format!("shareholders {symbol}"),
+                data,
+            );
+        }
         OutputFormat::Pretty => print_shareholders(&data),
     }
     Ok(())
@@ -983,6 +1053,13 @@ pub async fn cmd_fund_holders(
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw(
+                &format!("{symbol} Fund Holders"),
+                &format!("fund-holders {symbol}"),
+                data,
+            );
+        }
         OutputFormat::Pretty => print_fund_holders(&data),
     }
     Ok(())
@@ -1138,6 +1215,13 @@ pub async fn cmd_finance_calendar(
 
     match format {
         OutputFormat::Json => print_json(&resp),
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw(
+                "Finance Calendar",
+                "finance-calendar",
+                resp,
+            );
+        }
         OutputFormat::Pretty => print_finance_calendar(&resp),
     }
     Ok(())
@@ -1155,6 +1239,13 @@ pub async fn cmd_company(symbol: String, format: &OutputFormat, verbose: bool) -
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw(
+                &format!("{symbol} Company"),
+                &format!("company {symbol}"),
+                data,
+            );
+        }
         OutputFormat::Pretty => print_company(&data),
     }
     Ok(())
@@ -1202,6 +1293,13 @@ pub async fn cmd_executive(symbol: String, format: &OutputFormat, verbose: bool)
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw(
+                &format!("{symbol} Executives"),
+                &format!("executive {symbol}"),
+                data,
+            );
+        }
         OutputFormat::Pretty => print_executives(&data),
     }
     Ok(())
@@ -1239,6 +1337,13 @@ pub async fn cmd_buyback(symbol: String, format: &OutputFormat, verbose: bool) -
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw(
+                &format!("{symbol} Buyback"),
+                &format!("buyback {symbol}"),
+                data,
+            );
+        }
         OutputFormat::Pretty => print_buyback(&data),
     }
     Ok(())
@@ -1362,6 +1467,13 @@ pub async fn cmd_industry_valuation(
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw(
+                &format!("{symbol} Industry Valuation"),
+                &format!("industry-valuation {symbol}"),
+                data,
+            );
+        }
         OutputFormat::Pretty => {
             let items = match data.get("list").and_then(|v| v.as_array()) {
                 Some(a) if !a.is_empty() => a,
@@ -1425,6 +1537,13 @@ pub async fn cmd_industry_valuation_dist(
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw(
+                &format!("{symbol} Industry Valuation Distribution"),
+                &format!("industry-valuation-dist {symbol}"),
+                data,
+            );
+        }
         OutputFormat::Pretty => {
             let metrics = [("PE", "pe"), ("PB", "pb"), ("PS", "ps")];
             let mut found = false;
@@ -1491,6 +1610,13 @@ pub async fn cmd_operating(
     let data = http_get("/v1/quote/operatings", &params, verbose).await?;
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw(
+                &format!("{symbol} Operating"),
+                &format!("operating {symbol}"),
+                data,
+            );
+        }
         OutputFormat::Pretty => print_operating(&data),
     }
     Ok(())
@@ -1591,6 +1717,13 @@ pub async fn cmd_rating_history(
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw(
+                &format!("{symbol} Rating History"),
+                &format!("rating-history {symbol}"),
+                data,
+            );
+        }
         OutputFormat::Pretty => print_rating_history(&data),
     }
     Ok(())
@@ -1684,6 +1817,13 @@ pub async fn cmd_corp_action(symbol: String, format: &OutputFormat, verbose: boo
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw(
+                &format!("{symbol} Corporate Actions"),
+                &format!("corp-action {symbol}"),
+                data,
+            );
+        }
         OutputFormat::Pretty => print_corp_action(&data),
     }
     Ok(())
@@ -1731,6 +1871,13 @@ pub async fn cmd_invest_relation(
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw(
+                &format!("{symbol} Investment Relations"),
+                &format!("invest-relation {symbol}"),
+                data,
+            );
+        }
         OutputFormat::Pretty => print_invest_relation(&data),
     }
     Ok(())

@@ -102,6 +102,13 @@ async fn cmd_list(
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&plans)?);
         }
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw(
+                "Recurring Investment Plans",
+                "dca",
+                serde_json::Value::Array(plans),
+            );
+        }
         OutputFormat::Pretty => {
             if plans.is_empty() {
                 println!("No recurring investment plans found.");
@@ -278,7 +285,7 @@ async fn cmd_records(plan_id: String, page: u32, limit: u32, format: &OutputForm
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&records)?);
         }
-        OutputFormat::Pretty => {
+        OutputFormat::Pretty | OutputFormat::Html => {
             if records.is_empty() {
                 println!("No trade history found.");
                 return Ok(());
@@ -335,7 +342,7 @@ async fn cmd_stats(symbol: Option<&str>, format: &OutputFormat) -> Result<()> {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&resp)?);
         }
-        OutputFormat::Pretty => {
+        OutputFormat::Pretty | OutputFormat::Html => {
             print_json_value(
                 &serde_json::json!({
                     "total_amount": resp["total_amount"].as_str().unwrap_or("-"),
@@ -398,7 +405,7 @@ async fn cmd_calc_date(
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&resp)?);
         }
-        OutputFormat::Pretty => {
+        OutputFormat::Pretty | OutputFormat::Html => {
             let trade_date = resp["trade_date"].as_str().unwrap_or("-");
             let readable = trade_date
                 .parse::<i64>()
@@ -420,7 +427,7 @@ async fn cmd_check(symbols: Vec<String>, format: &OutputFormat) -> Result<()> {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&infos)?);
         }
-        OutputFormat::Pretty => {
+        OutputFormat::Pretty | OutputFormat::Html => {
             if infos.is_empty() {
                 println!("No results.");
                 return Ok(());

@@ -90,7 +90,7 @@ pub async fn cmd_run_script(
     let resp = http_post("/v1/quant/run_script", body, verbose).await?;
     match format {
         OutputFormat::Json => print_json_value(&resp, format),
-        OutputFormat::Pretty => quant_render::render_terminal(&resp),
+        OutputFormat::Pretty | OutputFormat::Html => quant_render::render_terminal(&resp),
     }
     Ok(())
 }

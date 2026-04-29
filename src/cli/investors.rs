@@ -480,6 +480,27 @@ pub async fn cmd_investors_list(top: usize, format: &OutputFormat) -> Result<()>
                 serde_json::to_string_pretty(&json).unwrap_or_default()
             );
         }
+        OutputFormat::Html => {
+            let rows: Vec<Vec<String>> = displayed
+                .iter()
+                .enumerate()
+                .map(|(i, f)| {
+                    vec![
+                        (i + 1).to_string(),
+                        f.name.clone(),
+                        format_large_usd(f.aum_thousands),
+                        f.period.clone(),
+                        f.cik.clone(),
+                    ]
+                })
+                .collect();
+            return crate::cli::html_render::open_html_table(
+                "Institutional Investors",
+                "investors",
+                &["#", "name", "AUM", "period", "cik"],
+                rows,
+            );
+        }
         OutputFormat::Pretty => {
             println!();
             let rows: Vec<Vec<String>> = displayed
@@ -984,7 +1005,7 @@ async fn show_holdings_changes(
                 .unwrap_or_default()
             );
         }
-        OutputFormat::Pretty => {
+        OutputFormat::Pretty | OutputFormat::Html => {
             println!(
                 "\n{label}\nChanges: {} vs {prev_report_date}\n",
                 latest.report_date
@@ -1096,7 +1117,7 @@ async fn show_holdings(
                 .unwrap_or_default()
             );
         }
-        OutputFormat::Pretty => {
+        OutputFormat::Pretty | OutputFormat::Html => {
             println!("\n{label} (period: {report_date})\n");
             println!(
                 "Portfolio: {} positions, total value ~{}",

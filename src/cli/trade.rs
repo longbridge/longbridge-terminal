@@ -95,7 +95,7 @@ pub async fn cmd_orders(
         "Executed Price",
         "Created At",
     ];
-    let rows = orders
+    let rows: Vec<Vec<String>> = orders
         .iter()
         .map(|o| {
             vec![
@@ -113,7 +113,12 @@ pub async fn cmd_orders(
         })
         .collect();
 
-    print_table(headers, rows, format);
+    match format {
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_table("Orders", "orders", headers, rows);
+        }
+        _ => print_table(headers, rows, format),
+    }
     Ok(())
 }
 
@@ -138,6 +143,41 @@ pub async fn cmd_order_detail(order_id: String, format: &OutputFormat) -> Result
                 "remark": detail.msg,
             });
             println!("{}", serde_json::to_string_pretty(&val)?);
+        }
+        OutputFormat::Html => {
+            let headers = &["Field", "Value"];
+            let rows = vec![
+                vec!["Order ID".to_string(), detail.order_id.clone()],
+                vec!["Symbol".to_string(), detail.symbol.clone()],
+                vec!["Side".to_string(), format!("{:?}", detail.side)],
+                vec!["Order Type".to_string(), format!("{:?}", detail.order_type)],
+                vec!["Status".to_string(), format!("{:?}", detail.status)],
+                vec!["Quantity".to_string(), detail.quantity.to_string()],
+                vec!["Price".to_string(), fmt_decimal(&detail.price)],
+                vec![
+                    "Executed Qty".to_string(),
+                    detail.executed_quantity.to_string(),
+                ],
+                vec![
+                    "Executed Price".to_string(),
+                    fmt_decimal(&detail.executed_price),
+                ],
+                vec![
+                    "Submitted At".to_string(),
+                    fmt_datetime(detail.submitted_at),
+                ],
+                vec![
+                    "Updated At".to_string(),
+                    detail.updated_at.map(fmt_datetime).unwrap_or_default(),
+                ],
+                vec!["Remark".to_string(), detail.msg.clone()],
+            ];
+            return crate::cli::html_render::open_html_table(
+                "Order Detail",
+                &format!("order-detail {}", detail.order_id),
+                headers,
+                rows,
+            );
         }
         OutputFormat::Pretty => {
             let headers = &["Field", "Value"];
@@ -205,7 +245,7 @@ pub async fn cmd_executions(
     let headers = &[
         "Order ID", "Trade ID", "Symbol", "Price", "Quantity", "Time",
     ];
-    let rows = executions
+    let rows: Vec<Vec<String>> = executions
         .iter()
         .map(|e| {
             vec![
@@ -219,7 +259,17 @@ pub async fn cmd_executions(
         })
         .collect();
 
-    print_table(headers, rows, format);
+    match format {
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_table(
+                "Executions",
+                "executions",
+                headers,
+                rows,
+            );
+        }
+        _ => print_table(headers, rows, format),
+    }
     Ok(())
 }
 
@@ -337,7 +387,7 @@ pub async fn cmd_submit_order(
             let val = serde_json::json!({ "order_id": resp.order_id });
             println!("{}", serde_json::to_string_pretty(&val)?);
         }
-        OutputFormat::Pretty => {
+        OutputFormat::Pretty | OutputFormat::Html => {
             println!("Order submitted successfully.");
             println!("Order ID: {}", resp.order_id);
         }
@@ -397,7 +447,10 @@ pub async fn cmd_replace_order(
     Ok(())
 }
 
-fn print_assets(balances: &[longbridge::trade::AccountBalance], format: &OutputFormat) {
+fn print_assets(
+    balances: &[longbridge::trade::AccountBalance],
+    format: &OutputFormat,
+) -> Result<()> {
     match format {
         OutputFormat::Json => {
             let records: Vec<serde_json::Value> = balances
@@ -435,6 +488,38 @@ fn print_assets(balances: &[longbridge::trade::AccountBalance], format: &OutputF
                 "{}",
                 serde_json::to_string_pretty(&records).unwrap_or_default()
             );
+        }
+        OutputFormat::Html => {
+            let headers = &[
+                "Currency",
+                "Net Assets",
+                "Total Cash",
+                "Buy Power",
+                "Max Finance",
+                "Remaining Finance",
+                "Init Margin",
+                "Maintenance Margin",
+                "Margin Call",
+                "Risk Level",
+            ];
+            let rows = balances
+                .iter()
+                .map(|b| {
+                    vec![
+                        b.currency.clone(),
+                        b.net_assets.to_string(),
+                        b.total_cash.to_string(),
+                        b.buy_power.to_string(),
+                        b.max_finance_amount.to_string(),
+                        b.remaining_finance_amount.to_string(),
+                        b.init_margin.to_string(),
+                        b.maintenance_margin.to_string(),
+                        b.margin_call.to_string(),
+                        risk_level_name(b.risk_level).to_string(),
+                    ]
+                })
+                .collect::<Vec<_>>();
+            return crate::cli::html_render::open_html_table("Assets", "assets", headers, rows);
         }
         OutputFormat::Pretty => {
             let headers = &[
@@ -493,12 +578,13 @@ fn print_assets(balances: &[longbridge::trade::AccountBalance], format: &OutputF
             }
         }
     }
+    Ok(())
 }
 
 pub async fn cmd_assets(currency: Option<String>, format: &OutputFormat) -> Result<()> {
     let ctx = crate::openapi::trade();
     let balances = ctx.account_balance(currency.as_deref()).await?;
-    print_assets(&balances, format);
+    print_assets(&balances, format)?;
     Ok(())
 }
 
@@ -548,7 +634,17 @@ pub async fn cmd_cash_flow(
         })
         .collect();
 
-    print_table(headers, rows, format);
+    match format {
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_table(
+                "Cash Flow",
+                "cash-flow",
+                headers,
+                rows,
+            );
+        }
+        _ => print_table(headers, rows, format),
+    }
     Ok(())
 }
 
@@ -580,7 +676,17 @@ pub async fn cmd_positions(format: &OutputFormat) -> Result<()> {
         }
     }
 
-    print_table(headers, rows, format);
+    match format {
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_table(
+                "Positions",
+                "positions",
+                headers,
+                rows,
+            );
+        }
+        _ => print_table(headers, rows, format),
+    }
     Ok(())
 }
 
@@ -610,7 +716,17 @@ pub async fn cmd_fund_positions(format: &OutputFormat) -> Result<()> {
         }
     }
 
-    print_table(headers, rows, format);
+    match format {
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_table(
+                "Fund Positions",
+                "fund-positions",
+                headers,
+                rows,
+            );
+        }
+        _ => print_table(headers, rows, format),
+    }
     Ok(())
 }
 
@@ -620,7 +736,7 @@ pub async fn cmd_margin_ratio(symbol: String, format: &OutputFormat) -> Result<(
 
     let headers = &["Field", "Value"];
     let rows = vec![
-        vec!["Symbol".to_string(), symbol],
+        vec!["Symbol".to_string(), symbol.clone()],
         vec![
             "Initial Margin Ratio".to_string(),
             ratio.im_factor.to_string(),
@@ -635,7 +751,17 @@ pub async fn cmd_margin_ratio(symbol: String, format: &OutputFormat) -> Result<(
         ],
     ];
 
-    print_table(headers, rows, format);
+    match format {
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_table(
+                &format!("{symbol} Margin Ratio"),
+                &format!("margin-ratio {symbol}"),
+                headers,
+                rows,
+            );
+        }
+        _ => print_table(headers, rows, format),
+    }
     Ok(())
 }
 
@@ -671,7 +797,7 @@ pub async fn cmd_max_qty(
 
     let headers = &["Field", "Value"];
     let rows = vec![
-        vec!["Symbol".to_string(), symbol],
+        vec!["Symbol".to_string(), symbol.clone()],
         vec!["Cash Max Qty".to_string(), resp.cash_max_qty.to_string()],
         vec![
             "Margin Max Qty".to_string(),
@@ -679,7 +805,17 @@ pub async fn cmd_max_qty(
         ],
     ];
 
-    print_table(headers, rows, format);
+    match format {
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_table(
+                &format!("{symbol} Max Quantity"),
+                &format!("max-qty {symbol}"),
+                headers,
+                rows,
+            );
+        }
+        _ => print_table(headers, rows, format),
+    }
     Ok(())
 }
 
@@ -689,6 +825,13 @@ pub async fn cmd_portfolio(format: &OutputFormat) -> Result<()> {
     match format {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&portfolio)?);
+        }
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw(
+                "Portfolio",
+                "portfolio",
+                serde_json::to_value(&portfolio)?,
+            );
         }
         OutputFormat::Pretty => {
             let o = &portfolio.overview;
@@ -949,6 +1092,21 @@ pub async fn run_order_detail(
             let val = serde_json::json!({"order_id": detail.order_id, "symbol": detail.symbol, "side": format!("{:?}", detail.side), "status": format!("{:?}", detail.status)});
             println!("{}", serde_json::to_string_pretty(&val)?);
         }
+        OutputFormat::Html => {
+            let headers = &["Field", "Value"];
+            let rows = vec![
+                vec!["Order ID".to_string(), detail.order_id.clone()],
+                vec!["Symbol".to_string(), detail.symbol.clone()],
+                vec!["Side".to_string(), format!("{:?}", detail.side)],
+                vec!["Status".to_string(), format!("{:?}", detail.status)],
+            ];
+            return crate::cli::html_render::open_html_table(
+                "Order Detail",
+                &format!("order-detail {}", detail.order_id),
+                headers,
+                rows,
+            );
+        }
         OutputFormat::Pretty => {
             let headers = &["Field", "Value"];
             let rows = vec![
@@ -1028,7 +1186,7 @@ pub async fn run_submit_order(
                 serde_json::to_string_pretty(&serde_json::json!({"order_id": resp.order_id}))?
             );
         }
-        OutputFormat::Pretty => println!("Order ID: {}", resp.order_id),
+        OutputFormat::Pretty | OutputFormat::Html => println!("Order ID: {}", resp.order_id),
     }
     Ok(())
 }
@@ -1049,7 +1207,7 @@ pub async fn run_assets(
     format: &OutputFormat,
 ) -> Result<()> {
     let balances = api.account_balance(currency).await?;
-    print_assets(&balances, format);
+    print_assets(&balances, format)?;
     Ok(())
 }
 
@@ -1214,7 +1372,7 @@ pub async fn cmd_alert_list(
     let data = super::api::http_get("/v1/notify/reminders", &params, verbose).await?;
     match format {
         OutputFormat::Json => print_json_value(&data),
-        OutputFormat::Pretty => {
+        OutputFormat::Pretty | OutputFormat::Html => {
             let stocks = match data
                 .get("lists")
                 .or_else(|| data.get("list"))
@@ -1259,6 +1417,13 @@ pub async fn cmd_alert_list(
             }
             if rows.is_empty() {
                 println!("No alerts found.");
+            } else if matches!(format, OutputFormat::Html) {
+                return crate::cli::html_render::open_html_table(
+                    "Alerts",
+                    "alert list",
+                    &headers,
+                    rows,
+                );
             } else {
                 print_table(&headers, rows, format);
             }
@@ -1306,7 +1471,9 @@ pub async fn cmd_alert_add(
     let data = super::api::http_post("/v1/notify/reminders", body, verbose).await?;
     match format {
         OutputFormat::Json => print_json_value(&data),
-        OutputFormat::Pretty => println!("Alert added for {symbol} at {price} ({direction})"),
+        OutputFormat::Pretty | OutputFormat::Html => {
+            println!("Alert added for {symbol} at {price} ({direction})")
+        }
     }
     Ok(())
 }
@@ -1317,7 +1484,7 @@ pub async fn cmd_alert_delete(id: String, format: &OutputFormat, verbose: bool) 
     let data = super::api::http_delete("/v1/notify/reminders", body, verbose).await?;
     match format {
         OutputFormat::Json => print_json_value(&data),
-        OutputFormat::Pretty => println!("Alert {id} deleted"),
+        OutputFormat::Pretty | OutputFormat::Html => println!("Alert {id} deleted"),
     }
     Ok(())
 }
@@ -1374,7 +1541,7 @@ pub async fn cmd_alert_set_enabled(
         OutputFormat::Json => {
             println!("{}", serde_json::json!({"id": id, "status": action}));
         }
-        OutputFormat::Pretty => println!("Alert {id} {action}"),
+        OutputFormat::Pretty | OutputFormat::Html => println!("Alert {id} {action}"),
     }
     Ok(())
 }
