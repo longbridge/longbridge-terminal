@@ -60,6 +60,12 @@ pub enum HtmlPayload {
         command: String,
         data: Value,
     },
+    MarketTemp {
+        title: String,
+        command: String,
+        current: Value,
+        history: Value,
+    },
     ShortPositions {
         title: String,
         command: String,
@@ -162,6 +168,12 @@ fn build_html(payload: &HtmlPayload, generated_at: &str) -> String {
             command,
             data,
         } => render_chart_page(title, command, generated_at, &market_temp_js(data)),
+        HtmlPayload::MarketTemp {
+            title,
+            command,
+            current,
+            history,
+        } => render_gauge_page(title, command, generated_at, current, history),
         HtmlPayload::ShortPositions {
             title,
             command,
@@ -283,6 +295,102 @@ fn render_raw_json_page(title: &str, command: &str, generated_at: &str, data: &V
 }})();"#
     );
     fill_template(title, command, generated_at, "", main, &data_js)
+}
+
+// ── Market Temperature Gauge ──────────────────────────────────────────────────
+
+fn render_gauge_page(
+    title: &str,
+    command: &str,
+    generated_at: &str,
+    current: &Value,
+    history: &Value,
+) -> String {
+    let cdn = format!(r#"<script src="{ECHARTS_CDN}"></script>"#);
+    let main = r#"<div class="mb-6 flex items-center gap-3"><span id="desc" class="text-[18px] font-bold tracking-wide"></span></div>
+<div class="grid grid-cols-3 gap-4 mb-7">
+<div class="border border-[#282828] bg-[#040404]"><div class="bg-[#171717] px-3.5 py-2 text-[10px] text-[#677179] uppercase tracking-[.08em] border-b border-[#282828]">Temperature</div><div class="h-[200px]" id="g1"></div></div>
+<div class="border border-[#282828] bg-[#040404]"><div class="bg-[#171717] px-3.5 py-2 text-[10px] text-[#677179] uppercase tracking-[.08em] border-b border-[#282828]">Valuation</div><div class="h-[200px]" id="g2"></div></div>
+<div class="border border-[#282828] bg-[#040404]"><div class="bg-[#171717] px-3.5 py-2 text-[10px] text-[#677179] uppercase tracking-[.08em] border-b border-[#282828]">Sentiment</div><div class="h-[200px]" id="g3"></div></div>
+</div>
+<div id="hist-section" class="border border-[#282828] bg-[#040404] mb-7"><div class="bg-[#171717] px-3.5 py-2 text-[10px] text-[#677179] uppercase tracking-[.08em] border-b border-[#282828]">History (90 days)</div><div class="w-full h-[320px]" id="hist"></div></div>
+<div class="border border-[#282828] mb-7"><div class="bg-[#171717] px-3.5 py-2 text-[10px] text-[#677179] uppercase tracking-[.08em] border-b border-[#282828]">Data</div>
+<div class="overflow-x-auto"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div></div>"#;
+
+    let mut data_js = String::new();
+    data_js.push_str(THEME_JS);
+    data_js.push('\n');
+    data_js.push_str(&market_temp_current_js(current, history));
+    fill_template(title, command, generated_at, &cdn, main, &data_js)
+}
+
+fn market_temp_current_js(current: &Value, history: &Value) -> String {
+    let cur = serde_json::to_string(current).unwrap_or_default();
+    let hist = serde_json::to_string(history).unwrap_or_default();
+    format!(
+        r#"var cur={cur};
+var hist={hist};
+(function(){{
+  var descEl=document.getElementById('desc');
+  if(descEl&&cur.description){{
+    var t=+cur.temperature;
+    descEl.textContent=cur.description;
+    descEl.style.color=t<30?'#41b3a9':t<70?'#aa7900':'#d84a33';
+  }}
+  function mkGauge(el,val){{
+    var c=echarts.init(document.getElementById(el),'lb',{{renderer:'canvas'}});
+    c.setOption({{series:[{{
+      type:'gauge',min:0,max:100,
+      radius:'80%',center:['50%','58%'],
+      startAngle:210,endAngle:-30,
+      axisLine:{{lineStyle:{{width:16,color:[[0.3,'#41b3a9'],[0.7,'#aa7900'],[1,'#d84a33']]}}}},
+      axisTick:{{show:false}},splitLine:{{show:false}},axisLabel:{{show:false}},
+      pointer:{{width:5,length:'65%',itemStyle:{{color:'#feffff',opacity:0.9}}}},
+      detail:{{formatter:'{{value}}',fontSize:28,fontWeight:'bold',color:'#feffff',offsetCenter:[0,'28%']}},
+      title:{{show:false}},
+      data:[{{value:+val}}]
+    }}]}});
+    window.addEventListener('resize',function(){{c.resize()}});
+  }}
+  mkGauge('g1',cur.temperature);
+  mkGauge('g2',cur.valuation);
+  mkGauge('g3',cur.sentiment);
+  if(!hist||hist.length===0){{
+    var s=document.getElementById('hist-section');
+    if(s)s.style.display='none';
+    return;
+  }}
+  var hc=echarts.init(document.getElementById('hist'),'lb',{{renderer:'canvas'}});
+  var dates=hist.map(function(d){{return d.time}});
+  var temps=hist.map(function(d){{return+d.temperature}});
+  var vals=hist.map(function(d){{return+d.valuation}});
+  var sents=hist.map(function(d){{return+d.sentiment}});
+  hc.setOption({{
+    animationDuration:1000,animationEasing:'cubicOut',
+    tooltip:{{trigger:'axis',backgroundColor:'#0e0e0e',borderColor:'#282828',textStyle:{{color:'#feffff',fontSize:11}}}},
+    legend:{{data:['Temperature','Valuation','Sentiment'],top:4,right:8}},
+    grid:{{left:50,right:16,top:32,bottom:48}},
+    xAxis:{{type:'category',data:dates,axisLabel:{{color:'#677179',fontSize:10}},axisLine:{{lineStyle:{{color:'#282828'}}}}}},
+    yAxis:{{scale:true,splitLine:{{lineStyle:{{color:'#282828'}}}},axisLabel:{{color:'#677179',fontSize:10}}}},
+    dataZoom:[{{type:'inside'}},{{bottom:4,height:24,borderColor:'#282828'}}],
+    series:[
+      {{name:'Temperature',type:'line',data:temps,showSymbol:false,smooth:true,
+        lineStyle:{{color:'#d84a33',width:2}},
+        areaStyle:{{color:{{type:'linear',x:0,y:0,x2:0,y2:1,
+          colorStops:[{{offset:0,color:'rgba(216,74,51,0.2)'}},{{offset:1,color:'rgba(216,74,51,0)'}}]
+        }}}}}},
+      {{name:'Valuation',type:'line',data:vals,showSymbol:false,smooth:true,
+        lineStyle:{{color:'#41b3a9',width:2}}}},
+      {{name:'Sentiment',type:'line',data:sents,showSymbol:false,smooth:true,
+        lineStyle:{{color:'#ffb670',width:2}}}}
+    ]
+  }});
+  window.addEventListener('resize',function(){{hc.resize()}});
+  buildTable(
+    ['Time','Temperature','Valuation','Sentiment'],
+    hist.map(function(d){{return[d.time,d.temperature,d.valuation,d.sentiment]}}));
+}})();"#
+    )
 }
 
 // ── Kline ─────────────────────────────────────────────────────────────────────

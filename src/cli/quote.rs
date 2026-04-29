@@ -1124,6 +1124,43 @@ pub async fn cmd_market_temp(
         print_table(headers, rows, format);
     } else {
         let temp = ctx.market_temperature(m).await?;
+
+        if matches!(format, OutputFormat::Html) {
+            let now = time::OffsetDateTime::now_utc();
+            let end_date = now.date();
+            let start_date = (now - time::Duration::days(90)).date();
+            let hist_resp = ctx
+                .history_market_temperature(m, start_date, end_date)
+                .await;
+            let history = serde_json::json!(hist_resp
+                .map(|r| r
+                    .records
+                    .iter()
+                    .map(|t| serde_json::json!({
+                        "time": fmt_datetime(t.timestamp),
+                        "temperature": t.temperature,
+                        "valuation": t.valuation,
+                        "sentiment": t.sentiment,
+                    }))
+                    .collect::<Vec<_>>())
+                .unwrap_or_default());
+            let current = serde_json::json!({
+                "temperature": temp.temperature,
+                "valuation": temp.valuation,
+                "sentiment": temp.sentiment,
+                "description": temp.description,
+            });
+            let title = format!("{} Market Temperature", market.to_uppercase());
+            return crate::cli::html_render::open_html(
+                crate::cli::html_render::HtmlPayload::MarketTemp {
+                    title,
+                    command: format!("market-temp {market}"),
+                    current,
+                    history,
+                },
+            );
+        }
+
         let headers = &["Field", "Value"];
         let rows = vec![
             vec!["Market".to_string(), market.to_uppercase()],
