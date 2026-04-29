@@ -3,10 +3,10 @@ use serde_json::Value;
 
 const ECHARTS_CDN: &str = "https://assets.lbkrs.com/libs/echarts@5.min.js";
 
-// Adventure theme colors for ECharts (aligned with adventure.json palette).
+// Colorful dark theme for ECharts. 10-color cycling palette tuned for dark backgrounds.
 // Candlestick convention: green = price up, red = price down.
 const THEME_JS: &str = r#"echarts.registerTheme('lb',{
-  color:['#41b3a9','#417ab3','#aa7900','#882252'],
+  color:['#4D7FFF','#AAEE00','#7A7A8E','#FF9000','#00CCFF','#FFCC00','#FF3399','#AA33DD','#00BBAA','#7766BB'],
   backgroundColor:'rgba(0,0,0,0)',
   candlestick:{itemStyle:{color:'#5da602',color0:'#d84a33',borderColor:'#5da602',borderColor0:'#d84a33',borderWidth:1}},
   line:{lineStyle:{width:2},symbolSize:4,symbol:'emptyCircle'},
@@ -56,6 +56,11 @@ pub enum HtmlPayload {
         data: Value,
     },
     MarketTempHistory {
+        title: String,
+        command: String,
+        data: Value,
+    },
+    ValuationHistory {
         title: String,
         command: String,
         data: Value,
@@ -168,6 +173,11 @@ fn build_html(payload: &HtmlPayload, generated_at: &str) -> String {
             command,
             data,
         } => render_chart_page(title, command, generated_at, &market_temp_js(data)),
+        HtmlPayload::ValuationHistory {
+            title,
+            command,
+            data,
+        } => render_chart_page(title, command, generated_at, &valuation_history_js(data)),
         HtmlPayload::MarketTemp {
             title,
             command,
@@ -629,6 +639,55 @@ buildTable(
   ['Time','Temperature','Valuation','Sentiment'],
   raw.map(function(d){{return[d.time,d.temperature,d.valuation,d.sentiment]}})
 );"#
+    )
+}
+
+// ── Valuation History ─────────────────────────────────────────────────────────
+
+fn valuation_history_js(data: &Value) -> String {
+    let json = serde_json::to_string(data).unwrap_or_default();
+    format!(
+        r#"(function(){{
+var raw={json};
+var metrics=raw.metrics||{{}};
+var keys=Object.keys(metrics);
+if(!keys.length){{chart.setOption({{title:{{text:'No data',left:'center',top:'center',textStyle:{{color:'#677179'}}}}}});return;}}
+var dateSet={{}};
+var seriesMap={{}};
+keys.forEach(function(k){{
+  seriesMap[k]={{}};
+  (metrics[k].list||[]).forEach(function(pt){{
+    var d=new Date(+pt.timestamp*1000).toISOString().slice(0,10);
+    dateSet[d]=1;
+    seriesMap[k][d]=pt.value;
+  }});
+}});
+var dates=Object.keys(dateSet).sort();
+var colors=['#4D7FFF','#AAEE00','#FF9000','#00CCFF','#FF3399','#FFCC00'];
+var series=keys.map(function(k,i){{
+  return{{name:k.toUpperCase(),type:'line',
+    data:dates.map(function(d){{return seriesMap[k][d]!=null?+seriesMap[k][d]:null}}),
+    showSymbol:false,smooth:false,connectNulls:false,
+    lineStyle:{{color:colors[i%colors.length],width:2}}}};
+}});
+chart.setOption({{
+  animationDuration:800,animationEasing:'cubicOut',
+  tooltip:{{trigger:'axis',backgroundColor:'#0e0e0e',borderColor:'#282828',textStyle:{{color:'#feffff',fontSize:11}}}},
+  legend:{{data:keys.map(function(k){{return k.toUpperCase()}}),top:4,right:8,textStyle:{{color:'#677179'}}}},
+  grid:{{left:60,right:16,top:32,bottom:48}},
+  xAxis:{{type:'category',data:dates,axisLabel:{{color:'#677179',fontSize:10}},axisLine:{{lineStyle:{{color:'#282828'}}}}}},
+  yAxis:{{scale:true,splitLine:{{lineStyle:{{color:'#282828'}}}},axisLabel:{{color:'#677179',fontSize:10}}}},
+  dataZoom:[{{type:'inside'}},{{bottom:4,height:24,borderColor:'#282828'}}],
+  series:series
+}});
+buildTable(
+  ['Date'].concat(keys.map(function(k){{return k.toUpperCase()}})),
+  dates.map(function(d){{
+    return[d].concat(keys.map(function(k){{
+      var v=seriesMap[k][d];return v!=null?v:'';
+    }}));
+  }}));
+}})();"#
     )
 }
 

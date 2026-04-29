@@ -808,10 +808,12 @@ pub async fn cmd_valuation(
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Html => {
-            return crate::cli::html_render::open_html_raw(
-                &format!("{symbol} Valuation"),
-                &format!("valuation {symbol}"),
-                data,
+            return crate::cli::html_render::open_html(
+                crate::cli::html_render::HtmlPayload::ValuationHistory {
+                    title: format!("{symbol} Valuation History"),
+                    command: format!("valuation {symbol} --history"),
+                    data,
+                },
             );
         }
         OutputFormat::Pretty => {
