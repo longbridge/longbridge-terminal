@@ -86,13 +86,13 @@ fn calc_index_column(key: &str) -> Option<(&'static str, CalcIndexExtractor)> {
         "last_done" => Some(("Last Done", |r| fmt_decimal(&r.last_done))),
         "change_value" => Some(("Change Value", |r| fmt_decimal(&r.change_value))),
         "change_rate" => Some(("Change Rate", |r| fmt_decimal(&r.change_rate))),
-        "volume" => Some(("Volume", |r| {
+        "volume" | "vol" => Some(("Volume", |r| {
             r.volume.map_or_else(|| "-".to_string(), |v| v.to_string())
         })),
         "turnover" => Some(("Turnover", |r| fmt_decimal(&r.turnover))),
         "ytd_change_rate" => Some(("YTD Change Rate", |r| fmt_decimal(&r.ytd_change_rate))),
         "turnover_rate" => Some(("Turnover Rate", |r| fmt_decimal(&r.turnover_rate))),
-        "total_market_value" => {
+        "total_market_value" | "mktcap" => {
             Some(("Total Market Value", |r| fmt_decimal(&r.total_market_value)))
         }
         "capital_flow" => Some(("Capital Flow", |r| fmt_decimal(&r.capital_flow))),
@@ -110,7 +110,7 @@ fn calc_index_column(key: &str) -> Option<(&'static str, CalcIndexExtractor)> {
         "five_minutes_change_rate" => Some(("5Min Chg Rate", |r| {
             fmt_decimal(&r.five_minutes_change_rate)
         })),
-        "implied_volatility" => Some(("Impl. Vol.", |r| {
+        "implied_volatility" | "iv" => Some(("Impl. Vol.", |r| {
             r.implied_volatility
                 .map_or_else(|| "-".to_string(), |d| format!("{d:.2}%"))
         })),
@@ -119,15 +119,15 @@ fn calc_index_column(key: &str) -> Option<(&'static str, CalcIndexExtractor)> {
         "theta" => Some(("Theta", |r| fmt_decimal_div252(&r.theta))),
         "vega" => Some(("Vega", |r| fmt_decimal_div100(&r.vega))),
         "rho" => Some(("Rho", |r| fmt_decimal_div100(&r.rho))),
-        "open_interest" => Some(("Open Interest", |r| {
+        "open_interest" | "oi" => Some(("Open Interest", |r| {
             r.open_interest
                 .map_or_else(|| "-".to_string(), |v| v.to_string())
         })),
-        "expiry_date" => Some(("Expiry Date", |r| {
+        "expiry_date" | "exp" => Some(("Expiry Date", |r| {
             r.expiry_date
                 .map_or_else(|| "-".to_string(), |d| d.to_string())
         })),
-        "strike_price" => Some(("Strike Price", |r| fmt_decimal(&r.strike_price))),
+        "strike_price" | "strike" => Some(("Strike Price", |r| fmt_decimal(&r.strike_price))),
         "upper_strike_price" => Some(("Upper Strike", |r| fmt_decimal(&r.upper_strike_price))),
         "lower_strike_price" => Some(("Lower Strike", |r| fmt_decimal(&r.lower_strike_price))),
         "outstanding_qty" => Some(("Outst. Qty", |r| {
@@ -157,11 +157,11 @@ fn parse_calc_indexes(indexes: &[String]) -> Vec<CalcIndex> {
             "last_done" => Some(CalcIndex::LastDone),
             "change_value" => Some(CalcIndex::ChangeValue),
             "change_rate" => Some(CalcIndex::ChangeRate),
-            "volume" => Some(CalcIndex::Volume),
+            "volume" | "vol" => Some(CalcIndex::Volume),
             "turnover" => Some(CalcIndex::Turnover),
             "ytd_change_rate" => Some(CalcIndex::YtdChangeRate),
             "turnover_rate" => Some(CalcIndex::TurnoverRate),
-            "total_market_value" => Some(CalcIndex::TotalMarketValue),
+            "total_market_value" | "mktcap" => Some(CalcIndex::TotalMarketValue),
             "capital_flow" => Some(CalcIndex::CapitalFlow),
             "amplitude" => Some(CalcIndex::Amplitude),
             "volume_ratio" => Some(CalcIndex::VolumeRatio),
@@ -172,15 +172,15 @@ fn parse_calc_indexes(indexes: &[String]) -> Vec<CalcIndex> {
             "ten_day_change_rate" => Some(CalcIndex::TenDayChangeRate),
             "half_year_change_rate" => Some(CalcIndex::HalfYearChangeRate),
             "five_minutes_change_rate" => Some(CalcIndex::FiveMinutesChangeRate),
-            "expiry_date" => Some(CalcIndex::ExpiryDate),
-            "strike_price" => Some(CalcIndex::StrikePrice),
+            "expiry_date" | "exp" => Some(CalcIndex::ExpiryDate),
+            "strike_price" | "strike" => Some(CalcIndex::StrikePrice),
             "upper_strike_price" => Some(CalcIndex::UpperStrikePrice),
             "lower_strike_price" => Some(CalcIndex::LowerStrikePrice),
             "outstanding_qty" => Some(CalcIndex::OutstandingQty),
             "outstanding_ratio" => Some(CalcIndex::OutstandingRatio),
             "premium" => Some(CalcIndex::Premium),
             "itm_otm" => Some(CalcIndex::ItmOtm),
-            "implied_volatility" => Some(CalcIndex::ImpliedVolatility),
+            "implied_volatility" | "iv" => Some(CalcIndex::ImpliedVolatility),
             "warrant_delta" => Some(CalcIndex::WarrantDelta),
             "call_price" => Some(CalcIndex::CallPrice),
             "to_call_price" => Some(CalcIndex::ToCallPrice),
@@ -188,7 +188,7 @@ fn parse_calc_indexes(indexes: &[String]) -> Vec<CalcIndex> {
             "leverage_ratio" => Some(CalcIndex::LeverageRatio),
             "conversion_ratio" => Some(CalcIndex::ConversionRatio),
             "balance_point" => Some(CalcIndex::BalancePoint),
-            "open_interest" => Some(CalcIndex::OpenInterest),
+            "open_interest" | "oi" => Some(CalcIndex::OpenInterest),
             "delta" => Some(CalcIndex::Delta),
             "gamma" => Some(CalcIndex::Gamma),
             "theta" => Some(CalcIndex::Theta),
