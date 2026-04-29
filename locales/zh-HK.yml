@@ -10,6 +10,17 @@ error:
 exit:
   any_key: "按下任意鍵退出"
   multi_instance: "檢測到其他運行實例，請先關閉後再運行"
+my_quote:
+  title: "我的行情"
+  level: "行情等級"
+  member_id: "會員 ID"
+  col_package: "套餐"
+  col_start: "開始"
+  col_end: "到期"
+  qr_title: "購買行情套餐"
+  scan_hint: |
+    請用 Longbridge App 內「我的」Tab 中的點擊掃碼開啟行情商城。
+    也可以在 App 內點擊「我的」->「行情商店」直接進入。
 qrcode_view:
   scan_hint: |
     請使用長橋 iOS 或 Android app 掃描二維碼

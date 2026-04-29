@@ -10,6 +10,17 @@ error:
 exit:
   any_key: "Press any key to exit"
   multi_instance: "another instance is running, please close it first"
+my_quote:
+  title: "My Quote"
+  level: "Level"
+  member_id: "Member ID"
+  col_package: "Package"
+  col_start: "Start"
+  col_end: "End"
+  qr_title: "Purchase Quote Packages"
+  scan_hint: |
+    Scan with the QR scanner in the "Me" tab inside Longbridge App.
+    Or go to "Me" -> "Quote Store" in the app.
 qrcode_view:
   scan_hint: |
     To sign in, scan the QR code using Longbridge iOS or Android app.
