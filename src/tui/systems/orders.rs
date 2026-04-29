@@ -140,10 +140,17 @@ const TIF_TYPES: &[longbridge::trade::TimeInForceType] = &[
     longbridge::trade::TimeInForceType::GoodTilCanceled,
 ];
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ReplaceOrderFocusedField {
+    Qty,
+    Price,
+}
+
 pub struct ReplaceOrderState {
     pub order_id: String,
     pub qty_input: tui_input::Input,
     pub price_input: tui_input::Input,
+    pub focused: ReplaceOrderFocusedField,
     pub confirming: bool,
 }
 
@@ -644,9 +651,12 @@ pub fn handle_replace_order_key(event: KeyEvent) {
             ..
         } => {
             if let Some(s) = REPLACE_ORDER_STATE.write().expect("poison").as_mut() {
-                let currently_qty = s.qty_input.cursor() >= s.price_input.cursor()
-                    || s.qty_input.value().len() == s.price_input.value().len();
-                let _ = currently_qty;
+                if !s.confirming {
+                    s.focused = match s.focused {
+                        ReplaceOrderFocusedField::Qty => ReplaceOrderFocusedField::Price,
+                        ReplaceOrderFocusedField::Price => ReplaceOrderFocusedField::Qty,
+                    };
+                }
             }
         }
         KeyEvent {
@@ -695,7 +705,10 @@ pub fn handle_replace_order_key(event: KeyEvent) {
             if let Some(req) = tui_input::backend::crossterm::to_input_request(&evt) {
                 if let Some(s) = REPLACE_ORDER_STATE.write().expect("poison").as_mut() {
                     if !s.confirming {
-                        s.qty_input.handle(req);
+                        match s.focused {
+                            ReplaceOrderFocusedField::Qty => { s.qty_input.handle(req); }
+                            ReplaceOrderFocusedField::Price => { s.price_input.handle(req); }
+                        }
                     }
                 }
             }
@@ -1448,7 +1461,8 @@ pub fn render_replace_order_popup(frame: &mut Frame, rect: Rect) {
             .split(inner);
         frame.render_widget(
             Paragraph::new(format!(
-                "  Modify {} qty={} price={}",
+                "  {} {} qty={} price={}",
+                t!("ReplaceOrder.ConfirmPrefix"),
                 state.order_id,
                 state.qty_input.value(),
                 state.price_input.value()
@@ -1469,20 +1483,41 @@ pub fn render_replace_order_popup(frame: &mut Frame, rect: Rect) {
         return;
     }
 
-    let rows = vec![
-        format!("  {}: {}", t!("ReplaceOrder.OrderId"), state.order_id),
-        format!(
-            "  {}: [{}]",
-            t!("ReplaceOrder.NewQty"),
-            state.qty_input.value()
-        ),
-        format!(
-            "  {}: [{}]",
-            t!("ReplaceOrder.NewPrice"),
-            state.price_input.value()
-        ),
-        String::new(),
-        format!("  {}   {}", t!("Trade.Submit"), t!("Trade.Cancel")),
+    let lbl = styles::label();
+    let val = styles::text();
+    let focused_val = Style::default()
+        .add_modifier(Modifier::BOLD)
+        .add_modifier(Modifier::UNDERLINED);
+
+    let qty_focused = state.focused == ReplaceOrderFocusedField::Qty;
+    let price_focused = state.focused == ReplaceOrderFocusedField::Price;
+    let qty_style = if qty_focused { focused_val } else { val };
+    let price_style = if price_focused { focused_val } else { val };
+
+    let rows: Vec<Line> = vec![
+        Line::from(vec![
+            Span::styled(format!("  {}: ", t!("ReplaceOrder.OrderId")), lbl),
+            Span::styled(state.order_id.clone(), val),
+        ]),
+        Line::from(vec![
+            Span::styled(format!("  {}: ", t!("ReplaceOrder.NewQty")), lbl),
+            Span::raw("["),
+            Span::styled(state.qty_input.value().to_string(), qty_style),
+            Span::raw("]"),
+        ]),
+        Line::from(vec![
+            Span::styled(format!("  {}: ", t!("ReplaceOrder.NewPrice")), lbl),
+            Span::raw("["),
+            Span::styled(state.price_input.value().to_string(), price_style),
+            Span::raw("]"),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::raw("  "),
+            Span::styled(format!(" {} ", t!("Trade.Submit")), val),
+            Span::raw("   "),
+            Span::styled(format!(" {} ", t!("Trade.Cancel")), val),
+        ]),
     ];
 
     let constraints: Vec<Constraint> = rows.iter().map(|_| Constraint::Length(1)).collect();
@@ -1491,8 +1526,26 @@ pub fn render_replace_order_popup(frame: &mut Frame, rect: Rect) {
         .constraints(constraints)
         .split(inner);
 
-    for (row, chunk) in rows.iter().zip(chunks.iter()) {
-        frame.render_widget(Paragraph::new(row.as_str()).style(styles::text()), *chunk);
+    for (line, chunk) in rows.iter().zip(chunks.iter()) {
+        frame.render_widget(Paragraph::new(line.clone()), *chunk);
+    }
+
+    // Position cursor in the focused input field
+    match state.focused {
+        ReplaceOrderFocusedField::Qty => {
+            let prefix_len = format!("  {}: [", t!("ReplaceOrder.NewQty")).len() as u16;
+            frame.set_cursor_position((
+                chunks[1].x + prefix_len + state.qty_input.visual_cursor() as u16,
+                chunks[1].y,
+            ));
+        }
+        ReplaceOrderFocusedField::Price => {
+            let prefix_len = format!("  {}: [", t!("ReplaceOrder.NewPrice")).len() as u16;
+            frame.set_cursor_position((
+                chunks[2].x + prefix_len + state.price_input.visual_cursor() as u16,
+                chunks[2].y,
+            ));
+        }
     }
 }
 
@@ -1633,6 +1686,7 @@ pub fn try_open_replace_for_selected() {
                     price_input: tui_input::Input::new(
                         order.price.map(|p| format!("{p:.2}")).unwrap_or_default(),
                     ),
+                    focused: ReplaceOrderFocusedField::Qty,
                     confirming: false,
                 };
                 *REPLACE_ORDER_STATE.write().expect("poison") = Some(state);
