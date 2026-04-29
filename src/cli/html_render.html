@@ -32,7 +32,15 @@
                 width: 100%;
                 font-size: 12px;
             }
+            .tbl-wrap {
+                max-height: 420px;
+                overflow-x: auto;
+                overflow-y: auto;
+            }
             th {
+                position: sticky;
+                top: 0;
+                z-index: 1;
                 background: #171717;
                 color: #677179;
                 padding: 7px 14px;
@@ -81,7 +89,7 @@
         >
             <a
                 href="https://longbridge.com"
-                class="h-[22px] flex gap-2 text-[#feffff] font-semibold no-underline text-sm tracking-tight items-end"
+                class="h-[22px] flex gap-2 text-[#feffff] font-semibold no-underline text-sm tracking-tight leading-0 items-end"
                 target="_blank"
             >
                 <img
@@ -89,7 +97,7 @@
                     alt="Longbridge"
                     class="h-[22px] block"
                 />
-                Longbridge
+                <span>Longbridge</span>
             </a>
             <div class="ml-auto flex gap-5 items-center">
                 <a
@@ -119,7 +127,7 @@
                 __TITLE__
             </h1>
             <div
-                class="bg-[#171717] border border-[#282828] [border-left:3px_solid_#41b3a9] px-[18px] py-[14px] mb-7"
+                class="bg-[#171717] border border-[#282828] px-[18px] py-[14px] mb-7"
             >
                 <div
                     class="text-[11px] text-[#5d6165] flex gap-[10px] items-baseline leading-[2]"
@@ -150,28 +158,28 @@
                 <a
                     href="https://longbridge.com"
                     target="_blank"
-                    class="text-[#41b3a9] no-underline hover:text-[#97efd6]"
+                    class="text-[#286e68] no-underline hover:text-[#97efd6]"
                     >Longbridge</a
                 >
                 <span class="text-[#282828]">&middot;</span>
                 <a
                     href="https://open.longbridge.com/skill"
                     target="_blank"
-                    class="text-[#41b3a9] no-underline hover:text-[#97efd6]"
+                    class="text-[#286e68] no-underline hover:text-[#97efd6]"
                     >Skill</a
                 >
                 <span class="text-[#282828]">&middot;</span>
                 <a
                     href="https://open.longbridge.com/docs/cli"
                     target="_blank"
-                    class="text-[#41b3a9] no-underline hover:text-[#97efd6]"
+                    class="text-[#286e68] no-underline hover:text-[#97efd6]"
                     >CLI</a
                 >
                 <span class="text-[#282828]">&middot;</span>
                 <a
                     href="https://open.longbridge.com/docs/mcp"
                     target="_blank"
-                    class="text-[#41b3a9] no-underline hover:text-[#97efd6]"
+                    class="text-[#286e68] no-underline hover:text-[#97efd6]"
                     >MCP</a
                 >
             </div>

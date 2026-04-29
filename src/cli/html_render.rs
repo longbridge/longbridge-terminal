@@ -222,7 +222,7 @@ fn render_chart_page(title: &str, command: &str, generated_at: &str, body_js: &s
     let main = r#"<div class="w-full h-[480px] mb-7 border border-[#282828] bg-[#040404]" id="chart"></div>
 <div class="border border-[#282828] mb-7">
 <div class="bg-[#171717] px-3.5 py-2 text-[10px] text-[#677179] uppercase tracking-[.08em] border-b border-[#282828]">Data</div>
-<div class="overflow-x-auto"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div>
+<div class="tbl-wrap"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div>
 </div>"#;
 
     // Theme + chart init + body_js, concatenated to avoid format! brace issues.
@@ -266,7 +266,7 @@ fn render_table_page(
     let main = format!(
         r#"<div class="border border-[#282828] mb-7">
 <div class="bg-[#171717] px-3.5 py-2 text-[10px] text-[#677179] uppercase tracking-[.08em] border-b border-[#282828]">Data</div>
-<div class="overflow-x-auto"><table><thead><tr>{thead}</tr></thead><tbody>{tbody}</tbody></table></div>
+<div class="tbl-wrap"><table><thead><tr>{thead}</tr></thead><tbody>{tbody}</tbody></table></div>
 </div>"#
     );
     fill_template(title, command, generated_at, "", &main, "")
@@ -278,7 +278,7 @@ fn render_raw_json_page(title: &str, command: &str, generated_at: &str, data: &V
     let json = serde_json::to_string(data).unwrap_or_default();
     let main = r#"<div class="border border-[#282828] mb-7">
 <div class="bg-[#171717] px-3.5 py-2 text-[10px] text-[#677179] uppercase tracking-[.08em] border-b border-[#282828]">Data</div>
-<div class="overflow-x-auto"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div>
+<div class="tbl-wrap"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div>
 </div>"#;
     // Auto-render: array of objects → table columns from keys; object → key/value pairs.
     let data_js = format!(
@@ -315,7 +315,7 @@ fn render_gauge_page(
 </div>
 <div id="hist-section" class="border border-[#282828] bg-[#040404] mb-7"><div class="bg-[#171717] px-3.5 py-2 text-[10px] text-[#677179] uppercase tracking-[.08em] border-b border-[#282828]">History (90 days)</div><div class="w-full h-[320px]" id="hist"></div></div>
 <div class="border border-[#282828] mb-7"><div class="bg-[#171717] px-3.5 py-2 text-[10px] text-[#677179] uppercase tracking-[.08em] border-b border-[#282828]">Data</div>
-<div class="overflow-x-auto"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div></div>"#;
+<div class="tbl-wrap"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div></div>"#;
 
     let mut data_js = String::new();
     data_js.push_str(THEME_JS);
