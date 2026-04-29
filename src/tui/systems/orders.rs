@@ -11,10 +11,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{
-        Block, Borders, Cell, Clear, Paragraph, Row, Scrollbar, ScrollbarOrientation,
-        ScrollbarState, Table,
-    },
+    widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table},
     Frame,
 };
 use rust_decimal::Decimal;
@@ -253,10 +250,7 @@ pub fn open_date_filter() {
 pub fn apply_date_filter() {
     let (start, end) = {
         let s = DATE_FILTER_STATE.read().expect("poison");
-        (
-            s.start_input.value().to_string(),
-            s.end_input.value().to_string(),
-        )
+        (s.start_input.value().to_string(), s.end_input.value().to_string())
     };
     {
         let mut range = HISTORY_DATE_RANGE.write().expect("poison");
@@ -812,23 +806,11 @@ pub fn render_orders(
                     if is_history {
                         let mut table = HISTORY_ORDERS_TABLE.lock().expect("poison");
                         let cur = table.selected();
-                        table.select(Some(cur.map_or(0, |i| {
-                            if i + 1 < orders_len {
-                                i + 1
-                            } else {
-                                i
-                            }
-                        })));
+                        table.select(Some(cur.map_or(0, |i| if i + 1 < orders_len { i + 1 } else { i })));
                     } else {
                         let mut table = ORDERS_TABLE.lock().expect("poison");
                         let cur = table.selected();
-                        table.select(Some(cur.map_or(0, |i| {
-                            if i + 1 < orders_len {
-                                i + 1
-                            } else {
-                                i
-                            }
-                        })));
+                        table.select(Some(cur.map_or(0, |i| if i + 1 < orders_len { i + 1 } else { i })));
                     }
                 }
             }
@@ -1036,7 +1018,8 @@ fn render_orders_list(frame: &mut Frame, rect: Rect) {
         preferred.clamp(6, 8) // min 3 data rows, max 5 data rows
     };
     let [today_rect, history_rect] =
-        Layout::vertical([Constraint::Length(today_height), Constraint::Min(4)]).areas(rect);
+        Layout::vertical([Constraint::Length(today_height), Constraint::Min(4)])
+            .areas(rect);
 
     // Today table title
     let today_title = if today_orders.is_empty() {
@@ -1068,17 +1051,19 @@ fn render_orders_list(frame: &mut Frame, rect: Rect) {
     let bottom_hints = Line::from(vec![
         Span::styled(format!(" {} ", t!("Orders.Refresh")), styles::dark_gray()),
         Span::styled(format!(" {} ", t!("Orders.CancelKey")), styles::dark_gray()),
-        Span::styled(
-            format!(" {} ", t!("Orders.ReplaceKey")),
-            styles::dark_gray(),
-        ),
+        Span::styled(format!(" {} ", t!("Orders.ReplaceKey")), styles::dark_gray()),
         Span::styled(format!(" {} ", t!("Orders.FilterKey")), styles::dark_gray()),
         Span::styled(format!(" {} ", t!("Orders.TabSwitch")), styles::dark_gray()),
     ])
     .right_aligned();
 
-    let (today_table, today_has_rows) =
-        make_orders_table(today_orders, false, !is_history_active, today_title, None);
+    let (today_table, today_has_rows) = make_orders_table(
+        today_orders,
+        false,
+        !is_history_active,
+        today_title,
+        None,
+    );
     let (history_table, history_has_rows) = make_orders_table(
         history_orders,
         true,
@@ -1096,18 +1081,10 @@ fn render_orders_list(frame: &mut Frame, rect: Rect) {
         } else {
             frame.render_stateful_widget(today_table, today_rect, &mut *today_state);
         }
-        let inner = today_rect.inner(Margin {
-            horizontal: 1,
-            vertical: 1,
-        });
-        let scrollbar_area = Rect {
-            x: inner.x + inner.width,
-            y: inner.y,
-            width: 1,
-            height: inner.height,
-        };
-        let mut sb =
-            ScrollbarState::new(today_orders.len()).position(today_state.selected().unwrap_or(0));
+        let inner = today_rect.inner(Margin { horizontal: 1, vertical: 1 });
+        let scrollbar_area = Rect { x: inner.x + inner.width, y: inner.y, width: 1, height: inner.height };
+        let mut sb = ScrollbarState::new(today_orders.len())
+            .position(today_state.selected().unwrap_or(0));
         frame.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(None)
@@ -1127,16 +1104,8 @@ fn render_orders_list(frame: &mut Frame, rect: Rect) {
         } else {
             frame.render_stateful_widget(history_table, history_rect, &mut TableState::default());
         }
-        let inner = history_rect.inner(Margin {
-            horizontal: 1,
-            vertical: 1,
-        });
-        let scrollbar_area = Rect {
-            x: inner.x + inner.width,
-            y: inner.y,
-            width: 1,
-            height: inner.height,
-        };
+        let inner = history_rect.inner(Margin { horizontal: 1, vertical: 1 });
+        let scrollbar_area = Rect { x: inner.x + inner.width, y: inner.y, width: 1, height: inner.height };
         let mut sb = ScrollbarState::new(history_orders.len())
             .position(history_state.selected().unwrap_or(0));
         frame.render_stateful_widget(
