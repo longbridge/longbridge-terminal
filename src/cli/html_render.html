@@ -63,12 +63,20 @@ function buildTable(cols,rows){
   if(!th||!tb)return;
   var hr=th.insertRow();
   cols.forEach(function(c){var t=document.createElement('th');t.textContent=c;hr.appendChild(t)});
+  var moneyRe=/price|value|turnover|amount|flow|aum|profit|cost|inflow|outflow|market_val|capital|premium/i;
+  var isMoney=cols.map(function(c){return moneyRe.test(c)});
   rows.forEach(function(r){
     var tr=tb.insertRow();
     r.forEach(function(v,i){
       var td=tr.insertCell();
-      td.textContent=v;
-      if(i>0){var n=parseFloat(v);if(!isNaN(n)&&v!==''){if(n>0)td.className='up';else if(n<0)td.className='dn';}}
+      var n=parseFloat(v);
+      var isNum=!isNaN(n)&&v!=='';
+      if(isMoney[i]&&isNum&&n!==0&&!String(v).startsWith('$')){
+        td.textContent='$'+v;
+      }else{
+        td.textContent=v;
+      }
+      if(i>0&&isNum){if(n>0)td.className='up';else if(n<0)td.className='dn';}
     })
   })
 }

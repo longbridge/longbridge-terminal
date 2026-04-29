@@ -4,11 +4,11 @@ use serde_json::Value;
 const ECHARTS_CDN: &str = "https://assets.lbkrs.com/libs/echarts@5.min.js";
 
 // Adventure theme colors for ECharts (aligned with adventure.json palette).
-// Candlestick convention: red (danger) = price up, green (success) = price down.
+// Candlestick convention: green = price up, red = price down.
 const THEME_JS: &str = r#"echarts.registerTheme('lb',{
   color:['#41b3a9','#417ab3','#aa7900','#882252'],
   backgroundColor:'rgba(0,0,0,0)',
-  candlestick:{itemStyle:{color:'#d84a33',color0:'#5da602',borderColor:'#d84a33',borderColor0:'#5da602',borderWidth:1}},
+  candlestick:{itemStyle:{color:'#5da602',color0:'#d84a33',borderColor:'#5da602',borderColor0:'#d84a33',borderWidth:1}},
   line:{lineStyle:{width:2},symbolSize:4,symbol:'emptyCircle'},
   bar:{itemStyle:{barBorderWidth:0}},
   legend:{textStyle:{color:'#5d6165'}},
@@ -294,7 +294,7 @@ fn kline_js(data: &Value) -> String {
         r#"var raw={json};
 var dates=raw.map(function(d){{return d.time}});
 var ohlc=raw.map(function(d){{return[+d.open,+d.close,+d.low,+d.high]}});
-var vols=raw.map(function(d){{return{{value:+d.volume,itemStyle:{{color:+d.close>=+d.open?'#d84a33':'#5da602'}}}}}});
+var vols=raw.map(function(d){{return{{value:+d.volume,itemStyle:{{color:+d.close>=+d.open?'#5da602':'#d84a33'}}}}}});
 chart.setOption({{
   animationDuration:800,animationEasing:'cubicOut',
   tooltip:{{trigger:'axis',axisPointer:{{type:'cross'}},backgroundColor:'#0e0e0e',borderColor:'#282828',textStyle:{{color:'#feffff',fontSize:11}}}},
