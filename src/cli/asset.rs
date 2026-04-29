@@ -30,6 +30,29 @@ pub async fn cmd_exchange_rate(format: &OutputFormat, verbose: bool) -> Result<(
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Html => {
+            if let Some(list) = data["exchanges"].as_array() {
+                let rows: Vec<Vec<String>> = list
+                    .iter()
+                    .map(|item| {
+                        vec![
+                            format!(
+                                "{} → {}",
+                                val_str(&item["base_currency"]),
+                                val_str(&item["other_currency"])
+                            ),
+                            val_str(&item["average_rate"]),
+                            val_str(&item["bid_rate"]),
+                            val_str(&item["offer_rate"]),
+                        ]
+                    })
+                    .collect();
+                return crate::cli::html_render::open_html_table(
+                    "Exchange Rates",
+                    "exchange-rate",
+                    &["Pair", "Average Rate", "Bid Rate", "Offer Rate"],
+                    rows,
+                );
+            }
             return crate::cli::html_render::open_html_raw("Exchange Rates", "exchange-rate", data);
         }
         OutputFormat::Pretty => print_exchange_rates(&data),

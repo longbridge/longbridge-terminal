@@ -1420,12 +1420,7 @@ pub async fn cmd_alert_list(
             if rows.is_empty() {
                 println!("No alerts found.");
             } else if matches!(format, OutputFormat::Html) {
-                return crate::cli::html_render::open_html_table(
-                    "Alerts",
-                    "alert list",
-                    &headers,
-                    rows,
-                );
+                return crate::cli::html_render::open_html_table("Alerts", "alert", &headers, rows);
             } else {
                 print_table(&headers, rows, format);
             }

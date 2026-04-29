@@ -82,8 +82,12 @@
   var sorted = holdings.slice().sort(function (a, b) {
     return (parseFloat(b.market_value_usd) || 0) - (parseFloat(a.market_value_usd) || 0);
   });
+  var totalMv = sorted.reduce(function (s, h) { return s + (parseFloat(h.market_value_usd) || 0); }, 0);
   var barSymbols = sorted.map(function (h) { return h.symbol.split('.')[0]; });
-  var barVals = sorted.map(function (h) { return +(parseFloat(h.market_value_usd) || 0).toFixed(2); });
+  var barVals = sorted.map(function (h) {
+    var mv = parseFloat(h.market_value_usd) || 0;
+    return +(totalMv > 0 ? mv / totalMv * 100 : 0).toFixed(2);
+  });
   var barColors = sorted.map(function (h) {
     var pl = h.cost_price
       ? (parseFloat(h.market_price) - parseFloat(h.cost_price)) * parseFloat(h.quantity)
@@ -98,8 +102,12 @@
       trigger: 'axis', axisPointer: { type: 'shadow' },
       backgroundColor: '#0e0e0e', borderColor: '#282828',
       textStyle: { color: '#feffff', fontSize: 11 },
+      formatter: function (params) {
+        var p = params[0];
+        return p.axisValue + ': ' + p.value.toFixed(2) + '%';
+      }
     },
-    grid: { left: 64, right: 16, top: 16, bottom: 48 },
+    grid: { left: 48, right: 16, top: 16, bottom: 48 },
     xAxis: {
       type: 'category', data: barSymbols,
       axisLabel: { color: '#677179', fontSize: 10, rotate: 30 },
@@ -107,18 +115,11 @@
     },
     yAxis: {
       scale: true, splitLine: { lineStyle: { color: '#282828' } },
-      axisLabel: {
-        color: '#677179', fontSize: 10,
-        formatter: function (v) {
-          var a = Math.abs(v);
-          if (a >= 1e6) return (v / 1e6).toFixed(1) + 'M';
-          if (a >= 1e3) return (v / 1e3).toFixed(1) + 'K';
-          return v;
-        }
-      }
+      axisLabel: { color: '#677179', fontSize: 10, formatter: function (v) { return v + '%'; } }
     },
     series: [{
       type: 'bar', barMaxWidth: 28,
+      label: { show: true, position: 'top', color: '#677179', fontSize: 10, formatter: function (p) { return p.value.toFixed(1) + '%'; } },
       data: barVals.map(function (v, i) { return { value: v, itemStyle: { color: barColors[i] } }; }),
     }]
   });
