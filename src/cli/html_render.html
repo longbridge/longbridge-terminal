@@ -36,7 +36,13 @@
                 max-height: 420px;
                 overflow-x: auto;
                 overflow-y: auto;
+                scrollbar-width: thin;
+                scrollbar-color: #3a3a3a #171717;
             }
+            .tbl-wrap::-webkit-scrollbar { width: 6px; height: 6px; }
+            .tbl-wrap::-webkit-scrollbar-track { background: #171717; }
+            .tbl-wrap::-webkit-scrollbar-thumb { background: #3a3a3a; }
+            .tbl-wrap::-webkit-scrollbar-thumb:hover { background: #4a4a4a; }
             th {
                 position: sticky;
                 top: 0;
