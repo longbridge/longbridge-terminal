@@ -17,6 +17,9 @@ my_quote:
   col_package: "Package"
   col_start: "Start"
   col_end: "End"
+  subscribed: "Subscribed Quotes"
+  unsubscribed: "Unsubscribed Quotes"
+  no_data: "No data"
   qr_title: "Purchase Quote Packages"
   scan_hint: |
     Scan with the QR scanner in the "Me" tab inside Longbridge App.
@@ -35,6 +38,9 @@ user:
   open_account:
     heading: "Account is not opened"
     content: "Please open account in other LongBridge app"
+account:
+  type:
+    paper: "Paper"
 Prompt:
   Esc: Press 'ESC' to cancel
 Candlestick:
