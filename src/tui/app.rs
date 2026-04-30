@@ -23,7 +23,7 @@ pub static LOG_PANEL_VISIBLE: Atomic<bool> = Atomic::new(false);
 pub static WATCHLIST: std::sync::LazyLock<RwLock<Watchlist>> =
     std::sync::LazyLock::new(Default::default);
 pub static USER: std::sync::LazyLock<RwLock<User>> = std::sync::LazyLock::new(Default::default);
-pub static ACCOUNT_TYPE: std::sync::LazyLock<RwLock<Option<String>>> =
+pub static ACCOUNT_CHANNEL: std::sync::LazyLock<RwLock<Option<String>>> =
     std::sync::LazyLock::new(|| RwLock::new(None));
 
 pub const POPUP_HELP: u16 = 0b1;
@@ -53,43 +53,10 @@ pub enum AppState {
     Orders,
 }
 
-async fn fetch_account_type_from_statement() -> Option<String> {
-    use longbridge::asset::{GetStatementListOptions, GetStatementOptions, StatementType};
-
-    let ctx = crate::openapi::statement();
-
-    let list_resp = ctx
-        .statements(
-            GetStatementListOptions::new(StatementType::Daily)
-                .page(1)
-                .page_size(1),
-        )
-        .await
-        .ok()?;
-
-    let file_key = list_resp.list.into_iter().next()?.file_key;
-
-    let dl_resp = ctx
-        .statement_download_url(GetStatementOptions::new(&file_key))
-        .await
-        .ok()?;
-
-    let body = reqwest::Client::new()
-        .get(&dl_resp.url)
-        .send()
-        .await
-        .ok()?
-        .text()
-        .await
-        .ok()?;
-
-    let value: serde_json::Value = serde_json::from_str(&body).ok()?;
-    let account_type = value["MemberInfo"]["AccountType"].as_str()?.to_owned();
-    if account_type.is_empty() {
-        None
-    } else {
-        Some(account_type)
-    }
+async fn fetch_account_channel() -> Option<String> {
+    let ctx = crate::openapi::trade();
+    let resp = ctx.stock_positions(None).await.ok()?;
+    resp.channels.into_iter().next().map(|c| c.account_channel)
 }
 
 #[allow(clippy::too_many_lines)]
@@ -306,10 +273,9 @@ pub async fn run(
                     });
                     _ = tx.send(queue);
 
-                    // Fetch account type from statement in background (non-blocking)
                     tokio::spawn(async move {
-                        if let Some(account_type) = fetch_account_type_from_statement().await {
-                            *ACCOUNT_TYPE.write().expect("poison") = Some(account_type);
+                        if let Some(channel) = fetch_account_channel().await {
+                            *ACCOUNT_CHANNEL.write().expect("poison") = Some(channel);
                         }
                     });
 

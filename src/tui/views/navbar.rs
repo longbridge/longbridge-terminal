@@ -5,7 +5,10 @@ use ratatui::{
     Frame,
 };
 
-use crate::{tui::app::{AppState, ACCOUNT_TYPE}, tui::ui::styles};
+use crate::{
+    tui::app::{AppState, ACCOUNT_CHANNEL},
+    tui::ui::styles,
+};
 
 pub fn render(frame: &mut Frame, rect: Rect, state: AppState) {
     let chunks = Layout::default()
@@ -30,29 +33,25 @@ pub fn render(frame: &mut Frame, rect: Rect, state: AppState) {
             _ => 0,
         });
 
-    // Simplified implementation: use fixed username
-    let nickname = "User".to_string();
     let dark_gray_style = styles::dark_gray();
-    let name = Span::styled(t!("Welcome, %{name}", name = nickname), dark_gray_style);
     let search = Span::styled(t!("Keyboard.Search"), dark_gray_style);
     let help = Span::styled(t!("Keyboard.Help"), dark_gray_style);
     let log = Span::styled(t!("Keyboard.Console"), dark_gray_style);
     let quit = Span::styled(t!("Keyboard.Quit"), dark_gray_style);
 
-    let account_type = ACCOUNT_TYPE.read().expect("poison").clone();
-    let mut spans = vec![name];
-    if let Some(ref t) = account_type {
-        let is_real = matches!(t.as_str(), "CashAccount" | "MarginAccount");
-        let badge_style = if is_real {
-            styles::online()
+    let account_channel = ACCOUNT_CHANNEL.read().expect("poison").clone();
+    let mut spans: Vec<Span> = Vec::new();
+    if let Some(ref ch) = account_channel {
+        let is_simulation = ch == "lb_papertrading";
+        let (label, badge_style) = if is_simulation {
+            (t!("account.type.paper").to_string(), styles::bmp())
         } else {
-            styles::bmp()
+            (t!("account.type.live").to_string(), styles::online())
         };
-        spans.push(Span::styled(" ", dark_gray_style));
-        spans.push(Span::styled(format!("[{t}]"), badge_style));
+        spans.push(Span::styled(label, badge_style));
+        spans.push(Span::styled(" | ", dark_gray_style));
     }
     spans.extend([
-        Span::styled(" | ", dark_gray_style),
         search,
         Span::styled(" ", dark_gray_style),
         help,
