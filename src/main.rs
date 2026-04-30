@@ -197,9 +197,9 @@ async fn main() {
         },
 
         Some(cli::Commands::Auth {
-            cmd: cli::AuthCmd::Status,
+            cmd: cli::AuthCmd::Status { market },
         }) => {
-            if let Err(e) = cli::auth::cmd_auth_status(&cli.format).await {
+            if let Err(e) = cli::auth::cmd_auth_status(&cli.format, &market).await {
                 eprintln!("Error: {e}");
                 std::process::exit(1);
             }
