@@ -38,6 +38,9 @@ user:
   open_account:
     heading: "請開户"
     content: "請在其他長橋應用上開户後使用"
+account:
+  type:
+    paper: "模擬帳戶"
 Prompt:
   Esc: 按 ESC 鍵退出
 Candlestick:

@@ -23,6 +23,8 @@ pub static LOG_PANEL_VISIBLE: Atomic<bool> = Atomic::new(false);
 pub static WATCHLIST: std::sync::LazyLock<RwLock<Watchlist>> =
     std::sync::LazyLock::new(Default::default);
 pub static USER: std::sync::LazyLock<RwLock<User>> = std::sync::LazyLock::new(Default::default);
+pub static ACCOUNT_CHANNEL: std::sync::LazyLock<RwLock<Option<String>>> =
+    std::sync::LazyLock::new(|| RwLock::new(None));
 
 pub const POPUP_HELP: u16 = 0b1;
 pub const POPUP_SEARCH: u16 = 0b10;
@@ -49,6 +51,12 @@ pub enum AppState {
     Watchlist,
     WatchlistStock,
     Orders,
+}
+
+async fn fetch_account_channel() -> Option<String> {
+    let ctx = crate::openapi::trade();
+    let resp = ctx.stock_positions(None).await.ok()?;
+    resp.channels.into_iter().next().map(|c| c.account_channel)
 }
 
 #[allow(clippy::too_many_lines)]
@@ -264,6 +272,12 @@ pub async fn run(
                         resource: NextState(Some(AppState::Watchlist)),
                     });
                     _ = tx.send(queue);
+
+                    tokio::spawn(async move {
+                        if let Some(channel) = fetch_account_channel().await {
+                            *ACCOUNT_CHANNEL.write().expect("poison") = Some(channel);
+                        }
+                    });
 
                     // Load watchlist data
                     tracing::info!("Loading watchlist data...");
