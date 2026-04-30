@@ -17,6 +17,9 @@ my_quote:
   col_package: "套餐"
   col_start: "开始"
   col_end: "到期"
+  subscribed: "已开通行情"
+  unsubscribed: "未开通行情"
+  no_data: "暂无数据"
   qr_title: "购买行情套餐"
   scan_hint: |
     请用 Longbridge App 内「我的」Tab 中的点击扫码打开行情商城。

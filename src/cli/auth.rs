@@ -3,6 +3,9 @@ use time::OffsetDateTime;
 
 use anyhow::Result;
 use longbridge::asset::{GetStatementListOptions, GetStatementOptions, StatementType};
+use longbridge::httpclient::Json;
+use reqwest::Method;
+use serde::Deserialize;
 use serde_json::json;
 
 use super::OutputFormat;
@@ -122,10 +125,41 @@ fn read_token_state() -> Result<TokenState> {
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct LevelCenterItem {
+    key: String,
+    name: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    start_at: String,
+    #[serde(default)]
+    end_at: String,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct LevelCenterData {
+    #[serde(default)]
+    activated_lists: Vec<LevelCenterItem>,
+    #[serde(default)]
+    unactivated_lists: Vec<LevelCenterItem>,
+}
+
+async fn fetch_level_center() -> Option<LevelCenterData> {
+    let client = crate::openapi::http_client();
+    let resp = client
+        .request(Method::GET, "/v1/quote/level_center")
+        .response::<Json<serde_json::Value>>()
+        .send()
+        .await
+        .ok()?;
+
+    serde_json::from_value(resp.0).ok()
+}
+
 struct AccountInfo {
     member_id: i64,
-    quote_level: String,
-    quote_packages: Vec<longbridge::quote::QuotePackageDetail>,
+    level_center: Option<LevelCenterData>,
     account_no: Option<String>,
     account_type: Option<String>,
     name: Option<String>,
@@ -179,10 +213,9 @@ async fn fetch_account_info_from_statement() -> Option<(String, String, String)>
 }
 
 async fn fetch_account_info() -> Result<AccountInfo> {
-    let (member_id, quote_level, quote_packages, statement_info) = tokio::join!(
+    let (member_id, level_center, statement_info) = tokio::join!(
         crate::openapi::quote().member_id(),
-        crate::openapi::quote().quote_level(),
-        crate::openapi::quote().quote_package_details(),
+        fetch_level_center(),
         fetch_account_info_from_statement(),
     );
 
@@ -197,8 +230,7 @@ async fn fetch_account_info() -> Result<AccountInfo> {
 
     Ok(AccountInfo {
         member_id: member_id?,
-        quote_level: quote_level?,
-        quote_packages: quote_packages.unwrap_or_default(),
+        level_center,
         account_no,
         account_type,
         name,
@@ -227,23 +259,29 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
             });
 
             if let Some(acc) = &account {
-                let packages: Vec<_> = acc
-                    .quote_packages
-                    .iter()
-                    .map(|p| {
-                        json!({
-                            "key": p.key,
-                            "name": p.name,
-                            "description": p.description,
-                            "start_at": p.start_at.to_string(),
-                            "end_at": p.end_at.to_string(),
+                let to_json = |items: &[LevelCenterItem]| -> Vec<serde_json::Value> {
+                    items
+                        .iter()
+                        .map(|p| {
+                            json!({
+                                "key": p.key,
+                                "name": p.name,
+                                "description": p.description,
+                                "start_at": p.start_at,
+                                "end_at": p.end_at,
+                            })
                         })
-                    })
-                    .collect();
+                        .collect()
+                };
+                let (activated, unactivated) = acc
+                    .level_center
+                    .as_ref()
+                    .map(|lc| (to_json(&lc.activated_lists), to_json(&lc.unactivated_lists)))
+                    .unwrap_or_default();
                 value["account"] = json!({
                     "member_id": acc.member_id,
-                    "quote_level": acc.quote_level,
-                    "quote_packages": packages,
+                    "activated_packages": activated,
+                    "unactivated_packages": unactivated,
                     "account_no": acc.account_no,
                     "account_type": acc.account_type,
                     "name": acc.name,
@@ -321,25 +359,44 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
                 println!("{:<W$} {}", "Member Id", acc.member_id, W = W);
 
                 // ── Quote Level ─────────────────────────────────────────────────
-                println!();
-                println!("Quote Level");
-                if acc.quote_packages.is_empty() {
-                    println!("{:<W$} {}", "Level", acc.quote_level, W = W);
-                } else {
-                    for pkg in &acc.quote_packages {
-                        let market = pkg.key.split('_').next().unwrap_or("");
-                        let start = pkg.start_at.date();
-                        let end = pkg.end_at.date();
+                let empty = LevelCenterData::default();
+                let lc = acc.level_center.as_ref().unwrap_or(&empty);
+
+                let print_pkg = |pkg: &LevelCenterItem, active: bool| {
+                    let market = pkg.key.split('_').next().unwrap_or("");
+                    if active {
                         println!(
-                            "  {}  {GREEN}{}{RESET}  ({start} ~ {end})",
-                            market, pkg.name
+                            "  {market}  {GREEN}{}{RESET}  ({} ~ {})",
+                            pkg.name, pkg.start_at, pkg.end_at
                         );
-                        let sub = if pkg.description.is_empty() {
-                            pkg.key.clone()
-                        } else {
-                            format!("{} · {}", pkg.key, pkg.description)
-                        };
-                        println!("      {DIM}{sub}{RESET}");
+                    } else {
+                        println!("  {market}  {DIM}{}{RESET}", pkg.name);
+                    }
+                    let sub = if pkg.description.is_empty() {
+                        pkg.key.clone()
+                    } else {
+                        format!("{} · {}", pkg.key, pkg.description)
+                    };
+                    println!("      {DIM}{sub}{RESET}");
+                };
+
+                println!();
+                println!("{}", t!("my_quote.subscribed"));
+                if lc.activated_lists.is_empty() {
+                    println!("  {DIM}{}{RESET}", t!("my_quote.no_data"));
+                } else {
+                    for pkg in &lc.activated_lists {
+                        print_pkg(pkg, true);
+                    }
+                }
+
+                println!();
+                println!("{}", t!("my_quote.unsubscribed"));
+                if lc.unactivated_lists.is_empty() {
+                    println!("  {DIM}{}{RESET}", t!("my_quote.no_data"));
+                } else {
+                    for pkg in &lc.unactivated_lists {
+                        print_pkg(pkg, false);
                     }
                 }
 
