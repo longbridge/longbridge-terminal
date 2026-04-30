@@ -1703,51 +1703,47 @@ pub fn render_date_filter_popup(frame: &mut Frame, rect: Rect) {
 
 // helper: open cancel popup for selected order in Orders page
 pub fn try_open_cancel_for_selected() {
-    let selected = ORDERS_TABLE.lock().expect("poison").selected();
-    if let Some(idx) = selected {
-        let orders = ORDERS_VIEW.read().expect("poison");
-        if let Some(order) = orders.get(idx) {
-            let cancellable = matches!(
-                order.status,
-                longbridge::trade::OrderStatus::WaitToNew
-                    | longbridge::trade::OrderStatus::New
-                    | longbridge::trade::OrderStatus::WaitToReplace
-                    | longbridge::trade::OrderStatus::PartialFilled
-            );
-            if cancellable {
-                *CANCEL_TARGET.write().expect("poison") = Some(order.clone());
-                POPUP.store(POPUP_CANCEL_ORDER, Ordering::Relaxed);
-            }
+    let idx = ORDERS_TABLE.lock().expect("poison").selected().unwrap_or(0);
+    let orders = ORDERS_VIEW.read().expect("poison");
+    if let Some(order) = orders.get(idx) {
+        let cancellable = matches!(
+            order.status,
+            longbridge::trade::OrderStatus::WaitToNew
+                | longbridge::trade::OrderStatus::New
+                | longbridge::trade::OrderStatus::WaitToReplace
+                | longbridge::trade::OrderStatus::PartialFilled
+        );
+        if cancellable {
+            *CANCEL_TARGET.write().expect("poison") = Some(order.clone());
+            POPUP.store(POPUP_CANCEL_ORDER, Ordering::Relaxed);
         }
     }
 }
 
 // helper: open replace popup for selected order in Orders page
 pub fn try_open_replace_for_selected() {
-    let selected = ORDERS_TABLE.lock().expect("poison").selected();
-    if let Some(idx) = selected {
-        let orders = ORDERS_VIEW.read().expect("poison");
-        if let Some(order) = orders.get(idx) {
-            let replaceable = matches!(
-                order.status,
-                longbridge::trade::OrderStatus::WaitToNew
-                    | longbridge::trade::OrderStatus::New
-                    | longbridge::trade::OrderStatus::WaitToReplace
-                    | longbridge::trade::OrderStatus::PartialFilled
-            );
-            if replaceable {
-                let state = ReplaceOrderState {
-                    order_id: order.order_id.clone(),
-                    qty_input: tui_input::Input::new(format!("{}", order.quantity)),
-                    price_input: tui_input::Input::new(
-                        order.price.map(|p| format!("{p:.2}")).unwrap_or_default(),
-                    ),
-                    focused: ReplaceOrderField::Qty,
-                    confirming: false,
-                };
-                *REPLACE_ORDER_STATE.write().expect("poison") = Some(state);
-                POPUP.store(POPUP_REPLACE_ORDER, Ordering::Relaxed);
-            }
+    let idx = ORDERS_TABLE.lock().expect("poison").selected().unwrap_or(0);
+    let orders = ORDERS_VIEW.read().expect("poison");
+    if let Some(order) = orders.get(idx) {
+        let replaceable = matches!(
+            order.status,
+            longbridge::trade::OrderStatus::WaitToNew
+                | longbridge::trade::OrderStatus::New
+                | longbridge::trade::OrderStatus::WaitToReplace
+                | longbridge::trade::OrderStatus::PartialFilled
+        );
+        if replaceable {
+            let state = ReplaceOrderState {
+                order_id: order.order_id.clone(),
+                qty_input: tui_input::Input::new(format!("{}", order.quantity)),
+                price_input: tui_input::Input::new(
+                    order.price.map(|p| format!("{p:.2}")).unwrap_or_default(),
+                ),
+                focused: ReplaceOrderField::Qty,
+                confirming: false,
+            };
+            *REPLACE_ORDER_STATE.write().expect("poison") = Some(state);
+            POPUP.store(POPUP_REPLACE_ORDER, Ordering::Relaxed);
         }
     }
 }
