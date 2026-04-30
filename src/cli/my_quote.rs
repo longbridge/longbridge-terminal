@@ -9,7 +9,7 @@ pub fn print_mall_qr(_account_channel: &str) -> Result<()> {
     const QZ: &str = "    "; // renderer's default left quiet zone
     const INDENT: &str = "  ";
 
-    let url = "https://activity.lbkrs.com/spa/mall";
+    let url = "https://longbridge.activity.wbrks.com/spa/my-market?need_login=0&is_new_market=true";
     let code = QrCode::with_error_correction_level(url.as_bytes(), qrcode::EcLevel::L)
         .map_err(|e| anyhow::anyhow!("Failed to generate QR code: {e}"))?;
 
