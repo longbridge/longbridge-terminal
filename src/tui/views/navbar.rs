@@ -41,14 +41,8 @@ pub fn render(frame: &mut Frame, rect: Rect, state: AppState) {
 
     let account_channel = ACCOUNT_CHANNEL.read().expect("poison").clone();
     let mut spans: Vec<Span> = Vec::new();
-    if let Some(ref ch) = account_channel {
-        let is_simulation = ch == "lb_papertrading";
-        let (label, badge_style) = if is_simulation {
-            (t!("account.type.paper").to_string(), styles::bmp())
-        } else {
-            (t!("account.type.live").to_string(), styles::online())
-        };
-        spans.push(Span::styled(label, badge_style));
+    if account_channel.as_deref() == Some("lb_papertrading") {
+        spans.push(Span::styled(t!("account.type.paper").to_string(), styles::bmp()));
         spans.push(Span::styled(" | ", dark_gray_style));
     }
     spans.extend([

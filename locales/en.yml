@@ -26,7 +26,6 @@ user:
     content: "Please open account in other LongBridge app"
 account:
   type:
-    live: "Live"
     paper: "Paper"
 Prompt:
   Esc: Press 'ESC' to cancel
