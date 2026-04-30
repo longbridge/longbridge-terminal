@@ -2,14 +2,14 @@ use anyhow::Result;
 use qrcode::render::unicode;
 use qrcode::QrCode;
 
-pub fn print_mall_qr(_account_channel: &str) -> Result<()> {
+pub fn print_mall_qr(account_channel: &str) -> Result<()> {
     // The renderer adds a 4-char quiet zone on each side (= 4 QR modules).
     // Replace the left quiet zone with 2 spaces so the code stays aligned
     // to the terminal margin while keeping a 2-module quiet zone for scanning.
     const QZ: &str = "    "; // renderer's default left quiet zone
     const INDENT: &str = "  ";
 
-    let url = "https://activity.lbkrs.com/spa/mall";
+    let url = format!("https://activity.wbrks.com/spa/my-market?need_login=0&is_new_market=true&account_channel={account_channel}");
     let code = QrCode::with_error_correction_level(url.as_bytes(), qrcode::EcLevel::L)
         .map_err(|e| anyhow::anyhow!("Failed to generate QR code: {e}"))?;
 
