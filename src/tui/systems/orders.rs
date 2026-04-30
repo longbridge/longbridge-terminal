@@ -1174,14 +1174,22 @@ fn render_orders_list(frame: &mut Frame, rect: Rect) {
 
 fn order_status_style(status: longbridge::trade::OrderStatus) -> Style {
     match status {
-        longbridge::trade::OrderStatus::WaitToNew
+        longbridge::trade::OrderStatus::NotReported
+        | longbridge::trade::OrderStatus::ReplacedNotReported
+        | longbridge::trade::OrderStatus::ProtectedNotReported
+        | longbridge::trade::OrderStatus::VarietiesNotReported
+        | longbridge::trade::OrderStatus::WaitToNew
         | longbridge::trade::OrderStatus::New
-        | longbridge::trade::OrderStatus::WaitToReplace => Style::default().fg(Color::Yellow),
+        | longbridge::trade::OrderStatus::WaitToReplace
+        | longbridge::trade::OrderStatus::PendingReplace
+        | longbridge::trade::OrderStatus::WaitToCancel
+        | longbridge::trade::OrderStatus::PendingCancel => Style::default().fg(Color::Yellow),
         longbridge::trade::OrderStatus::PartialFilled => Style::default().fg(Color::Cyan),
         longbridge::trade::OrderStatus::Filled => Style::default().fg(Color::Green),
         longbridge::trade::OrderStatus::Canceled
         | longbridge::trade::OrderStatus::Replaced
-        | longbridge::trade::OrderStatus::PartialWithdrawal => Style::default().fg(Color::DarkGray),
+        | longbridge::trade::OrderStatus::PartialWithdrawal
+        | longbridge::trade::OrderStatus::Expired => Style::default().fg(Color::DarkGray),
         longbridge::trade::OrderStatus::Rejected => Style::default().fg(Color::Red),
         _ => Style::default(),
     }
@@ -1189,15 +1197,23 @@ fn order_status_style(status: longbridge::trade::OrderStatus) -> Style {
 
 fn order_status_label(status: longbridge::trade::OrderStatus) -> &'static str {
     match status {
+        longbridge::trade::OrderStatus::NotReported => "NotReported",
+        longbridge::trade::OrderStatus::ReplacedNotReported => "ReplacedNR",
+        longbridge::trade::OrderStatus::ProtectedNotReported => "ProtectedNR",
+        longbridge::trade::OrderStatus::VarietiesNotReported => "VarietiesNR",
         longbridge::trade::OrderStatus::WaitToNew => "PendingNew",
         longbridge::trade::OrderStatus::New => "New",
         longbridge::trade::OrderStatus::WaitToReplace => "PendingReplace",
+        longbridge::trade::OrderStatus::PendingReplace => "Replacing",
+        longbridge::trade::OrderStatus::Replaced => "Replaced",
         longbridge::trade::OrderStatus::PartialFilled => "PartialFill",
+        longbridge::trade::OrderStatus::WaitToCancel => "PendingCancel",
+        longbridge::trade::OrderStatus::PendingCancel => "Cancelling",
         longbridge::trade::OrderStatus::Filled => "Filled",
         longbridge::trade::OrderStatus::Canceled => "Cancelled",
-        longbridge::trade::OrderStatus::Replaced => "Replaced",
-        longbridge::trade::OrderStatus::PartialWithdrawal => "PartialWithdrawal",
         longbridge::trade::OrderStatus::Rejected => "Rejected",
+        longbridge::trade::OrderStatus::Expired => "Expired",
+        longbridge::trade::OrderStatus::PartialWithdrawal => "PartialWithdrawal",
         _ => "–",
     }
 }
@@ -1710,14 +1726,15 @@ pub fn try_open_cancel_for_selected() {
         set_toast(ToastKind::Error, t!("Trade.NoOrderSelected").to_string());
         return;
     };
-    let cancellable = matches!(
+    let terminal = matches!(
         order.status,
-        longbridge::trade::OrderStatus::WaitToNew
-            | longbridge::trade::OrderStatus::New
-            | longbridge::trade::OrderStatus::WaitToReplace
-            | longbridge::trade::OrderStatus::PartialFilled
+        longbridge::trade::OrderStatus::Filled
+            | longbridge::trade::OrderStatus::Canceled
+            | longbridge::trade::OrderStatus::Rejected
+            | longbridge::trade::OrderStatus::Expired
+            | longbridge::trade::OrderStatus::PartialWithdrawal
     );
-    if cancellable {
+    if !terminal {
         *CANCEL_TARGET.write().expect("poison") = Some(order.clone());
         POPUP.store(POPUP_CANCEL_ORDER, Ordering::Relaxed);
     } else {
@@ -1736,14 +1753,15 @@ pub fn try_open_replace_for_selected() {
         set_toast(ToastKind::Error, t!("Trade.NoOrderSelected").to_string());
         return;
     };
-    let replaceable = matches!(
+    let terminal = matches!(
         order.status,
-        longbridge::trade::OrderStatus::WaitToNew
-            | longbridge::trade::OrderStatus::New
-            | longbridge::trade::OrderStatus::WaitToReplace
-            | longbridge::trade::OrderStatus::PartialFilled
+        longbridge::trade::OrderStatus::Filled
+            | longbridge::trade::OrderStatus::Canceled
+            | longbridge::trade::OrderStatus::Rejected
+            | longbridge::trade::OrderStatus::Expired
+            | longbridge::trade::OrderStatus::PartialWithdrawal
     );
-    if replaceable {
+    if !terminal {
         let state = ReplaceOrderState {
             order_id: order.order_id.clone(),
             qty_input: tui_input::Input::new(format!("{}", order.quantity)),
