@@ -784,6 +784,7 @@ pub fn handle_date_filter_key(event: KeyEvent) {
 // ─────────────────────────── Bevy ECS systems ───────────────────────────────
 
 pub fn enter_orders() {
+    ORDERS_TABLE.lock().expect("poison").select(Some(0));
     refresh_orders();
     refresh_history_orders();
 }
