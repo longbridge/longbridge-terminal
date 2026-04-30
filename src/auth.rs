@@ -58,6 +58,50 @@ fn invite_code_file_path() -> Result<PathBuf> {
         .join("invite-code"))
 }
 
+/// Default `account_channel` used when no token is present or the JWT
+/// cannot be decoded. Matches the historical hardcoded value across the CLI/TUI.
+pub const DEFAULT_ACCOUNT_CHANNEL: &str = "lb";
+
+/// Decode a JWT payload (no signature verification) as a JSON value.
+fn decode_jwt_payload(token: &str) -> Option<serde_json::Value> {
+    use base64::Engine as _;
+    let payload = token.split('.').nth(1)?;
+    let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload)
+        .ok()?;
+    serde_json::from_slice(&decoded).ok()
+}
+
+/// Read the logged-in user's `account_channel` from the local access token.
+///
+/// Longbridge tokens carry `sub` as a JSON-encoded string with fields like
+/// `client_id`, `member_id`, and `account_channel` (`"lb"`,
+/// `"lb_papertrading"`, etc.). Several APIs require this to match the
+/// token's own channel — e.g. `/v1/quote/my-quotes` returns 401004 when
+/// the request `account_channel` does not match.
+///
+/// Returns `None` if the token file is missing/unparseable or the JWT
+/// lacks the field. Use [`account_channel_or_default`] to get a usable
+/// string with a `"lb"` fallback.
+pub fn account_channel() -> Option<String> {
+    let path = token_file_path().ok()?;
+    let contents = fs::read_to_string(path).ok()?;
+    let data: serde_json::Value = serde_json::from_str(&contents).ok()?;
+    let token = data["access_token"].as_str()?;
+    let claims = decode_jwt_payload(token)?;
+    let sub_str = claims["sub"].as_str()?;
+    let sub: serde_json::Value = serde_json::from_str(sub_str).ok()?;
+    sub["account_channel"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+}
+
+/// [`account_channel`] with a fallback to [`DEFAULT_ACCOUNT_CHANNEL`].
+pub fn account_channel_or_default() -> String {
+    account_channel().unwrap_or_else(|| DEFAULT_ACCOUNT_CHANNEL.to_owned())
+}
+
 /// Persist the invite code to disk.
 pub fn save_invite_code(invite_code: &str) -> Result<()> {
     let path = invite_code_file_path()?;
