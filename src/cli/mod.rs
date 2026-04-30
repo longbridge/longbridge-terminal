@@ -2192,10 +2192,15 @@ pub enum AuthCmd {
     /// Show authentication status
     ///
     /// Checks whether a token is stored locally and whether it is still valid.
-    /// Does not make any network requests.
+    /// Also lists the user's quote subscriptions via `/v1/quote/my-quotes`.
     /// Example: longbridge auth status
+    /// Example: longbridge auth status --market US
     /// Example: longbridge auth status --format json
-    Status,
+    Status {
+        /// Market filter for quote subscriptions: `all` (default), `HK`, `US`, `CN`, `SG`.
+        #[arg(long, value_name = "MARKET", default_value = "all")]
+        market: String,
+    },
 }
 
 pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Result<()> {

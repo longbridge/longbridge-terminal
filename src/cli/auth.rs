@@ -3,6 +3,9 @@ use time::OffsetDateTime;
 
 use anyhow::Result;
 use longbridge::asset::{GetStatementListOptions, GetStatementOptions, StatementType};
+use longbridge::httpclient::Json;
+use reqwest::Method;
+use serde::Deserialize;
 use serde_json::json;
 
 use super::OutputFormat;
@@ -52,6 +55,47 @@ fn jwt_exp(token: &str) -> Option<u64> {
         .ok()?;
     let v: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
     v["exp"].as_u64()
+}
+
+/// Extract the user's `account_channel` from the access token JWT.
+///
+/// Longbridge tokens carry `sub` as a JSON-encoded string containing
+/// `account_channel` (e.g. `"lb"`, `"lb_papertrading"`, etc.). The channel
+/// is required by `/v1/quote/my-quotes` and must match the token's own
+/// channel — otherwise the server returns 401004.
+fn jwt_account_channel(token: &str) -> Option<String> {
+    use base64::Engine as _;
+    let payload = token.split('.').nth(1)?;
+    let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload)
+        .ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
+    let sub_str = v["sub"].as_str()?;
+    let sub: serde_json::Value = serde_json::from_str(sub_str).ok()?;
+    sub["account_channel"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+}
+
+/// Read the logged-in user's `account_channel` from the local token file.
+/// Falls back to `"lb"` when the file is missing/unparseable, which is the
+/// channel used by the rest of the CLI/TUI when no real account info is loaded.
+fn read_account_channel() -> String {
+    let default = "lb".to_owned();
+    let Ok(path) = crate::auth::token_file_path() else {
+        return default;
+    };
+    let Ok(contents) = std::fs::read_to_string(&path) else {
+        return default;
+    };
+    let Ok(data) = serde_json::from_str::<serde_json::Value>(&contents) else {
+        return default;
+    };
+    data["access_token"]
+        .as_str()
+        .and_then(jwt_account_channel)
+        .unwrap_or(default)
 }
 
 fn read_token_state() -> Result<TokenState> {
@@ -122,10 +166,81 @@ fn read_token_state() -> Result<TokenState> {
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct LevelCenterItem {
+    /// Package identifier, e.g. `US_QBBO`, `HK_L1_OpenAPI`. Used as the row key.
+    #[serde(default)]
+    package_key: String,
+    /// Display name, e.g. `LV1 实时行情`.
+    #[serde(default)]
+    name: String,
+    /// Long description.
+    #[serde(default)]
+    description: String,
+    /// Market the package is for: `US`, `HK`, `CN`, `SG`.
+    #[serde(default)]
+    market: String,
+    /// Tags such as `["API"]` for OpenAPI-tagged packages.
+    #[serde(default)]
+    tags: Vec<String>,
+    /// Server-rendered text such as `推广期免费` / `暂无权限`.
+    #[serde(default)]
+    expired_msg: String,
+    /// Unix timestamp string for when the entitlement expires (`"0"` means n/a).
+    #[serde(default)]
+    end_time: String,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct LevelCenterData {
+    #[serde(default)]
+    activated_lists: Vec<LevelCenterItem>,
+    #[serde(default)]
+    unactivated_lists: Vec<LevelCenterItem>,
+}
+
+/// Format the package `end_time` (Unix timestamp string) as `YYYY-MM-DD`.
+/// Returns empty string for `"0"`, missing, or unparseable values.
+fn format_pkg_expiry(end_time: &str) -> String {
+    let ts: i64 = match end_time.parse() {
+        Ok(0) | Err(_) => return String::new(),
+        Ok(v) => v,
+    };
+    OffsetDateTime::from_unix_timestamp(ts)
+        .map(|dt| {
+            format!(
+                "expires {}-{:02}-{:02}",
+                dt.year(),
+                dt.month() as u8,
+                dt.day(),
+            )
+        })
+        .unwrap_or_default()
+}
+
+async fn fetch_my_quotes(market: &str, account_channel: &str) -> Option<LevelCenterData> {
+    // Backend expects uppercase market codes (`ALL`, `HK`, `US`, `CN`, `SG`).
+    let market = market.to_uppercase();
+    let client = crate::openapi::http_client();
+    let resp = client
+        .request(Method::GET, "/v1/quote/my-quotes")
+        .query_params(vec![
+            ("market", market.as_str()),
+            ("account_channel", account_channel),
+        ])
+        .response::<Json<serde_json::Value>>()
+        .send()
+        .await
+        .ok()?;
+    serde_json::from_value(resp.0).ok()
+}
+
 struct AccountInfo {
-    member_id: i64,
-    quote_level: String,
-    quote_packages: Vec<longbridge::quote::QuotePackageDetail>,
+    /// `None` when the underlying quote-scope call fails (e.g. token lacks
+    /// quote scope, staging member service down). Other fields still render
+    /// independently.
+    member_id: Option<i64>,
+    level_center: Option<LevelCenterData>,
     account_no: Option<String>,
     account_type: Option<String>,
     name: Option<String>,
@@ -185,11 +300,11 @@ async fn fetch_account_channel_from_positions() -> Option<String> {
     resp.channels.into_iter().next().map(|c| c.account_channel)
 }
 
-async fn fetch_account_info() -> Result<AccountInfo> {
-    let (member_id, quote_level, quote_packages, statement_info, account_channel) = tokio::join!(
+async fn fetch_account_info(market: &str) -> Result<AccountInfo> {
+    let account_channel = read_account_channel();
+    let (member_id, level_center, statement_info, account_channel) = tokio::join!(
         crate::openapi::quote().member_id(),
-        crate::openapi::quote().quote_level(),
-        crate::openapi::quote().quote_package_details(),
+        fetch_my_quotes(market, &account_channel),
         fetch_account_info_from_statement(),
         fetch_account_channel_from_positions(),
     );
@@ -204,9 +319,8 @@ async fn fetch_account_info() -> Result<AccountInfo> {
     };
 
     Ok(AccountInfo {
-        member_id: member_id?,
-        quote_level: quote_level?,
-        quote_packages: quote_packages.unwrap_or_default(),
+        member_id: member_id.ok(),
+        level_center,
         account_no,
         account_type,
         name,
@@ -214,14 +328,14 @@ async fn fetch_account_info() -> Result<AccountInfo> {
     })
 }
 
-pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
+pub async fn cmd_auth_status(format: &OutputFormat, market: &str) -> Result<()> {
     // ── Token (local) ─────────────────────────────────────────────────────────
     let token_path = crate::auth::token_file_path()?;
     let token = read_token_state()?;
 
     // ── Connect and fetch account info ────────────────────────────────────────
     let account = match crate::openapi::init_contexts().await {
-        Ok(_) => fetch_account_info().await.ok(),
+        Ok(_) => fetch_account_info(market).await.ok(),
         Err(_) => None,
     };
 
@@ -236,23 +350,31 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
             });
 
             if let Some(acc) = &account {
-                let packages: Vec<_> = acc
-                    .quote_packages
-                    .iter()
-                    .map(|p| {
-                        json!({
-                            "key": p.key,
-                            "name": p.name,
-                            "description": p.description,
-                            "start_at": p.start_at.to_string(),
-                            "end_at": p.end_at.to_string(),
+                let to_json = |items: &[LevelCenterItem]| -> Vec<serde_json::Value> {
+                    items
+                        .iter()
+                        .map(|p| {
+                            json!({
+                                "package_key": p.package_key,
+                                "name": p.name,
+                                "description": p.description,
+                                "market": p.market,
+                                "tags": p.tags,
+                                "expired_msg": p.expired_msg,
+                                "end_time": p.end_time,
+                            })
                         })
-                    })
-                    .collect();
+                        .collect()
+                };
+                let (activated, unactivated) = acc
+                    .level_center
+                    .as_ref()
+                    .map(|lc| (to_json(&lc.activated_lists), to_json(&lc.unactivated_lists)))
+                    .unwrap_or_default();
                 value["account"] = json!({
                     "member_id": acc.member_id,
-                    "quote_level": acc.quote_level,
-                    "quote_packages": packages,
+                    "activated_packages": activated,
+                    "unactivated_packages": unactivated,
                     "account_no": acc.account_no,
                     "account_type": acc.account_type,
                     "account_channel": acc.account_channel,
@@ -333,28 +455,72 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
                 {
                     println!("{:<W$} Paper Trading", "Account", W = W);
                 }
-                println!("{:<W$} {}", "Member Id", acc.member_id, W = W);
+                if let Some(mid) = acc.member_id {
+                    println!("{:<W$} {}", "Member Id", mid, W = W);
+                }
 
                 // ── Quote Level ─────────────────────────────────────────────────
-                println!();
-                println!("Quote Level");
-                if acc.quote_packages.is_empty() {
-                    println!("{:<W$} {}", "Level", acc.quote_level, W = W);
-                } else {
-                    for pkg in &acc.quote_packages {
-                        let market = pkg.key.split('_').next().unwrap_or("");
-                        let start = pkg.start_at.date();
-                        let end = pkg.end_at.date();
+                let empty = LevelCenterData::default();
+                let lc = acc.level_center.as_ref().unwrap_or(&empty);
+
+                let print_pkg = |pkg: &LevelCenterItem, active: bool| {
+                    // The new `/v1/quote/my-quotes` schema includes a dedicated
+                    // `market` field; fall back to splitting the package_key
+                    // (`US_QBBO` -> `US`) for resilience.
+                    let market = if pkg.market.is_empty() {
+                        pkg.package_key.split('_').next().unwrap_or("")
+                    } else {
+                        pkg.market.as_str()
+                    };
+                    let tag_suffix = if pkg.tags.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" [{}]", pkg.tags.join(","))
+                    };
+                    let expiry = format_pkg_expiry(&pkg.end_time);
+                    if active {
                         println!(
-                            "  {}  {GREEN}{}{RESET}  ({start} ~ {end})",
-                            market, pkg.name
+                            "  {market}  {GREEN}{}{RESET}{tag_suffix}{}",
+                            pkg.name,
+                            if expiry.is_empty() {
+                                String::new()
+                            } else {
+                                format!("  ({expiry})")
+                            }
                         );
-                        let sub = if pkg.description.is_empty() {
-                            pkg.key.clone()
+                    } else {
+                        let msg = if pkg.expired_msg.is_empty() {
+                            String::new()
                         } else {
-                            format!("{} · {}", pkg.key, pkg.description)
+                            format!("  {DIM}{}{RESET}", pkg.expired_msg)
                         };
-                        println!("      {DIM}{sub}{RESET}");
+                        println!("  {market}  {DIM}{}{RESET}{tag_suffix}{msg}", pkg.name);
+                    }
+                    let sub = if pkg.description.is_empty() {
+                        pkg.package_key.clone()
+                    } else {
+                        format!("{} · {}", pkg.package_key, pkg.description)
+                    };
+                    println!("      {DIM}{sub}{RESET}");
+                };
+
+                println!();
+                println!("{}", t!("my_quote.subscribed"));
+                if lc.activated_lists.is_empty() {
+                    println!("  {DIM}{}{RESET}", t!("my_quote.no_data"));
+                } else {
+                    for pkg in &lc.activated_lists {
+                        print_pkg(pkg, true);
+                    }
+                }
+
+                println!();
+                println!("{}", t!("my_quote.unsubscribed"));
+                if lc.unactivated_lists.is_empty() {
+                    println!("  {DIM}{}{RESET}", t!("my_quote.no_data"));
+                } else {
+                    for pkg in &lc.unactivated_lists {
+                        print_pkg(pkg, false);
                     }
                 }
 
