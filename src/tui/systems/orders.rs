@@ -617,7 +617,7 @@ pub fn handle_order_entry_key(event: KeyEvent) {
 pub fn handle_cancel_order_key(event: KeyEvent) {
     match event {
         KeyEvent {
-            code: KeyCode::Char('y'),
+            code: KeyCode::Enter,
             modifiers: KeyModifiers::NONE,
             ..
         } => {
@@ -631,8 +631,7 @@ pub fn handle_cancel_order_key(event: KeyEvent) {
             }
         }
         KeyEvent {
-            code: KeyCode::Esc | KeyCode::Char('n'),
-            ..
+            code: KeyCode::Esc, ..
         } => {
             POPUP.store(0, Ordering::Relaxed);
             *CANCEL_TARGET.write().expect("poison") = None;
