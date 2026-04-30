@@ -385,7 +385,7 @@ pub async fn cmd_auth_status(format: &OutputFormat, market: &str) -> Result<()> 
             println!("{}", serde_json::to_string_pretty(&value)?);
         }
 
-        OutputFormat::Pretty => {
+        OutputFormat::Pretty | OutputFormat::Html => {
             const W: usize = 12; // key column width
 
             // ── Token ──────────────────────────────────────────────────────────

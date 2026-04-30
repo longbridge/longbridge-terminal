@@ -29,6 +29,32 @@ pub async fn cmd_exchange_rate(format: &OutputFormat, verbose: bool) -> Result<(
     let data = http_get("/v1/asset/exchange_rates", &[], verbose).await?;
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            if let Some(list) = data["exchanges"].as_array() {
+                let rows: Vec<Vec<String>> = list
+                    .iter()
+                    .map(|item| {
+                        vec![
+                            format!(
+                                "{} → {}",
+                                val_str(&item["base_currency"]),
+                                val_str(&item["other_currency"])
+                            ),
+                            val_str(&item["average_rate"]),
+                            val_str(&item["bid_rate"]),
+                            val_str(&item["offer_rate"]),
+                        ]
+                    })
+                    .collect();
+                return crate::cli::html_render::open_html_table(
+                    "Exchange Rates",
+                    "exchange-rate",
+                    &["Pair", "Average Rate", "Bid Rate", "Offer Rate"],
+                    rows,
+                );
+            }
+            return crate::cli::html_render::open_html_raw("Exchange Rates", "exchange-rate", data);
+        }
         OutputFormat::Pretty => print_exchange_rates(&data),
     }
     Ok(())
@@ -122,6 +148,20 @@ pub async fn cmd_profit_analysis(
             }
             merged.insert("sublist".to_owned(), sublist.clone());
             print_json(&Value::Object(merged));
+        }
+        OutputFormat::Html => {
+            let mut merged = serde_json::Map::new();
+            if let Value::Object(m) = &summary {
+                merged.extend(m.clone());
+            }
+            merged.insert("sublist".to_owned(), sublist.clone());
+            return crate::cli::html_render::open_html(
+                crate::cli::html_render::HtmlPayload::ProfitAnalysis {
+                    title: "Profit Analysis".to_string(),
+                    command: "profit-analysis".to_string(),
+                    data: Value::Object(merged),
+                },
+            );
         }
         OutputFormat::Pretty => {
             print_profit_analysis_summary(&summary);
@@ -298,6 +338,18 @@ pub async fn cmd_profit_analysis_detail(
             merged.insert("flows".to_owned(), flows.clone());
             print_json(&Value::Object(merged));
         }
+        OutputFormat::Html => {
+            let mut merged = serde_json::Map::new();
+            if let Value::Object(m) = &detail {
+                merged.extend(m.clone());
+            }
+            merged.insert("flows".to_owned(), flows.clone());
+            return crate::cli::html_render::open_html_raw(
+                &format!("{symbol} Profit Analysis"),
+                &format!("profit-analysis {symbol}"),
+                Value::Object(merged),
+            );
+        }
         OutputFormat::Pretty => {
             print_pnl_detail(&detail, symbol);
             print_pnl_flows(&flows);
@@ -467,6 +519,13 @@ pub async fn cmd_profit_analysis_by_market(
 
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw(
+                "Profit Analysis by Market",
+                "profit-analysis-by-market",
+                data,
+            );
+        }
         OutputFormat::Pretty => {
             let total_profit = val_str(&data["profit"]);
             let has_more = data
@@ -491,7 +550,7 @@ pub async fn cmd_profit_analysis_by_market(
                         ]
                     })
                     .collect();
-                print_table(headers, rows, format);
+                print_table(headers, rows, &OutputFormat::Pretty);
             }
         }
     }

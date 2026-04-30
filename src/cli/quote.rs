@@ -245,6 +245,42 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
                 .collect();
             println!("{}", serde_json::to_string_pretty(&records)?);
         }
+        OutputFormat::Html => {
+            let headers = &[
+                "Symbol",
+                "Last",
+                "Prev Close",
+                "Open",
+                "High",
+                "Low",
+                "Volume",
+                "Turnover",
+                "Status",
+            ];
+            let rows: Vec<Vec<String>> = quotes
+                .iter()
+                .map(|q| {
+                    vec![
+                        q.symbol.clone(),
+                        fmt_dec(q.last_done),
+                        fmt_dec(q.prev_close),
+                        fmt_dec(q.open),
+                        fmt_dec(q.high),
+                        fmt_dec(q.low),
+                        q.volume.to_string(),
+                        fmt_dec(q.turnover),
+                        format!("{:?}", q.trade_status),
+                    ]
+                })
+                .collect();
+            let cmd = format!("quote {}", input.join(" "));
+            return crate::cli::html_render::open_html_table(
+                &format!("Quote {}", input.join(" ")),
+                &cmd,
+                headers,
+                rows,
+            );
+        }
         OutputFormat::Pretty => {
             let headers = &[
                 "Symbol",
@@ -334,6 +370,28 @@ pub async fn cmd_depth(symbol: String, format: &OutputFormat) -> Result<()> {
         hint_symbol_do_you_mean(&symbol);
     }
 
+    if matches!(format, OutputFormat::Html) {
+        let data = serde_json::json!({
+            "symbol": symbol,
+            "asks": depth.asks.iter().map(|d| serde_json::json!({
+                "price": fmt_decimal(&d.price),
+                "volume": d.volume,
+                "order_num": d.order_num,
+            })).collect::<Vec<_>>(),
+            "bids": depth.bids.iter().map(|d| serde_json::json!({
+                "price": fmt_decimal(&d.price),
+                "volume": d.volume,
+                "order_num": d.order_num,
+            })).collect::<Vec<_>>(),
+        });
+        let title = format!("{symbol} Depth");
+        return crate::cli::html_render::open_html(crate::cli::html_render::HtmlPayload::Depth {
+            title,
+            command: format!("depth {symbol}"),
+            data,
+        });
+    }
+
     match format {
         OutputFormat::Json => {
             let val = serde_json::json!({
@@ -353,7 +411,7 @@ pub async fn cmd_depth(symbol: String, format: &OutputFormat) -> Result<()> {
             });
             println!("{}", serde_json::to_string_pretty(&val)?);
         }
-        OutputFormat::Pretty => {
+        OutputFormat::Pretty | OutputFormat::Html => {
             println!("Symbol: {symbol}");
             println!("\nAsks (Sell):");
             let headers = &["Position", "Price", "Volume", "Orders"];
@@ -394,6 +452,22 @@ pub async fn cmd_brokers(symbol: String, format: &OutputFormat) -> Result<()> {
     let ctx = crate::openapi::quote();
     let brokers = ctx.brokers(symbol.clone()).await?;
 
+    if matches!(format, OutputFormat::Html) {
+        let data = serde_json::json!({
+            "symbol": symbol,
+            "asks": brokers.ask_brokers.iter().map(|b| serde_json::json!({
+                "position": b.position,
+                "broker_ids": b.broker_ids,
+            })).collect::<Vec<_>>(),
+            "bids": brokers.bid_brokers.iter().map(|b| serde_json::json!({
+                "position": b.position,
+                "broker_ids": b.broker_ids,
+            })).collect::<Vec<_>>(),
+        });
+        let title = format!("{symbol} Brokers");
+        return crate::cli::html_render::open_html_raw(&title, &format!("brokers {symbol}"), data);
+    }
+
     match format {
         OutputFormat::Json => {
             let val = serde_json::json!({
@@ -409,7 +483,7 @@ pub async fn cmd_brokers(symbol: String, format: &OutputFormat) -> Result<()> {
             });
             println!("{}", serde_json::to_string_pretty(&val)?);
         }
-        OutputFormat::Pretty => {
+        OutputFormat::Pretty | OutputFormat::Html => {
             println!("Symbol: {symbol}");
             println!("\nAsk Brokers:");
             let headers = &["Position", "Broker IDs"];
@@ -455,7 +529,7 @@ pub async fn cmd_trades(symbol: String, count: usize, format: &OutputFormat) -> 
     let trades = ctx.trades(symbol.clone(), count).await?;
 
     let headers = &["Time", "Price", "Volume", "Direction", "Type"];
-    let rows = trades
+    let rows: Vec<Vec<String>> = trades
         .iter()
         .map(|t| {
             vec![
@@ -468,6 +542,15 @@ pub async fn cmd_trades(symbol: String, count: usize, format: &OutputFormat) -> 
         })
         .collect();
 
+    if matches!(format, OutputFormat::Html) {
+        return crate::cli::html_render::open_html_table(
+            &format!("{symbol} Trades"),
+            &format!("trades {symbol}"),
+            headers,
+            rows,
+        );
+    }
+
     print_table(headers, rows, format);
     if trades.is_empty() {
         hint_symbol_do_you_mean(&symbol);
@@ -479,6 +562,26 @@ pub async fn cmd_intraday(symbol: String, session: &str, format: &OutputFormat) 
     let ctx = crate::openapi::quote();
     let trade_sessions = parse_trade_sessions(session)?;
     let lines = ctx.intraday(symbol.clone(), trade_sessions).await?;
+
+    if matches!(format, OutputFormat::Html) {
+        let data = serde_json::json!(lines
+            .iter()
+            .map(|l| serde_json::json!({
+                "time": fmt_datetime(l.timestamp),
+                "price": fmt_dec(l.price),
+                "volume": l.volume,
+                "avg_price": fmt_dec(l.avg_price),
+            }))
+            .collect::<Vec<_>>());
+        let title = format!("{symbol} Intraday");
+        return crate::cli::html_render::open_html(
+            crate::cli::html_render::HtmlPayload::Intraday {
+                title,
+                command: format!("intraday {symbol}"),
+                data,
+            },
+        );
+    }
 
     let headers = &["Time", "Price", "Volume", "Turnover", "Avg Price"];
     let rows = lines
@@ -516,6 +619,26 @@ pub async fn cmd_kline(
     let candles = ctx
         .candlesticks(symbol.clone(), p, count, adj, trade_sessions)
         .await?;
+
+    if matches!(format, OutputFormat::Html) {
+        let data = serde_json::json!(candles
+            .iter()
+            .map(|c| serde_json::json!({
+                "time": fmt_datetime(c.timestamp),
+                "open": fmt_dec(c.open),
+                "high": fmt_dec(c.high),
+                "low": fmt_dec(c.low),
+                "close": fmt_dec(c.close),
+                "volume": c.volume,
+            }))
+            .collect::<Vec<_>>());
+        let title = format!("{symbol} {period} K Line");
+        return crate::cli::html_render::open_html(crate::cli::html_render::HtmlPayload::Kline {
+            title,
+            command: format!("kline {symbol} --period {period}"),
+            data,
+        });
+    }
 
     let show_session = matches!(trade_sessions, TradeSessions::All);
     if show_session {
@@ -594,6 +717,26 @@ pub async fn cmd_kline_history(
             .await?
     };
 
+    if matches!(format, OutputFormat::Html) {
+        let data = serde_json::json!(candles
+            .iter()
+            .map(|c| serde_json::json!({
+                "time": fmt_datetime(c.timestamp),
+                "open": fmt_dec(c.open),
+                "high": fmt_dec(c.high),
+                "low": fmt_dec(c.low),
+                "close": fmt_dec(c.close),
+                "volume": c.volume,
+            }))
+            .collect::<Vec<_>>());
+        let title = format!("{sym} {period} K Line (History)");
+        return crate::cli::html_render::open_html(crate::cli::html_render::HtmlPayload::Kline {
+            title,
+            command: format!("kline history {sym} --period {period}"),
+            data,
+        });
+    }
+
     let show_session = matches!(trade_sessions, TradeSessions::All);
     if show_session {
         let headers = &[
@@ -660,7 +803,7 @@ pub async fn cmd_static(symbols: Vec<String>, format: &OutputFormat) -> Result<(
         "BPS",
         "Dividend",
     ];
-    let rows = infos
+    let rows: Vec<Vec<String>> = infos
         .iter()
         .map(|i| {
             vec![
@@ -678,6 +821,16 @@ pub async fn cmd_static(symbols: Vec<String>, format: &OutputFormat) -> Result<(
             ]
         })
         .collect();
+
+    if matches!(format, OutputFormat::Html) {
+        let cmd = format!("static {}", input.join(" "));
+        return crate::cli::html_render::open_html_table(
+            &format!("Static Info {}", input.join(" ")),
+            &cmd,
+            headers,
+            rows,
+        );
+    }
 
     print_table(headers, rows, format);
     let found: Vec<&str> = infos.iter().map(|i| i.symbol.as_str()).collect();
@@ -770,6 +923,25 @@ pub async fn cmd_calc_index(
                 .collect();
             println!("{}", serde_json::to_string_pretty(&records)?);
         }
+        OutputFormat::Html => {
+            let mut headers = vec!["Symbol"];
+            headers.extend(columns.iter().map(|(_, h, _)| *h));
+            let rows: Vec<Vec<String>> = results
+                .iter()
+                .map(|r| {
+                    let mut row = vec![r.symbol.clone()];
+                    row.extend(columns.iter().map(|(_, _, extract)| extract(r)));
+                    row
+                })
+                .collect();
+            let cmd = format!("calc-index {}", symbols.join(" "));
+            return crate::cli::html_render::open_html_table(
+                &format!("Calc Index {}", symbols.join(" ")),
+                &cmd,
+                &headers,
+                rows,
+            );
+        }
         OutputFormat::Pretty => {
             let mut headers = vec!["Symbol"];
             headers.extend(columns.iter().map(|(_, h, _)| *h));
@@ -789,7 +961,25 @@ pub async fn cmd_calc_index(
 
 pub async fn cmd_capital_flow(symbol: String, format: &OutputFormat) -> Result<()> {
     let ctx = crate::openapi::quote();
-    let flows = ctx.capital_flow(symbol).await?;
+    let flows = ctx.capital_flow(symbol.clone()).await?;
+
+    if matches!(format, OutputFormat::Html) {
+        let data = serde_json::json!(flows
+            .iter()
+            .map(|f| serde_json::json!({
+                "time": fmt_datetime(f.timestamp),
+                "inflow": fmt_dec(f.inflow),
+            }))
+            .collect::<Vec<_>>());
+        let title = format!("{symbol} Capital Flow");
+        return crate::cli::html_render::open_html(
+            crate::cli::html_render::HtmlPayload::CapitalFlow {
+                title,
+                command: format!("capital {symbol} --flow"),
+                data,
+            },
+        );
+    }
 
     let headers = &["Time", "Inflow"];
     let rows = flows
@@ -804,6 +994,31 @@ pub async fn cmd_capital_flow(symbol: String, format: &OutputFormat) -> Result<(
 pub async fn cmd_capital_dist(symbol: String, format: &OutputFormat) -> Result<()> {
     let ctx = crate::openapi::quote();
     let dist = ctx.capital_distribution(symbol.clone()).await?;
+
+    if matches!(format, OutputFormat::Html) {
+        let data = serde_json::json!({
+            "symbol": symbol,
+            "timestamp": fmt_datetime(dist.timestamp),
+            "capital_in": {
+                "large": fmt_dec(dist.capital_in.large),
+                "medium": fmt_dec(dist.capital_in.medium),
+                "small": fmt_dec(dist.capital_in.small),
+            },
+            "capital_out": {
+                "large": fmt_dec(dist.capital_out.large),
+                "medium": fmt_dec(dist.capital_out.medium),
+                "small": fmt_dec(dist.capital_out.small),
+            },
+        });
+        let title = format!("{symbol} Capital Distribution");
+        return crate::cli::html_render::open_html(
+            crate::cli::html_render::HtmlPayload::CapitalDist {
+                title,
+                command: format!("capital {symbol}"),
+                data,
+            },
+        );
+    }
 
     match format {
         OutputFormat::Json => {
@@ -823,7 +1038,7 @@ pub async fn cmd_capital_dist(symbol: String, format: &OutputFormat) -> Result<(
             });
             println!("{}", serde_json::to_string_pretty(&val)?);
         }
-        OutputFormat::Pretty => {
+        OutputFormat::Pretty | OutputFormat::Html => {
             println!("Symbol: {}  Time: {}", symbol, fmt_datetime(dist.timestamp));
             let headers = &["Direction", "Large", "Medium", "Small"];
             let rows = vec![
@@ -864,6 +1079,28 @@ pub async fn cmd_market_temp(
         let resp = ctx
             .history_market_temperature(m, start_date, end_date)
             .await?;
+
+        if matches!(format, OutputFormat::Html) {
+            let data = serde_json::json!(resp
+                .records
+                .iter()
+                .map(|t| serde_json::json!({
+                    "time": fmt_datetime(t.timestamp),
+                    "temperature": t.temperature,
+                    "valuation": t.valuation,
+                    "sentiment": t.sentiment,
+                }))
+                .collect::<Vec<_>>());
+            let title = format!("{} Market Temperature", market.to_uppercase());
+            return crate::cli::html_render::open_html(
+                crate::cli::html_render::HtmlPayload::MarketTempHistory {
+                    title,
+                    command: format!("market-temp {market} --history"),
+                    data,
+                },
+            );
+        }
+
         let headers = &[
             "Time",
             "Temperature",
@@ -887,6 +1124,43 @@ pub async fn cmd_market_temp(
         print_table(headers, rows, format);
     } else {
         let temp = ctx.market_temperature(m).await?;
+
+        if matches!(format, OutputFormat::Html) {
+            let now = time::OffsetDateTime::now_utc();
+            let end_date = now.date();
+            let start_date = (now - time::Duration::days(90)).date();
+            let hist_resp = ctx
+                .history_market_temperature(m, start_date, end_date)
+                .await;
+            let history = serde_json::json!(hist_resp
+                .map(|r| r
+                    .records
+                    .iter()
+                    .map(|t| serde_json::json!({
+                        "time": fmt_datetime(t.timestamp),
+                        "temperature": t.temperature,
+                        "valuation": t.valuation,
+                        "sentiment": t.sentiment,
+                    }))
+                    .collect::<Vec<_>>())
+                .unwrap_or_default());
+            let current = serde_json::json!({
+                "temperature": temp.temperature,
+                "valuation": temp.valuation,
+                "sentiment": temp.sentiment,
+                "description": temp.description,
+            });
+            let title = format!("{} Market Temperature", market.to_uppercase());
+            return crate::cli::html_render::open_html(
+                crate::cli::html_render::HtmlPayload::MarketTemp {
+                    title,
+                    command: format!("market-temp {market}"),
+                    current,
+                    history,
+                },
+            );
+        }
+
         let headers = &["Field", "Value"];
         let rows = vec![
             vec!["Market".to_string(), market.to_uppercase()],
@@ -920,6 +1194,26 @@ pub async fn cmd_trading_session(format: &OutputFormat) -> Result<()> {
                 })
                 .collect();
             println!("{}", serde_json::to_string_pretty(&val)?);
+        }
+        OutputFormat::Html => {
+            let headers = &["Market", "Session", "Open", "Close"];
+            let mut rows: Vec<Vec<String>> = vec![];
+            for s in &sessions {
+                for ts in &s.trade_sessions {
+                    rows.push(vec![
+                        format!("{:?}", s.market),
+                        format!("{:?}", ts.trade_session),
+                        ts.begin_time.to_string(),
+                        ts.end_time.to_string(),
+                    ]);
+                }
+            }
+            return crate::cli::html_render::open_html_table(
+                "Trading Sessions",
+                "trading-session",
+                headers,
+                rows,
+            );
         }
         OutputFormat::Pretty => {
             let headers = &["Market", "Session", "Open", "Close"];
@@ -971,6 +1265,25 @@ pub async fn cmd_trading_days(
             });
             println!("{}", serde_json::to_string_pretty(&val)?);
         }
+        OutputFormat::Html => {
+            let headers = &["Date", "Type"];
+            let mut rows: Vec<Vec<String>> = days
+                .trading_days
+                .iter()
+                .map(|d| vec![fmt_date(*d), "Trading".to_string()])
+                .collect();
+            rows.extend(
+                days.half_trading_days
+                    .iter()
+                    .map(|d| vec![fmt_date(*d), "Half Trading".to_string()]),
+            );
+            return crate::cli::html_render::open_html_table(
+                &format!("{} Trading Days", market.to_uppercase()),
+                &format!("trading-days {market}"),
+                headers,
+                rows,
+            );
+        }
         OutputFormat::Pretty => {
             println!("Trading days:");
             for chunk in days.trading_days.chunks(7) {
@@ -1004,7 +1317,7 @@ pub async fn cmd_security_list(market: &str, category: &str, format: &OutputForm
     let securities = ctx.security_list(m, cat).await?;
 
     let headers = &["Symbol", "Name"];
-    let rows = securities
+    let rows: Vec<Vec<String>> = securities
         .iter()
         .map(|s| {
             vec![
@@ -1013,6 +1326,15 @@ pub async fn cmd_security_list(market: &str, category: &str, format: &OutputForm
             ]
         })
         .collect();
+
+    if matches!(format, OutputFormat::Html) {
+        return crate::cli::html_render::open_html_table(
+            &format!("{} Security List", market.to_uppercase()),
+            &format!("security-list {market}"),
+            headers,
+            rows,
+        );
+    }
 
     print_table(headers, rows, format);
     Ok(())
@@ -1023,7 +1345,7 @@ pub async fn cmd_participants(format: &OutputFormat) -> Result<()> {
     let participants = ctx.participants().await?;
 
     let headers = &["Broker ID", "Name EN", "Name CN"];
-    let rows = participants
+    let rows: Vec<Vec<String>> = participants
         .iter()
         .map(|p| {
             vec![
@@ -1038,6 +1360,15 @@ pub async fn cmd_participants(format: &OutputFormat) -> Result<()> {
         })
         .collect();
 
+    if matches!(format, OutputFormat::Html) {
+        return crate::cli::html_render::open_html_table(
+            "Participants",
+            "participants",
+            headers,
+            rows,
+        );
+    }
+
     print_table(headers, rows, format);
     Ok(())
 }
@@ -1047,7 +1378,7 @@ pub async fn cmd_subscriptions(format: &OutputFormat) -> Result<()> {
     let subs = ctx.subscriptions().await?;
 
     let headers = &["Symbol", "Sub Types", "Candlestick Periods"];
-    let rows = subs
+    let rows: Vec<Vec<String>> = subs
         .iter()
         .map(|s| {
             vec![
@@ -1061,6 +1392,15 @@ pub async fn cmd_subscriptions(format: &OutputFormat) -> Result<()> {
             ]
         })
         .collect();
+
+    if matches!(format, OutputFormat::Html) {
+        return crate::cli::html_render::open_html_table(
+            "Subscriptions",
+            "subscriptions",
+            headers,
+            rows,
+        );
+    }
 
     print_table(headers, rows, format);
     Ok(())
@@ -1103,6 +1443,55 @@ pub async fn cmd_option_quote(symbols: Vec<String>, format: &OutputFormat) -> Re
                 })
                 .collect();
             println!("{}", serde_json::to_string_pretty(&records)?);
+        }
+        OutputFormat::Html => {
+            let headers = &[
+                "Symbol",
+                "Last",
+                "Prev Close",
+                "Open",
+                "High",
+                "Low",
+                "Volume",
+                "Turnover",
+                "Impl Vol",
+                "Hist Vol",
+                "OI",
+                "Strike",
+                "Expiry",
+                "Type",
+                "Direction",
+                "Underlying",
+            ];
+            let rows: Vec<Vec<String>> = quotes
+                .iter()
+                .map(|q| {
+                    vec![
+                        q.symbol.clone(),
+                        fmt_dec(q.last_done),
+                        fmt_dec(q.prev_close),
+                        fmt_dec(q.open),
+                        fmt_dec(q.high),
+                        fmt_dec(q.low),
+                        q.volume.to_string(),
+                        fmt_dec(q.turnover),
+                        fmt_dec(q.implied_volatility),
+                        fmt_dec(q.historical_volatility),
+                        q.open_interest.to_string(),
+                        fmt_dec(q.strike_price),
+                        fmt_date(q.expiry_date),
+                        format!("{:?}", q.contract_type),
+                        format!("{:?}", q.direction),
+                        q.underlying_symbol.clone(),
+                    ]
+                })
+                .collect();
+            return crate::cli::html_render::open_html_table(
+                "Option Quote",
+                "option-quote",
+                headers,
+                rows,
+            );
         }
         OutputFormat::Pretty => {
             let headers = &[
@@ -1166,7 +1555,7 @@ pub async fn cmd_warrant_quote(symbols: Vec<String>, format: &OutputFormat) -> R
         bail!("At least one symbol is required");
     }
     let ctx = crate::openapi::quote();
-    let quotes = ctx.warrant_quote(symbols).await?;
+    let quotes = ctx.warrant_quote(symbols.clone()).await?;
 
     let headers = &[
         "Symbol",
@@ -1176,7 +1565,7 @@ pub async fn cmd_warrant_quote(symbols: Vec<String>, format: &OutputFormat) -> R
         "Expiry",
         "Type",
     ];
-    let rows = quotes
+    let rows: Vec<Vec<String>> = quotes
         .iter()
         .map(|q| {
             vec![
@@ -1190,6 +1579,15 @@ pub async fn cmd_warrant_quote(symbols: Vec<String>, format: &OutputFormat) -> R
         })
         .collect();
 
+    if matches!(format, OutputFormat::Html) {
+        return crate::cli::html_render::open_html_table(
+            &format!("Warrant Quote {}", symbols.join(" ")),
+            &format!("warrant-quote {}", symbols.join(" ")),
+            headers,
+            rows,
+        );
+    }
+
     print_table(headers, rows, format);
     Ok(())
 }
@@ -1198,7 +1596,7 @@ pub async fn cmd_warrant_list(symbol: String, format: &OutputFormat) -> Result<(
     let ctx = crate::openapi::quote();
     let warrants = ctx
         .warrant_list(
-            symbol,
+            symbol.clone(),
             longbridge::quote::WarrantSortBy::LastDone,
             longbridge::quote::SortOrderType::Descending,
             None,
@@ -1210,7 +1608,7 @@ pub async fn cmd_warrant_list(symbol: String, format: &OutputFormat) -> Result<(
         .await?;
 
     let headers = &["Symbol", "Name", "Last", "Leverage Ratio", "Expiry", "Type"];
-    let rows = warrants
+    let rows: Vec<Vec<String>> = warrants
         .iter()
         .map(|w| {
             vec![
@@ -1224,6 +1622,15 @@ pub async fn cmd_warrant_list(symbol: String, format: &OutputFormat) -> Result<(
         })
         .collect();
 
+    if matches!(format, OutputFormat::Html) {
+        return crate::cli::html_render::open_html_table(
+            &format!("{symbol} Warrant List"),
+            &format!("warrant-list {symbol}"),
+            headers,
+            rows,
+        );
+    }
+
     print_table(headers, rows, format);
     Ok(())
 }
@@ -1233,7 +1640,7 @@ pub async fn cmd_warrant_issuers(format: &OutputFormat) -> Result<()> {
     let issuers = ctx.warrant_issuers().await?;
 
     let headers = &["ID", "Name EN", "Name CN"];
-    let rows = issuers
+    let rows: Vec<Vec<String>> = issuers
         .iter()
         .map(|i| {
             vec![
@@ -1243,6 +1650,15 @@ pub async fn cmd_warrant_issuers(format: &OutputFormat) -> Result<()> {
             ]
         })
         .collect();
+
+    if matches!(format, OutputFormat::Html) {
+        return crate::cli::html_render::open_html_table(
+            "Warrant Issuers",
+            "warrant-issuers",
+            headers,
+            rows,
+        );
+    }
 
     print_table(headers, rows, format);
     Ok(())
@@ -1350,7 +1766,7 @@ pub async fn run_depth(api: &dyn QuoteApi, symbol: String, format: &OutputFormat
             });
             println!("{}", serde_json::to_string_pretty(&val)?);
         }
-        OutputFormat::Pretty => {
+        OutputFormat::Pretty | OutputFormat::Html => {
             let headers = &["Position", "Price", "Volume", "Orders"];
             let ask_rows: Vec<Vec<String>> = depth
                 .asks
@@ -1396,7 +1812,7 @@ pub async fn run_brokers(api: &dyn QuoteApi, symbol: String, format: &OutputForm
             });
             println!("{}", serde_json::to_string_pretty(&val)?);
         }
-        OutputFormat::Pretty => {
+        OutputFormat::Pretty | OutputFormat::Html => {
             let headers = &["Position", "Broker IDs"];
             let ask_rows: Vec<Vec<String>> = brokers
                 .ask_brokers
@@ -2120,9 +2536,37 @@ pub async fn cmd_history_intraday(
         verbose,
     )
     .await?;
+
+    if matches!(format, OutputFormat::Html) {
+        let minutes: Vec<_> = data
+            .get("timeshares")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|ts| ts.get("minutes").and_then(|v| v.as_array()).cloned())
+            .flatten()
+            .map(|m| {
+                serde_json::json!({
+                    "time": fmt_ts_time(&val_str(&m["timestamp"])),
+                    "price": val_str(&m["price"]),
+                    "volume": val_str(&m["amount"]),
+                    "avg_price": val_str(&m["avg_price"]),
+                })
+            })
+            .collect();
+        let title = format!("{symbol} Intraday {hist_date}");
+        return crate::cli::html_render::open_html(
+            crate::cli::html_render::HtmlPayload::HistoryIntraday {
+                title,
+                command: format!("intraday {symbol} --date {hist_date}"),
+                data: serde_json::json!(minutes),
+            },
+        );
+    }
+
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => {
+        OutputFormat::Pretty | OutputFormat::Html => {
             let mut found = false;
             if let Some(timeshares) = data.get("timeshares").and_then(|v| v.as_array()) {
                 for ts in timeshares {
@@ -2188,6 +2632,44 @@ pub async fn cmd_constituent(
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            let items = match data.get("stocks").and_then(|v| v.as_array()) {
+                Some(a) if !a.is_empty() => a,
+                _ => {
+                    println!("No constituent data found.");
+                    return Ok(());
+                }
+            };
+            let headers = [
+                "symbol",
+                "name",
+                "price",
+                "prev_close",
+                "change%",
+                "volume",
+                "turnover",
+            ];
+            let rows: Vec<Vec<String>> = items
+                .iter()
+                .map(|item| {
+                    vec![
+                        crate::utils::counter::counter_id_to_symbol(&val_str(&item["counter_id"])),
+                        val_str(&item["name"]),
+                        val_str(&item["last_done"]),
+                        val_str(&item["prev_close"]),
+                        val_str(&item["chg"]),
+                        val_str(&item["amount"]),
+                        val_str(&item["balance"]),
+                    ]
+                })
+                .collect();
+            return crate::cli::html_render::open_html_table(
+                &format!("{symbol} Constituents"),
+                &format!("constituent {symbol}"),
+                &headers,
+                rows,
+            );
+        }
         OutputFormat::Pretty => {
             let total = data["total"].as_i64().unwrap_or(0);
             let rise = data["rise_num"].as_i64().unwrap_or(0);
@@ -2270,6 +2752,25 @@ pub async fn cmd_market_status(format: &OutputFormat, verbose: bool) -> Result<(
                 .collect();
             print_json(&serde_json::json!(out));
         }
+        OutputFormat::Html => {
+            let headers = ["market", "status"];
+            let rows: Vec<Vec<String>> = items
+                .iter()
+                .map(|item| {
+                    let code = item["trade_status"].as_i64().unwrap_or(0);
+                    vec![
+                        val_str(&item["market"]),
+                        market_trade_status_label(code).to_string(),
+                    ]
+                })
+                .collect();
+            return crate::cli::html_render::open_html_table(
+                "Market Status",
+                "market-status",
+                &headers,
+                rows,
+            );
+        }
         OutputFormat::Pretty => {
             let headers = ["market", "status"];
             let rows: Vec<Vec<String>> = items
@@ -2301,9 +2802,17 @@ pub async fn cmd_broker_holding_top(
         verbose,
     )
     .await?;
+    if matches!(format, OutputFormat::Html) {
+        return crate::cli::html_render::open_html_raw(
+            &format!("{symbol} Broker Holding Top"),
+            &format!("broker-holding {symbol}"),
+            data,
+        );
+    }
+
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => {
+        OutputFormat::Pretty | OutputFormat::Html => {
             let updated = val_str(&data["updated_at"]);
             println!("Broker Holding Top (updated: {updated})\n");
 
@@ -2346,9 +2855,17 @@ pub async fn cmd_broker_holding_detail(
         verbose,
     )
     .await?;
+    if matches!(format, OutputFormat::Html) {
+        return crate::cli::html_render::open_html_raw(
+            &format!("{symbol} Broker Holding Detail"),
+            &format!("broker-holding detail {symbol}"),
+            data,
+        );
+    }
+
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => {
+        OutputFormat::Pretty | OutputFormat::Html => {
             let items = match data.get("list").and_then(|v| v.as_array()) {
                 Some(a) if !a.is_empty() => a.clone(),
                 _ => {
@@ -2400,9 +2917,34 @@ pub async fn cmd_broker_holding_daily(
         verbose,
     )
     .await?;
+
+    if matches!(format, OutputFormat::Html) {
+        let items: Vec<Vec<String>> = data
+            .get("list")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .map(|item| {
+                vec![
+                    val_str(&item["date"]),
+                    fmt_shares(&val_str(&item["holding"])),
+                    val_str(&item["ratio"]),
+                    fmt_shares_chg(&val_str(&item["chg"])),
+                ]
+            })
+            .collect();
+        return crate::cli::html_render::open_html_table(
+            &format!("{symbol} Broker Holding Daily"),
+            &format!("broker-holding daily {symbol}"),
+            &["date", "holding(shares)", "ratio%", "change(shares)"],
+            items,
+        );
+    }
+
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => {
+        OutputFormat::Pretty | OutputFormat::Html => {
             let items = match data.get("list").and_then(|v| v.as_array()) {
                 Some(a) if !a.is_empty() => a.clone(),
                 _ => {
@@ -2466,9 +3008,19 @@ pub async fn cmd_ah_premium_kline(
         verbose,
     )
     .await?;
+    if matches!(format, OutputFormat::Html) {
+        return crate::cli::html_render::open_html(
+            crate::cli::html_render::HtmlPayload::AhPremium {
+                title: format!("{symbol} A/H Premium"),
+                command: format!("ah-premium {symbol}"),
+                data,
+            },
+        );
+    }
+
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => {
+        OutputFormat::Pretty | OutputFormat::Html => {
             let items = match data.get("klines").and_then(|v| v.as_array()) {
                 Some(a) if !a.is_empty() => a,
                 _ => {
@@ -2507,9 +3059,20 @@ pub async fn cmd_ah_premium_intraday(
         verbose,
     )
     .await?;
+
+    if matches!(format, OutputFormat::Html) {
+        return crate::cli::html_render::open_html(
+            crate::cli::html_render::HtmlPayload::AhPremium {
+                title: format!("{symbol} A/H Premium (Intraday)"),
+                command: format!("ah-premium {symbol} --type intraday"),
+                data,
+            },
+        );
+    }
+
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => {
+        OutputFormat::Pretty | OutputFormat::Html => {
             let items = match data
                 .get("klines")
                 .or_else(|| data.get("minutes"))
@@ -2548,9 +3111,19 @@ pub async fn cmd_trade_stats(symbol: String, format: &OutputFormat, verbose: boo
         verbose,
     )
     .await?;
+    if matches!(format, OutputFormat::Html) {
+        return crate::cli::html_render::open_html(
+            crate::cli::html_render::HtmlPayload::TradeStats {
+                title: format!("{symbol} Trade Statistics"),
+                command: format!("trade-stats {symbol}"),
+                data,
+            },
+        );
+    }
+
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => {
+        OutputFormat::Pretty | OutputFormat::Html => {
             // Summary stats
             if let Some(stats) = data
                 .get("statistics")
@@ -2642,9 +3215,40 @@ pub async fn cmd_anomaly(
         params.push(("counter_id", cid.as_str()));
     }
     let data = http_get("/v1/quote/changes", &params, verbose).await?;
+
+    if matches!(format, OutputFormat::Html) {
+        let items: Vec<Vec<String>> = data
+            .get("changes")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .map(|item| {
+                let emotion = match item["emotion"].as_i64() {
+                    Some(1) => "Bull",
+                    Some(2) => "Bear",
+                    _ => "-",
+                };
+                vec![
+                    val_str(&item["alert_time"]),
+                    crate::utils::counter::counter_id_to_symbol(&val_str(&item["counter_id"])),
+                    val_str(&item["name"]),
+                    val_str(&item["alert_name"]),
+                    emotion.to_string(),
+                ]
+            })
+            .collect();
+        return crate::cli::html_render::open_html_table(
+            &format!("{} Anomalies", market.to_uppercase()),
+            &format!("anomaly {market}"),
+            &["time", "symbol", "name", "alert", "emotion"],
+            items,
+        );
+    }
+
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => {
+        OutputFormat::Pretty | OutputFormat::Html => {
             let items = match data.get("changes").and_then(|v| v.as_array()) {
                 Some(a) if !a.is_empty() => a,
                 _ => {
@@ -2688,9 +3292,30 @@ pub async fn cmd_option_volume_stats(
         verbose,
     )
     .await?;
+    if matches!(format, OutputFormat::Html) {
+        let call: i64 = val_str(&data["c"]).parse().unwrap_or(0);
+        let put: i64 = val_str(&data["p"]).parse().unwrap_or(0);
+        #[allow(clippy::cast_precision_loss)]
+        let pc_ratio = if call > 0 {
+            format!("{:.4}", put as f64 / call as f64)
+        } else {
+            "-".to_string()
+        };
+        return crate::cli::html_render::open_html_table(
+            &format!("{symbol} Option Volume Stats"),
+            &format!("option-volume-stats {symbol}"),
+            &["call_vol", "put_vol", "pc_ratio"],
+            vec![vec![
+                format_with_commas(call),
+                format_with_commas(put),
+                pc_ratio,
+            ]],
+        );
+    }
+
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => {
+        OutputFormat::Pretty | OutputFormat::Html => {
             let call: i64 = val_str(&data["c"]).parse().unwrap_or(0);
             let put: i64 = val_str(&data["p"]).parse().unwrap_or(0);
             let pc_ratio = if call > 0 {
@@ -2739,9 +3364,36 @@ pub async fn cmd_option_volume_daily(
         verbose,
     )
     .await?;
+    if matches!(format, OutputFormat::Html) {
+        let items: Vec<_> = data
+            .get("stats")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .rev()
+            .map(|item| {
+                serde_json::json!({
+                    "date": fmt_ts(&val_str(&item["timestamp"])),
+                    "call_vol": val_str(&item["total_call_volume"]).parse::<i64>().unwrap_or(0),
+                    "put_vol": val_str(&item["total_put_volume"]).parse::<i64>().unwrap_or(0),
+                    "pc_ratio": val_str(&item["put_call_volume_ratio"]).parse::<f64>().unwrap_or(0.0),
+                })
+            })
+            .collect();
+        let title = format!("{symbol} Option Volume Daily");
+        return crate::cli::html_render::open_html(
+            crate::cli::html_render::HtmlPayload::OptionVolumeDaily {
+                title,
+                command: format!("option volume daily {symbol}"),
+                data: serde_json::json!(items),
+            },
+        );
+    }
+
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => {
+        OutputFormat::Pretty | OutputFormat::Html => {
             let mut items = match data.get("stats").and_then(|v| v.as_array()) {
                 Some(a) if !a.is_empty() => a.clone(),
                 _ => {
@@ -2814,9 +3466,40 @@ pub async fn cmd_short_positions(
         verbose,
     )
     .await?;
+    if matches!(format, OutputFormat::Html) {
+        let items: Vec<_> = data
+            .get("data")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .rev()
+            .map(|item| {
+                let ts = val_str(&item["timestamp"]);
+                let rate = val_str(&item["rate"])
+                    .parse::<f64>()
+                    .unwrap_or(0.0)
+                    * 100.0;
+                serde_json::json!({
+                    "date": fmt_ts(&ts),
+                    "rate": rate,
+                    "short_shares": val_str(&item["current_shares_short"]).parse::<i64>().unwrap_or(0),
+                })
+            })
+            .collect();
+        let title = format!("{symbol} Short Positions");
+        return crate::cli::html_render::open_html(
+            crate::cli::html_render::HtmlPayload::ShortPositions {
+                title,
+                command: format!("short-positions {symbol}"),
+                data: serde_json::json!(items),
+            },
+        );
+    }
+
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => {
+        OutputFormat::Pretty | OutputFormat::Html => {
             let mut items = match data.get("data").and_then(|v| v.as_array()) {
                 Some(a) if !a.is_empty() => a.clone(),
                 _ => {

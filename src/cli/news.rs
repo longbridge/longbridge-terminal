@@ -1,6 +1,10 @@
 use anyhow::{bail, Result};
 
-use super::{output::print_table, OutputFormat};
+use super::{
+    html_render::{open_html, HtmlPayload},
+    output::print_table,
+    OutputFormat,
+};
 use crate::utils::datetime::format_datetime;
 
 const NEWS_DETAIL_HOST: &str = "https://longbridge.com";
@@ -49,6 +53,32 @@ pub async fn cmd_news(symbol: String, count: usize, format: &OutputFormat) -> Re
             serde_json::to_string_pretty(&records).unwrap_or_default()
         );
         return Ok(());
+    }
+
+    if matches!(format, OutputFormat::Html) {
+        let html_items: Vec<serde_json::Value> = items
+            .iter()
+            .map(|item| {
+                let title = if item.title.is_empty() {
+                    truncate_display(&item.description, 70)
+                } else {
+                    item.title.clone()
+                };
+                serde_json::json!({
+                    "id": item.id,
+                    "title": title,
+                    "url": item.url,
+                    "published_at": item.published_at.unix_timestamp(),
+                    "likes_count": item.likes_count,
+                    "comments_count": item.comments_count,
+                })
+            })
+            .collect();
+        return open_html(HtmlPayload::News {
+            title: format!("News · {symbol}"),
+            command: format!("longbridge news {symbol}"),
+            items: html_items,
+        });
     }
 
     let headers = &["id", "title", "published_at", "likes", "comments"];
