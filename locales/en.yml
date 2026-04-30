@@ -35,6 +35,9 @@ user:
   open_account:
     heading: "Account is not opened"
     content: "Please open account in other LongBridge app"
+account:
+  type:
+    paper: "Paper"
 Prompt:
   Esc: Press 'ESC' to cancel
 Candlestick:

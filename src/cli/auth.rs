@@ -129,6 +129,7 @@ struct AccountInfo {
     account_no: Option<String>,
     account_type: Option<String>,
     name: Option<String>,
+    account_channel: Option<String>,
 }
 
 /// Fetch `account_no` and `account_type` from the most recent daily statement.
@@ -178,12 +179,19 @@ async fn fetch_account_info_from_statement() -> Option<(String, String, String)>
     Some((account_no, account_type, name))
 }
 
+async fn fetch_account_channel_from_positions() -> Option<String> {
+    let ctx = crate::openapi::trade();
+    let resp = ctx.stock_positions(None).await.ok()?;
+    resp.channels.into_iter().next().map(|c| c.account_channel)
+}
+
 async fn fetch_account_info() -> Result<AccountInfo> {
-    let (member_id, quote_level, quote_packages, statement_info) = tokio::join!(
+    let (member_id, quote_level, quote_packages, statement_info, account_channel) = tokio::join!(
         crate::openapi::quote().member_id(),
         crate::openapi::quote().quote_level(),
         crate::openapi::quote().quote_package_details(),
         fetch_account_info_from_statement(),
+        fetch_account_channel_from_positions(),
     );
 
     let (account_no, account_type, name) = match statement_info {
@@ -202,6 +210,7 @@ async fn fetch_account_info() -> Result<AccountInfo> {
         account_no,
         account_type,
         name,
+        account_channel,
     })
 }
 
@@ -246,6 +255,7 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
                     "quote_packages": packages,
                     "account_no": acc.account_no,
                     "account_type": acc.account_type,
+                    "account_channel": acc.account_channel,
                     "name": acc.name,
                 });
             }
@@ -302,7 +312,6 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
                 if let Some(name) = &acc.name {
                     println!("{:<W$} {name}", "Name", W = W);
                 }
-                // account_no and account_type on one line
                 let mut acct_parts = Vec::new();
                 if let Some(no) = &acc.account_no {
                     acct_parts.push(no.as_str());
@@ -312,11 +321,17 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
                 }
                 if !acct_parts.is_empty() {
                     let acct_str = if acct_parts.len() >= 2 {
-                        format!("{} [{}]", acct_parts[0], acct_parts[1..].join(", "))
+                        format!("{} · {}", acct_parts[0], acct_parts[1..].join(", "))
                     } else {
                         acct_parts[0].to_string()
                     };
                     println!("{:<W$} {acct_str}", "Account", W = W);
+                } else if acc
+                    .account_channel
+                    .as_deref()
+                    .is_some_and(|ch| ch == "lb_papertrading")
+                {
+                    println!("{:<W$} Paper Trading", "Account", W = W);
                 }
                 println!("{:<W$} {}", "Member Id", acc.member_id, W = W);
 
