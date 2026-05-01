@@ -1055,6 +1055,9 @@ fn render_orders_list(frame: &mut Frame, rect: Rect) {
     let [today_rect, history_rect] =
         Layout::vertical([Constraint::Length(today_height), Constraint::Min(4)]).areas(rect);
 
+    *crate::tui::mouse::ORDERS_TABLE_RECT.lock().expect("poison") = today_rect;
+    *crate::tui::mouse::HISTORY_ORDERS_TABLE_RECT.lock().expect("poison") = history_rect;
+
     // Today table title
     let today_title = if today_orders.is_empty() {
         format!(" {} ", t!("Orders.TodayTab"))

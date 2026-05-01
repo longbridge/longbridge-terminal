@@ -58,4 +58,6 @@ pub fn render(frame: &mut Frame, rect: Rect, state: AppState) {
 
     frame.render_widget(tabs, chunks[0]);
     frame.render_widget(user_info, chunks[1]);
+
+    *crate::tui::mouse::NAVBAR_TABS_RECT.lock().expect("poison") = chunks[0];
 }
