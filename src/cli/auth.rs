@@ -56,15 +56,19 @@ struct TokenState {
     logged_in_at: Option<u64>,
 }
 
-/// Decode the `exp` field from a JWT payload without verifying the signature.
-fn jwt_exp(token: &str) -> Option<u64> {
+/// Decode a numeric field from a JWT payload without verifying the signature.
+fn jwt_field(token: &str, field: &str) -> Option<u64> {
     use base64::Engine as _;
     let payload = token.split('.').nth(1)?;
     let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(payload)
         .ok()?;
     let v: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
-    v["exp"].as_u64()
+    v[field].as_u64()
+}
+
+fn jwt_exp(token: &str) -> Option<u64> {
+    jwt_field(token, "exp")
 }
 
 /// Extract the user's `account_channel` from the access token JWT.
@@ -128,13 +132,7 @@ fn read_token_state() -> Result<TokenState> {
     let contents = std::fs::read_to_string(&token_path)?;
     let data: serde_json::Value = serde_json::from_str(&contents)?;
 
-    let logged_in_at = data["logged_in_at"].as_u64().or_else(|| {
-        std::fs::metadata(&token_path)
-            .and_then(|m| m.modified())
-            .ok()
-            .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-            .map(|d| d.as_secs())
-    });
+    let logged_in_at = data["refresh_token"].as_str().and_then(|t| jwt_field(t, "iat"));
     let expires_at = data["expires_at"].as_u64().unwrap_or(0);
     let access_token_exp = if expires_at > 0 { Some(expires_at) } else { None };
     let refresh_token_exp = data["refresh_token"].as_str().and_then(jwt_exp);
