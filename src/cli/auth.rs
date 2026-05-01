@@ -585,7 +585,8 @@ pub async fn cmd_auth_status(format: &OutputFormat, market: &str) -> Result<()> 
 
                 // ── Quote Mall QR code ───────────────────────────────────────────
                 println!();
-                let _ = super::my_quote::print_mall_qr("lb");
+                let channel = crate::auth::account_channel_or_default();
+                let _ = super::my_quote::print_mall_qr(&channel);
             }
         }
     }

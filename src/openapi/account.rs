@@ -27,9 +27,11 @@ pub async fn fetch_account_list() -> Result<AccountList> {
         }
     }
 
-    // Create a default account
+    // Resolve the channel from the access token JWT (`lb`, `lb_papertrading`,
+    // etc.) so paper-trading and other non-default channels surface accurately
+    // to the TUI / CLI without an extra HTTP roundtrip.
     let account = Account {
-        account_channel: "lb".to_string(),
+        account_channel: crate::auth::account_channel_or_default(),
         aaid: String::new(),
         account_name: "Default Account".to_string(),
         account_type: "CashAccount".to_string(),
