@@ -94,6 +94,8 @@ pub fn open_browser(url: &str) -> bool {
 }
 
 /// Write a token JSON blob to the SDK token file path.
+///
+/// Preserves the existing `logged_in_at` field on refresh; sets it to now on initial login.
 fn save_token(client_id: &str, token_resp: &serde_json::Value) -> Result<()> {
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -102,25 +104,52 @@ fn save_token(client_id: &str, token_resp: &serde_json::Value) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("No access_token in token response"))?;
     let expires_in = token_resp["expires_in"].as_u64().unwrap_or(3600);
     let refresh_token = token_resp["refresh_token"].as_str();
-    let expires_at = SystemTime::now()
+    let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
-        .as_secs()
-        + expires_in;
+        .as_secs();
+    let expires_at = now + expires_in;
+
+    let token_path = token_file_path()?;
+    let logged_in_at = fs::read_to_string(&token_path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v["logged_in_at"].as_u64())
+        .unwrap_or(now);
 
     let token = serde_json::json!({
         "client_id": client_id,
         "access_token": access_token,
         "refresh_token": refresh_token,
         "expires_at": expires_at,
+        "logged_in_at": logged_in_at,
     });
 
-    let token_path = token_file_path()?;
     if let Some(parent) = token_path.parent() {
         fs::create_dir_all(parent).context("Failed to create token directory")?;
     }
     fs::write(&token_path, serde_json::to_string_pretty(&token).unwrap())
         .context("Failed to write token file")?;
+    Ok(())
+}
+
+/// Patch the token file written by the SDK's `OAuthBuilder` to add `logged_in_at` if missing.
+fn patch_token_logged_in_at() -> Result<()> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let token_path = token_file_path()?;
+    let contents = fs::read_to_string(&token_path)?;
+    let mut data: serde_json::Value = serde_json::from_str(&contents)?;
+
+    if data["logged_in_at"].is_null() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        data["logged_in_at"] = serde_json::Value::from(now);
+        fs::write(&token_path, serde_json::to_string_pretty(&data).unwrap())
+            .context("Failed to patch token file")?;
+    }
     Ok(())
 }
 
@@ -245,10 +274,8 @@ pub async fn device_login(verbose: bool) -> Result<()> {
 ///
 /// - Not expired → returns `Ok(())` immediately (no network call).
 /// - Expired, refresh succeeds → writes new token to disk, returns `Ok(())`.
-/// - Expired, server says invalid/expired refresh token → clears token file,
-///   returns an error directing the user to re-authenticate.
-/// - Expired, network/transient error → returns an error asking the user to
-///   retry (token file is **not** cleared; the refresh token is still valid).
+/// - Expired, refresh fails → returns an error; token file is **never** deleted
+///   so `auth status` shows "expired" rather than "not found".
 pub async fn refresh_if_expired() -> Result<()> {
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -264,12 +291,15 @@ pub async fn refresh_if_expired() -> Result<()> {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    if data["expires_at"].as_u64().unwrap_or(0) > now {
+    let expires_at = data["expires_at"].as_u64().unwrap_or(0);
+    if expires_at == 0 {
+        return Ok(()); // no expiry info — let OAuthBuilder handle it
+    }
+    if expires_at > now {
         return Ok(()); // still valid
     }
 
     let Some(refresh_token) = data["refresh_token"].as_str().filter(|s| !s.is_empty()) else {
-        let _ = clear_token();
         return Err(anyhow::anyhow!(
             "No refresh token found. Please run 'longbridge auth login' to re-authenticate."
         ));
@@ -317,7 +347,6 @@ pub async fn refresh_if_expired() -> Result<()> {
     let error = err_resp["error"].as_str().unwrap_or("unknown");
 
     if error == "invalid_grant" {
-        let _ = clear_token();
         return Err(anyhow::anyhow!(
             "Refresh token has expired. Please run 'longbridge auth login' to re-authenticate."
         ));
@@ -357,6 +386,7 @@ pub async fn auth_code_login() -> Result<()> {
 
     match oauth_result {
         Ok(_) => {
+            let _ = patch_token_logged_in_at();
             println!("Successfully authenticated.");
             Ok(())
         }

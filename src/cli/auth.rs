@@ -1,5 +1,5 @@
 use std::time::{SystemTime, UNIX_EPOCH};
-use time::OffsetDateTime;
+use time::{OffsetDateTime, UtcOffset};
 
 use anyhow::Result;
 use longbridge::asset::{GetStatementListOptions, GetStatementOptions, StatementType};
@@ -18,7 +18,15 @@ const RESET: &str = "\x1b[0m";
 
 /// Format a duration in seconds as a human-readable string (e.g. "2h 14m", "45m", "30s").
 fn format_duration(secs: u64) -> String {
-    if secs >= 3600 {
+    if secs >= 86400 {
+        let d = secs / 86400;
+        let h = (secs % 86400) / 3600;
+        if h == 0 {
+            format!("{d}d")
+        } else {
+            format!("{d}d {h}h")
+        }
+    } else if secs >= 3600 {
         let h = secs / 3600;
         let m = (secs % 3600) / 60;
         if m == 0 {
@@ -42,19 +50,25 @@ fn format_duration(secs: u64) -> String {
 struct TokenState {
     status: &'static str,
     detail: String,
+    access_token_exp: Option<u64>,
+    refresh_token_exp: Option<u64>,
     /// Unix timestamp of when the token file was last written (login time).
     logged_in_at: Option<u64>,
 }
 
-/// Decode the `exp` field from a JWT payload without verifying the signature.
-fn jwt_exp(token: &str) -> Option<u64> {
+/// Decode a numeric field from a JWT payload without verifying the signature.
+fn jwt_field(token: &str, field: &str) -> Option<u64> {
     use base64::Engine as _;
     let payload = token.split('.').nth(1)?;
     let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(payload)
         .ok()?;
     let v: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
-    v["exp"].as_u64()
+    v[field].as_u64()
+}
+
+fn jwt_exp(token: &str) -> Option<u64> {
+    jwt_field(token, "exp")
 }
 
 /// Extract the user's `account_channel` from the access token JWT.
@@ -109,24 +123,28 @@ fn read_token_state() -> Result<TokenState> {
         return Ok(TokenState {
             status: "not_found",
             detail: format!("run {DIM}longbridge auth login{RESET} to authenticate"),
+            access_token_exp: None,
+            refresh_token_exp: None,
             logged_in_at: None,
         });
     }
 
-    let logged_in_at = std::fs::metadata(&token_path)
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs());
-
     let contents = std::fs::read_to_string(&token_path)?;
     let data: serde_json::Value = serde_json::from_str(&contents)?;
+
+    let logged_in_at = data["logged_in_at"].as_u64().or_else(|| {
+        data["refresh_token"].as_str().and_then(|t| jwt_field(t, "iat"))
+    });
     let expires_at = data["expires_at"].as_u64().unwrap_or(0);
+    let access_token_exp = if expires_at > 0 { Some(expires_at) } else { None };
+    let refresh_token_exp = data["refresh_token"].as_str().and_then(jwt_exp);
 
     if expires_at == 0 {
         return Ok(TokenState {
             status: "present",
             detail: String::new(),
+            access_token_exp,
+            refresh_token_exp,
             logged_in_at,
         });
     }
@@ -134,16 +152,15 @@ fn read_token_state() -> Result<TokenState> {
     if expires_at > now {
         return Ok(TokenState {
             status: "valid",
-            detail: format!("expires in {}", format_duration(expires_at - now)),
+            detail: String::new(),
+            access_token_exp,
+            refresh_token_exp,
             logged_in_at,
         });
     }
 
     // Access token is expired — check if the refresh token is still usable.
-    let refresh_token_valid = data["refresh_token"]
-        .as_str()
-        .and_then(jwt_exp)
-        .is_some_and(|exp| exp > now);
+    let refresh_token_valid = refresh_token_exp.is_some_and(|exp| exp > now);
 
     if refresh_token_valid {
         Ok(TokenState {
@@ -152,6 +169,8 @@ fn read_token_state() -> Result<TokenState> {
                 "access token expired {} ago, will auto-refresh on next command",
                 format_duration(now - expires_at)
             ),
+            access_token_exp,
+            refresh_token_exp,
             logged_in_at,
         })
     } else {
@@ -161,6 +180,8 @@ fn read_token_state() -> Result<TokenState> {
                 "{} ago — run {DIM}longbridge auth login{RESET} to re-authenticate",
                 format_duration(now - expires_at)
             ),
+            access_token_exp,
+            refresh_token_exp,
             logged_in_at,
         })
     }
@@ -386,7 +407,7 @@ pub async fn cmd_auth_status(format: &OutputFormat, market: &str) -> Result<()> 
         }
 
         OutputFormat::Pretty => {
-            const W: usize = 12; // key column width
+            const W: usize = 13; // key column width
 
             // ── Token ──────────────────────────────────────────────────────────
             let (status_str, status_color) = match token.status {
@@ -396,15 +417,53 @@ pub async fn cmd_auth_status(format: &OutputFormat, market: &str) -> Result<()> 
                 _ => ("valid", GREEN),
             };
             println!("Token");
-            println!(
-                "{:<W$} {color}{status_str}{RESET}  {}",
-                "Status",
-                token.detail,
-                W = W,
-                color = status_color,
-            );
+            if token.detail.is_empty() {
+                println!("{:<W$} {color}{status_str}{RESET}", "Status", W = W, color = status_color);
+            } else {
+                println!(
+                    "{:<W$} {color}{status_str}{RESET}  {}",
+                    "Status",
+                    token.detail,
+                    W = W,
+                    color = status_color,
+                );
+            }
+            let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
+            let fmt_exp = |ts: u64| -> String {
+                let Ok(dt) = OffsetDateTime::from_unix_timestamp(ts.cast_signed())
+                    .map(|utc| utc.to_offset(local_offset))
+                else {
+                    return String::new();
+                };
+                let now_secs = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
+                let rel = if ts > now_secs {
+                    format!("in {}", format_duration(ts - now_secs))
+                } else {
+                    format!("{} ago", format_duration(now_secs - ts))
+                };
+                format!(
+                    "{}-{:02}-{:02} {:02}:{:02}  {DIM}({}){RESET}",
+                    dt.year(),
+                    dt.month() as u8,
+                    dt.day(),
+                    dt.hour(),
+                    dt.minute(),
+                    rel,
+                )
+            };
+            if let Some(exp) = token.access_token_exp {
+                println!("{:<W$} {}", "AccessToken", fmt_exp(exp), W = W);
+            }
+            if let Some(exp) = token.refresh_token_exp {
+                println!("{:<W$} {}", "RefreshToken", fmt_exp(exp), W = W);
+            }
             if let Some(ts) = token.logged_in_at {
-                if let Ok(dt) = OffsetDateTime::from_unix_timestamp(ts.cast_signed()) {
+                if let Ok(dt) = OffsetDateTime::from_unix_timestamp(ts.cast_signed())
+                    .map(|utc| utc.to_offset(local_offset))
+                {
                     println!(
                         "{:<W$} {}-{:02}-{:02} {:02}:{:02}",
                         "Logged In",
