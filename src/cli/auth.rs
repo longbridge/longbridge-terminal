@@ -132,7 +132,9 @@ fn read_token_state() -> Result<TokenState> {
     let contents = std::fs::read_to_string(&token_path)?;
     let data: serde_json::Value = serde_json::from_str(&contents)?;
 
-    let logged_in_at = data["refresh_token"].as_str().and_then(|t| jwt_field(t, "iat"));
+    let logged_in_at = data["logged_in_at"].as_u64().or_else(|| {
+        data["refresh_token"].as_str().and_then(|t| jwt_field(t, "iat"))
+    });
     let expires_at = data["expires_at"].as_u64().unwrap_or(0);
     let access_token_exp = if expires_at > 0 { Some(expires_at) } else { None };
     let refresh_token_exp = data["refresh_token"].as_str().and_then(jwt_exp);
