@@ -8,7 +8,7 @@ use bevy_ecs::prelude::*;
 use bevy_ecs::system::{CommandQueue, InsertResource, SystemState};
 use tokio::sync::mpsc;
 
-use crate::data::{Counter, User, Watchlist, WatchlistGroup};
+use crate::data::{Counter, KlineType, User, Watchlist, WatchlistGroup};
 use crate::tui::mouse;
 use crate::tui::render::{DirtyFlags, RenderState};
 use crate::tui::ui::Content;
@@ -1198,6 +1198,21 @@ fn show_index(world: &mut World, index: usize) {
     world.insert_resource(NextState(Some(AppState::WatchlistStock)));
 }
 
+/// Map a column offset (relative to the kline tab bar's left edge) to the clicked KlineType.
+/// Tabs are rendered as " {label} " with "|" dividers between them.
+fn kline_tab_at(rel_col: u16) -> Option<KlineType> {
+    let mut x = 0u16;
+    for kline_type in <KlineType as strum::IntoEnumIterator>::iter() {
+        let label = kline_type.to_string();
+        let tab_w = (label.chars().count() as u16) + 2; // " {label} "
+        if rel_col < x + tab_w {
+            return Some(kline_type);
+        }
+        x += tab_w + 1; // +1 for "|" divider
+    }
+    None
+}
+
 #[allow(clippy::too_many_lines)]
 fn handle_mouse_event(
     app: &mut bevy_app::App,
@@ -1227,15 +1242,25 @@ fn handle_mouse_event(
         return;
     }
 
-    // Navbar tab bar is always at row 0
+    // Navbar tab bar: compute actual tab positions from rendered text widths
+    // to avoid the off-by-fraction error that comes from simple width/3 division.
     let navbar_rect = *mouse::NAVBAR_TABS_RECT.lock().expect("poison");
     if navbar_rect.width > 0
         && row == navbar_rect.y
         && col >= navbar_rect.x
         && col < navbar_rect.x + navbar_rect.width
     {
-        let tab_width = navbar_rect.width / 3;
-        let tab = ((col - navbar_rect.x) / tab_width.max(1)).min(2);
+        let tab0_w = format!(" {} [1] ", t!("tabs.Watchlist")).chars().count() as u16;
+        let tab1_w = format!(" {} [2] ", t!("tabs.Portfolio")).chars().count() as u16;
+        let divider = 1u16;
+        let rel = col - navbar_rect.x;
+        let tab = if rel < tab0_w {
+            0u16
+        } else if rel < tab0_w + divider + tab1_w {
+            1
+        } else {
+            2
+        };
         match tab {
             0 if !matches!(state, AppState::Watchlist | AppState::WatchlistStock | AppState::Stock) => {
                 app.world
@@ -1258,6 +1283,20 @@ fn handle_mouse_event(
             _ => {}
         }
         return;
+    }
+
+    // Footer index click: Q/W/E index groups
+    let footer_rects = *mouse::FOOTER_INDEX_RECTS.lock().expect("poison");
+    for (i, frect) in footer_rects.iter().enumerate() {
+        if frect.width > 0
+            && row == frect.y
+            && col >= frect.x
+            && col < frect.x + frect.width
+        {
+            show_index(&mut app.world, i);
+            render_state.mark_dirty(DirtyFlags::STOCK_DETAIL | DirtyFlags::WATCHLIST);
+            return;
+        }
     }
 
     match state {
@@ -1327,6 +1366,24 @@ fn handle_mouse_event(
                 return;
             }
 
+            // Kline period tab click (only visible in Quote mode)
+            let news_view = systems::NEWS_VIEW.load(Ordering::Relaxed);
+            if news_view == systems::NewsView::Quote {
+                let kline_rect = *mouse::KLINE_TABS_RECT.lock().expect("poison");
+                if kline_rect.width > 0
+                    && row >= kline_rect.y
+                    && row < kline_rect.y + kline_rect.height
+                    && col >= kline_rect.x
+                    && col < kline_rect.x + kline_rect.width
+                {
+                    if let Some(kline_type) = kline_tab_at(col - kline_rect.x) {
+                        systems::KLINE_TYPE.store(kline_type, Ordering::Relaxed);
+                        render_state.mark_dirty(DirtyFlags::STOCK_DETAIL);
+                        return;
+                    }
+                }
+            }
+
             // Watchlist table row click (left sidebar)
             let table_rect =
                 *mouse::WATCHLIST_TABLE_RECT.lock().expect("poison");
@@ -1361,7 +1418,6 @@ fn handle_mouse_event(
             }
 
             // News list item click
-            let news_view = systems::NEWS_VIEW.load(Ordering::Relaxed);
             if matches!(
                 news_view,
                 systems::NewsView::List | systems::NewsView::Detail
@@ -1450,6 +1506,20 @@ fn handle_mouse_event(
                         .select(Some(row_idx));
                     systems::ORDERS_MODE.store(true, Ordering::Relaxed);
                     render_state.mark_dirty(DirtyFlags::ALL);
+                }
+            }
+        }
+        AppState::Stock => {
+            let kline_rect = *mouse::KLINE_TABS_RECT.lock().expect("poison");
+            if kline_rect.width > 0
+                && row >= kline_rect.y
+                && row < kline_rect.y + kline_rect.height
+                && col >= kline_rect.x
+                && col < kline_rect.x + kline_rect.width
+            {
+                if let Some(kline_type) = kline_tab_at(col - kline_rect.x) {
+                    systems::KLINE_TYPE.store(kline_type, Ordering::Relaxed);
+                    render_state.mark_dirty(DirtyFlags::STOCK_DETAIL);
                 }
             }
         }

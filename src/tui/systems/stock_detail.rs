@@ -667,6 +667,7 @@ pub(crate) fn stock_detail(
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
         .select(selected_type_index);
         frame.render_widget(chart_tabs, chart_chunks_inner[0]);
+        *crate::tui::mouse::KLINE_TABS_RECT.lock().expect("poison") = chart_chunks_inner[0];
 
         let area = chart_chunks_inner[1];
         let (width, page, _index) = area

@@ -29,6 +29,14 @@ pub static NEWS_LIST_RECT: LazyLock<Mutex<Rect>> =
 pub static WATCHLIST_STOCK_TABS_RECT: LazyLock<Mutex<Rect>> =
     LazyLock::new(|| Mutex::new(Rect::default()));
 
+/// Kline period tab bar rect (1m / 5m / … / Year row in stock detail).
+pub static KLINE_TABS_RECT: LazyLock<Mutex<Rect>> =
+    LazyLock::new(|| Mutex::new(Rect::default()));
+
+/// Footer index click areas: [Q], [W], [E] regions (one rect per index group).
+pub static FOOTER_INDEX_RECTS: LazyLock<Mutex<[Rect; 3]>> =
+    LazyLock::new(|| Mutex::new([Rect::default(); 3]));
+
 /// Hit-test a click against a table with NO block border.
 /// Header is at rect.y; data row i is at rect.y + 1 + i.
 pub fn click_to_row(col: u16, row: u16, rect: Rect) -> Option<usize> {
