@@ -1198,7 +1198,7 @@ fn show_index(world: &mut World, index: usize) {
     world.insert_resource(NextState(Some(AppState::WatchlistStock)));
 }
 
-/// Map a column offset (relative to the kline tab bar's left edge) to the clicked KlineType.
+/// Map a column offset (relative to the kline tab bar's left edge) to the clicked `KlineType`.
 /// Tabs are rendered as " {label} " with "|" dividers between them.
 fn kline_tab_at(rel_col: u16) -> Option<KlineType> {
     let mut x = 0u16;
@@ -1262,7 +1262,11 @@ fn handle_mouse_event(
             2
         };
         match tab {
-            0 if !matches!(state, AppState::Watchlist | AppState::WatchlistStock | AppState::Stock) => {
+            0 if !matches!(
+                state,
+                AppState::Watchlist | AppState::WatchlistStock | AppState::Stock
+            ) =>
+            {
                 app.world
                     .insert_resource(NextState(Some(AppState::Watchlist)));
                 render_state.mark_dirty(DirtyFlags::ALL);
@@ -1276,8 +1280,7 @@ fn handle_mouse_event(
                 render_state.mark_dirty(DirtyFlags::ALL);
             }
             2 if state != AppState::Orders => {
-                app.world
-                    .insert_resource(NextState(Some(AppState::Orders)));
+                app.world.insert_resource(NextState(Some(AppState::Orders)));
                 render_state.mark_dirty(DirtyFlags::ALL);
             }
             _ => {}
@@ -1288,11 +1291,7 @@ fn handle_mouse_event(
     // Footer index click: Q/W/E index groups
     let footer_rects = *mouse::FOOTER_INDEX_RECTS.lock().expect("poison");
     for (i, frect) in footer_rects.iter().enumerate() {
-        if frect.width > 0
-            && row == frect.y
-            && col >= frect.x
-            && col < frect.x + frect.width
-        {
+        if frect.width > 0 && row == frect.y && col >= frect.x && col < frect.x + frect.width {
             show_index(&mut app.world, i);
             render_state.mark_dirty(DirtyFlags::STOCK_DETAIL | DirtyFlags::WATCHLIST);
             return;
@@ -1301,8 +1300,7 @@ fn handle_mouse_event(
 
     match state {
         AppState::Watchlist => {
-            let table_rect =
-                *mouse::WATCHLIST_TABLE_RECT.lock().expect("poison");
+            let table_rect = *mouse::WATCHLIST_TABLE_RECT.lock().expect("poison");
             if let Some(row_idx) = mouse::click_to_row(col, row, table_rect) {
                 let offset = systems::WATCHLIST_TABLE.lock().expect("poison").offset();
                 let actual_idx = row_idx + offset;
@@ -1334,8 +1332,7 @@ fn handle_mouse_event(
         }
         AppState::WatchlistStock => {
             // Tab bar click (Quote / News toggle)
-            let tabs_rect =
-                *mouse::WATCHLIST_STOCK_TABS_RECT.lock().expect("poison");
+            let tabs_rect = *mouse::WATCHLIST_STOCK_TABS_RECT.lock().expect("poison");
             if tabs_rect.width > 0
                 && row == tabs_rect.y
                 && col >= tabs_rect.x
@@ -1343,17 +1340,11 @@ fn handle_mouse_event(
             {
                 let half = tabs_rect.width / 2;
                 if col < tabs_rect.x + half {
-                    systems::NEWS_VIEW.store(
-                        systems::NewsView::Quote,
-                        Ordering::Relaxed,
-                    );
+                    systems::NEWS_VIEW.store(systems::NewsView::Quote, Ordering::Relaxed);
                 } else {
                     let news_view = systems::NEWS_VIEW.load(Ordering::Relaxed);
                     if news_view == systems::NewsView::Quote {
-                        systems::NEWS_VIEW.store(
-                            systems::NewsView::List,
-                            Ordering::Relaxed,
-                        );
+                        systems::NEWS_VIEW.store(systems::NewsView::List, Ordering::Relaxed);
                         if let Some(sd) = app.world.get_resource::<systems::StockDetail>() {
                             systems::fetch_news(
                                 sd.0.clone(),
@@ -1385,13 +1376,9 @@ fn handle_mouse_event(
             }
 
             // Watchlist table row click (left sidebar)
-            let table_rect =
-                *mouse::WATCHLIST_TABLE_RECT.lock().expect("poison");
+            let table_rect = *mouse::WATCHLIST_TABLE_RECT.lock().expect("poison");
             if let Some(row_idx) = mouse::click_to_row(col, row, table_rect) {
-                let offset = systems::WATCHLIST_TABLE
-                    .lock()
-                    .expect("poison")
-                    .offset();
+                let offset = systems::WATCHLIST_TABLE.lock().expect("poison").offset();
                 let actual_idx = row_idx + offset;
                 let len = WATCHLIST.read().expect("poison").counters().len();
                 if actual_idx < len {
@@ -1422,8 +1409,7 @@ fn handle_mouse_event(
                 news_view,
                 systems::NewsView::List | systems::NewsView::Detail
             ) {
-                let news_rect =
-                    *mouse::NEWS_LIST_RECT.lock().expect("poison");
+                let news_rect = *mouse::NEWS_LIST_RECT.lock().expect("poison");
                 if news_rect.width > 0
                     && col >= news_rect.x
                     && col < news_rect.x + news_rect.width
@@ -1432,10 +1418,7 @@ fn handle_mouse_event(
                 {
                     // Each news item is 2 lines tall in non-compact mode
                     let item_idx = ((row - news_rect.y) / 2) as usize;
-                    let len = systems::NEWS_ITEMS
-                        .lock()
-                        .expect("poison")
-                        .len();
+                    let len = systems::NEWS_ITEMS.lock().expect("poison").len();
                     if item_idx < len {
                         systems::NEWS_LIST_STATE
                             .lock()
@@ -1447,10 +1430,7 @@ fn handle_mouse_event(
                                 id,
                                 app.world.resource::<systems::Command>().0.clone(),
                             );
-                            systems::NEWS_VIEW.store(
-                                systems::NewsView::Detail,
-                                Ordering::Relaxed,
-                            );
+                            systems::NEWS_VIEW.store(systems::NewsView::Detail, Ordering::Relaxed);
                         }
                         render_state.mark_dirty(DirtyFlags::ALL);
                     }
@@ -1458,11 +1438,8 @@ fn handle_mouse_event(
             }
         }
         AppState::Portfolio => {
-            let table_rect =
-                *mouse::PORTFOLIO_TABLE_RECT.lock().expect("poison");
-            if let Some(row_idx) =
-                mouse::click_to_row_with_border(col, row, table_rect)
-            {
+            let table_rect = *mouse::PORTFOLIO_TABLE_RECT.lock().expect("poison");
+            if let Some(row_idx) = mouse::click_to_row_with_border(col, row, table_rect) {
                 let len = systems::PORTFOLIO_VIEW
                     .read()
                     .expect("poison")
@@ -1473,19 +1450,14 @@ fn handle_mouse_event(
                         .lock()
                         .expect("poison")
                         .select(Some(row_idx));
-                    render_state
-                        .mark_dirty(DirtyFlags::PORTFOLIO);
+                    render_state.mark_dirty(DirtyFlags::PORTFOLIO);
                 }
             }
         }
         AppState::Orders => {
-            let today_rect =
-                *mouse::ORDERS_TABLE_RECT.lock().expect("poison");
-            let history_rect =
-                *mouse::HISTORY_ORDERS_TABLE_RECT.lock().expect("poison");
-            if let Some(row_idx) =
-                mouse::click_to_row_with_border(col, row, today_rect)
-            {
+            let today_rect = *mouse::ORDERS_TABLE_RECT.lock().expect("poison");
+            let history_rect = *mouse::HISTORY_ORDERS_TABLE_RECT.lock().expect("poison");
+            if let Some(row_idx) = mouse::click_to_row_with_border(col, row, today_rect) {
                 let len = systems::ORDERS_VIEW.read().expect("poison").len();
                 if row_idx < len {
                     systems::ORDERS_TABLE
@@ -1495,9 +1467,7 @@ fn handle_mouse_event(
                     systems::ORDERS_MODE.store(false, Ordering::Relaxed);
                     render_state.mark_dirty(DirtyFlags::ALL);
                 }
-            } else if let Some(row_idx) =
-                mouse::click_to_row_with_border(col, row, history_rect)
-            {
+            } else if let Some(row_idx) = mouse::click_to_row_with_border(col, row, history_rect) {
                 let len = systems::HISTORY_ORDERS_VIEW.read().expect("poison").len();
                 if row_idx < len {
                     systems::HISTORY_ORDERS_TABLE
@@ -1538,9 +1508,7 @@ fn handle_popup_mouse_click(
     let list_rect = *mouse::POPUP_LIST_RECT.lock().expect("poison");
 
     if popup == POPUP_ACCOUNT {
-        let Some(row_idx) =
-            mouse::click_to_list_item(col, row, list_rect)
-        else {
+        let Some(row_idx) = mouse::click_to_list_item(col, row, list_rect) else {
             return;
         };
         let selected = {
@@ -1563,9 +1531,7 @@ fn handle_popup_mouse_click(
             render_state.mark_dirty(DirtyFlags::ALL);
         }
     } else if popup == POPUP_CURRENCY {
-        let Some(row_idx) =
-            mouse::click_to_list_item(col, row, list_rect)
-        else {
+        let Some(row_idx) = mouse::click_to_list_item(col, row, list_rect) else {
             return;
         };
         let selected = {
@@ -1587,15 +1553,11 @@ fn handle_popup_mouse_click(
             render_state.mark_dirty(DirtyFlags::ALL);
         }
     } else if popup == POPUP_WATCHLIST {
-        let Some(row_idx) =
-            mouse::click_to_list_item(col, row, list_rect)
-        else {
+        let Some(row_idx) = mouse::click_to_list_item(col, row, list_rect) else {
             return;
         };
         let selected = {
-            let search = app
-                .world
-                .resource_mut::<LocalSearch<WatchlistGroup>>();
+            let search = app.world.resource_mut::<LocalSearch<WatchlistGroup>>();
             search.options().get(row_idx).cloned()
         };
         if let Some(group) = selected {
@@ -1611,9 +1573,7 @@ fn handle_popup_mouse_click(
             render_state.mark_dirty(DirtyFlags::ALL);
         }
     } else if popup == POPUP_WATCHLIST_SEARCH {
-        let Some(row_idx) =
-            mouse::click_to_list_item(col, row, list_rect)
-        else {
+        let Some(row_idx) = mouse::click_to_list_item(col, row, list_rect) else {
             return;
         };
         let selected = {

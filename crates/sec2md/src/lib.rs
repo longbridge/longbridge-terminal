@@ -3,6 +3,8 @@
 // Handles inline XBRL tags (ix:nonNumeric, ix:continuation, etc.) as transparent
 // wrappers, strips hidden/metadata sections, and converts tables to Markdown format.
 
+use std::fmt::Write as _;
+
 use scraper::{ElementRef, Html, Node};
 
 /// Convert SEC filing HTML to clean Markdown text.
@@ -337,13 +339,13 @@ fn render_table_node(elem: ElementRef<'_>, out: &mut String) {
             // Keep only colspan and rowspan.
             let mut attrs = String::new();
             if let Some(cs) = elem.value().attr("colspan").filter(|&v| v != "1") {
-                attrs.push_str(&format!(" colspan=\"{cs}\""));
+                let _ = write!(attrs, " colspan=\"{cs}\"");
             }
             if let Some(rs) = elem.value().attr("rowspan").filter(|&v| v != "1") {
-                attrs.push_str(&format!(" rowspan=\"{rs}\""));
+                let _ = write!(attrs, " rowspan=\"{rs}\"");
             }
             let text = collect_text(elem);
-            out.push_str(&format!("<{tag}{attrs}>{}</{tag}>", html_escape(&text)));
+            let _ = write!(out, "<{tag}{attrs}>{}</{tag}>", html_escape(&text));
         }
 
         _ => {}

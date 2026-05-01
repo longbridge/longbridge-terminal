@@ -371,10 +371,10 @@ pub async fn auth_code_login() -> Result<()> {
     let oauth_result = longbridge::oauth::OAuthBuilder::new(client_id())
         .callback_port(CALLBACK_PORT)
         .build(|url| {
-            let authorization_url = invite_code
-                .as_deref()
-                .map(|invite_code| append_query_param(url, "invite-code", invite_code))
-                .unwrap_or_else(|| url.to_string());
+            let authorization_url = invite_code.as_deref().map_or_else(
+                || url.to_string(),
+                |invite_code| append_query_param(url, "invite-code", invite_code),
+            );
             println!();
             println!("Authorization URL: {authorization_url}");
             println!();

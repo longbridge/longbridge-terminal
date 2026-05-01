@@ -27,7 +27,6 @@ pub fn render(frame: &mut Frame, rect: Rect, state: AppState) {
         .highlight_style(styles::text_selected())
         .divider("|")
         .select(match state {
-            AppState::Watchlist | AppState::WatchlistStock | AppState::Stock => 0,
             AppState::Portfolio => 1,
             AppState::Orders => 2,
             _ => 0,

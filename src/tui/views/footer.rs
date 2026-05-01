@@ -59,7 +59,9 @@ pub fn render(frame: &mut Frame, rect: Rect, indexes: &[Counter; 3], state: &WsS
         footer_rects[i] = index_chunks[i];
     }
 
-    *crate::tui::mouse::FOOTER_INDEX_RECTS.lock().expect("poison") = footer_rects;
+    *crate::tui::mouse::FOOTER_INDEX_RECTS
+        .lock()
+        .expect("poison") = footer_rects;
 
     let (status, status_style) = match state.0 {
         ReadyState::Open => {

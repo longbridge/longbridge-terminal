@@ -72,9 +72,8 @@ fn extract_series(chart_json_raw: &Value) -> Vec<Series> {
         chart_json_raw.clone()
     };
 
-    let graphs = match chart_json.get("series_graphs") {
-        Some(Value::Object(m)) => m,
-        _ => return vec![],
+    let Some(Value::Object(graphs)) = chart_json.get("series_graphs") else {
+        return vec![];
     };
 
     let mut keys: Vec<u64> = graphs.keys().filter_map(|k| k.parse().ok()).collect();
@@ -93,7 +92,6 @@ fn extract_series(chart_json_raw: &Value) -> Vec<Series> {
             let values = raw
                 .iter()
                 .map(|item| match item {
-                    Value::Null => None,
                     Value::Number(n) => n.as_f64(),
                     Value::Object(m) => m
                         .get("Close")
@@ -122,13 +120,14 @@ fn fmt_val(v: Option<f64>) -> String {
 // dot rows.  Bars are filled from the bottom up to the value level, giving
 // much higher visual fidelity than block chars in a single text row.
 
+#[allow(clippy::cast_precision_loss, clippy::cast_sign_loss)]
 fn braille_spark(values: &[Option<f64>], width: usize) -> String {
     let clean: Vec<f64> = values.iter().filter_map(|v| *v).collect();
     if clean.is_empty() {
         return "·".repeat(width);
     }
-    let lo = clean.iter().cloned().fold(f64::INFINITY, f64::min);
-    let hi = clean.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let lo = clean.iter().copied().fold(f64::INFINITY, f64::min);
+    let hi = clean.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     let span = (hi - lo).max(1e-9);
 
     let px_w = width * 2;
@@ -181,7 +180,7 @@ fn braille_char(bits: u8) -> char {
 }
 
 struct BrailleCanvas {
-    /// Bit mask per cell (char_height rows × char_width cols).
+    /// Bit mask per cell (`char_height` rows × `char_width` cols).
     bits: Vec<Vec<u8>>,
     /// Foreground color assigned to each cell (last writer wins).
     colors: Vec<Vec<Color>>,
@@ -201,6 +200,7 @@ impl BrailleCanvas {
 
     /// Plot one series onto the canvas.  Values outside [lo, hi] are clamped.
     /// Adjacent pixels are connected with a vertical stroke so there are no gaps.
+    #[allow(clippy::cast_precision_loss, clippy::cast_sign_loss)]
     fn plot(&mut self, values: &[Option<f64>], lo: f64, hi: f64, color: Color) {
         if values.is_empty() {
             return;
@@ -221,7 +221,7 @@ impl BrailleCanvas {
 
             let Some(v0) = values[i0] else { continue };
             let y0 = px_y(v0);
-            let y1 = values[i1].map_or(y0, |v| px_y(v));
+            let y1 = values[i1].map_or(y0, &px_y);
 
             let y_lo = y0.min(y1);
             let y_hi = y0.max(y1);
@@ -239,6 +239,7 @@ impl BrailleCanvas {
     }
 
     /// Draw a horizontal reference line at value `v` (dim color, does not overwrite series dots).
+    #[allow(clippy::cast_precision_loss, clippy::cast_sign_loss)]
     fn hline(&mut self, v: f64, lo: f64, hi: f64) {
         let span = (hi - lo).max(1e-9);
         if v < lo || v > hi {
@@ -262,6 +263,7 @@ impl BrailleCanvas {
 
 const LABEL_W: usize = 10; // chars for y-axis label + separator
 
+#[allow(clippy::cast_precision_loss)]
 fn draw_braille_chart(
     out: &mut Out<'_>,
     canvas: &BrailleCanvas,
@@ -276,7 +278,7 @@ fn draw_braille_chart(
         // Y-axis label (only on selected rows, blank otherwise)
         if label_rows.contains(&row) {
             let v = hi - (row as f64 / (h - 1).max(1) as f64) * span;
-            write_dim(out, &format!("{:>8.2} │", v));
+            write_dim(out, &format!("{v:>8.2} │"));
         } else {
             write_dim(out, &format!("{:>8} │", ""));
         }
@@ -325,12 +327,12 @@ fn combined_range(slices: &[&[Option<f64>]]) -> (f64, f64) {
 }
 
 fn render_braille(out: &mut Out<'_>, series_list: &[Series], term_w: usize) {
-    // chart_w: terminal width minus label column and 2-char left indent
-    let chart_w = term_w.saturating_sub(LABEL_W + 2).max(20);
     const CHAR_H: usize = 12; // 12 rows × 4 dots = 48 pixel rows
+                              // chart_w: terminal width minus label column and 2-char left indent
+    let chart_w = term_w.saturating_sub(LABEL_W + 2).max(20);
 
     // ── Chart 1: Composite (index 0) + Comp Signal (index 1) overlaid ─────────
-    if let (Some(s0), Some(s1)) = (series_list.get(0), series_list.get(1)) {
+    if let (Some(s0), Some(s1)) = (series_list.first(), series_list.get(1)) {
         let (lo, hi) = combined_range(&[&s0.values, &s1.values]);
 
         let mut canvas = BrailleCanvas::new(chart_w, CHAR_H);
@@ -371,6 +373,10 @@ fn render_braille(out: &mut Out<'_>, series_list: &[Series], term_w: usize) {
 // ── Table ─────────────────────────────────────────────────────────────────────
 
 pub fn render_terminal(resp: &Value) {
+    // Columns: name(22) | bars(6) | first(10) | last(10) | min(10) | max(10) | sparkline(rest)
+    const C_NAME: usize = 22;
+    const C_BARS: usize = 6;
+    const C_NUM: usize = 10;
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     let w = term_width();
@@ -390,10 +396,6 @@ pub fn render_terminal(resp: &Value) {
     let _ = writeln!(out);
 
     // ── table ──────────────────────────────────────────────────────────────────
-    // Columns: name(22) | bars(6) | first(10) | last(10) | min(10) | max(10) | sparkline(rest)
-    const C_NAME: usize = 22;
-    const C_BARS: usize = 6;
-    const C_NUM: usize = 10;
     let spark_w = w.saturating_sub(C_NAME + C_BARS + C_NUM * 4 + 6).max(20);
 
     // header row
@@ -412,8 +414,8 @@ pub fn render_terminal(resp: &Value) {
         let bars = clean.len();
         let first = clean.first().copied();
         let last = clean.last().copied();
-        let lo = clean.iter().cloned().fold(f64::INFINITY, f64::min);
-        let hi = clean.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let lo = clean.iter().copied().fold(f64::INFINITY, f64::min);
+        let hi = clean.iter().copied().fold(f64::NEG_INFINITY, f64::max);
         let (lo, hi) = if clean.is_empty() {
             (None, None)
         } else {
@@ -424,7 +426,7 @@ pub fn render_terminal(resp: &Value) {
         let name = s.title.chars().take(C_NAME).collect::<String>();
 
         // name column colored
-        write_colored(&mut out, color, &format!("{:<C_NAME$}", name));
+        write_colored(&mut out, color, &format!("{name:<C_NAME$}"));
         let _ = write!(
             out,
             "│{bars:>C_BARS$}│{:>C_NUM$}│{:>C_NUM$}│{:>C_NUM$}│{:>C_NUM$} ",
@@ -438,7 +440,7 @@ pub fn render_terminal(resp: &Value) {
     }
 
     write_dim(&mut out, &format!("{}\n", "─".repeat(w)));
-    let total_bars = series_list.first().map(|s| s.values.len()).unwrap_or(0);
+    let total_bars = series_list.first().map_or(0, |s| s.values.len());
     write_dim(
         &mut out,
         &format!("  {} series  ·  {} bars\n\n", series_list.len(), total_bars),

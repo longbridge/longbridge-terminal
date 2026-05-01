@@ -5,8 +5,7 @@ use ratatui::layout::Rect;
 // Clickable area rects updated every frame during rendering.
 // Used by the mouse event handler in app.rs to map clicks to actions.
 
-pub static NAVBAR_TABS_RECT: LazyLock<Mutex<Rect>> =
-    LazyLock::new(|| Mutex::new(Rect::default()));
+pub static NAVBAR_TABS_RECT: LazyLock<Mutex<Rect>> = LazyLock::new(|| Mutex::new(Rect::default()));
 
 pub static WATCHLIST_TABLE_RECT: LazyLock<Mutex<Rect>> =
     LazyLock::new(|| Mutex::new(Rect::default()));
@@ -14,24 +13,20 @@ pub static WATCHLIST_TABLE_RECT: LazyLock<Mutex<Rect>> =
 pub static PORTFOLIO_TABLE_RECT: LazyLock<Mutex<Rect>> =
     LazyLock::new(|| Mutex::new(Rect::default()));
 
-pub static ORDERS_TABLE_RECT: LazyLock<Mutex<Rect>> =
-    LazyLock::new(|| Mutex::new(Rect::default()));
+pub static ORDERS_TABLE_RECT: LazyLock<Mutex<Rect>> = LazyLock::new(|| Mutex::new(Rect::default()));
 
 pub static HISTORY_ORDERS_TABLE_RECT: LazyLock<Mutex<Rect>> =
     LazyLock::new(|| Mutex::new(Rect::default()));
 
-pub static POPUP_LIST_RECT: LazyLock<Mutex<Rect>> =
-    LazyLock::new(|| Mutex::new(Rect::default()));
+pub static POPUP_LIST_RECT: LazyLock<Mutex<Rect>> = LazyLock::new(|| Mutex::new(Rect::default()));
 
-pub static NEWS_LIST_RECT: LazyLock<Mutex<Rect>> =
-    LazyLock::new(|| Mutex::new(Rect::default()));
+pub static NEWS_LIST_RECT: LazyLock<Mutex<Rect>> = LazyLock::new(|| Mutex::new(Rect::default()));
 
 pub static WATCHLIST_STOCK_TABS_RECT: LazyLock<Mutex<Rect>> =
     LazyLock::new(|| Mutex::new(Rect::default()));
 
 /// Kline period tab bar rect (1m / 5m / … / Year row in stock detail).
-pub static KLINE_TABS_RECT: LazyLock<Mutex<Rect>> =
-    LazyLock::new(|| Mutex::new(Rect::default()));
+pub static KLINE_TABS_RECT: LazyLock<Mutex<Rect>> = LazyLock::new(|| Mutex::new(Rect::default()));
 
 /// Footer index click areas: [Q], [W], [E] regions (one rect per index group).
 pub static FOOTER_INDEX_RECTS: LazyLock<Mutex<[Rect; 3]>> =
