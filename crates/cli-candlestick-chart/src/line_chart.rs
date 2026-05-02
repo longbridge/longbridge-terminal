@@ -25,10 +25,24 @@ fn braille_char(bits: u8) -> char {
     char::from_u32(0x2800 + u32::from(bits)).unwrap_or(' ')
 }
 
+/// Dim the base color by `factor` (0.0 = black, 1.0 = original). Used for the
+/// gradient area fill below the price line.
+fn dim_color(base: Color, factor: f64) -> Color {
+    match base {
+        Color::TrueColor { r, g, b } => Color::TrueColor {
+            r: (f64::from(r) * factor).round() as u8,
+            g: (f64::from(g) * factor).round() as u8,
+            b: (f64::from(b) * factor).round() as u8,
+        },
+        c => c,
+    }
+}
+
 /// High-resolution braille line chart for short-term periods.
 ///
 /// Uses Unicode braille characters (2×4 dot grid per char) to render a price
 /// curve with 4× the vertical resolution of block-character approaches.
+/// The area below the price line is filled with a gradient background.
 pub struct LineChart {
     pub bullish_color: Color,
     pub bearish_color: Color,
@@ -96,10 +110,7 @@ impl LineChart {
 
         let chart_char_width = (w - YAxis::WIDTH) as usize;
 
-        let has_volume = self
-            .candles
-            .iter()
-            .any(|c| c.volume.unwrap_or(0.0) > 0.0);
+        let has_volume = self.candles.iter().any(|c| c.volume.unwrap_or(0.0) > 0.0);
         let vol_height = if has_volume { (h / 6).max(1) } else { 0 };
 
         let chart_char_height = ((h - InfoBar::HEIGHT - vol_height).max(1)) as usize;
@@ -127,7 +138,10 @@ impl LineChart {
             ((1.0 - norm) * (px_h - 1) as f64).round() as usize
         };
 
-        let mut bits = vec![vec![0u8; chart_char_width]; chart_char_height];
+        // line_bits: braille dots for the price line strokes
+        // fill_bits: braille dots for the gradient area below the line
+        let mut line_bits = vec![vec![0u8; chart_char_width]; chart_char_height];
+        let mut fill_bits = vec![vec![0u8; chart_char_width]; chart_char_height];
 
         if px_w > 0 && px_h > 1 {
             let step = n as f64 / px_w as f64;
@@ -145,27 +159,38 @@ impl LineChart {
                     let col = px_x / 2;
                     let dx = px_x % 2;
                     if char_row < chart_char_height {
-                        bits[char_row][col] |= dot_bit(dx, dy);
+                        line_bits[char_row][col] |= dot_bit(dx, dy);
+                    }
+                }
+
+                // Gradient fill: all pixels below the line stroke
+                let y_below = y0.max(y1) + 1;
+                for y in y_below..px_h {
+                    let char_row = y / 4;
+                    let dy = y % 4;
+                    let col = px_x / 2;
+                    let dx = px_x % 2;
+                    if char_row < chart_char_height {
+                        fill_bits[char_row][col] |= dot_bit(dx, dy);
                     }
                 }
             }
         }
 
         let y_axis_empty = {
-            let cell =
-                " ".repeat((YAxis::CHAR_PRECISION + YAxis::DEC_PRECISION + 2) as usize);
+            let cell = " ".repeat((YAxis::CHAR_PRECISION + YAxis::DEC_PRECISION + 2) as usize);
             let margin = " ".repeat((YAxis::MARGIN_RIGHT + 1) as usize);
             format!("{cell}│{margin}")
         };
 
         let mut output = String::new();
 
-        for row in 0..chart_char_height {
+        for (row, (line_row, fill_row)) in line_bits.iter().zip(fill_bits.iter()).enumerate() {
             output.push('\n');
 
             // Y-axis tick every 4 character rows (from bottom), matching YAxis convention
             let y_from_bottom = chart_char_height - 1 - row;
-            if y_from_bottom % 4 == 0 {
+            if y_from_bottom.is_multiple_of(4) {
                 let price =
                     min_price + y_from_bottom as f64 * price_span / chart_char_height as f64;
                 let cell_len = (YAxis::CHAR_PRECISION + YAxis::DEC_PRECISION + 1) as usize;
@@ -180,12 +205,22 @@ impl LineChart {
                 output += &y_axis_empty;
             }
 
-            for col in 0..chart_char_width {
-                let b = bits[row][col];
-                if b == 0 {
+            for (lb, fb) in line_row.iter().zip(fill_row.iter()) {
+                let combined = lb | fb;
+                if combined == 0 {
                     output.push(' ');
+                } else if *lb != 0 {
+                    // Cell contains part of the price line — render at full line color
+                    output += &braille_char(combined)
+                        .to_string()
+                        .color(line_color)
+                        .to_string();
                 } else {
-                    output += &braille_char(b).to_string().color(line_color).to_string();
+                    // Cell is in the fill area — gradient: bright near line, dim at bottom
+                    let t = row as f64 / chart_char_height.max(1) as f64;
+                    let factor = 0.55 - 0.35 * t; // ~55% at top, ~20% at bottom
+                    let fill_color = dim_color(line_color, factor);
+                    output += &braille_char(*fb).to_string().color(fill_color).to_string();
                 }
             }
         }
@@ -209,8 +244,8 @@ impl LineChart {
                         continue;
                     }
                     let is_bullish = candle.close >= candle.open;
-                    let fill = ((vol / max_vol) * (vol_px_h.saturating_sub(1)) as f64)
-                        .round() as usize;
+                    let fill =
+                        ((vol / max_vol) * (vol_px_h.saturating_sub(1)) as f64).round() as usize;
 
                     let col = px_x / 2;
                     let dx = px_x % 2;
@@ -228,20 +263,19 @@ impl LineChart {
                 }
             }
 
-            for row in 0..vol_h_usize {
+            for (vol_row, vol_bull_row) in vol_bits.iter().zip(vol_is_bullish.iter()) {
                 output.push('\n');
                 output += &y_axis_empty;
-                for col in 0..chart_char_width {
-                    let b = vol_bits[row][col];
-                    if b == 0 {
+                for (b, is_bull) in vol_row.iter().zip(vol_bull_row.iter()) {
+                    if *b == 0 {
                         output.push(' ');
                     } else {
-                        let color = if vol_is_bullish[row][col] {
+                        let color = if *is_bull {
                             self.vol_bullish_color
                         } else {
                             self.vol_bearish_color
                         };
-                        output += &braille_char(b).to_string().color(color).to_string();
+                        output += &braille_char(*b).to_string().color(color).to_string();
                     }
                 }
             }
