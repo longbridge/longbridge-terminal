@@ -1184,7 +1184,7 @@ fn order_status_style(status: longbridge::trade::OrderStatus) -> Style {
         | longbridge::trade::OrderStatus::PartialWithdrawal
         | longbridge::trade::OrderStatus::Expired => Style::default().fg(Color::DarkGray),
         longbridge::trade::OrderStatus::Rejected => Style::default().fg(Color::Red),
-        _ => Style::default(),
+        longbridge::trade::OrderStatus::Unknown => Style::default(),
     }
 }
 
@@ -1207,7 +1207,7 @@ fn order_status_label(status: longbridge::trade::OrderStatus) -> &'static str {
         longbridge::trade::OrderStatus::Rejected => "Rejected",
         longbridge::trade::OrderStatus::Expired => "Expired",
         longbridge::trade::OrderStatus::PartialWithdrawal => "PartialWithdrawal",
-        _ => "–",
+        longbridge::trade::OrderStatus::Unknown => "–",
     }
 }
 
@@ -1566,13 +1566,13 @@ pub fn render_replace_order_popup(frame: &mut Frame, rect: Rect) {
             Span::styled(state.order_id.clone(), val),
         ]),
         Line::from(vec![
-            Span::styled(format!("  {}: ", qty_label), lbl),
+            Span::styled(format!("  {qty_label}: "), lbl),
             Span::raw("["),
             Span::styled(state.qty_input.value().to_string(), qty_style),
             Span::raw("]"),
         ]),
         Line::from(vec![
-            Span::styled(format!("  {}: ", price_label), lbl),
+            Span::styled(format!("  {price_label}: "), lbl),
             Span::raw("["),
             Span::styled(state.price_input.value().to_string(), price_style),
             Span::raw("]"),
@@ -1725,14 +1725,14 @@ pub fn try_open_cancel_for_selected() {
             | longbridge::trade::OrderStatus::Expired
             | longbridge::trade::OrderStatus::PartialWithdrawal
     );
-    if !terminal {
-        *CANCEL_TARGET.write().expect("poison") = Some(order.clone());
-        POPUP.store(POPUP_CANCEL_ORDER, Ordering::Relaxed);
-    } else {
+    if terminal {
         set_toast(
             ToastKind::Error,
             t!("Trade.OrderNotCancellable").to_string(),
         );
+    } else {
+        *CANCEL_TARGET.write().expect("poison") = Some(order.clone());
+        POPUP.store(POPUP_CANCEL_ORDER, Ordering::Relaxed);
     }
 }
 
@@ -1752,7 +1752,12 @@ pub fn try_open_replace_for_selected() {
             | longbridge::trade::OrderStatus::Expired
             | longbridge::trade::OrderStatus::PartialWithdrawal
     );
-    if !terminal {
+    if terminal {
+        set_toast(
+            ToastKind::Error,
+            t!("Trade.OrderNotReplaceable").to_string(),
+        );
+    } else {
         let state = ReplaceOrderState {
             order_id: order.order_id.clone(),
             qty_input: tui_input::Input::new(format!("{}", order.quantity)),
@@ -1764,10 +1769,5 @@ pub fn try_open_replace_for_selected() {
         };
         *REPLACE_ORDER_STATE.write().expect("poison") = Some(state);
         POPUP.store(POPUP_REPLACE_ORDER, Ordering::Relaxed);
-    } else {
-        set_toast(
-            ToastKind::Error,
-            t!("Trade.OrderNotReplaceable").to_string(),
-        );
     }
 }

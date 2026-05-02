@@ -133,10 +133,16 @@ fn read_token_state() -> Result<TokenState> {
     let data: serde_json::Value = serde_json::from_str(&contents)?;
 
     let logged_in_at = data["logged_in_at"].as_u64().or_else(|| {
-        data["refresh_token"].as_str().and_then(|t| jwt_field(t, "iat"))
+        data["refresh_token"]
+            .as_str()
+            .and_then(|t| jwt_field(t, "iat"))
     });
     let expires_at = data["expires_at"].as_u64().unwrap_or(0);
-    let access_token_exp = if expires_at > 0 { Some(expires_at) } else { None };
+    let access_token_exp = if expires_at > 0 {
+        Some(expires_at)
+    } else {
+        None
+    };
     let refresh_token_exp = data["refresh_token"].as_str().and_then(jwt_exp);
 
     if expires_at == 0 {
@@ -418,7 +424,12 @@ pub async fn cmd_auth_status(format: &OutputFormat, market: &str) -> Result<()> 
             };
             println!("Token");
             if token.detail.is_empty() {
-                println!("{:<W$} {color}{status_str}{RESET}", "Status", W = W, color = status_color);
+                println!(
+                    "{:<W$} {color}{status_str}{RESET}",
+                    "Status",
+                    W = W,
+                    color = status_color
+                );
             } else {
                 println!(
                     "{:<W$} {color}{status_str}{RESET}  {}",
