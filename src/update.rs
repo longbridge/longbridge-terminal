@@ -12,6 +12,7 @@ const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const CHECK_INTERVAL_SECS: u64 = 86400; // 24 hours
 const FETCH_TIMEOUT_SECS: u64 = 5;
 const DOWNLOAD_TIMEOUT_SECS: u64 = 300;
+const RELEASE_NOTES_LIMIT: usize = 10;
 
 const HOST_GLOBAL: &str = "https://open.longbridge.com";
 const HOST_CN: &str = "https://open.longbridge.cn";
@@ -451,6 +452,30 @@ fn release_notes_url() -> String {
     format!("{}{RELEASE_NOTES_PATH}", get_host())
 }
 
+/// Keep only the first `max_releases` H2 sections from a markdown string.
+fn truncate_release_notes(markdown: &str, max_releases: usize) -> &str {
+    let mut h2_starts: Vec<usize> = Vec::new();
+
+    if markdown.starts_with("## ") {
+        h2_starts.push(0);
+    }
+
+    let mut search = 0;
+    while let Some(rel) = markdown[search..].find("\n## ") {
+        let abs = search + rel + 1; // skip the '\n', point at '#'
+        h2_starts.push(abs);
+        search = abs;
+    }
+
+    if h2_starts.len() <= max_releases {
+        return markdown;
+    }
+
+    // Cut just before the '\n' that precedes the (max_releases+1)-th heading.
+    let cut = h2_starts[max_releases].saturating_sub(1);
+    &markdown[..cut]
+}
+
 /// Strip YAML front matter (leading `---` … `---` block) from markdown.
 fn strip_frontmatter(s: &str) -> &str {
     let trimmed = s.trim_start();
@@ -477,6 +502,7 @@ async fn fetch_release_notes() -> anyhow::Result<String> {
 }
 
 fn render_release_notes(markdown: &str) {
+    let markdown = truncate_release_notes(markdown, RELEASE_NOTES_LIMIT);
     use crossterm::{
         event::{self, Event, KeyCode, KeyEventKind},
         terminal,
