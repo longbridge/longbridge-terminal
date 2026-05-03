@@ -439,7 +439,7 @@ pub enum Commands {
 
     /// Finance calendar: upcoming events by type (V2)
     ///
-    /// Default start date: today (no --symbol) or 3 months ago (with --symbol).
+    /// Default start date: today. Use --start for historical queries (e.g. --start 2023-01-01).
     /// Types: financial, report, dividend, ipo, macrodata, closed
     /// Note: "report" automatically includes "financial" per V2 rules.
     /// Example: longbridge finance-calendar financial
