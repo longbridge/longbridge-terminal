@@ -27,7 +27,6 @@ pub fn render(frame: &mut Frame, rect: Rect, state: AppState) {
         .highlight_style(styles::text_selected())
         .divider("|")
         .select(match state {
-            AppState::Watchlist | AppState::WatchlistStock | AppState::Stock => 0,
             AppState::Portfolio => 1,
             AppState::Orders => 2,
             _ => 0,
@@ -42,7 +41,10 @@ pub fn render(frame: &mut Frame, rect: Rect, state: AppState) {
     let account_channel = ACCOUNT_CHANNEL.read().expect("poison").clone();
     let mut spans: Vec<Span> = Vec::new();
     if account_channel.as_deref() == Some("lb_papertrading") {
-        spans.push(Span::styled(t!("account.type.paper").to_string(), styles::bmp()));
+        spans.push(Span::styled(
+            t!("account.type.paper").to_string(),
+            styles::bmp(),
+        ));
         spans.push(Span::styled(" | ", dark_gray_style));
     }
     spans.extend([
@@ -58,4 +60,6 @@ pub fn render(frame: &mut Frame, rect: Rect, state: AppState) {
 
     frame.render_widget(tabs, chunks[0]);
     frame.render_widget(user_info, chunks[1]);
+
+    *crate::tui::mouse::NAVBAR_TABS_RECT.lock().expect("poison") = chunks[0];
 }

@@ -8,7 +8,8 @@ use bevy_ecs::prelude::*;
 use bevy_ecs::system::{CommandQueue, InsertResource, SystemState};
 use tokio::sync::mpsc;
 
-use crate::data::{Counter, User, Watchlist, WatchlistGroup};
+use crate::data::{Counter, KlineType, User, Watchlist, WatchlistGroup};
+use crate::tui::mouse;
 use crate::tui::render::{DirtyFlags, RenderState};
 use crate::tui::ui::Content;
 use crate::tui::widgets::{Carousel, Loading, LocalSearch, Search, Terminal};
@@ -452,10 +453,13 @@ pub async fn run(
             Some(event) = tokio_stream::StreamExt::next(&mut events) => {
                 let event = match event {
                     Ok(crossterm::event::Event::Key(event)) => event,
-                    Ok(_) => {
-                        // Non-key events (mouse, resize, etc.) - ignore for now
-                        continue
-                    },
+                    Ok(crossterm::event::Event::Mouse(mouse_event)) => {
+                        let popup = POPUP.load(Ordering::Relaxed);
+                        let state = *app.world.resource::<State<AppState>>().get();
+                        handle_mouse_event(&mut app, mouse_event, state, popup, update_tx.clone(), &mut render_state);
+                        continue;
+                    }
+                    Ok(_) => continue,
                     Err(err) => {
                         tracing::error!("fail to receive event: {err}");
                         app.world.insert_resource(Content::new(
@@ -1192,4 +1196,402 @@ fn show_index(world: &mut World, index: usize) {
     let indexes = world.resource::<Carousel<[Counter; 3]>>().current();
     world.insert_resource(systems::StockDetail(indexes[index].clone()));
     world.insert_resource(NextState(Some(AppState::WatchlistStock)));
+}
+
+/// Map a column offset (relative to the kline tab bar's left edge) to the clicked `KlineType`.
+/// Tabs are rendered as " {label} " with "|" dividers between them.
+fn kline_tab_at(rel_col: u16) -> Option<KlineType> {
+    let mut x = 0u16;
+    for kline_type in <KlineType as strum::IntoEnumIterator>::iter() {
+        let label = kline_type.to_string();
+        let tab_w = (label.chars().count() as u16) + 2; // " {label} "
+        if rel_col < x + tab_w {
+            return Some(kline_type);
+        }
+        x += tab_w + 1; // +1 for "|" divider
+    }
+    None
+}
+
+#[allow(clippy::too_many_lines)]
+fn handle_mouse_event(
+    app: &mut bevy_app::App,
+    event: crossterm::event::MouseEvent,
+    state: AppState,
+    popup: u16,
+    update_tx: tokio::sync::mpsc::UnboundedSender<CommandQueue>,
+    render_state: &mut RenderState,
+) {
+    use crossterm::event::{MouseButton, MouseEventKind};
+
+    let MouseEventKind::Down(MouseButton::Left) = event.kind else {
+        return;
+    };
+
+    let col = event.column;
+    let row = event.row;
+
+    // Popup clicks take priority over everything else
+    if popup != 0 {
+        if popup == POPUP_HELP {
+            POPUP.store(0, Ordering::Relaxed);
+            render_state.mark_dirty(DirtyFlags::ALL);
+        } else {
+            handle_popup_mouse_click(app, popup, col, row, update_tx, render_state);
+        }
+        return;
+    }
+
+    // Navbar tab bar: compute actual tab positions from rendered text widths
+    // to avoid the off-by-fraction error that comes from simple width/3 division.
+    let navbar_rect = *mouse::NAVBAR_TABS_RECT.lock().expect("poison");
+    if navbar_rect.width > 0
+        && row == navbar_rect.y
+        && col >= navbar_rect.x
+        && col < navbar_rect.x + navbar_rect.width
+    {
+        let tab0_w = format!(" {} [1] ", t!("tabs.Watchlist")).chars().count() as u16;
+        let tab1_w = format!(" {} [2] ", t!("tabs.Portfolio")).chars().count() as u16;
+        let divider = 1u16;
+        let rel = col - navbar_rect.x;
+        let tab = if rel < tab0_w {
+            0u16
+        } else if rel < tab0_w + divider + tab1_w {
+            1
+        } else {
+            2
+        };
+        match tab {
+            0 if !matches!(
+                state,
+                AppState::Watchlist | AppState::WatchlistStock | AppState::Stock
+            ) =>
+            {
+                app.world
+                    .insert_resource(NextState(Some(AppState::Watchlist)));
+                render_state.mark_dirty(DirtyFlags::ALL);
+            }
+            1 if state != AppState::Portfolio => {
+                if app.world.get_resource::<systems::Portfolio>().is_none() {
+                    app.world.insert_resource(systems::Portfolio::default());
+                }
+                app.world
+                    .insert_resource(NextState(Some(AppState::Portfolio)));
+                render_state.mark_dirty(DirtyFlags::ALL);
+            }
+            2 if state != AppState::Orders => {
+                app.world.insert_resource(NextState(Some(AppState::Orders)));
+                render_state.mark_dirty(DirtyFlags::ALL);
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    // Footer index click: Q/W/E index groups
+    let footer_rects = *mouse::FOOTER_INDEX_RECTS.lock().expect("poison");
+    for (i, frect) in footer_rects.iter().enumerate() {
+        if frect.width > 0 && row == frect.y && col >= frect.x && col < frect.x + frect.width {
+            show_index(&mut app.world, i);
+            render_state.mark_dirty(DirtyFlags::STOCK_DETAIL | DirtyFlags::WATCHLIST);
+            return;
+        }
+    }
+
+    match state {
+        AppState::Watchlist => {
+            let table_rect = *mouse::WATCHLIST_TABLE_RECT.lock().expect("poison");
+            if let Some(row_idx) = mouse::click_to_row(col, row, table_rect) {
+                let offset = systems::WATCHLIST_TABLE.lock().expect("poison").offset();
+                let actual_idx = row_idx + offset;
+                let len = WATCHLIST.read().expect("poison").counters().len();
+                if actual_idx < len {
+                    systems::WATCHLIST_TABLE
+                        .lock()
+                        .expect("poison")
+                        .select(Some(actual_idx));
+                    let counter = WATCHLIST
+                        .read()
+                        .expect("poison")
+                        .counters()
+                        .get(actual_idx)
+                        .cloned();
+                    if let Some(counter) = counter {
+                        let mut queue = CommandQueue::default();
+                        queue.push(InsertResource {
+                            resource: systems::StockDetail(counter),
+                        });
+                        queue.push(InsertResource {
+                            resource: NextState(Some(AppState::WatchlistStock)),
+                        });
+                        _ = update_tx.send(queue);
+                        render_state.mark_dirty(DirtyFlags::ALL);
+                    }
+                }
+            }
+        }
+        AppState::WatchlistStock => {
+            // Tab bar click (Quote / News toggle)
+            let tabs_rect = *mouse::WATCHLIST_STOCK_TABS_RECT.lock().expect("poison");
+            if tabs_rect.width > 0
+                && row == tabs_rect.y
+                && col >= tabs_rect.x
+                && col < tabs_rect.x + tabs_rect.width
+            {
+                let half = tabs_rect.width / 2;
+                if col < tabs_rect.x + half {
+                    systems::NEWS_VIEW.store(systems::NewsView::Quote, Ordering::Relaxed);
+                } else {
+                    let news_view = systems::NEWS_VIEW.load(Ordering::Relaxed);
+                    if news_view == systems::NewsView::Quote {
+                        systems::NEWS_VIEW.store(systems::NewsView::List, Ordering::Relaxed);
+                        if let Some(sd) = app.world.get_resource::<systems::StockDetail>() {
+                            systems::fetch_news(
+                                sd.0.clone(),
+                                app.world.resource::<systems::Command>().0.clone(),
+                            );
+                        }
+                    }
+                }
+                render_state.mark_dirty(DirtyFlags::ALL);
+                return;
+            }
+
+            // Kline period tab click (only visible in Quote mode)
+            let news_view = systems::NEWS_VIEW.load(Ordering::Relaxed);
+            if news_view == systems::NewsView::Quote {
+                let kline_rect = *mouse::KLINE_TABS_RECT.lock().expect("poison");
+                if kline_rect.width > 0
+                    && row >= kline_rect.y
+                    && row < kline_rect.y + kline_rect.height
+                    && col >= kline_rect.x
+                    && col < kline_rect.x + kline_rect.width
+                {
+                    if let Some(kline_type) = kline_tab_at(col - kline_rect.x) {
+                        systems::KLINE_TYPE.store(kline_type, Ordering::Relaxed);
+                        render_state.mark_dirty(DirtyFlags::STOCK_DETAIL);
+                        return;
+                    }
+                }
+            }
+
+            // Watchlist table row click (left sidebar)
+            let table_rect = *mouse::WATCHLIST_TABLE_RECT.lock().expect("poison");
+            if let Some(row_idx) = mouse::click_to_row(col, row, table_rect) {
+                let offset = systems::WATCHLIST_TABLE.lock().expect("poison").offset();
+                let actual_idx = row_idx + offset;
+                let len = WATCHLIST.read().expect("poison").counters().len();
+                if actual_idx < len {
+                    systems::WATCHLIST_TABLE
+                        .lock()
+                        .expect("poison")
+                        .select(Some(actual_idx));
+                    let counter = WATCHLIST
+                        .read()
+                        .expect("poison")
+                        .counters()
+                        .get(actual_idx)
+                        .cloned();
+                    if let Some(counter) = counter {
+                        let mut queue = CommandQueue::default();
+                        queue.push(InsertResource {
+                            resource: systems::StockDetail(counter),
+                        });
+                        _ = update_tx.send(queue);
+                        render_state.mark_dirty(DirtyFlags::ALL);
+                    }
+                }
+                return;
+            }
+
+            // News list item click
+            if matches!(
+                news_view,
+                systems::NewsView::List | systems::NewsView::Detail
+            ) {
+                let news_rect = *mouse::NEWS_LIST_RECT.lock().expect("poison");
+                if news_rect.width > 0
+                    && col >= news_rect.x
+                    && col < news_rect.x + news_rect.width
+                    && row >= news_rect.y
+                    && row < news_rect.y + news_rect.height
+                {
+                    // Each news item is 2 lines tall in non-compact mode
+                    let item_idx = ((row - news_rect.y) / 2) as usize;
+                    let len = systems::NEWS_ITEMS.lock().expect("poison").len();
+                    if item_idx < len {
+                        systems::NEWS_LIST_STATE
+                            .lock()
+                            .expect("poison")
+                            .select(Some(item_idx));
+                        let id = systems::selected_news_id();
+                        if let Some(id) = id {
+                            systems::fetch_news_detail(
+                                id,
+                                app.world.resource::<systems::Command>().0.clone(),
+                            );
+                            systems::NEWS_VIEW.store(systems::NewsView::Detail, Ordering::Relaxed);
+                        }
+                        render_state.mark_dirty(DirtyFlags::ALL);
+                    }
+                }
+            }
+        }
+        AppState::Portfolio => {
+            let table_rect = *mouse::PORTFOLIO_TABLE_RECT.lock().expect("poison");
+            if let Some(row_idx) = mouse::click_to_row_with_border(col, row, table_rect) {
+                let len = systems::PORTFOLIO_VIEW
+                    .read()
+                    .expect("poison")
+                    .as_ref()
+                    .map_or(0, |v| v.holdings.len());
+                if row_idx < len {
+                    systems::PORTFOLIO_TABLE
+                        .lock()
+                        .expect("poison")
+                        .select(Some(row_idx));
+                    render_state.mark_dirty(DirtyFlags::PORTFOLIO);
+                }
+            }
+        }
+        AppState::Orders => {
+            let today_rect = *mouse::ORDERS_TABLE_RECT.lock().expect("poison");
+            let history_rect = *mouse::HISTORY_ORDERS_TABLE_RECT.lock().expect("poison");
+            if let Some(row_idx) = mouse::click_to_row_with_border(col, row, today_rect) {
+                let len = systems::ORDERS_VIEW.read().expect("poison").len();
+                if row_idx < len {
+                    systems::ORDERS_TABLE
+                        .lock()
+                        .expect("poison")
+                        .select(Some(row_idx));
+                    systems::ORDERS_MODE.store(false, Ordering::Relaxed);
+                    render_state.mark_dirty(DirtyFlags::ALL);
+                }
+            } else if let Some(row_idx) = mouse::click_to_row_with_border(col, row, history_rect) {
+                let len = systems::HISTORY_ORDERS_VIEW.read().expect("poison").len();
+                if row_idx < len {
+                    systems::HISTORY_ORDERS_TABLE
+                        .lock()
+                        .expect("poison")
+                        .select(Some(row_idx));
+                    systems::ORDERS_MODE.store(true, Ordering::Relaxed);
+                    render_state.mark_dirty(DirtyFlags::ALL);
+                }
+            }
+        }
+        AppState::Stock => {
+            let kline_rect = *mouse::KLINE_TABS_RECT.lock().expect("poison");
+            if kline_rect.width > 0
+                && row >= kline_rect.y
+                && row < kline_rect.y + kline_rect.height
+                && col >= kline_rect.x
+                && col < kline_rect.x + kline_rect.width
+            {
+                if let Some(kline_type) = kline_tab_at(col - kline_rect.x) {
+                    systems::KLINE_TYPE.store(kline_type, Ordering::Relaxed);
+                    render_state.mark_dirty(DirtyFlags::STOCK_DETAIL);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn handle_popup_mouse_click(
+    app: &mut bevy_app::App,
+    popup: u16,
+    col: u16,
+    row: u16,
+    update_tx: tokio::sync::mpsc::UnboundedSender<CommandQueue>,
+    render_state: &mut RenderState,
+) {
+    let list_rect = *mouse::POPUP_LIST_RECT.lock().expect("poison");
+
+    if popup == POPUP_ACCOUNT {
+        let Some(row_idx) = mouse::click_to_list_item(col, row, list_rect) else {
+            return;
+        };
+        let selected = {
+            let search = app
+                .world
+                .resource_mut::<LocalSearch<crate::data::Account>>();
+            search.options().get(row_idx).cloned()
+        };
+        if let Some(account) = selected {
+            {
+                app.world
+                    .resource_mut::<LocalSearch<crate::data::Account>>()
+                    .table
+                    .select(Some(row_idx));
+            }
+            POPUP.store(0, Ordering::Relaxed);
+            let mut user = USER.write().expect("poison");
+            user.account_channel = account.account_channel;
+            user.aaid = account.aaid;
+            render_state.mark_dirty(DirtyFlags::ALL);
+        }
+    } else if popup == POPUP_CURRENCY {
+        let Some(row_idx) = mouse::click_to_list_item(col, row, list_rect) else {
+            return;
+        };
+        let selected = {
+            let search = app
+                .world
+                .resource_mut::<LocalSearch<openapi::account::CurrencyInfo>>();
+            search.options().get(row_idx).cloned()
+        };
+        if let Some(currency) = selected {
+            {
+                app.world
+                    .resource_mut::<LocalSearch<openapi::account::CurrencyInfo>>()
+                    .table
+                    .select(Some(row_idx));
+            }
+            POPUP.store(0, Ordering::Relaxed);
+            let mut user = USER.write().expect("poison");
+            user.base_currency = currency.currency_iso;
+            render_state.mark_dirty(DirtyFlags::ALL);
+        }
+    } else if popup == POPUP_WATCHLIST {
+        let Some(row_idx) = mouse::click_to_list_item(col, row, list_rect) else {
+            return;
+        };
+        let selected = {
+            let search = app.world.resource_mut::<LocalSearch<WatchlistGroup>>();
+            search.options().get(row_idx).cloned()
+        };
+        if let Some(group) = selected {
+            {
+                app.world
+                    .resource_mut::<LocalSearch<WatchlistGroup>>()
+                    .table
+                    .select(Some(row_idx));
+            }
+            POPUP.store(0, Ordering::Relaxed);
+            WATCHLIST.write().expect("poison").set_group_id(group.id);
+            systems::refresh_watchlist(update_tx);
+            render_state.mark_dirty(DirtyFlags::ALL);
+        }
+    } else if popup == POPUP_WATCHLIST_SEARCH {
+        let Some(row_idx) = mouse::click_to_list_item(col, row, list_rect) else {
+            return;
+        };
+        let selected = {
+            let search = app
+                .world
+                .resource_mut::<LocalSearch<crate::data::Counter>>();
+            search.options().get(row_idx).cloned()
+        };
+        if let Some(counter) = selected {
+            {
+                app.world
+                    .resource_mut::<LocalSearch<crate::data::Counter>>()
+                    .table
+                    .select(Some(row_idx));
+            }
+            POPUP.store(0, Ordering::Relaxed);
+            navigate_to_counter(app, counter);
+            render_state.mark_dirty(DirtyFlags::ALL);
+        }
+    }
 }

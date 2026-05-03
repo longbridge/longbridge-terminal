@@ -98,6 +98,7 @@ fn switch_account(frame: &mut Frame, rect: Rect, account: &mut LocalSearch<crate
         .column_spacing(2);
 
     frame.render_stateful_widget(table, chunks[1], &mut account.table);
+    *crate::tui::mouse::POPUP_LIST_RECT.lock().expect("poison") = chunks[1];
 }
 
 fn switch_currency(
@@ -156,6 +157,7 @@ fn switch_currency(
         .column_spacing(2);
 
     frame.render_stateful_widget(table, chunks[1], &mut currency.table);
+    *crate::tui::mouse::POPUP_LIST_RECT.lock().expect("poison") = chunks[1];
 }
 
 fn switch_watchlist(
@@ -214,6 +216,7 @@ fn switch_watchlist(
         .column_spacing(2);
 
     frame.render_stateful_widget(table, chunks[1], &mut groups.table);
+    *crate::tui::mouse::POPUP_LIST_RECT.lock().expect("poison") = chunks[1];
 }
 
 fn searching(frame: &mut Frame, rect: Rect, search: &mut Search<openapi::search::StockItem>) {
@@ -298,4 +301,5 @@ fn search_watchlist(frame: &mut Frame, rect: Rect, search: &mut LocalSearch<Coun
         .column_spacing(1);
 
     frame.render_stateful_widget(table, chunks[1], &mut search.table);
+    *crate::tui::mouse::POPUP_LIST_RECT.lock().expect("poison") = chunks[1];
 }
