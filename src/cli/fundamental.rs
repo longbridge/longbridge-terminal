@@ -1659,9 +1659,14 @@ fn print_rating_history(data: &Value) {
     }
 }
 
-pub async fn cmd_corp_action(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
+pub async fn cmd_corp_action(
+    symbol: String,
+    all: bool,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
-    let data = http_get(
+    let mut data = http_get(
         "/v1/quote/company-act",
         &[
             ("counter_id", cid.as_str()),
@@ -1671,6 +1676,16 @@ pub async fn cmd_corp_action(symbol: String, format: &OutputFormat, verbose: boo
         verbose,
     )
     .await?;
+    if !all {
+        let key = if data.get("items").is_some() {
+            "items"
+        } else {
+            "CompanyActItem"
+        };
+        if let Some(arr) = data.get_mut(key).and_then(|v| v.as_array_mut()) {
+            arr.truncate(30);
+        }
+    }
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => print_corp_action(&data),
