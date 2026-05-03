@@ -1670,7 +1670,12 @@ fn print_rating_history(data: &Value) {
     }
 }
 
-pub async fn cmd_corp_action(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
+pub async fn cmd_corp_action(
+    symbol: String,
+    page: u32,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
         "/v1/quote/company-act",
@@ -1683,13 +1688,43 @@ pub async fn cmd_corp_action(symbol: String, format: &OutputFormat, verbose: boo
     )
     .await?;
     match format {
-        OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_corp_action(&data),
+        OutputFormat::Json => print_json(&paginate_corp_action(&data, page)),
+        OutputFormat::Pretty => print_corp_action(&data, page),
     }
     Ok(())
 }
 
-fn print_corp_action(data: &Value) {
+const CORP_ACTION_PAGE_SIZE: usize = 30;
+
+fn paginate_corp_action(data: &Value, page: u32) -> Value {
+    let items = data
+        .get("items")
+        .or_else(|| data.get("CompanyActItem"))
+        .and_then(|v| v.as_array());
+    let Some(all) = items else {
+        return data.clone();
+    };
+    let page = page.max(1) as usize;
+    let start = (page - 1) * CORP_ACTION_PAGE_SIZE;
+    let slice: Vec<Value> = all
+        .iter()
+        .skip(start)
+        .take(CORP_ACTION_PAGE_SIZE)
+        .cloned()
+        .collect();
+    let mut out = data.clone();
+    if let Some(obj) = out.as_object_mut() {
+        let key = if data.get("items").is_some() {
+            "items"
+        } else {
+            "CompanyActItem"
+        };
+        obj.insert(key.to_string(), Value::Array(slice));
+    }
+    out
+}
+
+fn print_corp_action(data: &Value, page: u32) {
     let items = match data
         .get("items")
         .or_else(|| data.get("CompanyActItem"))
@@ -1702,8 +1737,17 @@ fn print_corp_action(data: &Value) {
         }
     };
 
+    let page = page.max(1) as usize;
+    let start = (page - 1) * CORP_ACTION_PAGE_SIZE;
+    let page_items: Vec<&Value> = items.iter().skip(start).take(CORP_ACTION_PAGE_SIZE).collect();
+
+    if page_items.is_empty() {
+        println!("No corporate action records found.");
+        return;
+    }
+
     let headers = ["date", "date_type", "action", "description"];
-    let rows: Vec<Vec<String>> = items
+    let rows: Vec<Vec<String>> = page_items
         .iter()
         .map(|item| {
             vec![
