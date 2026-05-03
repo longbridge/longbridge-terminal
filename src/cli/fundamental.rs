@@ -1088,13 +1088,7 @@ pub async fn cmd_finance_calendar(
     verbose: bool,
 ) -> Result<()> {
     let today = time::OffsetDateTime::now_utc().date();
-    let start = start.unwrap_or_else(|| {
-        if symbols.is_empty() {
-            format!("{today}")
-        } else {
-            format!("{}", today.saturating_sub(time::Duration::days(90)))
-        }
-    });
+    let start = start.unwrap_or_else(|| format!("{today}"));
 
     // V2 rule: ["report"] must be expanded to ["report", "financial"]
     let mut types: Vec<&str> = vec![event_type.as_str()];
@@ -1112,28 +1106,82 @@ pub async fn cmd_finance_calendar(
     let offset_str = offset.to_string();
     let star_strs: Vec<String> = star.iter().map(ToString::to_string).collect();
 
-    let mut params: Vec<(&str, &str)> = vec![
-        ("date", start.as_str()),
-        ("count", count_str.as_str()),
-        ("offset", offset_str.as_str()),
-        ("next", next.as_str()),
-    ];
-    for t in &types {
-        params.push(("types[]", t));
-    }
-    for c in &cids {
-        params.push(("counter_ids[]", c.as_str()));
-    }
-    for m in &markets {
-        params.push(("markets[]", m.as_str()));
-    }
-    for s in &star_strs {
-        params.push(("star[]", s.as_str()));
-    }
-    if let Some(ref end) = end {
-        params.push(("date_end", end.as_str()));
+    // Build base params shared across all pages (date will be overridden per page).
+    let build_params = |date: &str| -> Vec<(String, String)> {
+        let mut p: Vec<(String, String)> = vec![
+            ("date".into(), date.into()),
+            ("count".into(), count_str.clone()),
+            ("offset".into(), offset_str.clone()),
+            ("next".into(), next.clone()),
+        ];
+        for t in &types {
+            p.push(("types[]".into(), (*t).into()));
+        }
+        for c in &cids {
+            p.push(("counter_ids[]".into(), c.clone()));
+        }
+        for m in &markets {
+            p.push(("markets[]".into(), m.clone()));
+        }
+        for s in &star_strs {
+            p.push(("star[]".into(), s.clone()));
+        }
+        if let Some(ref e) = end {
+            p.push(("date_end".into(), e.clone()));
+        }
+        p
+    };
+
+    // Symbol-mode: auto-paginate via next_date until count individual events collected.
+    // Market-wide queries (no symbol) are paginated on-demand by the caller via --offset.
+    if !cids.is_empty() {
+        let mut current_date = start.clone();
+        let mut total_infos: u32 = 0;
+        let mut all_list: Vec<Value> = Vec::new();
+
+        loop {
+            let owned = build_params(&current_date);
+            let params: Vec<(&str, &str)> = owned
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
+            let resp = super::api::http_get("/v1/quote/finance_calendar", &params, verbose).await?;
+
+            let page_infos: u32 = resp["list"]
+                .as_array()
+                .unwrap_or(&vec![])
+                .iter()
+                .map(|g| g["infos"].as_array().map_or(0, |v| v.len() as u32))
+                .sum();
+
+            match format {
+                OutputFormat::Pretty => print_finance_calendar(&resp),
+                OutputFormat::Json => {
+                    if let Some(items) = resp["list"].as_array() {
+                        all_list.extend(items.iter().cloned());
+                    }
+                }
+            }
+
+            total_infos += page_infos;
+            let next_date = resp["next_date"].as_str().unwrap_or("").to_string();
+            if next_date.is_empty() || total_infos >= count {
+                break;
+            }
+            current_date = next_date;
+        }
+
+        if matches!(format, OutputFormat::Json) {
+            print_json(&serde_json::json!({ "list": all_list }));
+        }
+        return Ok(());
     }
 
+    let owned = build_params(&start);
+    let params: Vec<(&str, &str)> = owned
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
     let resp = super::api::http_get("/v1/quote/finance_calendar", &params, verbose).await?;
 
     match format {

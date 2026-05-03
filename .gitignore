@@ -4,3 +4,4 @@
 .DS_Store
 docs/
 .claude/worktrees/
+.worktrees/
