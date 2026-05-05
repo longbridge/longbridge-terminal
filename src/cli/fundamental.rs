@@ -1739,7 +1739,11 @@ fn print_corp_action(data: &Value, page: u32) {
 
     let page = page.max(1) as usize;
     let start = (page - 1) * CORP_ACTION_PAGE_SIZE;
-    let page_items: Vec<&Value> = items.iter().skip(start).take(CORP_ACTION_PAGE_SIZE).collect();
+    let page_items: Vec<&Value> = items
+        .iter()
+        .skip(start)
+        .take(CORP_ACTION_PAGE_SIZE)
+        .collect();
 
     if page_items.is_empty() {
         println!("No corporate action records found.");
