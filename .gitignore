@@ -3,5 +3,5 @@
 *.log
 .DS_Store
 docs/
-.claude/worktrees/
+.claude/
 .worktrees/

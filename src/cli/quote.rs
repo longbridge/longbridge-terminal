@@ -67,6 +67,16 @@ fn fmt_trade_session(s: TradeSession) -> &'static str {
     }
 }
 
+/// Calculate percentage change: `(last - prev_close) / prev_close * 100`.
+/// Returns `None` when `prev_close` is zero.
+fn change_pct(last: rust_decimal::Decimal, prev_close: rust_decimal::Decimal) -> Option<String> {
+    if prev_close.is_zero() {
+        return None;
+    }
+    let pct = (last - prev_close) / prev_close * rust_decimal::Decimal::ONE_HUNDRED;
+    Some(format!("{pct:+.2}%"))
+}
+
 fn pre_post_quote_to_json(q: &PrePostQuote) -> serde_json::Value {
     serde_json::json!({
         "last": q.last_done.to_string(),
@@ -230,6 +240,7 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
                     serde_json::json!({
                         "symbol": q.symbol,
                         "last": q.last_done.to_string(),
+                        "last_chg_pct": change_pct(q.last_done, q.prev_close),
                         "prev_close": q.prev_close.to_string(),
                         "open": q.open.to_string(),
                         "high": q.high.to_string(),
@@ -249,6 +260,7 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
             let headers = &[
                 "Symbol",
                 "Last",
+                "Last Chg%",
                 "Prev Close",
                 "Open",
                 "High",
@@ -263,6 +275,7 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
                     vec![
                         q.symbol.clone(),
                         fmt_dec(q.last_done),
+                        change_pct(q.last_done, q.prev_close).unwrap_or_default(),
                         fmt_dec(q.prev_close),
                         fmt_dec(q.open),
                         fmt_dec(q.high),
@@ -292,6 +305,7 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
                                     q.symbol.clone(),
                                     label.to_string(),
                                     fmt_dec(pmq.last_done),
+                                    change_pct(pmq.last_done, pmq.prev_close).unwrap_or_default(),
                                     fmt_dec(pmq.high),
                                     fmt_dec(pmq.low),
                                     pmq.volume.to_string(),
@@ -310,11 +324,12 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
                         "Symbol",
                         "Session",
                         "Last",
+                        "Last Chg%",
                         "High",
                         "Low",
                         "Volume",
                         "Prev Close",
-                        "Time",
+                        "UTC Time",
                     ],
                     ext_rows,
                     format,
