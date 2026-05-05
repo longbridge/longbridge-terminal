@@ -1,5 +1,5 @@
 use anyhow::Result;
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 pub mod api;
 pub mod asset;
@@ -437,42 +437,15 @@ pub enum Commands {
         symbol: String,
     },
 
-    /// Finance calendar: upcoming events by type (V2)
+    /// Finance calendar: upcoming events by category
     ///
-    /// Default start date: today (no --symbol) or 3 months ago (with --symbol).
-    /// Types: financial, report, dividend, ipo, macrodata, closed
-    /// Note: "report" automatically includes "financial" per V2 rules.
-    /// Example: longbridge finance-calendar financial
-    /// Example: longbridge finance-calendar financial --symbol AAPL.US --symbol TSLA.US
+    /// Example: longbridge finance-calendar report
+    /// Example: longbridge finance-calendar report --filter watchlist --market US
+    /// Example: longbridge finance-calendar dividend --filter positions
     /// Example: longbridge finance-calendar macrodata --star 3
-    /// Example: longbridge finance-calendar dividend --market US --market HK
     FinanceCalendar {
-        /// Event type: financial, report, dividend, ipo, macrodata, closed
-        event_type: String,
-        /// Filter by symbol, repeatable (max 10)
-        #[arg(long, value_name = "SYMBOL")]
-        symbol: Vec<String>,
-        /// Filter by market, repeatable (HK, US, CN, SG, JP, UK, DE, AU)
-        #[arg(long, value_name = "MARKET")]
-        market: Vec<String>,
-        /// Start date (YYYY-MM-DD), defaults to today
-        #[arg(long)]
-        start: Option<String>,
-        /// End date (YYYY-MM-DD), defaults to no limit
-        #[arg(long)]
-        end: Option<String>,
-        /// Max events returned (default: 100)
-        #[arg(long, alias = "limit", default_value = "100")]
-        count: u32,
-        /// Macro data importance filter, repeatable (1, 2, 3); only effective for macrodata type
-        #[arg(long, value_name = "LEVEL")]
-        star: Vec<u32>,
-        /// Pagination direction: later (default) or earlier
-        #[arg(long, default_value = "later")]
-        next: String,
-        /// Pagination offset (default: 0)
-        #[arg(long, default_value = "0")]
-        offset: u32,
+        #[command(subcommand)]
+        cmd: FinanceCalendarCmd,
     },
 
     /// Valuation analysis: P/E, P/B, P/S, dividend yield, and peer comparison
@@ -1083,6 +1056,83 @@ pub enum QuantCmd {
         /// Must match the order of input.*() calls in the script.
         #[arg(long)]
         input: Option<String>,
+    },
+}
+
+#[derive(Args, Debug)]
+pub struct FinanceCalendarOpts {
+    /// Filter by symbol, repeatable (max 10)
+    #[arg(long, value_name = "SYMBOL")]
+    pub symbol: Vec<String>,
+    /// Filter by symbol group: watchlist or positions (omit for all)
+    #[arg(long, value_name = "FILTER")]
+    pub filter: Option<String>,
+    /// Filter by market: HK, US, CN, SG, JP, UK, DE, AU (omit for all)
+    #[arg(long, value_name = "MARKET")]
+    pub market: Option<String>,
+    /// Start date (YYYY-MM-DD)
+    #[arg(long)]
+    pub start: Option<String>,
+    /// End date (YYYY-MM-DD)
+    #[arg(long)]
+    pub end: Option<String>,
+    /// Max events returned (default: 100)
+    #[arg(long, alias = "limit", default_value = "100")]
+    pub count: u32,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum FinanceCalendarCmd {
+    /// Earnings reports (upcoming and recently announced)
+    ///
+    /// Example: longbridge finance-calendar report
+    /// Example: longbridge finance-calendar report --symbol AAPL.US --filter watchlist --market US
+    Report {
+        #[command(flatten)]
+        opts: FinanceCalendarOpts,
+    },
+    /// Dividend announcements
+    ///
+    /// Example: longbridge finance-calendar dividend
+    /// Example: longbridge finance-calendar dividend --filter positions
+    Dividend {
+        #[command(flatten)]
+        opts: FinanceCalendarOpts,
+    },
+    /// Stock splits and merges
+    ///
+    /// Example: longbridge finance-calendar split
+    /// Example: longbridge finance-calendar split --market HK
+    Split {
+        #[command(flatten)]
+        opts: FinanceCalendarOpts,
+    },
+    /// IPO listings
+    ///
+    /// Example: longbridge finance-calendar ipo
+    /// Example: longbridge finance-calendar ipo --market HK
+    Ipo {
+        #[command(flatten)]
+        opts: FinanceCalendarOpts,
+    },
+    /// Macro economic data releases
+    ///
+    /// Example: longbridge finance-calendar macrodata
+    /// Example: longbridge finance-calendar macrodata --star 3
+    Macrodata {
+        #[command(flatten)]
+        opts: FinanceCalendarOpts,
+        /// Importance filter, repeatable: 1, 2, or 3 stars (omit for all)
+        #[arg(long, value_name = "LEVEL")]
+        star: Vec<u32>,
+    },
+    /// Market closure days
+    ///
+    /// Example: longbridge finance-calendar closed
+    /// Example: longbridge finance-calendar closed --market HK
+    Closed {
+        #[command(flatten)]
+        opts: FinanceCalendarOpts,
     },
 }
 
@@ -2343,19 +2393,25 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             fundamental::cmd_forecast_eps(symbol, format, verbose).await
         }
         Commands::Consensus { symbol } => fundamental::cmd_consensus(symbol, format, verbose).await,
-        Commands::FinanceCalendar {
-            event_type,
-            symbol,
-            market,
-            start,
-            end,
-            count,
-            star,
-            next,
-            offset,
-        } => {
+        Commands::FinanceCalendar { cmd } => {
+            let (event_type, opts, star) = match cmd {
+                FinanceCalendarCmd::Report { opts } => ("report", opts, vec![]),
+                FinanceCalendarCmd::Dividend { opts } => ("dividend", opts, vec![]),
+                FinanceCalendarCmd::Split { opts } => ("split", opts, vec![]),
+                FinanceCalendarCmd::Ipo { opts } => ("ipo", opts, vec![]),
+                FinanceCalendarCmd::Macrodata { opts, star } => ("macrodata", opts, star),
+                FinanceCalendarCmd::Closed { opts } => ("closed", opts, vec![]),
+            };
             fundamental::cmd_finance_calendar(
-                event_type, symbol, market, start, end, count, star, next, offset, format,
+                event_type.to_string(),
+                opts.symbol,
+                opts.filter,
+                opts.market,
+                opts.start,
+                opts.end,
+                opts.count,
+                star,
+                format,
                 verbose,
             )
             .await
