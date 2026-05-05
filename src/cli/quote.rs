@@ -77,10 +77,15 @@ fn change_pct(last: rust_decimal::Decimal, prev_close: rust_decimal::Decimal) ->
     Some(format!("{pct:+.2}%"))
 }
 
+fn change_val(last: rust_decimal::Decimal, prev_close: rust_decimal::Decimal) -> String {
+    let val = last - prev_close;
+    format!("{val:+}")
+}
+
 fn pre_post_quote_to_json(q: &PrePostQuote) -> serde_json::Value {
     serde_json::json!({
         "last": q.last_done.to_string(),
-        "timestamp": fmt_datetime(q.timestamp),
+        "timestamp": crate::utils::datetime::format_datetime(q.timestamp),
         "high": q.high.to_string(),
         "low": q.low.to_string(),
         "volume": q.volume,
@@ -240,7 +245,11 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
                     serde_json::json!({
                         "symbol": q.symbol,
                         "last": q.last_done.to_string(),
-                        "last_chg_pct": change_pct(q.last_done, q.prev_close),
+                        "change_value": (q.last_done - q.prev_close).to_string(),
+                        "change_percentage": if q.prev_close.is_zero() { None } else {
+                            let pct = (q.last_done - q.prev_close) / q.prev_close * rust_decimal::Decimal::ONE_HUNDRED;
+                            Some(pct.round_dp(2).to_string())
+                        },
                         "prev_close": q.prev_close.to_string(),
                         "open": q.open.to_string(),
                         "high": q.high.to_string(),
@@ -260,7 +269,8 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
             let headers = &[
                 "Symbol",
                 "Last",
-                "Last Chg%",
+                "Chg",
+                "Chg%",
                 "Prev Close",
                 "Open",
                 "High",
@@ -275,13 +285,17 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
                     vec![
                         q.symbol.clone(),
                         fmt_dec(q.last_done),
+                        change_val(q.last_done, q.prev_close),
                         change_pct(q.last_done, q.prev_close).unwrap_or_default(),
                         fmt_dec(q.prev_close),
                         fmt_dec(q.open),
                         fmt_dec(q.high),
                         fmt_dec(q.low),
                         q.volume.to_string(),
-                        fmt_dec(q.turnover),
+                        crate::utils::number::format_financial_value(
+                            &q.turnover.to_string(),
+                            false,
+                        ),
                         format!("{:?}", q.trade_status),
                     ]
                 })
@@ -305,12 +319,13 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
                                     q.symbol.clone(),
                                     label.to_string(),
                                     fmt_dec(pmq.last_done),
+                                    change_val(pmq.last_done, pmq.prev_close),
                                     change_pct(pmq.last_done, pmq.prev_close).unwrap_or_default(),
                                     fmt_dec(pmq.high),
                                     fmt_dec(pmq.low),
                                     pmq.volume.to_string(),
                                     fmt_dec(pmq.prev_close),
-                                    fmt_datetime(pmq.timestamp),
+                                    crate::utils::datetime::format_datetime(pmq.timestamp),
                                 ]
                             })
                         })
@@ -324,12 +339,13 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
                         "Symbol",
                         "Session",
                         "Last",
-                        "Last Chg%",
+                        "Chg",
+                        "Chg%",
                         "High",
                         "Low",
                         "Volume",
                         "Prev Close",
-                        "UTC Time",
+                        "Time",
                     ],
                     ext_rows,
                     format,
@@ -824,7 +840,7 @@ pub async fn cmd_capital_dist(symbol: String, format: &OutputFormat) -> Result<(
         OutputFormat::Json => {
             let val = serde_json::json!({
                 "symbol": symbol,
-                "timestamp": fmt_datetime(dist.timestamp),
+                "timestamp": crate::utils::datetime::format_datetime(dist.timestamp),
                 "capital_in": {
                     "large": dist.capital_in.large.to_string(),
                     "medium": dist.capital_in.medium.to_string(),
@@ -1100,7 +1116,7 @@ pub async fn cmd_option_quote(symbols: Vec<String>, format: &OutputFormat) -> Re
                         "open": q.open.to_string(),
                         "high": q.high.to_string(),
                         "low": q.low.to_string(),
-                        "timestamp": fmt_datetime(q.timestamp),
+                        "timestamp": crate::utils::datetime::format_datetime(q.timestamp),
                         "volume": q.volume,
                         "turnover": q.turnover.to_string(),
                         "trade_status": format!("{:?}", q.trade_status),
