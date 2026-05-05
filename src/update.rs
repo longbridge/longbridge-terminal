@@ -222,6 +222,25 @@ async fn download_to_file(url: &str, dest: &std::path::Path) -> anyhow::Result<(
 }
 
 #[cfg(unix)]
+fn sudo_mv(src: &std::path::Path, dest: &std::path::Path) -> anyhow::Result<()> {
+    eprintln!("Permission denied — retrying with sudo...");
+    let status = std::process::Command::new("sudo")
+        .arg("mv")
+        .arg(src)
+        .arg(dest)
+        .status()
+        .map_err(|e| anyhow::anyhow!("Failed to run sudo: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "sudo mv failed (exit code: {}).\nYou can also run: sudo longbridge update",
+            status.code().unwrap_or(-1)
+        )
+    }
+}
+
+#[cfg(unix)]
 fn extract_and_replace(
     archive_path: &std::path::Path,
     target_exe: &std::path::Path,
@@ -262,27 +281,22 @@ fn extract_and_replace(
     // 1) copy the new binary into the target directory under a temporary name
     // 2) atomically rename it over the running executable
     // This avoids writing directly to a running binary (ETXTBUSY).
-    let staged_path = tempfile::Builder::new()
+    let staged_result = tempfile::Builder::new()
         .prefix(".longbridge-update-")
-        .tempfile_in(target_dir)
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::PermissionDenied {
-                anyhow::anyhow!(
-                    "Permission denied writing to {}.\nTry: sudo longbridge update",
-                    target_dir.display()
-                )
-            } else {
-                e.into()
-            }
-        })?
-        .into_temp_path();
+        .tempfile_in(target_dir);
+
+    let staged_path = match staged_result {
+        Ok(f) => f.into_temp_path(),
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            return sudo_mv(&extracted, target_exe);
+        }
+        Err(e) => return Err(e.into()),
+    };
 
     if let Err(e) = std::fs::copy(&extracted, &staged_path) {
         if e.kind() == std::io::ErrorKind::PermissionDenied {
-            anyhow::bail!(
-                "Permission denied writing to {}.\nTry: sudo longbridge update",
-                target_dir.display()
-            );
+            drop(staged_path);
+            return sudo_mv(&extracted, target_exe);
         }
         return Err(e.into());
     }
@@ -290,10 +304,8 @@ fn extract_and_replace(
 
     if let Err(e) = std::fs::rename(&staged_path, target_exe) {
         if e.kind() == std::io::ErrorKind::PermissionDenied {
-            anyhow::bail!(
-                "Permission denied writing to {}.\nTry: sudo longbridge update",
-                target_dir.display()
-            );
+            drop(staged_path);
+            return sudo_mv(&extracted, target_exe);
         }
         return Err(e.into());
     }
@@ -369,7 +381,7 @@ pub fn cleanup_old_binary() {
 }
 
 /// Download the latest release and replace the current binary in place.
-pub async fn cmd_update(verbose: bool) -> anyhow::Result<()> {
+pub async fn cmd_update(verbose: bool, force: bool) -> anyhow::Result<()> {
     // 1. Resolve current binary path
     let current_exe = std::env::current_exe()?.canonicalize()?;
 
@@ -381,7 +393,7 @@ pub async fn cmd_update(verbose: bool) -> anyhow::Result<()> {
     let latest = fetch_latest_version_for_update().await?;
 
     // 3. Check if already up to date
-    if !is_newer(CURRENT_VERSION, &latest) {
+    if !force && !is_newer(CURRENT_VERSION, &latest) {
         eprintln!("Already up to date (v{CURRENT_VERSION}).");
         return Ok(());
     }

@@ -116,6 +116,9 @@ pub enum Commands {
         /// Show release notes instead of updating
         #[arg(long)]
         release_notes: bool,
+        /// Force update even if already on the latest version
+        #[arg(short, long)]
+        force: bool,
     },
 
     /// Launch the interactive full-screen TUI (terminal UI)

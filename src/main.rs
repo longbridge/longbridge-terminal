@@ -149,13 +149,13 @@ async fn main() {
             }
         }
 
-        Some(cli::Commands::Update { release_notes }) => {
+        Some(cli::Commands::Update { release_notes, force }) => {
             if release_notes {
                 if let Err(e) = update::cmd_release_notes().await {
                     eprintln!("Error: {e}");
                     std::process::exit(1);
                 }
-            } else if let Err(e) = update::cmd_update(verbose).await {
+            } else if let Err(e) = update::cmd_update(verbose, force).await {
                 eprintln!("Error: {e}");
                 std::process::exit(1);
             }
