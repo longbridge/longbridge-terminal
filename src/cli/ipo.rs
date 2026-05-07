@@ -33,7 +33,10 @@ fn confirm_action(action: &str) -> Result<bool> {
 }
 
 async fn member_id() -> Result<i64> {
-    crate::openapi::quote().member_id().await
+    crate::openapi::quote()
+        .member_id()
+        .await
+        .map_err(anyhow::Error::from)
 }
 
 // ── read-only IPO list commands ────────────────────────────────────────────────
