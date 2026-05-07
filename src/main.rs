@@ -149,7 +149,10 @@ async fn main() {
             }
         }
 
-        Some(cli::Commands::Update { release_notes, force }) => {
+        Some(cli::Commands::Update {
+            release_notes,
+            force,
+        }) => {
             if release_notes {
                 if let Err(e) = update::cmd_release_notes().await {
                     eprintln!("Error: {e}");
