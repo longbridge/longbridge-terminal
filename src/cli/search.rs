@@ -275,7 +275,9 @@ pub async fn cmd_search(
                 }
             }
         }
-        _ => unreachable!(),
+        _ => anyhow::bail!(
+            "Unknown --tab value: {tab}. Valid: market, news, posts, hashtags, help, share-lists, users, institutions"
+        ),
     }
     Ok(())
 }
