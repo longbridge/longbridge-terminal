@@ -1777,3 +1777,158 @@ fn print_invest_relation(data: &Value) {
         .collect();
     super::output::print_table(&headers, rows, &OutputFormat::Pretty);
 }
+
+// ── financial statement (v3) ─────────────────────────────────────────────────
+
+pub async fn cmd_financial_statement(
+    symbol: String,
+    kind: &str,
+    report: &str,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/v3/stock-info/statement",
+        &[
+            ("counter_id", cid.as_str()),
+            ("kind", kind),
+            ("report", report),
+        ],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => print_kv(&data),
+    }
+    Ok(())
+}
+
+// ── latest financial report summary ─────────────────────────────────────────
+
+pub async fn cmd_financial_report_latest(
+    symbol: String,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/v4/stock-info/latest-financial-report",
+        &[("counter_id", cid.as_str())],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => print_kv(&data),
+    }
+    Ok(())
+}
+
+// ── valuation rank (industry daily percentile) ───────────────────────────────
+
+pub async fn cmd_valuation_rank(
+    symbol: String,
+    start: &str,
+    end: &str,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/stock-info/valuation-rank",
+        &[
+            ("counter_id", cid.as_str()),
+            ("start_date", start),
+            ("end_date", end),
+        ],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => print_kv(&data),
+    }
+    Ok(())
+}
+
+// ── analyst estimates (multi-dimension) ─────────────────────────────────────
+
+pub async fn cmd_analyst_estimates(
+    symbol: String,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/stock-info/estimate",
+        &[("counter_id", cid.as_str())],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => print_kv(&data),
+    }
+    Ok(())
+}
+
+// ── institution rating history ───────────────────────────────────────────────
+
+pub async fn cmd_institution_rating_history(
+    symbol: String,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/stock-info/recommendation/history",
+        &[("counter_id", cid.as_str())],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            if let Some(target) = data.get("target_history") {
+                println!("Target price history:");
+                print_kv(target);
+            }
+            if let Some(eval) = data.get("evaluate_history") {
+                println!("\nRating history:");
+                print_kv(eval);
+            }
+        }
+    }
+    Ok(())
+}
+
+// ── institution rating industry rank ────────────────────────────────────────
+
+pub async fn cmd_institution_rating_industry_rank(
+    symbol: String,
+    page: u32,
+    limit: u32,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let page_str = page.to_string();
+    let size_str = limit.to_string();
+    let data = http_get(
+        "/v2/fa/institution-rating-industry-rank",
+        &[
+            ("counter_id", cid.as_str()),
+            ("page", page_str.as_str()),
+            ("size", size_str.as_str()),
+        ],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => print_kv(&data),
+    }
+    Ok(())
+}

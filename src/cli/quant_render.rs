@@ -20,7 +20,6 @@ const SERIES_COLORS: &[Color] = &[
     Color::DarkGrey,
 ];
 
-
 // ── Terminal helpers ──────────────────────────────────────────────────────────
 
 fn term_width() -> usize {

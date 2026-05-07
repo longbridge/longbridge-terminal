@@ -497,3 +497,116 @@ pub async fn cmd_profit_analysis_by_market(
     }
     Ok(())
 }
+
+// ── short margin ─────────────────────────────────────────────────────────────
+
+pub async fn cmd_short_margin(format: &OutputFormat, verbose: bool) -> Result<()> {
+    let data = http_get("/v1/asset/cash/short/detail", &[], verbose).await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            if let Some(list) = data["short_list"].as_array() {
+                if list.is_empty() {
+                    println!("No short margin records.");
+                    return Ok(());
+                }
+                let headers = ["code", "amount", "currency"];
+                let rows: Vec<Vec<String>> = list
+                    .iter()
+                    .map(|item| {
+                        vec![
+                            val_str(&item["code"]),
+                            val_str(&item["amount"]),
+                            val_str(&item["currency"]),
+                        ]
+                    })
+                    .collect();
+                print_table(&headers, rows, &OutputFormat::Pretty);
+            } else {
+                print_json(&data);
+            }
+        }
+    }
+    Ok(())
+}
+
+// ── pnl calendar ─────────────────────────────────────────────────────────────
+
+pub async fn cmd_pnl_calendar(format: &OutputFormat, verbose: bool) -> Result<()> {
+    let data = http_get("/portfolio/pnl/calendar", &[], verbose).await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            if let Some(list) = data["calendar_list"].as_array() {
+                if list.is_empty() {
+                    println!("No P&L calendar data.");
+                    return Ok(());
+                }
+                let headers = ["date", "pnl", "currency"];
+                let rows: Vec<Vec<String>> = list
+                    .iter()
+                    .map(|item| {
+                        vec![
+                            val_str(&item["date"]),
+                            val_str(&item["pnl"]),
+                            val_str(&item["currency"]),
+                        ]
+                    })
+                    .collect();
+                print_table(&headers, rows, &OutputFormat::Pretty);
+            } else {
+                print_json(&data);
+            }
+        }
+    }
+    Ok(())
+}
+
+// ── holding period ────────────────────────────────────────────────────────────
+
+pub async fn cmd_holding_period(
+    symbol: String,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = crate::utils::counter::symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/portfolio/asset/stock_holding_period",
+        &[("counter_id", cid.as_str())],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => print_json(&data),
+    }
+    Ok(())
+}
+
+// ── trade info (pre-trade position + cash) ───────────────────────────────────
+
+pub async fn cmd_trade_info(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
+    let cid = crate::utils::counter::symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/v1/portfolio/asset/trade/detail",
+        &[("counter_id", cid.as_str())],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => print_json(&data),
+    }
+    Ok(())
+}
+
+// ── order stats (today's account trade summary) ───────────────────────────────
+
+pub async fn cmd_order_stats(format: &OutputFormat, verbose: bool) -> Result<()> {
+    let data = http_get("/v1/orders/trade_analysis", &[], verbose).await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => print_json(&data),
+    }
+    Ok(())
+}

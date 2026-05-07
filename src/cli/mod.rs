@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 pub mod api;
 pub mod asset;
+pub mod atm;
 pub mod auth;
 pub mod check;
 pub mod completion;
@@ -11,11 +12,13 @@ pub mod fundamental;
 pub mod init;
 pub mod insider_trades;
 pub mod investors;
+pub mod ipo;
 pub mod news;
 pub mod output;
 pub mod quant_render;
 pub mod quote;
 pub mod run_script;
+pub mod search;
 pub mod sharelist;
 pub mod statement;
 pub mod topic;
@@ -382,6 +385,9 @@ pub enum Commands {
         /// Report period: af (annual), saf (semi-annual), q1 (Q1), 3q (3 quarters), qf (quarterly)
         #[arg(long)]
         report: Option<String>,
+        /// Fetch the latest financial report summary instead of the full statement
+        #[arg(long)]
+        latest: bool,
     },
 
     /// Institution rating overview and target price summary
@@ -397,6 +403,18 @@ pub enum Commands {
         symbol: Option<String>,
         #[command(subcommand)]
         cmd: Option<InstitutionRatingCmd>,
+        /// Show rating history (target price and rating changes over time)
+        #[arg(long)]
+        history: bool,
+        /// Show industry-wide rating ranking instead of per-symbol summary
+        #[arg(long)]
+        industry_rank: bool,
+        /// Page number for --industry-rank results (default: 1)
+        #[arg(long, default_value = "1")]
+        page: u32,
+        /// Page size for --industry-rank results (default: 20)
+        #[arg(long, default_value = "20")]
+        limit: u32,
     },
 
     /// Dividend history and distribution details for a symbol
@@ -1036,6 +1054,155 @@ pub enum Commands {
         #[command(subcommand)]
         cmd: QuantCmd,
     },
+
+    // ── Fundamental (new) ────────────────────────────────────────────────────
+    /// Financial statement (income / balance sheet / cash flow) for a symbol
+    ///
+    /// Example: longbridge financial-statement TSLA.US --kind IS --report af
+    /// Example: longbridge financial-statement 700.HK --kind BS --format json
+    FinancialStatement {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+        /// Statement type: IS (income), BS (balance sheet), CF (cash flow), ALL
+        #[arg(long, value_name = "TYPE", default_value = "ALL")]
+        kind: String,
+        /// Report period: af (annual), saf (semi-annual), qf (quarterly), cumul (cumulative)
+        #[arg(long, default_value = "af")]
+        report: String,
+    },
+
+    /// Valuation rank within the stock's industry for a date range
+    ///
+    /// Example: longbridge valuation-rank TSLA.US --start 20240101 --end 20241231
+    ValuationRank {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+        /// Start date YYYYMMDD
+        #[arg(long)]
+        start: String,
+        /// End date YYYYMMDD
+        #[arg(long)]
+        end: String,
+    },
+
+    /// Analyst consensus estimates (EPS, revenue, ratings) for a symbol
+    ///
+    /// Example: longbridge analyst-estimates TSLA.US
+    /// Example: longbridge analyst-estimates 700.HK --format json
+    AnalystEstimates {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+    },
+
+    // ── Asset (new) ──────────────────────────────────────────────────────────
+    /// Short-selling margin deposit details for the current account
+    ///
+    /// Example: longbridge short-margin
+    ShortMargin,
+
+    /// Daily profit/loss calendar for the current account
+    ///
+    /// Example: longbridge pnl-calendar
+    PnlCalendar,
+
+    /// Stock holding period breakdown for a symbol
+    ///
+    /// Example: longbridge holding-period TSLA.US
+    HoldingPeriod {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+    },
+
+    /// Trade-order detail and cash snapshot for a symbol (order entry page)
+    ///
+    /// Example: longbridge trade-info TSLA.US
+    TradeInfo {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+    },
+
+    /// Account-level order trade analysis / statistics
+    ///
+    /// Example: longbridge order-stats
+    #[command(name = "order-stats")]
+    OrderStats,
+
+    // ── ATM (new) ────────────────────────────────────────────────────────────
+    /// List withdrawal bank cards for the current account
+    ///
+    /// Example: longbridge withdrawal-cards
+    WithdrawalCards,
+
+    /// List withdrawal history for the current account
+    ///
+    /// Example: longbridge withdrawals
+    /// Example: longbridge withdrawals --page 2 --limit 50
+    Withdrawals {
+        /// Page number (default: 1)
+        #[arg(long, default_value = "1")]
+        page: u32,
+        /// Records per page (default: 20)
+        #[arg(long, default_value = "20")]
+        limit: u32,
+    },
+
+    /// List deposit history for the current account
+    ///
+    /// Example: longbridge deposits
+    /// Example: longbridge deposits --states 1 --currencies HKD,USD
+    Deposits {
+        /// Page number (default: 1)
+        #[arg(long, default_value = "1")]
+        page: u32,
+        /// Records per page (default: 20)
+        #[arg(long, default_value = "20")]
+        limit: u32,
+        /// Filter by state: 0=pending, 1=credited, 2=failed (comma-separated)
+        #[arg(long)]
+        states: Option<String>,
+        /// Filter by currency codes (comma-separated, e.g. HKD,USD)
+        #[arg(long)]
+        currencies: Option<String>,
+    },
+
+    // ── Search (new) ─────────────────────────────────────────────────────────
+    /// Search across market, news, posts, hashtags, help, share-lists, users, and institutions
+    ///
+    /// Example: longbridge search TSLA
+    /// Example: longbridge search "AI stocks" --tab news
+    /// Example: longbridge search TSLA --tab market --market US
+    Search {
+        /// Search keyword
+        keyword: String,
+        /// Search tab: market | news | posts | hashtags | help | share-lists | users | institutions
+        #[arg(long, default_value = "market")]
+        tab: String,
+        /// Market filter for --tab market: US | HK | SG
+        #[arg(long)]
+        market: Option<String>,
+        /// Product filter for --tab market (comma-separated: BK,ETF,ST,…)
+        #[arg(long)]
+        product: Option<String>,
+        /// Maximum results to display (default: 20)
+        #[arg(long, default_value = "20")]
+        limit: usize,
+    },
+
+    /// Show hot search keywords
+    ///
+    /// Example: longbridge search-hot
+    SearchHot,
+
+    // ── IPO (new) ────────────────────────────────────────────────────────────
+    /// IPO (new listings) commands — subscriptions, calendar, orders, profit/loss
+    ///
+    /// Example: longbridge ipo subscriptions
+    /// Example: longbridge ipo calendar
+    /// Example: longbridge ipo submit TSLA.US --qty 200 --amount 1000 --financing-amount 0 --method 2 --financing-interest 0
+    Ipo {
+        #[command(subcommand)]
+        cmd: IpoCmd,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1416,6 +1583,99 @@ pub enum InstitutionRatingCmd {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
     },
+}
+
+#[derive(Subcommand)]
+pub enum IpoCmd {
+    /// List IPO stocks currently in filing or subscription stage
+    Subscriptions,
+    /// List IPO stocks in wait-listing (grey market) stage
+    WaitListing,
+    /// List recently listed IPO stocks
+    Listed {
+        #[arg(long, default_value = "1")]
+        page: u32,
+        #[arg(long, default_value = "20")]
+        limit: u32,
+    },
+    /// Show the IPO calendar (all upcoming and recent IPOs)
+    Calendar,
+    /// Show IPO subscription page information for a symbol
+    Info { symbol: String },
+    /// Show IPO profile (prospectus summary) for a symbol
+    Profile { symbol: String },
+    /// Show IPO timeline for a symbol
+    Timeline {
+        symbol: String,
+        /// Market, e.g. HK
+        #[arg(long, default_value = "HK")]
+        market: String,
+        /// Flag: 0=normal, 2=international placement
+        #[arg(long, default_value = "0")]
+        flag: u8,
+    },
+    /// Show the current active IPO order status for a symbol
+    Order { symbol: String },
+    /// List active IPO holding orders for the current account
+    Orders { symbol: Option<String> },
+    /// Show IPO order detail by order ID
+    #[command(name = "order-detail")]
+    OrderDetail { order_id: String },
+    /// List IPO subscription history
+    History {
+        #[arg(long)]
+        market: Option<String>,
+        /// Status: 0=all, 1=subscribed, 2=debit-failed, 3=not-won, 4=won, 5=cancelled
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long, default_value = "1")]
+        page: u32,
+        #[arg(long, default_value = "10")]
+        limit: u32,
+    },
+    /// Check if the current user is eligible to subscribe to an IPO
+    Eligibility { symbol: String },
+    /// Show IPO profit/loss summary for a period
+    #[command(name = "profit-loss")]
+    ProfitLoss {
+        /// Period: 1m | 3m | 6m | 1y | all
+        #[arg(long, default_value = "all")]
+        period: String,
+    },
+    /// List IPO profit/loss items for a period
+    #[command(name = "profit-loss-items")]
+    ProfitLossItems {
+        /// Period: 1m | 3m | 6m | 1y | all
+        #[arg(long, default_value = "all")]
+        period: String,
+        #[arg(long, default_value = "1")]
+        page: u32,
+        #[arg(long, default_value = "20")]
+        limit: u32,
+    },
+    /// Show IPO holding portfolio detail for a symbol
+    Holdings { symbol: String },
+    /// Submit an IPO subscription order (requires confirmation)
+    Submit {
+        symbol: String,
+        /// Number of shares to subscribe
+        #[arg(long)]
+        qty: String,
+        /// Subscription amount
+        #[arg(long)]
+        amount: String,
+        /// Financing amount (0 for cash subscription)
+        #[arg(long, default_value = "0")]
+        financing_amount: String,
+        /// Subscription method: 1=financing, 2=cash
+        #[arg(long, default_value = "2")]
+        method: u8,
+        /// Financing daily interest (0 for cash subscription)
+        #[arg(long, default_value = "0")]
+        financing_interest: String,
+    },
+    /// Withdraw an IPO subscription order (requires confirmation)
+    Withdraw { order_id: String },
 }
 
 #[derive(Subcommand)]
@@ -2304,20 +2564,55 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             symbol,
             kind,
             report,
-        } => fundamental::cmd_financial_report(symbol, kind, report, format, verbose).await,
-        Commands::InstitutionRating { symbol, cmd } => match cmd {
-            Some(InstitutionRatingCmd::Detail { symbol: s }) => {
-                fundamental::cmd_institution_rating_detail(s, format, verbose).await
+            latest,
+        } => {
+            if latest {
+                fundamental::cmd_financial_report_latest(symbol, format, verbose).await
+            } else {
+                fundamental::cmd_financial_report(symbol, kind, report, format, verbose).await
             }
-            None => {
+        }
+        Commands::InstitutionRating {
+            symbol,
+            cmd,
+            history,
+            industry_rank,
+            page,
+            limit,
+        } => {
+            if industry_rank {
                 let sym = symbol.ok_or_else(|| {
                     anyhow::anyhow!(
-                        "Symbol required. Usage: longbridge institution-rating <SYMBOL>"
+                        "Symbol required. Usage: longbridge institution-rating <SYMBOL> --industry-rank"
                     )
                 })?;
-                fundamental::cmd_institution_rating(sym, format, verbose).await
+                fundamental::cmd_institution_rating_industry_rank(
+                    sym, page, limit, format, verbose,
+                )
+                .await
+            } else if history {
+                let sym = symbol.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Symbol required. Usage: longbridge institution-rating <SYMBOL> --history"
+                    )
+                })?;
+                fundamental::cmd_institution_rating_history(sym, format, verbose).await
+            } else {
+                match cmd {
+                    Some(InstitutionRatingCmd::Detail { symbol: s }) => {
+                        fundamental::cmd_institution_rating_detail(s, format, verbose).await
+                    }
+                    None => {
+                        let sym = symbol.ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "Symbol required. Usage: longbridge institution-rating <SYMBOL>"
+                            )
+                        })?;
+                        fundamental::cmd_institution_rating(sym, format, verbose).await
+                    }
+                }
             }
-        },
+        }
         Commands::Dividend { symbol, page, year, cmd } => match cmd {
             Some(DividendCmd::Detail { symbol: s }) => {
                 fundamental::cmd_dividend_detail(s, format, verbose).await
@@ -2749,6 +3044,125 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 script,
                 input,
             } => run_script::cmd_run_script(symbol, &period, &start, &end, script, input, format, verbose).await,
+        },
+
+        Commands::FinancialStatement { symbol, kind, report } => {
+            fundamental::cmd_financial_statement(symbol, &kind, &report, format, verbose).await
+        }
+        Commands::ValuationRank { symbol, start, end } => {
+            fundamental::cmd_valuation_rank(symbol, &start, &end, format, verbose).await
+        }
+        Commands::AnalystEstimates { symbol } => {
+            fundamental::cmd_analyst_estimates(symbol, format, verbose).await
+        }
+
+        Commands::ShortMargin => asset::cmd_short_margin(format, verbose).await,
+        Commands::PnlCalendar => asset::cmd_pnl_calendar(format, verbose).await,
+        Commands::HoldingPeriod { symbol } => {
+            asset::cmd_holding_period(symbol, format, verbose).await
+        }
+        Commands::TradeInfo { symbol } => asset::cmd_trade_info(symbol, format, verbose).await,
+        Commands::OrderStats => asset::cmd_order_stats(format, verbose).await,
+
+        Commands::WithdrawalCards => atm::cmd_withdrawal_cards(format, verbose).await,
+        Commands::Withdrawals { page, limit } => {
+            atm::cmd_withdrawals(page, limit, format, verbose).await
+        }
+        Commands::Deposits {
+            page,
+            limit,
+            states,
+            currencies,
+        } => {
+            atm::cmd_deposits(
+                page,
+                limit,
+                states.as_deref(),
+                currencies.as_deref(),
+                format,
+                verbose,
+            )
+            .await
+        }
+
+        Commands::Search {
+            keyword,
+            tab,
+            market,
+            product,
+            limit,
+        } => {
+            search::cmd_search(
+                keyword,
+                &tab,
+                market.as_deref(),
+                product.as_deref(),
+                limit,
+                format,
+                verbose,
+            )
+            .await
+        }
+        Commands::SearchHot => search::cmd_search_hot(format, verbose).await,
+
+        Commands::Ipo { cmd } => match cmd {
+            IpoCmd::Subscriptions => ipo::cmd_ipo_subscriptions(format, verbose).await,
+            IpoCmd::WaitListing => ipo::cmd_ipo_wait_listing(format, verbose).await,
+            IpoCmd::Listed { page, limit } => {
+                ipo::cmd_ipo_listed(page, limit, format, verbose).await
+            }
+            IpoCmd::Calendar => ipo::cmd_ipo_calendar(format, verbose).await,
+            IpoCmd::Info { symbol } => ipo::cmd_ipo_info(symbol, format, verbose).await,
+            IpoCmd::Profile { symbol } => ipo::cmd_ipo_profile(symbol, format, verbose).await,
+            IpoCmd::Timeline {
+                symbol,
+                market,
+                flag,
+            } => ipo::cmd_ipo_timeline(symbol, &market, flag, format, verbose).await,
+            IpoCmd::Order { symbol } => ipo::cmd_ipo_order(symbol, format, verbose).await,
+            IpoCmd::Orders { symbol } => ipo::cmd_ipo_orders(symbol, format, verbose).await,
+            IpoCmd::OrderDetail { order_id } => {
+                ipo::cmd_ipo_order_detail(order_id, format, verbose).await
+            }
+            IpoCmd::History {
+                market,
+                status,
+                page,
+                limit,
+            } => ipo::cmd_ipo_history(market, status, page, limit, format, verbose).await,
+            IpoCmd::Eligibility { symbol } => {
+                ipo::cmd_ipo_eligibility(symbol, format, verbose).await
+            }
+            IpoCmd::ProfitLoss { period } => {
+                ipo::cmd_ipo_profit_loss(&period, format, verbose).await
+            }
+            IpoCmd::ProfitLossItems { period, page, limit } => {
+                ipo::cmd_ipo_profit_loss_items(&period, page, limit, format, verbose).await
+            }
+            IpoCmd::Holdings { symbol } => ipo::cmd_ipo_holdings(symbol, format, verbose).await,
+            IpoCmd::Submit {
+                symbol,
+                qty,
+                amount,
+                financing_amount,
+                method,
+                financing_interest,
+            } => {
+                ipo::cmd_ipo_submit(
+                    symbol,
+                    qty,
+                    amount,
+                    financing_amount,
+                    method,
+                    financing_interest,
+                    format,
+                    verbose,
+                )
+                .await
+            }
+            IpoCmd::Withdraw { order_id } => {
+                ipo::cmd_ipo_withdraw(order_id, format, verbose).await
+            }
         },
 
         Commands::Auth { .. }
