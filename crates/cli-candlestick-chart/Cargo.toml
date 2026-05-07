@@ -1,6 +1,6 @@
 [package]
 name = "cli-candlestick-chart"
-version = "0.18.0"
+version = "0.19.2"
 license = "MIT"
 description = "A library for displaying candlestick charts right into your terminal."
 readme = "README.md"

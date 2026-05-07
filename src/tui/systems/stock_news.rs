@@ -334,6 +334,7 @@ fn render_news_list(frame: &mut Frame, rect: Rect, compact: bool) {
         width: list_width,
         ..inner
     };
+    *crate::tui::mouse::NEWS_LIST_RECT.lock().expect("poison") = list_area;
     let scrollbar_area = Rect {
         x: inner.x + list_width,
         y: inner.y,

@@ -10,6 +10,20 @@ error:
 exit:
   any_key: "Press any key to exit"
   multi_instance: "another instance is running, please close it first"
+my_quote:
+  title: "My Quote"
+  level: "Level"
+  member_id: "Member ID"
+  col_package: "Package"
+  col_start: "Start"
+  col_end: "End"
+  subscribed: "Subscribed Quotes"
+  unsubscribed: "Unsubscribed Quotes"
+  no_data: "No data"
+  qr_title: "Purchase Quote Packages"
+  scan_hint: |
+    Scan with the QR scanner in the "Me" tab inside Longbridge App.
+    Or go to "Me" -> "Quote Store" in the app.
 qrcode_view:
   scan_hint: |
     To sign in, scan the QR code using Longbridge iOS or Android app.
@@ -24,6 +38,9 @@ user:
   open_account:
     heading: "Account is not opened"
     content: "Please open account in other LongBridge app"
+account:
+  type:
+    paper: "Paper"
 Prompt:
   Esc: Press 'ESC' to cancel
 Candlestick:
@@ -255,6 +272,9 @@ Trade.OrderCancelled: "Order cancelled"
 Trade.OrderReplaced: "Order modified"
 Trade.FailedLoadOrders: "Failed to load orders"
 Trade.FailedLoadHistoryOrders: "Failed to load history orders"
+Trade.NoOrderSelected: "No order selected"
+Trade.OrderNotCancellable: "Order cannot be cancelled"
+Trade.OrderNotReplaceable: "Order cannot be modified"
 Orders.TodayTab: "Today"
 Orders.HistoryTab: "History"
 Orders.NoOrders: "No orders today"
@@ -285,8 +305,8 @@ CancelOrder.Symbol: "Symbol"
 CancelOrder.Qty: "Qty"
 CancelOrder.Price: "Price"
 CancelOrder.Side: "Side"
-CancelOrder.Confirm: "y [confirm cancel]"
-CancelOrder.Cancel: "n/Esc [back]"
+CancelOrder.Confirm: "Enter [confirm cancel]"
+CancelOrder.Cancel: "Esc [back]"
 ReplaceOrder.Title: "Modify Order"
 ReplaceOrder.OrderId: "Order"
 ReplaceOrder.NewQty: "New Qty"

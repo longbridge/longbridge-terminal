@@ -3,7 +3,7 @@
 [package]
 edition = "2021"
 name = "longbridge-terminal"
-version = "0.18.0"
+version = "0.19.2"
 
 [[bin]]
 name = "longbridge"
@@ -29,8 +29,8 @@ clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 tabled = "0.20"
 tar = "0.4"
-cli-candlestick-chart = { version = "0.18.0", path = "crates/cli-candlestick-chart", default-features = false }
-sec2md = { version = "0.18.0", path = "crates/sec2md" }
+cli-candlestick-chart = { version = "0.19.2", path = "crates/cli-candlestick-chart", default-features = false }
+sec2md = { version = "0.19.2", path = "crates/sec2md" }
 crossterm = { version = "0.29", features = ["event-stream"] }
 dashmap = "6.1"
 dirs = "5.0"

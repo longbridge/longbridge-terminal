@@ -246,6 +246,9 @@ pub fn render_watchlist_stock(
             .highlight_style(crate::tui::ui::styles::primary().add_modifier(Modifier::BOLD))
             .divider(" ");
         frame.render_widget(tabs, right_chunks[0]);
+        *crate::tui::mouse::WATCHLIST_STOCK_TABS_RECT
+            .lock()
+            .expect("poison") = right_chunks[0];
 
         match news_view {
             NewsView::Quote => {

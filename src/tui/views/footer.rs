@@ -16,8 +16,18 @@ pub fn render(frame: &mut Frame, rect: Rect, indexes: &[Counter; 3], state: &WsS
         .constraints([Constraint::Percentage(90), Constraint::Percentage(10)])
         .split(rect);
 
-    let mut spans = Vec::with_capacity(9);
-    for (counter, toggle_key) in indexes.iter().zip(['Q', 'W', 'E']) {
+    // Split the index area into 3 equal sections so each is independently clickable.
+    let index_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Ratio(1, 3),
+            Constraint::Ratio(1, 3),
+            Constraint::Ratio(1, 3),
+        ])
+        .split(chunks[0]);
+
+    let mut footer_rects = [Rect::default(); 3];
+    for (i, (counter, toggle_key)) in indexes.iter().zip(['Q', 'W', 'E']).enumerate() {
         let (last_done, prev_close) = STOCKS
             .get(counter)
             .map(|s| (s.quote.last_done, s.quote.prev_close))
@@ -39,16 +49,19 @@ pub fn render(frame: &mut Frame, rect: Rect, indexes: &[Counter; 3], state: &WsS
                 },
             );
         let color = styles::up(ordering);
-        // todo: add reversed modifier for chosen stock
         let key = format!("StockIndex.{counter}");
         let name = t!(&key).to_string();
         let index_name = Span::styled(name, color);
         let index_num = Span::styled(numbers, color);
         let toggle_key = Span::styled(format!("[{toggle_key}]  "), styles::dark_gray());
-        spans.extend([index_name, index_num, toggle_key]);
+        let line = Line::from(vec![index_name, index_num, toggle_key]);
+        frame.render_widget(Paragraph::new(line), index_chunks[i]);
+        footer_rects[i] = index_chunks[i];
     }
-    let indexes = Paragraph::new(Line::from(spans));
-    frame.render_widget(indexes, chunks[0]);
+
+    *crate::tui::mouse::FOOTER_INDEX_RECTS
+        .lock()
+        .expect("poison") = footer_rects;
 
     let (status, status_style) = match state.0 {
         ReadyState::Open => {
