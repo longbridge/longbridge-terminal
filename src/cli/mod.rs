@@ -1077,10 +1077,13 @@ pub enum Commands {
     },
 
     // ── Asset (new) ──────────────────────────────────────────────────────────
-    /// Short-selling margin deposit details for the current account
+    /// Asset subcommands
     ///
-    /// Example: longbridge short-margin
-    ShortMargin,
+    /// Example: longbridge asset short-margin
+    Asset {
+        #[command(subcommand)]
+        cmd: AssetCmd,
+    },
 
     /// Stock holding period breakdown for a symbol
     ///
@@ -1604,6 +1607,15 @@ pub enum InstitutionRatingCmd {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
     },
+}
+
+#[derive(Subcommand)]
+pub enum AssetCmd {
+    /// Short-selling margin deposit details for the current account
+    ///
+    /// Example: longbridge asset short-margin
+    #[command(name = "short-margin")]
+    ShortMargin,
 }
 
 #[derive(Subcommand)]
@@ -3107,7 +3119,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             fundamental::cmd_analyst_estimates(symbol, format, verbose).await
         }
 
-        Commands::ShortMargin => asset::cmd_short_margin(format, verbose).await,
+        Commands::Asset { cmd } => match cmd {
+            AssetCmd::ShortMargin => asset::cmd_short_margin(format, verbose).await,
+        },
         Commands::HoldingPeriod { symbol } => {
             asset::cmd_holding_period(symbol, format, verbose).await
         }
