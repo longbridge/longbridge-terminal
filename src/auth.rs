@@ -438,12 +438,6 @@ pub async fn auth_code_login() -> Result<()> {
     }
 }
 
-/// Return the account channel for the current session, defaulting to "lb".
-///
-/// PSPL Singapore users can set `LONGBRIDGE_ACCOUNT_CHANNEL=pspl_sg` to override.
-pub fn account_channel_or_default() -> String {
-    std::env::var("LONGBRIDGE_ACCOUNT_CHANNEL").unwrap_or_else(|_| "lb".to_string())
-}
 
 /// Clear the stored OAuth token (logout). Deletes the token file used by the longbridge SDK.
 pub fn clear_token() -> Result<()> {
