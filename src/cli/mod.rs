@@ -1607,15 +1607,6 @@ pub enum PortfolioCmd {
         /// One or more symbols in <CODE>.<MARKET> format
         symbols: Vec<String>,
     },
-
-    /// Trade-order detail and cash snapshot for a symbol (order entry page)
-    ///
-    /// Example: longbridge portfolio trade-info TSLA.US
-    #[command(name = "trade-info")]
-    TradeInfo {
-        /// Symbol in <CODE>.<MARKET> format
-        symbol: String,
-    },
 }
 
 #[derive(Subcommand)]
@@ -2894,9 +2885,6 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             Some(PortfolioCmd::ShortMargin) => asset::cmd_short_margin(format, verbose).await,
             Some(PortfolioCmd::HoldingPeriod { symbols }) => {
                 asset::cmd_holding_period(symbols, format, verbose).await
-            }
-            Some(PortfolioCmd::TradeInfo { symbol }) => {
-                asset::cmd_trade_info(symbol, format, verbose).await
             }
         },
         Commands::Positions => trade::cmd_positions(format).await,
