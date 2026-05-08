@@ -619,7 +619,7 @@ pub async fn cmd_ipo_detail(
         }
         OutputFormat::Pretty => {
             let kv = |label: &str, value: &str| {
-                println!("  {:<24}{value}", format!("{label}:"));
+                println!("{:<24}{value}", format!("{label}:"));
             };
             let trunc = |s: String, max: usize| -> String {
                 if s.chars().count() > max {
@@ -910,7 +910,7 @@ pub async fn cmd_ipo_order_detail(
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => {
             let kv = |label: &str, value: &str| {
-                println!("  {:<24}{value}", format!("{label}:"));
+                println!("{:<24}{value}", format!("{label}:"));
             };
             kv(
                 "Symbol",
