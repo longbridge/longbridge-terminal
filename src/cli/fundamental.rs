@@ -2225,12 +2225,12 @@ pub async fn cmd_valuation_rank(
     );
     let start_date = start.map_or_else(
         || {
-            let one_year_ago = now - time::Duration::days(365);
+            let one_month_ago = now - time::Duration::days(30);
             format!(
                 "{:04}{:02}{:02}",
-                one_year_ago.year(),
-                one_year_ago.month() as u8,
-                one_year_ago.day()
+                one_month_ago.year(),
+                one_month_ago.month() as u8,
+                one_month_ago.day()
             )
         },
         str::to_string,
