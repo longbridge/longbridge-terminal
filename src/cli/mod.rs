@@ -1082,15 +1082,6 @@ pub enum Commands {
     },
 
     // ── Asset (new) ──────────────────────────────────────────────────────────
-    /// Stock holding period breakdown for one or more symbols
-    ///
-    /// Example: longbridge holding-period TSLA.US
-    /// Example: longbridge holding-period TSLA.US 700.HK AAPL.US
-    HoldingPeriod {
-        /// One or more symbols in <CODE>.<MARKET> format
-        symbols: Vec<String>,
-    },
-
     /// Trade-order detail and cash snapshot for a symbol (order entry page)
     ///
     /// Example: longbridge trade-info TSLA.US
@@ -1614,6 +1605,16 @@ pub enum PortfolioCmd {
     /// Example: longbridge portfolio short-margin
     #[command(name = "short-margin")]
     ShortMargin,
+
+    /// Stock holding period breakdown (defaults to current positions)
+    ///
+    /// Example: longbridge portfolio holding-period
+    /// Example: longbridge portfolio holding-period TSLA.US 700.HK
+    #[command(name = "holding-period")]
+    HoldingPeriod {
+        /// One or more symbols in <CODE>.<MARKET> format
+        symbols: Vec<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2890,6 +2891,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         Commands::Portfolio { cmd } => match cmd {
             None => trade::cmd_portfolio(format).await,
             Some(PortfolioCmd::ShortMargin) => asset::cmd_short_margin(format, verbose).await,
+            Some(PortfolioCmd::HoldingPeriod { symbols }) => {
+                asset::cmd_holding_period(symbols, format, verbose).await
+            }
         },
         Commands::Positions => trade::cmd_positions(format).await,
         Commands::FundPositions => trade::cmd_fund_positions(format).await,
@@ -3120,9 +3124,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             fundamental::cmd_analyst_estimates(symbol, format, verbose).await
         }
 
-        Commands::HoldingPeriod { symbols } => {
-            asset::cmd_holding_period(symbols, format, verbose).await
-        }
+
         Commands::TradeInfo { symbol } => asset::cmd_trade_info(symbol, format, verbose).await,
 
         Commands::BankCards => atm::cmd_withdrawal_cards(format, verbose).await,
