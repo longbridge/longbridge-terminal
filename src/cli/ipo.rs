@@ -471,20 +471,20 @@ pub async fn cmd_ipo_listed(
             print_json(&Value::Object(result));
         }
         OutputFormat::Pretty => {
-            let headers = [
-                "name",
-                "symbol",
-                "issue_price",
-                "last_done",
-                "prev_close",
-                "change",
-                "amount",
-                "ipo_date",
-            ];
             let mut printed = false;
             if let Some(list) = hk_data["list"].as_array() {
                 if !list.is_empty() {
                     println!("── HK ──");
+                    let headers = [
+                        "name",
+                        "symbol",
+                        "issue_price",
+                        "last_done",
+                        "prev_close",
+                        "change%",
+                        "amount",
+                        "ipo_date",
+                    ];
                     let rows: Vec<Vec<String>> = list.iter().map(hk_listed_row).collect();
                     print_table(&headers, rows, &OutputFormat::Pretty);
                     printed = true;
@@ -496,6 +496,16 @@ pub async fn cmd_ipo_listed(
                         println!();
                     }
                     println!("── US ──");
+                    let headers = [
+                        "name",
+                        "symbol",
+                        "issue_price",
+                        "last_done",
+                        "prev_close",
+                        "change%",
+                        "amount",
+                        "ipo_date",
+                    ];
                     let rows: Vec<Vec<String>> = list.iter().map(us_listed_row).collect();
                     print_table(&headers, rows, &OutputFormat::Pretty);
                     printed = true;
@@ -1026,7 +1036,7 @@ pub async fn cmd_ipo_us_listed(
                     "issue_price",
                     "last_done",
                     "prev_close",
-                    "change",
+                    "change%",
                     "amount",
                     "ipo_date",
                 ];
