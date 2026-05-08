@@ -45,6 +45,26 @@ fn fmt_ts_opt(v: &Value) -> String {
     }
 }
 
+fn fmt_date_opt(v: &Value) -> String {
+    let ts = match v {
+        Value::Number(n) => n.as_i64(),
+        Value::String(s) => s.parse::<i64>().ok(),
+        _ => None,
+    };
+    match ts {
+        Some(n) if n > 0 => crate::utils::datetime::format_date(n),
+        Some(_) => "-".to_string(),
+        None => {
+            let s = val_str(v);
+            if s.len() == 8 && s.chars().all(|c| c.is_ascii_digit()) {
+                format!("{}-{}-{}", &s[..4], &s[4..6], &s[6..])
+            } else {
+                s
+            }
+        }
+    }
+}
+
 fn state_stage_label(v: &Value) -> &'static str {
     match val_str(v).as_str() {
         "0" => "pending",
@@ -379,14 +399,7 @@ pub async fn cmd_ipo_wait_listing(format: &OutputFormat, verbose: bool) -> Resul
 }
 
 fn hk_listed_row(item: &Value) -> Vec<String> {
-    let date = {
-        let s = val_str(&item["ipo_date"]);
-        if s.len() == 8 && s.chars().all(|c| c.is_ascii_digit()) {
-            format!("{}-{}-{}", &s[..4], &s[4..6], &s[6..])
-        } else {
-            s
-        }
-    };
+    let date = fmt_date_opt(&item["ipo_date"]);
     let amount = val_str(&item["amount"])
         .parse::<u64>()
         .map(|n| crate::utils::number::format_volume(n))
@@ -404,14 +417,11 @@ fn hk_listed_row(item: &Value) -> Vec<String> {
 }
 
 fn us_listed_row(item: &Value) -> Vec<String> {
-    let date = {
-        let s = val_str(&item["listing_date"]);
-        if s.len() == 8 && s.chars().all(|c| c.is_ascii_digit()) {
-            format!("{}-{}-{}", &s[..4], &s[4..6], &s[6..])
-        } else {
-            s
-        }
-    };
+    let date = fmt_date_opt(&item["ipo_date"]);
+    let amount = val_str(&item["amount"])
+        .parse::<u64>()
+        .map(|n| crate::utils::number::format_volume(n))
+        .unwrap_or_else(|_| val_str(&item["amount"]));
     vec![
         val_str(&item["name"]),
         counter_id_to_symbol(&val_str(&item["counter_id"])),
@@ -419,7 +429,7 @@ fn us_listed_row(item: &Value) -> Vec<String> {
         val_str(&item["last_done"]),
         val_str(&item["prev_close"]),
         val_str(&item["ipo_change"]),
-        val_str(&item["amount"]),
+        amount,
         date,
     ]
 }
@@ -530,26 +540,13 @@ pub async fn cmd_ipo_calendar(format: &OutputFormat, verbose: bool) -> Result<()
                 let mut other_rows: Vec<Vec<String>> = Vec::new();
                 for item in list {
                     let cid = val_str(&item["counter_id"]);
-                    let ipo_date = {
-                        let raw = &item["ipo_date"];
-                        if raw.is_number() {
-                            fmt_ts_opt(raw)
-                        } else {
-                            let s = val_str(raw);
-                            if s.len() == 8 && s.chars().all(|c| c.is_ascii_digit()) {
-                                format!("{}-{}-{}", &s[..4], &s[4..6], &s[6..])
-                            } else {
-                                s
-                            }
-                        }
-                    };
                     let row = vec![
                         val_str(&item["name"]),
                         counter_id_to_symbol(&cid),
                         state_stage_label(&item["state_stage"]).to_string(),
-                        fmt_ts_opt(&item["sub_date"]),
-                        fmt_ts_opt(&item["sub_end_date"]),
-                        ipo_date,
+                        fmt_date_opt(&item["sub_date"]),
+                        fmt_date_opt(&item["sub_end_date"]),
+                        fmt_date_opt(&item["ipo_date"]),
                     ];
                     if cid.contains("/HK/") {
                         hk_rows.push(row);
