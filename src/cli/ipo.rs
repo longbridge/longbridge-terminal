@@ -1,5 +1,5 @@
 use anyhow::Result;
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use super::api::http_get;
 use super::output::{print_json_value, print_table};
@@ -32,6 +32,143 @@ fn fmt_ts(v: &Value) -> String {
     ts.map_or_else(|| val_str(v), crate::utils::datetime::format_timestamp)
 }
 
+fn state_stage_label(v: &Value) -> &'static str {
+    match val_str(v).as_str() {
+        "0" => "pending",
+        "1" => "sub-start",
+        "2" => "sub-end",
+        "3" => "allotment",
+        "4" => "grey-market",
+        "5" => "listed",
+        _ => "unknown",
+    }
+}
+
+fn extract_tag(tags: &[Value], keyword: &str) -> String {
+    tags.iter()
+        .find_map(|t| t.as_str().filter(|s| s.contains(keyword)))
+        .map_or_else(|| "-".to_string(), str::to_string)
+}
+
+// Transform subscription item: counter_id → symbol, sub_deadline → deadline (RFC 3339),
+// state_stage → state (label).
+fn transform_subscription(item: &Value) -> Value {
+    let mut obj = Map::new();
+    if let Some(map) = item.as_object() {
+        for (k, v) in map {
+            match k.as_str() {
+                "counter_id" => {
+                    obj.insert(
+                        "symbol".to_string(),
+                        Value::String(counter_id_to_symbol(&val_str(v))),
+                    );
+                }
+                "sub_deadline" => {
+                    obj.insert("deadline".to_string(), Value::String(fmt_ts(v)));
+                }
+                "state_stage" => {
+                    obj.insert(
+                        "state".to_string(),
+                        Value::String(state_stage_label(v).to_string()),
+                    );
+                }
+                _ => {
+                    obj.insert(k.clone(), v.clone());
+                }
+            }
+        }
+    }
+    Value::Object(obj)
+}
+
+fn state_label(v: &Value) -> &'static str {
+    match val_str(v).as_str() {
+        "0" => "normal",
+        "1" => "delayed",
+        "2" => "cancelled",
+        _ => "unknown",
+    }
+}
+
+fn sub_state_label(v: &Value) -> &'static str {
+    match val_str(v).as_str() {
+        "0" => "not-subscribed",
+        "1" => "not-won",
+        "2" => "won",
+        _ => "unknown",
+    }
+}
+
+// Fields that are unix timestamps (numeric) and should be formatted as RFC 3339.
+const TS_FIELDS: &[&str] = &[
+    "ipo_date",
+    "sub_date",
+    "sub_end_date",
+    "result_date",
+    "mart_date",
+    "mart_begin",
+    "mart_end",
+];
+
+// Internal fields not useful to callers.
+const SKIP_FIELDS: &[&str] = &[
+    "code",
+    "order_id",
+    "sort",
+    "watched",
+    "remaining_second",
+    "remaining_day",
+];
+
+fn transform_ipo_list_item(item: &Value) -> Value {
+    let mut obj = Map::new();
+    if let Some(map) = item.as_object() {
+        for (k, v) in map {
+            if SKIP_FIELDS.contains(&k.as_str()) {
+                continue;
+            }
+            if k == "counter_id" {
+                obj.insert(
+                    "symbol".to_string(),
+                    Value::String(counter_id_to_symbol(&val_str(v))),
+                );
+            } else if k == "state_stage" {
+                obj.insert(
+                    "state".to_string(),
+                    Value::String(state_stage_label(v).to_string()),
+                );
+            } else if k == "state" {
+                obj.insert(k.clone(), Value::String(state_label(v).to_string()));
+            } else if k == "sub_state" {
+                obj.insert(k.clone(), Value::String(sub_state_label(v).to_string()));
+            } else if k == "mart_status" {
+                let label = if val_str(v) == "1" { "open" } else { "closed" };
+                obj.insert(k.clone(), Value::String(label.to_string()));
+            } else if TS_FIELDS.contains(&k.as_str()) && v.is_number() {
+                obj.insert(k.clone(), Value::String(fmt_ts(v)));
+            } else {
+                obj.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    Value::Object(obj)
+}
+
+// Transform history item: format created_at timestamp.
+fn transform_history_item(item: &Value) -> Value {
+    let mut obj = Map::new();
+    if let Some(map) = item.as_object() {
+        for (k, v) in map {
+            if k == "created_at" {
+                obj.insert(k.clone(), Value::String(fmt_ts(v)));
+            } else {
+                obj.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    Value::Object(obj)
+}
+
 async fn member_id() -> Result<i64> {
     crate::openapi::quote()
         .member_id()
@@ -52,7 +189,14 @@ pub async fn cmd_ipo_subscriptions(format: &OutputFormat, verbose: bool) -> Resu
     )
     .await?;
     match format {
-        OutputFormat::Json => print_json(&data),
+        OutputFormat::Json => {
+            if let Some(list) = data["list"].as_array() {
+                let transformed: Vec<Value> = list.iter().map(transform_subscription).collect();
+                print_json(&Value::Array(transformed));
+            } else {
+                print_json(&data);
+            }
+        }
         OutputFormat::Pretty => {
             if let Some(list) = data["list"].as_array() {
                 if list.is_empty() {
@@ -63,6 +207,10 @@ pub async fn cmd_ipo_subscriptions(format: &OutputFormat, verbose: bool) -> Resu
                     "name",
                     "symbol",
                     "currency",
+                    "entrance_fee",
+                    "est_sub",
+                    "fin_rate",
+                    "max_lev",
                     "issue_price",
                     "deadline",
                     "state",
@@ -70,20 +218,18 @@ pub async fn cmd_ipo_subscriptions(format: &OutputFormat, verbose: bool) -> Resu
                 let rows: Vec<Vec<String>> = list
                     .iter()
                     .map(|item| {
-                        let stage = match val_str(&item["state_stage"]).as_str() {
-                            "0" => "pending",
-                            "1" => "sub-start",
-                            "2" => "sub-end",
-                            "3" => "allotment",
-                            "4" => "grey-market",
-                            "5" => "listed",
-                            s => s,
-                        }
-                        .to_string();
+                        let stage = state_stage_label(&item["state_stage"]).to_string();
+                        let tags: &[Value] = item["tags"].as_array().map_or(&[], |a| a.as_slice());
+                        let fin_rate = extract_tag(tags, "融资利率");
+                        let max_lev = extract_tag(tags, "杠杆");
                         vec![
                             val_str(&item["name"]),
                             counter_id_to_symbol(&val_str(&item["counter_id"])),
                             val_str(&item["currency"]),
+                            val_str(&item["entrance_fee"]),
+                            val_str(&item["rate_forcast"]),
+                            fin_rate,
+                            max_lev,
                             val_str(&item["issue_price"]),
                             fmt_ts(&item["sub_deadline"]),
                             stage,
@@ -119,14 +265,21 @@ pub async fn cmd_ipo_wait_listing(format: &OutputFormat, verbose: bool) -> Resul
     )
     .await?;
     match format {
-        OutputFormat::Json => print_json(&data),
+        OutputFormat::Json => {
+            if let Some(list) = data["ipos"].as_array() {
+                let transformed: Vec<Value> = list.iter().map(transform_ipo_list_item).collect();
+                print_json(&Value::Array(transformed));
+            } else {
+                print_json(&data);
+            }
+        }
         OutputFormat::Pretty => {
-            if let Some(list) = data["list"].as_array() {
+            if let Some(list) = data["ipos"].as_array() {
                 if list.is_empty() {
                     println!("No IPO stocks in wait-listing.");
                     return Ok(());
                 }
-                let headers = ["name", "symbol", "issue_price", "listing_date"];
+                let headers = ["name", "symbol", "issue_price", "ipo_date", "state"];
                 let rows: Vec<Vec<String>> = list
                     .iter()
                     .map(|item| {
@@ -134,7 +287,8 @@ pub async fn cmd_ipo_wait_listing(format: &OutputFormat, verbose: bool) -> Resul
                             val_str(&item["name"]),
                             counter_id_to_symbol(&val_str(&item["counter_id"])),
                             val_str(&item["issue_price"]),
-                            val_str(&item["listing_date"]),
+                            fmt_ts(&item["ipo_date"]),
+                            state_stage_label(&item["state_stage"]).to_string(),
                         ]
                     })
                     .collect();
@@ -169,7 +323,14 @@ pub async fn cmd_ipo_listed(
     )
     .await?;
     match format {
-        OutputFormat::Json => print_json(&data),
+        OutputFormat::Json => {
+            if let Some(list) = data["list"].as_array() {
+                let transformed: Vec<Value> = list.iter().map(transform_ipo_list_item).collect();
+                print_json(&Value::Array(transformed));
+            } else {
+                print_json(&data);
+            }
+        }
         OutputFormat::Pretty => {
             if let Some(list) = data["list"].as_array() {
                 if list.is_empty() {
@@ -201,7 +362,14 @@ pub async fn cmd_ipo_listed(
 pub async fn cmd_ipo_calendar(format: &OutputFormat, verbose: bool) -> Result<()> {
     let data = http_get("/v1/ipo/calendar", &[], verbose).await?;
     match format {
-        OutputFormat::Json => print_json(&data),
+        OutputFormat::Json => {
+            if let Some(list) = data["list"].as_array() {
+                let transformed: Vec<Value> = list.iter().map(transform_ipo_list_item).collect();
+                print_json(&Value::Array(transformed));
+            } else {
+                print_json(&data);
+            }
+        }
         OutputFormat::Pretty => {
             if let Some(list) = data["list"].as_array() {
                 if list.is_empty() {
@@ -406,7 +574,14 @@ pub async fn cmd_ipo_history(
     }
     let data = http_get("/v1/ipo/orders/history", &params, verbose).await?;
     match format {
-        OutputFormat::Json => print_json(&data),
+        OutputFormat::Json => {
+            if let Some(arr) = data.as_array() {
+                let transformed: Vec<Value> = arr.iter().map(transform_history_item).collect();
+                print_json(&Value::Array(transformed));
+            } else {
+                print_json(&data);
+            }
+        }
         OutputFormat::Pretty => {
             if let Some(arr) = data.as_array() {
                 if arr.is_empty() {
@@ -522,6 +697,148 @@ pub async fn cmd_ipo_holdings(symbol: String, format: &OutputFormat, verbose: bo
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => print_json_value(&data, format),
+    }
+    Ok(())
+}
+
+// ── US IPO commands ───────────────────────────────────────────────────────────
+
+/// List US IPO stocks currently in subscription stage.
+pub async fn cmd_ipo_us_subscriptions(format: &OutputFormat, verbose: bool) -> Result<()> {
+    let data = http_get("/v1/ipo/us/subscriptions", &[], verbose).await?;
+    match format {
+        OutputFormat::Json => {
+            if let Some(list) = data["list"].as_array() {
+                let transformed: Vec<Value> = list.iter().map(transform_subscription).collect();
+                print_json(&Value::Array(transformed));
+            } else {
+                print_json(&data);
+            }
+        }
+        OutputFormat::Pretty => {
+            if let Some(list) = data["list"].as_array() {
+                if list.is_empty() {
+                    println!("No active US IPO subscriptions.");
+                    return Ok(());
+                }
+                let headers = [
+                    "name",
+                    "symbol",
+                    "currency",
+                    "issue_price",
+                    "deadline",
+                    "state",
+                ];
+                let rows: Vec<Vec<String>> = list
+                    .iter()
+                    .map(|item| {
+                        let stage = state_stage_label(&item["state_stage"]).to_string();
+                        vec![
+                            val_str(&item["name"]),
+                            counter_id_to_symbol(&val_str(&item["counter_id"])),
+                            val_str(&item["currency"]),
+                            val_str(&item["issue_price"]),
+                            fmt_ts(&item["sub_deadline"]),
+                            stage,
+                        ]
+                    })
+                    .collect();
+                print_table(&headers, rows, &OutputFormat::Pretty);
+            } else {
+                print_json(&data);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// List US IPO stocks in wait-listing stage.
+pub async fn cmd_ipo_us_wait_listing(format: &OutputFormat, verbose: bool) -> Result<()> {
+    let data = http_get("/v1/ipo/us/wait-listing", &[], verbose).await?;
+    match format {
+        OutputFormat::Json => {
+            if let Some(list) = data["ipos"].as_array() {
+                let transformed: Vec<Value> = list.iter().map(transform_ipo_list_item).collect();
+                print_json(&Value::Array(transformed));
+            } else {
+                print_json(&data);
+            }
+        }
+        OutputFormat::Pretty => {
+            if let Some(list) = data["ipos"].as_array() {
+                if list.is_empty() {
+                    println!("No US IPO stocks in wait-listing.");
+                    return Ok(());
+                }
+                let headers = ["name", "symbol", "issue_price", "ipo_date", "state"];
+                let rows: Vec<Vec<String>> = list
+                    .iter()
+                    .map(|item| {
+                        vec![
+                            val_str(&item["name"]),
+                            counter_id_to_symbol(&val_str(&item["counter_id"])),
+                            val_str(&item["issue_price"]),
+                            fmt_ts(&item["ipo_date"]),
+                            state_stage_label(&item["state_stage"]).to_string(),
+                        ]
+                    })
+                    .collect();
+                print_table(&headers, rows, &OutputFormat::Pretty);
+            } else {
+                print_json(&data);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// List recently listed US IPO stocks.
+pub async fn cmd_ipo_us_listed(
+    page: u32,
+    limit: u32,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let page_str = page.to_string();
+    let size_str = limit.to_string();
+    let data = http_get(
+        "/v1/ipo/us/listed",
+        &[("page", page_str.as_str()), ("size", size_str.as_str())],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => {
+            if let Some(list) = data["list"].as_array() {
+                let transformed: Vec<Value> = list.iter().map(transform_ipo_list_item).collect();
+                print_json(&Value::Array(transformed));
+            } else {
+                print_json(&data);
+            }
+        }
+        OutputFormat::Pretty => {
+            if let Some(list) = data["list"].as_array() {
+                if list.is_empty() {
+                    println!("No listed US IPO stocks found.");
+                    return Ok(());
+                }
+                let headers = ["name", "symbol", "issue_price", "listing_date"];
+                let rows: Vec<Vec<String>> = list
+                    .iter()
+                    .map(|item| {
+                        vec![
+                            val_str(&item["name"]),
+                            counter_id_to_symbol(&val_str(&item["counter_id"])),
+                            val_str(&item["issue_price"]),
+                            val_str(&item["listing_date"]),
+                        ]
+                    })
+                    .collect();
+                print_table(&headers, rows, &OutputFormat::Pretty);
+            } else {
+                print_json(&data);
+            }
+        }
     }
     Ok(())
 }

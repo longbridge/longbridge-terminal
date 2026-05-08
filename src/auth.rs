@@ -438,7 +438,6 @@ pub async fn auth_code_login() -> Result<()> {
     }
 }
 
-
 /// Clear the stored OAuth token (logout). Deletes the token file used by the longbridge SDK.
 pub fn clear_token() -> Result<()> {
     let path = token_file_path()?;

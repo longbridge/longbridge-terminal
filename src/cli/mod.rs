@@ -12,8 +12,8 @@ pub mod fundamental;
 pub mod init;
 pub mod insider_trades;
 pub mod investors;
-pub mod my_quote;
 pub mod ipo;
+pub mod my_quote;
 pub mod news;
 pub mod output;
 pub mod quant_render;
@@ -1682,6 +1682,20 @@ pub enum IpoCmd {
     },
     /// Show IPO holding portfolio detail for a symbol
     Holdings { symbol: String },
+    /// List US IPO stocks currently in subscription stage
+    #[command(name = "us-subscriptions")]
+    UsSubscriptions,
+    /// List US IPO stocks in wait-listing stage
+    #[command(name = "us-wait-listing")]
+    UsWaitListing,
+    /// List recently listed US IPO stocks
+    #[command(name = "us-listed")]
+    UsListed {
+        #[arg(long, default_value = "1")]
+        page: u32,
+        #[arg(long, default_value = "20")]
+        limit: u32,
+    },
 }
 
 #[derive(Subcommand)]
@@ -3166,6 +3180,11 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 ipo::cmd_ipo_profit_loss_items(&period, page, limit, format, verbose).await
             }
             IpoCmd::Holdings { symbol } => ipo::cmd_ipo_holdings(symbol, format, verbose).await,
+            IpoCmd::UsSubscriptions => ipo::cmd_ipo_us_subscriptions(format, verbose).await,
+            IpoCmd::UsWaitListing => ipo::cmd_ipo_us_wait_listing(format, verbose).await,
+            IpoCmd::UsListed { page, limit } => {
+                ipo::cmd_ipo_us_listed(page, limit, format, verbose).await
+            }
         },
 
         Commands::Auth { .. }

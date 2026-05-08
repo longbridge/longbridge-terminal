@@ -486,7 +486,28 @@ pub async fn cmd_dividend(
     }
     let data = http_get("/v1/quote/dividends", &params, verbose).await?;
     match format {
-        OutputFormat::Json => print_json(&data),
+        OutputFormat::Json => {
+            if let Some(list) = data["list"].as_array() {
+                let transformed: Vec<Value> = list
+                    .iter()
+                    .map(|item| {
+                        let mut obj = serde_json::Map::new();
+                        obj.insert("symbol".to_string(), Value::String(symbol.clone()));
+                        if let Some(map) = item.as_object() {
+                            for (k, v) in map {
+                                if !DIVIDENDS_SKIP.contains(&k.as_str()) {
+                                    obj.insert(k.clone(), v.clone());
+                                }
+                            }
+                        }
+                        Value::Object(obj)
+                    })
+                    .collect();
+                print_json(&serde_json::json!({ "list": transformed }));
+            } else {
+                print_json(&data);
+            }
+        }
         OutputFormat::Pretty => print_dividends(&data),
     }
     Ok(())
@@ -2086,27 +2107,27 @@ pub async fn cmd_institution_rating_history(
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => {
-            if let Some(target) = data.get("target_history") {
-                if !target.as_array().map_or(true, |a| a.is_empty()) {
+            let target_empty = data
+                .get("target_history")
+                .and_then(|v| v.as_array())
+                .is_none_or(Vec::is_empty);
+            let eval_empty = data
+                .get("evaluate_history")
+                .and_then(|v| v.as_array())
+                .is_none_or(Vec::is_empty);
+            if !target_empty {
+                if let Some(target) = data.get("target_history") {
                     println!("Target price history:");
                     print_kv(target);
                 }
             }
-            if let Some(eval) = data.get("evaluate_history") {
-                if !eval.as_array().map_or(true, |a| a.is_empty()) {
+            if !eval_empty {
+                if let Some(eval) = data.get("evaluate_history") {
                     println!("\nRating history:");
                     print_kv(eval);
                 }
             }
-            if data
-                .get("target_history")
-                .and_then(|v| v.as_array())
-                .map_or(true, |a| a.is_empty())
-                && data
-                    .get("evaluate_history")
-                    .and_then(|v| v.as_array())
-                    .map_or(true, |a| a.is_empty())
-            {
+            if target_empty && eval_empty {
                 println!("No rating history found.");
             }
         }

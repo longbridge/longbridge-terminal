@@ -1,5 +1,5 @@
 use anyhow::Result;
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use super::api::http_get;
 use super::output::print_table;
@@ -29,6 +29,42 @@ fn fmt_ts(v: &Value) -> String {
         _ => None,
     };
     ts.map_or_else(|| val_str(v), crate::utils::datetime::format_timestamp)
+}
+
+fn transform_ts_field(item: &Value, ts_fields: &[&str]) -> Value {
+    let mut obj = Map::new();
+    if let Some(map) = item.as_object() {
+        for (k, v) in map {
+            if ts_fields.contains(&k.as_str()) {
+                obj.insert(k.clone(), Value::String(fmt_ts(v)));
+            } else {
+                obj.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    Value::Object(obj)
+}
+
+const DEPOSIT_SKIP: &[&str] = &[
+    "vouchers",
+    "state_code",
+    "sub_state_code",
+    "bank_operation_type_id",
+    "disable_link",
+    "can_cancel",
+];
+
+fn transform_deposit_item(item: &Value) -> Value {
+    let mut obj = Map::new();
+    if let Some(map) = item.as_object() {
+        for (k, v) in map {
+            if DEPOSIT_SKIP.contains(&k.as_str()) {
+                continue;
+            }
+            obj.insert(k.clone(), v.clone());
+        }
+    }
+    Value::Object(obj)
 }
 
 // ── withdrawal cards ──────────────────────────────────────────────────────────
@@ -88,7 +124,25 @@ pub async fn cmd_withdrawals(
     )
     .await?;
     match format {
-        OutputFormat::Json => print_json(&data),
+        OutputFormat::Json => {
+            let mut result = serde_json::Map::new();
+            if let Some(obj) = data.as_object() {
+                for (k, v) in obj {
+                    if k == "list" {
+                        if let Some(list) = v.as_array() {
+                            let transformed: Vec<Value> = list
+                                .iter()
+                                .map(|item| transform_ts_field(item, &["created_at"]))
+                                .collect();
+                            result.insert(k.clone(), Value::Array(transformed));
+                        }
+                    } else {
+                        result.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+            print_json(&Value::Object(result));
+        }
         OutputFormat::Pretty => {
             let total = val_str(&data["total"]);
             if !total.is_empty() && total != "0" {
@@ -148,7 +202,23 @@ pub async fn cmd_deposits(
     }
     let data = http_get("/v1/account/deposits", &params, verbose).await?;
     match format {
-        OutputFormat::Json => print_json(&data),
+        OutputFormat::Json => {
+            let mut result = serde_json::Map::new();
+            if let Some(obj) = data.as_object() {
+                for (k, v) in obj {
+                    if k == "items" {
+                        if let Some(items) = v.as_array() {
+                            let transformed: Vec<Value> =
+                                items.iter().map(transform_deposit_item).collect();
+                            result.insert(k.clone(), Value::Array(transformed));
+                        }
+                    } else {
+                        result.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+            print_json(&Value::Object(result));
+        }
         OutputFormat::Pretty => {
             let total = val_str(&data["total"]);
             if !total.is_empty() && total != "0" {
@@ -159,22 +229,17 @@ pub async fn cmd_deposits(
                     println!("No deposit records.");
                     return Ok(());
                 }
-                let headers = ["date", "amount", "currency", "state", "source"];
+                let headers = ["id", "date", "amount", "currency", "type", "state"];
                 let rows: Vec<Vec<String>> = items
                     .iter()
                     .map(|item| {
-                        let state = match val_str(&item["state"]).as_str() {
-                            "0" => "Pending".to_string(),
-                            "1" => "Credited".to_string(),
-                            "2" => "Failed".to_string(),
-                            s => s.to_string(),
-                        };
                         vec![
-                            fmt_ts(&item["created_at"]),
+                            val_str(&item["id"]),
+                            val_str(&item["created_at"]),
                             val_str(&item["amount"]),
                             val_str(&item["currency"]),
-                            state,
-                            val_str(&item["fund_source"]),
+                            val_str(&item["bank_operation_type_name"]),
+                            val_str(&item["state"]),
                         ]
                     })
                     .collect();

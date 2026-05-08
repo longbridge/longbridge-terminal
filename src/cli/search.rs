@@ -1,5 +1,5 @@
 use anyhow::Result;
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use super::api::http_get;
 use super::output::print_table;
@@ -32,6 +32,65 @@ fn val_str(v: &Value) -> String {
     }
 }
 
+fn transform_news_item(item: &Value) -> Value {
+    let keep: &[&str] = &["id", "title", "source_name"];
+    let mut obj = Map::new();
+    if let Some(map) = item.as_object() {
+        for (k, v) in map {
+            if k == "publish_at_timestamp" {
+                obj.insert("time".to_string(), Value::String(fmt_ts(v)));
+            } else if k == "description" {
+                let excerpt: String = strip_html(&val_str(v)).chars().take(80).collect();
+                obj.insert("excerpt".to_string(), Value::String(excerpt));
+            } else if keep.contains(&k.as_str()) {
+                if k == "title" {
+                    obj.insert(k.clone(), Value::String(strip_html(&val_str(v))));
+                } else {
+                    obj.insert(k.clone(), v.clone());
+                }
+            }
+        }
+    }
+    if let Some(id) = obj.get("id").and_then(Value::as_str) {
+        let url = format!("https://longbridge.com/news/{id}.md");
+        obj.insert("url".to_string(), Value::String(url));
+    }
+    Value::Object(obj)
+}
+
+fn transform_topic_item(item: &Value) -> Value {
+    let keep: &[&str] = &[
+        "id",
+        "title",
+        "comments_count",
+        "likes_count",
+        "creator_name",
+        "creator_id",
+    ];
+    let mut obj = Map::new();
+    if let Some(map) = item.as_object() {
+        for (k, v) in map {
+            if k == "created_at_timestamp" {
+                obj.insert("time".to_string(), Value::String(fmt_ts(v)));
+            } else if k == "description" {
+                let excerpt: String = strip_html(&val_str(v)).chars().take(80).collect();
+                obj.insert("excerpt".to_string(), Value::String(excerpt));
+            } else if keep.contains(&k.as_str()) {
+                if k == "title" {
+                    obj.insert(k.clone(), Value::String(strip_html(&val_str(v))));
+                } else {
+                    obj.insert(k.clone(), v.clone());
+                }
+            }
+        }
+    }
+    if let Some(id) = obj.get("id").and_then(Value::as_str) {
+        let url = format!("https://longbridge.com/topics/{id}.md");
+        obj.insert("url".to_string(), Value::String(url));
+    }
+    Value::Object(obj)
+}
+
 // ── search ────────────────────────────────────────────────────────────────────
 
 /// Search news or community topics.
@@ -46,7 +105,15 @@ pub async fn cmd_search(
         "news" => {
             let data = http_get("/v1/search/news", &[("k", keyword.as_str())], verbose).await?;
             match format {
-                OutputFormat::Json => print_json(&data),
+                OutputFormat::Json => {
+                    if let Some(list) = data["news_list"].as_array() {
+                        let items: Vec<Value> =
+                            list.iter().take(limit).map(transform_news_item).collect();
+                        print_json(&Value::Array(items));
+                    } else {
+                        print_json(&data);
+                    }
+                }
                 OutputFormat::Pretty => {
                     if let Some(list) = data["news_list"].as_array() {
                         let items: Vec<&Value> = list.iter().take(limit).collect();
@@ -75,7 +142,15 @@ pub async fn cmd_search(
         "topics" => {
             let data = http_get("/v1/search/topics", &[("k", keyword.as_str())], verbose).await?;
             match format {
-                OutputFormat::Json => print_json(&data),
+                OutputFormat::Json => {
+                    if let Some(list) = data["topic_list"].as_array() {
+                        let items: Vec<Value> =
+                            list.iter().take(limit).map(transform_topic_item).collect();
+                        print_json(&Value::Array(items));
+                    } else {
+                        print_json(&data);
+                    }
+                }
                 OutputFormat::Pretty => {
                     if let Some(list) = data["topic_list"].as_array() {
                         let items: Vec<&Value> = list.iter().take(limit).collect();

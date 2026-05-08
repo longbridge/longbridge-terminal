@@ -23,9 +23,7 @@ const SERIES_COLORS: &[Color] = &[
 // ── Terminal helpers ──────────────────────────────────────────────────────────
 
 fn term_width() -> usize {
-    crossterm::terminal::size()
-        .map(|(w, _)| w as usize)
-        .unwrap_or(120)
+    crossterm::terminal::size().map_or(120, |(w, _)| w as usize)
 }
 
 type Out<'a> = std::io::StdoutLock<'a>;

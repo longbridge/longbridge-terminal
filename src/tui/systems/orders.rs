@@ -800,42 +800,38 @@ pub fn render_orders(
             super::Key::Tab => {
                 toggle_orders_mode();
             }
-            super::Key::Up => {
-                if orders_len > 0 {
-                    if is_history {
-                        let mut table = HISTORY_ORDERS_TABLE.lock().expect("poison");
-                        let cur = table.selected();
-                        table.select(Some(cur.map_or(0, |i| i.saturating_sub(1))));
-                    } else {
-                        let mut table = ORDERS_TABLE.lock().expect("poison");
-                        let cur = table.selected();
-                        table.select(Some(cur.map_or(0, |i| i.saturating_sub(1))));
-                    }
+            super::Key::Up if orders_len > 0 => {
+                if is_history {
+                    let mut table = HISTORY_ORDERS_TABLE.lock().expect("poison");
+                    let cur = table.selected();
+                    table.select(Some(cur.map_or(0, |i| i.saturating_sub(1))));
+                } else {
+                    let mut table = ORDERS_TABLE.lock().expect("poison");
+                    let cur = table.selected();
+                    table.select(Some(cur.map_or(0, |i| i.saturating_sub(1))));
                 }
             }
-            super::Key::Down => {
-                if orders_len > 0 {
-                    if is_history {
-                        let mut table = HISTORY_ORDERS_TABLE.lock().expect("poison");
-                        let cur = table.selected();
-                        table.select(Some(cur.map_or(0, |i| {
-                            if i + 1 < orders_len {
-                                i + 1
-                            } else {
-                                i
-                            }
-                        })));
-                    } else {
-                        let mut table = ORDERS_TABLE.lock().expect("poison");
-                        let cur = table.selected();
-                        table.select(Some(cur.map_or(0, |i| {
-                            if i + 1 < orders_len {
-                                i + 1
-                            } else {
-                                i
-                            }
-                        })));
-                    }
+            super::Key::Down if orders_len > 0 => {
+                if is_history {
+                    let mut table = HISTORY_ORDERS_TABLE.lock().expect("poison");
+                    let cur = table.selected();
+                    table.select(Some(cur.map_or(0, |i| {
+                        if i + 1 < orders_len {
+                            i + 1
+                        } else {
+                            i
+                        }
+                    })));
+                } else {
+                    let mut table = ORDERS_TABLE.lock().expect("poison");
+                    let cur = table.selected();
+                    table.select(Some(cur.map_or(0, |i| {
+                        if i + 1 < orders_len {
+                            i + 1
+                        } else {
+                            i
+                        }
+                    })));
                 }
             }
             super::Key::Enter => {
