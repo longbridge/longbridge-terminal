@@ -83,7 +83,7 @@ pub async fn cmd_search(
                             println!("No topic results.");
                             return Ok(());
                         }
-                        let headers = ["id", "author", "excerpt"];
+                        let headers = ["id", "author", "time", "excerpt"];
                         let rows: Vec<Vec<String>> = items
                             .iter()
                             .map(|item| {
@@ -94,6 +94,7 @@ pub async fn cmd_search(
                                 vec![
                                     val_str(&item["id"]),
                                     val_str(&item["creator_name"]),
+                                    fmt_ts(&item["created_at_timestamp"]),
                                     excerpt,
                                 ]
                             })

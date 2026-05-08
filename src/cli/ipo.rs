@@ -71,6 +71,7 @@ pub async fn cmd_ipo_subscriptions(format: &OutputFormat, verbose: bool) -> Resu
                     .iter()
                     .map(|item| {
                         let stage = match val_str(&item["state_stage"]).as_str() {
+                            "0" => "pending",
                             "1" => "sub-start",
                             "2" => "sub-end",
                             "3" => "allotment",
