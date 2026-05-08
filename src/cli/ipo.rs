@@ -477,7 +477,7 @@ pub async fn cmd_ipo_listed(
                 "issue_price",
                 "last_done",
                 "prev_close",
-                "change%",
+                "change",
                 "amount",
                 "ipo_date",
             ];
@@ -1026,7 +1026,7 @@ pub async fn cmd_ipo_us_listed(
                     "issue_price",
                     "last_done",
                     "prev_close",
-                    "change%",
+                    "change",
                     "amount",
                     "ipo_date",
                 ];
