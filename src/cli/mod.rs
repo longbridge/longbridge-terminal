@@ -1638,14 +1638,13 @@ pub enum IpoCmd {
         #[arg(long, default_value = "HK")]
         market: String,
     },
-    /// Show the current active IPO order status for a symbol
-    Order { symbol: String },
-    /// List IPO orders (active + history) for the current account
+    /// IPO orders (active + history) for the current account
     ///
-    /// Example: longbridge ipo orders
-    /// Example: longbridge ipo orders --status 4
-    Orders {
-        symbol: Option<String>,
+    /// Without a subcommand, lists active and historical orders.
+    /// Example: longbridge ipo order
+    /// Example: longbridge ipo order --status 4
+    /// Example: longbridge ipo order detail 2452504
+    Order {
         #[arg(long)]
         market: Option<String>,
         /// Status filter for history: 0=all, 1=subscribed, 2=debit-failed, 3=not-won, 4=won, 5=cancelled
@@ -1655,10 +1654,9 @@ pub enum IpoCmd {
         page: u32,
         #[arg(long, alias = "limit", default_value = "20")]
         count: u32,
+        #[command(subcommand)]
+        cmd: Option<IpoOrderCmd>,
     },
-    /// Show IPO order detail by order ID
-    #[command(name = "order-detail")]
-    OrderDetail { order_id: String },
     /// Check if the current user is eligible to subscribe to an IPO
     Eligibility { symbol: String },
     /// Show IPO profit/loss summary for a period
@@ -1694,6 +1692,17 @@ pub enum IpoCmd {
         page: u32,
         #[arg(long, alias = "limit", default_value = "20")]
         count: u32,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum IpoOrderCmd {
+    /// Full detail for a single IPO order
+    ///
+    /// Example: longbridge ipo order detail 2452504
+    Detail {
+        /// IPO order ID
+        order_id: String,
     },
 }
 
@@ -3154,17 +3163,20 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             IpoCmd::Detail { symbol, market } => {
                 ipo::cmd_ipo_detail(symbol, &market, format, verbose).await
             }
-            IpoCmd::Order { symbol } => ipo::cmd_ipo_order(symbol, format, verbose).await,
-            IpoCmd::Orders {
-                symbol,
+            IpoCmd::Order {
                 market,
                 status,
                 page,
                 count,
-            } => ipo::cmd_ipo_orders(symbol, market, status, page, count, format, verbose).await,
-            IpoCmd::OrderDetail { order_id } => {
-                ipo::cmd_ipo_order_detail(order_id, format, verbose).await
-            }
+                cmd,
+            } => match cmd {
+                Some(IpoOrderCmd::Detail { order_id }) => {
+                    ipo::cmd_ipo_order_detail(order_id, format, verbose).await
+                }
+                None => {
+                    ipo::cmd_ipo_orders(None, market, status, page, count, format, verbose).await
+                }
+            },
             IpoCmd::Eligibility { symbol } => {
                 ipo::cmd_ipo_eligibility(symbol, format, verbose).await
             }

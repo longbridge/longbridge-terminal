@@ -790,22 +790,6 @@ pub async fn cmd_ipo_detail(
     Ok(())
 }
 
-/// Show the current active IPO order status for a symbol.
-pub async fn cmd_ipo_order(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
-    let data = http_get(
-        "/v1/ipo/active-order",
-        &[("counter_id", cid.as_str())],
-        verbose,
-    )
-    .await?;
-    match format {
-        OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_json_value(&data, format),
-    }
-    Ok(())
-}
-
 /// List IPO orders (active + history) for the current account.
 pub async fn cmd_ipo_orders(
     symbol: Option<String>,
@@ -924,7 +908,90 @@ pub async fn cmd_ipo_order_detail(
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_json_value(&data, format),
+        OutputFormat::Pretty => {
+            let kv = |label: &str, value: &str| {
+                println!("  {:<24}{value}", format!("{label}:"));
+            };
+            kv(
+                "Symbol",
+                &counter_id_to_symbol(&val_str(&data["counter_id"])),
+            );
+            kv("Name", &val_str(&data["name"]));
+            kv("Market", &val_str(&data["market"]));
+            let ipo_date = fmt_date_opt(&data["ipo_date"]);
+            if ipo_date != "-" {
+                kv("IPO Date", &ipo_date);
+            }
+            let ipo_price = val_str(&data["ipo_price"]);
+            if ipo_price != "-" && !ipo_price.is_empty() {
+                kv(
+                    "IPO Price",
+                    &format!("{} {}", ipo_price, val_str(&data["currency"])),
+                );
+            }
+            kv("Status", &val_str(&data["status"]));
+            kv("Sub Qty", &val_str(&data["sub_qty"]));
+            let won = val_str(&data["lot_win_qty"]);
+            if won != "-" && won != "0" {
+                kv("Won Qty", &won);
+            }
+            let sub_amount = val_str(&data["sub_amount"]);
+            if sub_amount != "-" && sub_amount != "0.00" {
+                kv(
+                    "Sub Amount",
+                    &format!("{} {}", sub_amount, val_str(&data["currency"])),
+                );
+            }
+            let sub_fee = val_str(&data["sub_fee"]);
+            if sub_fee != "-" && sub_fee != "0.00" {
+                kv(
+                    "Sub Fee",
+                    &format!("{} {}", sub_fee, val_str(&data["currency"])),
+                );
+            }
+            let total = val_str(&data["total_amount"]);
+            if total != "-" && total != "0.00" {
+                kv(
+                    "Total Amount",
+                    &format!("{} {}", total, val_str(&data["currency"])),
+                );
+            }
+            let need_to_pay = val_str(&data["need_to_pay"]);
+            if need_to_pay != "-" && need_to_pay != "0.00" {
+                kv(
+                    "Need to Pay",
+                    &format!("{} {}", need_to_pay, val_str(&data["currency"])),
+                );
+            }
+            let refund = val_str(&data["refund_amount"]);
+            if refund != "-" && refund != "0.00" {
+                kv(
+                    "Refund",
+                    &format!("{} {}", refund, val_str(&data["currency"])),
+                );
+            }
+            let mart_begin = fmt_ts(&data["mart_begin"]);
+            let mart_end = fmt_ts(&data["mart_end"]);
+            if mart_begin != "-" {
+                kv("Grey Market", &format!("{mart_begin} – {mart_end}"));
+            }
+            if let Some(timeline) = data["timeline"].as_array() {
+                if !timeline.is_empty() {
+                    println!();
+                    let headers = ["time", "event"];
+                    let rows: Vec<Vec<String>> = timeline
+                        .iter()
+                        .map(|item| {
+                            vec![
+                                val_str(&item["time"]).replace('\n', " "),
+                                val_str(&item["desc"]),
+                            ]
+                        })
+                        .collect();
+                    print_table(&headers, rows, &OutputFormat::Pretty);
+                }
+            }
+        }
     }
     Ok(())
 }
