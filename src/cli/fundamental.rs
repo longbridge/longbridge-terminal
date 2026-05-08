@@ -2077,12 +2077,14 @@ pub async fn cmd_financial_statement(
     verbose: bool,
 ) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
+    let kind_upper = kind.to_uppercase();
+    let report_lower = report.to_lowercase();
     let data = http_get(
         "/v1/quote/financials/statements",
         &[
             ("counter_id", cid.as_str()),
-            ("kind", kind),
-            ("report", report),
+            ("kind", kind_upper.as_str()),
+            ("report", report_lower.as_str()),
         ],
         verbose,
     )
