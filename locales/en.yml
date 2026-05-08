@@ -24,6 +24,20 @@ my_quote:
   scan_hint: |
     Scan with the QR scanner in the "Me" tab inside Longbridge App.
     Or go to "Me" -> "Quote Store" in the app.
+compare:
+  error:
+    symbol_count: "Compare requires 2 to 5 symbols"
+    no_fields: "At least one compare field is required"
+    unknown_field: "Unknown compare field: %{field}. Use: price,change,pe,pb,eps,revenue,rating"
+  headers:
+    symbol: "Symbol"
+    price: "Price"
+    change: "Change"
+    pe: "PE"
+    pb: "PB"
+    eps: "EPS"
+    revenue: "Revenue"
+    rating: "Rating"
 qrcode_view:
   scan_hint: |
     To sign in, scan the QR code using Longbridge iOS or Android app.
