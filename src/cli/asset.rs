@@ -3,7 +3,7 @@ use serde_json::Value;
 
 use super::api::http_get;
 use super::output::{
-    fmt_datetime, parse_datetime_end, parse_datetime_start, print_json_value, print_table,
+    fmt_datetime, parse_datetime_end, parse_datetime_start, print_table,
 };
 use super::OutputFormat;
 
@@ -532,71 +532,3 @@ pub async fn cmd_short_margin(format: &OutputFormat, verbose: bool) -> Result<()
     Ok(())
 }
 
-// ── holding period ────────────────────────────────────────────────────────────
-
-pub async fn cmd_holding_period(
-    symbols: Vec<String>,
-    format: &OutputFormat,
-    verbose: bool,
-) -> Result<()> {
-    let resolved: Vec<String> = if symbols.is_empty() {
-        let resp = crate::openapi::trade().stock_positions(None).await?;
-        resp.channels
-            .into_iter()
-            .flat_map(|ch| ch.positions.into_iter().map(|p| p.symbol))
-            .collect()
-    } else {
-        symbols
-    };
-    let cids: Vec<serde_json::Value> = resolved
-        .iter()
-        .map(|s| serde_json::Value::String(crate::utils::counter::symbol_to_counter_id(s)))
-        .collect();
-    let body = serde_json::json!({ "counter_ids": cids });
-    let data = super::api::http_post("/v1/asset/positions/holding-period", body, verbose).await?;
-    match format {
-        OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => {
-            if let Some(map) = data["stocks_period"].as_object() {
-                if map.is_empty() {
-                    println!("No holding period data.");
-                    return Ok(());
-                }
-                let mut rows: Vec<Vec<String>> = map
-                    .iter()
-                    .map(|(cid, days)| {
-                        let symbol = crate::utils::counter::counter_id_to_symbol(cid);
-                        let d = match days {
-                            serde_json::Value::String(s) => s.clone(),
-                            serde_json::Value::Number(n) => n.to_string(),
-                            _ => "-".to_string(),
-                        };
-                        vec![symbol, d]
-                    })
-                    .collect();
-                rows.sort_by(|a, b| a[0].cmp(&b[0]));
-                print_table(&["symbol", "days held"], rows, &OutputFormat::Pretty);
-            } else {
-                print_json(&data);
-            }
-        }
-    }
-    Ok(())
-}
-
-// ── trade info (pre-trade position + cash) ───────────────────────────────────
-
-pub async fn cmd_trade_info(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
-    let cid = crate::utils::counter::symbol_to_counter_id(&symbol);
-    let data = http_get(
-        "/v1/asset/positions/trade-info",
-        &[("counter_id", cid.as_str())],
-        verbose,
-    )
-    .await?;
-    match format {
-        OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_json_value(&data, format),
-    }
-    Ok(())
-}
