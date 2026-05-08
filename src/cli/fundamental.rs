@@ -1,7 +1,8 @@
 use anyhow::Result;
 use longbridge::httpclient::Json;
 use reqwest::Method;
-use serde_json::Value;
+use serde_json::{Map, Value};
+use unicode_width::UnicodeWidthStr;
 
 use super::OutputFormat;
 
@@ -486,7 +487,28 @@ pub async fn cmd_dividend(
     }
     let data = http_get("/v1/quote/dividends", &params, verbose).await?;
     match format {
-        OutputFormat::Json => print_json(&data),
+        OutputFormat::Json => {
+            if let Some(list) = data["list"].as_array() {
+                let transformed: Vec<Value> = list
+                    .iter()
+                    .map(|item| {
+                        let mut obj = serde_json::Map::new();
+                        obj.insert("symbol".to_string(), Value::String(symbol.clone()));
+                        if let Some(map) = item.as_object() {
+                            for (k, v) in map {
+                                if !DIVIDENDS_SKIP.contains(&k.as_str()) {
+                                    obj.insert(k.clone(), v.clone());
+                                }
+                            }
+                        }
+                        Value::Object(obj)
+                    })
+                    .collect();
+                print_json(&serde_json::json!({ "list": transformed }));
+            } else {
+                print_json(&data);
+            }
+        }
         OutputFormat::Pretty => print_dividends(&data),
     }
     Ok(())
@@ -1971,4 +1993,460 @@ fn print_invest_relation(data: &Value) {
         })
         .collect();
     super::output::print_table(&headers, rows, &OutputFormat::Pretty);
+}
+
+// ── financial statement (v3) ─────────────────────────────────────────────────
+
+fn pad_right(s: &str, width: usize) -> String {
+    let w = UnicodeWidthStr::width(s);
+    if w >= width {
+        s.to_string()
+    } else {
+        format!("{s}{}", " ".repeat(width - w))
+    }
+}
+
+fn pad_left(s: &str, width: usize) -> String {
+    let w = UnicodeWidthStr::width(s);
+    if w >= width {
+        s.to_string()
+    } else {
+        format!("{}{s}", " ".repeat(width - w))
+    }
+}
+
+fn trunc_display(s: &str, max_width: usize) -> String {
+    let mut w = 0usize;
+    let mut result = String::new();
+    for ch in s.chars() {
+        let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1);
+        if w + cw > max_width - 1 {
+            result.push('…');
+            return result;
+        }
+        result.push(ch);
+        w += cw;
+    }
+    result
+}
+
+fn fmt_fin_number(s: &str) -> String {
+    let Ok(n) = s.parse::<f64>() else {
+        return s.to_string();
+    };
+    let abs = n.abs();
+    let (div, suffix) = if abs >= 1_000_000_000_000.0 {
+        (1_000_000_000_000.0, "T")
+    } else if abs >= 1_000_000_000.0 {
+        (1_000_000_000.0, "B")
+    } else if abs >= 1_000_000.0 {
+        (1_000_000.0, "M")
+    } else if abs >= 1_000.0 {
+        (1_000.0, "K")
+    } else {
+        return format!("{n:.2}");
+    };
+    format!("{:.2}{suffix}", n / div)
+}
+
+fn fmt_yoy(s: &str) -> String {
+    let Ok(v) = s.parse::<f64>() else {
+        return String::new();
+    };
+    let pct = v * 100.0;
+    if pct >= 0.0 {
+        format!("+{pct:.1}%")
+    } else {
+        format!("{pct:.1}%")
+    }
+}
+
+fn period_label(ff_period: &str, ff_year: i64, report: &str) -> String {
+    if report == "af" {
+        format!("FY{ff_year}")
+    } else {
+        format!("Q{ff_period} {ff_year}")
+    }
+}
+
+pub async fn cmd_financial_statement(
+    symbol: String,
+    kind: &str,
+    report: &str,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let kind_upper = kind.to_uppercase();
+    let report_lower = report.to_lowercase();
+    let data = http_get(
+        "/v1/quote/financials/statements",
+        &[
+            ("counter_id", cid.as_str()),
+            ("kind", kind_upper.as_str()),
+            ("report", report_lower.as_str()),
+        ],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            let currency = data["currency"].as_str().unwrap_or("");
+            let periods = match data["list"].as_array() {
+                Some(v) if !v.is_empty() => v,
+                _ => {
+                    println!("No data.");
+                    return Ok(());
+                }
+            };
+            // Build period labels (newest first, up to 5)
+            let cols: Vec<String> = periods
+                .iter()
+                .take(5)
+                .map(|p| {
+                    let yr = p["ff_year"].as_i64().unwrap_or(0);
+                    let per_val = p["ff_period"]
+                        .as_i64()
+                        .map(|n| n.to_string())
+                        .or_else(|| p["ff_period"].as_str().map(str::to_string))
+                        .unwrap_or_default();
+                    period_label(&per_val, yr, report)
+                })
+                .collect();
+            let n_cols = cols.len();
+            // Width: name col=28, value cols=12 each, yoy=9
+            let name_w = 28usize;
+            let val_w = 12usize;
+            let yoy_w = 9usize;
+            // Header: currency note + period labels
+            if !currency.is_empty() {
+                println!("  (in {currency})");
+            }
+            // Header row
+            print!("{}", pad_right("", name_w));
+            for col in &cols {
+                print!("{}", pad_left(col, val_w));
+            }
+            println!("{}", pad_left("YoY", yoy_w));
+            // Separator
+            println!("{}", "─".repeat(name_w + val_w * n_cols + yoy_w));
+            // Use first period's field list as template
+            let template = periods[0]["fields"]
+                .as_array()
+                .map_or(&[][..], |v| v.as_slice());
+            for field in template {
+                let level = field["level"].as_i64().unwrap_or(2);
+                let name = field["name"].as_str().unwrap_or("");
+                let vtype = field["value_type"].as_str().unwrap_or("");
+                let is_header = level == 1 && field["value"].as_str().unwrap_or("").is_empty();
+                let indent = match level {
+                    1 => "",
+                    2 => "  ",
+                    3 => "    ",
+                    _ => "      ",
+                };
+                let raw_name = format!("{indent}{name}");
+                let display_name = trunc_display(&raw_name, name_w);
+                if is_header {
+                    println!();
+                    print!("{}", pad_right(&display_name, name_w));
+                    for _ in 0..n_cols {
+                        print!("{}", pad_left("", val_w));
+                    }
+                    println!();
+                } else {
+                    let field_id = field["id"].as_str().unwrap_or("");
+                    print!("{}", pad_right(&display_name, name_w));
+                    let mut latest_yoy = String::new();
+                    for (i, period) in periods.iter().take(n_cols).enumerate() {
+                        let pfield = period["fields"]
+                            .as_array()
+                            .and_then(|fs| fs.iter().find(|f| f["id"].as_str() == Some(field_id)));
+                        let fval = pfield.and_then(|f| f["value"].as_str()).unwrap_or("");
+                        if i == 0 {
+                            let yoy_raw = pfield.and_then(|f| f["yoy"].as_str()).unwrap_or("");
+                            if !yoy_raw.is_empty() {
+                                latest_yoy = fmt_yoy(yoy_raw);
+                            }
+                        }
+                        let formatted = if fval.is_empty() {
+                            "-".to_string()
+                        } else if vtype == "bignumber" || vtype.is_empty() {
+                            fmt_fin_number(fval)
+                        } else {
+                            fval.to_string()
+                        };
+                        print!("{}", pad_left(&formatted, val_w));
+                    }
+                    println!("{}", pad_left(&latest_yoy, yoy_w));
+                }
+            }
+            println!();
+        }
+    }
+    Ok(())
+}
+
+// ── latest financial report summary ─────────────────────────────────────────
+
+pub async fn cmd_financial_report_latest(
+    symbol: String,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/v1/quote/financials/latest-report",
+        &[("counter_id", cid.as_str())],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => print_kv(&data),
+    }
+    Ok(())
+}
+
+// ── valuation rank (industry daily percentile) ───────────────────────────────
+
+pub async fn cmd_valuation_rank(
+    symbol: String,
+    start: Option<&str>,
+    end: Option<&str>,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let now = time::OffsetDateTime::now_utc();
+    let end_date = end.map_or_else(
+        || format!("{:04}{:02}{:02}", now.year(), now.month() as u8, now.day()),
+        str::to_string,
+    );
+    let start_date = start.map_or_else(
+        || {
+            let one_month_ago = now - time::Duration::days(30);
+            format!(
+                "{:04}{:02}{:02}",
+                one_month_ago.year(),
+                one_month_ago.month() as u8,
+                one_month_ago.day()
+            )
+        },
+        str::to_string,
+    );
+    let counter_id = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/v1/quote/valuation/rank",
+        &[
+            ("counter_id", counter_id.as_str()),
+            ("start_date", start_date.as_str()),
+            ("end_date", end_date.as_str()),
+        ],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            let kline_type = data["kline_type"].as_str().unwrap_or("");
+            if !kline_type.is_empty() {
+                println!("  ({kline_type})");
+            }
+            let metrics = [("pe", "PE"), ("pb", "PB"), ("ps", "PS"), ("dvd", "Div")];
+            // Find the metric with the most data points to use as date backbone
+            let max_len = metrics
+                .iter()
+                .map(|(k, _)| data[k].as_array().map_or(0, Vec::len))
+                .max()
+                .unwrap_or(0);
+            if max_len == 0 {
+                println!("No data.");
+                return Ok(());
+            }
+            // Build header
+            let date_w = 12usize;
+            let col_w = 10usize;
+            print!("{}", pad_right("Date", date_w));
+            for (_, label) in &metrics {
+                print!("{}", pad_left(label, col_w));
+            }
+            println!();
+            println!("{}", "─".repeat(date_w + col_w * metrics.len()));
+
+            // Use PE as date source (fall back to first non-empty)
+            let date_source = metrics
+                .iter()
+                .find(|(k, _)| data[*k].as_array().is_some_and(|a| !a.is_empty()))
+                .map_or("pe", |(k, _)| *k);
+            let timestamps: Vec<i64> = data[date_source]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|item| {
+                            item["timestamp"]
+                                .as_str()
+                                .and_then(|s| s.parse::<i64>().ok())
+                                .or_else(|| item["timestamp"].as_i64())
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            for (row_idx, &ts) in timestamps.iter().enumerate() {
+                let row_date = crate::utils::datetime::format_date(ts);
+                print!("{}", pad_right(&row_date, date_w));
+                for (key, _) in &metrics {
+                    let cell = data[*key]
+                        .as_array()
+                        .and_then(|a| a.get(row_idx))
+                        .map_or_else(
+                            || "-".to_string(),
+                            |item| {
+                                let rank = item["rank"].as_i64().unwrap_or(0);
+                                let total = item["total"].as_i64().unwrap_or(0);
+                                if rank == 0 || total == 0 {
+                                    "-".to_string()
+                                } else {
+                                    format!("{rank}/{total}")
+                                }
+                            },
+                        );
+                    print!("{}", pad_left(&cell, col_w));
+                }
+                println!();
+            }
+            println!();
+        }
+    }
+    Ok(())
+}
+
+// ── analyst estimates (multi-dimension) ─────────────────────────────────────
+
+pub async fn cmd_analyst_estimates(
+    symbol: String,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/v1/quote/estimates",
+        &[("counter_id", cid.as_str()), ("item", "EPS")],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => print_kv(&data),
+    }
+    Ok(())
+}
+
+// ── institution rating history ───────────────────────────────────────────────
+
+pub async fn cmd_institution_rating_history(
+    symbol: String,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/v1/quote/ratings/history",
+        &[("counter_id", cid.as_str())],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            let target_empty = data
+                .get("target_history")
+                .and_then(|v| v.as_array())
+                .is_none_or(Vec::is_empty);
+            let eval_empty = data
+                .get("evaluate_history")
+                .and_then(|v| v.as_array())
+                .is_none_or(Vec::is_empty);
+            if !target_empty {
+                if let Some(target) = data.get("target_history") {
+                    println!("Target price history:");
+                    print_kv(target);
+                }
+            }
+            if !eval_empty {
+                if let Some(eval) = data.get("evaluate_history") {
+                    println!("\nRating history:");
+                    print_kv(eval);
+                }
+            }
+            if target_empty && eval_empty {
+                println!("No rating history found.");
+            }
+        }
+    }
+    Ok(())
+}
+
+// ── institution rating industry rank ────────────────────────────────────────
+
+pub async fn cmd_institution_rating_industry_rank(
+    symbol: String,
+    page: u32,
+    limit: u32,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let page_str = page.to_string();
+    let size_str = limit.to_string();
+    let data = http_get(
+        "/v1/quote/institution-ratings/industry-rank",
+        &[
+            ("counter_id", cid.as_str()),
+            ("page", page_str.as_str()),
+            ("size", size_str.as_str()),
+        ],
+        verbose,
+    )
+    .await?;
+    let mut result = Map::new();
+    if let Some(obj) = data.as_object() {
+        for (k, v) in obj {
+            if k == "items" {
+                if let Some(arr) = v.as_array() {
+                    let transformed: Vec<Value> = arr
+                        .iter()
+                        .map(|item| {
+                            let mut o = Map::new();
+                            if let Some(m) = item.as_object() {
+                                for (ik, iv) in m {
+                                    if ik == "counter_id" {
+                                        o.insert(
+                                            "symbol".to_string(),
+                                            Value::String(counter_id_to_symbol(
+                                                iv.as_str().unwrap_or(""),
+                                            )),
+                                        );
+                                    } else {
+                                        o.insert(ik.clone(), iv.clone());
+                                    }
+                                }
+                            }
+                            Value::Object(o)
+                        })
+                        .collect();
+                    result.insert(k.clone(), Value::Array(transformed));
+                }
+            } else {
+                result.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    let data = Value::Object(result);
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => print_kv(&data),
+    }
+    Ok(())
 }
