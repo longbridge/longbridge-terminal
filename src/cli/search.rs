@@ -4,6 +4,7 @@ use serde_json::Value;
 use super::api::http_get;
 use super::output::print_table;
 use super::OutputFormat;
+use crate::utils::text::strip_html;
 
 fn print_json(value: &Value) {
     println!(
@@ -50,7 +51,7 @@ pub async fn cmd_search(
                             .map(|item| {
                                 vec![
                                     val_str(&item["id"]),
-                                    val_str(&item["title"]),
+                                    strip_html(&val_str(&item["title"])),
                                     val_str(&item["publish_at"]),
                                 ]
                             })
@@ -77,8 +78,10 @@ pub async fn cmd_search(
                         let rows: Vec<Vec<String>> = items
                             .iter()
                             .map(|item| {
-                                let excerpt: String =
-                                    val_str(&item["content"]).chars().take(60).collect();
+                                let excerpt: String = strip_html(&val_str(&item["content"]))
+                                    .chars()
+                                    .take(60)
+                                    .collect();
                                 vec![val_str(&item["id"]), val_str(&item["author_name"]), excerpt]
                             })
                             .collect();
