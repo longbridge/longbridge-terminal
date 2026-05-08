@@ -559,7 +559,30 @@ pub async fn cmd_holding_period(
     let data = http_get("/v1/asset/positions/holding-period", &params, verbose).await?;
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_json_value(&data, format),
+        OutputFormat::Pretty => {
+            if let Some(map) = data["stocks_period"].as_object() {
+                if map.is_empty() {
+                    println!("No holding period data.");
+                    return Ok(());
+                }
+                let mut rows: Vec<Vec<String>> = map
+                    .iter()
+                    .map(|(cid, days)| {
+                        let symbol = crate::utils::counter::counter_id_to_symbol(cid);
+                        let d = match days {
+                            serde_json::Value::String(s) => s.clone(),
+                            serde_json::Value::Number(n) => n.to_string(),
+                            _ => "-".to_string(),
+                        };
+                        vec![symbol, d]
+                    })
+                    .collect();
+                rows.sort_by(|a, b| a[0].cmp(&b[0]));
+                print_table(&["symbol", "days held"], rows, &OutputFormat::Pretty);
+            } else {
+                print_json(&data);
+            }
+        }
     }
     Ok(())
 }
