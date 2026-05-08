@@ -1657,8 +1657,6 @@ pub enum IpoCmd {
         #[command(subcommand)]
         cmd: Option<IpoOrderCmd>,
     },
-    /// Check if the current user is eligible to subscribe to an IPO
-    Eligibility { symbol: String },
     /// Show IPO profit/loss summary for a period
     #[command(name = "profit-loss")]
     ProfitLoss {
@@ -3177,10 +3175,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                     ipo::cmd_ipo_orders(None, market, status, page, count, format, verbose).await
                 }
             },
-            IpoCmd::Eligibility { symbol } => {
-                ipo::cmd_ipo_eligibility(symbol, format, verbose).await
-            }
-            IpoCmd::ProfitLoss { period } => {
+IpoCmd::ProfitLoss { period } => {
                 ipo::cmd_ipo_profit_loss(&period, format, verbose).await
             }
             IpoCmd::ProfitLossItems { period, page, count } => {

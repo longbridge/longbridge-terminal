@@ -604,17 +604,21 @@ pub async fn cmd_ipo_detail(
         ("market", market),
         ("flag", "0"),
     ];
-    let (profile_data, timeline_data) = tokio::join!(
+    let eligibility_params = [("counter_id", cid.as_str())];
+    let (profile_data, timeline_data, eligibility_data) = tokio::join!(
         http_get("/v1/ipo/profile", &profile_params, verbose),
         http_get("/v1/ipo/timeline", &timeline_params, verbose),
+        http_get("/v1/ipo/eligibility", &eligibility_params, verbose),
     );
     let profile_data = profile_data?;
     let timeline_data = timeline_data?;
+    let eligibility_data = eligibility_data?;
     match format {
         OutputFormat::Json => {
             let mut result = serde_json::Map::new();
             result.insert("profile".to_string(), profile_data);
             result.insert("timeline".to_string(), timeline_data);
+            result.insert("eligibility".to_string(), eligibility_data);
             print_json(&Value::Object(result));
         }
         OutputFormat::Pretty => {
@@ -758,11 +762,14 @@ pub async fn cmd_ipo_detail(
                 }
                 println!();
             }
-            // Timeline section
+            // Eligibility + timeline meta
+            let eligible = eligibility_data["can_subscribe"].as_bool();
             let can_sub = timeline_data["can_subscribe"].as_bool().unwrap_or(false);
             let pay_end = val_str(&timeline_data["pay_end_date"]);
-            if can_sub || (pay_end != "-" && !pay_end.is_empty()) {
-                kv("Can Subscribe", if can_sub { "Yes" } else { "No" });
+            if eligible.is_some() || can_sub || (pay_end != "-" && !pay_end.is_empty()) {
+                if let Some(e) = eligible {
+                    kv("Can Subscribe", if e { "Yes" } else { "No" });
+                }
                 if pay_end != "-" && !pay_end.is_empty() {
                     kv("Payment Deadline", &pay_end);
                 }
@@ -997,24 +1004,6 @@ pub async fn cmd_ipo_order_detail(
 }
 
 /// Check if the current user is eligible to subscribe to an IPO.
-pub async fn cmd_ipo_eligibility(
-    symbol: String,
-    format: &OutputFormat,
-    verbose: bool,
-) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
-    let data = http_get(
-        "/v1/ipo/eligibility",
-        &[("counter_id", cid.as_str())],
-        verbose,
-    )
-    .await?;
-    match format {
-        OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_json_value(&data, format),
-    }
-    Ok(())
-}
 
 /// Show IPO profit/loss summary for the given period.
 pub async fn cmd_ipo_profit_loss(period: &str, format: &OutputFormat, verbose: bool) -> Result<()> {
