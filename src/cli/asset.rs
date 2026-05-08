@@ -548,15 +548,12 @@ pub async fn cmd_holding_period(
     } else {
         symbols
     };
-    let cids: Vec<String> = resolved
+    let cids: Vec<serde_json::Value> = resolved
         .iter()
-        .map(|s| crate::utils::counter::symbol_to_counter_id(s))
+        .map(|s| serde_json::Value::String(crate::utils::counter::symbol_to_counter_id(s)))
         .collect();
-    let params: Vec<(&str, &str)> = cids
-        .iter()
-        .map(|cid| ("counter_ids[]", cid.as_str()))
-        .collect();
-    let data = http_get("/v1/asset/positions/holding-period", &params, verbose).await?;
+    let body = serde_json::json!({ "counter_ids": cids });
+    let data = super::api::http_post("/v1/asset/positions/holding-period", body, verbose).await?;
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => {
