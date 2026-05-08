@@ -1106,10 +1106,11 @@ pub enum Commands {
     OrderStats,
 
     // ── ATM (new) ────────────────────────────────────────────────────────────
-    /// List withdrawal bank cards for the current account
+    /// List bank cards for the current account
     ///
-    /// Example: longbridge withdrawal-cards
-    WithdrawalCards,
+    /// Example: longbridge bank-cards
+    #[command(name = "bank-cards")]
+    BankCards,
 
     /// List withdrawal history for the current account
     ///
@@ -3124,7 +3125,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         Commands::TradeInfo { symbol } => asset::cmd_trade_info(symbol, format, verbose).await,
         Commands::OrderStats => asset::cmd_order_stats(format, verbose).await,
 
-        Commands::WithdrawalCards => atm::cmd_withdrawal_cards(format, verbose).await,
+        Commands::BankCards => atm::cmd_withdrawal_cards(format, verbose).await,
         Commands::Withdrawals { page, limit } => {
             atm::cmd_withdrawals(page, limit, format, verbose).await
         }

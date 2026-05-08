@@ -61,34 +61,77 @@ fn transform_deposit_item(item: &Value) -> Value {
             if DEPOSIT_SKIP.contains(&k.as_str()) {
                 continue;
             }
-            obj.insert(k.clone(), v.clone());
+            if k == "created_at" {
+                obj.insert(k.clone(), Value::String(fmt_ts(v)));
+            } else {
+                obj.insert(k.clone(), v.clone());
+            }
         }
     }
     Value::Object(obj)
 }
 
-// ── withdrawal cards ──────────────────────────────────────────────────────────
+fn bank_card_status_label(v: &Value) -> &'static str {
+    match val_str(v).as_str() {
+        "0" => "unverified",
+        "1" => "reviewing",
+        "2" => "verified",
+        "3" => "active",
+        _ => "unknown",
+    }
+}
+
+const BANK_CARD_KEEP: &[&str] = &[
+    "id", "bank", "bank_en", "account", "account_type", "name", "name_en",
+    "swift_code", "region", "region_name", "country", "address", "remark",
+    "nickname", "bank_routing_number",
+];
+
+fn transform_bank_card(card: &Value) -> Value {
+    let mut obj = Map::new();
+    if let Some(map) = card.as_object() {
+        for (k, v) in map {
+            if k == "status" {
+                obj.insert(k.clone(), Value::String(bank_card_status_label(v).to_string()));
+            } else if BANK_CARD_KEEP.contains(&k.as_str()) {
+                obj.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    Value::Object(obj)
+}
+
+// ── bank cards ────────────────────────────────────────────────────────────────
 
 /// List withdrawal bank cards for the current user.
 pub async fn cmd_withdrawal_cards(format: &OutputFormat, verbose: bool) -> Result<()> {
     let data = http_get("/v1/account/bank-cards", &[], verbose).await?;
     match format {
-        OutputFormat::Json => print_json(&data),
+        OutputFormat::Json => {
+            if let Some(cards) = data["list"].as_array() {
+                let transformed: Vec<Value> = cards.iter().map(transform_bank_card).collect();
+                print_json(&Value::Array(transformed));
+            } else {
+                print_json(&data);
+            }
+        }
         OutputFormat::Pretty => {
-            if let Some(cards) = data["cards"].as_array() {
+            if let Some(cards) = data["list"].as_array() {
                 if cards.is_empty() {
-                    println!("No withdrawal cards found.");
+                    println!("No bank cards found.");
                     return Ok(());
                 }
-                let headers = ["bank_name", "account_number", "currency", "status"];
+                let headers = ["bank", "account", "currency", "swift", "region", "status"];
                 let rows: Vec<Vec<String>> = cards
                     .iter()
                     .map(|card| {
                         vec![
-                            val_str(&card["bank_name"]),
-                            val_str(&card["account_number"]),
-                            val_str(&card["currency"]),
-                            val_str(&card["status"]),
+                            val_str(&card["bank_en"]),
+                            val_str(&card["account"]),
+                            val_str(&card["account_type"]),
+                            val_str(&card["swift_code"]),
+                            val_str(&card["region_name"]),
+                            bank_card_status_label(&card["status"]).to_string(),
                         ]
                     })
                     .collect();
@@ -235,7 +278,7 @@ pub async fn cmd_deposits(
                     .map(|item| {
                         vec![
                             val_str(&item["id"]),
-                            val_str(&item["created_at"]),
+                            fmt_ts(&item["created_at"]),
                             val_str(&item["amount"]),
                             val_str(&item["currency"]),
                             val_str(&item["bank_operation_type_name"]),
