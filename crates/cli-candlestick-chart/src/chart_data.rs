@@ -43,7 +43,7 @@ impl ChartData {
             self.main_candle_set
                 .candles
                 .iter()
-                .skip((nb_candles as i64 - nb_visible_candles).max(0) as usize)
+                .skip((nb_candles as i64 - nb_visible_candles as i64).max(0) as usize)
                 .cloned()
                 .collect::<Vec<Candle>>(),
         );
