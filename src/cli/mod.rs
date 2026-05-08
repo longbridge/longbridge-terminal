@@ -1068,16 +1068,12 @@ pub enum Commands {
         end: Option<String>,
     },
 
-    /// Analyst consensus estimates (EPS, revenue, ratings) for a symbol
+    /// Analyst consensus estimates (EPS) for a symbol
     ///
     /// Example: longbridge analyst-estimates TSLA.US
-    /// Example: longbridge analyst-estimates TSLA.US --item EPS
     AnalystEstimates {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
-        /// Indicator type, e.g. EPS, revenue
-        #[arg(long, default_value = "EPS")]
-        item: String,
     },
 
     // ── Asset (new) ──────────────────────────────────────────────────────────
@@ -3107,8 +3103,8 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         Commands::ValuationRank { symbol, start, end } => {
             fundamental::cmd_valuation_rank(symbol, start.as_deref(), end.as_deref(), format, verbose).await
         }
-        Commands::AnalystEstimates { symbol, item } => {
-            fundamental::cmd_analyst_estimates(symbol, &item, format, verbose).await
+        Commands::AnalystEstimates { symbol } => {
+            fundamental::cmd_analyst_estimates(symbol, format, verbose).await
         }
 
         Commands::ShortMargin => asset::cmd_short_margin(format, verbose).await,

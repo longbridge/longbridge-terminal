@@ -2326,14 +2326,13 @@ pub async fn cmd_valuation_rank(
 
 pub async fn cmd_analyst_estimates(
     symbol: String,
-    item: &str,
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
         "/v1/quote/estimates",
-        &[("counter_id", cid.as_str()), ("item", item)],
+        &[("counter_id", cid.as_str()), ("item", "EPS")],
         verbose,
     )
     .await?;
