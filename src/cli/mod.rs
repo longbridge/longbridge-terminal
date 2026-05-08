@@ -1047,7 +1047,7 @@ pub enum Commands {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
         /// Statement type: IS (income), BS (balance sheet), CF (cash flow), ALL
-        #[arg(long, value_name = "TYPE", default_value = "ALL")]
+        #[arg(long, value_name = "TYPE", default_value = "IS")]
         kind: String,
         /// Report period: af (annual), saf (semi-annual), qf (quarterly), cumul (cumulative)
         #[arg(long, default_value = "af")]
@@ -1098,12 +1098,6 @@ pub enum Commands {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
     },
-
-    /// Account-level order trade analysis / statistics
-    ///
-    /// Example: longbridge order-stats
-    #[command(name = "order-stats")]
-    OrderStats,
 
     // ── ATM (new) ────────────────────────────────────────────────────────────
     /// List bank cards for the current account
@@ -3119,7 +3113,6 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             asset::cmd_holding_period(symbol, format, verbose).await
         }
         Commands::TradeInfo { symbol } => asset::cmd_trade_info(symbol, format, verbose).await,
-        Commands::OrderStats => asset::cmd_order_stats(format, verbose).await,
 
         Commands::BankCards => atm::cmd_withdrawal_cards(format, verbose).await,
         Commands::Withdrawals { page, count } => {

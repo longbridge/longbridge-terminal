@@ -569,14 +569,3 @@ pub async fn cmd_trade_info(symbol: String, format: &OutputFormat, verbose: bool
     }
     Ok(())
 }
-
-// ── order stats (today's account trade summary) ───────────────────────────────
-
-pub async fn cmd_order_stats(format: &OutputFormat, verbose: bool) -> Result<()> {
-    let data = http_get("/v1/asset/trade-analysis", &[], verbose).await?;
-    match format {
-        OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_json_value(&data, format),
-    }
-    Ok(())
-}

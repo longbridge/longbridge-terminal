@@ -2,6 +2,7 @@ use anyhow::Result;
 use longbridge::httpclient::Json;
 use reqwest::Method;
 use serde_json::{Map, Value};
+use unicode_width::UnicodeWidthStr;
 
 use super::OutputFormat;
 
@@ -1996,6 +1997,78 @@ fn print_invest_relation(data: &Value) {
 
 // ── financial statement (v3) ─────────────────────────────────────────────────
 
+fn pad_right(s: &str, width: usize) -> String {
+    let w = UnicodeWidthStr::width(s);
+    if w >= width {
+        s.to_string()
+    } else {
+        format!("{s}{}", " ".repeat(width - w))
+    }
+}
+
+fn pad_left(s: &str, width: usize) -> String {
+    let w = UnicodeWidthStr::width(s);
+    if w >= width {
+        s.to_string()
+    } else {
+        format!("{}{s}", " ".repeat(width - w))
+    }
+}
+
+fn trunc_display(s: &str, max_width: usize) -> String {
+    let mut w = 0usize;
+    let mut result = String::new();
+    for ch in s.chars() {
+        let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1);
+        if w + cw > max_width - 1 {
+            result.push('…');
+            return result;
+        }
+        result.push(ch);
+        w += cw;
+    }
+    result
+}
+
+fn fmt_fin_number(s: &str) -> String {
+    let Ok(n) = s.parse::<f64>() else {
+        return s.to_string();
+    };
+    let abs = n.abs();
+    let (div, suffix) = if abs >= 1_000_000_000_000.0 {
+        (1_000_000_000_000.0, "T")
+    } else if abs >= 1_000_000_000.0 {
+        (1_000_000_000.0, "B")
+    } else if abs >= 1_000_000.0 {
+        (1_000_000.0, "M")
+    } else if abs >= 1_000.0 {
+        (1_000.0, "K")
+    } else {
+        return format!("{n:.2}");
+    };
+    format!("{:.2}{suffix}", n / div)
+}
+
+fn fmt_yoy(s: &str) -> String {
+    let Ok(v) = s.parse::<f64>() else {
+        return String::new();
+    };
+    let pct = v * 100.0;
+    if pct >= 0.0 {
+        format!("+{pct:.1}%")
+    } else {
+        format!("{pct:.1}%")
+    }
+}
+
+fn period_label(ff_period: &str, ff_year: i64, report: &str) -> String {
+    if report == "af" {
+        format!("FY{ff_year}")
+    } else {
+        format!("Q{ff_period} {ff_year}")
+    }
+}
+
 pub async fn cmd_financial_statement(
     symbol: String,
     kind: &str,
@@ -2016,7 +2089,99 @@ pub async fn cmd_financial_statement(
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_kv(&data),
+        OutputFormat::Pretty => {
+            let currency = data["currency"].as_str().unwrap_or("");
+            let periods = match data["list"].as_array() {
+                Some(v) if !v.is_empty() => v,
+                _ => {
+                    println!("No data.");
+                    return Ok(());
+                }
+            };
+            // Build period labels (newest first, up to 5)
+            let cols: Vec<String> = periods
+                .iter()
+                .take(5)
+                .map(|p| {
+                    let yr = p["ff_year"].as_i64().unwrap_or(0);
+                    let per_val = p["ff_period"]
+                        .as_i64()
+                        .map(|n| n.to_string())
+                        .or_else(|| p["ff_period"].as_str().map(str::to_string))
+                        .unwrap_or_default();
+                    period_label(&per_val, yr, report)
+                })
+                .collect();
+            let n_cols = cols.len();
+            // Width: name col=28, value cols=12 each, yoy=9
+            let name_w = 28usize;
+            let val_w = 12usize;
+            let yoy_w = 9usize;
+            // Header: currency note + period labels
+            if !currency.is_empty() {
+                println!("  (in {currency})");
+            }
+            // Header row
+            print!("{}", pad_right("", name_w));
+            for col in &cols {
+                print!("{}", pad_left(col, val_w));
+            }
+            println!("{}", pad_left("YoY", yoy_w));
+            // Separator
+            println!("{}", "─".repeat(name_w + val_w * n_cols + yoy_w));
+            // Use first period's field list as template
+            let template = periods[0]["fields"]
+                .as_array()
+                .map_or(&[][..], |v| v.as_slice());
+            for field in template {
+                let level = field["level"].as_i64().unwrap_or(2);
+                let name = field["name"].as_str().unwrap_or("");
+                let vtype = field["value_type"].as_str().unwrap_or("");
+                let is_header = level == 1 && field["value"].as_str().unwrap_or("").is_empty();
+                let indent = match level {
+                    1 => "",
+                    2 => "  ",
+                    3 => "    ",
+                    _ => "      ",
+                };
+                let raw_name = format!("{indent}{name}");
+                let display_name = trunc_display(&raw_name, name_w);
+                if is_header {
+                    println!();
+                    print!("{}", pad_right(&display_name, name_w));
+                    for _ in 0..n_cols {
+                        print!("{}", pad_left("", val_w));
+                    }
+                    println!();
+                } else {
+                    let field_id = field["id"].as_str().unwrap_or("");
+                    print!("{}", pad_right(&display_name, name_w));
+                    let mut latest_yoy = String::new();
+                    for (i, period) in periods.iter().take(n_cols).enumerate() {
+                        let pfield = period["fields"]
+                            .as_array()
+                            .and_then(|fs| fs.iter().find(|f| f["id"].as_str() == Some(field_id)));
+                        let fval = pfield.and_then(|f| f["value"].as_str()).unwrap_or("");
+                        if i == 0 {
+                            let yoy_raw = pfield.and_then(|f| f["yoy"].as_str()).unwrap_or("");
+                            if !yoy_raw.is_empty() {
+                                latest_yoy = fmt_yoy(yoy_raw);
+                            }
+                        }
+                        let formatted = if fval.is_empty() {
+                            "-".to_string()
+                        } else if vtype == "bignumber" || vtype.is_empty() {
+                            fmt_fin_number(fval)
+                        } else {
+                            fval.to_string()
+                        };
+                        print!("{}", pad_left(&formatted, val_w));
+                    }
+                    println!("{}", pad_left(&latest_yoy, yoy_w));
+                }
+            }
+            println!();
+        }
     }
     Ok(())
 }
