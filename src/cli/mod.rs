@@ -1121,8 +1121,8 @@ pub enum Commands {
         #[arg(long, default_value = "1")]
         page: u32,
         /// Records per page (default: 20)
-        #[arg(long, default_value = "20")]
-        limit: u32,
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: u32,
     },
 
     /// List deposit history for the current account
@@ -1134,8 +1134,8 @@ pub enum Commands {
         #[arg(long, default_value = "1")]
         page: u32,
         /// Records per page (default: 20)
-        #[arg(long, default_value = "20")]
-        limit: u32,
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: u32,
         /// Filter by state: 0=pending, 1=credited, 2=failed (comma-separated)
         #[arg(long)]
         states: Option<String>,
@@ -1623,8 +1623,8 @@ pub enum IpoCmd {
     Listed {
         #[arg(long, default_value = "1")]
         page: u32,
-        #[arg(long, default_value = "20")]
-        limit: u32,
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: u32,
     },
     /// Show the IPO calendar (all upcoming and recent IPOs)
     Calendar,
@@ -1658,8 +1658,8 @@ pub enum IpoCmd {
         status: Option<String>,
         #[arg(long, default_value = "1")]
         page: u32,
-        #[arg(long, default_value = "10")]
-        limit: u32,
+        #[arg(long, alias = "limit", default_value = "10")]
+        count: u32,
     },
     /// Check if the current user is eligible to subscribe to an IPO
     Eligibility { symbol: String },
@@ -1678,8 +1678,8 @@ pub enum IpoCmd {
         period: String,
         #[arg(long, default_value = "1")]
         page: u32,
-        #[arg(long, default_value = "20")]
-        limit: u32,
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: u32,
     },
     /// Show IPO holding portfolio detail for a symbol
     Holdings { symbol: String },
@@ -1694,8 +1694,8 @@ pub enum IpoCmd {
     UsListed {
         #[arg(long, default_value = "1")]
         page: u32,
-        #[arg(long, default_value = "20")]
-        limit: u32,
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: u32,
     },
 }
 
@@ -2207,13 +2207,13 @@ pub enum NewsCmd {
     /// Search news by keyword
     ///
     /// Example: longbridge news search "AI stocks"
-    /// Example: longbridge news search TSLA --limit 10
+    /// Example: longbridge news search TSLA --count 10
     Search {
         /// Search keyword
         keyword: String,
         /// Maximum results to display (default: 20)
-        #[arg(long, default_value = "20")]
-        limit: usize,
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: usize,
     },
 }
 
@@ -2330,13 +2330,13 @@ pub enum TopicCmd {
     /// Search community topics by keyword
     ///
     /// Example: longbridge topic search TSLA
-    /// Example: longbridge topic search "AI stocks" --limit 10
+    /// Example: longbridge topic search "AI stocks" --count 10
     Search {
         /// Search keyword
         keyword: String,
         /// Maximum results to display (default: 20)
-        #[arg(long, default_value = "20")]
-        limit: usize,
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: usize,
     },
 }
 
@@ -2716,8 +2716,8 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         }
         Commands::News { symbol, count, cmd } => match cmd {
             Some(NewsCmd::Detail { id }) => news::cmd_news_detail(id).await,
-            Some(NewsCmd::Search { keyword, limit }) => {
-                search::cmd_search(keyword, "news", limit, format, verbose).await
+            Some(NewsCmd::Search { keyword, count }) => {
+                search::cmd_search(keyword, "news", count, format, verbose).await
             }
             None => {
                 let sym = symbol.ok_or_else(|| {
@@ -2763,8 +2763,8 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 body,
                 reply_to_id,
             }) => topic::cmd_create_reply(topic_id, body, reply_to_id, format).await,
-            Some(TopicCmd::Search { keyword, limit }) => {
-                search::cmd_search(keyword, "topics", limit, format, verbose).await
+            Some(TopicCmd::Search { keyword, count }) => {
+                search::cmd_search(keyword, "topics", count, format, verbose).await
             }
             None => {
                 let sym = symbol.ok_or_else(|| {
@@ -3126,18 +3126,18 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         Commands::OrderStats => asset::cmd_order_stats(format, verbose).await,
 
         Commands::BankCards => atm::cmd_withdrawal_cards(format, verbose).await,
-        Commands::Withdrawals { page, limit } => {
-            atm::cmd_withdrawals(page, limit, format, verbose).await
+        Commands::Withdrawals { page, count } => {
+            atm::cmd_withdrawals(page, count, format, verbose).await
         }
         Commands::Deposits {
             page,
-            limit,
+            count,
             states,
             currencies,
         } => {
             atm::cmd_deposits(
                 page,
-                limit,
+                count,
                 states.as_deref(),
                 currencies.as_deref(),
                 format,
@@ -3149,8 +3149,8 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         Commands::Ipo { cmd } => match cmd {
             IpoCmd::Subscriptions => ipo::cmd_ipo_subscriptions(format, verbose).await,
             IpoCmd::WaitListing => ipo::cmd_ipo_wait_listing(format, verbose).await,
-            IpoCmd::Listed { page, limit } => {
-                ipo::cmd_ipo_listed(page, limit, format, verbose).await
+            IpoCmd::Listed { page, count } => {
+                ipo::cmd_ipo_listed(page, count, format, verbose).await
             }
             IpoCmd::Calendar => ipo::cmd_ipo_calendar(format, verbose).await,
             IpoCmd::Info { symbol } => ipo::cmd_ipo_info(symbol, format, verbose).await,
@@ -3169,22 +3169,22 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 market,
                 status,
                 page,
-                limit,
-            } => ipo::cmd_ipo_history(market, status, page, limit, format, verbose).await,
+                count,
+            } => ipo::cmd_ipo_history(market, status, page, count, format, verbose).await,
             IpoCmd::Eligibility { symbol } => {
                 ipo::cmd_ipo_eligibility(symbol, format, verbose).await
             }
             IpoCmd::ProfitLoss { period } => {
                 ipo::cmd_ipo_profit_loss(&period, format, verbose).await
             }
-            IpoCmd::ProfitLossItems { period, page, limit } => {
-                ipo::cmd_ipo_profit_loss_items(&period, page, limit, format, verbose).await
+            IpoCmd::ProfitLossItems { period, page, count } => {
+                ipo::cmd_ipo_profit_loss_items(&period, page, count, format, verbose).await
             }
             IpoCmd::Holdings { symbol } => ipo::cmd_ipo_holdings(symbol, format, verbose).await,
             IpoCmd::UsSubscriptions => ipo::cmd_ipo_us_subscriptions(format, verbose).await,
             IpoCmd::UsWaitListing => ipo::cmd_ipo_us_wait_listing(format, verbose).await,
-            IpoCmd::UsListed { page, limit } => {
-                ipo::cmd_ipo_us_listed(page, limit, format, verbose).await
+            IpoCmd::UsListed { page, count } => {
+                ipo::cmd_ipo_us_listed(page, count, format, verbose).await
             }
         },
 

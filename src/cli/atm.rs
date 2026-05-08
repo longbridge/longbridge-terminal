@@ -82,9 +82,21 @@ fn bank_card_status_label(v: &Value) -> &'static str {
 }
 
 const BANK_CARD_KEEP: &[&str] = &[
-    "id", "bank", "bank_en", "account", "account_type", "name", "name_en",
-    "swift_code", "region", "region_name", "country", "address", "remark",
-    "nickname", "bank_routing_number",
+    "id",
+    "bank",
+    "bank_en",
+    "account",
+    "account_type",
+    "name",
+    "name_en",
+    "swift_code",
+    "region",
+    "region_name",
+    "country",
+    "address",
+    "remark",
+    "nickname",
+    "bank_routing_number",
 ];
 
 fn transform_bank_card(card: &Value) -> Value {
@@ -92,7 +104,10 @@ fn transform_bank_card(card: &Value) -> Value {
     if let Some(map) = card.as_object() {
         for (k, v) in map {
             if k == "status" {
-                obj.insert(k.clone(), Value::String(bank_card_status_label(v).to_string()));
+                obj.insert(
+                    k.clone(),
+                    Value::String(bank_card_status_label(v).to_string()),
+                );
             } else if BANK_CARD_KEEP.contains(&k.as_str()) {
                 obj.insert(k.clone(), v.clone());
             }
