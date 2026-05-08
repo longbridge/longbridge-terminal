@@ -78,11 +78,15 @@ pub async fn cmd_search(
                         let rows: Vec<Vec<String>> = items
                             .iter()
                             .map(|item| {
-                                let excerpt: String = strip_html(&val_str(&item["content"]))
+                                let excerpt: String = strip_html(&val_str(&item["description"]))
                                     .chars()
                                     .take(60)
                                     .collect();
-                                vec![val_str(&item["id"]), val_str(&item["author_name"]), excerpt]
+                                vec![
+                                    val_str(&item["id"]),
+                                    val_str(&item["creator_name"]),
+                                    excerpt,
+                                ]
                             })
                             .collect();
                         print_table(&headers, rows, &OutputFormat::Pretty);
