@@ -12,6 +12,7 @@ pub mod fundamental;
 pub mod init;
 pub mod insider_trades;
 pub mod investors;
+pub mod my_quote;
 pub mod ipo;
 pub mod news;
 pub mod output;
