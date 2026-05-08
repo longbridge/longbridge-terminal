@@ -665,8 +665,10 @@ pub(crate) fn stock_detail(
                 .collect::<Vec<_>>(),
         )
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-        .select(selected_type_index);
+        .select(selected_type_index)
+        .padding("", "");
         frame.render_widget(chart_tabs, chart_chunks_inner[0]);
+        *crate::tui::mouse::KLINE_TABS_RECT.lock().expect("poison") = chart_chunks_inner[0];
 
         let area = chart_chunks_inner[1];
         let (width, page, _index) = area
@@ -732,18 +734,33 @@ pub(crate) fn stock_detail(
                     area,
                 );
             } else {
-                // Adjust chart size
                 let chart_width = area.width.saturating_sub(1);
-                let mut chart = cli_candlestick_chart::Chart::new_with_size(
-                    candles,
-                    (chart_width, area.height),
-                );
                 let (bull, bear) = styles::bull_bear_color();
-                chart.set_bull_color(bull);
-                chart.set_vol_bull_color(bull);
-                chart.set_bear_color(bear);
-                chart.set_vol_bear_color(bear);
-                frame.render_widget(crate::tui::widgets::Ansi(&chart.render()), area);
+                let chart_str = if matches!(
+                    kline_type,
+                    KlineType::PerDay | KlineType::PerWeek | KlineType::PerYear
+                ) {
+                    let mut chart = cli_candlestick_chart::Chart::new_with_size(
+                        candles,
+                        (chart_width, area.height),
+                    );
+                    chart.set_bull_color(bull);
+                    chart.set_vol_bull_color(bull);
+                    chart.set_bear_color(bear);
+                    chart.set_vol_bear_color(bear);
+                    chart.render()
+                } else {
+                    let mut chart = cli_candlestick_chart::LineChart::new_with_size(
+                        candles,
+                        (chart_width, area.height),
+                    );
+                    chart.set_bull_color(bull);
+                    chart.set_vol_bull_color(bull);
+                    chart.set_bear_color(bear);
+                    chart.set_vol_bear_color(bear);
+                    chart.render()
+                };
+                frame.render_widget(crate::tui::widgets::Ansi(&chart_str), area);
             }
         }
     }

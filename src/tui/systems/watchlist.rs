@@ -176,6 +176,9 @@ pub fn watch(frame: &mut Frame, rect: Rect, full_mode: bool) {
         width: block_inner.width.saturating_sub(3), // left: 2, right: 1
         height: block_inner.height,
     };
+    *crate::tui::mouse::WATCHLIST_TABLE_RECT
+        .lock()
+        .expect("poison") = table_area;
     frame.render_stateful_widget(
         watch_group_table(
             &counters,

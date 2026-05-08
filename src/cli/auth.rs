@@ -1,10 +1,11 @@
 use std::time::{SystemTime, UNIX_EPOCH};
-
-use tabled::{builder::Builder, settings::Style};
-use time::OffsetDateTime;
+use time::{OffsetDateTime, UtcOffset};
 
 use anyhow::Result;
 use longbridge::asset::{GetStatementListOptions, GetStatementOptions, StatementType};
+use longbridge::httpclient::Json;
+use reqwest::Method;
+use serde::Deserialize;
 use serde_json::json;
 
 use super::OutputFormat;
@@ -17,7 +18,15 @@ const RESET: &str = "\x1b[0m";
 
 /// Format a duration in seconds as a human-readable string (e.g. "2h 14m", "45m", "30s").
 fn format_duration(secs: u64) -> String {
-    if secs >= 3600 {
+    if secs >= 86400 {
+        let d = secs / 86400;
+        let h = (secs % 86400) / 3600;
+        if h == 0 {
+            format!("{d}d")
+        } else {
+            format!("{d}d {h}h")
+        }
+    } else if secs >= 3600 {
         let h = secs / 3600;
         let m = (secs % 3600) / 60;
         if m == 0 {
@@ -41,19 +50,25 @@ fn format_duration(secs: u64) -> String {
 struct TokenState {
     status: &'static str,
     detail: String,
+    access_token_exp: Option<u64>,
+    refresh_token_exp: Option<u64>,
     /// Unix timestamp of when the token file was last written (login time).
     logged_in_at: Option<u64>,
 }
 
-/// Decode the `exp` field from a JWT payload without verifying the signature.
-fn jwt_exp(token: &str) -> Option<u64> {
+/// Decode a numeric field from a JWT payload without verifying the signature.
+fn jwt_field(token: &str, field: &str) -> Option<u64> {
     use base64::Engine as _;
     let payload = token.split('.').nth(1)?;
     let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(payload)
         .ok()?;
     let v: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
-    v["exp"].as_u64()
+    v[field].as_u64()
+}
+
+fn jwt_exp(token: &str) -> Option<u64> {
+    jwt_field(token, "exp")
 }
 
 fn read_token_state() -> Result<TokenState> {
@@ -67,24 +82,34 @@ fn read_token_state() -> Result<TokenState> {
         return Ok(TokenState {
             status: "not_found",
             detail: format!("run {DIM}longbridge auth login{RESET} to authenticate"),
+            access_token_exp: None,
+            refresh_token_exp: None,
             logged_in_at: None,
         });
     }
 
-    let logged_in_at = std::fs::metadata(&token_path)
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs());
-
     let contents = std::fs::read_to_string(&token_path)?;
     let data: serde_json::Value = serde_json::from_str(&contents)?;
+
+    let logged_in_at = data["logged_in_at"].as_u64().or_else(|| {
+        data["refresh_token"]
+            .as_str()
+            .and_then(|t| jwt_field(t, "iat"))
+    });
     let expires_at = data["expires_at"].as_u64().unwrap_or(0);
+    let access_token_exp = if expires_at > 0 {
+        Some(expires_at)
+    } else {
+        None
+    };
+    let refresh_token_exp = data["refresh_token"].as_str().and_then(jwt_exp);
 
     if expires_at == 0 {
         return Ok(TokenState {
             status: "present",
             detail: String::new(),
+            access_token_exp,
+            refresh_token_exp,
             logged_in_at,
         });
     }
@@ -92,16 +117,15 @@ fn read_token_state() -> Result<TokenState> {
     if expires_at > now {
         return Ok(TokenState {
             status: "valid",
-            detail: format!("expires in {}", format_duration(expires_at - now)),
+            detail: String::new(),
+            access_token_exp,
+            refresh_token_exp,
             logged_in_at,
         });
     }
 
     // Access token is expired — check if the refresh token is still usable.
-    let refresh_token_valid = data["refresh_token"]
-        .as_str()
-        .and_then(jwt_exp)
-        .is_some_and(|exp| exp > now);
+    let refresh_token_valid = refresh_token_exp.is_some_and(|exp| exp > now);
 
     if refresh_token_valid {
         Ok(TokenState {
@@ -110,6 +134,8 @@ fn read_token_state() -> Result<TokenState> {
                 "access token expired {} ago, will auto-refresh on next command",
                 format_duration(now - expires_at)
             ),
+            access_token_exp,
+            refresh_token_exp,
             logged_in_at,
         })
     } else {
@@ -119,18 +145,92 @@ fn read_token_state() -> Result<TokenState> {
                 "{} ago — run {DIM}longbridge auth login{RESET} to re-authenticate",
                 format_duration(now - expires_at)
             ),
+            access_token_exp,
+            refresh_token_exp,
             logged_in_at,
         })
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct LevelCenterItem {
+    /// Package identifier, e.g. `US_QBBO`, `HK_L1_OpenAPI`. Used as the row key.
+    #[serde(default)]
+    package_key: String,
+    /// Display name, e.g. `LV1 实时行情`.
+    #[serde(default)]
+    name: String,
+    /// Long description.
+    #[serde(default)]
+    description: String,
+    /// Market the package is for: `US`, `HK`, `CN`, `SG`.
+    #[serde(default)]
+    market: String,
+    /// Tags such as `["API"]` for OpenAPI-tagged packages.
+    #[serde(default)]
+    tags: Vec<String>,
+    /// Server-rendered text such as `推广期免费` / `暂无权限`.
+    #[serde(default)]
+    expired_msg: String,
+    /// Unix timestamp string for when the entitlement expires (`"0"` means n/a).
+    #[serde(default)]
+    end_time: String,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct LevelCenterData {
+    #[serde(default)]
+    activated_lists: Vec<LevelCenterItem>,
+    #[serde(default)]
+    unactivated_lists: Vec<LevelCenterItem>,
+}
+
+/// Format the package `end_time` (Unix timestamp string) as `YYYY-MM-DD`.
+/// Returns empty string for `"0"`, missing, or unparseable values.
+fn format_pkg_expiry(end_time: &str) -> String {
+    let ts: i64 = match end_time.parse() {
+        Ok(0) | Err(_) => return String::new(),
+        Ok(v) => v,
+    };
+    OffsetDateTime::from_unix_timestamp(ts)
+        .map(|dt| {
+            format!(
+                "expires {}-{:02}-{:02}",
+                dt.year(),
+                dt.month() as u8,
+                dt.day(),
+            )
+        })
+        .unwrap_or_default()
+}
+
+async fn fetch_my_quotes(market: &str, account_channel: &str) -> Option<LevelCenterData> {
+    // Backend expects uppercase market codes (`ALL`, `HK`, `US`, `CN`, `SG`).
+    let market = market.to_uppercase();
+    let client = crate::openapi::http_client();
+    let resp = client
+        .request(Method::GET, "/v1/quote/my-quotes")
+        .query_params(vec![
+            ("market", market.as_str()),
+            ("account_channel", account_channel),
+        ])
+        .response::<Json<serde_json::Value>>()
+        .send()
+        .await
+        .ok()?;
+    serde_json::from_value(resp.0).ok()
+}
+
 struct AccountInfo {
-    member_id: i64,
-    quote_level: String,
-    quote_packages: Vec<longbridge::quote::QuotePackageDetail>,
+    /// `None` when the underlying quote-scope call fails (e.g. token lacks
+    /// quote scope, staging member service down). Other fields still render
+    /// independently.
+    member_id: Option<i64>,
+    level_center: Option<LevelCenterData>,
     account_no: Option<String>,
     account_type: Option<String>,
     name: Option<String>,
+    account_channel: Option<String>,
 }
 
 /// Fetch `account_no` and `account_type` from the most recent daily statement.
@@ -180,12 +280,19 @@ async fn fetch_account_info_from_statement() -> Option<(String, String, String)>
     Some((account_no, account_type, name))
 }
 
-async fn fetch_account_info() -> Result<AccountInfo> {
-    let (member_id, quote_level, quote_packages, statement_info) = tokio::join!(
+async fn fetch_account_channel_from_positions() -> Option<String> {
+    let ctx = crate::openapi::trade();
+    let resp = ctx.stock_positions(None).await.ok()?;
+    resp.channels.into_iter().next().map(|c| c.account_channel)
+}
+
+async fn fetch_account_info(market: &str) -> Result<AccountInfo> {
+    let account_channel = crate::auth::account_channel_or_default();
+    let (member_id, level_center, statement_info, account_channel) = tokio::join!(
         crate::openapi::quote().member_id(),
-        crate::openapi::quote().quote_level(),
-        crate::openapi::quote().quote_package_details(),
+        fetch_my_quotes(market, &account_channel),
         fetch_account_info_from_statement(),
+        fetch_account_channel_from_positions(),
     );
 
     let (account_no, account_type, name) = match statement_info {
@@ -198,23 +305,23 @@ async fn fetch_account_info() -> Result<AccountInfo> {
     };
 
     Ok(AccountInfo {
-        member_id: member_id?,
-        quote_level: quote_level?,
-        quote_packages: quote_packages.unwrap_or_default(),
+        member_id: member_id.ok(),
+        level_center,
         account_no,
         account_type,
         name,
+        account_channel,
     })
 }
 
-pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
+pub async fn cmd_auth_status(format: &OutputFormat, market: &str) -> Result<()> {
     // ── Token (local) ─────────────────────────────────────────────────────────
     let token_path = crate::auth::token_file_path()?;
     let token = read_token_state()?;
 
     // ── Connect and fetch account info ────────────────────────────────────────
     let account = match crate::openapi::init_contexts().await {
-        Ok(_) => fetch_account_info().await.ok(),
+        Ok(_) => fetch_account_info(market).await.ok(),
         Err(_) => None,
     };
 
@@ -229,11 +336,34 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
             });
 
             if let Some(acc) = &account {
+                let to_json = |items: &[LevelCenterItem]| -> Vec<serde_json::Value> {
+                    items
+                        .iter()
+                        .map(|p| {
+                            json!({
+                                "package_key": p.package_key,
+                                "name": p.name,
+                                "description": p.description,
+                                "market": p.market,
+                                "tags": p.tags,
+                                "expired_msg": p.expired_msg,
+                                "end_time": p.end_time,
+                            })
+                        })
+                        .collect()
+                };
+                let (activated, unactivated) = acc
+                    .level_center
+                    .as_ref()
+                    .map(|lc| (to_json(&lc.activated_lists), to_json(&lc.unactivated_lists)))
+                    .unwrap_or_default();
                 value["account"] = json!({
                     "member_id": acc.member_id,
-                    "quote_level": acc.quote_level,
+                    "activated_packages": activated,
+                    "unactivated_packages": unactivated,
                     "account_no": acc.account_no,
                     "account_type": acc.account_type,
+                    "account_channel": acc.account_channel,
                     "name": acc.name,
                 });
             }
@@ -242,7 +372,7 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
         }
 
         OutputFormat::Pretty => {
-            const W: usize = 12; // key column width
+            const W: usize = 13; // key column width
 
             // ── Token ──────────────────────────────────────────────────────────
             let (status_str, status_color) = match token.status {
@@ -252,15 +382,58 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
                 _ => ("valid", GREEN),
             };
             println!("Token");
-            println!(
-                "{:<W$} {color}{status_str}{RESET}  {}",
-                "Status",
-                token.detail,
-                W = W,
-                color = status_color,
-            );
+            if token.detail.is_empty() {
+                println!(
+                    "{:<W$} {color}{status_str}{RESET}",
+                    "Status",
+                    W = W,
+                    color = status_color
+                );
+            } else {
+                println!(
+                    "{:<W$} {color}{status_str}{RESET}  {}",
+                    "Status",
+                    token.detail,
+                    W = W,
+                    color = status_color,
+                );
+            }
+            let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
+            let fmt_exp = |ts: u64| -> String {
+                let Ok(dt) = OffsetDateTime::from_unix_timestamp(ts.cast_signed())
+                    .map(|utc| utc.to_offset(local_offset))
+                else {
+                    return String::new();
+                };
+                let now_secs = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
+                let rel = if ts > now_secs {
+                    format!("in {}", format_duration(ts - now_secs))
+                } else {
+                    format!("{} ago", format_duration(now_secs - ts))
+                };
+                format!(
+                    "{}-{:02}-{:02} {:02}:{:02}  {DIM}({}){RESET}",
+                    dt.year(),
+                    dt.month() as u8,
+                    dt.day(),
+                    dt.hour(),
+                    dt.minute(),
+                    rel,
+                )
+            };
+            if let Some(exp) = token.access_token_exp {
+                println!("{:<W$} {}", "AccessToken", fmt_exp(exp), W = W);
+            }
+            if let Some(exp) = token.refresh_token_exp {
+                println!("{:<W$} {}", "RefreshToken", fmt_exp(exp), W = W);
+            }
             if let Some(ts) = token.logged_in_at {
-                if let Ok(dt) = OffsetDateTime::from_unix_timestamp(ts.cast_signed()) {
+                if let Ok(dt) = OffsetDateTime::from_unix_timestamp(ts.cast_signed())
+                    .map(|utc| utc.to_offset(local_offset))
+                {
                     println!(
                         "{:<W$} {}-{:02}-{:02} {:02}:{:02}",
                         "Logged In",
@@ -290,7 +463,6 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
                 if let Some(name) = &acc.name {
                     println!("{:<W$} {name}", "Name", W = W);
                 }
-                // account_no and account_type on one line
                 let mut acct_parts = Vec::new();
                 if let Some(no) = &acc.account_no {
                     acct_parts.push(no.as_str());
@@ -300,29 +472,91 @@ pub async fn cmd_auth_status(format: &OutputFormat) -> Result<()> {
                 }
                 if !acct_parts.is_empty() {
                     let acct_str = if acct_parts.len() >= 2 {
-                        format!("{} [{}]", acct_parts[0], acct_parts[1..].join(", "))
+                        format!("{} · {}", acct_parts[0], acct_parts[1..].join(", "))
                     } else {
                         acct_parts[0].to_string()
                     };
                     println!("{:<W$} {acct_str}", "Account", W = W);
+                } else if acc
+                    .account_channel
+                    .as_deref()
+                    .is_some_and(|ch| ch == "lb_papertrading")
+                {
+                    println!("{:<W$} Paper Trading", "Account", W = W);
                 }
-                println!("{:<W$} {}", "Member Id", acc.member_id, W = W);
+                if let Some(mid) = acc.member_id {
+                    println!("{:<W$} {}", "Member Id", mid, W = W);
+                }
 
                 // ── Quote Level ─────────────────────────────────────────────────
-                println!();
-                println!("Quote Level");
-                if acc.quote_packages.is_empty() {
-                    println!("{:<W$} {}", "Level", acc.quote_level, W = W);
-                } else {
-                    let mut builder = Builder::default();
-                    builder.push_record(["Package", "Start", "End"]);
-                    for pkg in &acc.quote_packages {
-                        let start = pkg.start_at.date().to_string();
-                        let end = pkg.end_at.date().to_string();
-                        builder.push_record([&pkg.name, &start, &end]);
+                let empty = LevelCenterData::default();
+                let lc = acc.level_center.as_ref().unwrap_or(&empty);
+
+                let print_pkg = |pkg: &LevelCenterItem, active: bool| {
+                    // The new `/v1/quote/my-quotes` schema includes a dedicated
+                    // `market` field; fall back to splitting the package_key
+                    // (`US_QBBO` -> `US`) for resilience.
+                    let market = if pkg.market.is_empty() {
+                        pkg.package_key.split('_').next().unwrap_or("")
+                    } else {
+                        pkg.market.as_str()
+                    };
+                    let tag_suffix = if pkg.tags.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" [{}]", pkg.tags.join(","))
+                    };
+                    let expiry = format_pkg_expiry(&pkg.end_time);
+                    if active {
+                        println!(
+                            "  {market}  {GREEN}{}{RESET}{tag_suffix}{}",
+                            pkg.name,
+                            if expiry.is_empty() {
+                                String::new()
+                            } else {
+                                format!("  ({expiry})")
+                            }
+                        );
+                    } else {
+                        let msg = if pkg.expired_msg.is_empty() {
+                            String::new()
+                        } else {
+                            format!("  {DIM}{}{RESET}", pkg.expired_msg)
+                        };
+                        println!("  {market}  {DIM}{}{RESET}{tag_suffix}{msg}", pkg.name);
                     }
-                    println!("{}", builder.build().with(Style::markdown()));
+                    let sub = if pkg.description.is_empty() {
+                        pkg.package_key.clone()
+                    } else {
+                        format!("{} · {}", pkg.package_key, pkg.description)
+                    };
+                    println!("      {DIM}{sub}{RESET}");
+                };
+
+                println!();
+                println!("{}", t!("my_quote.subscribed"));
+                if lc.activated_lists.is_empty() {
+                    println!("  {DIM}{}{RESET}", t!("my_quote.no_data"));
+                } else {
+                    for pkg in &lc.activated_lists {
+                        print_pkg(pkg, true);
+                    }
                 }
+
+                println!();
+                println!("{}", t!("my_quote.unsubscribed"));
+                if lc.unactivated_lists.is_empty() {
+                    println!("  {DIM}{}{RESET}", t!("my_quote.no_data"));
+                } else {
+                    for pkg in &lc.unactivated_lists {
+                        print_pkg(pkg, false);
+                    }
+                }
+
+                // ── Quote Mall QR code ───────────────────────────────────────────
+                println!();
+                let channel = crate::auth::account_channel_or_default();
+                let _ = super::my_quote::print_mall_qr(&channel);
             }
         }
     }

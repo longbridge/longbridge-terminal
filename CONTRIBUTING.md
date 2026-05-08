@@ -19,7 +19,7 @@ Thank you for your interest in contributing to Longbridge Terminal! This documen
    cd longbridge-terminal
    ```
 
-3. **Build and run**:
+2. **Build and run**:
    ```bash
    cargo run
    ```
@@ -56,7 +56,7 @@ let status = t!("TradeStatus.Normal");
 This project uses strict `clippy::pedantic` rules. Run the following before submitting:
 
 ```bash
-cargo clippy --all-targets --all-features
+cargo fmt && cargo clippy
 ```
 
 The following pedantic rules are allowed (you don't need to fix them):
@@ -144,8 +144,7 @@ For more details, see [CLAUDE.md](./CLAUDE.md).
 3. **Run checks**:
 
    ```bash
-   cargo fmt
-   cargo clippy --all-targets --all-features
+   cargo fmt && cargo clippy
    cargo build
    ```
 
@@ -160,6 +159,18 @@ For more details, see [CLAUDE.md](./CLAUDE.md).
 
 6. **Address review feedback** if requested
 
+## Commit and PR Title Conventions
+
+Use a prefix to indicate the area of change. The word after the colon must be **capitalized**.
+
+- `cli:` — changes to CLI commands (`src/cli/`) or shared infrastructure (`src/openapi/`, `src/region.rs`, `src/auth.rs`, etc.)
+- `tui:` — changes that touch TUI-specific code (`src/tui/app.rs`, `src/tui/views/`, `src/tui/widgets/`, `src/tui/systems/`, etc.)
+- `chore:` — other changes that don't fit the above (e.g. docs, formatting, refactors that don't modify behavior)
+
+Only use `tui:` when the diff actually modifies TUI files. Changes to shared modules that happen to be triggered by a TUI bug should still use `cli:` or a more specific prefix.
+
+**Examples**: `cli: Add statement export command`, `tui: Fix quit confirmation dialog`
+
 ## Development Tips
 
 ### Using Ratatui
@@ -172,7 +183,7 @@ This project uses [Ratatui](https://ratatui.rs/) for the TUI. For Ratatui-specif
 ### Longbridge API
 
 - **Rate Limit**: Maximum 10 API calls per second
-- **Token Expiration**: Access tokens expire every 3 months
+- **Token Refresh**: The SDK automatically refreshes access tokens — no manual renewal needed
 - **Documentation**: [Longbridge OpenAPI Docs](https://open.longbridge.com)
 - **Rust SDK**: [SDK Documentation](https://longbridge.github.io/openapi/rust/longbridge/)
 

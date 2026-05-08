@@ -416,6 +416,9 @@ pub fn render_portfolio(
                     chunks[1],
                     &mut *PORTFOLIO_TABLE.lock().expect("poison"),
                 );
+                *crate::tui::mouse::PORTFOLIO_TABLE_RECT
+                    .lock()
+                    .expect("poison") = chunks[1];
             }
         }
 

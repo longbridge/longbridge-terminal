@@ -36,7 +36,7 @@ impl Default for Terminal {
 
 impl Terminal {
     pub fn enter_full_screen() {
-        use crossterm::{cursor, terminal};
+        use crossterm::{cursor, event, terminal};
 
         _ = terminal::enable_raw_mode();
         _ = crossterm::execute!(
@@ -45,20 +45,21 @@ impl Terminal {
             terminal::Clear(terminal::ClearType::All),
             terminal::Clear(terminal::ClearType::Purge),
             cursor::MoveTo(0, 0),
-            cursor::Hide
+            cursor::Hide,
+            event::EnableMouseCapture,
         );
     }
 
     pub fn exit_full_screen() {
-        use crossterm::{cursor, terminal};
+        use crossterm::{cursor, event, terminal};
 
-        // Restore terminal state
         _ = crossterm::execute!(
             std::io::stdout(),
-            cursor::Show,                   // Show cursor
-            terminal::LeaveAlternateScreen, // Leave alternate screen
+            event::DisableMouseCapture,
+            cursor::Show,
+            terminal::LeaveAlternateScreen,
         );
-        _ = terminal::disable_raw_mode(); // Disable raw mode
+        _ = terminal::disable_raw_mode();
     }
 
     /// Graceful exit - cleanup terminal and exit program

@@ -997,6 +997,8 @@ fn finance_calendar_type_label(t: &str) -> &'static str {
         "ipo" => "IPO",
         "meeting" => "Meeting",
         "macrodata" => "Macro",
+        "split" => "Split",
+        "merge" => "Merge",
         "closed" => "Closed",
         _ => "Event",
     }
@@ -1022,13 +1024,27 @@ fn print_finance_calendar(payload: &Value) {
                 info_date
             };
 
-            let type_label = finance_calendar_type_label(info["type"].as_str().unwrap_or(""));
+            let event_type = info["type"].as_str().unwrap_or("");
+            let type_label = finance_calendar_type_label(event_type);
             let content = val_str(&info["content"]);
             let name = val_str(&info["counter_name"]);
             let symbol = counter_id_to_symbol(info["counter_id"].as_str().unwrap_or(""));
             let market = val_str(&info["market"]);
+            let date_type = val_str(&info["date_type"]);
+            let star = info["star"].as_u64().unwrap_or(0);
 
             let mut header = format!("{event_date}  [{type_label}]");
+            if !date_type.is_empty() {
+                header.push_str("  ");
+                header.push_str(&date_type);
+            }
+            if event_type == "macrodata" && star > 0 {
+                let stars: String = (1u64..=3)
+                    .map(|i| if i <= star { '★' } else { '☆' })
+                    .collect();
+                header.push_str("  ");
+                header.push_str(&stars);
+            }
             if !market.is_empty() {
                 header.push_str("  ");
                 header.push_str(&market);
@@ -1045,11 +1061,18 @@ fn print_finance_calendar(payload: &Value) {
 
             let kv = info["data_kv"].as_array().unwrap_or(&empty);
             if !kv.is_empty() {
-                let find_kv = |key: &str| -> String {
+                let find_kv = |type_key: &str| -> String {
                     kv.iter()
-                        .find(|e| e["type"].as_str() == Some(key))
+                        .find(|e| e["type"].as_str() == Some(type_key))
                         .map(|e| val_str(&e["value"]))
                         .unwrap_or_default()
+                };
+                let kv_label = |type_key: &str, fallback: &str| -> String {
+                    kv.iter()
+                        .find(|e| e["type"].as_str() == Some(type_key))
+                        .and_then(|e| e["key"].as_str())
+                        .filter(|s| !s.is_empty())
+                        .map_or_else(|| fallback.to_string(), ToString::to_string)
                 };
                 // Financial events: EPS / Revenue
                 let est_eps = find_kv("estimate_eps");
@@ -1059,12 +1082,15 @@ fn print_finance_calendar(payload: &Value) {
                     let act_rev = find_kv("actual_revenue");
                     println!("  EPS: Est {est_eps} / Act {act_eps}  |  Revenue: Est {est_rev} / Act {act_rev}");
                 }
-                // Macro events: previous / estimate / actual
+                // Macro events: use API-provided key labels to avoid hardcoded strings
                 let prev = find_kv("previous");
                 let est = find_kv("estimate");
                 let act = find_kv("actual");
                 if !prev.is_empty() || !est.is_empty() || !act.is_empty() {
-                    println!("  前值: {prev}  预测: {est}  公告: {act}");
+                    let prev_label = kv_label("previous", "Previous");
+                    let est_label = kv_label("estimate", "Estimate");
+                    let act_label = kv_label("actual", "Actual");
+                    println!("  {prev_label}: {prev}  {est_label}: {est}  {act_label}: {act}");
                 }
             }
             println!();
@@ -1072,69 +1098,223 @@ fn print_finance_calendar(payload: &Value) {
     }
 }
 
-/// Fetch finance calendar events (V2). Optionally filter by symbols, markets, and star level.
-#[allow(clippy::too_many_arguments)]
-pub async fn cmd_finance_calendar(
-    event_type: String,
-    symbols: Vec<String>,
-    markets: Vec<String>,
-    start: Option<String>,
-    end: Option<String>,
+async fn finance_calendar_request(
+    types: &[&str],
+    cids: &[String],
+    market: Option<&str>,
+    start: &str,
+    end: Option<&str>,
     count: u32,
-    star: Vec<u32>,
-    next: String,
+    star: &[u32],
+    next: &str,
     offset: u32,
-    format: &OutputFormat,
     verbose: bool,
-) -> Result<()> {
-    let today = time::OffsetDateTime::now_utc().date();
-    let start = start.unwrap_or_else(|| {
-        if symbols.is_empty() {
-            format!("{today}")
-        } else {
-            format!("{}", today.saturating_sub(time::Duration::days(90)))
-        }
-    });
-
-    // V2 rule: ["report"] must be expanded to ["report", "financial"]
-    let mut types: Vec<&str> = vec![event_type.as_str()];
-    if types == ["report"] {
-        types.push("financial");
-    }
-
-    let cids: Vec<String> = symbols
-        .iter()
-        .take(10)
-        .map(|s| symbol_to_counter_id(s))
-        .collect();
-
+) -> Result<serde_json::Value> {
     let count_str = count.to_string();
     let offset_str = offset.to_string();
     let star_strs: Vec<String> = star.iter().map(ToString::to_string).collect();
 
     let mut params: Vec<(&str, &str)> = vec![
-        ("date", start.as_str()),
+        ("date", start),
         ("count", count_str.as_str()),
         ("offset", offset_str.as_str()),
-        ("next", next.as_str()),
+        ("next", next),
     ];
-    for t in &types {
+    for t in types {
         params.push(("types[]", t));
     }
-    for c in &cids {
+    for c in cids {
         params.push(("counter_ids[]", c.as_str()));
     }
-    for m in &markets {
-        params.push(("markets[]", m.as_str()));
+    if let Some(m) = market {
+        params.push(("markets[]", m));
     }
     for s in &star_strs {
         params.push(("star[]", s.as_str()));
     }
-    if let Some(ref end) = end {
-        params.push(("date_end", end.as_str()));
+    if let Some(end) = end {
+        params.push(("date_end", end));
     }
 
-    let resp = super::api::http_get("/v1/quote/finance_calendar", &params, verbose).await?;
+    super::api::http_get("/v1/quote/finance_calendar", &params, verbose).await
+}
+
+fn merge_finance_calendar_responses(responses: Vec<serde_json::Value>) -> serde_json::Value {
+    use std::collections::{BTreeMap, HashMap};
+    let empty = vec![];
+    let mut groups: BTreeMap<String, HashMap<String, serde_json::Value>> = BTreeMap::new();
+    let first_date = responses
+        .first()
+        .and_then(|r| r["date"].as_str())
+        .unwrap_or("")
+        .to_string();
+
+    for resp in &responses {
+        for group in resp["list"].as_array().unwrap_or(&empty) {
+            let date = group["date"].as_str().unwrap_or("").to_string();
+            let infos = group["infos"].as_array().unwrap_or(&empty);
+            let bucket = groups.entry(date).or_default();
+            for info in infos {
+                // Use id as dedup key; fall back to datetime+market for id-less events (e.g. closed)
+                let key = if let Some(id) = info["id"].as_str().filter(|s| !s.is_empty()) {
+                    id.to_string()
+                } else {
+                    format!(
+                        "{}_{}",
+                        info["datetime"].as_str().unwrap_or(""),
+                        info["market"].as_str().unwrap_or("")
+                    )
+                };
+                bucket.insert(key, info.clone());
+            }
+        }
+    }
+
+    let list: Vec<serde_json::Value> = groups
+        .into_iter()
+        .map(|(date, infos_map)| {
+            let mut infos: Vec<serde_json::Value> = infos_map.into_values().collect();
+            infos.sort_by_key(|i| {
+                i["datetime"]
+                    .as_str()
+                    .unwrap_or("")
+                    .parse::<u64>()
+                    .unwrap_or(0)
+            });
+            serde_json::json!({ "date": date, "infos": infos })
+        })
+        .collect();
+
+    serde_json::json!({ "date": first_date, "list": list, "next_date": "", "result": {} })
+}
+
+/// Fetch finance calendar events (V2). Optionally filter by symbols, source, market, and star level.
+#[allow(clippy::too_many_arguments)]
+pub async fn cmd_finance_calendar(
+    event_type: String,
+    symbols: Vec<String>,
+    filter: Option<String>,
+    market: Option<String>,
+    start: Option<String>,
+    end: Option<String>,
+    count: u32,
+    star: Vec<u32>,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let today = time::OffsetDateTime::now_utc().date();
+    // Historical types (financial, report) default to 90 days ago; forward-looking types default to today.
+    let is_historical = matches!(event_type.as_str(), "financial" | "report");
+    let start = start.unwrap_or_else(|| {
+        if !symbols.is_empty() || filter.is_some() || is_historical {
+            format!("{}", today.saturating_sub(time::Duration::days(90)))
+        } else {
+            format!("{today}")
+        }
+    });
+
+    // V2 rule: "report" includes "financial"; "split" includes "merge" (matches app tab behavior)
+    let mut types: Vec<&str> = vec![event_type.as_str()];
+    if types == ["report"] {
+        types.push("financial");
+    }
+    if types == ["split"] {
+        types.push("merge");
+    }
+
+    // Resolve symbols from source (watchlist or positions)
+    let mut all_symbols = symbols;
+    if let Some(ref src) = filter {
+        match src.as_str() {
+            "watchlist" => {
+                let ctx = crate::openapi::quote();
+                let groups = ctx.watchlist().await?;
+                let mut seen = std::collections::HashSet::new();
+                for group in groups {
+                    for sec in &group.securities {
+                        if seen.insert(sec.symbol.clone()) {
+                            all_symbols.push(sec.symbol.clone());
+                        }
+                    }
+                }
+            }
+            "positions" => {
+                let ctx = crate::openapi::trade();
+                let resp = ctx.stock_positions(None).await?;
+                for channel in &resp.channels {
+                    for pos in &channel.positions {
+                        all_symbols.push(pos.symbol.clone());
+                    }
+                }
+            }
+            other => anyhow::bail!("unknown source '{other}'; use watchlist or positions"),
+        }
+    }
+
+    let cids: Vec<String> = all_symbols
+        .iter()
+        .map(|s| symbol_to_counter_id(s))
+        .collect();
+
+    let market_ref = market.as_deref();
+    let end_ref = end.as_deref();
+
+    // Follow next_date pagination until count events collected or no more pages (max 20 pages).
+    let fetch_all_pages = |cids: Vec<String>| {
+        let types = types.clone();
+        let start = start.clone();
+        let star = star.clone();
+        async move {
+            let mut responses: Vec<serde_json::Value> = Vec::new();
+            let mut current_date = start;
+            let mut total_events = 0u32;
+            for _ in 0..20u32 {
+                let r = finance_calendar_request(
+                    &types,
+                    &cids,
+                    market_ref,
+                    &current_date,
+                    end_ref,
+                    count,
+                    &star,
+                    "later",
+                    0,
+                    verbose,
+                )
+                .await?;
+                let empty = vec![];
+                let page_events: u32 = r["list"]
+                    .as_array()
+                    .unwrap_or(&empty)
+                    .iter()
+                    .map(|g| g["infos"].as_array().unwrap_or(&empty).len() as u32)
+                    .sum();
+                total_events += page_events;
+                let next_date = r["next_date"].as_str().unwrap_or("").to_string();
+                responses.push(r);
+                if next_date.is_empty() || total_events >= count {
+                    break;
+                }
+                current_date = next_date;
+            }
+            if responses.len() == 1 {
+                Ok::<_, anyhow::Error>(responses.remove(0))
+            } else {
+                Ok(merge_finance_calendar_responses(responses))
+            }
+        }
+    };
+
+    let resp = if cids.len() <= 10 {
+        fetch_all_pages(cids).await?
+    } else {
+        let mut responses = Vec::new();
+        for batch in cids.chunks(10) {
+            let r = fetch_all_pages(batch.to_vec()).await?;
+            responses.push(r);
+        }
+        merge_finance_calendar_responses(responses)
+    };
 
     match format {
         OutputFormat::Json => print_json(&resp),
@@ -1670,9 +1850,14 @@ fn print_rating_history(data: &Value) {
     }
 }
 
-pub async fn cmd_corp_action(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
+pub async fn cmd_corp_action(
+    symbol: String,
+    all: bool,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
-    let data = http_get(
+    let mut data = http_get(
         "/v1/quote/company-act",
         &[
             ("counter_id", cid.as_str()),
@@ -1682,6 +1867,16 @@ pub async fn cmd_corp_action(symbol: String, format: &OutputFormat, verbose: boo
         verbose,
     )
     .await?;
+    if !all {
+        let key = if data.get("items").is_some() {
+            "items"
+        } else {
+            "CompanyActItem"
+        };
+        if let Some(arr) = data.get_mut(key).and_then(|v| v.as_array_mut()) {
+            arr.truncate(30);
+        }
+    }
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => print_corp_action(&data),

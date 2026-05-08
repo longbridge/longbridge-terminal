@@ -760,7 +760,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "cli-candlestick-chart"
-version = "0.18.0"
+version = "0.19.2"
 dependencies = [
  "ansi-parser 0.8.0",
  "clap 2.34.0",
@@ -2619,7 +2619,7 @@ dependencies = [
 
 [[package]]
 name = "longbridge-terminal"
-version = "0.18.0"
+version = "0.19.2"
 dependencies = [
  "ansi-parser 0.9.1",
  "ansi-to-tui",
@@ -4342,7 +4342,7 @@ checksum = "1c107b6f4780854c8b126e228ea8869f4d7b71260f962fefb57b996b8959ba6b"
 
 [[package]]
 name = "sec2md"
-version = "0.18.0"
+version = "0.19.2"
 dependencies = [
  "scraper",
 ]
