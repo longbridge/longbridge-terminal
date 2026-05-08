@@ -59,11 +59,19 @@ pub async fn cmd_ipo_subscriptions(format: &OutputFormat, verbose: bool) -> Resu
                     println!("No active IPO subscriptions.");
                     return Ok(());
                 }
-                let headers = ["name", "counter_id", "issue_price", "deadline", "state"];
+                let headers = [
+                    "name",
+                    "counter_id",
+                    "currency",
+                    "issue_price",
+                    "deadline",
+                    "state",
+                ];
                 let rows: Vec<Vec<String>> = list
                     .iter()
                     .map(|item| {
                         let stage = match val_str(&item["state_stage"]).as_str() {
+                            "0" => "filing",
                             "1" => "sub-start",
                             "2" => "sub-end",
                             "3" => "allotment",
@@ -75,8 +83,9 @@ pub async fn cmd_ipo_subscriptions(format: &OutputFormat, verbose: bool) -> Resu
                         vec![
                             val_str(&item["name"]),
                             val_str(&item["counter_id"]),
+                            val_str(&item["currency"]),
                             val_str(&item["issue_price"]),
-                            val_str(&item["sub_deadline"]),
+                            fmt_ts(&item["sub_deadline"]),
                             stage,
                         ]
                     })

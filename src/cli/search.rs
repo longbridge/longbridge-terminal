@@ -6,6 +6,15 @@ use super::output::print_table;
 use super::OutputFormat;
 use crate::utils::text::strip_html;
 
+fn fmt_ts(v: &serde_json::Value) -> String {
+    let ts = match v {
+        serde_json::Value::Number(n) => n.as_i64(),
+        serde_json::Value::String(s) => s.parse::<i64>().ok(),
+        _ => None,
+    };
+    ts.map_or_else(|| val_str(v), crate::utils::datetime::format_timestamp)
+}
+
 fn print_json(value: &Value) {
     println!(
         "{}",
@@ -52,7 +61,7 @@ pub async fn cmd_search(
                                 vec![
                                     val_str(&item["id"]),
                                     strip_html(&val_str(&item["title"])),
-                                    val_str(&item["publish_at"]),
+                                    fmt_ts(&item["publish_at_timestamp"]),
                                 ]
                             })
                             .collect();
