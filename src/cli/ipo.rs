@@ -182,15 +182,24 @@ fn transform_ipo_list_item(item: &Value) -> Value {
     Value::Object(obj)
 }
 
-// Transform history item: format created_at timestamp.
-fn transform_history_item(item: &Value) -> Value {
+// Transform an IPO order item: counter_id → symbol, format created_at timestamp.
+fn transform_order_item(item: &Value) -> Value {
     let mut obj = Map::new();
     if let Some(map) = item.as_object() {
         for (k, v) in map {
-            if k == "created_at" {
-                obj.insert(k.clone(), Value::String(fmt_ts(v)));
-            } else {
-                obj.insert(k.clone(), v.clone());
+            match k.as_str() {
+                "counter_id" => {
+                    obj.insert(
+                        "symbol".to_string(),
+                        Value::String(counter_id_to_symbol(&val_str(v))),
+                    );
+                }
+                "created_at" => {
+                    obj.insert(k.clone(), Value::String(fmt_ts(v)));
+                }
+                _ => {
+                    obj.insert(k.clone(), v.clone());
+                }
             }
         }
     }
@@ -797,44 +806,102 @@ pub async fn cmd_ipo_order(symbol: String, format: &OutputFormat, verbose: bool)
     Ok(())
 }
 
-/// List active IPO holding orders for the current account.
+/// List IPO orders (active + history) for the current account.
 pub async fn cmd_ipo_orders(
     symbol: Option<String>,
+    market: Option<String>,
+    status: Option<String>,
+    page: u32,
+    count: u32,
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
     let account_channel = crate::auth::account_channel_or_default();
-    let mut params: Vec<(&str, &str)> = vec![("account_channel", account_channel.as_str())];
+    let mut active_params: Vec<(&str, &str)> = vec![("account_channel", account_channel.as_str())];
     let cid;
     if let Some(ref sym) = symbol {
         cid = symbol_to_counter_id(sym);
-        params.push(("counter_id", cid.as_str()));
+        active_params.push(("counter_id", cid.as_str()));
     }
-    let data = http_get("/v1/ipo/orders", &params, verbose).await?;
+    let page_str = page.to_string();
+    let count_str = count.to_string();
+    let mut hist_params: Vec<(&str, &str)> =
+        vec![("page", page_str.as_str()), ("limit", count_str.as_str())];
+    if let Some(ref m) = market {
+        hist_params.push(("market", m.as_str()));
+    }
+    if let Some(ref s) = status {
+        hist_params.push(("status", s.as_str()));
+    }
+    let (active_data, hist_data) = tokio::join!(
+        http_get("/v1/ipo/orders", &active_params, verbose),
+        http_get("/v1/ipo/orders/history", &hist_params, verbose),
+    );
+    let active_data = active_data?;
+    let hist_data = hist_data?;
     match format {
-        OutputFormat::Json => print_json(&data),
+        OutputFormat::Json => {
+            let mut result = serde_json::Map::new();
+            if let Some(arr) = active_data["orders"].as_array() {
+                let transformed: Vec<Value> = arr.iter().map(transform_order_item).collect();
+                result.insert("orders".to_string(), Value::Array(transformed));
+            }
+            if let Some(arr) = hist_data["orders"].as_array() {
+                let transformed: Vec<Value> = arr.iter().map(transform_order_item).collect();
+                result.insert("history".to_string(), Value::Array(transformed));
+            }
+            print_json(&Value::Object(result));
+        }
         OutputFormat::Pretty => {
-            if let Some(orders) = data["orders"].as_array() {
-                if orders.is_empty() {
-                    println!("No active IPO orders.");
-                    return Ok(());
+            let mut printed = false;
+            if let Some(orders) = active_data["orders"].as_array() {
+                if !orders.is_empty() {
+                    println!("── Active ──");
+                    let headers = ["id", "symbol", "name", "qty", "status", "date"];
+                    let rows: Vec<Vec<String>> = orders
+                        .iter()
+                        .map(|o| {
+                            vec![
+                                val_str(&o["id"]),
+                                counter_id_to_symbol(&val_str(&o["counter_id"])),
+                                val_str(&o["name"]),
+                                val_str(&o["sub_qty"]),
+                                val_str(&o["status"]),
+                                fmt_ts(&o["created_at"]),
+                            ]
+                        })
+                        .collect();
+                    print_table(&headers, rows, &OutputFormat::Pretty);
+                    printed = true;
                 }
-                let headers = ["id", "name", "code", "qty", "status"];
-                let rows: Vec<Vec<String>> = orders
-                    .iter()
-                    .map(|o| {
-                        vec![
-                            val_str(&o["id"]),
-                            val_str(&o["name"]),
-                            val_str(&o["code"]),
-                            val_str(&o["sub_qty"]),
-                            val_str(&o["status"]),
-                        ]
-                    })
-                    .collect();
-                print_table(&headers, rows, &OutputFormat::Pretty);
-            } else {
-                print_json(&data);
+            }
+            if let Some(arr) = hist_data["orders"].as_array() {
+                if !arr.is_empty() {
+                    if printed {
+                        println!();
+                    }
+                    println!("── History ──");
+                    let headers = ["id", "symbol", "name", "qty", "won", "status", "date"];
+                    let rows: Vec<Vec<String>> = arr
+                        .iter()
+                        .map(|o| {
+                            vec![
+                                val_str(&o["id"]),
+                                counter_id_to_symbol(&val_str(&o["counter_id"])),
+                                val_str(&o["name"]),
+                                val_str(&o["sub_qty"]),
+                                val_str(&o["lot_win_qty"]),
+                                val_str(&o["status"]),
+                                fmt_ts(&o["created_at"]),
+                            ]
+                        })
+                        .collect();
+                    print_table(&headers, rows, &OutputFormat::Pretty);
+                    printed = true;
+                }
+            }
+            if !printed {
+                println!("No IPO orders found.");
             }
         }
     }
@@ -858,65 +925,6 @@ pub async fn cmd_ipo_order_detail(
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => print_json_value(&data, format),
-    }
-    Ok(())
-}
-
-/// List IPO subscription history.
-pub async fn cmd_ipo_history(
-    market: Option<String>,
-    status: Option<String>,
-    page: u32,
-    limit: u32,
-    format: &OutputFormat,
-    verbose: bool,
-) -> Result<()> {
-    let page_str = page.to_string();
-    let limit_str = limit.to_string();
-    let mut params: Vec<(&str, &str)> =
-        vec![("page", page_str.as_str()), ("limit", limit_str.as_str())];
-    if let Some(ref m) = market {
-        params.push(("market", m.as_str()));
-    }
-    if let Some(ref s) = status {
-        params.push(("status", s.as_str()));
-    }
-    let data = http_get("/v1/ipo/orders/history", &params, verbose).await?;
-    match format {
-        OutputFormat::Json => {
-            if let Some(arr) = data.as_array() {
-                let transformed: Vec<Value> = arr.iter().map(transform_history_item).collect();
-                print_json(&Value::Array(transformed));
-            } else {
-                print_json(&data);
-            }
-        }
-        OutputFormat::Pretty => {
-            if let Some(arr) = data.as_array() {
-                if arr.is_empty() {
-                    println!("No IPO history found.");
-                    return Ok(());
-                }
-                let headers = ["id", "name", "code", "qty", "won", "status", "date"];
-                let rows: Vec<Vec<String>> = arr
-                    .iter()
-                    .map(|o| {
-                        vec![
-                            val_str(&o["id"]),
-                            val_str(&o["name"]),
-                            val_str(&o["code"]),
-                            val_str(&o["sub_qty"]),
-                            val_str(&o["lot_win_qty"]),
-                            val_str(&o["status"]),
-                            fmt_ts(&o["created_at"]),
-                        ]
-                    })
-                    .collect();
-                print_table(&headers, rows, &OutputFormat::Pretty);
-            } else {
-                print_json(&data);
-            }
-        }
     }
     Ok(())
 }
