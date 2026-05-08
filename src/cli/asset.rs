@@ -2,7 +2,9 @@ use anyhow::Result;
 use serde_json::Value;
 
 use super::api::http_get;
-use super::output::{fmt_datetime, parse_datetime_end, parse_datetime_start, print_table};
+use super::output::{
+    fmt_datetime, parse_datetime_end, parse_datetime_start, print_json_value, print_table,
+};
 use super::OutputFormat;
 
 fn print_json(value: &Value) {
@@ -501,7 +503,7 @@ pub async fn cmd_profit_analysis_by_market(
 // ── short margin ─────────────────────────────────────────────────────────────
 
 pub async fn cmd_short_margin(format: &OutputFormat, verbose: bool) -> Result<()> {
-    let data = http_get("/v1/asset/cash/short/detail", &[], verbose).await?;
+    let data = http_get("/v1/asset/cash/short-margin", &[], verbose).await?;
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => {
@@ -530,38 +532,6 @@ pub async fn cmd_short_margin(format: &OutputFormat, verbose: bool) -> Result<()
     Ok(())
 }
 
-// ── pnl calendar ─────────────────────────────────────────────────────────────
-
-pub async fn cmd_pnl_calendar(format: &OutputFormat, verbose: bool) -> Result<()> {
-    let data = http_get("/portfolio/pnl/calendar", &[], verbose).await?;
-    match format {
-        OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => {
-            if let Some(list) = data["calendar_list"].as_array() {
-                if list.is_empty() {
-                    println!("No P&L calendar data.");
-                    return Ok(());
-                }
-                let headers = ["date", "pnl", "currency"];
-                let rows: Vec<Vec<String>> = list
-                    .iter()
-                    .map(|item| {
-                        vec![
-                            val_str(&item["date"]),
-                            val_str(&item["pnl"]),
-                            val_str(&item["currency"]),
-                        ]
-                    })
-                    .collect();
-                print_table(&headers, rows, &OutputFormat::Pretty);
-            } else {
-                print_json(&data);
-            }
-        }
-    }
-    Ok(())
-}
-
 // ── holding period ────────────────────────────────────────────────────────────
 
 pub async fn cmd_holding_period(
@@ -571,14 +541,14 @@ pub async fn cmd_holding_period(
 ) -> Result<()> {
     let cid = crate::utils::counter::symbol_to_counter_id(&symbol);
     let data = http_get(
-        "/portfolio/asset/stock_holding_period",
+        "/v1/asset/positions/holding-period",
         &[("counter_id", cid.as_str())],
         verbose,
     )
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_json(&data),
+        OutputFormat::Pretty => print_json_value(&data, format),
     }
     Ok(())
 }
@@ -588,14 +558,14 @@ pub async fn cmd_holding_period(
 pub async fn cmd_trade_info(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
     let cid = crate::utils::counter::symbol_to_counter_id(&symbol);
     let data = http_get(
-        "/v1/portfolio/asset/trade/detail",
+        "/v1/asset/positions/trade-info",
         &[("counter_id", cid.as_str())],
         verbose,
     )
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_json(&data),
+        OutputFormat::Pretty => print_json_value(&data, format),
     }
     Ok(())
 }
@@ -603,10 +573,10 @@ pub async fn cmd_trade_info(symbol: String, format: &OutputFormat, verbose: bool
 // ── order stats (today's account trade summary) ───────────────────────────────
 
 pub async fn cmd_order_stats(format: &OutputFormat, verbose: bool) -> Result<()> {
-    let data = http_get("/v1/orders/trade_analysis", &[], verbose).await?;
+    let data = http_get("/v1/asset/trade-analysis", &[], verbose).await?;
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_json(&data),
+        OutputFormat::Pretty => print_json_value(&data, format),
     }
     Ok(())
 }

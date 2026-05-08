@@ -1,9 +1,8 @@
 use anyhow::Result;
 use serde_json::Value;
-use std::io::Write;
 
-use super::api::{http_get, http_post};
-use super::output::print_table;
+use super::api::http_get;
+use super::output::{print_json_value, print_table};
 use super::OutputFormat;
 use crate::utils::counter::symbol_to_counter_id;
 
@@ -19,17 +18,18 @@ fn val_str(v: &Value) -> String {
         Value::String(s) => s.clone(),
         Value::Number(n) => n.to_string(),
         Value::Bool(b) => b.to_string(),
-        Value::Null => String::new(),
+        Value::Null => "-".to_string(),
         other => other.to_string(),
     }
 }
 
-fn confirm_action(action: &str) -> Result<bool> {
-    print!("Are you sure you want to {action}? [y/N] ");
-    std::io::stdout().flush()?;
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    Ok(input.trim().eq_ignore_ascii_case("y"))
+fn fmt_ts(v: &Value) -> String {
+    let ts = match v {
+        Value::Number(n) => n.as_i64(),
+        Value::String(s) => s.parse::<i64>().ok(),
+        _ => None,
+    };
+    ts.map_or_else(|| val_str(v), crate::utils::datetime::format_timestamp)
 }
 
 async fn member_id() -> Result<i64> {
@@ -46,7 +46,7 @@ pub async fn cmd_ipo_subscriptions(format: &OutputFormat, verbose: bool) -> Resu
     let mid = member_id().await?;
     let mid_str = mid.to_string();
     let data = http_get(
-        "/newmarket/hk/ipo/subscribing",
+        "/v1/ipo/subscriptions",
         &[("memebr_id", mid_str.as_str())],
         verbose,
     )
@@ -101,7 +101,7 @@ pub async fn cmd_ipo_wait_listing(format: &OutputFormat, verbose: bool) -> Resul
     let mid_str = mid.to_string();
     let day_str = now.to_string();
     let data = http_get(
-        "/newmarket/hk/ipo/wait_listing",
+        "/v1/ipo/wait-listing",
         &[
             ("day_time", day_str.as_str()),
             ("memebr_id", mid_str.as_str()),
@@ -150,7 +150,7 @@ pub async fn cmd_ipo_listed(
     let page_str = page.to_string();
     let size_str = limit.to_string();
     let data = http_get(
-        "/newmarket/hk/ipo/ipo_listing",
+        "/v1/ipo/listed",
         &[
             ("page", page_str.as_str()),
             ("size", size_str.as_str()),
@@ -190,7 +190,7 @@ pub async fn cmd_ipo_listed(
 
 /// Show the IPO calendar (all upcoming and recent IPOs).
 pub async fn cmd_ipo_calendar(format: &OutputFormat, verbose: bool) -> Result<()> {
-    let data = http_get("/newmarket/ipo/calendar", &[], verbose).await?;
+    let data = http_get("/v1/ipo/calendar", &[], verbose).await?;
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => {
@@ -225,7 +225,7 @@ pub async fn cmd_ipo_info(symbol: String, format: &OutputFormat, verbose: bool) 
     let account_channel = crate::auth::account_channel_or_default();
     let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
-        "/v3/ipo/info",
+        "/v1/ipo/info",
         &[
             ("counter_id", cid.as_str()),
             ("account_channel", account_channel.as_str()),
@@ -235,7 +235,7 @@ pub async fn cmd_ipo_info(symbol: String, format: &OutputFormat, verbose: bool) 
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_json(&data),
+        OutputFormat::Pretty => print_json_value(&data, format),
     }
     Ok(())
 }
@@ -243,15 +243,10 @@ pub async fn cmd_ipo_info(symbol: String, format: &OutputFormat, verbose: bool) 
 /// Show IPO profile (prospectus summary) for a symbol.
 pub async fn cmd_ipo_profile(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
-    let data = http_get(
-        "/v1/stock-info/ipo-profile",
-        &[("counter_id", cid.as_str())],
-        verbose,
-    )
-    .await?;
+    let data = http_get("/v1/ipo/profile", &[("counter_id", cid.as_str())], verbose).await?;
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_json(&data),
+        OutputFormat::Pretty => print_json_value(&data, format),
     }
     Ok(())
 }
@@ -267,7 +262,7 @@ pub async fn cmd_ipo_timeline(
     let cid = symbol_to_counter_id(&symbol);
     let flag_str = flag.to_string();
     let data = http_get(
-        "/stock-info/ipo-timeline",
+        "/v1/ipo/timeline",
         &[
             ("counter_id", cid.as_str()),
             ("market", market),
@@ -304,14 +299,14 @@ pub async fn cmd_ipo_timeline(
 pub async fn cmd_ipo_order(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
-        "/ipo/active_order",
+        "/v1/ipo/active-order",
         &[("counter_id", cid.as_str())],
         verbose,
     )
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_json(&data),
+        OutputFormat::Pretty => print_json_value(&data, format),
     }
     Ok(())
 }
@@ -329,7 +324,7 @@ pub async fn cmd_ipo_orders(
         cid = symbol_to_counter_id(sym);
         params.push(("counter_id", cid.as_str()));
     }
-    let data = http_get("/ipo/holding", &params, verbose).await?;
+    let data = http_get("/v1/ipo/orders", &params, verbose).await?;
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => {
@@ -367,18 +362,16 @@ pub async fn cmd_ipo_order_detail(
     verbose: bool,
 ) -> Result<()> {
     let account_channel = crate::auth::account_channel_or_default();
+    let path = format!("/v1/ipo/orders/{order_id}");
     let data = http_get(
-        "/v1/ipo/detail",
-        &[
-            ("order_id", order_id.as_str()),
-            ("account_channel", account_channel.as_str()),
-        ],
+        &path,
+        &[("account_channel", account_channel.as_str())],
         verbose,
     )
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_json(&data),
+        OutputFormat::Pretty => print_json_value(&data, format),
     }
     Ok(())
 }
@@ -402,7 +395,7 @@ pub async fn cmd_ipo_history(
     if let Some(ref s) = status {
         params.push(("status", s.as_str()));
     }
-    let data = http_get("/ipo/history", &params, verbose).await?;
+    let data = http_get("/v1/ipo/orders/history", &params, verbose).await?;
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => {
@@ -422,7 +415,7 @@ pub async fn cmd_ipo_history(
                             val_str(&o["sub_qty"]),
                             val_str(&o["lot_win_qty"]),
                             val_str(&o["status"]),
-                            val_str(&o["created_at"]),
+                            fmt_ts(&o["created_at"]),
                         ]
                     })
                     .collect();
@@ -443,14 +436,14 @@ pub async fn cmd_ipo_eligibility(
 ) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
-        "/v1/ipo/check_user_can_subscribe",
+        "/v1/ipo/eligibility",
         &[("counter_id", cid.as_str())],
         verbose,
     )
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_json(&data),
+        OutputFormat::Pretty => print_json_value(&data, format),
     }
     Ok(())
 }
@@ -459,7 +452,7 @@ pub async fn cmd_ipo_eligibility(
 pub async fn cmd_ipo_profit_loss(period: &str, format: &OutputFormat, verbose: bool) -> Result<()> {
     let account_channel = crate::auth::account_channel_or_default();
     let data = http_get(
-        "/portfolio/asset/ipo_analysis",
+        "/v1/ipo/profit-loss",
         &[
             ("period", period),
             ("account_channel", account_channel.as_str()),
@@ -469,7 +462,7 @@ pub async fn cmd_ipo_profit_loss(period: &str, format: &OutputFormat, verbose: b
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_json(&data),
+        OutputFormat::Pretty => print_json_value(&data, format),
     }
     Ok(())
 }
@@ -486,7 +479,7 @@ pub async fn cmd_ipo_profit_loss_items(
     let page_str = page.to_string();
     let size_str = limit.to_string();
     let data = http_get(
-        "/portfolio/asset/ipo_analysis_sublist",
+        "/v1/ipo/profit-loss/items",
         &[
             ("period", period),
             ("page", page_str.as_str()),
@@ -498,7 +491,7 @@ pub async fn cmd_ipo_profit_loss_items(
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_json(&data),
+        OutputFormat::Pretty => print_json_value(&data, format),
     }
     Ok(())
 }
@@ -508,7 +501,7 @@ pub async fn cmd_ipo_holdings(symbol: String, format: &OutputFormat, verbose: bo
     let account_channel = crate::auth::account_channel_or_default();
     let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
-        "/portfolio/ipo/detail",
+        "/v1/ipo/holdings",
         &[
             ("counter_id", cid.as_str()),
             ("need_realtime", "true"),
@@ -519,72 +512,7 @@ pub async fn cmd_ipo_holdings(symbol: String, format: &OutputFormat, verbose: bo
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_json(&data),
-    }
-    Ok(())
-}
-
-// ── write IPO commands (require confirmation) ──────────────────────────────────
-
-/// Submit an IPO subscription order.
-pub async fn cmd_ipo_submit(
-    symbol: String,
-    qty: String,
-    amount: String,
-    financing_amount: String,
-    method: u8,
-    financing_interest: String,
-    format: &OutputFormat,
-    verbose: bool,
-) -> Result<()> {
-    let account_channel = crate::auth::account_channel_or_default();
-    let cid = symbol_to_counter_id(&symbol);
-    if !confirm_action(&format!("submit IPO subscription for {symbol}"))? {
-        println!("Cancelled.");
-        return Ok(());
-    }
-    let body = serde_json::json!({
-        "counter_id": cid,
-        "sub_qty": qty,
-        "sub_amount": amount,
-        "financing_amount": financing_amount,
-        "method": method,
-        "financing_interest": financing_interest,
-        "account_channel": account_channel,
-    });
-    let data = http_post("/ipo/submit", body, verbose).await?;
-    match format {
-        OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => {
-            println!("IPO subscription submitted.");
-            print_json(&data);
-        }
-    }
-    Ok(())
-}
-
-/// Withdraw an IPO subscription order by order ID.
-pub async fn cmd_ipo_withdraw(
-    order_id: String,
-    format: &OutputFormat,
-    verbose: bool,
-) -> Result<()> {
-    let account_channel = crate::auth::account_channel_or_default();
-    if !confirm_action(&format!("withdraw IPO order {order_id}"))? {
-        println!("Cancelled.");
-        return Ok(());
-    }
-    let body = serde_json::json!({
-        "order_id": order_id,
-        "account_channel": account_channel,
-    });
-    let data = http_post("/ipo/withdraw", body, verbose).await?;
-    match format {
-        OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => {
-            println!("IPO order withdrawn.");
-            print_json(&data);
-        }
+        OutputFormat::Pretty => print_json_value(&data, format),
     }
     Ok(())
 }

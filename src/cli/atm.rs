@@ -17,16 +17,25 @@ fn val_str(v: &Value) -> String {
         Value::String(s) => s.clone(),
         Value::Number(n) => n.to_string(),
         Value::Bool(b) => b.to_string(),
-        Value::Null => String::new(),
+        Value::Null => "-".to_string(),
         other => other.to_string(),
     }
+}
+
+fn fmt_ts(v: &Value) -> String {
+    let ts = match v {
+        Value::Number(n) => n.as_i64(),
+        Value::String(s) => s.parse::<i64>().ok(),
+        _ => None,
+    };
+    ts.map_or_else(|| val_str(v), crate::utils::datetime::format_timestamp)
 }
 
 // ── withdrawal cards ──────────────────────────────────────────────────────────
 
 /// List withdrawal bank cards for the current user.
 pub async fn cmd_withdrawal_cards(format: &OutputFormat, verbose: bool) -> Result<()> {
-    let data = http_get("/v3/portfolio/withdraw/cards", &[], verbose).await?;
+    let data = http_get("/v1/account/bank-cards", &[], verbose).await?;
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => {
@@ -69,7 +78,7 @@ pub async fn cmd_withdrawals(
     let page_str = page.to_string();
     let size_str = limit.to_string();
     let data = http_get(
-        "/v6/portfolio/withdraw/record",
+        "/v1/account/withdrawals",
         &[
             ("page", page_str.as_str()),
             ("size", size_str.as_str()),
@@ -95,7 +104,7 @@ pub async fn cmd_withdrawals(
                     .iter()
                     .map(|item| {
                         vec![
-                            val_str(&item["created_at"]),
+                            fmt_ts(&item["created_at"]),
                             val_str(&item["amount"]),
                             val_str(&item["currency"]),
                             val_str(&item["status"]),
@@ -137,7 +146,7 @@ pub async fn cmd_deposits(
     if let Some(c) = currencies {
         params.push(("currencies", c));
     }
-    let data = http_get("/v5/portfolio/deposit/notify", &params, verbose).await?;
+    let data = http_get("/v1/account/deposits", &params, verbose).await?;
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => {
@@ -161,7 +170,7 @@ pub async fn cmd_deposits(
                             s => s.to_string(),
                         };
                         vec![
-                            val_str(&item["created_at"]),
+                            fmt_ts(&item["created_at"]),
                             val_str(&item["amount"]),
                             val_str(&item["currency"]),
                             state,

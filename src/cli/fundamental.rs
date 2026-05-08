@@ -1984,7 +1984,7 @@ pub async fn cmd_financial_statement(
 ) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
-        "/v3/stock-info/statement",
+        "/v1/quote/financials/statements",
         &[
             ("counter_id", cid.as_str()),
             ("kind", kind),
@@ -2009,7 +2009,7 @@ pub async fn cmd_financial_report_latest(
 ) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
-        "/v4/stock-info/latest-financial-report",
+        "/v1/quote/financials/latest-report",
         &[("counter_id", cid.as_str())],
         verbose,
     )
@@ -2032,7 +2032,7 @@ pub async fn cmd_valuation_rank(
 ) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
-        "/stock-info/valuation-rank",
+        "/v1/quote/valuation/rank",
         &[
             ("counter_id", cid.as_str()),
             ("start_date", start),
@@ -2057,7 +2057,7 @@ pub async fn cmd_analyst_estimates(
 ) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
-        "/stock-info/estimate",
+        "/v1/quote/estimates",
         &[("counter_id", cid.as_str())],
         verbose,
     )
@@ -2078,7 +2078,7 @@ pub async fn cmd_institution_rating_history(
 ) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
-        "/stock-info/recommendation/history",
+        "/v1/quote/ratings/history",
         &[("counter_id", cid.as_str())],
         verbose,
     )
@@ -2087,12 +2087,27 @@ pub async fn cmd_institution_rating_history(
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => {
             if let Some(target) = data.get("target_history") {
-                println!("Target price history:");
-                print_kv(target);
+                if !target.as_array().map_or(true, |a| a.is_empty()) {
+                    println!("Target price history:");
+                    print_kv(target);
+                }
             }
             if let Some(eval) = data.get("evaluate_history") {
-                println!("\nRating history:");
-                print_kv(eval);
+                if !eval.as_array().map_or(true, |a| a.is_empty()) {
+                    println!("\nRating history:");
+                    print_kv(eval);
+                }
+            }
+            if data
+                .get("target_history")
+                .and_then(|v| v.as_array())
+                .map_or(true, |a| a.is_empty())
+                && data
+                    .get("evaluate_history")
+                    .and_then(|v| v.as_array())
+                    .map_or(true, |a| a.is_empty())
+            {
+                println!("No rating history found.");
             }
         }
     }
@@ -2112,7 +2127,7 @@ pub async fn cmd_institution_rating_industry_rank(
     let page_str = page.to_string();
     let size_str = limit.to_string();
     let data = http_get(
-        "/v2/fa/institution-rating-industry-rank",
+        "/v1/quote/institution-ratings/industry-rank",
         &[
             ("counter_id", cid.as_str()),
             ("page", page_str.as_str()),

@@ -494,11 +494,12 @@ pub enum Commands {
     /// Latest news articles for a symbol, or fetch full article content
     ///
     /// Without subcommand: lists news articles for a symbol.
-    /// Subcommands: detail
+    /// Subcommands: detail  search
     /// Returns: id, title, `published_at`, likes, comments.
     /// Example: longbridge news TSLA.US
     /// Example: longbridge news TSLA.US --count 5
     /// Example: longbridge news detail 12345678
+    /// Example: longbridge news search "AI stocks"
     News {
         /// Symbol in <CODE>.<MARKET> format (e.g. TSLA.US 700.HK). Omit when using a subcommand.
         symbol: Option<String>,
@@ -529,11 +530,12 @@ pub enum Commands {
     /// Community discussion topics
     ///
     /// Without subcommand: lists topics for a symbol.
-    /// Subcommands: list  detail  mine  create  replies  create-reply
+    /// Subcommands: list  detail  mine  create  replies  create-reply  search
     /// Example: longbridge topic TSLA.US
     /// Example: longbridge topic list TSLA.US
     /// Example: longbridge topic detail 6993508780031016960
     /// Example: longbridge topic create --body "Bullish on TSLA today"
+    /// Example: longbridge topic search TSLA
     Topic {
         /// Symbol in <CODE>.<MARKET> format (e.g. TSLA.US 700.HK). Omit when using a subcommand.
         symbol: Option<String>,
@@ -1080,11 +1082,6 @@ pub enum Commands {
     /// Example: longbridge short-margin
     ShortMargin,
 
-    /// Daily profit/loss calendar for the current account
-    ///
-    /// Example: longbridge pnl-calendar
-    PnlCalendar,
-
     /// Stock holding period breakdown for a symbol
     ///
     /// Example: longbridge holding-period TSLA.US
@@ -1146,39 +1143,11 @@ pub enum Commands {
     },
 
     // ── Search (new) ─────────────────────────────────────────────────────────
-    /// Search across market, news, posts, hashtags, help, share-lists, users, and institutions
-    ///
-    /// Example: longbridge search TSLA
-    /// Example: longbridge search "AI stocks" --tab news
-    /// Example: longbridge search TSLA --tab market --market US
-    Search {
-        /// Search keyword
-        keyword: String,
-        /// Search tab: market | news | posts | hashtags | help | share-lists | users | institutions
-        #[arg(long, default_value = "market")]
-        tab: String,
-        /// Market filter for --tab market: US | HK | SG
-        #[arg(long)]
-        market: Option<String>,
-        /// Product filter for --tab market (comma-separated: BK,ETF,ST,…)
-        #[arg(long)]
-        product: Option<String>,
-        /// Maximum results to display (default: 20)
-        #[arg(long, default_value = "20")]
-        limit: usize,
-    },
-
-    /// Show hot search keywords
-    ///
-    /// Example: longbridge search-hot
-    SearchHot,
-
     // ── IPO (new) ────────────────────────────────────────────────────────────
     /// IPO (new listings) commands — subscriptions, calendar, orders, profit/loss
     ///
     /// Example: longbridge ipo subscriptions
     /// Example: longbridge ipo calendar
-    /// Example: longbridge ipo submit TSLA.US --qty 200 --amount 1000 --financing-amount 0 --method 2 --financing-interest 0
     Ipo {
         #[command(subcommand)]
         cmd: IpoCmd,
@@ -1712,27 +1681,6 @@ pub enum IpoCmd {
     },
     /// Show IPO holding portfolio detail for a symbol
     Holdings { symbol: String },
-    /// Submit an IPO subscription order (requires confirmation)
-    Submit {
-        symbol: String,
-        /// Number of shares to subscribe
-        #[arg(long)]
-        qty: String,
-        /// Subscription amount
-        #[arg(long)]
-        amount: String,
-        /// Financing amount (0 for cash subscription)
-        #[arg(long, default_value = "0")]
-        financing_amount: String,
-        /// Subscription method: 1=financing, 2=cash
-        #[arg(long, default_value = "2")]
-        method: u8,
-        /// Financing daily interest (0 for cash subscription)
-        #[arg(long, default_value = "0")]
-        financing_interest: String,
-    },
-    /// Withdraw an IPO subscription order (requires confirmation)
-    Withdraw { order_id: String },
 }
 
 #[derive(Subcommand)]
@@ -2239,6 +2187,18 @@ pub enum NewsCmd {
         /// News article ID (from `longbridge news <SYMBOL>`)
         id: String,
     },
+
+    /// Search news by keyword
+    ///
+    /// Example: longbridge news search "AI stocks"
+    /// Example: longbridge news search TSLA --limit 10
+    Search {
+        /// Search keyword
+        keyword: String,
+        /// Maximum results to display (default: 20)
+        #[arg(long, default_value = "20")]
+        limit: usize,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2349,6 +2309,18 @@ pub enum TopicCmd {
         /// Nest under this reply ID (get IDs from topic-replies). Omit for a top-level reply.
         #[arg(long = "reply-to")]
         reply_to_id: Option<String>,
+    },
+
+    /// Search community topics by keyword
+    ///
+    /// Example: longbridge topic search TSLA
+    /// Example: longbridge topic search "AI stocks" --limit 10
+    Search {
+        /// Search keyword
+        keyword: String,
+        /// Maximum results to display (default: 20)
+        #[arg(long, default_value = "20")]
+        limit: usize,
     },
 }
 
@@ -2728,6 +2700,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         }
         Commands::News { symbol, count, cmd } => match cmd {
             Some(NewsCmd::Detail { id }) => news::cmd_news_detail(id).await,
+            Some(NewsCmd::Search { keyword, limit }) => {
+                search::cmd_search(keyword, "news", limit, format, verbose).await
+            }
             None => {
                 let sym = symbol.ok_or_else(|| {
                     anyhow::anyhow!("Symbol required. Usage: longbridge news <SYMBOL>")
@@ -2772,6 +2747,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 body,
                 reply_to_id,
             }) => topic::cmd_create_reply(topic_id, body, reply_to_id, format).await,
+            Some(TopicCmd::Search { keyword, limit }) => {
+                search::cmd_search(keyword, "topics", limit, format, verbose).await
+            }
             None => {
                 let sym = symbol.ok_or_else(|| {
                     anyhow::anyhow!("Symbol required. Usage: longbridge topic <SYMBOL>")
@@ -3125,7 +3103,6 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         }
 
         Commands::ShortMargin => asset::cmd_short_margin(format, verbose).await,
-        Commands::PnlCalendar => asset::cmd_pnl_calendar(format, verbose).await,
         Commands::HoldingPeriod { symbol } => {
             asset::cmd_holding_period(symbol, format, verbose).await
         }
@@ -3152,26 +3129,6 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             )
             .await
         }
-
-        Commands::Search {
-            keyword,
-            tab,
-            market,
-            product,
-            limit,
-        } => {
-            search::cmd_search(
-                keyword,
-                &tab,
-                market.as_deref(),
-                product.as_deref(),
-                limit,
-                format,
-                verbose,
-            )
-            .await
-        }
-        Commands::SearchHot => search::cmd_search_hot(format, verbose).await,
 
         Commands::Ipo { cmd } => match cmd {
             IpoCmd::Subscriptions => ipo::cmd_ipo_subscriptions(format, verbose).await,
@@ -3208,29 +3165,6 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 ipo::cmd_ipo_profit_loss_items(&period, page, limit, format, verbose).await
             }
             IpoCmd::Holdings { symbol } => ipo::cmd_ipo_holdings(symbol, format, verbose).await,
-            IpoCmd::Submit {
-                symbol,
-                qty,
-                amount,
-                financing_amount,
-                method,
-                financing_interest,
-            } => {
-                ipo::cmd_ipo_submit(
-                    symbol,
-                    qty,
-                    amount,
-                    financing_amount,
-                    method,
-                    financing_interest,
-                    format,
-                    verbose,
-                )
-                .await
-            }
-            IpoCmd::Withdraw { order_id } => {
-                ipo::cmd_ipo_withdraw(order_id, format, verbose).await
-            }
         },
 
         Commands::Auth { .. }
