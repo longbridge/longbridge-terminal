@@ -535,17 +535,28 @@ pub async fn cmd_short_margin(format: &OutputFormat, verbose: bool) -> Result<()
 // ── holding period ────────────────────────────────────────────────────────────
 
 pub async fn cmd_holding_period(
-    symbol: String,
+    symbols: Vec<String>,
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = crate::utils::counter::symbol_to_counter_id(&symbol);
-    let data = http_get(
-        "/v1/asset/positions/holding-period",
-        &[("counter_id", cid.as_str())],
-        verbose,
-    )
-    .await?;
+    let resolved: Vec<String> = if symbols.is_empty() {
+        let resp = crate::openapi::trade().stock_positions(None).await?;
+        resp.channels
+            .into_iter()
+            .flat_map(|ch| ch.positions.into_iter().map(|p| p.symbol))
+            .collect()
+    } else {
+        symbols
+    };
+    let cids: Vec<String> = resolved
+        .iter()
+        .map(|s| crate::utils::counter::symbol_to_counter_id(s))
+        .collect();
+    let params: Vec<(&str, &str)> = cids
+        .iter()
+        .map(|cid| ("counter_ids[]", cid.as_str()))
+        .collect();
+    let data = http_get("/v1/asset/positions/holding-period", &params, verbose).await?;
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => print_json_value(&data, format),

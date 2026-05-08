@@ -1082,12 +1082,13 @@ pub enum Commands {
     },
 
     // ── Asset (new) ──────────────────────────────────────────────────────────
-    /// Stock holding period breakdown for a symbol
+    /// Stock holding period breakdown for one or more symbols
     ///
     /// Example: longbridge holding-period TSLA.US
+    /// Example: longbridge holding-period TSLA.US 700.HK AAPL.US
     HoldingPeriod {
-        /// Symbol in <CODE>.<MARKET> format
-        symbol: String,
+        /// One or more symbols in <CODE>.<MARKET> format
+        symbols: Vec<String>,
     },
 
     /// Trade-order detail and cash snapshot for a symbol (order entry page)
@@ -3119,8 +3120,8 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             fundamental::cmd_analyst_estimates(symbol, format, verbose).await
         }
 
-        Commands::HoldingPeriod { symbol } => {
-            asset::cmd_holding_period(symbol, format, verbose).await
+        Commands::HoldingPeriod { symbols } => {
+            asset::cmd_holding_period(symbols, format, verbose).await
         }
         Commands::TradeInfo { symbol } => asset::cmd_trade_info(symbol, format, verbose).await,
 
