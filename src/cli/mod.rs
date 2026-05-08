@@ -645,9 +645,14 @@ pub enum Commands {
     /// Returns: overview (`total_asset`, `market_cap`, `total_cash`, `total_pl`, `total_today_pl`,
     /// `margin_call`, `risk_level`, `credit_limit`, currency), holdings table, and cash balances.
     ///
+    /// Without subcommand: shows full portfolio overview.
+    /// Subcommands: short-margin
     /// Example: longbridge portfolio
-    /// Example: longbridge portfolio --format json
-    Portfolio,
+    /// Example: longbridge portfolio short-margin
+    Portfolio {
+        #[command(subcommand)]
+        cmd: Option<PortfolioCmd>,
+    },
 
     /// Current stock (equity) positions across all sub-accounts
     ///
@@ -1077,14 +1082,6 @@ pub enum Commands {
     },
 
     // ── Asset (new) ──────────────────────────────────────────────────────────
-    /// Asset subcommands
-    ///
-    /// Example: longbridge asset short-margin
-    Asset {
-        #[command(subcommand)]
-        cmd: AssetCmd,
-    },
-
     /// Stock holding period breakdown for a symbol
     ///
     /// Example: longbridge holding-period TSLA.US
@@ -1610,10 +1607,10 @@ pub enum InstitutionRatingCmd {
 }
 
 #[derive(Subcommand)]
-pub enum AssetCmd {
+pub enum PortfolioCmd {
     /// Short-selling margin deposit details for the current account
     ///
-    /// Example: longbridge asset short-margin
+    /// Example: longbridge portfolio short-margin
     #[command(name = "short-margin")]
     ShortMargin,
 }
@@ -2889,7 +2886,10 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         },
         Commands::Assets { currency } => trade::cmd_assets(currency, format).await,
         Commands::CashFlow { start, end } => trade::cmd_cash_flow(start, end, format).await,
-        Commands::Portfolio => trade::cmd_portfolio(format).await,
+        Commands::Portfolio { cmd } => match cmd {
+            None => trade::cmd_portfolio(format).await,
+            Some(PortfolioCmd::ShortMargin) => asset::cmd_short_margin(format, verbose).await,
+        },
         Commands::Positions => trade::cmd_positions(format).await,
         Commands::FundPositions => trade::cmd_fund_positions(format).await,
         Commands::MarginRatio { symbol } => trade::cmd_margin_ratio(symbol, format).await,
@@ -3119,9 +3119,6 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             fundamental::cmd_analyst_estimates(symbol, format, verbose).await
         }
 
-        Commands::Asset { cmd } => match cmd {
-            AssetCmd::ShortMargin => asset::cmd_short_margin(format, verbose).await,
-        },
         Commands::HoldingPeriod { symbol } => {
             asset::cmd_holding_period(symbol, format, verbose).await
         }
