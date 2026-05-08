@@ -1082,14 +1082,6 @@ pub enum Commands {
     },
 
     // ── Asset (new) ──────────────────────────────────────────────────────────
-    /// Trade-order detail and cash snapshot for a symbol (order entry page)
-    ///
-    /// Example: longbridge trade-info TSLA.US
-    TradeInfo {
-        /// Symbol in <CODE>.<MARKET> format
-        symbol: String,
-    },
-
     // ── ATM (new) ────────────────────────────────────────────────────────────
     /// List bank cards for the current account
     ///
@@ -1614,6 +1606,15 @@ pub enum PortfolioCmd {
     HoldingPeriod {
         /// One or more symbols in <CODE>.<MARKET> format
         symbols: Vec<String>,
+    },
+
+    /// Trade-order detail and cash snapshot for a symbol (order entry page)
+    ///
+    /// Example: longbridge portfolio trade-info TSLA.US
+    #[command(name = "trade-info")]
+    TradeInfo {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
     },
 }
 
@@ -2894,6 +2895,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             Some(PortfolioCmd::HoldingPeriod { symbols }) => {
                 asset::cmd_holding_period(symbols, format, verbose).await
             }
+            Some(PortfolioCmd::TradeInfo { symbol }) => {
+                asset::cmd_trade_info(symbol, format, verbose).await
+            }
         },
         Commands::Positions => trade::cmd_positions(format).await,
         Commands::FundPositions => trade::cmd_fund_positions(format).await,
@@ -3124,8 +3128,6 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             fundamental::cmd_analyst_estimates(symbol, format, verbose).await
         }
 
-
-        Commands::TradeInfo { symbol } => asset::cmd_trade_info(symbol, format, verbose).await,
 
         Commands::BankCards => atm::cmd_withdrawal_cards(format, verbose).await,
         Commands::Withdrawals { page, count } => {
