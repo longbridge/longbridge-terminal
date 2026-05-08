@@ -1657,16 +1657,9 @@ pub enum IpoCmd {
         #[command(subcommand)]
         cmd: Option<IpoOrderCmd>,
     },
-    /// Show IPO profit/loss summary for a period
+    /// Show IPO profit/loss summary and items for a period
     #[command(name = "profit-loss")]
     ProfitLoss {
-        /// Period: 1m | 3m | 6m | 1y | all
-        #[arg(long, default_value = "all")]
-        period: String,
-    },
-    /// List IPO profit/loss items for a period
-    #[command(name = "profit-loss-items")]
-    ProfitLossItems {
         /// Period: 1m | 3m | 6m | 1y | all
         #[arg(long, default_value = "all")]
         period: String,
@@ -1675,8 +1668,6 @@ pub enum IpoCmd {
         #[arg(long, alias = "limit", default_value = "20")]
         count: u32,
     },
-    /// Show IPO holding portfolio detail for a symbol
-    Holdings { symbol: String },
     /// List US IPO stocks currently in subscription stage
     #[command(name = "us-subscriptions")]
     UsSubscriptions,
@@ -3175,13 +3166,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                     ipo::cmd_ipo_orders(None, market, status, page, count, format, verbose).await
                 }
             },
-IpoCmd::ProfitLoss { period } => {
-                ipo::cmd_ipo_profit_loss(&period, format, verbose).await
+IpoCmd::ProfitLoss { period, page, count } => {
+                ipo::cmd_ipo_profit_loss(&period, page, count, format, verbose).await
             }
-            IpoCmd::ProfitLossItems { period, page, count } => {
-                ipo::cmd_ipo_profit_loss_items(&period, page, count, format, verbose).await
-            }
-            IpoCmd::Holdings { symbol } => ipo::cmd_ipo_holdings(symbol, format, verbose).await,
             IpoCmd::UsSubscriptions => ipo::cmd_ipo_us_subscriptions(format, verbose).await,
             IpoCmd::UsWaitListing => ipo::cmd_ipo_us_wait_listing(format, verbose).await,
             IpoCmd::UsListed { page, count } => {

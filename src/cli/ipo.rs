@@ -598,6 +598,7 @@ pub async fn cmd_ipo_detail(
     verbose: bool,
 ) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
+    let account_channel = crate::auth::account_channel_or_default();
     let profile_params = [("counter_id", cid.as_str())];
     let timeline_params = [
         ("counter_id", cid.as_str()),
@@ -605,20 +606,28 @@ pub async fn cmd_ipo_detail(
         ("flag", "0"),
     ];
     let eligibility_params = [("counter_id", cid.as_str())];
-    let (profile_data, timeline_data, eligibility_data) = tokio::join!(
+    let holdings_params = [
+        ("counter_id", cid.as_str()),
+        ("need_realtime", "true"),
+        ("account_channel", account_channel.as_str()),
+    ];
+    let (profile_data, timeline_data, eligibility_data, holdings_data) = tokio::join!(
         http_get("/v1/ipo/profile", &profile_params, verbose),
         http_get("/v1/ipo/timeline", &timeline_params, verbose),
         http_get("/v1/ipo/eligibility", &eligibility_params, verbose),
+        http_get("/v1/ipo/holdings", &holdings_params, verbose),
     );
     let profile_data = profile_data?;
     let timeline_data = timeline_data?;
     let eligibility_data = eligibility_data?;
+    let holdings_data = holdings_data?;
     match format {
         OutputFormat::Json => {
             let mut result = serde_json::Map::new();
             result.insert("profile".to_string(), profile_data);
             result.insert("timeline".to_string(), timeline_data);
             result.insert("eligibility".to_string(), eligibility_data);
+            result.insert("holdings".to_string(), holdings_data);
             print_json(&Value::Object(result));
         }
         OutputFormat::Pretty => {
@@ -791,6 +800,31 @@ pub async fn cmd_ipo_detail(
                 }
             } else {
                 print_json(&timeline_data);
+            }
+            // Holdings section
+            if !holdings_data.is_null() && holdings_data.as_object().is_some() {
+                let max_purchase = val_str(&holdings_data["ipo_max_purchase"]);
+                let total = val_str(&holdings_data["total_amount"]);
+                let current = val_str(&holdings_data["current_amount"]);
+                let fee_rate = val_str(&holdings_data["finance_fee_rate"]);
+                let has_data = [&max_purchase, &total, &current, &fee_rate]
+                    .iter()
+                    .any(|v| *v != "-" && !v.is_empty() && *v != "0" && *v != "0.00");
+                if has_data {
+                    println!();
+                    if max_purchase != "-" && !max_purchase.is_empty() && max_purchase != "0" {
+                        kv("Max Purchase", &max_purchase);
+                    }
+                    if total != "-" && !total.is_empty() && total != "0.00" {
+                        kv("Total Amount", &total);
+                    }
+                    if current != "-" && !current.is_empty() && current != "0.00" {
+                        kv("Current Amount", &current);
+                    }
+                    if fee_rate != "-" && !fee_rate.is_empty() {
+                        kv("Finance Fee Rate", &fee_rate);
+                    }
+                }
             }
         }
     }
@@ -1003,40 +1037,8 @@ pub async fn cmd_ipo_order_detail(
     Ok(())
 }
 
-/// Check if the current user is eligible to subscribe to an IPO.
-
-/// Show IPO profit/loss summary for the given period.
-pub async fn cmd_ipo_profit_loss(period: &str, format: &OutputFormat, verbose: bool) -> Result<()> {
-    let account_channel = crate::auth::account_channel_or_default();
-    let data = http_get(
-        "/v1/ipo/profit-loss",
-        &[
-            ("period", period),
-            ("account_channel", account_channel.as_str()),
-        ],
-        verbose,
-    )
-    .await?;
-    let mut result = serde_json::Map::new();
-    if let Some(obj) = data.as_object() {
-        for (k, v) in obj {
-            if k == "updated_at" {
-                result.insert(k.clone(), Value::String(fmt_ts(v)));
-            } else {
-                result.insert(k.clone(), v.clone());
-            }
-        }
-    }
-    let data = Value::Object(result);
-    match format {
-        OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_json_value(&data, format),
-    }
-    Ok(())
-}
-
-/// List IPO profit/loss items for the given period.
-pub async fn cmd_ipo_profit_loss_items(
+/// Show IPO profit/loss summary + items for the given period.
+pub async fn cmd_ipo_profit_loss(
     period: &str,
     page: u32,
     limit: u32,
@@ -1046,41 +1048,65 @@ pub async fn cmd_ipo_profit_loss_items(
     let account_channel = crate::auth::account_channel_or_default();
     let page_str = page.to_string();
     let size_str = limit.to_string();
-    let data = http_get(
-        "/v1/ipo/profit-loss/items",
-        &[
-            ("period", period),
-            ("page", page_str.as_str()),
-            ("size", size_str.as_str()),
-            ("account_channel", account_channel.as_str()),
-        ],
-        verbose,
-    )
-    .await?;
-    match format {
-        OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_json_value(&data, format),
+    let summary_params = [
+        ("period", period),
+        ("account_channel", account_channel.as_str()),
+    ];
+    let items_params = [
+        ("period", period),
+        ("page", page_str.as_str()),
+        ("size", size_str.as_str()),
+        ("account_channel", account_channel.as_str()),
+    ];
+    let (summary_data, items_data) = tokio::join!(
+        http_get("/v1/ipo/profit-loss", &summary_params, verbose),
+        http_get("/v1/ipo/profit-loss/items", &items_params, verbose),
+    );
+    let summary_data = summary_data?;
+    let items_data = items_data?;
+    let mut summary = serde_json::Map::new();
+    if let Some(obj) = summary_data.as_object() {
+        for (k, v) in obj {
+            if k == "updated_at" {
+                summary.insert(k.clone(), Value::String(fmt_ts(v)));
+            } else {
+                summary.insert(k.clone(), v.clone());
+            }
+        }
     }
-    Ok(())
-}
-
-/// Show IPO holding portfolio detail for a symbol.
-pub async fn cmd_ipo_holdings(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
-    let account_channel = crate::auth::account_channel_or_default();
-    let cid = symbol_to_counter_id(&symbol);
-    let data = http_get(
-        "/v1/ipo/holdings",
-        &[
-            ("counter_id", cid.as_str()),
-            ("need_realtime", "true"),
-            ("account_channel", account_channel.as_str()),
-        ],
-        verbose,
-    )
-    .await?;
+    let summary_val = Value::Object(summary);
     match format {
-        OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_json_value(&data, format),
+        OutputFormat::Json => {
+            let mut result = serde_json::Map::new();
+            result.insert("summary".to_string(), summary_val);
+            result.insert("items".to_string(), items_data);
+            print_json(&Value::Object(result));
+        }
+        OutputFormat::Pretty => {
+            print_json_value(&summary_val, format);
+            if let Some(items) = items_data["items"].as_array() {
+                if !items.is_empty() {
+                    println!();
+                    let headers = ["symbol", "name", "qty", "cost", "profit", "rate"];
+                    let rows: Vec<Vec<String>> = items
+                        .iter()
+                        .map(|item| {
+                            vec![
+                                counter_id_to_symbol(&val_str(&item["counter_id"])),
+                                val_str(&item["name"]),
+                                val_str(&item["qty"]),
+                                val_str(&item["cost_price"]),
+                                val_str(&item["profit_loss"]),
+                                val_str(&item["profit_loss_rate"]),
+                            ]
+                        })
+                        .collect();
+                    print_table(&headers, rows, &OutputFormat::Pretty);
+                }
+            } else if !items_data.is_null() {
+                print_json_value(&items_data, format);
+            }
+        }
     }
     Ok(())
 }

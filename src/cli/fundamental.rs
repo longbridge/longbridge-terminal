@@ -2172,7 +2172,7 @@ pub async fn cmd_institution_rating_industry_rank(
                                         o.insert(
                                             "symbol".to_string(),
                                             Value::String(counter_id_to_symbol(
-                                                &iv.as_str().unwrap_or("").to_string(),
+                                                iv.as_str().unwrap_or(""),
                                             )),
                                         );
                                     } else {
