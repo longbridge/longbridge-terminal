@@ -1,7 +1,7 @@
 use anyhow::Result;
 use longbridge::httpclient::Json;
 use reqwest::Method;
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use super::OutputFormat;
 
@@ -2157,6 +2157,40 @@ pub async fn cmd_institution_rating_industry_rank(
         verbose,
     )
     .await?;
+    let mut result = Map::new();
+    if let Some(obj) = data.as_object() {
+        for (k, v) in obj {
+            if k == "items" {
+                if let Some(arr) = v.as_array() {
+                    let transformed: Vec<Value> = arr
+                        .iter()
+                        .map(|item| {
+                            let mut o = Map::new();
+                            if let Some(m) = item.as_object() {
+                                for (ik, iv) in m {
+                                    if ik == "counter_id" {
+                                        o.insert(
+                                            "symbol".to_string(),
+                                            Value::String(counter_id_to_symbol(
+                                                &iv.as_str().unwrap_or("").to_string(),
+                                            )),
+                                        );
+                                    } else {
+                                        o.insert(ik.clone(), iv.clone());
+                                    }
+                                }
+                            }
+                            Value::Object(o)
+                        })
+                        .collect();
+                    result.insert(k.clone(), Value::Array(transformed));
+                }
+            } else {
+                result.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    let data = Value::Object(result);
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => print_kv(&data),

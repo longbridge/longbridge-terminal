@@ -1628,19 +1628,15 @@ pub enum IpoCmd {
     },
     /// Show the IPO calendar (all upcoming and recent IPOs)
     Calendar,
-    /// Show IPO subscription page information for a symbol
-    Info { symbol: String },
-    /// Show IPO profile (prospectus summary) for a symbol
-    Profile { symbol: String },
-    /// Show IPO timeline for a symbol
-    Timeline {
+    /// Show IPO detail: profile and timeline for a symbol
+    ///
+    /// Example: longbridge ipo detail 6810.HK
+    /// Example: longbridge ipo detail AAPL.US --market US
+    Detail {
         symbol: String,
-        /// Market, e.g. HK
+        /// Market: HK (default) or US
         #[arg(long, default_value = "HK")]
         market: String,
-        /// Flag: 0=normal, 2=international placement
-        #[arg(long, default_value = "0")]
-        flag: u8,
     },
     /// Show the current active IPO order status for a symbol
     Order { symbol: String },
@@ -3153,13 +3149,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 ipo::cmd_ipo_listed(page, count, format, verbose).await
             }
             IpoCmd::Calendar => ipo::cmd_ipo_calendar(format, verbose).await,
-            IpoCmd::Info { symbol } => ipo::cmd_ipo_info(symbol, format, verbose).await,
-            IpoCmd::Profile { symbol } => ipo::cmd_ipo_profile(symbol, format, verbose).await,
-            IpoCmd::Timeline {
-                symbol,
-                market,
-                flag,
-            } => ipo::cmd_ipo_timeline(symbol, &market, flag, format, verbose).await,
+            IpoCmd::Detail { symbol, market } => {
+                ipo::cmd_ipo_detail(symbol, &market, format, verbose).await
+            }
             IpoCmd::Order { symbol } => ipo::cmd_ipo_order(symbol, format, verbose).await,
             IpoCmd::Orders { symbol } => ipo::cmd_ipo_orders(symbol, format, verbose).await,
             IpoCmd::OrderDetail { order_id } => {

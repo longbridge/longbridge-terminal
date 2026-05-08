@@ -32,19 +32,6 @@ fn fmt_ts(v: &Value) -> String {
     ts.map_or_else(|| val_str(v), crate::utils::datetime::format_timestamp)
 }
 
-fn fmt_ts_opt(v: &Value) -> String {
-    let ts = match v {
-        Value::Number(n) => n.as_i64(),
-        Value::String(s) => s.parse::<i64>().ok(),
-        _ => None,
-    };
-    match ts {
-        Some(n) if n > 0 => crate::utils::datetime::format_timestamp(n),
-        Some(_) => "-".to_string(),
-        None => val_str(v),
-    }
-}
-
 fn fmt_date_opt(v: &Value) -> String {
     let ts = match v {
         Value::Number(n) => n.as_i64(),
@@ -400,10 +387,10 @@ pub async fn cmd_ipo_wait_listing(format: &OutputFormat, verbose: bool) -> Resul
 
 fn hk_listed_row(item: &Value) -> Vec<String> {
     let date = fmt_date_opt(&item["ipo_date"]);
-    let amount = val_str(&item["amount"])
-        .parse::<u64>()
-        .map(|n| crate::utils::number::format_volume(n))
-        .unwrap_or_else(|_| val_str(&item["amount"]));
+    let amount = val_str(&item["amount"]).parse::<u64>().map_or_else(
+        |_| val_str(&item["amount"]),
+        crate::utils::number::format_volume,
+    );
     vec![
         val_str(&item["name"]),
         counter_id_to_symbol(&val_str(&item["counter_id"])),
@@ -418,10 +405,10 @@ fn hk_listed_row(item: &Value) -> Vec<String> {
 
 fn us_listed_row(item: &Value) -> Vec<String> {
     let date = fmt_date_opt(&item["ipo_date"]);
-    let amount = val_str(&item["amount"])
-        .parse::<u64>()
-        .map(|n| crate::utils::number::format_volume(n))
-        .unwrap_or_else(|_| val_str(&item["amount"]));
+    let amount = val_str(&item["amount"]).parse::<u64>().map_or_else(
+        |_| val_str(&item["amount"]),
+        crate::utils::number::format_volume,
+    );
     vec![
         val_str(&item["name"]),
         counter_id_to_symbol(&val_str(&item["counter_id"])),
@@ -594,75 +581,200 @@ pub async fn cmd_ipo_calendar(format: &OutputFormat, verbose: bool) -> Result<()
     Ok(())
 }
 
-/// Show IPO subscription page information for a symbol.
-pub async fn cmd_ipo_info(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
-    let account_channel = crate::auth::account_channel_or_default();
-    let cid = symbol_to_counter_id(&symbol);
-    let data = http_get(
-        "/v1/ipo/info",
-        &[
-            ("counter_id", cid.as_str()),
-            ("account_channel", account_channel.as_str()),
-        ],
-        verbose,
-    )
-    .await?;
-    match format {
-        OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_json_value(&data, format),
-    }
-    Ok(())
-}
-
-/// Show IPO profile (prospectus summary) for a symbol.
-pub async fn cmd_ipo_profile(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
-    let data = http_get("/v1/ipo/profile", &[("counter_id", cid.as_str())], verbose).await?;
-    match format {
-        OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_json_value(&data, format),
-    }
-    Ok(())
-}
-
-/// Show the IPO timeline for a symbol.
-pub async fn cmd_ipo_timeline(
+/// Show IPO detail: profile (prospectus summary) + timeline for a symbol.
+pub async fn cmd_ipo_detail(
     symbol: String,
     market: &str,
-    flag: u8,
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
-    let flag_str = flag.to_string();
-    let data = http_get(
-        "/v1/ipo/timeline",
-        &[
-            ("counter_id", cid.as_str()),
-            ("market", market),
-            ("flag", flag_str.as_str()),
-        ],
-        verbose,
-    )
-    .await?;
+    let profile_params = [("counter_id", cid.as_str())];
+    let timeline_params = [
+        ("counter_id", cid.as_str()),
+        ("market", market),
+        ("flag", "0"),
+    ];
+    let (profile_data, timeline_data) = tokio::join!(
+        http_get("/v1/ipo/profile", &profile_params, verbose),
+        http_get("/v1/ipo/timeline", &timeline_params, verbose),
+    );
+    let profile_data = profile_data?;
+    let timeline_data = timeline_data?;
     match format {
-        OutputFormat::Json => print_json(&data),
+        OutputFormat::Json => {
+            let mut result = serde_json::Map::new();
+            result.insert("profile".to_string(), profile_data);
+            result.insert("timeline".to_string(), timeline_data);
+            print_json(&Value::Object(result));
+        }
         OutputFormat::Pretty => {
-            if let Some(timeline) = data["timeline"].as_array() {
-                let headers = ["date", "event", "status"];
-                let rows: Vec<Vec<String>> = timeline
-                    .iter()
-                    .map(|item| {
-                        vec![
-                            val_str(&item["date"]),
-                            val_str(&item["event"]),
-                            val_str(&item["status"]),
-                        ]
-                    })
-                    .collect();
-                print_table(&headers, rows, &OutputFormat::Pretty);
+            let kv = |label: &str, value: &str| {
+                println!("  {:<24}{value}", format!("{label}:"));
+            };
+            let trunc = |s: String, max: usize| -> String {
+                if s.chars().count() > max {
+                    format!("{}…", s.chars().take(max).collect::<String>())
+                } else {
+                    s
+                }
+            };
+            let str_list = |arr: Option<&Vec<Value>>| -> String {
+                arr.map(|a| {
+                    a.iter()
+                        .filter_map(|x| {
+                            let s = if x.is_string() {
+                                val_str(x)
+                            } else {
+                                val_str(&x["name"])
+                            };
+                            if s == "-" || s.is_empty() {
+                                None
+                            } else {
+                                Some(s)
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default()
+            };
+
+            let profile = if market == "US" {
+                &profile_data["us"]
             } else {
-                print_json(&data);
+                &profile_data["hk"]
+            };
+            if !profile.is_null() {
+                let ipo_date = fmt_date_opt(&profile["ipo_date"]);
+                if ipo_date != "-" {
+                    kv("IPO Date", &ipo_date);
+                }
+
+                let currency = val_str(&profile["issue_currency"]);
+                let issue_price = val_str(&profile["issue_price"]);
+                if issue_price != "-" && !issue_price.is_empty() {
+                    let price_str = if currency != "-" && !currency.is_empty() {
+                        format!("{issue_price} {currency}")
+                    } else {
+                        issue_price
+                    };
+                    kv("Issue Price", &price_str);
+                }
+                if profile["show_mart"].as_bool().unwrap_or(false) {
+                    let mart_begin = fmt_ts(&profile["mart_begin"]);
+                    let mart_end = fmt_ts(&profile["mart_end"]);
+                    if mart_begin != "-" {
+                        kv("Grey Market", &format!("{mart_begin} – {mart_end}"));
+                    }
+                }
+                let trade_unit = val_str(&profile["trade_unit"]);
+                if trade_unit != "-" && !trade_unit.is_empty() && trade_unit != "0" {
+                    kv("Trade Unit (Lot)", &trade_unit);
+                }
+                let proceeds = val_str(&profile["proceeds_planned"]);
+                if proceeds != "-" && !proceeds.is_empty() {
+                    kv("Proceeds Planned", &proceeds);
+                }
+
+                let industry = val_str(&profile["industry"]);
+                if industry != "-" && !industry.is_empty() {
+                    kv("Industry", &industry);
+                }
+
+                for (key, label) in &[
+                    ("margin_multiple", "Margin Multiple"),
+                    ("margin_sub", "Margin Sub"),
+                ] {
+                    let v = val_str(&profile[*key]);
+                    if v != "-" && !v.is_empty() {
+                        kv(label, &v);
+                    }
+                }
+                let sponsors = str_list(profile["sponsor"].as_array());
+                if !sponsors.is_empty() {
+                    kv("Sponsor", &sponsors);
+                }
+
+                let investors = str_list(profile["investors"].as_array());
+                if !investors.is_empty() {
+                    kv("Cornerstone Investors", &investors);
+                }
+
+                if let Some(uw) = profile["underwriter"].as_array() {
+                    if !uw.is_empty() {
+                        let names: Vec<String> = uw
+                            .iter()
+                            .take(5)
+                            .filter_map(|x| {
+                                let s = if x.is_string() {
+                                    val_str(x)
+                                } else {
+                                    val_str(&x["name"])
+                                };
+                                if s == "-" || s.is_empty() {
+                                    None
+                                } else {
+                                    Some(s)
+                                }
+                            })
+                            .collect();
+                        let mut label = names.join(", ");
+                        if uw.len() > 5 {
+                            use std::fmt::Write as _;
+                            let _ = write!(label, " (+{})", uw.len() - 5);
+                        }
+                        if !label.is_empty() {
+                            kv("Underwriters", &label);
+                        }
+                    }
+                }
+                let prospectus = val_str(&profile["prospectus"]);
+                if prospectus != "-" && !prospectus.is_empty() {
+                    kv("Prospectus", &prospectus);
+                }
+
+                let recommend_url = val_str(&profile["recommend_url"]);
+                if recommend_url != "-" && !recommend_url.is_empty() {
+                    kv("Research", &recommend_url);
+                }
+
+                let profile_text = val_str(&profile["profile"]);
+                if profile_text != "-" && !profile_text.is_empty() {
+                    kv("Description", &trunc(profile_text, 200));
+                }
+                let rec = val_str(&profile["rec_purposes"]);
+                if rec != "-" && !rec.is_empty() {
+                    kv("Use of Proceeds", &trunc(rec, 200));
+                }
+                println!();
+            }
+            // Timeline section
+            let can_sub = timeline_data["can_subscribe"].as_bool().unwrap_or(false);
+            let pay_end = val_str(&timeline_data["pay_end_date"]);
+            if can_sub || (pay_end != "-" && !pay_end.is_empty()) {
+                kv("Can Subscribe", if can_sub { "Yes" } else { "No" });
+                if pay_end != "-" && !pay_end.is_empty() {
+                    kv("Payment Deadline", &pay_end);
+                }
+                println!();
+            }
+            if let Some(timeline) = timeline_data["timeline"].as_array() {
+                if !timeline.is_empty() {
+                    let headers = ["time", "event"];
+                    let rows: Vec<Vec<String>> = timeline
+                        .iter()
+                        .map(|item| {
+                            vec![
+                                val_str(&item["time"]).replace('\n', " "),
+                                val_str(&item["name"]),
+                            ]
+                        })
+                        .collect();
+                    print_table(&headers, rows, &OutputFormat::Pretty);
+                }
+            } else {
+                print_json(&timeline_data);
             }
         }
     }
