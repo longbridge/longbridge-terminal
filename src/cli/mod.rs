@@ -1641,10 +1641,10 @@ pub enum IpoCmd {
     /// IPO orders (active + history) for the current account
     ///
     /// Without a subcommand, lists active and historical orders.
-    /// Example: longbridge ipo order
-    /// Example: longbridge ipo order --status 4
-    /// Example: longbridge ipo order detail 2452504
-    Order {
+    /// Example: longbridge ipo orders
+    /// Example: longbridge ipo orders --status 4
+    /// Example: longbridge ipo orders detail 2452504
+    Orders {
         #[arg(long)]
         market: Option<String>,
         /// Status filter for history: 0=all, 1=subscribed, 2=debit-failed, 3=not-won, 4=won, 5=cancelled
@@ -1699,7 +1699,7 @@ pub enum IpoCmd {
 pub enum IpoOrderCmd {
     /// Full detail for a single IPO order
     ///
-    /// Example: longbridge ipo order detail 2452504
+    /// Example: longbridge ipo orders detail 2452504
     Detail {
         /// IPO order ID
         order_id: String,
@@ -3163,7 +3163,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             IpoCmd::Detail { symbol, market } => {
                 ipo::cmd_ipo_detail(symbol, &market, format, verbose).await
             }
-            IpoCmd::Order {
+            IpoCmd::Orders {
                 market,
                 status,
                 page,
