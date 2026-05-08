@@ -2213,25 +2213,111 @@ pub async fn cmd_financial_report_latest(
 
 pub async fn cmd_valuation_rank(
     symbol: String,
-    start: &str,
-    end: &str,
+    start: Option<&str>,
+    end: Option<&str>,
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
+    let now = time::OffsetDateTime::now_utc();
+    let end_date = end.map_or_else(
+        || format!("{:04}{:02}{:02}", now.year(), now.month() as u8, now.day()),
+        str::to_string,
+    );
+    let start_date = start.map_or_else(
+        || {
+            let one_year_ago = now - time::Duration::days(365);
+            format!(
+                "{:04}{:02}{:02}",
+                one_year_ago.year(),
+                one_year_ago.month() as u8,
+                one_year_ago.day()
+            )
+        },
+        str::to_string,
+    );
+    let counter_id = symbol_to_counter_id(&symbol);
     let data = http_get(
         "/v1/quote/valuation/rank",
         &[
-            ("counter_id", cid.as_str()),
-            ("start_date", start),
-            ("end_date", end),
+            ("counter_id", counter_id.as_str()),
+            ("start_date", start_date.as_str()),
+            ("end_date", end_date.as_str()),
         ],
         verbose,
     )
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_kv(&data),
+        OutputFormat::Pretty => {
+            let kline_type = data["kline_type"].as_str().unwrap_or("");
+            if !kline_type.is_empty() {
+                println!("  ({kline_type})");
+            }
+            let metrics = [("pe", "PE"), ("pb", "PB"), ("ps", "PS"), ("dvd", "Div")];
+            // Find the metric with the most data points to use as date backbone
+            let max_len = metrics
+                .iter()
+                .map(|(k, _)| data[k].as_array().map_or(0, Vec::len))
+                .max()
+                .unwrap_or(0);
+            if max_len == 0 {
+                println!("No data.");
+                return Ok(());
+            }
+            // Build header
+            let date_w = 12usize;
+            let col_w = 10usize;
+            print!("{}", pad_right("Date", date_w));
+            for (_, label) in &metrics {
+                print!("{}", pad_left(label, col_w));
+            }
+            println!();
+            println!("{}", "─".repeat(date_w + col_w * metrics.len()));
+
+            // Use PE as date source (fall back to first non-empty)
+            let date_source = metrics
+                .iter()
+                .find(|(k, _)| data[*k].as_array().is_some_and(|a| !a.is_empty()))
+                .map_or("pe", |(k, _)| *k);
+            let timestamps: Vec<i64> = data[date_source]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|item| {
+                            item["timestamp"]
+                                .as_str()
+                                .and_then(|s| s.parse::<i64>().ok())
+                                .or_else(|| item["timestamp"].as_i64())
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            for (row_idx, &ts) in timestamps.iter().enumerate() {
+                let row_date = crate::utils::datetime::format_date(ts);
+                print!("{}", pad_right(&row_date, date_w));
+                for (key, _) in &metrics {
+                    let cell = data[*key]
+                        .as_array()
+                        .and_then(|a| a.get(row_idx))
+                        .map_or_else(
+                            || "-".to_string(),
+                            |item| {
+                                let rank = item["rank"].as_i64().unwrap_or(0);
+                                let total = item["total"].as_i64().unwrap_or(0);
+                                if rank == 0 || total == 0 {
+                                    "-".to_string()
+                                } else {
+                                    format!("{rank}/{total}")
+                                }
+                            },
+                        );
+                    print!("{}", pad_left(&cell, col_w));
+                }
+                println!();
+            }
+            println!();
+        }
     }
     Ok(())
 }
@@ -2240,13 +2326,14 @@ pub async fn cmd_valuation_rank(
 
 pub async fn cmd_analyst_estimates(
     symbol: String,
+    item: &str,
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
         "/v1/quote/estimates",
-        &[("counter_id", cid.as_str())],
+        &[("counter_id", cid.as_str()), ("item", item)],
         verbose,
     )
     .await?;
