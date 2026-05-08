@@ -4,7 +4,7 @@ use serde_json::Value;
 use super::api::http_get;
 use super::output::{print_json_value, print_table};
 use super::OutputFormat;
-use crate::utils::counter::symbol_to_counter_id;
+use crate::utils::counter::{counter_id_to_symbol, symbol_to_counter_id};
 
 fn print_json(value: &Value) {
     println!(
@@ -61,7 +61,7 @@ pub async fn cmd_ipo_subscriptions(format: &OutputFormat, verbose: bool) -> Resu
                 }
                 let headers = [
                     "name",
-                    "counter_id",
+                    "symbol",
                     "currency",
                     "issue_price",
                     "deadline",
@@ -82,7 +82,7 @@ pub async fn cmd_ipo_subscriptions(format: &OutputFormat, verbose: bool) -> Resu
                         .to_string();
                         vec![
                             val_str(&item["name"]),
-                            val_str(&item["counter_id"]),
+                            counter_id_to_symbol(&val_str(&item["counter_id"])),
                             val_str(&item["currency"]),
                             val_str(&item["issue_price"]),
                             fmt_ts(&item["sub_deadline"]),
@@ -126,13 +126,13 @@ pub async fn cmd_ipo_wait_listing(format: &OutputFormat, verbose: bool) -> Resul
                     println!("No IPO stocks in wait-listing.");
                     return Ok(());
                 }
-                let headers = ["name", "counter_id", "issue_price", "listing_date"];
+                let headers = ["name", "symbol", "issue_price", "listing_date"];
                 let rows: Vec<Vec<String>> = list
                     .iter()
                     .map(|item| {
                         vec![
                             val_str(&item["name"]),
-                            val_str(&item["counter_id"]),
+                            counter_id_to_symbol(&val_str(&item["counter_id"])),
                             val_str(&item["issue_price"]),
                             val_str(&item["listing_date"]),
                         ]
@@ -176,13 +176,13 @@ pub async fn cmd_ipo_listed(
                     println!("No listed IPO stocks found.");
                     return Ok(());
                 }
-                let headers = ["name", "counter_id", "issue_price", "listing_date"];
+                let headers = ["name", "symbol", "issue_price", "listing_date"];
                 let rows: Vec<Vec<String>> = list
                     .iter()
                     .map(|item| {
                         vec![
                             val_str(&item["name"]),
-                            val_str(&item["counter_id"]),
+                            counter_id_to_symbol(&val_str(&item["counter_id"])),
                             val_str(&item["issue_price"]),
                             val_str(&item["listing_date"]),
                         ]
@@ -208,14 +208,14 @@ pub async fn cmd_ipo_calendar(format: &OutputFormat, verbose: bool) -> Result<()
                     println!("No IPO calendar entries found.");
                     return Ok(());
                 }
-                let headers = ["date", "name", "counter_id", "type"];
+                let headers = ["date", "name", "symbol", "type"];
                 let rows: Vec<Vec<String>> = list
                     .iter()
                     .map(|item| {
                         vec![
                             val_str(&item["date"]),
                             val_str(&item["name"]),
-                            val_str(&item["counter_id"]),
+                            counter_id_to_symbol(&val_str(&item["counter_id"])),
                             val_str(&item["type"]),
                         ]
                     })
