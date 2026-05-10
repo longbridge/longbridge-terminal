@@ -2347,6 +2347,7 @@ pub async fn cmd_analyst_estimates(
 
 pub async fn cmd_institution_rating_history(
     symbol: String,
+    count: usize,
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
@@ -2359,7 +2360,7 @@ pub async fn cmd_institution_rating_history(
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_institution_rating_history(&data),
+        OutputFormat::Pretty => print_institution_rating_history(&data, count),
     }
     Ok(())
 }
@@ -2374,7 +2375,7 @@ fn fmt_ts_val(v: &Value) -> String {
     s.parse::<i64>().map_or_else(|_| s, format_date)
 }
 
-fn print_institution_rating_history(data: &Value) {
+fn print_institution_rating_history(data: &Value, count: usize) {
     let empty: Vec<Value> = Vec::new();
     let target_list = data
         .get("target_history")
@@ -2386,9 +2387,21 @@ fn print_institution_rating_history(data: &Value) {
         .unwrap_or(&empty);
 
     if !target_list.is_empty() {
-        println!("Target price history:");
+        let recent_target = if target_list.len() > count {
+            &target_list[target_list.len() - count..]
+        } else {
+            target_list
+        };
+        if target_list.len() > count {
+            println!(
+                "Target price history (most recent {count} of {}):",
+                target_list.len()
+            );
+        } else {
+            println!("Target price history:");
+        }
         let headers = ["date", "close", "low_target", "high_target"];
-        let rows: Vec<Vec<String>> = target_list
+        let rows: Vec<Vec<String>> = recent_target
             .iter()
             .map(|item| {
                 vec![
@@ -2403,21 +2416,30 @@ fn print_institution_rating_history(data: &Value) {
     }
 
     if !eval_list.is_empty() {
-        const EVAL_LIMIT: usize = 20;
-        let recent = if eval_list.len() > EVAL_LIMIT {
-            &eval_list[eval_list.len() - EVAL_LIMIT..]
+        let recent = if eval_list.len() > count {
+            &eval_list[eval_list.len() - count..]
         } else {
             eval_list
         };
-        if eval_list.len() > EVAL_LIMIT {
+        if eval_list.len() > count {
             println!(
-                "\nRating history (most recent {EVAL_LIMIT} of {}):",
+                "\nRating history (most recent {count} of {}):",
                 eval_list.len()
             );
         } else {
             println!("\nRating history:");
         }
-        let headers = ["start_date", "end_date", "total", "over", "buy", "hold", "sell", "under", "no_opinion"];
+        let headers = [
+            "start_date",
+            "end_date",
+            "total",
+            "over",
+            "buy",
+            "hold",
+            "sell",
+            "under",
+            "no_opinion",
+        ];
         let rows: Vec<Vec<String>> = recent
             .iter()
             .map(|item| {

@@ -416,9 +416,9 @@ pub enum Commands {
         /// Page number for --industry-rank results (default: 1)
         #[arg(long, default_value = "1")]
         page: u32,
-        /// Page size for --industry-rank results (default: 20)
-        #[arg(long, default_value = "20")]
-        limit: u32,
+        /// Number of records to show (default: 20); applies to --history and --industry-rank
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: u32,
     },
 
     /// Dividend history and distribution details for a symbol
@@ -2610,7 +2610,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             history,
             industry_rank,
             page,
-            limit,
+            count,
         } => {
             if industry_rank {
                 let sym = symbol.ok_or_else(|| {
@@ -2619,7 +2619,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                     )
                 })?;
                 fundamental::cmd_institution_rating_industry_rank(
-                    sym, page, limit, format, verbose,
+                    sym, page, count, format, verbose,
                 )
                 .await
             } else if history {
@@ -2628,7 +2628,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                         "Symbol required. Usage: longbridge institution-rating <SYMBOL> --history"
                     )
                 })?;
-                fundamental::cmd_institution_rating_history(sym, format, verbose).await
+                fundamental::cmd_institution_rating_history(sym, count as usize, format, verbose).await
             } else {
                 match cmd {
                     Some(InstitutionRatingCmd::Detail { symbol: s }) => {
