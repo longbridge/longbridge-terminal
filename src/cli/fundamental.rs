@@ -2347,6 +2347,7 @@ pub async fn cmd_analyst_estimates(
 
 pub async fn cmd_institution_rating_history(
     symbol: String,
+    count: usize,
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
@@ -2359,33 +2360,108 @@ pub async fn cmd_institution_rating_history(
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => {
-            let target_empty = data
-                .get("target_history")
-                .and_then(|v| v.as_array())
-                .is_none_or(Vec::is_empty);
-            let eval_empty = data
-                .get("evaluate_history")
-                .and_then(|v| v.as_array())
-                .is_none_or(Vec::is_empty);
-            if !target_empty {
-                if let Some(target) = data.get("target_history") {
-                    println!("Target price history:");
-                    print_kv(target);
-                }
-            }
-            if !eval_empty {
-                if let Some(eval) = data.get("evaluate_history") {
-                    println!("\nRating history:");
-                    print_kv(eval);
-                }
-            }
-            if target_empty && eval_empty {
-                println!("No rating history found.");
-            }
-        }
+        OutputFormat::Pretty => print_institution_rating_history(&data, count),
     }
     Ok(())
+}
+
+fn fmt_price(v: &Value) -> String {
+    let s = val_str(v);
+    s.parse::<f64>().map_or_else(|_| s, |f| format!("{f:.2}"))
+}
+
+fn fmt_ts_val(v: &Value) -> String {
+    let s = val_str(v);
+    s.parse::<i64>().map_or_else(|_| s, format_date)
+}
+
+fn print_institution_rating_history(data: &Value, count: usize) {
+    let empty: Vec<Value> = Vec::new();
+    let target_list = data
+        .get("target_history")
+        .and_then(|v| v.as_array())
+        .unwrap_or(&empty);
+    let eval_list = data
+        .get("evaluate_history")
+        .and_then(|v| v.as_array())
+        .unwrap_or(&empty);
+
+    if !target_list.is_empty() {
+        let recent_target = if target_list.len() > count {
+            &target_list[target_list.len() - count..]
+        } else {
+            target_list
+        };
+        if target_list.len() > count {
+            println!(
+                "Target price history (most recent {count} of {}):",
+                target_list.len()
+            );
+        } else {
+            println!("Target price history:");
+        }
+        let headers = ["date", "close", "low_target", "high_target"];
+        let rows: Vec<Vec<String>> = recent_target
+            .iter()
+            .map(|item| {
+                vec![
+                    fmt_ts_val(&item["timestamp"]),
+                    val_str(&item["close"]),
+                    fmt_price(&item["low_target_price"]),
+                    fmt_price(&item["high_target_price"]),
+                ]
+            })
+            .collect();
+        super::output::print_table(&headers, rows, &OutputFormat::Pretty);
+    }
+
+    if !eval_list.is_empty() {
+        let recent = if eval_list.len() > count {
+            &eval_list[eval_list.len() - count..]
+        } else {
+            eval_list
+        };
+        if eval_list.len() > count {
+            println!(
+                "\nRating history (most recent {count} of {}):",
+                eval_list.len()
+            );
+        } else {
+            println!("\nRating history:");
+        }
+        let headers = [
+            "start_date",
+            "end_date",
+            "total",
+            "over",
+            "buy",
+            "hold",
+            "sell",
+            "under",
+            "no_opinion",
+        ];
+        let rows: Vec<Vec<String>> = recent
+            .iter()
+            .map(|item| {
+                vec![
+                    fmt_ts_val(&item["start_date"]),
+                    fmt_ts_val(&item["end_date"]),
+                    val_str(&item["total"]),
+                    val_str(&item["over"]),
+                    val_str(&item["buy"]),
+                    val_str(&item["hold"]),
+                    val_str(&item["sell"]),
+                    val_str(&item["under"]),
+                    val_str(&item["no_opinion"]),
+                ]
+            })
+            .collect();
+        super::output::print_table(&headers, rows, &OutputFormat::Pretty);
+    }
+
+    if target_list.is_empty() && eval_list.is_empty() {
+        println!("No rating history found.");
+    }
 }
 
 // ── institution rating industry rank ────────────────────────────────────────
