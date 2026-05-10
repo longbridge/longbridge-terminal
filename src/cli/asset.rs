@@ -2,9 +2,7 @@ use anyhow::Result;
 use serde_json::Value;
 
 use super::api::http_get;
-use super::output::{
-    fmt_datetime, parse_datetime_end, parse_datetime_start, print_table,
-};
+use super::output::{fmt_datetime, parse_datetime_end, parse_datetime_start, print_table};
 use super::OutputFormat;
 
 fn print_json(value: &Value) {
@@ -531,4 +529,3 @@ pub async fn cmd_short_margin(format: &OutputFormat, verbose: bool) -> Result<()
     }
     Ok(())
 }
-
