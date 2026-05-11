@@ -44,6 +44,12 @@ pub fn symbol_to_counter_id(symbol: &str) -> String {
         if let Some(ix_code) = code.strip_prefix('.') {
             return format!("IX/{market}/{ix_code}");
         }
+        // Strip leading zeros from numeric codes (e.g. `00700` → `700`)
+        let code = if code.chars().all(|c| c.is_ascii_digit()) {
+            code.trim_start_matches('0')
+        } else {
+            code
+        };
         let etf_candidate = format!("ETF/{market}/{code}");
         if us_etf_set().contains(etf_candidate.as_str()) {
             etf_candidate
@@ -67,6 +73,16 @@ mod tests {
     #[test]
     fn stock_hk() {
         assert_eq!(symbol_to_counter_id("700.HK"), "ST/HK/700");
+    }
+
+    #[test]
+    fn stock_hk_leading_zeros() {
+        assert_eq!(symbol_to_counter_id("00700.HK"), "ST/HK/700");
+    }
+
+    #[test]
+    fn stock_hk_leading_zeros_short() {
+        assert_eq!(symbol_to_counter_id("09988.HK"), "ST/HK/9988");
     }
 
     #[test]
