@@ -1073,14 +1073,6 @@ pub enum Commands {
         end: Option<String>,
     },
 
-    /// Analyst consensus estimates (EPS) for a symbol
-    ///
-    /// Example: longbridge analyst-estimates TSLA.US
-    AnalystEstimates {
-        /// Symbol in <CODE>.<MARKET> format
-        symbol: String,
-    },
-
     // ── Asset (new) ──────────────────────────────────────────────────────────
     // ── ATM (new) ────────────────────────────────────────────────────────────
     /// List bank cards for the current account
@@ -3100,11 +3092,6 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         Commands::ValuationRank { symbol, start, end } => {
             fundamental::cmd_valuation_rank(symbol, start.as_deref(), end.as_deref(), format, verbose).await
         }
-        Commands::AnalystEstimates { symbol } => {
-            fundamental::cmd_analyst_estimates(symbol, format, verbose).await
-        }
-
-
         Commands::BankCards => atm::cmd_withdrawal_cards(format, verbose).await,
         Commands::Withdrawals { page, count } => {
             atm::cmd_withdrawals(page, count, format, verbose).await

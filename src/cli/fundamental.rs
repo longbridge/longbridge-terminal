@@ -2322,27 +2322,6 @@ pub async fn cmd_valuation_rank(
     Ok(())
 }
 
-// ── analyst estimates (multi-dimension) ─────────────────────────────────────
-
-pub async fn cmd_analyst_estimates(
-    symbol: String,
-    format: &OutputFormat,
-    verbose: bool,
-) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
-    let data = http_get(
-        "/v1/quote/estimates",
-        &[("counter_id", cid.as_str()), ("item", "EPS")],
-        verbose,
-    )
-    .await?;
-    match format {
-        OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_kv(&data),
-    }
-    Ok(())
-}
-
 // ── institution rating history ───────────────────────────────────────────────
 
 pub async fn cmd_institution_rating_history(
