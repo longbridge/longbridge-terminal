@@ -1617,7 +1617,7 @@ pub enum IpoCmd {
     /// Show IPO detail: profile and timeline for a symbol
     ///
     /// Example: longbridge ipo detail 6810.HK
-    /// Example: longbridge ipo detail AAPL.US --market US
+    /// Example: longbridge ipo detail SUJA.US
     Detail {
         symbol: String,
         /// Market: HK (default) or US
