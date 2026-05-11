@@ -752,10 +752,10 @@ pub enum Commands {
         cmd: Option<IndustryValuationCmd>,
     },
 
-    /// Operating reviews and financial indicators by report period
+    /// Operating reviews and financial indicators by report period (HK stocks only)
     ///
-    /// Example: longbridge operating AAPL.US
-    /// Example: longbridge operating AAPL.US --report q1
+    /// Example: longbridge operating 700.HK
+    /// Example: longbridge operating 700.HK --report q1
     Operating {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
