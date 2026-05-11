@@ -2324,6 +2324,51 @@ pub async fn cmd_valuation_rank(
 
 // ── analyst estimates (multi-dimension) ─────────────────────────────────────
 
+fn print_analyst_estimates(data: &Value) {
+    let empty = Vec::new();
+    let list = data["list"].as_array().unwrap_or(&empty);
+    if list.is_empty() {
+        println!("No estimates data.");
+        return;
+    }
+    let currency = list
+        .first()
+        .and_then(|r| r["currency"].as_str())
+        .unwrap_or("");
+    println!("Currency: {currency}");
+    let headers = [
+        "Period",
+        "EPS (est)",
+        "EPS (act)",
+        "Revenue (est)",
+        "Revenue (act)",
+    ];
+    let rows: Vec<Vec<String>> = list
+        .iter()
+        .map(|r| {
+            let year = r["fiscal_year"].as_i64().unwrap_or(0);
+            let period = val_str(&r["fiscal_period"]);
+            let report = val_str(&r["report"]);
+            let period_label = if report == "af" {
+                format!("FY{year}")
+            } else {
+                format!("FY{year} Q{period}")
+            };
+            let est_eps = fmt_price(&r["estimated_eps"]);
+            let actual_eps = fmt_price(&r["eps"]);
+            let est_rev = format_financial_value(&val_str(&r["estimated_revenue"]), false);
+            let actual_rev_raw = val_str(&r["revenue"]);
+            let actual_rev = if actual_rev_raw.is_empty() {
+                String::new()
+            } else {
+                format_financial_value(&actual_rev_raw, false)
+            };
+            vec![period_label, est_eps, actual_eps, est_rev, actual_rev]
+        })
+        .collect();
+    super::output::print_table(&headers, rows, &OutputFormat::Pretty);
+}
+
 pub async fn cmd_analyst_estimates(
     symbol: String,
     format: &OutputFormat,
@@ -2332,13 +2377,13 @@ pub async fn cmd_analyst_estimates(
     let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
         "/v1/quote/estimates",
-        &[("counter_id", cid.as_str()), ("item", "EPS")],
+        &[("counter_id", cid.as_str())],
         verbose,
     )
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_kv(&data),
+        OutputFormat::Pretty => print_analyst_estimates(&data),
     }
     Ok(())
 }
