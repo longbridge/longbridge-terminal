@@ -71,47 +71,6 @@ fn jwt_exp(token: &str) -> Option<u64> {
     jwt_field(token, "exp")
 }
 
-/// Extract the user's `account_channel` from the access token JWT.
-///
-/// Longbridge tokens carry `sub` as a JSON-encoded string containing
-/// `account_channel` (e.g. `"lb"`, `"lb_papertrading"`, etc.). The channel
-/// is required by `/v1/quote/my-quotes` and must match the token's own
-/// channel — otherwise the server returns 401004.
-fn jwt_account_channel(token: &str) -> Option<String> {
-    use base64::Engine as _;
-    let payload = token.split('.').nth(1)?;
-    let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(payload)
-        .ok()?;
-    let v: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
-    let sub_str = v["sub"].as_str()?;
-    let sub: serde_json::Value = serde_json::from_str(sub_str).ok()?;
-    sub["account_channel"]
-        .as_str()
-        .filter(|s| !s.is_empty())
-        .map(str::to_owned)
-}
-
-/// Read the logged-in user's `account_channel` from the local token file.
-/// Falls back to `"lb"` when the file is missing/unparseable, which is the
-/// channel used by the rest of the CLI/TUI when no real account info is loaded.
-fn read_account_channel() -> String {
-    let default = "lb".to_owned();
-    let Ok(path) = crate::auth::token_file_path() else {
-        return default;
-    };
-    let Ok(contents) = std::fs::read_to_string(&path) else {
-        return default;
-    };
-    let Ok(data) = serde_json::from_str::<serde_json::Value>(&contents) else {
-        return default;
-    };
-    data["access_token"]
-        .as_str()
-        .and_then(jwt_account_channel)
-        .unwrap_or(default)
-}
-
 fn read_token_state() -> Result<TokenState> {
     let token_path = crate::auth::token_file_path()?;
     let now = SystemTime::now()
@@ -328,7 +287,7 @@ async fn fetch_account_channel_from_positions() -> Option<String> {
 }
 
 async fn fetch_account_info(market: &str) -> Result<AccountInfo> {
-    let account_channel = read_account_channel();
+    let account_channel = crate::auth::account_channel_or_default();
     let (member_id, level_center, statement_info, account_channel) = tokio::join!(
         crate::openapi::quote().member_id(),
         fetch_my_quotes(market, &account_channel),
@@ -596,7 +555,8 @@ pub async fn cmd_auth_status(format: &OutputFormat, market: &str) -> Result<()> 
 
                 // ── Quote Mall QR code ───────────────────────────────────────────
                 println!();
-                let _ = super::my_quote::print_mall_qr("lb");
+                let channel = crate::auth::account_channel_or_default();
+                let _ = super::my_quote::print_mall_qr(&channel);
             }
         }
     }

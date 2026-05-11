@@ -1,11 +1,11 @@
 # Longbridge Terminal
 
-AI-native CLI for the [Longbridge](https://longbridge.com) trading platform — real-time market data, portfolio, and trading.
+AI-native CLI for the [Longbridge](https://longbridge.com) trading platform — real-time market data, portfolio, and trading. Also ships a full-screen TUI for interactive monitoring.
 
 Covers every Longbridge OpenAPI endpoint: real-time quotes, depth, K-lines, options, and warrants for market data; account balances, stock and fund positions for portfolio management; and order submission, modification, cancellation, and execution history for trading. Designed for scripting, AI-agent tool-calling, and daily trading workflows from the terminal.
 
 ```bash
-$ longbridge static NVDA.US
+$ longbridge static TSLA.US NVDA.US
 | Symbol  | Last    | Prev Close | Open    | High    | Low     | Volume    | Turnover        | Status |
 |---------|---------|------------|---------|---------|---------|-----------|-----------------|--------|
 | TSLA.US | 395.560 | 391.200    | 396.220 | 403.730 | 394.420 | 58068343  | 23138752546.000 | Normal |
@@ -37,8 +37,6 @@ $ longbridge quote TSLA.US NVDA.US --format json
   }
 ]
 ```
-
-Also ships a full-screen TUI for interactive monitoring.
 
 [![asciicast](https://asciinema.org/a/785102.svg)](https://asciinema.org/a/785102)
 
@@ -172,6 +170,9 @@ longbridge topic create-reply <id> --body "…"    # Post a reply to a topic (--
 longbridge option quote AAPL240119C190000          # Real-time quotes for option contracts
 longbridge option chain AAPL.US                   # Option chain: list all expiry dates
 longbridge option chain AAPL.US --date 2024-01-19 # Option chain: strike prices for a given expiry
+longbridge option volume AAPL.US                  # Real-time option Call/Put volume and Put/Call ratio
+longbridge option volume daily AAPL.US            # Daily option Call/Put volume and open interest history
+longbridge option volume daily AAPL.US --count 60 # Return last 60 trading days
 longbridge warrant quote 12345.HK                 # Real-time quotes for warrant contracts
 longbridge warrant 700.HK                         # Warrants linked to an underlying security
 longbridge warrant issuers                        # Warrant issuer list (HK market)
@@ -181,7 +182,11 @@ longbridge warrant issuers                        # Warrant issuer list (HK mark
 
 ```bash
 longbridge financial-report AAPL.US [--kind IS|BS|CF]               # Multi-period financial statements (income / balance sheet / cash flow)
+longbridge financial-report AAPL.US --latest                         # Latest financial report summary
+longbridge financial-statement AAPL.US [--kind IS|BS|CF|ALL] [--report af|saf|qf|cumul]  # Detailed financial statement (v3 endpoint)
 longbridge institution-rating AAPL.US                                # Analyst rating distribution and consensus target price
+longbridge institution-rating AAPL.US --history                      # Rating and target price change history
+longbridge institution-rating AAPL.US --industry-rank [--page 1] [--limit 20]  # Industry-wide institution rating ranking
 longbridge institution-rating detail AAPL.US                         # Monthly rating trend and analyst accuracy history
 longbridge dividend AAPL.US                                          # Historical dividend records
 longbridge dividend detail AAPL.US                                   # Dividend allocation plan details
@@ -189,9 +194,44 @@ longbridge forecast-eps AAPL.US                                      # Analyst E
 longbridge consensus AAPL.US                                         # Revenue / profit / EPS multi-period comparison with beat/miss markers
 longbridge valuation AAPL.US [--indicator pe|pb|ps|dvd_yld]         # Current valuation snapshot and peer comparison
 longbridge valuation AAPL.US --history [--indicator pe] [--range 5]  # Historical valuation time series (1 / 3 / 5 / 10 years)
+longbridge valuation-rank AAPL.US [--start 20240101] [--end 20241231] # Industry valuation percentile ranking (default: last 30 days)
+longbridge analyst-estimates AAPL.US                                 # Analyst consensus EPS estimates
 longbridge fund-holder AAPL.US [--count 20]                          # Funds and ETFs holding this stock
 longbridge shareholder AAPL.US [--range all|inc|dec] [--sort chg]    # Institutional shareholders with QoQ change tracking
 longbridge corp-action 700.HK [--all]                                 # Corporate actions (splits, dividends, rights, etc.) — default 30, --all for full history
+```
+
+### Deposits & Withdrawals
+
+```bash
+longbridge bank-cards                                               # List linked bank cards
+longbridge withdrawals [--page 1] [--limit 20]                      # Withdrawal history
+longbridge deposits [--page 1] [--limit 20] [--states 0,1,2] [--currencies HKD,USD]  # Deposit history
+```
+
+### Search
+
+```bash
+longbridge search TSLA [--tab market|news|posts|hashtags|help|share-lists|users|institutions]  # Search across multiple content types
+longbridge search-hot                                               # Hot search keywords
+```
+
+### IPO
+
+```bash
+longbridge ipo subscriptions                                        # IPO stocks currently in filing or subscription stage
+longbridge ipo wait-listing                                         # IPO stocks in grey-market (wait-listing) stage
+longbridge ipo listed [--page 1] [--limit 20]                       # Recently listed IPO stocks
+longbridge ipo calendar                                             # IPO calendar (all upcoming and recent IPOs)
+longbridge ipo detail <symbol> [--market HK|US]                     # IPO profile, timeline, eligibility, and holdings for a symbol
+longbridge ipo orders [--market HK] [--status 0] [--page 1]         # IPO orders (active + history) for the current account
+longbridge ipo orders detail <order_id>                             # Full detail for a single IPO order
+longbridge ipo profit-loss [--period all|1m|3m|6m|1y] [--page 1]   # IPO P&L summary and item list
+longbridge ipo us-subscriptions                                     # US IPO stocks currently in subscription stage
+longbridge ipo us-wait-listing                                      # US IPO stocks in wait-listing stage
+longbridge ipo us-listed [--page 1] [--limit 20]                    # Recently listed US IPO stocks
+longbridge ipo submit TSLA.US --qty 200 --amount 1000 [--method 2]  # Submit IPO subscription (prompts for confirmation)
+longbridge ipo withdraw <order_id>                                  # Withdraw IPO subscription (prompts for confirmation)
 ```
 
 ### Market Data
@@ -246,6 +286,8 @@ longbridge order cancel <order_id>                         # Cancel a pending or
 longbridge order replace <order_id> --qty 200 --price 255.00 # Modify quantity or price of a pending order
 longbridge assets [--currency USD]                         # Asset overview: net assets, cash, buy power, margins, and per-currency breakdown
 longbridge cash-flow [--start 2024-01-01]                  # Cash flow records (deposits, withdrawals, dividends, settlements)
+longbridge portfolio                                       # Portfolio overview: total assets, P/L, holdings, and cash breakdown
+longbridge portfolio short-margin                          # Short-selling margin deposit details
 longbridge positions                                       # Current stock (equity) positions across all sub-accounts
 longbridge fund-positions                                  # Current fund (mutual fund) positions across all sub-accounts
 longbridge margin-ratio TSLA.US                            # Margin ratio requirements for a symbol
@@ -287,7 +329,11 @@ longbridge investors 0001067983 --top 20                      # Show top 20 posi
 longbridge investors 0001067983 --format json                 # Export holdings as JSON
 longbridge investors changes 0001067983                       # Quarter-over-quarter changes (NEW/ADDED/REDUCED/EXITED)
 longbridge investors changes 0001067983 --from 2024-12-31     # Compare latest vs a specific period
+```
 
+### Recurring Investment
+
+```bash
 longbridge dca                                                # List all recurring investment plans
 longbridge dca --status Active                                # Filter by status: Active | Suspended | Finished
 longbridge dca --symbol TSLA.US                               # Filter by symbol
@@ -302,10 +348,11 @@ longbridge dca stats                                          # Recurring invest
 longbridge dca calc-date TSLA.US --frequency weekly --day-of-week fri  # Calculate next trade date
 longbridge dca check TSLA.US AAPL.US 700.HK                  # Check which symbols support recurring investment
 longbridge dca set-reminder 6                                 # Set reminder hours before trade (1 | 6 | 12)
+```
 
-longbridge option volume AAPL.US                              # Real-time option Call/Put volume and Put/Call ratio
-longbridge option volume daily AAPL.US                        # Daily option Call/Put volume and open interest history
-longbridge option volume daily AAPL.US --count 60             # Return last 60 trading days
+### Short Selling
+
+```bash
 longbridge short-positions AAPL.US                            # US stock short selling data (short interest, ratio, days to cover)
 longbridge short-positions TSLA.US --count 50                 # Return last 50 short interest records
 ```
@@ -332,16 +379,12 @@ More about Longbridge Skill, please visit: https://open.longbridge.com/skill/
 
 Once installed, Claude can query market data, run technical analysis, and manage trades directly from your AI workflow.
 
-```bash
-claude> Show me recent 5 days performance of NVDA and TSLA
+```
+claude> Show me TSLA and NVDA performance over the last 5 days
 
-⏺ Bash(longbridge kline TSLA.US --period day --count 5 & longbridge kline NVDA.US --period day --count 5 & wait)
-  ⎿  Authentication failed: oauth error: failed to refresh token: Failed to parse server response
-     | Time                | Open    | High    | Low     | Close   | Volume   | Turnover        |
-     |---------------------|---------|---------|---------|---------|----------|-----------------|
-     … +11 lines (ctrl+o to expand)
+● Bash(longbridge kline TSLA.US --period day --count 5 & longbridge kline NVDA.US --period day --count 5 & wait)
 
-⏺ It seems NVDA failed to authenticate (token refresh issue). TSLA data loaded fine. Here's what we have:
+● Here's the 5-day performance for both:
 
   TSLA.US — Last 5 Days
 
@@ -360,6 +403,24 @@ claude> Show me recent 5 days performance of NVDA and TSLA
   └────────┴────────┴────────┴────────┴────────┴──────────┘
 
   5-day return: -0.92% | Range: $389.95 – $416.38
+
+  NVDA.US — Last 5 Days
+
+  ┌────────┬────────┬────────┬────────┬────────┬──────────┐
+  │  Date  │  Open  │  High  │  Low   │ Close  │  Change  │
+  ├────────┼────────┼────────┼────────┼────────┼──────────┤
+  │ Mar 10 │ 112.34 │ 115.20 │ 111.80 │ 114.50 │ —        │
+  ├────────┼────────┼────────┼────────┼────────┼──────────┤
+  │ Mar 11 │ 114.80 │ 117.60 │ 114.20 │ 116.90 │ ▲ +2.10% │
+  ├────────┼────────┼────────┼────────┼────────┼──────────┤
+  │ Mar 12 │ 116.50 │ 118.30 │ 115.40 │ 115.80 │ ▼ -0.94% │
+  ├────────┼────────┼────────┼────────┼────────┼──────────┤
+  │ Mar 13 │ 115.20 │ 116.80 │ 113.90 │ 114.60 │ ▼ -1.04% │
+  ├────────┼────────┼────────┼────────┼────────┼──────────┤
+  │ Mar 16 │ 114.90 │ 117.50 │ 114.30 │ 116.80 │ ▲ +1.92% │
+  └────────┴────────┴────────┴────────┴────────┴──────────┘
+
+  5-day return: +2.01% | Range: $111.80 – $118.30
 ```
 
 ## TUI
