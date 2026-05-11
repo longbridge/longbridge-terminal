@@ -21,6 +21,11 @@ pub const HTTP_URL_TEST: &str = "https://openapi.longbridge.xyz";
 pub const QUOTE_WS_URL_TEST: &str = "wss://openapi-quote.longbridge.xyz/v2";
 pub const TRADE_WS_URL_TEST: &str = "wss://openapi-trade.longbridge.xyz/v2";
 
+// LongPort SaaS endpoint URLs (open.longportapp.com)
+pub const HTTP_URL_LONGPORT: &str = "https://openapi.longportapp.com";
+pub const QUOTE_WS_URL_LONGPORT: &str = "wss://openapi-quote.longportapp.com/v2";
+pub const TRADE_WS_URL_LONGPORT: &str = "wss://openapi-trade.longportapp.com/v2";
+
 fn cache_file_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".longbridge").join("openapi").join("region-cache"))
 }
@@ -42,6 +47,16 @@ pub fn is_cn_cached() -> bool {
         Ok(s) => s.trim().eq_ignore_ascii_case("cn"),
         Err(_) => false,
     }
+}
+
+/// Returns `true` if `LONGBRIDGE_REGION=longport` is set, selecting LongPort SaaS endpoints.
+/// LongPort does not support OAuth — API key authentication is required.
+pub fn is_longport() -> bool {
+    std::env::var("LONGBRIDGE_REGION")
+        .ok()
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|r| r.eq_ignore_ascii_case("longport"))
 }
 
 fn write_cache(is_cn: bool) {

@@ -111,6 +111,14 @@ pub async fn init_contexts() -> Result<(
             .trade_ws_url(crate::region::TRADE_WS_URL_TEST);
         http_client_config = http_client_config.http_url(crate::region::HTTP_URL_TEST);
         effective_http_url = crate::region::HTTP_URL_TEST;
+    } else if crate::region::is_longport() {
+        tracing::info!("Using LongPort endpoints (openapi.longportapp.com)");
+        config_builder = config_builder
+            .http_url(crate::region::HTTP_URL_LONGPORT)
+            .quote_ws_url(crate::region::QUOTE_WS_URL_LONGPORT)
+            .trade_ws_url(crate::region::TRADE_WS_URL_LONGPORT);
+        http_client_config = http_client_config.http_url(crate::region::HTTP_URL_LONGPORT);
+        effective_http_url = crate::region::HTTP_URL_LONGPORT;
     } else if crate::region::is_cn_cached()
         && (cfg!(not(debug_assertions)) || std::env::var("LONGBRIDGE_HTTP_URL").is_err())
     {
