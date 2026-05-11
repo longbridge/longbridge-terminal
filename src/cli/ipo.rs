@@ -33,6 +33,14 @@ fn fmt_ts(v: &Value) -> String {
 }
 
 fn fmt_date_opt(v: &Value) -> String {
+    if let Value::String(s) = v {
+        if s.len() == 8 && s.chars().all(|c| c.is_ascii_digit()) {
+            return format!("{}-{}-{}", &s[..4], &s[4..6], &s[6..]);
+        }
+        if s.len() == 10 && s.as_bytes()[4] == b'-' && s.as_bytes()[7] == b'-' {
+            return s.clone();
+        }
+    }
     let ts = match v {
         Value::Number(n) => n.as_i64(),
         Value::String(s) => s.parse::<i64>().ok(),
@@ -41,14 +49,7 @@ fn fmt_date_opt(v: &Value) -> String {
     match ts {
         Some(n) if n > 0 => crate::utils::datetime::format_date(n),
         Some(_) => "-".to_string(),
-        None => {
-            let s = val_str(v);
-            if s.len() == 8 && s.chars().all(|c| c.is_ascii_digit()) {
-                format!("{}-{}-{}", &s[..4], &s[4..6], &s[6..])
-            } else {
-                s
-            }
-        }
+        None => val_str(v),
     }
 }
 
@@ -121,7 +122,6 @@ fn sub_state_label(v: &Value) -> &'static str {
 
 // Fields that are unix timestamps (numeric) and should be formatted as RFC 3339.
 const TS_FIELDS: &[&str] = &[
-    "ipo_date",
     "sub_date",
     "sub_end_date",
     "result_date",
@@ -347,7 +347,7 @@ pub async fn cmd_ipo_wait_listing(format: &OutputFormat, verbose: bool) -> Resul
             val_str(&item["name"]),
             counter_id_to_symbol(&val_str(&item["counter_id"])),
             val_str(&item["issue_price"]),
-            fmt_ts(&item["ipo_date"]),
+            fmt_date_opt(&item["ipo_date"]),
             state_stage_label(&item["state_stage"]).to_string(),
         ]
     };
@@ -1188,7 +1188,7 @@ pub async fn cmd_ipo_us_wait_listing(format: &OutputFormat, verbose: bool) -> Re
                             val_str(&item["name"]),
                             counter_id_to_symbol(&val_str(&item["counter_id"])),
                             val_str(&item["issue_price"]),
-                            fmt_ts(&item["ipo_date"]),
+                            fmt_date_opt(&item["ipo_date"]),
                             state_stage_label(&item["state_stage"]).to_string(),
                         ]
                     })
