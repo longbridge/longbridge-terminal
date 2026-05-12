@@ -662,10 +662,7 @@ pub async fn cmd_ipo_detail(
             // stock has no IPO data; surface everything else as a real error.
             if e.downcast_ref::<longbridge::httpclient::HttpClientError>()
                 .is_some_and(|he| {
-                    matches!(
-                        he,
-                        longbridge::httpclient::HttpClientError::OpenApi { .. }
-                    )
+                    matches!(he, longbridge::httpclient::HttpClientError::OpenApi { .. })
                 })
             {
                 println!("No IPO detail found for {symbol}.");

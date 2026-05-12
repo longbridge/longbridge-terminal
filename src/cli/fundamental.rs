@@ -2505,3 +2505,318 @@ pub async fn cmd_institution_rating_industry_rank(
     }
     Ok(())
 }
+
+// ── business segments ────────────────────────────────────────────────────────
+
+pub async fn cmd_business_segments(
+    symbol: String,
+    history: bool,
+    report: Option<String>,
+    cate: Option<String>,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    if history {
+        let mut params: Vec<(&str, &str)> = vec![("counter_id", cid.as_str())];
+        if let Some(ref r) = report {
+            params.push(("report", r.as_str()));
+        }
+        if let Some(ref c) = cate {
+            params.push(("cate", c.as_str()));
+        }
+        let data = http_get(
+            "/v1/quote/fundamentals/business-segments/history",
+            &params,
+            verbose,
+        )
+        .await?;
+        match format {
+            OutputFormat::Json => print_json(&data),
+            OutputFormat::Pretty => print_business_segments_history(&data),
+        }
+    } else {
+        let data = http_get(
+            "/v1/quote/fundamentals/business-segments",
+            &[("counter_id", cid.as_str())],
+            verbose,
+        )
+        .await?;
+        match format {
+            OutputFormat::Json => print_json(&data),
+            OutputFormat::Pretty => print_business_segments_current(&data),
+        }
+    }
+    Ok(())
+}
+
+fn print_business_segments_current(data: &Value) {
+    let period_date = val_str(&data["date"]);
+    let total = val_str(&data["total"]);
+    let currency = val_str(&data["currency"]);
+    println!("Period: {period_date}    Total: {total}    Currency: {currency}\n");
+    let items = match data["business"].as_array() {
+        Some(a) if !a.is_empty() => a,
+        _ => {
+            println!("No segment data.");
+            return;
+        }
+    };
+    let headers = ["Segment", "Percent"];
+    let rows: Vec<Vec<String>> = items
+        .iter()
+        .map(|item| vec![val_str(&item["name"]), val_str(&item["percent"])])
+        .collect();
+    super::output::print_table(&headers, rows, &OutputFormat::Pretty);
+}
+
+fn print_business_segments_history(data: &Value) {
+    let periods = match data["historical"].as_array() {
+        Some(a) if !a.is_empty() => a,
+        _ => {
+            println!("No historical segment data.");
+            return;
+        }
+    };
+    for period in periods {
+        let period_date = val_str(&period["date"]);
+        let total = val_str(&period["total"]);
+        let currency = val_str(&period["currency"]);
+        println!("Period: {period_date}    Total: {total}    Currency: {currency}");
+        if let Some(biz) = period["business"].as_array() {
+            if !biz.is_empty() {
+                let headers = ["Segment", "Percent", "Value"];
+                let rows: Vec<Vec<String>> = biz
+                    .iter()
+                    .map(|item| {
+                        vec![
+                            val_str(&item["name"]),
+                            val_str(&item["percent"]),
+                            val_str(&item["value"]),
+                        ]
+                    })
+                    .collect();
+                super::output::print_table(&headers, rows, &OutputFormat::Pretty);
+            }
+        }
+        if let Some(reg) = period["regionals"].as_array() {
+            if !reg.is_empty() {
+                println!("  Regionals:");
+                let headers = ["Region", "Percent", "Value"];
+                let rows: Vec<Vec<String>> = reg
+                    .iter()
+                    .map(|item| {
+                        vec![
+                            val_str(&item["name"]),
+                            val_str(&item["percent"]),
+                            val_str(&item["value"]),
+                        ]
+                    })
+                    .collect();
+                super::output::print_table(&headers, rows, &OutputFormat::Pretty);
+            }
+        }
+        println!();
+    }
+}
+
+// ── institution rating views ──────────────────────────────────────────────────
+
+pub async fn cmd_institution_rating_views(
+    symbol: String,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/v1/quote/ratings/institutional",
+        &[("counter_id", cid.as_str())],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => print_institution_rating_views(&data),
+    }
+    Ok(())
+}
+
+fn print_institution_rating_views(data: &Value) {
+    let items = match data["elist"].as_array() {
+        Some(a) if !a.is_empty() => a,
+        _ => {
+            println!("No institutional views data.");
+            return;
+        }
+    };
+    let headers = ["Date", "Buy", "Outperform", "Hold", "Underperform", "Sell", "Total"];
+    let rows: Vec<Vec<String>> = items
+        .iter()
+        .map(|item| {
+            let row_date = format_date(
+                item["date"]
+                    .as_i64()
+                    .or_else(|| item["date"].as_str().and_then(|s| s.parse::<i64>().ok()))
+                    .unwrap_or(0),
+            );
+            vec![
+                row_date,
+                val_str(&item["buy"]),
+                val_str(&item["over"]),
+                val_str(&item["hold"]),
+                val_str(&item["under"]),
+                val_str(&item["sell"]),
+                val_str(&item["total"]),
+            ]
+        })
+        .collect();
+    super::output::print_table(&headers, rows, &OutputFormat::Pretty);
+}
+
+// ── industry peers ────────────────────────────────────────────────────────────
+
+pub async fn cmd_industry_peers(
+    symbol: String,
+    market: Option<String>,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let mkt = market.unwrap_or_else(|| symbol.split('.').next_back().unwrap_or("US").to_uppercase());
+    let data = http_get(
+        "/v1/quote/industries/peers",
+        &[
+            ("type", "1"),
+            ("market", mkt.as_str()),
+            ("industry_id", ""),
+            ("counter_id", cid.as_str()),
+        ],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => print_industry_peers(&data),
+    }
+    Ok(())
+}
+
+fn print_industry_peers(data: &Value) {
+    let top_name = val_str(&data["top"]["name"]);
+    let top_market = val_str(&data["top"]["market"]);
+    if top_name != "-" && !top_name.is_empty() {
+        println!("Root: {top_name} ({top_market})\n");
+    }
+    if data["chain"].is_null() {
+        println!("No peer data.");
+    } else {
+        print_industry_peers_node(&data["chain"], 0);
+    }
+}
+
+fn print_industry_peers_node(node: &Value, depth: usize) {
+    let indent = "  ".repeat(depth + 1);
+    let name = val_str(&node["name"]);
+    let stock_num = val_str(&node["stock_num"]);
+    let chg = val_str(&node["chg"]);
+    let ytd_chg = val_str(&node["ytd_chg"]);
+    let chg_display = if chg != "-" && !chg.is_empty() {
+        format!("{chg}%")
+    } else {
+        chg
+    };
+    let ytd_display = if ytd_chg != "-" && !ytd_chg.is_empty() {
+        format!("YTD {ytd_chg}%")
+    } else {
+        ytd_chg
+    };
+    println!("{indent}{name}   {stock_num} stocks   {chg_display}   {ytd_display}");
+    if let Some(children) = node["next"].as_array() {
+        for child in children {
+            print_industry_peers_node(child, depth + 1);
+        }
+    }
+}
+
+// ── financial report snapshot ─────────────────────────────────────────────────
+
+pub async fn cmd_financial_report_snapshot(
+    symbol: String,
+    report: Option<String>,
+    year: Option<u32>,
+    period: Option<String>,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let year_str = year.map(|y| y.to_string());
+    let mut params: Vec<(&str, &str)> = vec![("counter_id", cid.as_str())];
+    if let Some(ref r) = report {
+        params.push(("report", r.as_str()));
+    }
+    if let Some(ref y) = year_str {
+        params.push(("fiscal_year", y.as_str()));
+    }
+    if let Some(ref p) = period {
+        params.push(("fiscal_period", p.as_str()));
+    }
+    let data = http_get("/v1/quote/financials/earnings-snapshot", &params, verbose).await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => print_financial_report_snapshot(&data),
+    }
+    Ok(())
+}
+
+fn print_financial_report_snapshot(data: &Value) {
+    let name = val_str(&data["name"]);
+    let period_range = val_str(&data["fiscal_period_range"]);
+    println!("{name}    {period_range}\n");
+
+    let ai_summary = val_str(&data["ai_summary"]);
+    if ai_summary != "-" && !ai_summary.is_empty() {
+        println!("── AI Summary ──────────────────────────────────────────────────");
+        println!("{ai_summary}\n");
+    }
+
+    if let Some(fd) = data.get("forecast_data") {
+        let metrics = [
+            ("operating_revenue", "Operating Revenue"),
+            ("ebit", "EBIT"),
+            ("net_asset_value_per_share", "Net Asset Value/Share"),
+        ];
+        let mut rows: Vec<Vec<String>> = Vec::new();
+        for (key, label) in &metrics {
+            if let Some(m) = fd.get(*key) {
+                let actual = val_str(&m["actual_value"]);
+                let exp_tag = val_str(&m["expectation_tag"]);
+                let actual_yoy = val_str(&m["actual_yoy"]);
+                rows.push(vec![label.to_string(), actual, exp_tag, actual_yoy]);
+            }
+        }
+        if !rows.is_empty() {
+            println!("── Key Metrics ─────────────────────────────────────────────────");
+            let headers = ["Metric", "Actual", "vs Estimate", "YoY"];
+            super::output::print_table(&headers, rows, &OutputFormat::Pretty);
+            println!();
+        }
+    }
+
+    if let Some(peers) = data["peer_companies"].as_array() {
+        if !peers.is_empty() {
+            println!("── Peer Earnings Dates ─────────────────────────────────────────");
+            let headers = ["Ticker", "Company", "Report Date"];
+            let rows: Vec<Vec<String>> = peers
+                .iter()
+                .map(|p| {
+                    vec![
+                        val_str(&p["ticker"]),
+                        val_str(&p["name"]),
+                        val_str(&p["report_date"]),
+                    ]
+                })
+                .collect();
+            super::output::print_table(&headers, rows, &OutputFormat::Pretty);
+        }
+    }
+}
