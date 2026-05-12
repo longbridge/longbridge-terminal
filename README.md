@@ -183,10 +183,12 @@ longbridge warrant issuers                        # Warrant issuer list (HK mark
 ```bash
 longbridge financial-report AAPL.US [--kind IS|BS|CF]               # Multi-period financial statements (income / balance sheet / cash flow)
 longbridge financial-report AAPL.US --latest                         # Latest financial report summary
+longbridge financial-report snapshot AAPL.US [--report qf|saf|af] [--year N] [--period N]  # AI earnings summary + key metrics vs consensus + peer earnings dates
 longbridge financial-statement AAPL.US [--kind IS|BS|CF|ALL] [--report af|saf|qf|cumul]  # Detailed financial statement (v3 endpoint)
 longbridge institution-rating AAPL.US                                # Analyst rating distribution and consensus target price
 longbridge institution-rating AAPL.US --history                      # Rating and target price change history
 longbridge institution-rating AAPL.US --industry-rank [--page 1] [--limit 20]  # Industry-wide institution rating ranking
+longbridge institution-rating AAPL.US --views                        # Monthly buy/hold/sell distribution timeline (institutional views)
 longbridge institution-rating detail AAPL.US                         # Monthly rating trend and analyst accuracy history
 longbridge dividend AAPL.US                                          # Historical dividend records
 longbridge dividend detail AAPL.US                                   # Dividend allocation plan details
@@ -199,6 +201,8 @@ longbridge analyst-estimates AAPL.US                                 # Analyst c
 longbridge fund-holder AAPL.US [--count 20]                          # Funds and ETFs holding this stock
 longbridge shareholder AAPL.US [--range all|inc|dec] [--sort chg]    # Institutional shareholders with QoQ change tracking
 longbridge corp-action 700.HK [--all]                                 # Corporate actions (splits, dividends, rights, etc.) — default 30, --all for full history
+longbridge business-segments 700.HK [--history] [--report qf|saf|af] [--cate <cate>]  # Revenue segment breakdown (current snapshot or historical trends)
+longbridge industry-peers 700.HK [--market HK|US|CN]                 # Industry peer group hierarchy tree (type=1 same-peer mode)
 ```
 
 ### Deposits & Withdrawals
