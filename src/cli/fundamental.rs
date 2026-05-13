@@ -2678,18 +2678,18 @@ fn print_institution_rating_views(data: &Value) {
 pub async fn cmd_industry_rank(
     market: &str,
     indicator: &str,
-    sort_type: String,
+    sort_type: &str,
     count: u32,
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
     let count_str = count.to_string();
     let data = http_get(
-        "/newmarket/industry/rank_lists",
+        "/v1/quote/industry/rank",
         &[
             ("market",    market),
             ("indicator", indicator),
-            ("sort_type", sort_type.as_str()),
+            ("sort_type", sort_type),
             ("limit",     count_str.as_str()),
         ],
         verbose,

@@ -435,9 +435,9 @@ pub enum Commands {
         /// Ranking indicator (default: leading-gainer)
         #[arg(long, default_value = "leading-gainer")]
         indicator: IndustryRankIndicator,
-        /// Sort direction: desc (default) | asc
-        #[arg(long, default_value = "desc")]
-        sort_type: String,
+        /// Display mode: single (default, flat list) | multi (hierarchical)
+        #[arg(long, default_value = "single")]
+        sort_type: IndustryRankSortType,
         /// Number of results (default: 20)
         #[arg(long, alias = "limit", default_value = "20")]
         count: u32,
@@ -1538,6 +1538,25 @@ impl IndustryRankIndicator {
             Self::RevenueGrowth  => "5",
             Self::NetProfit      => "6",
             Self::NetProfitGrowth => "7",
+        }
+    }
+}
+
+#[derive(ValueEnum, Clone, Debug)]
+pub enum IndustryRankSortType {
+    /// Flat single-level list (default)
+    #[value(name = "single")]
+    Single,
+    /// Hierarchical multi-level tree
+    #[value(name = "multi")]
+    Multi,
+}
+
+impl IndustryRankSortType {
+    pub fn as_api_value(&self) -> &'static str {
+        match self {
+            Self::Single => "0",
+            Self::Multi  => "1",
         }
     }
 }
@@ -2841,7 +2860,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             cate,
         } => fundamental::cmd_business_segments(symbol, history, report, cate, format, verbose).await,
         Commands::IndustryRank { market, indicator, sort_type, count } => {
-            fundamental::cmd_industry_rank(market.as_str(), indicator.as_api_value(), sort_type, count, format, verbose).await
+            fundamental::cmd_industry_rank(market.as_str(), indicator.as_api_value(), sort_type.as_api_value(), count, format, verbose).await
         }
         Commands::IndustryPeers { symbol, market } => {
             fundamental::cmd_industry_peers(symbol, market, format, verbose).await
