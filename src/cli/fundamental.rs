@@ -2841,55 +2841,98 @@ pub async fn cmd_financial_report_snapshot(
     Ok(())
 }
 
+fn fmt_fo_row(label: &str, m: &Value) -> Vec<String> {
+    let actual = val_str(&m["value"]);
+    let yoy = val_str(&m["yoy"]);
+    let cmp_desc = val_str(&m["cmp_desc"]);
+    let est = val_str(&m["est_value"]);
+    let yoy_display = if yoy != "-" && !yoy.is_empty() {
+        format!("{:+.2}%", yoy.parse::<f64>().unwrap_or(0.0))
+    } else {
+        yoy
+    };
+    vec![label.to_string(), actual, yoy_display, if cmp_desc == "-" { String::new() } else { cmp_desc }, est]
+}
+
+fn fmt_fr_row(label: &str, m: &Value) -> Option<Vec<String>> {
+    let value = val_str(&m["value"]);
+    if value == "-" || value.is_empty() { return None; }
+    let yoy = val_str(&m["yoy"]);
+    let yoy_display = if yoy != "-" && !yoy.is_empty() {
+        format!("{:+.2}%", yoy.parse::<f64>().unwrap_or(0.0))
+    } else {
+        yoy
+    };
+    Some(vec![label.to_string(), value, yoy_display])
+}
+
 fn print_financial_report_snapshot(data: &Value) {
     let name = val_str(&data["name"]);
-    let period_range = val_str(&data["fiscal_period_range"]);
-    println!("{name}    {period_range}\n");
+    let ticker = val_str(&data["ticker"]);
+    let fp_start = val_str(&data["fp_start"]);
+    let fp_end = val_str(&data["fp_end"]);
+    let currency = val_str(&data["currency"]);
+    println!("{name} ({ticker})    {fp_start} – {fp_end}    {currency}\n");
 
-    let ai_summary = val_str(&data["ai_summary"]);
-    if ai_summary != "-" && !ai_summary.is_empty() {
-        println!("── AI Summary ──────────────────────────────────────────────────");
-        println!("{ai_summary}\n");
+    let report_desc = val_str(&data["report_desc"]);
+    if report_desc != "-" && !report_desc.is_empty() {
+        println!("{report_desc}\n");
     }
 
-    if let Some(fd) = data.get("forecast_data") {
-        let metrics = [
-            ("operating_revenue", "Operating Revenue"),
-            ("ebit", "EBIT"),
-            ("net_asset_value_per_share", "Net Asset Value/Share"),
-        ];
-        let mut rows: Vec<Vec<String>> = Vec::new();
-        for (key, label) in &metrics {
-            if let Some(m) = fd.get(*key) {
-                let actual = val_str(&m["actual_value"]);
-                let exp_tag = val_str(&m["expectation_tag"]);
-                let actual_yoy = val_str(&m["actual_yoy"]);
-                rows.push(vec![label.to_string(), actual, exp_tag, actual_yoy]);
+    // Forecast vs actual
+    let fo_metrics = [
+        ("fo_revenue",  "Revenue"),
+        ("fo_ebit",     "EBIT"),
+        ("fo_eps",      "EPS"),
+    ];
+    let mut fo_rows: Vec<Vec<String>> = Vec::new();
+    for (key, label) in &fo_metrics {
+        if let Some(m) = data.get(*key) {
+            if val_str(&m["value"]) != "-" && !val_str(&m["value"]).is_empty() {
+                fo_rows.push(fmt_fo_row(label, m));
             }
         }
-        if !rows.is_empty() {
-            println!("── Key Metrics ─────────────────────────────────────────────────");
-            let headers = ["Metric", "Actual", "vs Estimate", "YoY"];
-            super::output::print_table(&headers, rows, &OutputFormat::Pretty);
-            println!();
-        }
+    }
+    if !fo_rows.is_empty() {
+        println!("── Forecast vs Actual ──────────────────────────────────────────");
+        super::output::print_table(&["Metric", "Actual", "YoY", "vs Estimate", "Consensus"], fo_rows, &OutputFormat::Pretty);
+        println!();
     }
 
-    if let Some(peers) = data["peer_companies"].as_array() {
-        if !peers.is_empty() {
-            println!("── Peer Earnings Dates ─────────────────────────────────────────");
-            let headers = ["Ticker", "Company", "Report Date"];
-            let rows: Vec<Vec<String>> = peers
-                .iter()
-                .map(|p| {
-                    vec![
-                        val_str(&p["ticker"]),
-                        val_str(&p["name"]),
-                        val_str(&p["report_date"]),
-                    ]
-                })
-                .collect();
-            super::output::print_table(&headers, rows, &OutputFormat::Pretty);
+    // Financial ratios
+    let fr_obj_metrics = [
+        ("fr_revenue",      "Revenue"),
+        ("fr_profit",       "Net Profit"),
+        ("fr_operate_cash", "Operating CF"),
+        ("fr_invest_cash",  "Investing CF"),
+        ("fr_finance_cash", "Financing CF"),
+        ("fr_total_assets", "Total Assets"),
+        ("fr_total_liability", "Total Liabilities"),
+    ];
+    let mut financials_rows: Vec<Vec<String>> = Vec::new();
+    for (key, label) in &fr_obj_metrics {
+        if let Some(m) = data.get(*key) {
+            if let Some(row) = fmt_fr_row(label, m) {
+                financials_rows.push(row);
+            }
         }
+    }
+    // Scalar ratios
+    for (key, label) in &[
+        ("fr_roe_ttm",          "ROE (TTM)"),
+        ("fr_profit_margin",    "Net Margin"),
+        ("fr_profit_margin_ttm","Net Margin (TTM)"),
+        ("fr_asset_turn_ttm",   "Asset Turnover"),
+        ("fr_leverage_ttm",     "Leverage"),
+        ("fr_debt_assets_ratio","Debt/Assets"),
+    ] {
+        let v = val_str(&data[*key]);
+        if v != "-" && !v.is_empty() {
+            financials_rows.push(vec![label.to_string(), v, String::new()]);
+        }
+    }
+    if !financials_rows.is_empty() {
+        println!("── Financials ──────────────────────────────────────────────────");
+        super::output::print_table(&["Item", "Value", "YoY"], financials_rows, &OutputFormat::Pretty);
     }
 }
