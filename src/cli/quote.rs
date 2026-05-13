@@ -2115,12 +2115,11 @@ fn print_json(data: &Value) {
 }
 
 /// Convert index symbol to IX/ prefix `counter_id` (e.g. `HSI.HK` → `IX/HK/HSI`,
-/// `.DJI.US` → `IX/US/DJI`).
+/// `.DJI.US` → `IX/US/.DJI`).
 fn index_symbol_to_counter_id(symbol: &str) -> String {
     if let Some((code, market)) = symbol.rsplit_once('.') {
         let market = market.to_uppercase();
-        // Strip leading dot from code (e.g. `.DJI.US` → code part is `.DJI`, strip to `DJI`)
-        let code = code.trim_start_matches('.');
+        // Preserve the leading dot — US index counter_ids include it (e.g. `.DJI.US` → `IX/US/.DJI`)
         format!("IX/{market}/{code}")
     } else {
         symbol.to_string()
@@ -2189,21 +2188,12 @@ pub async fn cmd_history_intraday(
 pub async fn cmd_constituent(
     symbol: String,
     limit: i32,
-    sort: &str,
-    order: &str,
+    sort: &crate::cli::ConstituentSort,
+    order: &crate::cli::ConstituentOrder,
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
     let cid = index_symbol_to_counter_id(&symbol);
-    let indicator = match sort {
-        "price" => "2",
-        "turnover" => "3",
-        "inflow" => "4",
-        "turnover_rate" => "5",
-        "market_cap" => "6",
-        _ => "1", // change% default
-    };
-    let order_val = if order == "asc" { "1" } else { "0" };
     let limit_str = limit.to_string();
     let data = http_get(
         "/v1/quote/index-constituents",
@@ -2211,8 +2201,8 @@ pub async fn cmd_constituent(
             ("counter_id", cid.as_str()),
             ("offset", "0"),
             ("limit", limit_str.as_str()),
-            ("indicator", indicator),
-            ("order", order_val),
+            ("indicator", sort.as_indicator()),
+            ("order", order.as_indicator()),
         ],
         verbose,
     )

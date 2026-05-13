@@ -786,20 +786,24 @@ pub enum Commands {
 
     /// Index or ETF constituent stocks
     ///
+    /// US index symbols require a leading dot (e.g. .DJI.US, .SPX.US, .IXIC.US).
+    /// HK indexes use the plain code (e.g. HSI.HK).
+    ///
     /// Example: longbridge constituent HSI.HK
+    /// Example: longbridge constituent .SPX.US --sort market-cap --order asc
     /// Example: longbridge constituent HSI.HK --limit 20 --sort change
     Constituent {
-        /// Index symbol in <CODE>.<MARKET> format (e.g. HSI.HK, DJI.US)
+        /// Index symbol in <CODE>.<MARKET> format (e.g. HSI.HK, .DJI.US, .SPX.US)
         symbol: String,
         /// Number of results to return
         #[arg(long, default_value = "50")]
         limit: i32,
-        /// Sort indicator: change, price, turnover, inflow, turnover-rate, market-cap
-        #[arg(long, default_value = "change")]
-        sort: String,
-        /// Sort order: desc | asc
-        #[arg(long, default_value = "desc")]
-        order: String,
+        /// Sort indicator
+        #[arg(long, value_enum, default_value_t = ConstituentSort::Change)]
+        sort: ConstituentSort,
+        /// Sort order
+        #[arg(long, value_enum, default_value_t = ConstituentOrder::Desc)]
+        order: ConstituentOrder,
     },
 
     /// Market open/close status for each exchange
@@ -1942,6 +1946,53 @@ pub enum ExportFormat {
     Csv,
     #[value(name = "md")]
     Md,
+}
+
+#[derive(ValueEnum, Clone, Debug)]
+pub enum ConstituentSort {
+    #[value(name = "change")]
+    Change,
+    #[value(name = "price")]
+    Price,
+    #[value(name = "turnover")]
+    Turnover,
+    #[value(name = "inflow")]
+    Inflow,
+    #[value(name = "turnover-rate", alias = "turnover_rate")]
+    TurnoverRate,
+    #[value(name = "market-cap", alias = "market_cap")]
+    MarketCap,
+}
+
+impl ConstituentSort {
+    /// Indicator code expected by `/v1/quote/index-constituents`.
+    pub fn as_indicator(&self) -> &'static str {
+        match self {
+            Self::Change => "1",
+            Self::Price => "2",
+            Self::Turnover => "3",
+            Self::Inflow => "4",
+            Self::TurnoverRate => "5",
+            Self::MarketCap => "6",
+        }
+    }
+}
+
+#[derive(ValueEnum, Clone, Debug)]
+pub enum ConstituentOrder {
+    #[value(name = "desc")]
+    Desc,
+    #[value(name = "asc")]
+    Asc,
+}
+
+impl ConstituentOrder {
+    pub fn as_indicator(&self) -> &'static str {
+        match self {
+            Self::Desc => "0",
+            Self::Asc => "1",
+        }
+    }
 }
 
 #[derive(Subcommand)]

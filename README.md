@@ -142,6 +142,7 @@ longbridge calc-index TSLA.US --fields pe,pb,eps     # Calculated financial inde
 longbridge capital TSLA.US                          # Capital distribution snapshot (large/medium/small inflow and outflow)
 longbridge capital TSLA.US --flow                   # Intraday capital flow time series (large/medium/small money in vs out)
 longbridge market-temp [HK|US|CN|SG]                # Market sentiment temperature index (0–100, higher = more bullish)
+longbridge constituent .SPX.US [--sort market-cap]  # Index constituent stocks (US indexes need a leading dot, e.g. .DJI.US, .SPX.US)
 longbridge trading session                          # Trading session schedule (open/close times) for all markets
 longbridge trading days HK                          # Trading days and half-trading days for a market
 longbridge security-list HK                         # Full list of securities available in a market
