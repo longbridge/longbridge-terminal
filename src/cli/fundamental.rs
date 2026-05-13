@@ -2685,7 +2685,7 @@ pub async fn cmd_industry_rank(
 ) -> Result<()> {
     let count_str = count.to_string();
     let data = http_get(
-        "/v1/newmarket/industry/rank_lists",
+        "/newmarket/industry/rank_lists",
         &[
             ("market",    market),
             ("indicator", indicator),
