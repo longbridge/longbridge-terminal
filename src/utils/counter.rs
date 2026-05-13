@@ -61,6 +61,29 @@ pub fn symbol_to_counter_id(symbol: &str) -> String {
     }
 }
 
+/// Convert an industry index symbol to a `BK` `counter_id`.
+/// Example: `IN00270.US` → `BK/US/IN00270`.
+/// Returns the input unchanged if it cannot be parsed.
+pub fn bk_symbol_to_counter(symbol: &str) -> String {
+    if let Some((code, market)) = symbol.rsplit_once('.') {
+        format!("BK/{}/{}", market.to_uppercase(), code.to_uppercase())
+    } else {
+        symbol.to_string()
+    }
+}
+
+/// Convert a `BK` `counter_id` back to an industry index symbol.
+/// Example: `BK/US/IN00270` → `IN00270.US`.
+/// Returns an empty string if the input is not a valid `BK` `counter_id`.
+pub fn bk_counter_to_symbol(counter_id: &str) -> String {
+    let parts: Vec<&str> = counter_id.splitn(3, '/').collect();
+    if parts.len() == 3 && parts[0] == "BK" {
+        format!("{}.{}", parts[2], parts[1])
+    } else {
+        String::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -133,5 +156,30 @@ mod tests {
     #[test]
     fn counter_id_st_to_symbol() {
         assert_eq!(counter_id_to_symbol("ST/US/TSLA"), "TSLA.US");
+    }
+
+    #[test]
+    fn bk_symbol_to_counter_us() {
+        assert_eq!(bk_symbol_to_counter("IN00270.US"), "BK/US/IN00270");
+    }
+
+    #[test]
+    fn bk_symbol_to_counter_hk() {
+        assert_eq!(bk_symbol_to_counter("IN00123.HK"), "BK/HK/IN00123");
+    }
+
+    #[test]
+    fn bk_counter_to_symbol_us() {
+        assert_eq!(bk_counter_to_symbol("BK/US/IN00270"), "IN00270.US");
+    }
+
+    #[test]
+    fn bk_counter_to_symbol_empty() {
+        assert_eq!(bk_counter_to_symbol(""), "");
+    }
+
+    #[test]
+    fn bk_counter_to_symbol_non_bk() {
+        assert_eq!(bk_counter_to_symbol("ST/US/AAPL"), "");
     }
 }

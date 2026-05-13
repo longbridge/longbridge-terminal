@@ -2673,7 +2673,71 @@ fn print_institution_rating_views(data: &Value) {
     super::output::print_table(&headers, rows, &OutputFormat::Pretty);
 }
 
-// ── industry peers ────────────────────────────────────────────────────────────
+// ── industry rank ─────────────────────────────────────────────────────────────
+
+pub async fn cmd_industry_rank(
+    market: &str,
+    indicator: &str,
+    sort_type: String,
+    count: u32,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let count_str = count.to_string();
+    let data = http_get(
+        "/v1/newmarket/industry/rank_lists",
+        &[
+            ("market",    market),
+            ("indicator", indicator),
+            ("sort_type", sort_type.as_str()),
+            ("limit",     count_str.as_str()),
+        ],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => print_industry_rank(&data),
+    }
+    Ok(())
+}
+
+fn print_industry_rank(data: &Value) {
+    let items = match data["items"].as_array() {
+        Some(a) if !a.is_empty() => a,
+        _ => {
+            println!("No data.");
+            return;
+        }
+    };
+    for item in items {
+        let name = val_str(&item["name"]);
+        let chg = val_str(&item["chg"]);
+        let symbol = crate::utils::counter::bk_counter_to_symbol(&val_str(&item["counter_id"]));
+        let chg_display = if chg != "-" && !chg.is_empty() { fmt_rate(&chg) } else { String::new() };
+        let sym_display = if symbol.is_empty() { String::new() } else { format!("   ({symbol})") };
+        println!("{name}{sym_display}   {chg_display}");
+        if let Some(lists) = item["lists"].as_array() {
+            for sub in lists {
+                let sub_name = val_str(&sub["name"]);
+                let sub_chg = val_str(&sub["chg"]);
+                let sub_sym = crate::utils::counter::bk_counter_to_symbol(&val_str(&sub["counter_id"]));
+                let sub_chg_display = if sub_chg != "-" && !sub_chg.is_empty() { fmt_rate(&sub_chg) } else { String::new() };
+                let sub_sym_display = if sub_sym.is_empty() { String::new() } else { format!("   ({sub_sym})") };
+                let value_name = val_str(&sub["value_name"]);
+                let value_data = val_str(&sub["value_data"]);
+                let value_display = if value_name != "-" && !value_name.is_empty() {
+                    format!("   {value_name}: {value_data}")
+                } else {
+                    String::new()
+                };
+                println!("  {sub_name}{sub_sym_display}   {sub_chg_display}{value_display}");
+            }
+        }
+    }
+}
+
+// ── industry peers ─────────────────────────────────────────────────────────────
 
 pub async fn cmd_industry_peers(
     symbol: String,
@@ -2681,8 +2745,11 @@ pub async fn cmd_industry_peers(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
-    let mkt = market.unwrap_or_else(|| symbol.split('.').next_back().unwrap_or("US").to_uppercase());
+    // Industry index symbols use IN<code>.<MARKET> format (e.g. IN00270.US).
+    let mkt = market.unwrap_or_else(|| {
+        symbol.rsplit_once('.').map_or_else(|| "US".to_string(), |(_, m)| m.to_uppercase())
+    });
+    let cid = crate::utils::counter::bk_symbol_to_counter(&symbol);
     let data = http_get(
         "/v1/quote/industries/peers",
         &[
@@ -2714,23 +2781,29 @@ fn print_industry_peers(data: &Value) {
     }
 }
 
+fn fmt_rate(raw: &str) -> String {
+    raw.parse::<f64>()
+        .map(|f| format!("{:+.2}%", f * 100.0))
+        .unwrap_or_default()
+}
+
 fn print_industry_peers_node(node: &Value, depth: usize) {
     let indent = "  ".repeat(depth + 1);
     let name = val_str(&node["name"]);
-    let stock_num = val_str(&node["stock_num"]);
-    let chg = val_str(&node["chg"]);
-    let ytd_chg = val_str(&node["ytd_chg"]);
-    let chg_display = if chg != "-" && !chg.is_empty() {
-        format!("{chg}%")
-    } else {
-        chg
+    let stock_num = node["stock_num"].as_u64().unwrap_or(0);
+    let chg_raw = val_str(&node["chg"]);
+    let ytd_raw = val_str(&node["ytd_chg"]);
+    let chg_display = if chg_raw != "-" && !chg_raw.is_empty() { fmt_rate(&chg_raw) } else { String::new() };
+    let ytd_display = if ytd_raw != "-" && !ytd_raw.is_empty() { format!("YTD {}", fmt_rate(&ytd_raw)) } else { String::new() };
+    let symbol = crate::utils::counter::bk_counter_to_symbol(&val_str(&node["counter_id"]));
+    let symbol_display = if symbol.is_empty() { String::new() } else { format!("   ({symbol})") };
+    let suffix = match (chg_display.is_empty(), ytd_display.is_empty()) {
+        (false, false) => format!("   {chg_display}   {ytd_display}"),
+        (false, true)  => format!("   {chg_display}"),
+        (true, false)  => format!("   {ytd_display}"),
+        (true, true)   => String::new(),
     };
-    let ytd_display = if ytd_chg != "-" && !ytd_chg.is_empty() {
-        format!("YTD {ytd_chg}%")
-    } else {
-        ytd_chg
-    };
-    println!("{indent}{name}   {stock_num} stocks   {chg_display}   {ytd_display}");
+    println!("{indent}{name}{symbol_display}   {stock_num} stocks{suffix}");
     if let Some(children) = node["next"].as_array() {
         for child in children {
             print_industry_peers_node(child, depth + 1);

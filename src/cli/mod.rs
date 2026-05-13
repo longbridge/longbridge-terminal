@@ -420,17 +420,43 @@ pub enum Commands {
         cate: Option<String>,
     },
 
+    /// Industry ranking list by market and indicator
+    ///
+    /// Returns a ranked list of industries with symbols in IN<code>.<MARKET> format.
+    /// Use the output symbol with `industry-peers` to explore the peer tree.
+    ///
+    /// Example: longbridge industry-rank --market US
+    /// Example: longbridge industry-rank --market HK --indicator market-cap
+    /// Example: longbridge industry-rank --market US --indicator revenue --limit 10
+    IndustryRank {
+        /// Market: US | HK | SG | CN
+        #[arg(long)]
+        market: IndustryRankMarket,
+        /// Ranking indicator (default: leading-gainer)
+        #[arg(long, default_value = "leading-gainer")]
+        indicator: IndustryRankIndicator,
+        /// Sort direction: desc (default) | asc
+        #[arg(long, default_value = "desc")]
+        sort_type: String,
+        /// Number of results (default: 20)
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: u32,
+    },
+
     /// Industry peer group tree for a symbol (type=1 path/peer mode)
     ///
-    /// Returns the hierarchical industry tree the symbol belongs to,
+    /// Returns the hierarchical industry tree for an industry index,
     /// each node with stock count, change, and YTD change.
     ///
-    /// Example: longbridge industry-peers AAPL.US
-    /// Example: longbridge industry-peers 700.HK --market HK
+    /// Pass an industry index symbol in IN<code>.<MARKET> format.
+    /// Use `longbridge industry-rank` to discover symbols.
+    ///
+    /// Example: longbridge industry-peers IN00446.US
+    /// Example: longbridge industry-peers IN00123.HK
     IndustryPeers {
-        /// Symbol in <CODE>.<MARKET> format
+        /// Industry index symbol, e.g. IN00270.US
         symbol: String,
-        /// Market (default: inferred from symbol suffix)
+        /// Market override (default: inferred from symbol suffix)
         #[arg(long)]
         market: Option<String>,
     },
@@ -1456,6 +1482,64 @@ pub enum DcaCmd {
         /// Hours before trade to send reminder: 1 | 6 | 12
         hours: DcaReminderHours,
     },
+}
+
+#[derive(ValueEnum, Clone, Debug)]
+pub enum IndustryRankMarket {
+    #[value(name = "US")]
+    Us,
+    #[value(name = "HK")]
+    Hk,
+    #[value(name = "SG")]
+    Sg,
+    #[value(name = "CN")]
+    Cn,
+}
+
+impl IndustryRankMarket {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Us => "US",
+            Self::Hk => "HK",
+            Self::Sg => "SG",
+            Self::Cn => "CN",
+        }
+    }
+}
+
+#[derive(ValueEnum, Clone, Debug)]
+pub enum IndustryRankIndicator {
+    #[value(name = "leading-gainer")]
+    LeadingGainer,
+    #[value(name = "today-trend")]
+    TodayTrend,
+    #[value(name = "popularity")]
+    Popularity,
+    #[value(name = "market-cap")]
+    MarketCap,
+    #[value(name = "revenue")]
+    Revenue,
+    #[value(name = "revenue-growth")]
+    RevenueGrowth,
+    #[value(name = "net-profit")]
+    NetProfit,
+    #[value(name = "net-profit-growth")]
+    NetProfitGrowth,
+}
+
+impl IndustryRankIndicator {
+    pub fn as_api_value(&self) -> &'static str {
+        match self {
+            Self::LeadingGainer  => "0",
+            Self::TodayTrend     => "1",
+            Self::Popularity     => "2",
+            Self::MarketCap      => "3",
+            Self::Revenue        => "4",
+            Self::RevenueGrowth  => "5",
+            Self::NetProfit      => "6",
+            Self::NetProfitGrowth => "7",
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -2756,6 +2840,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             report,
             cate,
         } => fundamental::cmd_business_segments(symbol, history, report, cate, format, verbose).await,
+        Commands::IndustryRank { market, indicator, sort_type, count } => {
+            fundamental::cmd_industry_rank(market.as_str(), indicator.as_api_value(), sort_type, count, format, verbose).await
+        }
         Commands::IndustryPeers { symbol, market } => {
             fundamental::cmd_industry_peers(symbol, market, format, verbose).await
         }
