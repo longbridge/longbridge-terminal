@@ -201,8 +201,9 @@ longbridge analyst-estimates AAPL.US                                 # Analyst c
 longbridge fund-holder AAPL.US [--count 20]                          # Funds and ETFs holding this stock
 longbridge shareholder AAPL.US [--range all|inc|dec] [--sort chg]    # Institutional shareholders with QoQ change tracking
 longbridge corp-action 700.HK [--all]                                 # Corporate actions (splits, dividends, rights, etc.) — default 30, --all for full history
-longbridge business-segments 700.HK [--history] [--report qf|saf|af] [--cate <cate>]  # Revenue segment breakdown (current snapshot or historical trends)
-longbridge industry-peers 700.HK [--market HK|US|CN]                 # Industry peer group hierarchy tree (type=1 same-peer mode)
+longbridge business-segments AAPL.US [--history] [--report qf|saf|af] [--cate <cate>]  # Revenue segment breakdown (current snapshot or historical trends)
+longbridge industry-rank --market US|HK|CN|SG [--indicator leading-gainer|...|net-profit-growth]  # Industry ranking list; output symbols feed into industry-peers
+longbridge industry-peers IN00446.US                                  # Industry peer group hierarchy tree for an industry index symbol (from industry-rank)
 ```
 
 ### Deposits & Withdrawals
