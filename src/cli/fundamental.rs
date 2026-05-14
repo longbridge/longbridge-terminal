@@ -2660,6 +2660,7 @@ fn print_institution_rating_views(data: &Value) {
     ];
     let rows: Vec<Vec<String>> = items
         .iter()
+        .rev()
         .map(|item| {
             let row_date = format_date(
                 item["date"]
