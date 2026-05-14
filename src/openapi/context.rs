@@ -112,10 +112,7 @@ pub async fn init_contexts() -> Result<(
         http_client_config = http_client_config.http_url(crate::region::HTTP_URL_TEST);
         effective_http_url = crate::region::HTTP_URL_TEST;
     } else if crate::region::is_cn_cached()
-        && (cfg!(not(debug_assertions))
-            || std::env::var("LONGBRIDGE_HTTP_URL")
-                .or_else(|_| std::env::var("LONGPORT_HTTP_URL"))
-                .is_err())
+        && (cfg!(not(debug_assertions)) || std::env::var("LONGBRIDGE_HTTP_URL").is_err())
     {
         // If last geotest indicated China Mainland, use CN endpoints directly.
         // In debug builds, skip if LONGBRIDGE_HTTP_URL is set (allows local mock server testing).
@@ -130,19 +127,21 @@ pub async fn init_contexts() -> Result<(
         effective_http_url = "https://openapi.longbridge.com";
     }
 
-    // Extract x-cli-cmd: first positional (non-flag) arg; skip --format / --lang values.
-    let cli_cmd = {
+    // Extract x-cli-cmd and x-cli-args from process arguments.
+    // x-cli-cmd: the first positional (subcommand) arg.
+    // x-cli-args: all remaining args after the subcommand.
+    let (cli_cmd, cli_args) = {
         let mut iter = std::env::args().skip(1);
-        let mut found = String::new();
-        while let Some(arg) = iter.next() {
-            if arg == "--format" || arg == "--lang" {
-                iter.next();
-            } else if !arg.starts_with('-') {
-                found = arg;
-                break;
+        let mut cmd = String::new();
+        let mut args: Vec<String> = Vec::new();
+        for arg in iter.by_ref() {
+            if cmd.is_empty() && !arg.starts_with('-') {
+                cmd = arg;
+            } else if !arg.is_empty() {
+                args.push(arg);
             }
         }
-        found
+        (cmd, args.join(" "))
     };
 
     let user_agent = concat!("longbridge-cli/", env!("CARGO_PKG_VERSION"));
@@ -151,6 +150,9 @@ pub async fn init_contexts() -> Result<(
     config_builder = config_builder.header("user-agent", user_agent);
     if !cli_cmd.is_empty() {
         config_builder = config_builder.header("x-cli-cmd", &cli_cmd);
+    }
+    if !cli_args.is_empty() {
+        config_builder = config_builder.header("x-cli-args", &cli_args);
     }
 
     let config = Arc::new(config_builder);
@@ -170,6 +172,9 @@ pub async fn init_contexts() -> Result<(
     http_client = http_client.header("user-agent", user_agent);
     if !cli_cmd.is_empty() {
         http_client = http_client.header("x-cli-cmd", cli_cmd.as_str());
+    }
+    if !cli_args.is_empty() {
+        http_client = http_client.header("x-cli-args", cli_args.as_str());
     }
 
     HTTP_CLIENT

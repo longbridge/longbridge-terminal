@@ -42,7 +42,7 @@ pub async fn cmd_news(symbol: String, count: usize, format: &OutputFormat) -> Re
                     "id": item.id,
                     "title": title,
                     "url": item.url,
-                    "published_at": item.published_at.unix_timestamp(),
+                    "published_at": format_datetime(item.published_at),
                     "likes_count": item.likes_count,
                     "comments_count": item.comments_count,
                 })
@@ -124,7 +124,7 @@ pub async fn cmd_filings(symbol: String, count: usize, format: &OutputFormat) ->
                     "title": item.title,
                     "description": item.description,
                     "file_name": item.file_name,
-                    "publish_at": item.published_at.unix_timestamp(),
+                    "publish_at": format_datetime(item.published_at),
                     "file_count": item.file_urls.len(),
                     "file_urls": item.file_urls,
                 })
@@ -289,9 +289,9 @@ pub async fn cmd_topics(symbol: String, count: usize, format: &OutputFormat) -> 
                 serde_json::json!({
                     "id": item.id,
                     "title": item.title,
-                    "description": crate::cli::topic::format_topic_contents(&item.description),
+                    "excerpt": crate::cli::topic::format_topic_contents(&item.description),
                     "url": item.url,
-                    "published_at": item.published_at.unix_timestamp(),
+                    "published_at": format_datetime(item.published_at),
                     "likes_count": item.likes_count,
                     "comments_count": item.comments_count,
                     "shares_count": item.shares_count,

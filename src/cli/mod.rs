@@ -3,6 +3,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 pub mod api;
 pub mod asset;
+pub mod atm;
 pub mod auth;
 pub mod check;
 pub mod completion;
@@ -12,12 +13,14 @@ pub mod html_render;
 pub mod init;
 pub mod insider_trades;
 pub mod investors;
+pub mod ipo;
 pub mod my_quote;
 pub mod news;
 pub mod output;
 pub mod quant_render;
 pub mod quote;
 pub mod run_script;
+pub mod search;
 pub mod sharelist;
 pub mod statement;
 pub mod topic;
@@ -377,17 +380,87 @@ pub enum Commands {
     // ── Fundamentals ────────────────────────────────────────────────────────────
     /// Financial statements (income, balance sheet, cash flow) for a symbol
     ///
+    /// Subcommands: snapshot
     /// Example: longbridge financial-report TSLA.US --kind IS --report af
     /// Example: longbridge financial-report TSLA.US --kind BS --format json
+    /// Example: longbridge financial-report snapshot AAPL.US
+    /// Example: longbridge financial-report snapshot AAPL.US --report qf --year 2024 --period 4
     FinancialReport {
-        /// Symbol in <CODE>.<MARKET> format, e.g. TSLA.US 700.HK
-        symbol: String,
+        /// Symbol in <CODE>.<MARKET> format, e.g. TSLA.US 700.HK (omit when using a subcommand)
+        symbol: Option<String>,
         /// Statement type: IS (income), BS (balance sheet), CF (cash flow), ALL
         #[arg(long, value_name = "TYPE", default_value = "ALL")]
         kind: String,
         /// Report period: af (annual), saf (semi-annual), q1 (Q1), 3q (3 quarters), qf (quarterly)
         #[arg(long)]
         report: Option<String>,
+        /// Fetch the latest financial report summary instead of the full statement
+        #[arg(long)]
+        latest: bool,
+        #[command(subcommand)]
+        cmd: Option<FinancialReportCmd>,
+    },
+
+    /// Business segment revenue breakdown for a symbol
+    ///
+    /// Without --history: returns the current-period segment composition.
+    /// With --history: returns historical segment trends by period and category.
+    ///
+    /// Example: longbridge business-segments AAPL.US
+    /// Example: longbridge business-segments AAPL.US --history --report qf
+    BusinessSegments {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+        /// Fetch historical segment trends instead of current snapshot
+        #[arg(long)]
+        history: bool,
+        /// Report period for history mode: qf (quarterly) | saf (semi-annual) | af (annual)
+        #[arg(long)]
+        report: Option<String>,
+        /// Segment category filter for history mode
+        #[arg(long)]
+        cate: Option<String>,
+    },
+
+    /// Industry ranking list by market and indicator
+    ///
+    /// Returns a ranked list of industries. The "Counter ID" column contains BK
+    /// counter_ids (e.g. BK/US/IN00258) that can be passed directly to `industry-peers`
+    /// to explore the sub-sector hierarchy for that industry.
+    ///
+    /// Example: longbridge industry-rank --market US
+    /// Example: longbridge industry-rank --market HK --indicator market-cap
+    /// Example: longbridge industry-rank --market US --indicator revenue --limit 10
+    IndustryRank {
+        /// Market: US | HK | SG | CN
+        #[arg(long)]
+        market: IndustryRankMarket,
+        /// Ranking indicator (default: leading-gainer)
+        #[arg(long, default_value = "leading-gainer")]
+        indicator: IndustryRankIndicator,
+        /// Display mode: single (default, flat list) | multi (hierarchical)
+        #[arg(long, default_value = "single")]
+        sort_type: IndustryRankSortType,
+        /// Number of results (default: 20)
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: u32,
+    },
+
+    /// Industry peer group tree for a BK counter_id
+    ///
+    /// Returns the hierarchical sub-sector tree for an industry group, with stock
+    /// count, daily change, and YTD change at each level.
+    ///
+    /// Use `industry-rank` to discover industry Counter IDs, then pass one here.
+    ///
+    /// Example: longbridge industry-peers BK/US/IN00258
+    /// Example: longbridge industry-peers BK/HK/IN20337
+    IndustryPeers {
+        /// BK counter_id from `industry-rank`, e.g. BK/US/IN00258
+        symbol: String,
+        /// Market override (default: inferred from symbol suffix)
+        #[arg(long)]
+        market: Option<String>,
     },
 
     /// Institution rating overview and target price summary
@@ -397,12 +470,28 @@ pub enum Commands {
     /// Subcommands: detail
     /// Example: longbridge institution-rating TSLA.US
     /// Example: longbridge institution-rating detail TSLA.US
+    /// Example: longbridge institution-rating TSLA.US --views
     /// Example: longbridge institution-rating TSLA.US --format json
     InstitutionRating {
         /// Symbol in <CODE>.<MARKET> format. Omit when using a subcommand.
         symbol: Option<String>,
         #[command(subcommand)]
         cmd: Option<InstitutionRatingCmd>,
+        /// Show rating history (target price and rating changes over time)
+        #[arg(long)]
+        history: bool,
+        /// Show monthly buy/hold/sell distribution timeline instead of latest snapshot
+        #[arg(long)]
+        views: bool,
+        /// Show industry-wide rating ranking instead of per-symbol summary
+        #[arg(long)]
+        industry_rank: bool,
+        /// Page number for --industry-rank results (default: 1)
+        #[arg(long, default_value = "1")]
+        page: u32,
+        /// Number of records to show (default: 20); applies to --history and --industry-rank
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: u32,
     },
 
     /// Dividend history and distribution details for a symbol
@@ -479,11 +568,12 @@ pub enum Commands {
     /// Latest news articles for a symbol, or fetch full article content
     ///
     /// Without subcommand: lists news articles for a symbol.
-    /// Subcommands: detail
+    /// Subcommands: detail  search
     /// Returns: id, title, `published_at`, likes, comments.
     /// Example: longbridge news TSLA.US
     /// Example: longbridge news TSLA.US --count 5
     /// Example: longbridge news detail 12345678
+    /// Example: longbridge news search "AI stocks"
     News {
         /// Symbol in <CODE>.<MARKET> format (e.g. TSLA.US 700.HK). Omit when using a subcommand.
         symbol: Option<String>,
@@ -514,11 +604,12 @@ pub enum Commands {
     /// Community discussion topics
     ///
     /// Without subcommand: lists topics for a symbol.
-    /// Subcommands: list  detail  mine  create  replies  create-reply
+    /// Subcommands: list  detail  mine  create  replies  create-reply  search
     /// Example: longbridge topic TSLA.US
     /// Example: longbridge topic list TSLA.US
     /// Example: longbridge topic detail 6993508780031016960
     /// Example: longbridge topic create --body "Bullish on TSLA today"
+    /// Example: longbridge topic search TSLA
     Topic {
         /// Symbol in <CODE>.<MARKET> format (e.g. TSLA.US 700.HK). Omit when using a subcommand.
         symbol: Option<String>,
@@ -627,9 +718,14 @@ pub enum Commands {
     /// Returns: overview (`total_asset`, `market_cap`, `total_cash`, `total_pl`, `total_today_pl`,
     /// `margin_call`, `risk_level`, `credit_limit`, currency), holdings table, and cash balances.
     ///
+    /// Without subcommand: shows full portfolio overview.
+    /// Subcommands: short-margin
     /// Example: longbridge portfolio
-    /// Example: longbridge portfolio --format json
-    Portfolio,
+    /// Example: longbridge portfolio short-margin
+    Portfolio {
+        #[command(subcommand)]
+        cmd: Option<PortfolioCmd>,
+    },
 
     /// Current stock (equity) positions across all sub-accounts
     ///
@@ -729,10 +825,10 @@ pub enum Commands {
         cmd: Option<IndustryValuationCmd>,
     },
 
-    /// Operating reviews and financial indicators by report period
+    /// Operating reviews and financial indicators by report period (HK stocks only)
     ///
-    /// Example: longbridge operating AAPL.US
-    /// Example: longbridge operating AAPL.US --report q1
+    /// Example: longbridge operating 700.HK
+    /// Example: longbridge operating 700.HK --report q1
     Operating {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -763,20 +859,24 @@ pub enum Commands {
 
     /// Index or ETF constituent stocks
     ///
+    /// US index symbols require a leading dot (e.g. .DJI.US, .SPX.US, .IXIC.US).
+    /// HK indexes use the plain code (e.g. HSI.HK).
+    ///
     /// Example: longbridge constituent HSI.HK
+    /// Example: longbridge constituent .SPX.US --sort market-cap --order asc
     /// Example: longbridge constituent HSI.HK --limit 20 --sort change
     Constituent {
-        /// Index symbol in <CODE>.<MARKET> format (e.g. HSI.HK, DJI.US)
+        /// Index symbol in <CODE>.<MARKET> format (e.g. HSI.HK, .DJI.US, .SPX.US)
         symbol: String,
         /// Number of results to return
         #[arg(long, default_value = "50")]
         limit: i32,
-        /// Sort indicator: change, price, turnover, inflow, turnover-rate, market-cap
-        #[arg(long, default_value = "change")]
-        sort: String,
-        /// Sort order: desc | asc
-        #[arg(long, default_value = "desc")]
-        order: String,
+        /// Sort indicator
+        #[arg(long, value_enum, default_value_t = ConstituentSort::Change)]
+        sort: ConstituentSort,
+        /// Sort order
+        #[arg(long, value_enum, default_value_t = ConstituentOrder::Desc)]
+        order: ConstituentOrder,
     },
 
     /// Market open/close status for each exchange
@@ -1018,6 +1118,87 @@ pub enum Commands {
     Quant {
         #[command(subcommand)]
         cmd: QuantCmd,
+    },
+
+    // ── Fundamental (new) ────────────────────────────────────────────────────
+    /// Financial statement (income / balance sheet / cash flow) for a symbol
+    ///
+    /// Example: longbridge financial-statement TSLA.US --kind IS --report af
+    /// Example: longbridge financial-statement 700.HK --kind BS --format json
+    FinancialStatement {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+        /// Statement type: IS (income), BS (balance sheet), CF (cash flow), ALL
+        #[arg(long, value_name = "TYPE", default_value = "IS")]
+        kind: String,
+        /// Report period: af (annual), saf (semi-annual), qf (quarterly), cumul (cumulative)
+        #[arg(long, default_value = "af")]
+        report: String,
+    },
+
+    /// Valuation rank within the stock's industry for a date range
+    ///
+    /// Example: longbridge valuation-rank TSLA.US --start 20240101 --end 20241231
+    ValuationRank {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+        /// Start date YYYYMMDD (default: 1 year ago)
+        #[arg(long)]
+        start: Option<String>,
+        /// End date YYYYMMDD (default: today)
+        #[arg(long)]
+        end: Option<String>,
+    },
+
+    // ── Asset (new) ──────────────────────────────────────────────────────────
+    // ── ATM (new) ────────────────────────────────────────────────────────────
+    /// List bank cards for the current account
+    ///
+    /// Example: longbridge bank-cards
+    #[command(name = "bank-cards")]
+    BankCards,
+
+    /// List withdrawal history for the current account
+    ///
+    /// Example: longbridge withdrawals
+    /// Example: longbridge withdrawals --page 2 --limit 50
+    Withdrawals {
+        /// Page number (default: 1)
+        #[arg(long, default_value = "1")]
+        page: u32,
+        /// Records per page (default: 20)
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: u32,
+    },
+
+    /// List deposit history for the current account
+    ///
+    /// Example: longbridge deposits
+    /// Example: longbridge deposits --states 1 --currencies HKD,USD
+    Deposits {
+        /// Page number (default: 1)
+        #[arg(long, default_value = "1")]
+        page: u32,
+        /// Records per page (default: 20)
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: u32,
+        /// Filter by state: 0=pending, 1=credited, 2=failed (comma-separated)
+        #[arg(long)]
+        states: Option<String>,
+        /// Filter by currency codes (comma-separated, e.g. HKD,USD)
+        #[arg(long)]
+        currencies: Option<String>,
+    },
+
+    // ── Search (new) ─────────────────────────────────────────────────────────
+    // ── IPO (new) ────────────────────────────────────────────────────────────
+    /// IPO (new listings) commands — subscriptions, calendar, orders, profit/loss
+    ///
+    /// Example: longbridge ipo subscriptions
+    /// Example: longbridge ipo calendar
+    Ipo {
+        #[command(subcommand)]
+        cmd: IpoCmd,
     },
 }
 
@@ -1309,6 +1490,83 @@ pub enum DcaCmd {
     },
 }
 
+#[derive(ValueEnum, Clone, Debug)]
+pub enum IndustryRankMarket {
+    #[value(name = "US")]
+    Us,
+    #[value(name = "HK")]
+    Hk,
+    #[value(name = "SG")]
+    Sg,
+    #[value(name = "CN")]
+    Cn,
+}
+
+impl IndustryRankMarket {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Us => "US",
+            Self::Hk => "HK",
+            Self::Sg => "SG",
+            Self::Cn => "CN",
+        }
+    }
+}
+
+#[derive(ValueEnum, Clone, Debug)]
+pub enum IndustryRankIndicator {
+    #[value(name = "leading-gainer")]
+    LeadingGainer,
+    #[value(name = "today-trend")]
+    TodayTrend,
+    #[value(name = "popularity")]
+    Popularity,
+    #[value(name = "market-cap")]
+    MarketCap,
+    #[value(name = "revenue")]
+    Revenue,
+    #[value(name = "revenue-growth")]
+    RevenueGrowth,
+    #[value(name = "net-profit")]
+    NetProfit,
+    #[value(name = "net-profit-growth")]
+    NetProfitGrowth,
+}
+
+impl IndustryRankIndicator {
+    pub fn as_api_value(&self) -> &'static str {
+        match self {
+            Self::LeadingGainer => "0",
+            Self::TodayTrend => "1",
+            Self::Popularity => "2",
+            Self::MarketCap => "3",
+            Self::Revenue => "4",
+            Self::RevenueGrowth => "5",
+            Self::NetProfit => "6",
+            Self::NetProfitGrowth => "7",
+        }
+    }
+}
+
+#[derive(ValueEnum, Clone, Debug)]
+pub enum IndustryRankSortType {
+    /// Flat single-level list (default)
+    #[value(name = "single")]
+    Single,
+    /// Hierarchical multi-level tree
+    #[value(name = "multi")]
+    Multi,
+}
+
+impl IndustryRankSortType {
+    pub fn as_api_value(&self) -> &'static str {
+        match self {
+            Self::Single => "0",
+            Self::Multi => "1",
+        }
+    }
+}
+
 #[derive(Subcommand)]
 pub enum IndustryValuationCmd {
     /// Industry valuation distribution (percentile ranking)
@@ -1475,6 +1733,122 @@ pub enum InstitutionRatingCmd {
     Detail {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum FinancialReportCmd {
+    /// AI earnings summary + peer company earnings dates
+    ///
+    /// Returns an AI-generated earnings summary, beat/miss on revenue / EBIT /
+    /// net asset value per share vs consensus, and a list of peer companies
+    /// with their upcoming earnings dates.
+    ///
+    /// Example: longbridge financial-report snapshot AAPL.US
+    /// Example: longbridge financial-report snapshot AAPL.US --report qf --year 2024 --period 4
+    Snapshot {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+        /// Report type: qf (quarterly) | saf (semi-annual) | af (annual)
+        #[arg(long)]
+        report: Option<String>,
+        /// Fiscal year (e.g. 2024)
+        #[arg(long)]
+        year: Option<u32>,
+        /// Fiscal period (e.g. 1 2 3 4)
+        #[arg(long)]
+        period: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum PortfolioCmd {
+    /// Short-selling margin deposit details for the current account
+    ///
+    /// Example: longbridge portfolio short-margin
+    #[command(name = "short-margin")]
+    ShortMargin,
+}
+
+#[derive(Subcommand)]
+pub enum IpoCmd {
+    /// List IPO stocks currently in filing or subscription stage
+    Subscriptions,
+    /// List IPO stocks in wait-listing (grey market) stage
+    WaitListing,
+    /// List recently listed IPO stocks
+    Listed {
+        #[arg(long, default_value = "1")]
+        page: u32,
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: u32,
+    },
+    /// Show the IPO calendar (all upcoming and recent IPOs)
+    Calendar,
+    /// Show IPO detail: profile and timeline for a symbol
+    ///
+    /// Example: longbridge ipo detail 6810.HK
+    /// Example: longbridge ipo detail SUJA.US
+    Detail {
+        symbol: String,
+        /// Market: HK (default) or US
+        #[arg(long, default_value = "HK")]
+        market: String,
+    },
+    /// IPO orders (active + history) for the current account
+    ///
+    /// Without a subcommand, lists active and historical orders.
+    /// Example: longbridge ipo orders
+    /// Example: longbridge ipo orders --status 4
+    /// Example: longbridge ipo orders detail 2452504
+    Orders {
+        #[arg(long)]
+        market: Option<String>,
+        /// Status filter for history: 0=all, 1=subscribed, 2=debit-failed, 3=not-won, 4=won, 5=cancelled
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long, default_value = "1")]
+        page: u32,
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: u32,
+        #[command(subcommand)]
+        cmd: Option<IpoOrderCmd>,
+    },
+    /// Show IPO profit/loss summary and items for a period
+    #[command(name = "profit-loss")]
+    ProfitLoss {
+        /// Period: 1m | 3m | 6m | 1y | all
+        #[arg(long, default_value = "all")]
+        period: String,
+        #[arg(long, default_value = "1")]
+        page: u32,
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: u32,
+    },
+    /// List US IPO stocks currently in subscription stage
+    #[command(name = "us-subscriptions")]
+    UsSubscriptions,
+    /// List US IPO stocks in wait-listing stage
+    #[command(name = "us-wait-listing")]
+    UsWaitListing,
+    /// List recently listed US IPO stocks
+    #[command(name = "us-listed")]
+    UsListed {
+        #[arg(long, default_value = "1")]
+        page: u32,
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: u32,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum IpoOrderCmd {
+    /// Full detail for a single IPO order
+    ///
+    /// Example: longbridge ipo orders detail 2452504
+    Detail {
+        /// IPO order ID
+        order_id: String,
     },
 }
 
@@ -1749,6 +2123,53 @@ pub enum ExportFormat {
     Md,
 }
 
+#[derive(ValueEnum, Clone, Debug)]
+pub enum ConstituentSort {
+    #[value(name = "change")]
+    Change,
+    #[value(name = "price")]
+    Price,
+    #[value(name = "turnover")]
+    Turnover,
+    #[value(name = "inflow")]
+    Inflow,
+    #[value(name = "turnover-rate", alias = "turnover_rate")]
+    TurnoverRate,
+    #[value(name = "market-cap", alias = "market_cap")]
+    MarketCap,
+}
+
+impl ConstituentSort {
+    /// Indicator code expected by `/v1/quote/index-constituents`.
+    pub fn as_indicator(&self) -> &'static str {
+        match self {
+            Self::Change => "1",
+            Self::Price => "2",
+            Self::Turnover => "3",
+            Self::Inflow => "4",
+            Self::TurnoverRate => "5",
+            Self::MarketCap => "6",
+        }
+    }
+}
+
+#[derive(ValueEnum, Clone, Debug)]
+pub enum ConstituentOrder {
+    #[value(name = "desc")]
+    Desc,
+    #[value(name = "asc")]
+    Asc,
+}
+
+impl ConstituentOrder {
+    pub fn as_indicator(&self) -> &'static str {
+        match self {
+            Self::Desc => "0",
+            Self::Asc => "1",
+        }
+    }
+}
+
 #[derive(Subcommand)]
 pub enum StatementCmd {
     /// List available statements for an account
@@ -1982,6 +2403,18 @@ pub enum NewsCmd {
         /// News article ID (from `longbridge news <SYMBOL>`)
         id: String,
     },
+
+    /// Search news by keyword
+    ///
+    /// Example: longbridge news search "AI stocks"
+    /// Example: longbridge news search TSLA --count 10
+    Search {
+        /// Search keyword
+        keyword: String,
+        /// Maximum results to display (default: 20)
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: usize,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2092,6 +2525,18 @@ pub enum TopicCmd {
         /// Nest under this reply ID (get IDs from topic-replies). Omit for a top-level reply.
         #[arg(long = "reply-to")]
         reply_to_id: Option<String>,
+    },
+
+    /// Search community topics by keyword
+    ///
+    /// Example: longbridge topic search TSLA
+    /// Example: longbridge topic search "AI stocks" --count 10
+    Search {
+        /// Search keyword
+        keyword: String,
+        /// Maximum results to display (default: 20)
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: usize,
     },
 }
 
@@ -2369,20 +2814,83 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             symbol,
             kind,
             report,
-        } => fundamental::cmd_financial_report(symbol, kind, report, format, verbose).await,
-        Commands::InstitutionRating { symbol, cmd } => match cmd {
-            Some(InstitutionRatingCmd::Detail { symbol: s }) => {
-                fundamental::cmd_institution_rating_detail(s, format, verbose).await
-            }
-            None => {
+            latest,
+            cmd,
+        } => {
+            if let Some(FinancialReportCmd::Snapshot {
+                symbol: s,
+                report: r,
+                year,
+                period,
+            }) = cmd
+            {
+                fundamental::cmd_financial_report_snapshot(s, r, year, period, format, verbose)
+                    .await
+            } else if latest {
                 let sym = symbol.ok_or_else(|| {
                     anyhow::anyhow!(
-                        "Symbol required. Usage: longbridge institution-rating <SYMBOL>"
+                        "Symbol required. Usage: longbridge financial-report <SYMBOL> --latest"
                     )
                 })?;
-                fundamental::cmd_institution_rating(sym, format, verbose).await
+                fundamental::cmd_financial_report_latest(sym, format, verbose).await
+            } else {
+                let sym = symbol.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Symbol required. Usage: longbridge financial-report <SYMBOL>"
+                    )
+                })?;
+                fundamental::cmd_financial_report(sym, kind, report, format, verbose).await
             }
-        },
+        }
+        Commands::InstitutionRating {
+            symbol,
+            cmd,
+            history,
+            views,
+            industry_rank,
+            page,
+            count,
+        } => {
+            if industry_rank {
+                let sym = symbol.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Symbol required. Usage: longbridge institution-rating <SYMBOL> --industry-rank"
+                    )
+                })?;
+                fundamental::cmd_institution_rating_industry_rank(
+                    sym, page, count, format, verbose,
+                )
+                .await
+            } else if views {
+                let sym = symbol.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Symbol required. Usage: longbridge institution-rating <SYMBOL> --views"
+                    )
+                })?;
+                fundamental::cmd_institution_rating_views(sym, format, verbose).await
+            } else if history {
+                let sym = symbol.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Symbol required. Usage: longbridge institution-rating <SYMBOL> --history"
+                    )
+                })?;
+                fundamental::cmd_institution_rating_history(sym, count as usize, format, verbose).await
+            } else {
+                match cmd {
+                    Some(InstitutionRatingCmd::Detail { symbol: s }) => {
+                        fundamental::cmd_institution_rating_detail(s, format, verbose).await
+                    }
+                    None => {
+                        let sym = symbol.ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "Symbol required. Usage: longbridge institution-rating <SYMBOL>"
+                            )
+                        })?;
+                        fundamental::cmd_institution_rating(sym, format, verbose).await
+                    }
+                }
+            }
+        }
         Commands::Dividend { symbol, page, year, cmd } => match cmd {
             Some(DividendCmd::Detail { symbol: s }) => {
                 fundamental::cmd_dividend_detail(s, format, verbose).await
@@ -2398,6 +2906,18 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             fundamental::cmd_forecast_eps(symbol, format, verbose).await
         }
         Commands::Consensus { symbol } => fundamental::cmd_consensus(symbol, format, verbose).await,
+        Commands::BusinessSegments {
+            symbol,
+            history,
+            report,
+            cate,
+        } => fundamental::cmd_business_segments(symbol, history, report, cate, format, verbose).await,
+        Commands::IndustryRank { market, indicator, sort_type, count } => {
+            fundamental::cmd_industry_rank(market.as_str(), indicator.as_api_value(), sort_type.as_api_value(), count, format, verbose).await
+        }
+        Commands::IndustryPeers { symbol, market } => {
+            fundamental::cmd_industry_peers(symbol, market, format, verbose).await
+        }
         Commands::FinanceCalendar { cmd } => {
             let (event_type, opts, star) = match cmd {
                 FinanceCalendarCmd::Report { opts } => ("report", opts, vec![]),
@@ -2436,6 +2956,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         }
         Commands::News { symbol, count, cmd } => match cmd {
             Some(NewsCmd::Detail { id }) => news::cmd_news_detail(id).await,
+            Some(NewsCmd::Search { keyword, count }) => {
+                search::cmd_search(keyword, "news", count, format, verbose).await
+            }
             None => {
                 let sym = symbol.ok_or_else(|| {
                     anyhow::anyhow!("Symbol required. Usage: longbridge news <SYMBOL>")
@@ -2480,6 +3003,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 body,
                 reply_to_id,
             }) => topic::cmd_create_reply(topic_id, body, reply_to_id, format).await,
+            Some(TopicCmd::Search { keyword, count }) => {
+                search::cmd_search(keyword, "topics", count, format, verbose).await
+            }
             None => {
                 let sym = symbol.ok_or_else(|| {
                     anyhow::anyhow!("Symbol required. Usage: longbridge topic <SYMBOL>")
@@ -2602,7 +3128,11 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         },
         Commands::Assets { currency } => trade::cmd_assets(currency, format).await,
         Commands::CashFlow { start, end } => trade::cmd_cash_flow(start, end, format).await,
-        Commands::Portfolio => trade::cmd_portfolio(format).await,
+        Commands::Portfolio { cmd } => match cmd {
+            None => trade::cmd_portfolio(format).await,
+            Some(PortfolioCmd::ShortMargin) => asset::cmd_short_margin(format, verbose).await,
+
+        },
         Commands::Positions => trade::cmd_positions(format).await,
         Commands::FundPositions => trade::cmd_fund_positions(format).await,
         Commands::MarginRatio { symbol } => trade::cmd_margin_ratio(symbol, format).await,
@@ -2820,6 +3350,67 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 script,
                 input,
             } => run_script::cmd_run_script(symbol, &period, &start, &end, script, input, format, verbose).await,
+        },
+
+        Commands::FinancialStatement { symbol, kind, report } => {
+            fundamental::cmd_financial_statement(symbol, &kind, &report, format, verbose).await
+        }
+        Commands::ValuationRank { symbol, start, end } => {
+            fundamental::cmd_valuation_rank(symbol, start.as_deref(), end.as_deref(), format, verbose).await
+        }
+        Commands::BankCards => atm::cmd_withdrawal_cards(format, verbose).await,
+        Commands::Withdrawals { page, count } => {
+            atm::cmd_withdrawals(page, count, format, verbose).await
+        }
+        Commands::Deposits {
+            page,
+            count,
+            states,
+            currencies,
+        } => {
+            atm::cmd_deposits(
+                page,
+                count,
+                states.as_deref(),
+                currencies.as_deref(),
+                format,
+                verbose,
+            )
+            .await
+        }
+
+        Commands::Ipo { cmd } => match cmd {
+            IpoCmd::Subscriptions => ipo::cmd_ipo_subscriptions(format, verbose).await,
+            IpoCmd::WaitListing => ipo::cmd_ipo_wait_listing(format, verbose).await,
+            IpoCmd::Listed { page, count } => {
+                ipo::cmd_ipo_listed(page, count, format, verbose).await
+            }
+            IpoCmd::Calendar => ipo::cmd_ipo_calendar(format, verbose).await,
+            IpoCmd::Detail { symbol, market } => {
+                ipo::cmd_ipo_detail(symbol, &market, format, verbose).await
+            }
+            IpoCmd::Orders {
+                market,
+                status,
+                page,
+                count,
+                cmd,
+            } => match cmd {
+                Some(IpoOrderCmd::Detail { order_id }) => {
+                    ipo::cmd_ipo_order_detail(order_id, format, verbose).await
+                }
+                None => {
+                    ipo::cmd_ipo_orders(None, market, status, page, count, format, verbose).await
+                }
+            },
+IpoCmd::ProfitLoss { period, page, count } => {
+                ipo::cmd_ipo_profit_loss(&period, page, count, format, verbose).await
+            }
+            IpoCmd::UsSubscriptions => ipo::cmd_ipo_us_subscriptions(format, verbose).await,
+            IpoCmd::UsWaitListing => ipo::cmd_ipo_us_wait_listing(format, verbose).await,
+            IpoCmd::UsListed { page, count } => {
+                ipo::cmd_ipo_us_listed(page, count, format, verbose).await
+            }
         },
 
         Commands::Auth { .. }

@@ -556,3 +556,35 @@ pub async fn cmd_profit_analysis_by_market(
     }
     Ok(())
 }
+
+// ── short margin ─────────────────────────────────────────────────────────────
+
+pub async fn cmd_short_margin(format: &OutputFormat, verbose: bool) -> Result<()> {
+    let data = http_get("/v1/asset/cash/short-margin", &[], verbose).await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            if let Some(list) = data["short_list"].as_array() {
+                if list.is_empty() {
+                    println!("No short margin records.");
+                    return Ok(());
+                }
+                let headers = ["code", "amount", "currency"];
+                let rows: Vec<Vec<String>> = list
+                    .iter()
+                    .map(|item| {
+                        vec![
+                            val_str(&item["code"]),
+                            val_str(&item["amount"]),
+                            val_str(&item["currency"]),
+                        ]
+                    })
+                    .collect();
+                print_table(&headers, rows, &OutputFormat::Pretty);
+            } else {
+                print_json(&data);
+            }
+        }
+    }
+    Ok(())
+}

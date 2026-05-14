@@ -142,6 +142,7 @@ longbridge calc-index TSLA.US --fields pe,pb,eps     # Calculated financial inde
 longbridge capital TSLA.US                          # Capital distribution snapshot (large/medium/small inflow and outflow)
 longbridge capital TSLA.US --flow                   # Intraday capital flow time series (large/medium/small money in vs out)
 longbridge market-temp [HK|US|CN|SG]                # Market sentiment temperature index (0–100, higher = more bullish)
+longbridge constituent .SPX.US [--sort market-cap]  # Index constituent stocks (US indexes need a leading dot, e.g. .DJI.US, .SPX.US)
 longbridge trading session                          # Trading session schedule (open/close times) for all markets
 longbridge trading days HK                          # Trading days and half-trading days for a market
 longbridge security-list HK                         # Full list of securities available in a market
@@ -182,7 +183,13 @@ longbridge warrant issuers                        # Warrant issuer list (HK mark
 
 ```bash
 longbridge financial-report AAPL.US [--kind IS|BS|CF]               # Multi-period financial statements (income / balance sheet / cash flow)
+longbridge financial-report AAPL.US --latest                         # Latest financial report summary
+longbridge financial-report snapshot AAPL.US --report qf --year N --period N  # Earnings summary + forecast vs actual (revenue/EBIT/EPS beat/miss) + financial ratios
+longbridge financial-statement AAPL.US [--kind IS|BS|CF|ALL] [--report af|saf|qf|cumul]  # Detailed financial statement (v3 endpoint)
 longbridge institution-rating AAPL.US                                # Analyst rating distribution and consensus target price
+longbridge institution-rating AAPL.US --history                      # Rating and target price change history
+longbridge institution-rating AAPL.US --industry-rank [--page 1] [--limit 20]  # Industry-wide institution rating ranking
+longbridge institution-rating AAPL.US --views                        # Monthly buy/hold/sell distribution timeline (institutional views)
 longbridge institution-rating detail AAPL.US                         # Monthly rating trend and analyst accuracy history
 longbridge dividend AAPL.US                                          # Historical dividend records
 longbridge dividend detail AAPL.US                                   # Dividend allocation plan details
@@ -190,9 +197,47 @@ longbridge forecast-eps AAPL.US                                      # Analyst E
 longbridge consensus AAPL.US                                         # Revenue / profit / EPS multi-period comparison with beat/miss markers
 longbridge valuation AAPL.US [--indicator pe|pb|ps|dvd_yld]         # Current valuation snapshot and peer comparison
 longbridge valuation AAPL.US --history [--indicator pe] [--range 5]  # Historical valuation time series (1 / 3 / 5 / 10 years)
+longbridge valuation-rank AAPL.US [--start 20240101] [--end 20241231] # Industry valuation percentile ranking (default: last 30 days)
+longbridge analyst-estimates AAPL.US                                 # Analyst consensus EPS estimates
 longbridge fund-holder AAPL.US [--count 20]                          # Funds and ETFs holding this stock
 longbridge shareholder AAPL.US [--range all|inc|dec] [--sort chg]    # Institutional shareholders with QoQ change tracking
 longbridge corp-action 700.HK [--all]                                 # Corporate actions (splits, dividends, rights, etc.) — default 30, --all for full history
+longbridge business-segments AAPL.US [--history] [--report qf|saf|af] [--cate <cate>]  # Revenue segment breakdown (current snapshot or historical trends)
+longbridge industry-rank --market US|HK|CN|SG [--indicator leading-gainer|...|net-profit-growth]  # Industry ranking list; output symbols feed into industry-peers
+longbridge industry-peers IN00446.US                                  # Industry peer group hierarchy tree for an industry index symbol (from industry-rank)
+```
+
+### Deposits & Withdrawals
+
+```bash
+longbridge bank-cards                                               # List linked bank cards
+longbridge withdrawals [--page 1] [--limit 20]                      # Withdrawal history
+longbridge deposits [--page 1] [--limit 20] [--states 0,1,2] [--currencies HKD,USD]  # Deposit history
+```
+
+### Search
+
+```bash
+longbridge search TSLA [--tab market|news|posts|hashtags|help|share-lists|users|institutions]  # Search across multiple content types
+longbridge search-hot                                               # Hot search keywords
+```
+
+### IPO
+
+```bash
+longbridge ipo subscriptions                                        # IPO stocks currently in filing or subscription stage
+longbridge ipo wait-listing                                         # IPO stocks in grey-market (wait-listing) stage
+longbridge ipo listed [--page 1] [--limit 20]                       # Recently listed IPO stocks
+longbridge ipo calendar                                             # IPO calendar (all upcoming and recent IPOs)
+longbridge ipo detail <symbol> [--market HK|US]                     # IPO profile, timeline, eligibility, and holdings for a symbol
+longbridge ipo orders [--market HK] [--status 0] [--page 1]         # IPO orders (active + history) for the current account
+longbridge ipo orders detail <order_id>                             # Full detail for a single IPO order
+longbridge ipo profit-loss [--period all|1m|3m|6m|1y] [--page 1]   # IPO P&L summary and item list
+longbridge ipo us-subscriptions                                     # US IPO stocks currently in subscription stage
+longbridge ipo us-wait-listing                                      # US IPO stocks in wait-listing stage
+longbridge ipo us-listed [--page 1] [--limit 20]                    # Recently listed US IPO stocks
+longbridge ipo submit TSLA.US --qty 200 --amount 1000 [--method 2]  # Submit IPO subscription (prompts for confirmation)
+longbridge ipo withdraw <order_id>                                  # Withdraw IPO subscription (prompts for confirmation)
 ```
 
 ### Market Data
@@ -247,6 +292,8 @@ longbridge order cancel <order_id>                         # Cancel a pending or
 longbridge order replace <order_id> --qty 200 --price 255.00 # Modify quantity or price of a pending order
 longbridge assets [--currency USD]                         # Asset overview: net assets, cash, buy power, margins, and per-currency breakdown
 longbridge cash-flow [--start 2024-01-01]                  # Cash flow records (deposits, withdrawals, dividends, settlements)
+longbridge portfolio                                       # Portfolio overview: total assets, P/L, holdings, and cash breakdown
+longbridge portfolio short-margin                          # Short-selling margin deposit details
 longbridge positions                                       # Current stock (equity) positions across all sub-accounts
 longbridge fund-positions                                  # Current fund (mutual fund) positions across all sub-accounts
 longbridge margin-ratio TSLA.US                            # Margin ratio requirements for a symbol
