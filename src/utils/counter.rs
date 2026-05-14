@@ -1,17 +1,4 @@
-use std::collections::HashSet;
-use std::sync::OnceLock;
-
-static US_ETF_SET: OnceLock<HashSet<&'static str>> = OnceLock::new();
-
-fn us_etf_set() -> &'static HashSet<&'static str> {
-    US_ETF_SET.get_or_init(|| {
-        include_str!("US-ETF.csv")
-            .lines()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .collect()
-    })
-}
+include!(concat!(env!("OUT_DIR"), "/special_counter_ids.rs"));
 
 /// Convert a `counter_id` (e.g. `ST/US/TSLA`, `ETF/US/SPY`, `IX/US/.DJI`, `ST/HK/700`) back to
 /// a display symbol (e.g. `TSLA.US`, `SPY.US`, `.DJI.US`, `700.HK`).
@@ -28,13 +15,12 @@ pub fn counter_id_to_symbol(counter_id: &str) -> String {
     }
 }
 
-/// Convert a user-supplied symbol (e.g. `TSLA.US`, `700.HK`, `.DJI.US`) to a `counter_id`
-/// (e.g. `ST/US/TSLA`, `ST/HK/700`, `ETF/US/SPY`, `IX/US/.DJI`).
+/// Convert a user-supplied symbol (e.g. `TSLA.US`, `700.HK`, `.DJI.US`, `HSI.HK`) to a
+/// `counter_id` (e.g. `ST/US/TSLA`, `ST/HK/700`, `IX/US/DJI`, `IX/HK/HSI`).
 ///
-/// Leading-dot symbols (e.g. `.DJI.US`, `.VIX.US`) are US market indexes and map to
-/// the `IX/` prefix, preserving the dot in the code part (e.g. `.DJI.US` → `IX/US/.DJI`).
-/// US symbols are checked against the embedded ETF list; matching symbols use the `ETF/`
-/// prefix.  All other symbols default to `ST/`.
+/// Leading-dot symbols (e.g. `.DJI.US`) are US market indexes and always map to `IX/`.
+/// All other symbols are checked against the embedded ETF + index set; a matching entry
+/// is returned as-is.  Unmatched symbols default to `ST/`.
 pub fn symbol_to_counter_id(symbol: &str) -> String {
     if let Some((code, market)) = symbol.rsplit_once('.') {
         let market = market.to_uppercase();
@@ -49,12 +35,14 @@ pub fn symbol_to_counter_id(symbol: &str) -> String {
         } else {
             code
         };
-        let etf_candidate = format!("ETF/{market}/{code}");
-        if us_etf_set().contains(etf_candidate.as_str()) {
-            etf_candidate
-        } else {
-            format!("ST/{market}/{code}")
+        // Check special counter_ids set (ETF, IX, and WT entries)
+        for prefix in &["ETF", "IX", "WT"] {
+            let candidate = format!("{prefix}/{market}/{code}");
+            if SPECIAL_COUNTER_IDS.contains(candidate.as_str()) {
+                return candidate;
+            }
         }
+        format!("ST/{market}/{code}")
     } else {
         symbol.to_string()
     }
@@ -122,6 +110,16 @@ mod tests {
     #[test]
     fn ix_us_spx() {
         assert_eq!(symbol_to_counter_id(".SPX.US"), "IX/US/.SPX");
+    }
+
+    #[test]
+    fn ix_hk_hsi_via_set() {
+        assert_eq!(symbol_to_counter_id("HSI.HK"), "IX/HK/HSI");
+    }
+
+    #[test]
+    fn wt_hk_via_set() {
+        assert_eq!(symbol_to_counter_id("10005.HK"), "WT/HK/10005");
     }
 
     #[test]
