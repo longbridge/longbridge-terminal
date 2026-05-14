@@ -143,12 +143,9 @@ fn read_u32_le(data: &[u8], offset: usize) -> u32 {
 #[allow(clippy::indexing_slicing)]
 fn find_eocd(data: &[u8]) -> Option<usize> {
     let sig = [0x50u8, 0x4B, 0x05, 0x06];
-    for i in (0..data.len().saturating_sub(21)).rev() {
-        if data[i..i + 4] == sig {
-            return Some(i);
-        }
-    }
-    None
+    (0..data.len().saturating_sub(21))
+        .rev()
+        .find(|&i| data[i..i + 4] == sig)
 }
 
 // Parses the ZIP central directory; returns filename → (local_offset_abs, comp_size, comp_method).

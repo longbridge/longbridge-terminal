@@ -1,18 +1,15 @@
 include!(concat!(env!("OUT_DIR"), "/special_counter_ids.rs"));
 
-/// Convert a `counter_id` (e.g. `ST/US/TSLA`, `ETF/US/SPY`, `IX/US/DJI`, `ST/HK/700`) back to
+/// Convert a `counter_id` (e.g. `ST/US/TSLA`, `ETF/US/SPY`, `IX/US/.DJI`, `ST/HK/700`) back to
 /// a display symbol (e.g. `TSLA.US`, `SPY.US`, `.DJI.US`, `700.HK`).
 ///
-/// US index `counter_ids` (`IX/US/...`) map to leading-dot symbols (e.g. `.DJI.US`).
+/// US index `counter_ids` (`IX/US/...`) preserve the leading dot in the code part
+/// (e.g. `IX/US/.DJI` → `.DJI.US`).
 pub fn counter_id_to_symbol(counter_id: &str) -> String {
     let parts: Vec<&str> = counter_id.splitn(3, '/').collect();
     if parts.len() == 3 {
-        let (prefix, market, code) = (parts[0], parts[1], parts[2]);
-        if prefix == "IX" && market == "US" {
-            format!(".{code}.{market}")
-        } else {
-            format!("{code}.{market}")
-        }
+        let (_prefix, market, code) = (parts[0], parts[1], parts[2]);
+        format!("{code}.{market}")
     } else {
         counter_id.to_string()
     }
@@ -27,9 +24,10 @@ pub fn counter_id_to_symbol(counter_id: &str) -> String {
 pub fn symbol_to_counter_id(symbol: &str) -> String {
     if let Some((code, market)) = symbol.rsplit_once('.') {
         let market = market.to_uppercase();
-        // Leading-dot symbols are US market indexes (e.g. `.DJI.US` → `IX/US/DJI`)
-        if let Some(ix_code) = code.strip_prefix('.') {
-            return format!("IX/{market}/{ix_code}");
+        // Leading-dot symbols are US market indexes; the dot is part of the counter_id
+        // (e.g. `.DJI.US` → `IX/US/.DJI`)
+        if code.starts_with('.') {
+            return format!("IX/{market}/{code}");
         }
         // Strip leading zeros from numeric codes (e.g. `00700` → `700`)
         let code = if code.chars().all(|c| c.is_ascii_digit()) {
@@ -96,17 +94,22 @@ mod tests {
 
     #[test]
     fn ix_us_dji() {
-        assert_eq!(symbol_to_counter_id(".DJI.US"), "IX/US/DJI");
+        assert_eq!(symbol_to_counter_id(".DJI.US"), "IX/US/.DJI");
     }
 
     #[test]
     fn ix_us_vix() {
-        assert_eq!(symbol_to_counter_id(".VIX.US"), "IX/US/VIX");
+        assert_eq!(symbol_to_counter_id(".VIX.US"), "IX/US/.VIX");
     }
 
     #[test]
     fn ix_us_ixic() {
-        assert_eq!(symbol_to_counter_id(".IXIC.US"), "IX/US/IXIC");
+        assert_eq!(symbol_to_counter_id(".IXIC.US"), "IX/US/.IXIC");
+    }
+
+    #[test]
+    fn ix_us_spx() {
+        assert_eq!(symbol_to_counter_id(".SPX.US"), "IX/US/.SPX");
     }
 
     #[test]
@@ -121,7 +124,7 @@ mod tests {
 
     #[test]
     fn counter_id_ix_us_to_symbol() {
-        assert_eq!(counter_id_to_symbol("IX/US/DJI"), ".DJI.US");
+        assert_eq!(counter_id_to_symbol("IX/US/.DJI"), ".DJI.US");
     }
 
     #[test]
