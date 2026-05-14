@@ -2824,10 +2824,26 @@ fn print_industry_peers(data: &Value) {
     if top_name != "-" && !top_name.is_empty() {
         println!("Root: {top_name} ({top_market})\n");
     }
-    if data["chain"].is_null() {
+    let chain = &data["chain"];
+    if chain.is_null() {
         println!("No peer data.");
+        return;
+    }
+    let name = val_str(&chain["name"]);
+    let stock_num = chain["stock_num"].as_u64().unwrap_or(0);
+    let cid = val_str(&chain["counter_id"]);
+    let cid_part = if cid.is_empty() {
+        String::new()
     } else {
-        print_industry_peers_node(&data["chain"], 0);
+        format!(" ({cid})")
+    };
+    let suffix = fmt_node_stats(chain);
+    println!("{name}{cid_part}  {stock_num} stocks{suffix}");
+    if let Some(children) = chain["next"].as_array() {
+        let n = children.len();
+        for (i, child) in children.iter().enumerate() {
+            print_industry_peers_node(child, "", i + 1 == n);
+        }
     }
 }
 
@@ -2837,38 +2853,45 @@ fn fmt_rate(raw: &str) -> String {
         .unwrap_or_default()
 }
 
-fn print_industry_peers_node(node: &Value, depth: usize) {
-    let indent = "  ".repeat(depth + 1);
-    let name = val_str(&node["name"]);
-    let stock_num = node["stock_num"].as_u64().unwrap_or(0);
+fn fmt_node_stats(node: &Value) -> String {
     let chg_raw = val_str(&node["chg"]);
     let ytd_raw = val_str(&node["ytd_chg"]);
-    let chg_display = if chg_raw != "-" && !chg_raw.is_empty() {
+    let chg = if chg_raw.is_empty() || chg_raw == "-" {
+        String::new()
+    } else {
         fmt_rate(&chg_raw)
-    } else {
-        String::new()
     };
-    let ytd_display = if ytd_raw != "-" && !ytd_raw.is_empty() {
+    let ytd = if ytd_raw.is_empty() || ytd_raw == "-" {
+        String::new()
+    } else {
         format!("YTD {}", fmt_rate(&ytd_raw))
-    } else {
-        String::new()
     };
-    let cid = val_str(&node["counter_id"]);
-    let symbol_display = if cid.is_empty() {
-        String::new()
-    } else {
-        format!("   ({cid})")
-    };
-    let suffix = match (chg_display.is_empty(), ytd_display.is_empty()) {
-        (false, false) => format!("   {chg_display}   {ytd_display}"),
-        (false, true) => format!("   {chg_display}"),
-        (true, false) => format!("   {ytd_display}"),
+    match (chg.is_empty(), ytd.is_empty()) {
+        (false, false) => format!("  {chg}  {ytd}"),
+        (false, true) => format!("  {chg}"),
+        (true, false) => format!("  {ytd}"),
         (true, true) => String::new(),
+    }
+}
+
+fn print_industry_peers_node(node: &Value, prefix: &str, is_last: bool) {
+    let connector = if is_last { "└── " } else { "├── " };
+    let extension = if is_last { "    " } else { "│   " };
+    let name = val_str(&node["name"]);
+    let stock_num = node["stock_num"].as_u64().unwrap_or(0);
+    let cid = val_str(&node["counter_id"]);
+    let cid_part = if cid.is_empty() {
+        String::new()
+    } else {
+        format!(" ({cid})")
     };
-    println!("{indent}{name}{symbol_display}   {stock_num} stocks{suffix}");
+    let suffix = fmt_node_stats(node);
+    println!("{prefix}{connector}{name}{cid_part}  {stock_num} stocks{suffix}");
     if let Some(children) = node["next"].as_array() {
-        for child in children {
-            print_industry_peers_node(child, depth + 1);
+        let new_prefix = format!("{prefix}{extension}");
+        let n = children.len();
+        for (i, child) in children.iter().enumerate() {
+            print_industry_peers_node(child, &new_prefix, i + 1 == n);
         }
     }
 }

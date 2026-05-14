@@ -422,8 +422,9 @@ pub enum Commands {
 
     /// Industry ranking list by market and indicator
     ///
-    /// Returns a ranked list of industries with symbols in IN<code>.<MARKET> format.
-    /// Use the output symbol with `industry-peers` to explore the peer tree.
+    /// Returns a ranked list of industries. The "Counter ID" column contains BK
+    /// counter_ids (e.g. BK/US/IN00258) that can be passed directly to `industry-peers`
+    /// to explore the sub-sector hierarchy for that industry.
     ///
     /// Example: longbridge industry-rank --market US
     /// Example: longbridge industry-rank --market HK --indicator market-cap
@@ -443,18 +444,17 @@ pub enum Commands {
         count: u32,
     },
 
-    /// Industry peer group tree for a symbol (type=1 path/peer mode)
+    /// Industry peer group tree for a BK counter_id
     ///
-    /// Returns the hierarchical industry tree for an industry index,
-    /// each node with stock count, change, and YTD change.
+    /// Returns the hierarchical sub-sector tree for an industry group, with stock
+    /// count, daily change, and YTD change at each level.
     ///
-    /// Pass an industry index symbol in IN<code>.<MARKET> format.
-    /// Use `longbridge industry-rank` to discover symbols.
+    /// Use `industry-rank` to discover industry Counter IDs, then pass one here.
     ///
-    /// Example: longbridge industry-peers IN00446.US
-    /// Example: longbridge industry-peers IN00123.HK
+    /// Example: longbridge industry-peers BK/US/IN00258
+    /// Example: longbridge industry-peers BK/HK/IN20337
     IndustryPeers {
-        /// Industry index symbol, e.g. IN00270.US
+        /// BK counter_id from `industry-rank`, e.g. BK/US/IN00258
         symbol: String,
         /// Market override (default: inferred from symbol suffix)
         #[arg(long)]
@@ -1530,13 +1530,13 @@ pub enum IndustryRankIndicator {
 impl IndustryRankIndicator {
     pub fn as_api_value(&self) -> &'static str {
         match self {
-            Self::LeadingGainer  => "0",
-            Self::TodayTrend     => "1",
-            Self::Popularity     => "2",
-            Self::MarketCap      => "3",
-            Self::Revenue        => "4",
-            Self::RevenueGrowth  => "5",
-            Self::NetProfit      => "6",
+            Self::LeadingGainer => "0",
+            Self::TodayTrend => "1",
+            Self::Popularity => "2",
+            Self::MarketCap => "3",
+            Self::Revenue => "4",
+            Self::RevenueGrowth => "5",
+            Self::NetProfit => "6",
             Self::NetProfitGrowth => "7",
         }
     }
@@ -1556,7 +1556,7 @@ impl IndustryRankSortType {
     pub fn as_api_value(&self) -> &'static str {
         match self {
             Self::Single => "0",
-            Self::Multi  => "1",
+            Self::Multi => "1",
         }
     }
 }
