@@ -2649,7 +2649,15 @@ fn print_institution_rating_views(data: &Value) {
             return;
         }
     };
-    let headers = ["Date", "Buy", "Outperform", "Hold", "Underperform", "Sell", "Total"];
+    let headers = [
+        "Date",
+        "Buy",
+        "Outperform",
+        "Hold",
+        "Underperform",
+        "Sell",
+        "Total",
+    ];
     let rows: Vec<Vec<String>> = items
         .iter()
         .map(|item| {
@@ -2687,10 +2695,10 @@ pub async fn cmd_industry_rank(
     let data = http_get(
         "/v1/quote/industry/rank",
         &[
-            ("market",    market),
+            ("market", market),
             ("indicator", indicator),
             ("sort_type", sort_type),
-            ("limit",     count_str.as_str()),
+            ("limit", count_str.as_str()),
         ],
         verbose,
     )
@@ -2703,38 +2711,73 @@ pub async fn cmd_industry_rank(
 }
 
 fn print_industry_rank(data: &Value) {
-    let items = match data["items"].as_array() {
+    let lists = data["items"]
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(|item| item["lists"].as_array());
+    let lists = match lists {
         Some(a) if !a.is_empty() => a,
         _ => {
             println!("No data.");
             return;
         }
     };
-    for item in items {
-        let name = val_str(&item["name"]);
-        let chg = val_str(&item["chg"]);
-        let symbol = crate::utils::counter::bk_counter_to_symbol(&val_str(&item["counter_id"]));
-        let chg_display = if chg != "-" && !chg.is_empty() { fmt_rate(&chg) } else { String::new() };
-        let sym_display = if symbol.is_empty() { String::new() } else { format!("   ({symbol})") };
-        println!("{name}{sym_display}   {chg_display}");
-        if let Some(lists) = item["lists"].as_array() {
-            for sub in lists {
-                let sub_name = val_str(&sub["name"]);
-                let sub_chg = val_str(&sub["chg"]);
-                let sub_sym = crate::utils::counter::bk_counter_to_symbol(&val_str(&sub["counter_id"]));
-                let sub_chg_display = if sub_chg != "-" && !sub_chg.is_empty() { fmt_rate(&sub_chg) } else { String::new() };
-                let sub_sym_display = if sub_sym.is_empty() { String::new() } else { format!("   ({sub_sym})") };
+
+    let has_value = lists
+        .iter()
+        .any(|sub| !val_str(&sub["value_name"]).is_empty() && val_str(&sub["value_name"]) != "-");
+
+    let mut headers = vec![
+        "Industry",
+        "Counter ID",
+        "Chg%",
+        "Leading Stock",
+        "Leading Chg%",
+    ];
+    if has_value {
+        headers.push("Value");
+    }
+
+    let rows: Vec<Vec<String>> = lists
+        .iter()
+        .map(|sub| {
+            let name = val_str(&sub["name"]);
+            let sym = val_str(&sub["counter_id"]);
+            let chg = val_str(&sub["chg"]);
+            let chg_display = if !chg.is_empty() && chg != "-" {
+                fmt_rate(&chg)
+            } else {
+                String::new()
+            };
+            let leading_name = val_str(&sub["leading_name"]);
+            let leading_ticker = val_str(&sub["leading_ticker"]);
+            let leading = if leading_name.is_empty() {
+                String::new()
+            } else {
+                format!("{leading_name} ({leading_ticker})")
+            };
+            let leading_chg = val_str(&sub["leading_chg"]);
+            let leading_chg_display = if !leading_chg.is_empty() && leading_chg != "-" {
+                fmt_rate(&leading_chg)
+            } else {
+                String::new()
+            };
+            let mut row = vec![name, sym, chg_display, leading, leading_chg_display];
+            if has_value {
                 let value_name = val_str(&sub["value_name"]);
                 let value_data = val_str(&sub["value_data"]);
-                let value_display = if value_name != "-" && !value_name.is_empty() {
-                    format!("   {value_name}: {value_data}")
+                let value_display = if !value_name.is_empty() && value_name != "-" {
+                    format!("{value_name}: {value_data}")
                 } else {
                     String::new()
                 };
-                println!("  {sub_name}{sub_sym_display}   {sub_chg_display}{value_display}");
+                row.push(value_display);
             }
-        }
-    }
+            row
+        })
+        .collect();
+
+    super::output::print_table(&headers, rows, &OutputFormat::Pretty);
 }
 
 // ── industry peers ─────────────────────────────────────────────────────────────
@@ -2745,11 +2788,17 @@ pub async fn cmd_industry_peers(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    // Industry index symbols use IN<code>.<MARKET> format (e.g. IN00270.US).
     let mkt = market.unwrap_or_else(|| {
-        symbol.rsplit_once('.').map_or_else(|| "US".to_string(), |(_, m)| m.to_uppercase())
+        symbol
+            .rsplit_once('.')
+            .map_or_else(|| "US".to_string(), |(_, m)| m.to_uppercase())
     });
-    let cid = crate::utils::counter::bk_symbol_to_counter(&symbol);
+    // Accept counter_ids (e.g. BK/US/IN00297) directly; otherwise convert from symbol.
+    let cid = if symbol.contains('/') {
+        symbol.clone()
+    } else {
+        crate::utils::counter::symbol_to_counter_id(&symbol)
+    };
     let data = http_get(
         "/v1/quote/industries/peers",
         &[
@@ -2793,15 +2842,27 @@ fn print_industry_peers_node(node: &Value, depth: usize) {
     let stock_num = node["stock_num"].as_u64().unwrap_or(0);
     let chg_raw = val_str(&node["chg"]);
     let ytd_raw = val_str(&node["ytd_chg"]);
-    let chg_display = if chg_raw != "-" && !chg_raw.is_empty() { fmt_rate(&chg_raw) } else { String::new() };
-    let ytd_display = if ytd_raw != "-" && !ytd_raw.is_empty() { format!("YTD {}", fmt_rate(&ytd_raw)) } else { String::new() };
-    let symbol = crate::utils::counter::bk_counter_to_symbol(&val_str(&node["counter_id"]));
-    let symbol_display = if symbol.is_empty() { String::new() } else { format!("   ({symbol})") };
+    let chg_display = if chg_raw != "-" && !chg_raw.is_empty() {
+        fmt_rate(&chg_raw)
+    } else {
+        String::new()
+    };
+    let ytd_display = if ytd_raw != "-" && !ytd_raw.is_empty() {
+        format!("YTD {}", fmt_rate(&ytd_raw))
+    } else {
+        String::new()
+    };
+    let cid = val_str(&node["counter_id"]);
+    let symbol_display = if cid.is_empty() {
+        String::new()
+    } else {
+        format!("   ({cid})")
+    };
     let suffix = match (chg_display.is_empty(), ytd_display.is_empty()) {
         (false, false) => format!("   {chg_display}   {ytd_display}"),
-        (false, true)  => format!("   {chg_display}"),
-        (true, false)  => format!("   {ytd_display}"),
-        (true, true)   => String::new(),
+        (false, true) => format!("   {chg_display}"),
+        (true, false) => format!("   {ytd_display}"),
+        (true, true) => String::new(),
     };
     println!("{indent}{name}{symbol_display}   {stock_num} stocks{suffix}");
     if let Some(children) = node["next"].as_array() {
@@ -2851,12 +2912,24 @@ fn fmt_fo_row(label: &str, m: &Value) -> Vec<String> {
     } else {
         yoy
     };
-    vec![label.to_string(), actual, yoy_display, if cmp_desc == "-" { String::new() } else { cmp_desc }, est]
+    vec![
+        label.to_string(),
+        actual,
+        yoy_display,
+        if cmp_desc == "-" {
+            String::new()
+        } else {
+            cmp_desc
+        },
+        est,
+    ]
 }
 
 fn fmt_fr_row(label: &str, m: &Value) -> Option<Vec<String>> {
     let value = val_str(&m["value"]);
-    if value == "-" || value.is_empty() { return None; }
+    if value == "-" || value.is_empty() {
+        return None;
+    }
     let yoy = val_str(&m["yoy"]);
     let yoy_display = if yoy != "-" && !yoy.is_empty() {
         format!("{:+.2}%", yoy.parse::<f64>().unwrap_or(0.0))
@@ -2881,9 +2954,9 @@ fn print_financial_report_snapshot(data: &Value) {
 
     // Forecast vs actual
     let fo_metrics = [
-        ("fo_revenue",  "Revenue"),
-        ("fo_ebit",     "EBIT"),
-        ("fo_eps",      "EPS"),
+        ("fo_revenue", "Revenue"),
+        ("fo_ebit", "EBIT"),
+        ("fo_eps", "EPS"),
     ];
     let mut fo_rows: Vec<Vec<String>> = Vec::new();
     for (key, label) in &fo_metrics {
@@ -2895,16 +2968,20 @@ fn print_financial_report_snapshot(data: &Value) {
     }
     if !fo_rows.is_empty() {
         println!("── Forecast vs Actual ──────────────────────────────────────────");
-        super::output::print_table(&["Metric", "Actual", "YoY", "vs Estimate", "Consensus"], fo_rows, &OutputFormat::Pretty);
+        super::output::print_table(
+            &["Metric", "Actual", "YoY", "vs Estimate", "Consensus"],
+            fo_rows,
+            &OutputFormat::Pretty,
+        );
         println!();
     }
 
     // Financial ratios
     let fr_obj_metrics = [
-        ("fr_revenue",      "Revenue"),
-        ("fr_profit",       "Net Profit"),
+        ("fr_revenue", "Revenue"),
+        ("fr_profit", "Net Profit"),
         ("fr_operate_cash", "Operating CF"),
-        ("fr_invest_cash",  "Investing CF"),
+        ("fr_invest_cash", "Investing CF"),
         ("fr_finance_cash", "Financing CF"),
         ("fr_total_assets", "Total Assets"),
         ("fr_total_liability", "Total Liabilities"),
@@ -2919,12 +2996,12 @@ fn print_financial_report_snapshot(data: &Value) {
     }
     // Scalar ratios
     for (key, label) in &[
-        ("fr_roe_ttm",          "ROE (TTM)"),
-        ("fr_profit_margin",    "Net Margin"),
-        ("fr_profit_margin_ttm","Net Margin (TTM)"),
-        ("fr_asset_turn_ttm",   "Asset Turnover"),
-        ("fr_leverage_ttm",     "Leverage"),
-        ("fr_debt_assets_ratio","Debt/Assets"),
+        ("fr_roe_ttm", "ROE (TTM)"),
+        ("fr_profit_margin", "Net Margin"),
+        ("fr_profit_margin_ttm", "Net Margin (TTM)"),
+        ("fr_asset_turn_ttm", "Asset Turnover"),
+        ("fr_leverage_ttm", "Leverage"),
+        ("fr_debt_assets_ratio", "Debt/Assets"),
     ] {
         let v = val_str(&data[*key]);
         if v != "-" && !v.is_empty() {
@@ -2933,6 +3010,10 @@ fn print_financial_report_snapshot(data: &Value) {
     }
     if !financials_rows.is_empty() {
         println!("── Financials ──────────────────────────────────────────────────");
-        super::output::print_table(&["Item", "Value", "YoY"], financials_rows, &OutputFormat::Pretty);
+        super::output::print_table(
+            &["Item", "Value", "YoY"],
+            financials_rows,
+            &OutputFormat::Pretty,
+        );
     }
 }

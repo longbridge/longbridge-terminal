@@ -2649,6 +2649,8 @@ dependencies = [
  "once_cell",
  "open",
  "percent-encoding",
+ "phf",
+ "phf_codegen",
  "prost 0.12.6",
  "qrcode",
  "ratatui",

@@ -1,17 +1,4 @@
-use std::collections::HashSet;
-use std::sync::OnceLock;
-
-static US_ETF_SET: OnceLock<HashSet<&'static str>> = OnceLock::new();
-
-fn us_etf_set() -> &'static HashSet<&'static str> {
-    US_ETF_SET.get_or_init(|| {
-        include_str!("US-ETF.csv")
-            .lines()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .collect()
-    })
-}
+include!(concat!(env!("OUT_DIR"), "/special_counter_ids.rs"));
 
 /// Convert a `counter_id` (e.g. `ST/US/TSLA`, `ETF/US/SPY`, `IX/US/DJI`, `ST/HK/700`) back to
 /// a display symbol (e.g. `TSLA.US`, `SPY.US`, `.DJI.US`, `700.HK`).
@@ -31,12 +18,12 @@ pub fn counter_id_to_symbol(counter_id: &str) -> String {
     }
 }
 
-/// Convert a user-supplied symbol (e.g. `TSLA.US`, `700.HK`, `.DJI.US`) to a `counter_id`
-/// (e.g. `ST/US/TSLA`, `ST/HK/700`, `ETF/US/SPY`, `IX/US/DJI`).
+/// Convert a user-supplied symbol (e.g. `TSLA.US`, `700.HK`, `.DJI.US`, `HSI.HK`) to a
+/// `counter_id` (e.g. `ST/US/TSLA`, `ST/HK/700`, `IX/US/DJI`, `IX/HK/HSI`).
 ///
-/// Leading-dot symbols (e.g. `.DJI.US`, `.VIX.US`) are US market indexes and map to
-/// the `IX/` prefix.  US symbols are checked against the embedded ETF list; matching
-/// symbols use the `ETF/` prefix.  All other symbols default to `ST/`.
+/// Leading-dot symbols (e.g. `.DJI.US`) are US market indexes and always map to `IX/`.
+/// All other symbols are checked against the embedded ETF + index set; a matching entry
+/// is returned as-is.  Unmatched symbols default to `ST/`.
 pub fn symbol_to_counter_id(symbol: &str) -> String {
     if let Some((code, market)) = symbol.rsplit_once('.') {
         let market = market.to_uppercase();
@@ -50,37 +37,16 @@ pub fn symbol_to_counter_id(symbol: &str) -> String {
         } else {
             code
         };
-        let etf_candidate = format!("ETF/{market}/{code}");
-        if us_etf_set().contains(etf_candidate.as_str()) {
-            etf_candidate
-        } else {
-            format!("ST/{market}/{code}")
+        // Check special counter_ids set (ETF, IX, and WT entries)
+        for prefix in &["ETF", "IX", "WT"] {
+            let candidate = format!("{prefix}/{market}/{code}");
+            if SPECIAL_COUNTER_IDS.contains(candidate.as_str()) {
+                return candidate;
+            }
         }
+        format!("ST/{market}/{code}")
     } else {
         symbol.to_string()
-    }
-}
-
-/// Convert an industry index symbol to a `BK` `counter_id`.
-/// Example: `IN00270.US` → `BK/US/IN00270`.
-/// Returns the input unchanged if it cannot be parsed.
-pub fn bk_symbol_to_counter(symbol: &str) -> String {
-    if let Some((code, market)) = symbol.rsplit_once('.') {
-        format!("BK/{}/{}", market.to_uppercase(), code.to_uppercase())
-    } else {
-        symbol.to_string()
-    }
-}
-
-/// Convert a `BK` `counter_id` back to an industry index symbol.
-/// Example: `BK/US/IN00270` → `IN00270.US`.
-/// Returns an empty string if the input is not a valid `BK` `counter_id`.
-pub fn bk_counter_to_symbol(counter_id: &str) -> String {
-    let parts: Vec<&str> = counter_id.splitn(3, '/').collect();
-    if parts.len() == 3 && parts[0] == "BK" {
-        format!("{}.{}", parts[2], parts[1])
-    } else {
-        String::new()
     }
 }
 
@@ -144,6 +110,16 @@ mod tests {
     }
 
     #[test]
+    fn ix_hk_hsi_via_set() {
+        assert_eq!(symbol_to_counter_id("HSI.HK"), "IX/HK/HSI");
+    }
+
+    #[test]
+    fn wt_hk_via_set() {
+        assert_eq!(symbol_to_counter_id("10005.HK"), "WT/HK/10005");
+    }
+
+    #[test]
     fn counter_id_ix_us_to_symbol() {
         assert_eq!(counter_id_to_symbol("IX/US/DJI"), ".DJI.US");
     }
@@ -156,30 +132,5 @@ mod tests {
     #[test]
     fn counter_id_st_to_symbol() {
         assert_eq!(counter_id_to_symbol("ST/US/TSLA"), "TSLA.US");
-    }
-
-    #[test]
-    fn bk_symbol_to_counter_us() {
-        assert_eq!(bk_symbol_to_counter("IN00270.US"), "BK/US/IN00270");
-    }
-
-    #[test]
-    fn bk_symbol_to_counter_hk() {
-        assert_eq!(bk_symbol_to_counter("IN00123.HK"), "BK/HK/IN00123");
-    }
-
-    #[test]
-    fn bk_counter_to_symbol_us() {
-        assert_eq!(bk_counter_to_symbol("BK/US/IN00270"), "IN00270.US");
-    }
-
-    #[test]
-    fn bk_counter_to_symbol_empty() {
-        assert_eq!(bk_counter_to_symbol(""), "");
-    }
-
-    #[test]
-    fn bk_counter_to_symbol_non_bk() {
-        assert_eq!(bk_counter_to_symbol("ST/US/AAPL"), "");
     }
 }
