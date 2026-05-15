@@ -158,7 +158,7 @@
       legend: { data: legendNames, top: 4, right: 8, textStyle: { color: '#677179', fontSize: 10 } },
       grid: { left: 64, right: hasLines ? 64 : 16, top: 36, bottom: 48 },
       xAxis: { type: 'category', data: periods,
-        axisLabel: { color: '#677179', fontSize: 10, rotate: 30 },
+        axisLabel: { color: '#677179', fontSize: 10 },
         axisLine: { lineStyle: { color: '#282828' } } },
       yAxis: yAxes,
       dataZoom: [{ type: 'inside' }, { bottom: 4, height: 20, borderColor: '#282828' }],
