@@ -156,6 +156,12 @@ pub enum HtmlPayload {
         command: String,
         data: Value,
     },
+    /// Generic chart (480px) + data table page. `js` is pre-rendered JS with data embedded.
+    Chart {
+        title: String,
+        command: String,
+        js: String,
+    },
 }
 
 /// Convenience wrapper for rendering multiple named table sections as HTML.
@@ -192,6 +198,21 @@ pub fn open_html_table(
         command: command.to_string(),
         headers: headers.iter().map(|h| h.to_string()).collect(),
         rows,
+    })
+}
+
+/// Renders a chart + table page with the given JS template (must use `__JSON__` placeholder).
+pub fn open_html_chart_page(
+    title: &str,
+    command: &str,
+    data: &Value,
+    js_template: &str,
+) -> Result<()> {
+    let json = serde_json::to_string(data).unwrap_or_default();
+    open_html(HtmlPayload::Chart {
+        title: title.to_string(),
+        command: command.to_string(),
+        js: js_template.replace("__JSON__", &json),
     })
 }
 
@@ -350,6 +371,9 @@ fn build_html(payload: &HtmlPayload, generated_at: &str) -> String {
             command,
             data,
         } => render_financial_statement_page(title, command, generated_at, data),
+        HtmlPayload::Chart { title, command, js } => {
+            render_chart_page(title, command, generated_at, js)
+        }
     }
 }
 

@@ -2378,10 +2378,11 @@ pub async fn cmd_financial_report_latest(
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Html => {
-            return crate::cli::html_render::open_html_raw(
+            return crate::cli::html_render::open_html_chart_page(
                 &format!("{symbol} Financial Report Latest"),
                 &format!("financial-report-latest {symbol}"),
-                data,
+                &data,
+                include_str!("html_render/financial_report_latest.js"),
             );
         }
         OutputFormat::Pretty => print_kv(&data),
@@ -2429,10 +2430,11 @@ pub async fn cmd_valuation_rank(
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Html => {
-            return crate::cli::html_render::open_html_raw(
+            return crate::cli::html_render::open_html_chart_page(
                 &format!("{symbol} Valuation Rank"),
                 &format!("valuation-rank {symbol}"),
-                data,
+                &data,
+                include_str!("html_render/valuation_rank.js"),
             );
         }
         OutputFormat::Pretty => {
@@ -2527,10 +2529,11 @@ pub async fn cmd_institution_rating_history(
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Html => {
-            return crate::cli::html_render::open_html_raw(
+            return crate::cli::html_render::open_html_chart_page(
                 &format!("{symbol} Rating History"),
                 &format!("institution-rating {symbol} --history"),
-                data,
+                &data,
+                include_str!("html_render/institution_rating_history.js"),
             );
         }
         OutputFormat::Pretty => print_institution_rating_history(&data, count),
@@ -2696,10 +2699,11 @@ pub async fn cmd_institution_rating_industry_rank(
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Html => {
-            return crate::cli::html_render::open_html_raw(
+            return crate::cli::html_render::open_html_chart_page(
                 &format!("{symbol} Rating Industry Rank"),
                 &format!("institution-rating {symbol} --industry-rank"),
-                data,
+                &data,
+                include_str!("html_render/institution_rating_industry_rank.js"),
             );
         }
         OutputFormat::Pretty => print_kv(&data),
@@ -2735,10 +2739,11 @@ pub async fn cmd_business_segments(
         match format {
             OutputFormat::Json => print_json(&data),
             OutputFormat::Html => {
-                return crate::cli::html_render::open_html_raw(
+                return crate::cli::html_render::open_html_chart_page(
                     &format!("{symbol} Business Segments"),
                     &format!("business-segments {symbol}"),
-                    data,
+                    &data,
+                    include_str!("html_render/business_segments.js"),
                 );
             }
             OutputFormat::Pretty => print_business_segments_history(&data),
@@ -2753,10 +2758,11 @@ pub async fn cmd_business_segments(
         match format {
             OutputFormat::Json => print_json(&data),
             OutputFormat::Html => {
-                return crate::cli::html_render::open_html_raw(
+                return crate::cli::html_render::open_html_chart_page(
                     &format!("{symbol} Business Segments"),
                     &format!("business-segments {symbol}"),
-                    data,
+                    &data,
+                    include_str!("html_render/business_segments.js"),
                 );
             }
             OutputFormat::Pretty => print_business_segments_current(&data),
@@ -2968,7 +2974,12 @@ pub async fn cmd_industry_rank(
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Html => {
-            return crate::cli::html_render::open_html_raw("Industry Rank", "industry-rank", data);
+            return crate::cli::html_render::open_html_chart_page(
+                "Industry Rank",
+                "industry-rank",
+                &data,
+                include_str!("html_render/industry_rank.js"),
+            );
         }
         OutputFormat::Pretty => print_industry_rank(&data),
     }
