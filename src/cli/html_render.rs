@@ -383,19 +383,17 @@ fn render_chart_page(title: &str, command: &str, generated_at: &str, body_js: &s
 
 // ── Table page ────────────────────────────────────────────────────────────────
 
-fn render_cell(header: &str, value: &str) -> String {
+fn render_cell(header: &str, value: &str) -> (String, bool) {
     if header == "symbol" && !value.is_empty() && value != "-" {
         let quote_url = format!("https://longbridge.com/quote/{value}");
         let counter_id = crate::utils::counter::symbol_to_counter_id(value);
         let logo_url = format!("https://assets.lbkrs.com/ticker/{counter_id}.png");
-        let logo_html = format!(
-            r#"<img src="{logo_url}" onerror="this.style.display='none'" class="w-5 h-5 rounded-full flex-shrink-0" />"#
+        let html = format!(
+            r#"<img src="{logo_url}" onerror="this.style.display='none'" class="w-5 h-5 rounded-full flex-shrink-0" /><a href="{quote_url}" target="_blank" class="text-[#00dcb5] hover:underline">{value}</a>"#
         );
-        format!(
-            r#"<a href="{quote_url}" target="_blank" class="inline-flex items-center gap-1.5 text-[#00dcb5] hover:underline">{logo_html}<span>{value}</span></a>"#
-        )
+        (html, true)
     } else {
-        value.to_string()
+        (value.to_string(), false)
     }
 }
 
@@ -407,7 +405,12 @@ fn build_tbody(headers: &[impl AsRef<str>], rows: &[Vec<String>]) -> String {
                 .enumerate()
                 .map(|(i, cell)| {
                     let header = headers.get(i).map_or("", |h| h.as_ref());
-                    format!("<td>{}</td>", render_cell(header, cell))
+                    let (content, is_symbol) = render_cell(header, cell);
+                    if is_symbol {
+                        format!(r#"<td class="inline-flex items-center gap-1.5">{content}</td>"#)
+                    } else {
+                        format!("<td>{content}</td>")
+                    }
                 })
                 .collect::<Vec<_>>()
                 .join("");
