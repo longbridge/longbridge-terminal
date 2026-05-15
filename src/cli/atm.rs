@@ -130,6 +130,30 @@ pub async fn cmd_withdrawal_cards(format: &OutputFormat, verbose: bool) -> Resul
                 print_json(&data);
             }
         }
+        OutputFormat::Html => {
+            if let Some(cards) = data["list"].as_array() {
+                let rows: Vec<Vec<String>> = cards
+                    .iter()
+                    .map(|card| {
+                        vec![
+                            val_str(&card["bank_en"]),
+                            val_str(&card["account"]),
+                            val_str(&card["account_type"]),
+                            val_str(&card["swift_code"]),
+                            val_str(&card["region_name"]),
+                            bank_card_status_label(&card["status"]).to_string(),
+                        ]
+                    })
+                    .collect();
+                return crate::cli::html_render::open_html_table(
+                    "Bank Cards",
+                    "bank-cards",
+                    &["bank", "account", "currency", "swift", "region", "status"],
+                    rows,
+                );
+            }
+            return crate::cli::html_render::open_html_raw("Bank Cards", "bank-cards", data);
+        }
         OutputFormat::Pretty => {
             if let Some(cards) = data["list"].as_array() {
                 if cards.is_empty() {
@@ -200,6 +224,29 @@ pub async fn cmd_withdrawals(
                 }
             }
             print_json(&Value::Object(result));
+        }
+        OutputFormat::Html => {
+            if let Some(list) = data["list"].as_array() {
+                let rows: Vec<Vec<String>> = list
+                    .iter()
+                    .map(|item| {
+                        vec![
+                            fmt_ts(&item["created_at"]),
+                            val_str(&item["amount"]),
+                            val_str(&item["currency"]),
+                            val_str(&item["status"]),
+                            val_str(&item["bank_name"]),
+                        ]
+                    })
+                    .collect();
+                return crate::cli::html_render::open_html_table(
+                    "Withdrawals",
+                    "withdrawals",
+                    &["date", "amount", "currency", "status", "bank"],
+                    rows,
+                );
+            }
+            return crate::cli::html_render::open_html_raw("Withdrawals", "withdrawals", data);
         }
         OutputFormat::Pretty => {
             let total = val_str(&data["total"]);
@@ -276,6 +323,30 @@ pub async fn cmd_deposits(
                 }
             }
             print_json(&Value::Object(result));
+        }
+        OutputFormat::Html => {
+            if let Some(items) = data["items"].as_array() {
+                let rows: Vec<Vec<String>> = items
+                    .iter()
+                    .map(|item| {
+                        vec![
+                            val_str(&item["id"]),
+                            fmt_ts(&item["created_at"]),
+                            val_str(&item["amount"]),
+                            val_str(&item["currency"]),
+                            val_str(&item["bank_operation_type_name"]),
+                            val_str(&item["state"]),
+                        ]
+                    })
+                    .collect();
+                return crate::cli::html_render::open_html_table(
+                    "Deposits",
+                    "deposits",
+                    &["id", "date", "amount", "currency", "type", "state"],
+                    rows,
+                );
+            }
+            return crate::cli::html_render::open_html_raw("Deposits", "deposits", data);
         }
         OutputFormat::Pretty => {
             let total = val_str(&data["total"]);

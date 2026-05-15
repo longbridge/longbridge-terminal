@@ -563,6 +563,31 @@ pub async fn cmd_short_margin(format: &OutputFormat, verbose: bool) -> Result<()
     let data = http_get("/v1/asset/cash/short-margin", &[], verbose).await?;
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            if let Some(list) = data["short_list"].as_array() {
+                let rows: Vec<Vec<String>> = list
+                    .iter()
+                    .map(|item| {
+                        vec![
+                            val_str(&item["code"]),
+                            val_str(&item["amount"]),
+                            val_str(&item["currency"]),
+                        ]
+                    })
+                    .collect();
+                return crate::cli::html_render::open_html_table(
+                    "Short Margin",
+                    "portfolio short-margin",
+                    &["code", "amount", "currency"],
+                    rows,
+                );
+            }
+            return crate::cli::html_render::open_html_raw(
+                "Short Margin",
+                "portfolio short-margin",
+                data,
+            );
+        }
         OutputFormat::Pretty => {
             if let Some(list) = data["short_list"].as_array() {
                 if list.is_empty() {

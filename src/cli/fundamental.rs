@@ -2248,6 +2248,13 @@ pub async fn cmd_financial_statement(
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw(
+                &format!("{symbol} Financial Statement"),
+                &format!("financial-statement {symbol}"),
+                data,
+            );
+        }
         OutputFormat::Pretty => {
             let currency = data["currency"].as_str().unwrap_or("");
             let periods = match data["list"].as_array() {
@@ -2361,6 +2368,13 @@ pub async fn cmd_financial_report_latest(
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw(
+                &format!("{symbol} Financial Report Latest"),
+                &format!("financial-report-latest {symbol}"),
+                data,
+            );
+        }
         OutputFormat::Pretty => print_kv(&data),
     }
     Ok(())
@@ -2405,6 +2419,13 @@ pub async fn cmd_valuation_rank(
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw(
+                &format!("{symbol} Valuation Rank"),
+                &format!("valuation-rank {symbol}"),
+                data,
+            );
+        }
         OutputFormat::Pretty => {
             let kline_type = data["kline_type"].as_str().unwrap_or("");
             if !kline_type.is_empty() {
@@ -2496,6 +2517,13 @@ pub async fn cmd_institution_rating_history(
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw(
+                &format!("{symbol} Rating History"),
+                &format!("institution-rating {symbol} --history"),
+                data,
+            );
+        }
         OutputFormat::Pretty => print_institution_rating_history(&data, count),
     }
     Ok(())
@@ -2658,6 +2686,13 @@ pub async fn cmd_institution_rating_industry_rank(
     let data = Value::Object(result);
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw(
+                &format!("{symbol} Rating Industry Rank"),
+                &format!("institution-rating {symbol} --industry-rank"),
+                data,
+            );
+        }
         OutputFormat::Pretty => print_kv(&data),
     }
     Ok(())
@@ -2690,6 +2725,13 @@ pub async fn cmd_business_segments(
         .await?;
         match format {
             OutputFormat::Json => print_json(&data),
+            OutputFormat::Html => {
+                return crate::cli::html_render::open_html_raw(
+                    &format!("{symbol} Business Segments"),
+                    &format!("business-segments {symbol}"),
+                    data,
+                );
+            }
             OutputFormat::Pretty => print_business_segments_history(&data),
         }
     } else {
@@ -2701,6 +2743,13 @@ pub async fn cmd_business_segments(
         .await?;
         match format {
             OutputFormat::Json => print_json(&data),
+            OutputFormat::Html => {
+                return crate::cli::html_render::open_html_raw(
+                    &format!("{symbol} Business Segments"),
+                    &format!("business-segments {symbol}"),
+                    data,
+                );
+            }
             OutputFormat::Pretty => print_business_segments_current(&data),
         }
     }
@@ -2793,6 +2842,52 @@ pub async fn cmd_institution_rating_views(
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            if let Some(items) = data["elist"].as_array() {
+                let rows: Vec<Vec<String>> = items
+                    .iter()
+                    .rev()
+                    .map(|item| {
+                        let row_date = crate::utils::datetime::format_date(
+                            item["date"]
+                                .as_i64()
+                                .or_else(|| {
+                                    item["date"].as_str().and_then(|s| s.parse::<i64>().ok())
+                                })
+                                .unwrap_or(0),
+                        );
+                        vec![
+                            row_date,
+                            val_str(&item["buy"]),
+                            val_str(&item["over"]),
+                            val_str(&item["hold"]),
+                            val_str(&item["under"]),
+                            val_str(&item["sell"]),
+                            val_str(&item["total"]),
+                        ]
+                    })
+                    .collect();
+                return crate::cli::html_render::open_html_table(
+                    &format!("{symbol} Rating Views"),
+                    &format!("institution-rating {symbol} --views"),
+                    &[
+                        "Date",
+                        "Buy",
+                        "Outperform",
+                        "Hold",
+                        "Underperform",
+                        "Sell",
+                        "Total",
+                    ],
+                    rows,
+                );
+            }
+            return crate::cli::html_render::open_html_raw(
+                &format!("{symbol} Rating Views"),
+                &format!("institution-rating {symbol} --views"),
+                data,
+            );
+        }
         OutputFormat::Pretty => print_institution_rating_views(&data),
     }
     Ok(())
@@ -2863,6 +2958,9 @@ pub async fn cmd_industry_rank(
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw("Industry Rank", "industry-rank", data);
+        }
         OutputFormat::Pretty => print_industry_rank(&data),
     }
     Ok(())
@@ -2970,6 +3068,13 @@ pub async fn cmd_industry_peers(
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw(
+                &format!("{symbol} Industry Peers"),
+                &format!("industry-peers {symbol}"),
+                data,
+            );
+        }
         OutputFormat::Pretty => print_industry_peers(&data),
     }
     Ok(())
@@ -3078,6 +3183,13 @@ pub async fn cmd_financial_report_snapshot(
     let data = http_get("/v1/quote/financials/earnings-snapshot", &params, verbose).await?;
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw(
+                &format!("{symbol} Financial Report Snapshot"),
+                &format!("financial-report-snapshot {symbol}"),
+                data,
+            );
+        }
         OutputFormat::Pretty => print_financial_report_snapshot(&data),
     }
     Ok(())

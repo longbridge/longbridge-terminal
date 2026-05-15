@@ -285,6 +285,14 @@ pub async fn cmd_ipo_subscriptions(format: &OutputFormat, verbose: bool) -> Resu
             }
             print_json(&Value::Object(result));
         }
+        OutputFormat::Html => {
+            let combined = serde_json::json!({"hk": hk_data, "us": us_data});
+            return crate::cli::html_render::open_html_raw(
+                "IPO Subscriptions",
+                "ipo subscriptions",
+                combined,
+            );
+        }
         OutputFormat::Pretty => {
             let mut printed = false;
             if let Some(list) = hk_data["list"].as_array() {
@@ -410,6 +418,14 @@ pub async fn cmd_ipo_wait_listing(format: &OutputFormat, verbose: bool) -> Resul
             }
             print_json(&Value::Object(result));
         }
+        OutputFormat::Html => {
+            let combined = serde_json::json!({"hk": hk_data, "us": us_data});
+            return crate::cli::html_render::open_html_raw(
+                "IPO Wait Listing",
+                "ipo wait-listing",
+                combined,
+            );
+        }
         OutputFormat::Pretty => {
             let headers = ["name", "symbol", "issue_price", "ipo_date", "state"];
             let mut printed = false;
@@ -512,6 +528,10 @@ pub async fn cmd_ipo_listed(
             }
             print_json(&Value::Object(result));
         }
+        OutputFormat::Html => {
+            let combined = serde_json::json!({"hk": hk_data, "us": us_data});
+            return crate::cli::html_render::open_html_raw("IPO Listed", "ipo listed", combined);
+        }
         OutputFormat::Pretty => {
             let mut printed = false;
             if let Some(list) = hk_data["list"].as_array() {
@@ -572,6 +592,9 @@ pub async fn cmd_ipo_calendar(format: &OutputFormat, verbose: bool) -> Result<()
             } else {
                 print_json(&data);
             }
+        }
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw("IPO Calendar", "ipo calendar", data);
         }
         OutputFormat::Pretty => {
             if let Some(list) = data["list"].as_array() {
@@ -702,6 +725,19 @@ pub async fn cmd_ipo_detail(
             result.insert("eligibility".to_string(), eligibility_data);
             result.insert("holdings".to_string(), holdings_data);
             print_json(&Value::Object(result));
+        }
+        OutputFormat::Html => {
+            let combined = serde_json::json!({
+                "profile": profile_data,
+                "timeline": timeline_data,
+                "eligibility": eligibility_data,
+                "holdings": holdings_data,
+            });
+            return crate::cli::html_render::open_html_raw(
+                &format!("{symbol} IPO Detail"),
+                &format!("ipo detail {symbol}"),
+                combined,
+            );
         }
         OutputFormat::Pretty => {
             let kv = |label: &str, value: &str| {
@@ -946,6 +982,10 @@ pub async fn cmd_ipo_orders(
             }
             print_json(&Value::Object(result));
         }
+        OutputFormat::Html => {
+            let combined = serde_json::json!({"orders": active_data, "history": hist_data});
+            return crate::cli::html_render::open_html_raw("IPO Orders", "ipo orders", combined);
+        }
         OutputFormat::Pretty => {
             let mut printed = false;
             if let Some(orders) = active_data["orders"].as_array() {
@@ -1018,6 +1058,13 @@ pub async fn cmd_ipo_order_detail(
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw(
+                "IPO Order Detail",
+                &format!("ipo orders detail {order_id}"),
+                data,
+            );
+        }
         OutputFormat::Pretty => {
             let kv = |label: &str, value: &str| {
                 println!("{:<24}{value}", format!("{label}:"));
@@ -1151,6 +1198,14 @@ pub async fn cmd_ipo_profit_loss(
             result.insert("items".to_string(), items_data);
             print_json(&Value::Object(result));
         }
+        OutputFormat::Html => {
+            let combined = serde_json::json!({"summary": summary_val, "items": items_data});
+            return crate::cli::html_render::open_html_raw(
+                "IPO Profit Loss",
+                "ipo profit-loss",
+                combined,
+            );
+        }
         OutputFormat::Pretty => {
             print_json_value(&summary_val, format);
             if let Some(items) = items_data["items"].as_array() {
@@ -1193,6 +1248,42 @@ pub async fn cmd_ipo_us_subscriptions(format: &OutputFormat, verbose: bool) -> R
             } else {
                 print_json(&data);
             }
+        }
+        OutputFormat::Html => {
+            if let Some(list) = data["list"].as_array() {
+                let rows: Vec<Vec<String>> = list
+                    .iter()
+                    .map(|item| {
+                        let stage = state_stage_label(&item["state_stage"]).to_string();
+                        vec![
+                            val_str(&item["name"]),
+                            counter_id_to_symbol(&val_str(&item["counter_id"])),
+                            val_str(&item["currency"]),
+                            val_str(&item["issue_price"]),
+                            fmt_ts(&item["sub_deadline"]),
+                            stage,
+                        ]
+                    })
+                    .collect();
+                return crate::cli::html_render::open_html_table(
+                    "US IPO Subscriptions",
+                    "ipo us-subscriptions",
+                    &[
+                        "name",
+                        "symbol",
+                        "currency",
+                        "issue_price",
+                        "deadline",
+                        "state",
+                    ],
+                    rows,
+                );
+            }
+            return crate::cli::html_render::open_html_raw(
+                "US IPO Subscriptions",
+                "ipo us-subscriptions",
+                data,
+            );
         }
         OutputFormat::Pretty => {
             if let Some(list) = data["list"].as_array() {
@@ -1242,6 +1333,33 @@ pub async fn cmd_ipo_us_wait_listing(format: &OutputFormat, verbose: bool) -> Re
             } else {
                 print_json(&data);
             }
+        }
+        OutputFormat::Html => {
+            if let Some(list) = data["ipos"].as_array() {
+                let rows: Vec<Vec<String>> = list
+                    .iter()
+                    .map(|item| {
+                        vec![
+                            val_str(&item["name"]),
+                            counter_id_to_symbol(&val_str(&item["counter_id"])),
+                            val_str(&item["issue_price"]),
+                            fmt_date_opt(&item["ipo_date"]),
+                            state_stage_label(&item["state_stage"]).to_string(),
+                        ]
+                    })
+                    .collect();
+                return crate::cli::html_render::open_html_table(
+                    "US IPO Wait Listing",
+                    "ipo us-wait-listing",
+                    &["name", "symbol", "issue_price", "ipo_date", "state"],
+                    rows,
+                );
+            }
+            return crate::cli::html_render::open_html_raw(
+                "US IPO Wait Listing",
+                "ipo us-wait-listing",
+                data,
+            );
         }
         OutputFormat::Pretty => {
             if let Some(list) = data["ipos"].as_array() {
@@ -1294,6 +1412,27 @@ pub async fn cmd_ipo_us_listed(
             } else {
                 print_json(&data);
             }
+        }
+        OutputFormat::Html => {
+            if let Some(list) = data["list"].as_array() {
+                let rows: Vec<Vec<String>> = list.iter().map(us_listed_row).collect();
+                return crate::cli::html_render::open_html_table(
+                    "US IPO Listed",
+                    "ipo us-listed",
+                    &[
+                        "name",
+                        "symbol",
+                        "issue_price",
+                        "last_done",
+                        "prev_close",
+                        "change%",
+                        "amount",
+                        "ipo_date",
+                    ],
+                    rows,
+                );
+            }
+            return crate::cli::html_render::open_html_raw("US IPO Listed", "ipo us-listed", data);
         }
         OutputFormat::Pretty => {
             if let Some(list) = data["list"].as_array() {
