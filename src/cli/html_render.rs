@@ -383,6 +383,35 @@ fn render_chart_page(title: &str, command: &str, generated_at: &str, body_js: &s
 
 // ── Table page ────────────────────────────────────────────────────────────────
 
+fn render_cell(header: &str, value: &str) -> String {
+    if header == "symbol" && !value.is_empty() && value != "-" {
+        let url = format!("https://longbridge.com/quote/{value}");
+        format!(
+            r#"<a href="{url}" target="_blank" class="text-[#00dcb5] hover:underline">{value}</a>"#
+        )
+    } else {
+        value.to_string()
+    }
+}
+
+fn build_tbody(headers: &[impl AsRef<str>], rows: &[Vec<String>]) -> String {
+    rows.iter()
+        .map(|row| {
+            let cells: String = row
+                .iter()
+                .enumerate()
+                .map(|(i, cell)| {
+                    let header = headers.get(i).map_or("", |h| h.as_ref());
+                    format!("<td>{}</td>", render_cell(header, cell))
+                })
+                .collect::<Vec<_>>()
+                .join("");
+            format!("<tr>{cells}</tr>")
+        })
+        .collect::<Vec<_>>()
+        .join("")
+}
+
 fn render_table_page(
     title: &str,
     command: &str,
@@ -395,18 +424,7 @@ fn render_table_page(
         .map(|h| format!("<th>{h}</th>"))
         .collect::<Vec<_>>()
         .join("");
-    let tbody: String = rows
-        .iter()
-        .map(|row| {
-            let cells: String = row
-                .iter()
-                .map(|cell| format!("<td>{cell}</td>"))
-                .collect::<Vec<_>>()
-                .join("");
-            format!("<tr>{cells}</tr>")
-        })
-        .collect::<Vec<_>>()
-        .join("");
+    let tbody = build_tbody(headers, rows);
     let main = format!(
         r#"<div class="border border-[#282828] mb-7">
 <div class="bg-[#171717] px-3.5 py-2 text-[10px] text-[#677179] uppercase tracking-[.08em] border-b border-[#282828]">Data</div>
@@ -433,18 +451,7 @@ fn render_sections_page(
                 .map(|h| format!("<th>{h}</th>"))
                 .collect::<Vec<_>>()
                 .join("");
-            let tbody: String = rows
-                .iter()
-                .map(|row| {
-                    let cells: String = row
-                        .iter()
-                        .map(|cell| format!("<td>{cell}</td>"))
-                        .collect::<Vec<_>>()
-                        .join("");
-                    format!("<tr>{cells}</tr>")
-                })
-                .collect::<Vec<_>>()
-                .join("");
+            let tbody = build_tbody(headers, rows);
             format!(
                 r#"<div class="border border-[#282828] mb-7">
 <div class="bg-[#171717] px-3.5 py-2 text-[10px] text-[#677179] uppercase tracking-[.08em] border-b border-[#282828]">{label}</div>
