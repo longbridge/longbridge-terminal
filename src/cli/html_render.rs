@@ -150,6 +150,12 @@ pub enum HtmlPayload {
         command: String,
         sections: Vec<(String, Vec<String>, Vec<Vec<String>>)>,
     },
+    /// Renders financial statements with ECharts bar+line chart and pivot table.
+    FinancialStatement {
+        title: String,
+        command: String,
+        data: Value,
+    },
 }
 
 /// Convenience wrapper for rendering multiple named table sections as HTML.
@@ -339,6 +345,11 @@ fn build_html(payload: &HtmlPayload, generated_at: &str) -> String {
             command,
             sections,
         } => render_sections_page(title, command, generated_at, sections),
+        HtmlPayload::FinancialStatement {
+            title,
+            command,
+            data,
+        } => render_financial_statement_page(title, command, generated_at, data),
     }
 }
 
@@ -685,6 +696,36 @@ fn render_news_page(title: &str, command: &str, generated_at: &str, items: &[Val
         .join("\n");
     let main = format!(r#"<div class="mb-2">{cards}</div>"#);
     fill_template(title, command, generated_at, "", &main, "")
+}
+
+// ── Financial Statement (chart + pivot table) ─────────────────────────────────
+
+fn render_financial_statement_page(
+    title: &str,
+    command: &str,
+    generated_at: &str,
+    data: &Value,
+) -> String {
+    let cdn = format!(r#"<script src="{ECHARTS_CDN}"></script>"#);
+    let main = r#"<div class="border border-[#282828] bg-[#040404] mb-7">
+<div class="bg-[#171717] px-3.5 py-2 text-[10px] text-[#677179] uppercase tracking-[.08em] border-b border-[#282828]">Chart</div>
+<div class="w-full h-[300px]" id="fs-chart"></div>
+</div>
+<div class="border border-[#282828] mb-7">
+<div class="bg-[#171717] px-3.5 py-2 text-[10px] text-[#677179] uppercase tracking-[.08em] border-b border-[#282828]">Data</div>
+<div class="tbl-wrap"><table><thead id="fs-thead"></thead><tbody id="fs-tbody"></tbody></table></div>
+</div>"#;
+
+    let mut data_js = String::new();
+    data_js.push_str(THEME_JS);
+    data_js.push('\n');
+    data_js.push_str(&financial_statement_js(data));
+    fill_template(title, command, generated_at, &cdn, main, &data_js)
+}
+
+fn financial_statement_js(data: &Value) -> String {
+    let json = serde_json::to_string(data).unwrap_or_default();
+    include_str!("html_render/financial_statement.js").replace("__JSON__", &json)
 }
 
 // ── Financial Report ──────────────────────────────────────────────────────────
