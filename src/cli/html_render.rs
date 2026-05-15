@@ -385,9 +385,17 @@ fn render_chart_page(title: &str, command: &str, generated_at: &str, body_js: &s
 
 fn render_cell(header: &str, value: &str) -> String {
     if header == "symbol" && !value.is_empty() && value != "-" {
-        let url = format!("https://longbridge.com/quote/{value}");
+        let quote_url = format!("https://longbridge.com/quote/{value}");
+        let logo_html = if let Some((code, market)) = value.rsplit_once('.') {
+            let logo_url = format!("https://assets.lbkrs.com/ticker/ST/{market}/{code}.png");
+            format!(
+                r#"<img src="{logo_url}" onerror="this.style.display='none'" class="inline-block w-5 h-5 rounded-full mr-1.5 align-middle" />"#
+            )
+        } else {
+            String::new()
+        };
         format!(
-            r#"<a href="{url}" target="_blank" class="text-[#00dcb5] hover:underline">{value}</a>"#
+            r#"<a href="{quote_url}" target="_blank" class="inline-flex items-center text-[#00dcb5] hover:underline">{logo_html}{value}</a>"#
         )
     } else {
         value.to_string()
