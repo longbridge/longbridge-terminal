@@ -286,11 +286,74 @@ pub async fn cmd_ipo_subscriptions(format: &OutputFormat, verbose: bool) -> Resu
             print_json(&Value::Object(result));
         }
         OutputFormat::Html => {
-            let combined = serde_json::json!({"hk": hk_data, "us": us_data});
-            return crate::cli::html_render::open_html_raw(
+            let hk_headers: &[&str] = &[
+                "name",
+                "symbol",
+                "currency",
+                "entrance_fee",
+                "est_sub",
+                "fin_rate",
+                "max_lev",
+                "issue_price",
+                "deadline",
+                "state",
+            ];
+            let us_headers: &[&str] = &[
+                "name",
+                "symbol",
+                "currency",
+                "issue_price",
+                "deadline",
+                "state",
+            ];
+            let hk_rows: Vec<Vec<String>> = hk_data["list"]
+                .as_array()
+                .map(|list| {
+                    list.iter()
+                        .map(|item| {
+                            let stage = state_stage_label(&item["state_stage"]).to_string();
+                            let tags: &[Value] =
+                                item["tags"].as_array().map_or(&[], |a| a.as_slice());
+                            let fin_rate = extract_tag(tags, "融资利率");
+                            let max_lev = extract_tag(tags, "杠杆");
+                            vec![
+                                val_str(&item["name"]),
+                                counter_id_to_symbol(&val_str(&item["counter_id"])),
+                                val_str(&item["currency"]),
+                                val_str(&item["entrance_fee"]),
+                                val_str(&item["rate_forcast"]),
+                                fin_rate,
+                                max_lev,
+                                val_str(&item["issue_price"]),
+                                fmt_ts(&item["sub_deadline"]),
+                                stage,
+                            ]
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let us_rows: Vec<Vec<String>> = us_data["list"]
+                .as_array()
+                .map(|list| {
+                    list.iter()
+                        .map(|item| {
+                            let stage = state_stage_label(&item["state_stage"]).to_string();
+                            vec![
+                                val_str(&item["name"]),
+                                counter_id_to_symbol(&val_str(&item["counter_id"])),
+                                val_str(&item["currency"]),
+                                val_str(&item["issue_price"]),
+                                fmt_ts(&item["sub_deadline"]),
+                                stage,
+                            ]
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            return crate::cli::html_render::open_html_sections(
                 "IPO Subscriptions",
                 "ipo subscriptions",
-                combined,
+                vec![("HK", hk_headers, hk_rows), ("US", us_headers, us_rows)],
             );
         }
         OutputFormat::Pretty => {
@@ -419,11 +482,19 @@ pub async fn cmd_ipo_wait_listing(format: &OutputFormat, verbose: bool) -> Resul
             print_json(&Value::Object(result));
         }
         OutputFormat::Html => {
-            let combined = serde_json::json!({"hk": hk_data, "us": us_data});
-            return crate::cli::html_render::open_html_raw(
+            let headers: &[&str] = &["name", "symbol", "issue_price", "ipo_date", "state"];
+            let hk_rows: Vec<Vec<String>> = hk_data["ipos"]
+                .as_array()
+                .map(|list| list.iter().map(wait_list_row).collect())
+                .unwrap_or_default();
+            let us_rows: Vec<Vec<String>> = us_data["ipos"]
+                .as_array()
+                .map(|list| list.iter().map(wait_list_row).collect())
+                .unwrap_or_default();
+            return crate::cli::html_render::open_html_sections(
                 "IPO Wait Listing",
                 "ipo wait-listing",
-                combined,
+                vec![("HK", headers, hk_rows), ("US", headers, us_rows)],
             );
         }
         OutputFormat::Pretty => {
@@ -529,8 +600,29 @@ pub async fn cmd_ipo_listed(
             print_json(&Value::Object(result));
         }
         OutputFormat::Html => {
-            let combined = serde_json::json!({"hk": hk_data, "us": us_data});
-            return crate::cli::html_render::open_html_raw("IPO Listed", "ipo listed", combined);
+            let headers: &[&str] = &[
+                "name",
+                "symbol",
+                "issue_price",
+                "last_done",
+                "prev_close",
+                "change%",
+                "amount",
+                "ipo_date",
+            ];
+            let hk_rows: Vec<Vec<String>> = hk_data["list"]
+                .as_array()
+                .map(|list| list.iter().map(hk_listed_row).collect())
+                .unwrap_or_default();
+            let us_rows: Vec<Vec<String>> = us_data["list"]
+                .as_array()
+                .map(|list| list.iter().map(us_listed_row).collect())
+                .unwrap_or_default();
+            return crate::cli::html_render::open_html_sections(
+                "IPO Listed",
+                "ipo listed",
+                vec![("HK", headers, hk_rows), ("US", headers, us_rows)],
+            );
         }
         OutputFormat::Pretty => {
             let mut printed = false;
@@ -594,7 +686,46 @@ pub async fn cmd_ipo_calendar(format: &OutputFormat, verbose: bool) -> Result<()
             }
         }
         OutputFormat::Html => {
-            return crate::cli::html_render::open_html_raw("IPO Calendar", "ipo calendar", data);
+            let headers: &[&str] = &[
+                "name",
+                "symbol",
+                "state",
+                "sub_date",
+                "sub_end_date",
+                "ipo_date",
+            ];
+            let mut hk_rows: Vec<Vec<String>> = Vec::new();
+            let mut us_rows: Vec<Vec<String>> = Vec::new();
+            let mut other_rows: Vec<Vec<String>> = Vec::new();
+            if let Some(list) = data["list"].as_array() {
+                for item in list {
+                    let cid = val_str(&item["counter_id"]);
+                    let row = vec![
+                        val_str(&item["name"]),
+                        counter_id_to_symbol(&cid),
+                        state_stage_label(&item["state_stage"]).to_string(),
+                        fmt_date_opt(&item["sub_date"]),
+                        fmt_date_opt(&item["sub_end_date"]),
+                        fmt_date_opt(&item["ipo_date"]),
+                    ];
+                    if cid.contains("/HK/") {
+                        hk_rows.push(row);
+                    } else if cid.contains("/US/") {
+                        us_rows.push(row);
+                    } else {
+                        other_rows.push(row);
+                    }
+                }
+            }
+            return crate::cli::html_render::open_html_sections(
+                "IPO Calendar",
+                "ipo calendar",
+                vec![
+                    ("HK", headers, hk_rows),
+                    ("US", headers, us_rows),
+                    ("Other", headers, other_rows),
+                ],
+            );
         }
         OutputFormat::Pretty => {
             if let Some(list) = data["list"].as_array() {
@@ -983,8 +1114,51 @@ pub async fn cmd_ipo_orders(
             print_json(&Value::Object(result));
         }
         OutputFormat::Html => {
-            let combined = serde_json::json!({"orders": active_data, "history": hist_data});
-            return crate::cli::html_render::open_html_raw("IPO Orders", "ipo orders", combined);
+            let active_headers: &[&str] = &["id", "symbol", "name", "qty", "status", "date"];
+            let hist_headers: &[&str] = &["id", "symbol", "name", "qty", "won", "status", "date"];
+            let active_rows: Vec<Vec<String>> = active_data["orders"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .map(|o| {
+                            vec![
+                                val_str(&o["id"]),
+                                counter_id_to_symbol(&val_str(&o["counter_id"])),
+                                val_str(&o["name"]),
+                                val_str(&o["sub_qty"]),
+                                val_str(&o["status"]),
+                                fmt_ts(&o["created_at"]),
+                            ]
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let hist_rows: Vec<Vec<String>> = hist_data["orders"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .map(|o| {
+                            vec![
+                                val_str(&o["id"]),
+                                counter_id_to_symbol(&val_str(&o["counter_id"])),
+                                val_str(&o["name"]),
+                                val_str(&o["sub_qty"]),
+                                val_str(&o["lot_win_qty"]),
+                                val_str(&o["status"]),
+                                fmt_ts(&o["created_at"]),
+                            ]
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            return crate::cli::html_render::open_html_sections(
+                "IPO Orders",
+                "ipo orders",
+                vec![
+                    ("Active", active_headers, active_rows),
+                    ("History", hist_headers, hist_rows),
+                ],
+            );
         }
         OutputFormat::Pretty => {
             let mut printed = false;
@@ -1199,11 +1373,49 @@ pub async fn cmd_ipo_profit_loss(
             print_json(&Value::Object(result));
         }
         OutputFormat::Html => {
-            let combined = serde_json::json!({"summary": summary_val, "items": items_data});
-            return crate::cli::html_render::open_html_raw(
+            let summary_rows: Vec<Vec<String>> = summary_val
+                .as_object()
+                .map(|obj| {
+                    obj.iter()
+                        .map(|(k, v)| {
+                            let v_str = match v {
+                                Value::String(s) => s.clone(),
+                                Value::Null => "-".to_string(),
+                                other => other.to_string(),
+                            };
+                            vec![k.clone(), v_str]
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let items_rows: Vec<Vec<String>> = items_data["items"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .map(|item| {
+                            vec![
+                                counter_id_to_symbol(&val_str(&item["counter_id"])),
+                                val_str(&item["name"]),
+                                val_str(&item["qty"]),
+                                val_str(&item["cost_price"]),
+                                val_str(&item["profit_loss"]),
+                                val_str(&item["profit_loss_rate"]),
+                            ]
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            return crate::cli::html_render::open_html_sections(
                 "IPO Profit Loss",
                 "ipo profit-loss",
-                combined,
+                vec![
+                    ("Summary", &["field", "value"] as &[&str], summary_rows),
+                    (
+                        "Items",
+                        &["symbol", "name", "qty", "cost", "profit", "rate"],
+                        items_rows,
+                    ),
+                ],
             );
         }
         OutputFormat::Pretty => {

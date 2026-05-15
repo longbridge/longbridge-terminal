@@ -144,6 +144,34 @@ pub enum HtmlPayload {
         command: String,
         data: Value,
     },
+    /// Renders multiple named table sections on a single page.
+    Sections {
+        title: String,
+        command: String,
+        sections: Vec<(String, Vec<String>, Vec<Vec<String>>)>,
+    },
+}
+
+/// Convenience wrapper for rendering multiple named table sections as HTML.
+pub fn open_html_sections(
+    title: &str,
+    command: &str,
+    sections: Vec<(&str, &[&str], Vec<Vec<String>>)>,
+) -> Result<()> {
+    open_html(HtmlPayload::Sections {
+        title: title.to_string(),
+        command: command.to_string(),
+        sections: sections
+            .into_iter()
+            .map(|(label, headers, rows)| {
+                (
+                    label.to_string(),
+                    headers.iter().map(|h| h.to_string()).collect(),
+                    rows,
+                )
+            })
+            .collect(),
+    })
 }
 
 /// Convenience wrapper for rendering a plain table as HTML.
@@ -306,6 +334,11 @@ fn build_html(payload: &HtmlPayload, generated_at: &str) -> String {
             command,
             data,
         } => render_profit_analysis_page(title, command, generated_at, data),
+        HtmlPayload::Sections {
+            title,
+            command,
+            sections,
+        } => render_sections_page(title, command, generated_at, sections),
     }
 }
 
@@ -380,6 +413,46 @@ fn render_table_page(
 <div class="tbl-wrap"><table><thead><tr>{thead}</tr></thead><tbody>{tbody}</tbody></table></div>
 </div>"#
     );
+    fill_template(title, command, generated_at, "", &main, "")
+}
+
+// ── Multi-section table page ──────────────────────────────────────────────────
+
+fn render_sections_page(
+    title: &str,
+    command: &str,
+    generated_at: &str,
+    sections: &[(String, Vec<String>, Vec<Vec<String>>)],
+) -> String {
+    let main: String = sections
+        .iter()
+        .filter(|(_, _, rows)| !rows.is_empty())
+        .map(|(label, headers, rows)| {
+            let thead: String = headers
+                .iter()
+                .map(|h| format!("<th>{h}</th>"))
+                .collect::<Vec<_>>()
+                .join("");
+            let tbody: String = rows
+                .iter()
+                .map(|row| {
+                    let cells: String = row
+                        .iter()
+                        .map(|cell| format!("<td>{cell}</td>"))
+                        .collect::<Vec<_>>()
+                        .join("");
+                    format!("<tr>{cells}</tr>")
+                })
+                .collect::<Vec<_>>()
+                .join("");
+            format!(
+                r#"<div class="border border-[#282828] mb-7">
+<div class="bg-[#171717] px-3.5 py-2 text-[10px] text-[#677179] uppercase tracking-[.08em] border-b border-[#282828]">{label}</div>
+<div class="tbl-wrap"><table><thead><tr>{thead}</tr></thead><tbody>{tbody}</tbody></table></div>
+</div>"#
+            )
+        })
+        .collect();
     fill_template(title, command, generated_at, "", &main, "")
 }
 
