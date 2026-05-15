@@ -389,10 +389,10 @@ fn render_cell(header: &str, value: &str) -> String {
         let counter_id = crate::utils::counter::symbol_to_counter_id(value);
         let logo_url = format!("https://assets.lbkrs.com/ticker/{counter_id}.png");
         let logo_html = format!(
-            r#"<img src="{logo_url}" onerror="this.style.display='none'" class="inline-block w-5 h-5 rounded-full mr-1.5 align-middle" />"#
+            r#"<img src="{logo_url}" onerror="this.style.display='none'" class="w-5 h-5 rounded-full flex-shrink-0" />"#
         );
         format!(
-            r#"<a href="{quote_url}" target="_blank" class="inline-flex items-center text-[#00dcb5] hover:underline">{logo_html}{value}</a>"#
+            r#"<a href="{quote_url}" target="_blank" class="inline-flex items-center gap-1.5 text-[#00dcb5] hover:underline">{logo_html}<span>{value}</span></a>"#
         )
     } else {
         value.to_string()
