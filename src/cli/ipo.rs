@@ -858,16 +858,160 @@ pub async fn cmd_ipo_detail(
             print_json(&Value::Object(result));
         }
         OutputFormat::Html => {
-            let combined = serde_json::json!({
-                "profile": profile_data,
-                "timeline": timeline_data,
-                "eligibility": eligibility_data,
-                "holdings": holdings_data,
-            });
-            return crate::cli::html_render::open_html_raw(
+            let profile = &profile_data[profile_key];
+            let trunc = |s: String, max: usize| -> String {
+                if s.chars().count() > max {
+                    format!("{}…", s.chars().take(max).collect::<String>())
+                } else {
+                    s
+                }
+            };
+            let str_list = |arr: Option<&Vec<Value>>| -> String {
+                arr.map(|a| {
+                    a.iter()
+                        .filter_map(|x| {
+                            let s = if x.is_string() {
+                                val_str(x)
+                            } else {
+                                val_str(&x["name"])
+                            };
+                            if s == "-" || s.is_empty() {
+                                None
+                            } else {
+                                Some(s)
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default()
+            };
+            let kv_row = |label: &str, value: String| -> Option<Vec<String>> {
+                if value.is_empty() || value == "-" {
+                    None
+                } else {
+                    Some(vec![label.to_string(), value])
+                }
+            };
+
+            let mut profile_rows: Vec<Vec<String>> = Vec::new();
+            let ipo_date = fmt_date_opt(&profile["ipo_date"]);
+            if let Some(r) = kv_row("IPO Date", ipo_date) {
+                profile_rows.push(r);
+            }
+            let currency = val_str(&profile["issue_currency"]);
+            let issue_price = val_str(&profile["issue_price"]);
+            if issue_price != "-" && !issue_price.is_empty() {
+                let price_str = if currency != "-" && !currency.is_empty() {
+                    format!("{issue_price} {currency}")
+                } else {
+                    issue_price
+                };
+                profile_rows.push(vec!["Issue Price".to_string(), price_str]);
+            }
+            let trade_unit = val_str(&profile["trade_unit"]);
+            if trade_unit != "-" && !trade_unit.is_empty() && trade_unit != "0" {
+                profile_rows.push(vec!["Trade Unit (Lot)".to_string(), trade_unit]);
+            }
+            let proceeds = val_str(&profile["proceeds_planned"]);
+            if let Some(r) = kv_row("Proceeds Planned", proceeds) {
+                profile_rows.push(r);
+            }
+            if let Some(r) = kv_row("Industry", val_str(&profile["industry"])) {
+                profile_rows.push(r);
+            }
+            let sponsors = str_list(profile["sponsor"].as_array());
+            if let Some(r) = kv_row("Sponsor", sponsors) {
+                profile_rows.push(r);
+            }
+            let investors = str_list(profile["investors"].as_array());
+            if let Some(r) = kv_row("Cornerstone Investors", investors) {
+                profile_rows.push(r);
+            }
+            if let Some(uw) = profile["underwriter"].as_array() {
+                let names: Vec<String> = uw
+                    .iter()
+                    .take(5)
+                    .filter_map(|x| {
+                        let s = if x.is_string() {
+                            val_str(x)
+                        } else {
+                            val_str(&x["name"])
+                        };
+                        if s == "-" || s.is_empty() {
+                            None
+                        } else {
+                            Some(s)
+                        }
+                    })
+                    .collect();
+                let mut label = names.join(", ");
+                if uw.len() > 5 {
+                    use std::fmt::Write as _;
+                    let _ = write!(label, " (+{})", uw.len() - 5);
+                }
+                if let Some(r) = kv_row("Underwriters", label) {
+                    profile_rows.push(r);
+                }
+            }
+            if let Some(r) = kv_row("Prospectus", val_str(&profile["prospectus"])) {
+                profile_rows.push(r);
+            }
+            if let Some(r) = kv_row("Description", trunc(val_str(&profile["profile"]), 300)) {
+                profile_rows.push(r);
+            }
+
+            let mut eligibility_rows: Vec<Vec<String>> = Vec::new();
+            if let Some(e) = eligibility_data["can_subscribe"].as_bool() {
+                eligibility_rows.push(vec![
+                    "Can Subscribe".to_string(),
+                    if e { "Yes" } else { "No" }.to_string(),
+                ]);
+            }
+            let pay_end = fmt_datetime_hkt(&timeline_data["pay_end_date"]);
+            if pay_end != "-" && !pay_end.is_empty() {
+                eligibility_rows.push(vec!["Payment Deadline".to_string(), pay_end]);
+            }
+
+            let timeline_rows: Vec<Vec<String>> = timeline_data["timeline"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .map(|item| {
+                            vec![
+                                val_str(&item["time"]).replace('\n', " "),
+                                val_str(&item["name"]),
+                            ]
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let mut holdings_rows: Vec<Vec<String>> = Vec::new();
+            if !holdings_data.is_null() {
+                for (label, key) in &[
+                    ("Max Purchase", "ipo_max_purchase"),
+                    ("Total Amount", "total_amount"),
+                    ("Current Amount", "current_amount"),
+                    ("Finance Fee Rate", "finance_fee_rate"),
+                ] {
+                    let v = val_str(&holdings_data[*key]);
+                    if v != "-" && !v.is_empty() && v != "0" && v != "0.00" {
+                        holdings_rows.push(vec![label.to_string(), v]);
+                    }
+                }
+            }
+
+            let kv_headers: &[&str] = &["field", "value"];
+            return crate::cli::html_render::open_html_sections(
                 &format!("{symbol} IPO Detail"),
                 &format!("ipo detail {symbol}"),
-                combined,
+                vec![
+                    ("Profile", kv_headers, profile_rows),
+                    ("Eligibility", kv_headers, eligibility_rows),
+                    ("Timeline", &["time", "event"], timeline_rows),
+                    ("Holdings", kv_headers, holdings_rows),
+                ],
             );
         }
         OutputFormat::Pretty => {
