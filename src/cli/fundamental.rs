@@ -2249,10 +2249,92 @@ pub async fn cmd_financial_statement(
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Html => {
-            return crate::cli::html_render::open_html_raw(
-                &format!("{symbol} Financial Statement"),
-                &format!("financial-statement {symbol}"),
-                data,
+            let currency = data["currency"].as_str().unwrap_or("");
+            let periods = match data["list"].as_array() {
+                Some(v) if !v.is_empty() => v,
+                _ => {
+                    return crate::cli::html_render::open_html_raw(
+                        &format!("{symbol} Financial Statement"),
+                        &format!("financial-statement {symbol} --kind {kind}"),
+                        data,
+                    );
+                }
+            };
+            let col_labels: Vec<String> = periods
+                .iter()
+                .take(5)
+                .map(|p| {
+                    let yr = p["ff_year"].as_i64().unwrap_or(0);
+                    let per_val = p["ff_period"]
+                        .as_i64()
+                        .map(|n| n.to_string())
+                        .or_else(|| p["ff_period"].as_str().map(str::to_string))
+                        .unwrap_or_default();
+                    period_label(&per_val, yr, report)
+                })
+                .collect();
+            let n_cols = col_labels.len();
+            let mut headers: Vec<&str> = vec!["Metric"];
+            let col_label_refs: Vec<&str> = col_labels.iter().map(String::as_str).collect();
+            headers.extend_from_slice(&col_label_refs);
+            headers.push("YoY");
+            let currency_note = if currency.is_empty() {
+                String::new()
+            } else {
+                format!(" (in {currency})")
+            };
+            let title = format!("{symbol} Financial Statement{currency_note}");
+            let template = periods[0]["fields"]
+                .as_array()
+                .map_or(&[][..], |v| v.as_slice());
+            let mut rows: Vec<Vec<String>> = Vec::new();
+            for field in template {
+                let level = field["level"].as_i64().unwrap_or(2);
+                let name = field["name"].as_str().unwrap_or("");
+                let vtype = field["value_type"].as_str().unwrap_or("");
+                let is_section = level == 1 && field["value"].as_str().unwrap_or("").is_empty();
+                let indent = match level {
+                    1 => "",
+                    2 => "&nbsp;&nbsp;",
+                    3 => "&nbsp;&nbsp;&nbsp;&nbsp;",
+                    _ => "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;",
+                };
+                let name_cell = if is_section {
+                    format!("<strong>{name}</strong>")
+                } else {
+                    format!("{indent}{name}")
+                };
+                let field_id = field["id"].as_str().unwrap_or("");
+                let mut row = vec![name_cell];
+                let mut yoy_cell = String::new();
+                for (i, period) in periods.iter().take(n_cols).enumerate() {
+                    let pfield = period["fields"]
+                        .as_array()
+                        .and_then(|fs| fs.iter().find(|f| f["id"].as_str() == Some(field_id)));
+                    let fval = pfield.and_then(|f| f["value"].as_str()).unwrap_or("");
+                    if i == 0 {
+                        let yoy_raw = pfield.and_then(|f| f["yoy"].as_str()).unwrap_or("");
+                        if !yoy_raw.is_empty() {
+                            yoy_cell = fmt_yoy(yoy_raw);
+                        }
+                    }
+                    let cell = if is_section || fval.is_empty() {
+                        String::new()
+                    } else if vtype == "bignumber" || vtype.is_empty() {
+                        fmt_fin_number(fval)
+                    } else {
+                        fval.to_string()
+                    };
+                    row.push(cell);
+                }
+                row.push(yoy_cell);
+                rows.push(row);
+            }
+            return crate::cli::html_render::open_html_table(
+                &title,
+                &format!("financial-statement {symbol} --kind {kind}"),
+                &headers,
+                rows,
             );
         }
         OutputFormat::Pretty => {
