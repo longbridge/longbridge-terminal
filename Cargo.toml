@@ -10,10 +10,12 @@ name = "longbridge"
 path = "src/main.rs"
 
 [profile.release]
-debug = true               # Release build 时也生成 Debug Info
+debug = true               # Keep debug info for split-debuginfo packaging
 lto = true
 opt-level = 'z'
-split-debuginfo = "packed" # 将 Debug Info 单独打包为 .pdb (Windows) 或 .dSYM (macOS)
+panic = "abort"
+split-debuginfo = "packed" # Pack debug info into .pdb (Windows) or .dSYM (macOS)
+strip = "symbols"          # Strip all symbols from the final binary
 
 [dependencies]
 phf = "0.11"
@@ -58,7 +60,7 @@ strum = { version = "0.26", features = ["derive"] }
 tempfile = "3"
 termimad = "0.30"
 time = { version = "0.3", features = ["formatting", "local-offset", "macros"] }
-tokio = { version = "1.33.0", features = ["full"] }
+tokio = { version = "1.33.0", features = ["macros", "rt-multi-thread", "sync", "time"] }
 tokio-stream = "0.1"
 tracing = "0.1.40"
 tracing-appender = { version = "0.2.4" }
