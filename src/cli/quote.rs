@@ -1,6 +1,6 @@
 use anyhow::{bail, Result};
 use longbridge::quote::{
-    AdjustType, CalcIndex, Period, PrePostQuote, SecurityListCategory, TradeSession, TradeSessions,
+    AdjustType, CalcIndex, Period, PrePostQuote, TradeSession, TradeSessions,
 };
 use longbridge::Market;
 use time::Date;
@@ -222,11 +222,6 @@ fn parse_market(s: &str) -> Result<longbridge::Market> {
         "SG" => Ok(longbridge::Market::SG),
         _ => bail!("Unknown market '{s}'. Use: HK US CN SG"),
     }
-}
-
-fn parse_security_list_category(_s: &str) -> SecurityListCategory {
-    // Currently only Overnight is supported; expand as the SDK exposes more variants
-    SecurityListCategory::Overnight
 }
 
 pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()> {
@@ -1025,30 +1020,6 @@ pub async fn cmd_trading_days(
     Ok(())
 }
 
-pub async fn cmd_security_list(market: &str, category: &str, format: &OutputFormat) -> Result<()> {
-    if !matches!(market.to_uppercase().as_str(), "US") {
-        bail!("Only US market is supported for security-list (Longbridge API only exposes the Overnight category)");
-    }
-    let ctx = crate::openapi::quote();
-    let m = parse_market(market)?;
-    let cat = parse_security_list_category(category);
-    let securities = ctx.security_list(m, cat).await?;
-
-    let headers = &["Symbol", "Name"];
-    let rows = securities
-        .iter()
-        .map(|s| {
-            vec![
-                s.symbol.clone(),
-                locale_name(&s.name_en, &s.name_cn).to_owned(),
-            ]
-        })
-        .collect();
-
-    print_table(headers, rows, format);
-    Ok(())
-}
-
 pub async fn cmd_participants(format: &OutputFormat) -> Result<()> {
     let ctx = crate::openapi::quote();
     let participants = ctx.participants().await?;
@@ -1774,25 +1745,6 @@ pub async fn run_trading_days(
     Ok(())
 }
 
-pub async fn run_security_list(
-    api: &dyn QuoteApi,
-    market: Market,
-    format: &OutputFormat,
-) -> Result<()> {
-    let securities = api.security_list(market).await?;
-    let headers = &["Symbol", "Name"];
-    let rows = securities
-        .iter()
-        .map(|s| {
-            vec![
-                s.symbol.clone(),
-                locale_name(&s.name_en, &s.name_cn).to_owned(),
-            ]
-        })
-        .collect();
-    print_table(headers, rows, format);
-    Ok(())
-}
 
 pub async fn run_participants(api: &dyn QuoteApi, format: &OutputFormat) -> Result<()> {
     let participants = api.participants().await?;
@@ -3092,18 +3044,6 @@ mod tests {
             .times(1)
             .returning(|| Ok(vec![]));
         run_trading_session(&mock, &OutputFormat::Pretty)
-            .await
-            .unwrap();
-    }
-
-    #[tokio::test]
-    async fn test_run_security_list_dispatches() {
-        let mut mock = MockQuoteApi::new();
-        mock.expect_security_list()
-            .with(mockall::predicate::eq(longbridge::Market::HK))
-            .times(1)
-            .returning(|_| Ok(vec![]));
-        run_security_list(&mock, longbridge::Market::HK, &OutputFormat::Pretty)
             .await
             .unwrap();
     }

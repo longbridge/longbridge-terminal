@@ -4,7 +4,7 @@ use longbridge::quote::{
     AdjustType, CalcIndex, Candlestick, CapitalDistributionResponse, CapitalFlowLine,
     HistoryMarketTemperatureResponse, IssuerInfo, MarketTemperature, MarketTradingDays,
     MarketTradingSession, OptionQuote, ParticipantInfo, Period, RequestUpdateWatchlistGroup,
-    Security, SecurityBrokers, SecurityCalcIndex, SecurityDepth, SecurityQuote, SecurityStaticInfo,
+    SecurityBrokers, SecurityCalcIndex, SecurityDepth, SecurityQuote, SecurityStaticInfo,
     StrikePriceInfo, Subscription, Trade, WarrantInfo, WarrantQuote, WatchlistGroup,
 };
 use longbridge::trade::{
@@ -71,7 +71,6 @@ pub trait QuoteApi: Send + Sync {
         begin: Date,
         end: Date,
     ) -> Result<MarketTradingDays>;
-    async fn security_list(&self, market: Market) -> Result<Vec<Security>>;
     async fn participants(&self) -> Result<Vec<ParticipantInfo>>;
     async fn subscriptions(&self) -> Result<Vec<Subscription>>;
     async fn option_quote(&self, symbols: Vec<String>) -> Result<Vec<OptionQuote>>;
@@ -255,10 +254,6 @@ impl QuoteApi for LbQuoteApi {
         end: Date,
     ) -> Result<MarketTradingDays> {
         Ok(self.ctx.trading_days(market, begin, end).await?)
-    }
-
-    async fn security_list(&self, market: Market) -> Result<Vec<Security>> {
-        Ok(self.ctx.security_list(market, None).await?)
     }
 
     async fn participants(&self) -> Result<Vec<ParticipantInfo>> {
