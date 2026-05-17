@@ -333,10 +333,10 @@ pub fn render_portfolio(
                     t!("Holding.Price"),
                     t!("Holding.Cost Price"),
                     t!("Holding.Market Value"),
-                    t!("Holding.P/L"),
-                    t!("Holding.P/L%"),
                     t!("Holding.Intraday P/L"),
                     t!("Holding.Intraday P/L%"),
+                    t!("Holding.P/L"),
+                    t!("Holding.P/L%"),
                 ])
                 .style(styles::header());
 
@@ -406,10 +406,10 @@ pub fn render_portfolio(
                                     .map_or("-".to_string(), |p| format!("{p:.2} {currency_str}")),
                             ),
                             Cell::from(format!("{:.2} {}", holding.market_value, currency_str)),
-                            Cell::from(format!("{profit_loss:+.2}")).style(pl_style),
-                            Cell::from(format!("{profit_loss_percent:+.2}%")).style(pl_style),
                             Cell::from(format!("{today_pl:+.2}")).style(today_pl_style),
                             Cell::from(format!("{today_pl_percent:+.2}%")).style(today_pl_style),
+                            Cell::from(format!("{profit_loss:+.2}")).style(pl_style),
+                            Cell::from(format!("{profit_loss_percent:+.2}%")).style(pl_style),
                         ])
                     })
                     .collect();
@@ -423,10 +423,10 @@ pub fn render_portfolio(
                         Constraint::Percentage(12), // Price (with currency)
                         Constraint::Percentage(12), // Cost Price (with currency)
                         Constraint::Percentage(13), // Market Value (with currency)
-                        Constraint::Percentage(9),  // P/L
-                        Constraint::Percentage(9),  // P/L%
                         Constraint::Percentage(10), // Today P/L
                         Constraint::Percentage(10), // Today P/L%
+                        Constraint::Percentage(9),  // P/L
+                        Constraint::Percentage(9),  // P/L%
                     ],
                 )
                 .header(header)
