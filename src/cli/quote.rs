@@ -2814,19 +2814,27 @@ pub async fn cmd_option_volume_daily(
 
 pub async fn cmd_short_positions(
     symbol: String,
+    trades: bool,
     count: u32,
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
+    let is_hk = symbol.to_uppercase().ends_with(".HK");
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
         .to_string();
     let count_str = count.clamp(1, 100).to_string();
+    let path = match (is_hk, trades) {
+        (true, false)  => "/v1/quote/short-positions/hk",
+        (true, true)   => "/v1/quote/short-trades/hk",
+        (false, false) => "/v1/quote/short-positions/us",
+        (false, true)  => "/v1/quote/short-trades/us",
+    };
     let data = http_get(
-        "/v1/quote/short-positions/us",
+        path,
         &[
             ("counter_id", cid.as_str()),
             ("last_timestamp", now.as_str()),
@@ -2846,40 +2854,71 @@ pub async fn cmd_short_positions(
                 }
             };
             items.reverse();
-            println!("Short Selling Data — {symbol}\n");
-            let headers = [
-                "date",
-                "rate%",
-                "short_shares",
-                "avg_daily_vol",
-                "days_cover",
-                "close",
-            ];
-            let rows: Vec<Vec<String>> = items
-                .iter()
-                .map(|item| {
-                    let ts = val_str(&item["timestamp"]);
-                    let rate = val_str(&item["rate"])
-                        .parse::<f64>()
-                        .map_or_else(|_| val_str(&item["rate"]), |v| format!("{:.2}%", v * 100.0));
-                    let short_shares: i64 =
-                        val_str(&item["current_shares_short"]).parse().unwrap_or(0);
-                    let avg_vol: i64 = val_str(&item["avg_daily_share_volume"])
-                        .parse()
-                        .unwrap_or(0);
-                    let days = val_str(&item["days_to_cover"]);
-                    let close = val_str(&item["close"]);
-                    vec![
-                        fmt_ts(&ts),
-                        rate,
-                        format_with_commas(short_shares),
-                        format_with_commas(avg_vol),
-                        days,
-                        close,
-                    ]
-                })
-                .collect();
-            print_table(&headers, rows, format);
+            let label = if trades { "Short Trades" } else { "Short Positions" };
+            println!("{label} — {symbol}");
+            if let Some(ts) = data.get("update_timestamp").and_then(serde_json::Value::as_i64) {
+                println!("Updated: {}\n", fmt_ts(&ts.to_string()));
+            } else {
+                println!();
+            }
+            match (is_hk, trades) {
+                (false, false) => {
+                    // US positions: existing layout
+                    let headers = ["date", "rate%", "short_shares", "avg_daily_vol", "days_cover", "close"];
+                    let rows: Vec<Vec<String>> = items.iter().map(|item| {
+                        let ts = val_str(&item["timestamp"]);
+                        let rate = val_str(&item["rate"]).parse::<f64>()
+                            .map_or_else(|_| val_str(&item["rate"]), |v| format!("{:.2}%", v * 100.0));
+                        let short_shares: i64 = val_str(&item["current_shares_short"]).parse().unwrap_or(0);
+                        let avg_vol: i64 = val_str(&item["avg_daily_share_volume"]).parse().unwrap_or(0);
+                        vec![fmt_ts(&ts), rate, format_with_commas(short_shares),
+                             format_with_commas(avg_vol), val_str(&item["days_to_cover"]), val_str(&item["close"])]
+                    }).collect();
+                    print_table(&headers, rows, format);
+                }
+                (false, true) => {
+                    // US trades
+                    let headers = ["date", "nas_short", "ny_short", "total_vol", "rate%", "close"];
+                    let rows: Vec<Vec<String>> = items.iter().map(|item| {
+                        let ts = val_str(&item["timestamp"]);
+                        let rate = val_str(&item["rate"]).parse::<f64>()
+                            .map_or_else(|_| val_str(&item["rate"]), |v| format!("{:.2}%", v * 100.0));
+                        let nus: i64 = val_str(&item["nus_amount"]).parse().unwrap_or(0);
+                        let ny: i64  = val_str(&item["ny_amount"]).parse().unwrap_or(0);
+                        let tot: i64 = val_str(&item["total_amount"]).parse().unwrap_or(0);
+                        vec![fmt_ts(&ts), format_with_commas(nus), format_with_commas(ny),
+                             format_with_commas(tot), rate, val_str(&item["close"])]
+                    }).collect();
+                    print_table(&headers, rows, format);
+                }
+                (true, false) => {
+                    // HK positions
+                    let headers = ["date", "short_shares", "balance", "cost", "rate%"];
+                    let rows: Vec<Vec<String>> = items.iter().map(|item| {
+                        let ts = val_str(&item["timestamp"]);
+                        let rate = val_str(&item["rate"]).parse::<f64>()
+                            .map_or_else(|_| val_str(&item["rate"]), |v| format!("{:.2}%", v * 100.0));
+                        let amount: i64 = item["amount"].as_i64().unwrap_or(0);
+                        vec![fmt_ts(&ts), format_with_commas(amount),
+                             val_str(&item["balance"]), val_str(&item["cost"]), rate]
+                    }).collect();
+                    print_table(&headers, rows, format);
+                }
+                (true, true) => {
+                    // HK trades
+                    let headers = ["date", "short_shares", "balance", "total_vol", "rate%", "close"];
+                    let rows: Vec<Vec<String>> = items.iter().map(|item| {
+                        let ts = val_str(&item["timestamp"]);
+                        let rate = val_str(&item["rate"]).parse::<f64>()
+                            .map_or_else(|_| val_str(&item["rate"]), |v| format!("{:.2}%", v * 100.0));
+                        let amount: i64 = item["amount"].as_i64().unwrap_or(0);
+                        let total: i64  = item["total_amount"].as_i64().unwrap_or(0);
+                        vec![fmt_ts(&ts), format_with_commas(amount), val_str(&item["balance"]),
+                             format_with_commas(total), rate, val_str(&item["close"])]
+                    }).collect();
+                    print_table(&headers, rows, format);
+                }
+            }
         }
     }
     Ok(())

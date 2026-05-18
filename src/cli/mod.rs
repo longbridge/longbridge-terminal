@@ -423,7 +423,7 @@ pub enum Commands {
     /// Industry ranking list by market and indicator
     ///
     /// Returns a ranked list of industries. The "Counter ID" column contains BK
-    /// counter_ids (e.g. BK/US/IN00258) that can be passed directly to `industry-peers`
+    /// `counter_ids` (e.g. BK/US/IN00258) that can be passed directly to `industry-peers`
     /// to explore the sub-sector hierarchy for that industry.
     ///
     /// Example: longbridge industry-rank --market US
@@ -444,7 +444,7 @@ pub enum Commands {
         count: u32,
     },
 
-    /// Industry peer group tree for a BK counter_id
+    /// Industry peer group tree for a BK `counter_id`
     ///
     /// Returns the hierarchical sub-sector tree for an industry group, with stock
     /// count, daily change, and YTD change at each level.
@@ -454,7 +454,7 @@ pub enum Commands {
     /// Example: longbridge industry-peers BK/US/IN00258
     /// Example: longbridge industry-peers BK/HK/IN20337
     IndustryPeers {
-        /// BK counter_id from `industry-rank`, e.g. BK/US/IN00258
+        /// BK `counter_id` from `industry-rank`, e.g. BK/US/IN00258
         symbol: String,
         /// Market override (default: inferred from symbol suffix)
         #[arg(long)]
@@ -771,13 +771,23 @@ pub enum Commands {
 
     /// Institutional shareholders for a symbol
     ///
-    /// Returns: shareholder name, related symbol (if listed), % shares held, share change, report date.
+    /// Without flags: institution list (change direction, sort).
+    /// --top: Top20 major shareholders across multiple periods (includes individuals and insiders).
+    /// --object-id: Holding history and trade detail for a specific shareholder (use `object_id` from --top).
+    ///
     /// Example: longbridge shareholder AAPL.US
+    /// Example: longbridge shareholder AAPL.US --top
+    /// Example: longbridge shareholder AAPL.US --object-id 1001
     /// Example: longbridge shareholder AAPL.US --range inc --sort owned
-    /// Example: longbridge shareholder AAPL.US --format json
     Shareholder {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
+        /// Show Top20 major shareholders (multi-period, includes individuals and insiders)
+        #[arg(long)]
+        top: bool,
+        /// Show holding and trade detail for a specific shareholder ID (from --top output)
+        #[arg(long, value_name = "ID")]
+        object_id: Option<i64>,
         /// Filter by change direction: all | inc (increase) | dec (decrease)
         #[arg(long, default_value = "all")]
         range: String,
@@ -1072,14 +1082,25 @@ pub enum Commands {
     },
 
     // ── Short positions ─────────────────────────────────────────────────
-    /// US stock short selling data (short interest, short ratio, days to cover)
+    /// Short selling data — open positions or daily short sale volume
     ///
-    /// Only supports US-listed stocks and ETFs.
+    /// Supports US and HK markets. Market is inferred from the symbol suffix.
+    /// Without --trades: short interest / open short positions.
+    /// With --trades: daily short sale volume.
+    ///
+    /// US positions: `short_interest`, `rate`, `days_to_cover`, `close`
+    /// HK positions: `open_short_shares`, `balance`, `cost`, `rate`
+    ///
     /// Example: longbridge short-positions AAPL.US
-    /// Example: longbridge short-positions TSLA.US --count 50
+    /// Example: longbridge short-positions 700.HK
+    /// Example: longbridge short-positions AAPL.US --trades
+    /// Example: longbridge short-positions 700.HK --trades
     ShortPositions {
-        /// Symbol in <CODE>.<MARKET> format (US market only, e.g. AAPL.US)
+        /// Symbol in <CODE>.<MARKET> format (US or HK, e.g. AAPL.US 700.HK)
         symbol: String,
+        /// Show short sale volume (trades) instead of open positions
+        #[arg(long)]
+        trades: bool,
         /// Number of records to return (1–100, default: 20)
         #[arg(long, alias = "limit", default_value = "20")]
         count: u32,
@@ -3144,10 +3165,20 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
 
         Commands::Shareholder {
             symbol,
+            top,
+            object_id,
             range,
             sort,
             order,
-        } => fundamental::cmd_shareholders(symbol, range, sort, order, format, verbose).await,
+        } => {
+            if top {
+                fundamental::cmd_shareholders_top(symbol, format, verbose).await
+            } else if let Some(oid) = object_id {
+                fundamental::cmd_shareholder_detail(symbol, oid, format, verbose).await
+            } else {
+                fundamental::cmd_shareholders(symbol, range, sort, order, format, verbose).await
+            }
+        }
         Commands::FundHolder { symbol, count } => {
             fundamental::cmd_fund_holders(symbol, count, format, verbose).await
         }
@@ -3331,8 +3362,8 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             limit,
         } => dca::cmd_dca(cmd, status.as_deref(), symbol.as_deref(), page, limit, format).await,
 
-        Commands::ShortPositions { symbol, count } => {
-            quote::cmd_short_positions(symbol, count, format, verbose).await
+        Commands::ShortPositions { symbol, trades, count } => {
+            quote::cmd_short_positions(symbol, trades, count, format, verbose).await
         }
 
         Commands::Sharelist { cmd, count } => {

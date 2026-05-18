@@ -960,6 +960,122 @@ fn print_shareholders(data: &Value) {
 }
 
 /// Fetch institutional shareholders for a symbol.
+pub async fn cmd_shareholders_top(
+    symbol: String,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/v1/quote/shareholders/top",
+        &[("counter_id", cid.as_str())],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            let info = match data.get("info").and_then(|v| v.as_array()) {
+                Some(a) if !a.is_empty() => a,
+                _ => {
+                    println!("No Top20 shareholder data found for {symbol}.");
+                    return Ok(());
+                }
+            };
+            for period_entry in info {
+                let period = val_str(&period_entry["period"]);
+                println!("{symbol} — Period: {period}\n");
+                let holders = match period_entry["share_holders"].as_array() {
+                    Some(a) if !a.is_empty() => a,
+                    _ => continue,
+                };
+                let headers = ["object_id", "name", "title", "shares_held", "percent%", "changed", "filing_date"];
+                let rows: Vec<Vec<String>> = holders.iter().map(|h| {
+                    let shares: i64 = val_str(&h["shares_held"]).parse().unwrap_or(0);
+                    let changed: i64 = val_str(&h["shares_changed"]).parse().unwrap_or(0);
+                    let pct = val_str(&h["percent_shares_held"]).parse::<f64>()
+                        .map_or_else(|_| val_str(&h["percent_shares_held"]), |v| format!("{v:.2}"));
+                    vec![
+                        val_str(&h["object_id"]),
+                        val_str(&h["name"]),
+                        val_str(&h["title"]),
+                        shares.to_string(),
+                        pct,
+                        changed.to_string(),
+                        val_str(&h["filing_date"]),
+                    ]
+                }).collect();
+                super::output::print_table(&headers, rows, format);
+                println!();
+            }
+        }
+    }
+    Ok(())
+}
+
+pub async fn cmd_shareholder_detail(
+    symbol: String,
+    object_id: i64,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let oid = object_id.to_string();
+    let data = http_get(
+        "/v1/quote/shareholders/holding",
+        &[("counter_id", cid.as_str()), ("object_id", oid.as_str())],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            let name = val_str(&data["name"]);
+            let title = val_str(&data["title"]);
+            let owner_source = val_str(&data["owner_source"]);
+            println!("{name}  [{owner_source}]");
+            if title != "-" && !title.is_empty() {
+                println!("{title}");
+            }
+            println!();
+            // Holding summary
+            if let Some(summary) = data["holding_summary"].as_array() {
+                if !summary.is_empty() {
+                    println!("── Holding Summary ─────────────────────────────────────");
+                    let headers = ["period", "accum_buy", "accum_sell", "price", "price_chg%"];
+                    let rows: Vec<Vec<String>> = summary.iter().map(|s| {
+                        let pct = val_str(&s["percent_stock_price_changed"]).parse::<f64>()
+                            .map_or_else(|_| val_str(&s["percent_stock_price_changed"]), |v| format!("{v:+.2}%"));
+                        vec![val_str(&s["period"]), val_str(&s["accum_buy"]),
+                             val_str(&s["accum_sell"]), val_str(&s["stock_price"]), pct]
+                    }).collect();
+                    super::output::print_table(&headers, rows, format);
+                    println!();
+                }
+            }
+            // Recent trades
+            if let Some(tradings) = data["tradings"].as_array() {
+                if let Some(latest) = tradings.first() {
+                    if let Some(details) = latest["trading_details"].as_array() {
+                        if !details.is_empty() {
+                            println!("── Recent Trades (Period: {}) ──────────────────────────", val_str(&latest["period"]));
+                            let headers = ["date", "type", "shares", "price", "security_type", "filing_date"];
+                            let rows: Vec<Vec<String>> = details.iter().map(|d| {
+                                let shares: i64 = val_str(&d["trading_shares"]).parse().unwrap_or(0);
+                                vec![val_str(&d["trading_date"]), val_str(&d["trading_type"]),
+                                     shares.to_string(), val_str(&d["trading_price"]),
+                                     val_str(&d["security_type"]), val_str(&d["filing_date"])]
+                            }).collect();
+                            super::output::print_table(&headers, rows, format);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 pub async fn cmd_shareholders(
     symbol: String,
     range: String,
