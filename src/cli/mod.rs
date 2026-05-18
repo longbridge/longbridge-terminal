@@ -952,6 +952,45 @@ pub enum Commands {
         count: i32,
     },
 
+    /// Hot stock anomaly events with alert reason and pinned news
+    ///
+    /// Different from `anomaly` (technical signals only): `stock-events` includes
+    /// the reason text (e.g. "波动超 20 日均值"), pinned news, and industry tags.
+    ///
+    /// Sort values: hot (default) | time | change
+    ///
+    /// Example: longbridge stock-events
+    /// Example: longbridge stock-events --market HK
+    /// Example: longbridge stock-events --market US --sort time --count 50
+    StockEvents {
+        /// Market filter: HK | US | CN | SG (omit for all markets)
+        #[arg(long)]
+        market: Option<String>,
+        /// Sort order: hot (default) | time | change
+        #[arg(long, default_value = "hot")]
+        sort: StockEventSort,
+        /// Number of results (default: 20)
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: u32,
+    },
+
+    /// Multi-stock valuation comparison (PE, PB, PS, market cap, close price)
+    ///
+    /// Compare 2–5 stocks side-by-side on valuation multiples.
+    /// The first symbol is the base; remaining symbols are compared against it.
+    ///
+    /// Example: longbridge compare AAPL.US BABA.US JD.US
+    /// Example: longbridge compare 700.HK 9988.HK --currency HKD
+    Compare {
+        /// Base symbol in <CODE>.<MARKET> format
+        base: String,
+        /// Additional symbols to compare (1–4 more)
+        others: Vec<String>,
+        /// Currency: USD | HKD | CNY (default: USD)
+        #[arg(long, default_value = "USD")]
+        currency: String,
+    },
+
     /// Price alerts (list, add, delete)
     ///
     /// Without subcommand: lists all alerts.
@@ -1582,6 +1621,26 @@ impl IndustryRankSortType {
         match self {
             Self::Single => "0",
             Self::Multi => "1",
+        }
+    }
+}
+
+#[derive(ValueEnum, Clone, Debug)]
+pub enum StockEventSort {
+    #[value(name = "hot")]
+    Hot,
+    #[value(name = "time")]
+    Time,
+    #[value(name = "change")]
+    Change,
+}
+
+impl StockEventSort {
+    pub fn as_api_value(&self) -> u8 {
+        match self {
+            Self::Time   => 0,
+            Self::Change => 1,
+            Self::Hot    => 2,
         }
     }
 }
@@ -3286,6 +3345,12 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             symbol,
             count,
         } => quote::cmd_anomaly(&market, symbol, count, format, verbose).await,
+        Commands::StockEvents { market, sort, count } => {
+            quote::cmd_stock_events(market, sort.as_api_value(), count, format, verbose).await
+        }
+        Commands::Compare { base, others, currency } => {
+            fundamental::cmd_compare(base.as_str(), others.as_slice(), currency.as_str(), format, verbose).await
+        }
         Commands::Alert { symbol, cmd } => match cmd {
             Some(AlertCmd::Add {
                 symbol: s,

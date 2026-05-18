@@ -2897,6 +2897,73 @@ fn print_industry_rank(data: &Value) {
     super::output::print_table(&headers, rows, &OutputFormat::Pretty);
 }
 
+
+// ── compare ────────────────────────────────────────────────────────────────────
+
+pub async fn cmd_compare(
+    base: &str,
+    others: &[String],
+    currency: &str,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let base_cid = symbol_to_counter_id(base);
+    let comparison_ids: Vec<String> = others.iter().map(|s| symbol_to_counter_id(s)).collect();
+    let comparison_str = comparison_ids.join(",");
+    let data = http_get(
+        "/v1/stock-info/industry-valuation-comparison",
+        &[
+            ("counter_id", base_cid.as_str()),
+            ("currency", currency),
+            ("comparison_counter_ids", comparison_str.as_str()),
+        ],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            let list = match data.get("list").and_then(|v| v.as_array()) {
+                Some(a) if !a.is_empty() => a,
+                _ => {
+                    println!("No comparison data found.");
+                    return Ok(());
+                }
+            };
+            let symbols: Vec<String> = list.iter().map(|s| val_str(&s["counter_id"])).collect();
+            let names: Vec<String>   = list.iter().map(|s| val_str(&s["name"])).collect();
+            let sym_refs: Vec<&str> = symbols.iter().map(String::as_str).collect();
+            let mut headers = vec!["Metric"];
+            headers.extend_from_slice(&sym_refs);
+            let mut rows: Vec<Vec<String>> = Vec::new();
+            // Name row
+            let mut name_row = vec!["Name".to_string()];
+            name_row.extend(names);
+            rows.push(name_row);
+            // Scalar metric rows
+            for (label, key) in &[("Close", "price_close"), ("Market Cap", "market_value"), ("PE (TTM)", "pe")] {
+                let mut row = vec![label.to_string()];
+                row.extend(list.iter().map(|s| val_str(&s[*key])));
+                rows.push(row);
+            }
+            // PB/PS from history (latest entry)
+            for (label, key) in [("PB", "pb"), ("PS", "ps")] {
+                let mut row = vec![label.to_string()];
+                for stock in list {
+                    let v = stock["history"]
+                        .as_array()
+                        .and_then(|h| h.last())
+                        .map_or_else(|| "-".to_string(), |e| val_str(&e[key]));
+                    row.push(v);
+                }
+                rows.push(row);
+            }
+            super::output::print_table(&headers, rows, format);
+        }
+    }
+    Ok(())
+}
+
 // ── industry peers ─────────────────────────────────────────────────────────────
 
 pub async fn cmd_industry_peers(

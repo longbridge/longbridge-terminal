@@ -8,7 +8,7 @@ use time::Date;
 use serde_json::Value;
 
 use super::{
-    api::{http_get, LbQuoteApi, QuoteApi},
+    api::{http_get, http_post, LbQuoteApi, QuoteApi},
     output::{
         fmt_date, fmt_datetime, fmt_dec, fmt_decimal, fmt_decimal_div100, fmt_decimal_div252,
         parse_date, print_table,
@@ -2919,6 +2919,65 @@ pub async fn cmd_short_positions(
                     print_table(&headers, rows, format);
                 }
             }
+        }
+    }
+    Ok(())
+}
+
+pub async fn cmd_stock_events(
+    market: Option<String>,
+    sort: u8,
+    count: u32,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let markets: Vec<String> = market
+        .map(|m| vec![m.to_uppercase()])
+        .unwrap_or_default();
+    let body = serde_json::json!({
+        "limit": u64::from(count),
+        "sort": sort,
+        "markets": markets,
+        "next_params": {},
+        "date": "",
+    });
+    let data = http_post("/newmarket/stock_events", body, verbose).await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            if let Some(ts) = data.get("updated_at").and_then(serde_json::Value::as_i64) {
+                println!("Updated: {}\n", fmt_ts(&ts.to_string()));
+            }
+            let events = match data.get("events").and_then(|v| v.as_array()) {
+                Some(a) if !a.is_empty() => a,
+                _ => {
+                    println!("No events found.");
+                    return Ok(());
+                }
+            };
+            let headers = ["time", "symbol", "market", "change%", "reason", "tags"];
+            let rows: Vec<Vec<String>> = events
+                .iter()
+                .map(|e| {
+                    let stock = &e["stock"];
+                    let ts = val_str(&e["timestamp"]);
+                    let code = val_str(&stock["code"]);
+                    let mkt  = val_str(&stock["market"]);
+                    let chg  = val_str(&stock["change"]);
+                    let reason = val_str(&e["alert_reason"]);
+                    let tags = stock["labels"]
+                        .as_array()
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|v| v.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        })
+                        .unwrap_or_default();
+                    vec![fmt_ts(&ts), code, mkt, chg, reason, tags]
+                })
+                .collect();
+            print_table(&headers, rows, format);
         }
     }
     Ok(())
