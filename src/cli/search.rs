@@ -137,6 +137,32 @@ pub async fn cmd_search(
                         print_json(&data);
                     }
                 }
+                OutputFormat::Html => {
+                    if let Some(list) = data["news_list"].as_array() {
+                        let rows: Vec<Vec<String>> = list
+                            .iter()
+                            .take(limit)
+                            .map(|item| {
+                                vec![
+                                    val_str(&item["id"]),
+                                    strip_html(&val_str(&item["title"])),
+                                    fmt_ts(&item["publish_at_timestamp"]),
+                                ]
+                            })
+                            .collect();
+                        return crate::cli::html_render::open_html_table(
+                            "Search News",
+                            "search --tab news",
+                            &["id", "title", "time"],
+                            rows,
+                        );
+                    }
+                    return crate::cli::html_render::open_html_raw(
+                        "Search News",
+                        "search --tab news",
+                        data,
+                    );
+                }
             }
         }
         "topics" => {
@@ -150,6 +176,37 @@ pub async fn cmd_search(
                     } else {
                         print_json(&data);
                     }
+                }
+                OutputFormat::Html => {
+                    if let Some(list) = data["topic_list"].as_array() {
+                        let rows: Vec<Vec<String>> = list
+                            .iter()
+                            .take(limit)
+                            .map(|item| {
+                                let excerpt: String = strip_html(&val_str(&item["description"]))
+                                    .chars()
+                                    .take(60)
+                                    .collect();
+                                vec![
+                                    val_str(&item["id"]),
+                                    val_str(&item["creator_name"]),
+                                    fmt_ts(&item["created_at_timestamp"]),
+                                    excerpt,
+                                ]
+                            })
+                            .collect();
+                        return crate::cli::html_render::open_html_table(
+                            "Search Topics",
+                            "search --tab topics",
+                            &["id", "author", "time", "excerpt"],
+                            rows,
+                        );
+                    }
+                    return crate::cli::html_render::open_html_raw(
+                        "Search Topics",
+                        "search --tab topics",
+                        data,
+                    );
                 }
                 OutputFormat::Pretty => {
                     if let Some(list) = data["topic_list"].as_array() {

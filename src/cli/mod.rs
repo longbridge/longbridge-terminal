@@ -9,6 +9,7 @@ pub mod check;
 pub mod completion;
 pub mod dca;
 pub mod fundamental;
+pub mod html_render;
 pub mod init;
 pub mod insider_trades;
 pub mod investors;
@@ -32,6 +33,7 @@ pub enum OutputFormat {
     #[value(name = "table", alias = "pretty")]
     Pretty,
     Json,
+    Html,
 }
 
 #[derive(Parser)]

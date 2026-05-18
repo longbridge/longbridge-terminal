@@ -53,6 +53,28 @@ async fn cmd_list(format: &OutputFormat) -> Result<()> {
                 .collect();
             println!("{}", serde_json::to_string_pretty(&val)?);
         }
+        OutputFormat::Html => {
+            let val: Vec<_> = groups
+                .iter()
+                .map(|g| {
+                    serde_json::json!({
+                        "id": g.id,
+                        "name": g.name,
+                        "securities": sorted_securities(&g.securities).iter().map(|s| serde_json::json!({
+                            "symbol": s.symbol,
+                            "name": s.name,
+                            "market": format!("{:?}", s.market),
+                            "is_pinned": s.is_pinned,
+                        })).collect::<Vec<_>>(),
+                    })
+                })
+                .collect();
+            return crate::cli::html_render::open_html_raw(
+                "Watchlist",
+                "watchlist",
+                serde_json::Value::Array(val),
+            );
+        }
         OutputFormat::Pretty => {
             for group in &groups {
                 println!("\nGroup: {} (ID: {})", group.name, group.id);
@@ -104,6 +126,25 @@ async fn cmd_show(group: String, format: &OutputFormat) -> Result<()> {
                 })).collect::<Vec<_>>(),
             });
             println!("{}", serde_json::to_string_pretty(&val)?);
+        }
+        OutputFormat::Html => {
+            let rows: Vec<Vec<String>> = sorted_securities(&g.securities)
+                .iter()
+                .map(|s| {
+                    vec![
+                        s.symbol.clone(),
+                        s.name.clone(),
+                        format!("{:?}", s.market),
+                        if s.is_pinned { "yes" } else { "" }.to_string(),
+                    ]
+                })
+                .collect();
+            return crate::cli::html_render::open_html_table(
+                &format!("{} Watchlist", g.name),
+                &format!("watchlist show {}", g.id),
+                &["Symbol", "Name", "Market", "Pinned"],
+                rows,
+            );
         }
         OutputFormat::Pretty => {
             println!("Group: {} (ID: {})", g.name, g.id);
@@ -231,7 +272,7 @@ pub async fn run_watchlist_list(api: &dyn QuoteApi, format: &OutputFormat) -> Re
             })).collect();
             println!("{}", serde_json::to_string_pretty(&val)?);
         }
-        OutputFormat::Pretty => {
+        OutputFormat::Pretty | OutputFormat::Html => {
             for group in &groups {
                 println!("\nGroup: {} (ID: {})", group.name, group.id);
                 let headers = &["Symbol", "Name", "Market"];

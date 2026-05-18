@@ -1,0 +1,235 @@
+<!doctype html>
+<html>
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <title>__TITLE__</title>
+        <script>
+            tailwind.config = {
+                theme: {
+                    extend: {
+                        fontFamily: {
+                            mono: [
+                                "'JetBrains Mono'",
+                                "'Fira Code'",
+                                "'Cascadia Code'",
+                                "ui-monospace",
+                                "monospace",
+                            ],
+                        },
+                    },
+                },
+            };
+        </script>
+        <script src="https://cdn.tailwindcss.com"></script>
+        __CDN_SCRIPTS__
+        <style>
+            * {
+                border-radius: 0 !important;
+            }
+            table {
+                border-collapse: collapse;
+                width: 100%;
+                font-size: 12px;
+            }
+            .tbl-wrap {
+                max-height: 420px;
+                overflow-x: auto;
+                overflow-y: auto;
+                scrollbar-width: thin;
+                scrollbar-color: #3a3a3a #171717;
+            }
+            .tbl-wrap::-webkit-scrollbar { width: 6px; height: 6px; }
+            .tbl-wrap::-webkit-scrollbar-track { background: #171717; }
+            .tbl-wrap::-webkit-scrollbar-thumb { background: #3a3a3a; }
+            .tbl-wrap::-webkit-scrollbar-thumb:hover { background: #4a4a4a; }
+            th {
+                position: sticky;
+                top: 0;
+                z-index: 1;
+                background: #171717;
+                color: #677179;
+                padding: 7px 14px;
+                text-align: right;
+                border-bottom: 1px solid #282828;
+                font-weight: 500;
+                letter-spacing: 0.05em;
+                text-transform: uppercase;
+                font-size: 10px;
+                white-space: nowrap;
+            }
+            th:first-child {
+                text-align: left;
+            }
+            td {
+                padding: 5px 14px;
+                border-bottom: 1px solid rgba(75, 100, 121, 0.44);
+                color: #feffff;
+                text-align: right;
+                white-space: nowrap;
+                font-variant-numeric: tabular-nums;
+            }
+            td:first-child {
+                text-align: left;
+                color: #5d6165;
+            }
+            tr:last-child td {
+                border-bottom: none;
+            }
+            tr:hover td {
+                background: #0e0e0e;
+            }
+            .up {
+                color: #5da602;
+            }
+            .dn {
+                color: #d84a33;
+            }
+        </style>
+    </head>
+    <body
+        class="bg-[#040404] text-[#feffff] font-mono text-[13px] leading-relaxed min-h-screen"
+    >
+        <nav
+            class="bg-[#040404] border-b border-[#282828] px-6 h-[52px] flex items-center gap-4 sticky top-0 z-[100]"
+        >
+            <a
+                href="https://longbridge.com"
+                class="h-[22px] flex gap-2 text-[#feffff] font-semibold no-underline text-sm tracking-tight leading-0 items-end"
+                target="_blank"
+            >
+                <img
+                    src="https://assets.wbrks.com/assets/logo/dark/logo.svg"
+                    alt="Longbridge"
+                    class="h-[22px] block"
+                />
+                <span>Longbridge</span>
+            </a>
+            <div class="ml-auto flex gap-5 items-center">
+                <a
+                    href="https://open.longbridge.com/skill"
+                    target="_blank"
+                    class="text-[#5d6165] no-underline text-[11px] tracking-widest uppercase hover:text-[#feffff]"
+                    >Skill</a
+                >
+                <a
+                    href="https://open.longbridge.com/docs/cli"
+                    target="_blank"
+                    class="text-[#5d6165] no-underline text-[11px] tracking-widest uppercase hover:text-[#feffff]"
+                    >CLI</a
+                >
+                <a
+                    href="https://open.longbridge.com/docs/mcp"
+                    target="_blank"
+                    class="text-[#5d6165] no-underline text-[11px] tracking-widest uppercase hover:text-[#feffff]"
+                    >MCP</a
+                >
+            </div>
+        </nav>
+        <div class="max-w-[896px] mx-auto px-6 pt-10 pb-20">
+            <h1
+                class="text-[22px] font-bold text-[#feffff] mb-4 border-b border-[#282828] pb-4 tracking-tight"
+            >
+                __TITLE__
+            </h1>
+            <div
+                class="bg-[#171717] border border-[#282828] px-[18px] py-[14px] mb-7"
+            >
+                <div
+                    class="text-[11px] text-[#5d6165] flex gap-[10px] items-baseline leading-[2]"
+                >
+                    <span
+                        class="text-[#41b3a9] uppercase tracking-[.06em] text-[10px] min-w-[84px] shrink-0 font-semibold"
+                        >Command</span
+                    >
+                    <code
+                        class="text-[#feffff] bg-[#0e0e0e] px-2 py-0.5 text-[11px] font-mono"
+                        >longbridge __COMMAND__</code
+                    >
+                </div>
+                <div
+                    class="text-[11px] text-[#5d6165] flex gap-[10px] items-baseline leading-[2]"
+                >
+                    <span
+                        class="text-[#677179] uppercase tracking-[.06em] text-[10px] min-w-[84px] shrink-0"
+                        >Generated</span
+                    >
+                    <span>__GENERATED_AT__</span>
+                </div>
+            </div>
+            __MAIN__
+            <div
+                class="mt-12 pt-5 border-t border-[#282828] text-[11px] text-[#677179] flex gap-4 items-center flex-wrap"
+            >
+                <a
+                    href="https://longbridge.com"
+                    target="_blank"
+                    class="text-[#286e68] no-underline hover:text-[#97efd6]"
+                    >Longbridge</a
+                >
+                <span class="text-[#282828]">&middot;</span>
+                <a
+                    href="https://open.longbridge.com/skill"
+                    target="_blank"
+                    class="text-[#286e68] no-underline hover:text-[#97efd6]"
+                    >Skill</a
+                >
+                <span class="text-[#282828]">&middot;</span>
+                <a
+                    href="https://open.longbridge.com/docs/cli"
+                    target="_blank"
+                    class="text-[#286e68] no-underline hover:text-[#97efd6]"
+                    >CLI</a
+                >
+                <span class="text-[#282828]">&middot;</span>
+                <a
+                    href="https://open.longbridge.com/docs/mcp"
+                    target="_blank"
+                    class="text-[#286e68] no-underline hover:text-[#97efd6]"
+                    >MCP</a
+                >
+            </div>
+        </div>
+        <script>
+            function buildTable(cols, rows) {
+                var th = document.getElementById("thead");
+                var tb = document.getElementById("tbody");
+                if (!th || !tb) return;
+                var hr = th.insertRow();
+                cols.forEach(function (c) {
+                    var t = document.createElement("th");
+                    t.textContent = c;
+                    hr.appendChild(t);
+                });
+                var moneyRe =
+                    /price|value|turnover|amount|flow|aum|profit|cost|inflow|outflow|market_val|capital|premium/i;
+                var isMoney = cols.map(function (c) {
+                    return moneyRe.test(c);
+                });
+                rows.forEach(function (r) {
+                    var tr = tb.insertRow();
+                    r.forEach(function (v, i) {
+                        var td = tr.insertCell();
+                        var n = parseFloat(v);
+                        var isNum = !isNaN(n) && v !== "";
+                        if (
+                            isMoney[i] &&
+                            isNum &&
+                            n !== 0 &&
+                            !String(v).startsWith("$")
+                        ) {
+                            td.textContent = "$" + v;
+                        } else {
+                            td.textContent = v;
+                        }
+                        if (i > 0 && isNum) {
+                            if (n > 0) td.className = "up";
+                            else if (n < 0) td.className = "dn";
+                        }
+                    });
+                });
+            }
+            __DATA_JS__;
+        </script>
+    </body>
+</html>

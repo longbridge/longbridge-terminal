@@ -285,6 +285,77 @@ pub async fn cmd_ipo_subscriptions(format: &OutputFormat, verbose: bool) -> Resu
             }
             print_json(&Value::Object(result));
         }
+        OutputFormat::Html => {
+            let hk_headers: &[&str] = &[
+                "name",
+                "symbol",
+                "currency",
+                "entrance_fee",
+                "est_sub",
+                "fin_rate",
+                "max_lev",
+                "issue_price",
+                "deadline",
+                "state",
+            ];
+            let us_headers: &[&str] = &[
+                "name",
+                "symbol",
+                "currency",
+                "issue_price",
+                "deadline",
+                "state",
+            ];
+            let hk_rows: Vec<Vec<String>> = hk_data["list"]
+                .as_array()
+                .map(|list| {
+                    list.iter()
+                        .map(|item| {
+                            let stage = state_stage_label(&item["state_stage"]).to_string();
+                            let tags: &[Value] =
+                                item["tags"].as_array().map_or(&[], |a| a.as_slice());
+                            let fin_rate = extract_tag(tags, "融资利率");
+                            let max_lev = extract_tag(tags, "杠杆");
+                            vec![
+                                val_str(&item["name"]),
+                                counter_id_to_symbol(&val_str(&item["counter_id"])),
+                                val_str(&item["currency"]),
+                                val_str(&item["entrance_fee"]),
+                                val_str(&item["rate_forcast"]),
+                                fin_rate,
+                                max_lev,
+                                val_str(&item["issue_price"]),
+                                fmt_ts(&item["sub_deadline"]),
+                                stage,
+                            ]
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let us_rows: Vec<Vec<String>> = us_data["list"]
+                .as_array()
+                .map(|list| {
+                    list.iter()
+                        .map(|item| {
+                            let stage = state_stage_label(&item["state_stage"]).to_string();
+                            vec![
+                                val_str(&item["name"]),
+                                counter_id_to_symbol(&val_str(&item["counter_id"])),
+                                val_str(&item["currency"]),
+                                val_str(&item["issue_price"]),
+                                fmt_ts(&item["sub_deadline"]),
+                                stage,
+                            ]
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            return crate::cli::html_render::open_html_sections(
+                "IPO Subscriptions",
+                "ipo subscriptions",
+                vec![("HK", hk_headers, hk_rows), ("US", us_headers, us_rows)],
+            );
+        }
         OutputFormat::Pretty => {
             let mut printed = false;
             if let Some(list) = hk_data["list"].as_array() {
@@ -410,6 +481,22 @@ pub async fn cmd_ipo_wait_listing(format: &OutputFormat, verbose: bool) -> Resul
             }
             print_json(&Value::Object(result));
         }
+        OutputFormat::Html => {
+            let headers: &[&str] = &["name", "symbol", "issue_price", "ipo_date", "state"];
+            let hk_rows: Vec<Vec<String>> = hk_data["ipos"]
+                .as_array()
+                .map(|list| list.iter().map(wait_list_row).collect())
+                .unwrap_or_default();
+            let us_rows: Vec<Vec<String>> = us_data["ipos"]
+                .as_array()
+                .map(|list| list.iter().map(wait_list_row).collect())
+                .unwrap_or_default();
+            return crate::cli::html_render::open_html_sections(
+                "IPO Wait Listing",
+                "ipo wait-listing",
+                vec![("HK", headers, hk_rows), ("US", headers, us_rows)],
+            );
+        }
         OutputFormat::Pretty => {
             let headers = ["name", "symbol", "issue_price", "ipo_date", "state"];
             let mut printed = false;
@@ -512,6 +599,31 @@ pub async fn cmd_ipo_listed(
             }
             print_json(&Value::Object(result));
         }
+        OutputFormat::Html => {
+            let headers: &[&str] = &[
+                "name",
+                "symbol",
+                "issue_price",
+                "last_done",
+                "prev_close",
+                "change%",
+                "amount",
+                "ipo_date",
+            ];
+            let hk_rows: Vec<Vec<String>> = hk_data["list"]
+                .as_array()
+                .map(|list| list.iter().map(hk_listed_row).collect())
+                .unwrap_or_default();
+            let us_rows: Vec<Vec<String>> = us_data["list"]
+                .as_array()
+                .map(|list| list.iter().map(us_listed_row).collect())
+                .unwrap_or_default();
+            return crate::cli::html_render::open_html_sections(
+                "IPO Listed",
+                "ipo listed",
+                vec![("HK", headers, hk_rows), ("US", headers, us_rows)],
+            );
+        }
         OutputFormat::Pretty => {
             let mut printed = false;
             if let Some(list) = hk_data["list"].as_array() {
@@ -572,6 +684,48 @@ pub async fn cmd_ipo_calendar(format: &OutputFormat, verbose: bool) -> Result<()
             } else {
                 print_json(&data);
             }
+        }
+        OutputFormat::Html => {
+            let headers: &[&str] = &[
+                "name",
+                "symbol",
+                "state",
+                "sub_date",
+                "sub_end_date",
+                "ipo_date",
+            ];
+            let mut hk_rows: Vec<Vec<String>> = Vec::new();
+            let mut us_rows: Vec<Vec<String>> = Vec::new();
+            let mut other_rows: Vec<Vec<String>> = Vec::new();
+            if let Some(list) = data["list"].as_array() {
+                for item in list {
+                    let cid = val_str(&item["counter_id"]);
+                    let row = vec![
+                        val_str(&item["name"]),
+                        counter_id_to_symbol(&cid),
+                        state_stage_label(&item["state_stage"]).to_string(),
+                        fmt_date_opt(&item["sub_date"]),
+                        fmt_date_opt(&item["sub_end_date"]),
+                        fmt_date_opt(&item["ipo_date"]),
+                    ];
+                    if cid.contains("/HK/") {
+                        hk_rows.push(row);
+                    } else if cid.contains("/US/") {
+                        us_rows.push(row);
+                    } else {
+                        other_rows.push(row);
+                    }
+                }
+            }
+            return crate::cli::html_render::open_html_sections(
+                "IPO Calendar",
+                "ipo calendar",
+                vec![
+                    ("HK", headers, hk_rows),
+                    ("US", headers, us_rows),
+                    ("Other", headers, other_rows),
+                ],
+            );
         }
         OutputFormat::Pretty => {
             if let Some(list) = data["list"].as_array() {
@@ -702,6 +856,163 @@ pub async fn cmd_ipo_detail(
             result.insert("eligibility".to_string(), eligibility_data);
             result.insert("holdings".to_string(), holdings_data);
             print_json(&Value::Object(result));
+        }
+        OutputFormat::Html => {
+            let profile = &profile_data[profile_key];
+            let trunc = |s: String, max: usize| -> String {
+                if s.chars().count() > max {
+                    format!("{}…", s.chars().take(max).collect::<String>())
+                } else {
+                    s
+                }
+            };
+            let str_list = |arr: Option<&Vec<Value>>| -> String {
+                arr.map(|a| {
+                    a.iter()
+                        .filter_map(|x| {
+                            let s = if x.is_string() {
+                                val_str(x)
+                            } else {
+                                val_str(&x["name"])
+                            };
+                            if s == "-" || s.is_empty() {
+                                None
+                            } else {
+                                Some(s)
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default()
+            };
+            let kv_row = |label: &str, value: String| -> Option<Vec<String>> {
+                if value.is_empty() || value == "-" {
+                    None
+                } else {
+                    Some(vec![label.to_string(), value])
+                }
+            };
+
+            let mut profile_rows: Vec<Vec<String>> = Vec::new();
+            let ipo_date = fmt_date_opt(&profile["ipo_date"]);
+            if let Some(r) = kv_row("IPO Date", ipo_date) {
+                profile_rows.push(r);
+            }
+            let currency = val_str(&profile["issue_currency"]);
+            let issue_price = val_str(&profile["issue_price"]);
+            if issue_price != "-" && !issue_price.is_empty() {
+                let price_str = if currency != "-" && !currency.is_empty() {
+                    format!("{issue_price} {currency}")
+                } else {
+                    issue_price
+                };
+                profile_rows.push(vec!["Issue Price".to_string(), price_str]);
+            }
+            let trade_unit = val_str(&profile["trade_unit"]);
+            if trade_unit != "-" && !trade_unit.is_empty() && trade_unit != "0" {
+                profile_rows.push(vec!["Trade Unit (Lot)".to_string(), trade_unit]);
+            }
+            let proceeds = val_str(&profile["proceeds_planned"]);
+            if let Some(r) = kv_row("Proceeds Planned", proceeds) {
+                profile_rows.push(r);
+            }
+            if let Some(r) = kv_row("Industry", val_str(&profile["industry"])) {
+                profile_rows.push(r);
+            }
+            let sponsors = str_list(profile["sponsor"].as_array());
+            if let Some(r) = kv_row("Sponsor", sponsors) {
+                profile_rows.push(r);
+            }
+            let investors = str_list(profile["investors"].as_array());
+            if let Some(r) = kv_row("Cornerstone Investors", investors) {
+                profile_rows.push(r);
+            }
+            if let Some(uw) = profile["underwriter"].as_array() {
+                let names: Vec<String> = uw
+                    .iter()
+                    .take(5)
+                    .filter_map(|x| {
+                        let s = if x.is_string() {
+                            val_str(x)
+                        } else {
+                            val_str(&x["name"])
+                        };
+                        if s == "-" || s.is_empty() {
+                            None
+                        } else {
+                            Some(s)
+                        }
+                    })
+                    .collect();
+                let mut label = names.join(", ");
+                if uw.len() > 5 {
+                    use std::fmt::Write as _;
+                    let _ = write!(label, " (+{})", uw.len() - 5);
+                }
+                if let Some(r) = kv_row("Underwriters", label) {
+                    profile_rows.push(r);
+                }
+            }
+            if let Some(r) = kv_row("Prospectus", val_str(&profile["prospectus"])) {
+                profile_rows.push(r);
+            }
+            if let Some(r) = kv_row("Description", trunc(val_str(&profile["profile"]), 300)) {
+                profile_rows.push(r);
+            }
+
+            let mut eligibility_rows: Vec<Vec<String>> = Vec::new();
+            if let Some(e) = eligibility_data["can_subscribe"].as_bool() {
+                eligibility_rows.push(vec![
+                    "Can Subscribe".to_string(),
+                    if e { "Yes" } else { "No" }.to_string(),
+                ]);
+            }
+            let pay_end = fmt_datetime_hkt(&timeline_data["pay_end_date"]);
+            if pay_end != "-" && !pay_end.is_empty() {
+                eligibility_rows.push(vec!["Payment Deadline".to_string(), pay_end]);
+            }
+
+            let timeline_rows: Vec<Vec<String>> = timeline_data["timeline"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .map(|item| {
+                            vec![
+                                val_str(&item["time"]).replace('\n', " "),
+                                val_str(&item["name"]),
+                            ]
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let mut holdings_rows: Vec<Vec<String>> = Vec::new();
+            if !holdings_data.is_null() {
+                for (label, key) in &[
+                    ("Max Purchase", "ipo_max_purchase"),
+                    ("Total Amount", "total_amount"),
+                    ("Current Amount", "current_amount"),
+                    ("Finance Fee Rate", "finance_fee_rate"),
+                ] {
+                    let v = val_str(&holdings_data[*key]);
+                    if v != "-" && !v.is_empty() && v != "0" && v != "0.00" {
+                        holdings_rows.push(vec![label.to_string(), v]);
+                    }
+                }
+            }
+
+            let kv_headers: &[&str] = &["field", "value"];
+            return crate::cli::html_render::open_html_sections(
+                &format!("{symbol} IPO Detail"),
+                &format!("ipo detail {symbol}"),
+                vec![
+                    ("Profile", kv_headers, profile_rows),
+                    ("Eligibility", kv_headers, eligibility_rows),
+                    ("Timeline", &["time", "event"], timeline_rows),
+                    ("Holdings", kv_headers, holdings_rows),
+                ],
+            );
         }
         OutputFormat::Pretty => {
             let kv = |label: &str, value: &str| {
@@ -946,6 +1257,53 @@ pub async fn cmd_ipo_orders(
             }
             print_json(&Value::Object(result));
         }
+        OutputFormat::Html => {
+            let active_headers: &[&str] = &["id", "symbol", "name", "qty", "status", "date"];
+            let hist_headers: &[&str] = &["id", "symbol", "name", "qty", "won", "status", "date"];
+            let active_rows: Vec<Vec<String>> = active_data["orders"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .map(|o| {
+                            vec![
+                                val_str(&o["id"]),
+                                counter_id_to_symbol(&val_str(&o["counter_id"])),
+                                val_str(&o["name"]),
+                                val_str(&o["sub_qty"]),
+                                val_str(&o["status"]),
+                                fmt_ts(&o["created_at"]),
+                            ]
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let hist_rows: Vec<Vec<String>> = hist_data["orders"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .map(|o| {
+                            vec![
+                                val_str(&o["id"]),
+                                counter_id_to_symbol(&val_str(&o["counter_id"])),
+                                val_str(&o["name"]),
+                                val_str(&o["sub_qty"]),
+                                val_str(&o["lot_win_qty"]),
+                                val_str(&o["status"]),
+                                fmt_ts(&o["created_at"]),
+                            ]
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            return crate::cli::html_render::open_html_sections(
+                "IPO Orders",
+                "ipo orders",
+                vec![
+                    ("Active", active_headers, active_rows),
+                    ("History", hist_headers, hist_rows),
+                ],
+            );
+        }
         OutputFormat::Pretty => {
             let mut printed = false;
             if let Some(orders) = active_data["orders"].as_array() {
@@ -1018,6 +1376,13 @@ pub async fn cmd_ipo_order_detail(
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw(
+                "IPO Order Detail",
+                &format!("ipo orders detail {order_id}"),
+                data,
+            );
+        }
         OutputFormat::Pretty => {
             let kv = |label: &str, value: &str| {
                 println!("{:<24}{value}", format!("{label}:"));
@@ -1151,6 +1516,52 @@ pub async fn cmd_ipo_profit_loss(
             result.insert("items".to_string(), items_data);
             print_json(&Value::Object(result));
         }
+        OutputFormat::Html => {
+            let summary_rows: Vec<Vec<String>> = summary_val
+                .as_object()
+                .map(|obj| {
+                    obj.iter()
+                        .map(|(k, v)| {
+                            let v_str = match v {
+                                Value::String(s) => s.clone(),
+                                Value::Null => "-".to_string(),
+                                other => other.to_string(),
+                            };
+                            vec![k.clone(), v_str]
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let items_rows: Vec<Vec<String>> = items_data["items"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .map(|item| {
+                            vec![
+                                counter_id_to_symbol(&val_str(&item["counter_id"])),
+                                val_str(&item["name"]),
+                                val_str(&item["qty"]),
+                                val_str(&item["cost_price"]),
+                                val_str(&item["profit_loss"]),
+                                val_str(&item["profit_loss_rate"]),
+                            ]
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            return crate::cli::html_render::open_html_sections(
+                "IPO Profit Loss",
+                "ipo profit-loss",
+                vec![
+                    ("Summary", &["field", "value"] as &[&str], summary_rows),
+                    (
+                        "Items",
+                        &["symbol", "name", "qty", "cost", "profit", "rate"],
+                        items_rows,
+                    ),
+                ],
+            );
+        }
         OutputFormat::Pretty => {
             print_json_value(&summary_val, format);
             if let Some(items) = items_data["items"].as_array() {
@@ -1193,6 +1604,42 @@ pub async fn cmd_ipo_us_subscriptions(format: &OutputFormat, verbose: bool) -> R
             } else {
                 print_json(&data);
             }
+        }
+        OutputFormat::Html => {
+            if let Some(list) = data["list"].as_array() {
+                let rows: Vec<Vec<String>> = list
+                    .iter()
+                    .map(|item| {
+                        let stage = state_stage_label(&item["state_stage"]).to_string();
+                        vec![
+                            val_str(&item["name"]),
+                            counter_id_to_symbol(&val_str(&item["counter_id"])),
+                            val_str(&item["currency"]),
+                            val_str(&item["issue_price"]),
+                            fmt_ts(&item["sub_deadline"]),
+                            stage,
+                        ]
+                    })
+                    .collect();
+                return crate::cli::html_render::open_html_table(
+                    "US IPO Subscriptions",
+                    "ipo us-subscriptions",
+                    &[
+                        "name",
+                        "symbol",
+                        "currency",
+                        "issue_price",
+                        "deadline",
+                        "state",
+                    ],
+                    rows,
+                );
+            }
+            return crate::cli::html_render::open_html_raw(
+                "US IPO Subscriptions",
+                "ipo us-subscriptions",
+                data,
+            );
         }
         OutputFormat::Pretty => {
             if let Some(list) = data["list"].as_array() {
@@ -1242,6 +1689,33 @@ pub async fn cmd_ipo_us_wait_listing(format: &OutputFormat, verbose: bool) -> Re
             } else {
                 print_json(&data);
             }
+        }
+        OutputFormat::Html => {
+            if let Some(list) = data["ipos"].as_array() {
+                let rows: Vec<Vec<String>> = list
+                    .iter()
+                    .map(|item| {
+                        vec![
+                            val_str(&item["name"]),
+                            counter_id_to_symbol(&val_str(&item["counter_id"])),
+                            val_str(&item["issue_price"]),
+                            fmt_date_opt(&item["ipo_date"]),
+                            state_stage_label(&item["state_stage"]).to_string(),
+                        ]
+                    })
+                    .collect();
+                return crate::cli::html_render::open_html_table(
+                    "US IPO Wait Listing",
+                    "ipo us-wait-listing",
+                    &["name", "symbol", "issue_price", "ipo_date", "state"],
+                    rows,
+                );
+            }
+            return crate::cli::html_render::open_html_raw(
+                "US IPO Wait Listing",
+                "ipo us-wait-listing",
+                data,
+            );
         }
         OutputFormat::Pretty => {
             if let Some(list) = data["ipos"].as_array() {
@@ -1294,6 +1768,27 @@ pub async fn cmd_ipo_us_listed(
             } else {
                 print_json(&data);
             }
+        }
+        OutputFormat::Html => {
+            if let Some(list) = data["list"].as_array() {
+                let rows: Vec<Vec<String>> = list.iter().map(us_listed_row).collect();
+                return crate::cli::html_render::open_html_table(
+                    "US IPO Listed",
+                    "ipo us-listed",
+                    &[
+                        "name",
+                        "symbol",
+                        "issue_price",
+                        "last_done",
+                        "prev_close",
+                        "change%",
+                        "amount",
+                        "ipo_date",
+                    ],
+                    rows,
+                );
+            }
+            return crate::cli::html_render::open_html_raw("US IPO Listed", "ipo us-listed", data);
         }
         OutputFormat::Pretty => {
             if let Some(list) = data["list"].as_array() {

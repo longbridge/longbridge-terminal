@@ -41,6 +41,9 @@ async fn cmd_list(count: u32, format: &OutputFormat) -> Result<()> {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&resp)?);
         }
+        OutputFormat::Html => {
+            return crate::cli::html_render::open_html_raw("Sharelists", "sharelist", resp);
+        }
         OutputFormat::Pretty => {
             let sharelists = resp["sharelists"].as_array().cloned().unwrap_or_default();
             let subscribed = resp["subscribed_sharelists"]
@@ -89,7 +92,7 @@ async fn cmd_detail(id: String, format: &OutputFormat) -> Result<()> {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&resp)?);
         }
-        OutputFormat::Pretty => {
+        OutputFormat::Pretty | OutputFormat::Html => {
             let sl = &resp["sharelist"];
             let sl_type = match sl["sharelist_type"].as_u64().unwrap_or(0) {
                 0 => "Regular",
@@ -240,7 +243,7 @@ async fn cmd_popular(count: u32, format: &OutputFormat) -> Result<()> {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&sharelists)?);
         }
-        OutputFormat::Pretty => {
+        OutputFormat::Pretty | OutputFormat::Html => {
             if sharelists.is_empty() {
                 println!("No popular sharelists found.");
                 return Ok(());
