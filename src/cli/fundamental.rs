@@ -2911,7 +2911,7 @@ pub async fn cmd_compare(
     let comparison_ids: Vec<String> = others.iter().map(|s| symbol_to_counter_id(s)).collect();
     let comparison_str = comparison_ids.join(",");
     let data = http_get(
-        "/v1/stock-info/industry-valuation-comparison",
+        "/v1/quote/compare/valuation",
         &[
             ("counter_id", base_cid.as_str()),
             ("currency", currency),

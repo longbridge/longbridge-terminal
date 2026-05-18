@@ -22,7 +22,7 @@ pub async fn cmd_screener_strategies(
     if let Some(sid) = id {
         let sid_str = sid.to_string();
         let data = http_get(
-            "/calc/filter/strategy",
+            "/v1/quote/screener/strategy",
             &[("id", sid_str.as_str())],
             verbose,
         )
@@ -58,11 +58,11 @@ pub async fn cmd_screener_strategies(
     }
 
     let path = if mine {
-        "/calc/filter/user/strategy"
+        "/v1/quote/screener/strategies/mine"
     } else if all {
-        "/calc/filter/all/strategy"
+        "/v1/quote/screener/strategies"
     } else {
-        "/calc/filter/recommend/strategy"
+        "/v1/quote/screener/strategies/recommend"
     };
 
     let data = http_get(path, &[], verbose).await?;
@@ -112,7 +112,7 @@ pub async fn cmd_screener_search(
     if let Some(sid) = strategy_id {
         body["id"] = serde_json::json!(sid.to_string());
     }
-    let data = http_post("/calc/filter/search", body, verbose).await?;
+    let data = http_post("/v1/quote/screener/search", body, verbose).await?;
     match format {
         OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&data).unwrap_or_default()),
         OutputFormat::Pretty => {
@@ -150,7 +150,7 @@ pub async fn cmd_screener_indicators(
         cid = symbol_to_counter_id(sym);
         params.push(("counter_id", cid.as_str()));
     }
-    let data = http_get("/calc/filter/indicator/config", &params, verbose).await?;
+    let data = http_get("/v1/quote/screener/indicators", &params, verbose).await?;
     match format {
         OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&data).unwrap_or_default()),
         OutputFormat::Pretty => {

@@ -2941,7 +2941,7 @@ pub async fn cmd_stock_events(
         "next_params": {},
         "date": "",
     });
-    let data = http_post("/newmarket/stock_events", body, verbose).await?;
+    let data = http_post("/v1/quote/market/stock-events", body, verbose).await?;
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => {
