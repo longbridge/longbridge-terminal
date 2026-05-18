@@ -960,6 +960,122 @@ fn print_shareholders(data: &Value) {
 }
 
 /// Fetch institutional shareholders for a symbol.
+pub async fn cmd_shareholders_top(
+    symbol: String,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let data = http_get(
+        "/v1/quote/shareholders/top",
+        &[("counter_id", cid.as_str())],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            let info = match data.get("info").and_then(|v| v.as_array()) {
+                Some(a) if !a.is_empty() => a,
+                _ => {
+                    println!("No Top20 shareholder data found for {symbol}.");
+                    return Ok(());
+                }
+            };
+            for period_entry in info {
+                let period = val_str(&period_entry["period"]);
+                println!("{symbol} — Period: {period}\n");
+                let holders = match period_entry["share_holders"].as_array() {
+                    Some(a) if !a.is_empty() => a,
+                    _ => continue,
+                };
+                let headers = ["object_id", "name", "title", "shares_held", "percent%", "changed", "filing_date"];
+                let rows: Vec<Vec<String>> = holders.iter().map(|h| {
+                    let shares: i64 = val_str(&h["shares_held"]).parse().unwrap_or(0);
+                    let changed: i64 = val_str(&h["shares_changed"]).parse().unwrap_or(0);
+                    let pct = val_str(&h["percent_shares_held"]).parse::<f64>()
+                        .map_or_else(|_| val_str(&h["percent_shares_held"]), |v| format!("{v:.2}"));
+                    vec![
+                        val_str(&h["object_id"]),
+                        val_str(&h["name"]),
+                        val_str(&h["title"]),
+                        shares.to_string(),
+                        pct,
+                        changed.to_string(),
+                        val_str(&h["filing_date"]),
+                    ]
+                }).collect();
+                super::output::print_table(&headers, rows, format);
+                println!();
+            }
+        }
+    }
+    Ok(())
+}
+
+pub async fn cmd_shareholder_detail(
+    symbol: String,
+    object_id: i64,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let oid = object_id.to_string();
+    let data = http_get(
+        "/v1/quote/shareholders/holding",
+        &[("counter_id", cid.as_str()), ("object_id", oid.as_str())],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            let name = val_str(&data["name"]);
+            let title = val_str(&data["title"]);
+            let owner_source = val_str(&data["owner_source"]);
+            println!("{name}  [{owner_source}]");
+            if title != "-" && !title.is_empty() {
+                println!("{title}");
+            }
+            println!();
+            // Holding summary
+            if let Some(summary) = data["holding_summary"].as_array() {
+                if !summary.is_empty() {
+                    println!("── Holding Summary ─────────────────────────────────────");
+                    let headers = ["period", "accum_buy", "accum_sell", "price", "price_chg%"];
+                    let rows: Vec<Vec<String>> = summary.iter().map(|s| {
+                        let pct = val_str(&s["percent_stock_price_changed"]).parse::<f64>()
+                            .map_or_else(|_| val_str(&s["percent_stock_price_changed"]), |v| format!("{v:+.2}%"));
+                        vec![val_str(&s["period"]), val_str(&s["accum_buy"]),
+                             val_str(&s["accum_sell"]), val_str(&s["stock_price"]), pct]
+                    }).collect();
+                    super::output::print_table(&headers, rows, format);
+                    println!();
+                }
+            }
+            // Recent trades
+            if let Some(tradings) = data["tradings"].as_array() {
+                if let Some(latest) = tradings.first() {
+                    if let Some(details) = latest["trading_details"].as_array() {
+                        if !details.is_empty() {
+                            println!("── Recent Trades (Period: {}) ──────────────────────────", val_str(&latest["period"]));
+                            let headers = ["date", "type", "shares", "price", "security_type", "filing_date"];
+                            let rows: Vec<Vec<String>> = details.iter().map(|d| {
+                                let shares: i64 = val_str(&d["trading_shares"]).parse().unwrap_or(0);
+                                vec![val_str(&d["trading_date"]), val_str(&d["trading_type"]),
+                                     shares.to_string(), val_str(&d["trading_price"]),
+                                     val_str(&d["security_type"]), val_str(&d["filing_date"])]
+                            }).collect();
+                            super::output::print_table(&headers, rows, format);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 pub async fn cmd_shareholders(
     symbol: String,
     range: String,
@@ -2779,6 +2895,73 @@ fn print_industry_rank(data: &Value) {
         .collect();
 
     super::output::print_table(&headers, rows, &OutputFormat::Pretty);
+}
+
+
+// ── compare ────────────────────────────────────────────────────────────────────
+
+pub async fn cmd_compare(
+    base: &str,
+    others: &[String],
+    currency: &str,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let base_cid = symbol_to_counter_id(base);
+    let comparison_ids: Vec<String> = others.iter().map(|s| symbol_to_counter_id(s)).collect();
+    let comparison_str = comparison_ids.join(",");
+    let data = http_get(
+        "/v1/quote/compare/valuation",
+        &[
+            ("counter_id", base_cid.as_str()),
+            ("currency", currency),
+            ("comparison_counter_ids", comparison_str.as_str()),
+        ],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            let list = match data.get("list").and_then(|v| v.as_array()) {
+                Some(a) if !a.is_empty() => a,
+                _ => {
+                    println!("No comparison data found.");
+                    return Ok(());
+                }
+            };
+            let symbols: Vec<String> = list.iter().map(|s| val_str(&s["counter_id"])).collect();
+            let names: Vec<String>   = list.iter().map(|s| val_str(&s["name"])).collect();
+            let sym_refs: Vec<&str> = symbols.iter().map(String::as_str).collect();
+            let mut headers = vec!["Metric"];
+            headers.extend_from_slice(&sym_refs);
+            let mut rows: Vec<Vec<String>> = Vec::new();
+            // Name row
+            let mut name_row = vec!["Name".to_string()];
+            name_row.extend(names);
+            rows.push(name_row);
+            // Scalar metric rows
+            for (label, key) in &[("Close", "price_close"), ("Market Cap", "market_value"), ("PE (TTM)", "pe")] {
+                let mut row = vec![label.to_string()];
+                row.extend(list.iter().map(|s| val_str(&s[*key])));
+                rows.push(row);
+            }
+            // PB/PS from history (latest entry)
+            for (label, key) in [("PB", "pb"), ("PS", "ps")] {
+                let mut row = vec![label.to_string()];
+                for stock in list {
+                    let v = stock["history"]
+                        .as_array()
+                        .and_then(|h| h.last())
+                        .map_or_else(|| "-".to_string(), |e| val_str(&e[key]));
+                    row.push(v);
+                }
+                rows.push(row);
+            }
+            super::output::print_table(&headers, rows, format);
+        }
+    }
+    Ok(())
 }
 
 // ── industry peers ─────────────────────────────────────────────────────────────

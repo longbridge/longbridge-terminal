@@ -18,6 +18,7 @@ pub mod news;
 pub mod output;
 pub mod quant_render;
 pub mod quote;
+pub mod screener;
 pub mod run_script;
 pub mod search;
 pub mod sharelist;
@@ -423,7 +424,7 @@ pub enum Commands {
     /// Industry ranking list by market and indicator
     ///
     /// Returns a ranked list of industries. The "Counter ID" column contains BK
-    /// counter_ids (e.g. BK/US/IN00258) that can be passed directly to `industry-peers`
+    /// `counter_ids` (e.g. BK/US/IN00258) that can be passed directly to `industry-peers`
     /// to explore the sub-sector hierarchy for that industry.
     ///
     /// Example: longbridge industry-rank --market US
@@ -444,7 +445,7 @@ pub enum Commands {
         count: u32,
     },
 
-    /// Industry peer group tree for a BK counter_id
+    /// Industry peer group tree for a BK `counter_id`
     ///
     /// Returns the hierarchical sub-sector tree for an industry group, with stock
     /// count, daily change, and YTD change at each level.
@@ -454,7 +455,7 @@ pub enum Commands {
     /// Example: longbridge industry-peers BK/US/IN00258
     /// Example: longbridge industry-peers BK/HK/IN20337
     IndustryPeers {
-        /// BK counter_id from `industry-rank`, e.g. BK/US/IN00258
+        /// BK `counter_id` from `industry-rank`, e.g. BK/US/IN00258
         symbol: String,
         /// Market override (default: inferred from symbol suffix)
         #[arg(long)]
@@ -771,13 +772,23 @@ pub enum Commands {
 
     /// Institutional shareholders for a symbol
     ///
-    /// Returns: shareholder name, related symbol (if listed), % shares held, share change, report date.
+    /// Without flags: institution list (change direction, sort).
+    /// --top: Top20 major shareholders across multiple periods (includes individuals and insiders).
+    /// --object-id: Holding history and trade detail for a specific shareholder (use `object_id` from --top).
+    ///
     /// Example: longbridge shareholder AAPL.US
+    /// Example: longbridge shareholder AAPL.US --top
+    /// Example: longbridge shareholder AAPL.US --object-id 1001
     /// Example: longbridge shareholder AAPL.US --range inc --sort owned
-    /// Example: longbridge shareholder AAPL.US --format json
     Shareholder {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
+        /// Show Top20 major shareholders (multi-period, includes individuals and insiders)
+        #[arg(long)]
+        top: bool,
+        /// Show holding and trade detail for a specific shareholder ID (from --top output)
+        #[arg(long, value_name = "ID")]
+        object_id: Option<i64>,
         /// Filter by change direction: all | inc (increase) | dec (decrease)
         #[arg(long, default_value = "all")]
         range: String,
@@ -942,6 +953,60 @@ pub enum Commands {
         count: i32,
     },
 
+    /// Hot stock anomaly events with alert reason and pinned news
+    ///
+    /// Different from `anomaly` (technical signals only): `stock-events` includes
+    /// the reason text (e.g. "波动超 20 日均值"), pinned news, and industry tags.
+    ///
+    /// Sort values: hot (default) | time | change
+    ///
+    /// Example: longbridge stock-events
+    /// Example: longbridge stock-events --market HK
+    /// Example: longbridge stock-events --market US --sort time --count 50
+    StockEvents {
+        /// Market filter: HK | US | CN | SG (omit for all markets)
+        #[arg(long)]
+        market: Option<String>,
+        /// Sort order: hot (default) | time | change
+        #[arg(long, default_value = "hot")]
+        sort: StockEventSort,
+        /// Number of results (default: 20)
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: u32,
+    },
+
+    /// Strategy screener — browse strategies, execute stock filters, view indicator config
+    ///
+    /// Subcommands: strategies | search | indicators
+    ///
+    /// Example: longbridge screener strategies
+    /// Example: longbridge screener strategies --mine
+    /// Example: longbridge screener strategies --id 42
+    /// Example: longbridge screener search --strategy-id 42
+    /// Example: longbridge screener search --market US
+    /// Example: longbridge screener indicators
+    Screener {
+        #[command(subcommand)]
+        cmd: ScreenerCmd,
+    },
+
+    /// Multi-stock valuation comparison (PE, PB, PS, market cap, close price)
+    ///
+    /// Compare 2–5 stocks side-by-side on valuation multiples.
+    /// The first symbol is the base; remaining symbols are compared against it.
+    ///
+    /// Example: longbridge compare AAPL.US BABA.US JD.US
+    /// Example: longbridge compare 700.HK 9988.HK --currency HKD
+    Compare {
+        /// Base symbol in <CODE>.<MARKET> format
+        base: String,
+        /// Additional symbols to compare (1–4 more)
+        others: Vec<String>,
+        /// Currency: USD | HKD | CNY (default: USD)
+        #[arg(long, default_value = "USD")]
+        currency: String,
+    },
+
     /// Price alerts (list, add, delete)
     ///
     /// Without subcommand: lists all alerts.
@@ -1072,14 +1137,25 @@ pub enum Commands {
     },
 
     // ── Short positions ─────────────────────────────────────────────────
-    /// US stock short selling data (short interest, short ratio, days to cover)
+    /// Short selling data — open positions or daily short sale volume
     ///
-    /// Only supports US-listed stocks and ETFs.
+    /// Supports US and HK markets. Market is inferred from the symbol suffix.
+    /// Without --trades: short interest / open short positions.
+    /// With --trades: daily short sale volume.
+    ///
+    /// US positions: `short_interest`, `rate`, `days_to_cover`, `close`
+    /// HK positions: `open_short_shares`, `balance`, `cost`, `rate`
+    ///
     /// Example: longbridge short-positions AAPL.US
-    /// Example: longbridge short-positions TSLA.US --count 50
+    /// Example: longbridge short-positions 700.HK
+    /// Example: longbridge short-positions AAPL.US --trades
+    /// Example: longbridge short-positions 700.HK --trades
     ShortPositions {
-        /// Symbol in <CODE>.<MARKET> format (US market only, e.g. AAPL.US)
+        /// Symbol in <CODE>.<MARKET> format (US or HK, e.g. AAPL.US 700.HK)
         symbol: String,
+        /// Show short sale volume (trades) instead of open positions
+        #[arg(long)]
+        trades: bool,
         /// Number of records to return (1–100, default: 20)
         #[arg(long, alias = "limit", default_value = "20")]
         count: u32,
@@ -1561,6 +1637,74 @@ impl IndustryRankSortType {
         match self {
             Self::Single => "0",
             Self::Multi => "1",
+        }
+    }
+}
+
+#[derive(Subcommand)]
+pub enum ScreenerCmd {
+    /// List stock-selection strategies (recommended by default)
+    ///
+    /// --mine: user's saved strategies.
+    /// --all: all strategies (recommended + user).
+    /// --id N: single strategy's filter conditions.
+    ///
+    /// Example: longbridge screener strategies
+    /// Example: longbridge screener strategies --mine
+    /// Example: longbridge screener strategies --id 42
+    Strategies {
+        /// Show user's saved strategies
+        #[arg(long)]
+        mine: bool,
+        /// Show all strategies (recommended + user)
+        #[arg(long)]
+        all: bool,
+        /// Show filter conditions for a single strategy
+        #[arg(long, value_name = "ID")]
+        id: Option<i64>,
+    },
+
+    /// Execute a strategy or custom filter to find matching stocks
+    ///
+    /// Example: longbridge screener search --strategy-id 42
+    /// Example: longbridge screener search --market US
+    Search {
+        /// Run a saved strategy by ID (from `screener strategies`)
+        #[arg(long)]
+        strategy_id: Option<i64>,
+        /// Market: US | HK | CN (default: US)
+        #[arg(long, default_value = "US")]
+        market: String,
+        /// Number of results (default: 20)
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: u32,
+    },
+
+    /// List all available filter indicators and their value ranges
+    ///
+    /// Example: longbridge screener indicators
+    Indicators {
+        /// Optional symbol to get symbol-specific indicator values
+        symbol: Option<String>,
+    },
+}
+
+#[derive(ValueEnum, Clone, Debug)]
+pub enum StockEventSort {
+    #[value(name = "hot")]
+    Hot,
+    #[value(name = "time")]
+    Time,
+    #[value(name = "change")]
+    Change,
+}
+
+impl StockEventSort {
+    pub fn as_api_value(&self) -> u8 {
+        match self {
+            Self::Time   => 0,
+            Self::Change => 1,
+            Self::Hot    => 2,
         }
     }
 }
@@ -3144,10 +3288,20 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
 
         Commands::Shareholder {
             symbol,
+            top,
+            object_id,
             range,
             sort,
             order,
-        } => fundamental::cmd_shareholders(symbol, range, sort, order, format, verbose).await,
+        } => {
+            if top {
+                fundamental::cmd_shareholders_top(symbol, format, verbose).await
+            } else if let Some(oid) = object_id {
+                fundamental::cmd_shareholder_detail(symbol, oid, format, verbose).await
+            } else {
+                fundamental::cmd_shareholders(symbol, range, sort, order, format, verbose).await
+            }
+        }
         Commands::FundHolder { symbol, count } => {
             fundamental::cmd_fund_holders(symbol, count, format, verbose).await
         }
@@ -3255,6 +3409,23 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             symbol,
             count,
         } => quote::cmd_anomaly(&market, symbol, count, format, verbose).await,
+        Commands::StockEvents { market, sort, count } => {
+            quote::cmd_stock_events(market, sort.as_api_value(), count, format, verbose).await
+        }
+        Commands::Screener { cmd } => match cmd {
+            ScreenerCmd::Strategies { mine, all, id } => {
+                screener::cmd_screener_strategies(mine, all, id, format, verbose).await
+            }
+            ScreenerCmd::Search { strategy_id, market, count } => {
+                screener::cmd_screener_search(strategy_id, market.as_str(), count, format, verbose).await
+            }
+            ScreenerCmd::Indicators { symbol } => {
+                screener::cmd_screener_indicators(symbol.clone(), format, verbose).await
+            }
+        },
+        Commands::Compare { base, others, currency } => {
+            fundamental::cmd_compare(base.as_str(), others.as_slice(), currency.as_str(), format, verbose).await
+        }
         Commands::Alert { symbol, cmd } => match cmd {
             Some(AlertCmd::Add {
                 symbol: s,
@@ -3331,8 +3502,8 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             limit,
         } => dca::cmd_dca(cmd, status.as_deref(), symbol.as_deref(), page, limit, format).await,
 
-        Commands::ShortPositions { symbol, count } => {
-            quote::cmd_short_positions(symbol, count, format, verbose).await
+        Commands::ShortPositions { symbol, trades, count } => {
+            quote::cmd_short_positions(symbol, trades, count, format, verbose).await
         }
 
         Commands::Sharelist { cmd, count } => {
