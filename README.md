@@ -131,6 +131,7 @@ longbridge check   # Check token validity, and API connectivity
 
 ```bash
 longbridge quote TSLA.US 700.HK                     # Real-time quotes for one or more symbols
+longbridge compare TSLA.US RIVN.US --fields price,pe,rating  # Multi-symbol peer comparison
 longbridge depth TSLA.US                            # Level 2 order book depth (bid/ask ladder)
 longbridge brokers 700.HK                           # Broker queue at each price level (HK market)
 longbridge trades TSLA.US [--count 50]              # Recent tick-by-tick trades

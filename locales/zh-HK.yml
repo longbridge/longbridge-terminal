@@ -24,6 +24,20 @@ my_quote:
   scan_hint: |
     請用 Longbridge App 內「我的」Tab 中的點擊掃碼開啟行情商城。
     也可以在 App 內點擊「我的」->「行情商店」直接進入。
+compare:
+  error:
+    symbol_count: "比較命令需要 2 到 5 個股票代號"
+    no_fields: "至少需要一個比較欄位"
+    unknown_field: "未知的比較欄位：%{field}。可用欄位：price,change,pe,pb,eps,revenue,rating"
+  headers:
+    symbol: "代號"
+    price: "價格"
+    change: "升跌幅"
+    pe: "市盈率"
+    pb: "市賬率"
+    eps: "每股盈利"
+    revenue: "營收"
+    rating: "評級"
 qrcode_view:
   scan_hint: |
     請使用長橋 iOS 或 Android app 掃描二維碼

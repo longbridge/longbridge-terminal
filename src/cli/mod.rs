@@ -6,6 +6,7 @@ pub mod asset;
 pub mod atm;
 pub mod auth;
 pub mod check;
+pub mod compare;
 pub mod completion;
 pub mod dca;
 pub mod fundamental;
@@ -155,6 +156,25 @@ pub enum Commands {
     Quote {
         /// Symbols in <CODE>.<MARKET> format, e.g. TSLA.US QQQ.US 700.HK .VIX.US
         symbols: Vec<String>,
+    },
+
+    /// Compare key metrics across multiple symbols
+    ///
+    /// Aggregates quote, calc-index, static, consensus, and rating data into one response.
+    /// Supports 2 to 5 symbols per call.
+    /// Example: longbridge compare TSLA.US RIVN.US NIO.US
+    /// Example: longbridge compare 700.HK 9988.HK 1810.HK --fields price,change,pe,pb,revenue
+    /// Example: longbridge compare TSLA.US RIVN.US --format json
+    Compare {
+        /// Symbols in <CODE>.<MARKET> format. Minimum 2, maximum 5.
+        symbols: Vec<String>,
+        /// Comma-separated fields to include in the comparison table.
+        #[arg(
+            long,
+            value_delimiter = ',',
+            default_value = "price,change,pe,pb,eps,revenue,rating"
+        )]
+        fields: Vec<String>,
     },
 
     /// Level 2 order book depth (bid/ask ladder)
@@ -2708,6 +2728,9 @@ pub enum AuthCmd {
 pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Result<()> {
     match cmd {
         Commands::Quote { symbols } => quote::cmd_quote(symbols, format).await,
+        Commands::Compare { symbols, fields } => {
+            compare::cmd_compare(symbols, fields, format, verbose).await
+        }
         Commands::Depth { symbol } => quote::cmd_depth(symbol, format).await,
         Commands::Brokers { symbol } => quote::cmd_brokers(symbol, format).await,
         Commands::Trades { symbol, count } => quote::cmd_trades(symbol, count, format).await,
@@ -3488,6 +3511,38 @@ mod tests {
             assert_eq!(symbols.len(), 3);
         } else {
             panic!("expected Quote command");
+        }
+    }
+
+    #[test]
+    fn test_compare_default_fields() {
+        let cli = parse(&["longbridge", "compare", "TSLA.US", "RIVN.US"]).unwrap();
+        if let Some(Commands::Compare { symbols, fields }) = cli.command {
+            assert_eq!(symbols, vec!["TSLA.US", "RIVN.US"]);
+            assert_eq!(
+                fields,
+                vec!["price", "change", "pe", "pb", "eps", "revenue", "rating"]
+            );
+        } else {
+            panic!("expected Compare command");
+        }
+    }
+
+    #[test]
+    fn test_compare_custom_fields() {
+        let cli = parse(&[
+            "longbridge",
+            "compare",
+            "TSLA.US",
+            "RIVN.US",
+            "--fields",
+            "price,pe,rating",
+        ])
+        .unwrap();
+        if let Some(Commands::Compare { fields, .. }) = cli.command {
+            assert_eq!(fields, vec!["price", "pe", "rating"]);
+        } else {
+            panic!("expected Compare command");
         }
     }
 
