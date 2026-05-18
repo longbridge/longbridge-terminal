@@ -324,20 +324,6 @@ pub enum Commands {
         cmd: TradingCmd,
     },
 
-    /// List of US overnight-eligible securities
-    ///
-    /// Returns securities that can be traded in the US overnight session.
-    /// Only the US market is supported (Longbridge API limitation).
-    /// Example: longbridge security-list US
-    SecurityList {
-        /// Market: only US is supported (overnight category)
-        #[arg(default_value = "US")]
-        market: String,
-        /// NOTE: currently unused — the SDK only exposes the Overnight category.
-        #[arg(long, default_value = "main", hide = true)]
-        category: String,
-    },
-
     /// Market maker (participant) broker IDs and names
     ///
     /// Use these IDs to interpret results from the `brokers` command.
@@ -2774,9 +2760,6 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 quote::cmd_trading_days(&market, start, end, format).await
             }
         },
-        Commands::SecurityList { market, category } => {
-            quote::cmd_security_list(&market, &category, format).await
-        }
         Commands::Participants => quote::cmd_participants(format).await,
         Commands::Subscriptions => quote::cmd_subscriptions(format).await,
         Commands::Option { cmd } => match cmd {
@@ -3715,16 +3698,6 @@ mod tests {
             assert_eq!(market, "HK");
         } else {
             panic!("expected Trading Days command");
-        }
-    }
-
-    #[test]
-    fn test_security_list_subcommand() {
-        let cli = parse(&["longbridge", "security-list", "US"]).unwrap();
-        if let Some(Commands::SecurityList { market, .. }) = cli.command {
-            assert_eq!(market, "US");
-        } else {
-            panic!("expected SecurityList command");
         }
     }
 
