@@ -18,6 +18,7 @@ pub mod news;
 pub mod output;
 pub mod quant_render;
 pub mod quote;
+pub mod screener;
 pub mod run_script;
 pub mod search;
 pub mod sharelist;
@@ -974,6 +975,21 @@ pub enum Commands {
         count: u32,
     },
 
+    /// Strategy screener — browse strategies, execute stock filters, view indicator config
+    ///
+    /// Subcommands: strategies | search | indicators
+    ///
+    /// Example: longbridge screener strategies
+    /// Example: longbridge screener strategies --mine
+    /// Example: longbridge screener strategies --id 42
+    /// Example: longbridge screener search --strategy-id 42
+    /// Example: longbridge screener search --market US
+    /// Example: longbridge screener indicators
+    Screener {
+        #[command(subcommand)]
+        cmd: ScreenerCmd,
+    },
+
     /// Multi-stock valuation comparison (PE, PB, PS, market cap, close price)
     ///
     /// Compare 2–5 stocks side-by-side on valuation multiples.
@@ -1623,6 +1639,54 @@ impl IndustryRankSortType {
             Self::Multi => "1",
         }
     }
+}
+
+#[derive(Subcommand)]
+pub enum ScreenerCmd {
+    /// List stock-selection strategies (recommended by default)
+    ///
+    /// --mine: user's saved strategies.
+    /// --all: all strategies (recommended + user).
+    /// --id N: single strategy's filter conditions.
+    ///
+    /// Example: longbridge screener strategies
+    /// Example: longbridge screener strategies --mine
+    /// Example: longbridge screener strategies --id 42
+    Strategies {
+        /// Show user's saved strategies
+        #[arg(long)]
+        mine: bool,
+        /// Show all strategies (recommended + user)
+        #[arg(long)]
+        all: bool,
+        /// Show filter conditions for a single strategy
+        #[arg(long, value_name = "ID")]
+        id: Option<i64>,
+    },
+
+    /// Execute a strategy or custom filter to find matching stocks
+    ///
+    /// Example: longbridge screener search --strategy-id 42
+    /// Example: longbridge screener search --market US
+    Search {
+        /// Run a saved strategy by ID (from `screener strategies`)
+        #[arg(long)]
+        strategy_id: Option<i64>,
+        /// Market: US | HK | CN (default: US)
+        #[arg(long, default_value = "US")]
+        market: String,
+        /// Number of results (default: 20)
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: u32,
+    },
+
+    /// List all available filter indicators and their value ranges
+    ///
+    /// Example: longbridge screener indicators
+    Indicators {
+        /// Optional symbol to get symbol-specific indicator values
+        symbol: Option<String>,
+    },
 }
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -3348,6 +3412,17 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         Commands::StockEvents { market, sort, count } => {
             quote::cmd_stock_events(market, sort.as_api_value(), count, format, verbose).await
         }
+        Commands::Screener { cmd } => match cmd {
+            ScreenerCmd::Strategies { mine, all, id } => {
+                screener::cmd_screener_strategies(mine, all, id, format, verbose).await
+            }
+            ScreenerCmd::Search { strategy_id, market, count } => {
+                screener::cmd_screener_search(strategy_id, market.as_str(), count, format, verbose).await
+            }
+            ScreenerCmd::Indicators { symbol } => {
+                screener::cmd_screener_indicators(symbol.clone(), format, verbose).await
+            }
+        },
         Commands::Compare { base, others, currency } => {
             fundamental::cmd_compare(base.as_str(), others.as_slice(), currency.as_str(), format, verbose).await
         }
