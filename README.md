@@ -201,6 +201,10 @@ longbridge valuation-rank AAPL.US [--start 20240101] [--end 20241231] # Industry
 longbridge analyst-estimates AAPL.US                                 # Analyst consensus EPS estimates
 longbridge fund-holder AAPL.US [--count 20]                          # Funds and ETFs holding this stock
 longbridge shareholder AAPL.US [--range all|inc|dec] [--sort chg]    # Institutional shareholders with QoQ change tracking
+longbridge shareholder AAPL.US --top                                  # Top 20 major shareholders (includes individuals and insiders, multi-period)
+longbridge shareholder AAPL.US --object-id <ID>                       # Holding and trade detail for a specific shareholder (use ID from --top output)
+longbridge compare AAPL.US                                            # Multi-stock valuation comparison vs server-selected industry peers
+longbridge compare 9988.HK 700.HK 9999.HK [--currency HKD]           # Compare specific stocks side by side (price, market cap, PE/PB/PS, ROE, ROA, div yield, and more)
 longbridge corp-action 700.HK [--all]                                 # Corporate actions (splits, dividends, rights, etc.) — default 30, --all for full history
 longbridge business-segments AAPL.US [--history] [--report qf|saf|af] [--cate <cate>]  # Revenue segment breakdown (current snapshot or historical trends)
 longbridge industry-rank --market US|HK|CN|SG [--indicator leading-gainer|...|net-profit-growth]  # Industry ranking list; output symbols feed into industry-peers
@@ -243,6 +247,9 @@ longbridge ipo withdraw <order_id>                                  # Withdraw I
 ### Market Data
 
 ```bash
+longbridge rank                                                      # List available popularity ranking tab keys
+longbridge rank --key ib_hot_all-us [--count 20]                     # Stocks ranked by composite heat score (trading activity, media, community, volatility)
+longbridge top-movers [--market HK|US|CN|SG] [--sort hot|time|chg]  # Stocks with abnormal price moves paired with correlated news and reason summaries
 longbridge exchange-rate                                             # Exchange rates for all markets
 longbridge finance-calendar financial [--symbol AAPL.US]             # Earnings guidance announcements from today onward
 longbridge finance-calendar report [--symbol AAPL.US]                # Earnings report release dates from today onward
@@ -361,6 +368,20 @@ longbridge dca set-reminder 6                                 # Set reminder hou
 ```bash
 longbridge short-positions AAPL.US                            # US stock short selling data (short interest, ratio, days to cover)
 longbridge short-positions TSLA.US --count 50                 # Return last 50 short interest records
+longbridge short-trades AAPL.US                               # Daily short sale volume (FINRA/NASDAQ for US; HKEX for HK)
+longbridge short-trades 700.HK [--count 50]                   # HK: amount, balance, total amount, rate, close per trading day
+```
+
+### Stock Screener
+
+```bash
+longbridge screener strategies                                # List recommended stock-selection strategies
+longbridge screener strategies --all                          # List all platform strategies
+longbridge screener strategies --mine                         # List user-created strategies
+longbridge screener strategies --id <ID>                      # Show groups and indicators for a specific strategy
+longbridge screener search --strategy-id <ID>                 # Run a saved strategy and return matching stocks
+longbridge screener search --market HK --filter filter_marketcap:100:1000 --filter filter_divyld:3:  # Custom filter (key:min:max, omit bound to leave open)
+longbridge screener indicators                                # List all available filter indicators with IDs, keys, and default value ranges
 ```
 
 <!-- COMMANDS_END -->

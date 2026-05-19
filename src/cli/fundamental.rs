@@ -989,22 +989,37 @@ pub async fn cmd_shareholders_top(
                     Some(a) if !a.is_empty() => a,
                     _ => continue,
                 };
-                let headers = ["object_id", "name", "title", "shares_held", "percent%", "changed", "filing_date"];
-                let rows: Vec<Vec<String>> = holders.iter().map(|h| {
-                    let shares: i64 = val_str(&h["shares_held"]).parse().unwrap_or(0);
-                    let changed: i64 = val_str(&h["shares_changed"]).parse().unwrap_or(0);
-                    let pct = val_str(&h["percent_shares_held"]).parse::<f64>()
-                        .map_or_else(|_| val_str(&h["percent_shares_held"]), |v| format!("{v:.2}"));
-                    vec![
-                        val_str(&h["object_id"]),
-                        val_str(&h["name"]),
-                        val_str(&h["title"]),
-                        shares.to_string(),
-                        pct,
-                        changed.to_string(),
-                        val_str(&h["filing_date"]),
-                    ]
-                }).collect();
+                let headers = [
+                    "object_id",
+                    "name",
+                    "title",
+                    "shares_held",
+                    "percent%",
+                    "changed",
+                    "filing_date",
+                ];
+                let rows: Vec<Vec<String>> = holders
+                    .iter()
+                    .map(|h| {
+                        let shares: i64 = val_str(&h["shares_held"]).parse().unwrap_or(0);
+                        let changed: i64 = val_str(&h["shares_changed"]).parse().unwrap_or(0);
+                        let pct = val_str(&h["percent_shares_held"])
+                            .parse::<f64>()
+                            .map_or_else(
+                                |_| val_str(&h["percent_shares_held"]),
+                                |v| format!("{v:.2}"),
+                            );
+                        vec![
+                            val_str(&h["object_id"]),
+                            val_str(&h["name"]),
+                            val_str(&h["title"]),
+                            shares.to_string(),
+                            pct,
+                            changed.to_string(),
+                            val_str(&h["filing_date"]),
+                        ]
+                    })
+                    .collect();
                 super::output::print_table(&headers, rows, format);
                 println!();
             }
@@ -1043,12 +1058,24 @@ pub async fn cmd_shareholder_detail(
                 if !summary.is_empty() {
                     println!("── Holding Summary ─────────────────────────────────────");
                     let headers = ["period", "accum_buy", "accum_sell", "price", "price_chg%"];
-                    let rows: Vec<Vec<String>> = summary.iter().map(|s| {
-                        let pct = val_str(&s["percent_stock_price_changed"]).parse::<f64>()
-                            .map_or_else(|_| val_str(&s["percent_stock_price_changed"]), |v| format!("{v:+.2}%"));
-                        vec![val_str(&s["period"]), val_str(&s["accum_buy"]),
-                             val_str(&s["accum_sell"]), val_str(&s["stock_price"]), pct]
-                    }).collect();
+                    let rows: Vec<Vec<String>> = summary
+                        .iter()
+                        .map(|s| {
+                            let pct = val_str(&s["percent_stock_price_changed"])
+                                .parse::<f64>()
+                                .map_or_else(
+                                    |_| val_str(&s["percent_stock_price_changed"]),
+                                    |v| format!("{v:+.2}%"),
+                                );
+                            vec![
+                                val_str(&s["period"]),
+                                val_str(&s["accum_buy"]),
+                                val_str(&s["accum_sell"]),
+                                val_str(&s["stock_price"]),
+                                pct,
+                            ]
+                        })
+                        .collect();
                     super::output::print_table(&headers, rows, format);
                     println!();
                 }
@@ -1058,14 +1085,33 @@ pub async fn cmd_shareholder_detail(
                 if let Some(latest) = tradings.first() {
                     if let Some(details) = latest["trading_details"].as_array() {
                         if !details.is_empty() {
-                            println!("── Recent Trades (Period: {}) ──────────────────────────", val_str(&latest["period"]));
-                            let headers = ["date", "type", "shares", "price", "security_type", "filing_date"];
-                            let rows: Vec<Vec<String>> = details.iter().map(|d| {
-                                let shares: i64 = val_str(&d["trading_shares"]).parse().unwrap_or(0);
-                                vec![val_str(&d["trading_date"]), val_str(&d["trading_type"]),
-                                     shares.to_string(), val_str(&d["trading_price"]),
-                                     val_str(&d["security_type"]), val_str(&d["filing_date"])]
-                            }).collect();
+                            println!(
+                                "── Recent Trades (Period: {}) ──────────────────────────",
+                                val_str(&latest["period"])
+                            );
+                            let headers = [
+                                "date",
+                                "type",
+                                "shares",
+                                "price",
+                                "security_type",
+                                "filing_date",
+                            ];
+                            let rows: Vec<Vec<String>> = details
+                                .iter()
+                                .map(|d| {
+                                    let shares: i64 =
+                                        val_str(&d["trading_shares"]).parse().unwrap_or(0);
+                                    vec![
+                                        val_str(&d["trading_date"]),
+                                        val_str(&d["trading_type"]),
+                                        shares.to_string(),
+                                        val_str(&d["trading_price"]),
+                                        val_str(&d["security_type"]),
+                                        val_str(&d["filing_date"]),
+                                    ]
+                                })
+                                .collect();
                             super::output::print_table(&headers, rows, format);
                         }
                     }
@@ -2897,7 +2943,6 @@ fn print_industry_rank(data: &Value) {
     super::output::print_table(&headers, rows, &OutputFormat::Pretty);
 }
 
-
 // ── compare ────────────────────────────────────────────────────────────────────
 
 pub async fn cmd_compare(
@@ -2908,18 +2953,15 @@ pub async fn cmd_compare(
     verbose: bool,
 ) -> Result<()> {
     let base_cid = symbol_to_counter_id(base);
-    let comparison_ids: Vec<String> = others.iter().map(|s| symbol_to_counter_id(s)).collect();
-    let comparison_str = comparison_ids.join(",");
-    let data = http_get(
-        "/v1/quote/compare/valuation",
-        &[
-            ("counter_id", base_cid.as_str()),
-            ("currency", currency),
-            ("comparison_counter_ids", comparison_str.as_str()),
-        ],
-        verbose,
-    )
-    .await?;
+    let comp_cids: Vec<String> = others.iter().map(|s| symbol_to_counter_id(s)).collect();
+    // iOS serializes comparison_counter_ids as a JSON array string via yy_modelToJSONString
+    let comp_json = serde_json::to_string(&comp_cids).unwrap_or_default();
+    let mut params: Vec<(&str, &str)> =
+        vec![("counter_id", base_cid.as_str()), ("currency", currency)];
+    if !comp_cids.is_empty() {
+        params.push(("comparison_counter_ids", comp_json.as_str()));
+    }
+    let data = http_get("/v1/quote/compare/valuation", &params, verbose).await?;
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => {
@@ -2930,8 +2972,11 @@ pub async fn cmd_compare(
                     return Ok(());
                 }
             };
-            let symbols: Vec<String> = list.iter().map(|s| val_str(&s["counter_id"])).collect();
-            let names: Vec<String>   = list.iter().map(|s| val_str(&s["name"])).collect();
+            let symbols: Vec<String> = list
+                .iter()
+                .map(|s| crate::utils::counter::counter_id_to_symbol(&val_str(&s["counter_id"])))
+                .collect();
+            let names: Vec<String> = list.iter().map(|s| val_str(&s["name"])).collect();
             let sym_refs: Vec<&str> = symbols.iter().map(String::as_str).collect();
             let mut headers = vec!["Metric"];
             headers.extend_from_slice(&sym_refs);
@@ -2940,8 +2985,30 @@ pub async fn cmd_compare(
             let mut name_row = vec!["Name".to_string()];
             name_row.extend(names);
             rows.push(name_row);
-            // Scalar metric rows
-            for (label, key) in &[("Close", "price_close"), ("Market Cap", "market_value"), ("PE (TTM)", "pe")] {
+            // Scalar metric rows — all available fields
+            for (label, key) in &[
+                ("Close", "price_close"),
+                ("Market Cap", "market_value"),
+                ("Volume", "volume"),
+                ("Turnover", "turnover"),
+                ("EPS (TTM)", "eps"),
+                ("BPS", "bps"),
+                ("Sales PS", "sales_ps"),
+                ("DPS", "dps"),
+                ("5Y Avg DPS", "five_y_avg_dps"),
+                ("Div Yield", "div_yld"),
+                ("Div Payout", "div_payout_ratio"),
+                ("PE (TTM)", "pe"),
+                ("ROE", "roe"),
+                ("ROA", "roa"),
+                ("Net Margin", "net_margin"),
+                ("Net Income", "net_income"),
+                ("Sales", "sales"),
+                ("Assets", "assets"),
+                ("Liabilities", "liabilities"),
+                ("Liab/Assets", "liabilities_assets"),
+                ("Leverage", "leverage"),
+            ] {
                 let mut row = vec![label.to_string()];
                 row.extend(list.iter().map(|s| val_str(&s[*key])));
                 rows.push(row);

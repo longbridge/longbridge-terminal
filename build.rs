@@ -35,7 +35,7 @@ fn generate_special_counter_ids() {
     let mut file = std::fs::File::create(&dest).unwrap();
     writeln!(
         file,
-        "static SPECIAL_COUNTER_IDS: phf::Set<&'static str> = {};",
+        "pub static SPECIAL_COUNTER_IDS: phf::Set<&'static str> = {};",
         set.build()
     )
     .unwrap();

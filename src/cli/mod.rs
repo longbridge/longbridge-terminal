@@ -18,8 +18,8 @@ pub mod news;
 pub mod output;
 pub mod quant_render;
 pub mod quote;
-pub mod screener;
 pub mod run_script;
+pub mod screener;
 pub mod search;
 pub mod sharelist;
 pub mod statement;
@@ -988,14 +988,13 @@ pub enum Commands {
     ///   2. `screener search --strategy-id <ID>` to run the strategy
     ///
     /// Workflow B — custom filter using indicator conditions:
-    ///   1. `screener indicators` to discover available indicator IDs and value ranges
-    ///   2. `screener search --market US` with custom conditions (see --help for details)
+    ///   1. `screener indicators` to discover available indicator keys and value ranges
+    ///   2. `screener search --market HK --filter filter_marketcap:100:1000 --filter filter_divyld:3:`
     ///
     /// Example: longbridge screener strategies
     /// Example: longbridge screener strategies --mine
-    /// Example: longbridge screener strategies --id 42
     /// Example: longbridge screener search --strategy-id 42
-    /// Example: longbridge screener search --market US
+    /// Example: `longbridge screener search --market HK --filter filter_marketcap:100:1000 --filter filter_divyld:3:`
     /// Example: longbridge screener indicators
     Screener {
         #[command(subcommand)]
@@ -1007,14 +1006,14 @@ pub enum Commands {
     /// Returns stocks ranked by a composite heat score combining trading activity,
     /// media coverage, community discussion, and price volatility.
     ///
-    /// Use `rank categories` to discover available tab keys, then pass a key to
-    /// list the corresponding ranking.
+    /// Run `rank` without --key to list all available tab keys (e.g. `ib_hot_all-us`).
+    /// Then pass a key to `--key` to get the corresponding ranking.
     ///
-    /// Example: longbridge rank categories
-    /// Example: longbridge rank --key hotness --market US
-    /// Example: longbridge rank --key trading --market HK --count 20
+    /// Example: longbridge rank
+    /// Example: longbridge rank --key ib_hot_all-us
+    /// Example: longbridge rank --key ib_trade_heat-hk --count 20
     Rank {
-        /// Ranking tab key (from `rank categories`). Omit to show categories.
+        /// Ranking tab key (from `rank` with no --key). Omit to list available keys.
         #[arg(long)]
         key: Option<String>,
         /// Market filter applied when listing (default: US)
@@ -1025,17 +1024,17 @@ pub enum Commands {
         count: u32,
     },
 
-    /// Multi-stock valuation comparison (PE, PB, PS, market cap, close price)
+    /// Multi-stock valuation comparison (price, market cap, PE/PB/PS, ROE, ROA, div yield, and more)
     ///
-    /// Compare 2–5 stocks side-by-side on valuation multiples.
-    /// The first symbol is the base; remaining symbols are compared against it.
+    /// Without extra symbols: shows the stock alongside server-selected industry peers.
+    /// With extra symbols: compares the specified stocks side by side.
     ///
-    /// Example: longbridge compare AAPL.US BABA.US JD.US
-    /// Example: longbridge compare 700.HK 9988.HK --currency HKD
+    /// Example: longbridge compare AAPL.US
+    /// Example: longbridge compare 9988.HK 700.HK 9999.HK --currency HKD
     Compare {
         /// Base symbol in <CODE>.<MARKET> format
-        base: String,
-        /// Additional symbols to compare (1–4 more)
+        symbol: String,
+        /// Additional symbols to compare (up to 4)
         others: Vec<String>,
         /// Currency: USD | HKD | CNY (default: USD)
         #[arg(long, default_value = "USD")]
@@ -1721,19 +1720,28 @@ pub enum ScreenerCmd {
     /// Find stocks matching a strategy or custom indicator conditions
     ///
     /// Mode A — strategy: pass --strategy-id from `screener strategies` output.
-    ///   The strategy's pre-configured conditions are applied automatically.
+    ///   The strategy's pre-configured market and conditions are applied automatically.
+    ///   --market is ignored in Mode A — the strategy's built-in market takes precedence.
     ///
-    /// Mode B — custom: omit --strategy-id and the server uses any indicator
-    ///   conditions you configure. Use `screener indicators` to discover
-    ///   available indicator IDs, keys, and valid value ranges.
+    /// Mode B — custom: use --filter key:min:max (repeatable) to specify conditions.
+    ///   Run `screener indicators` first to discover available keys, units, and ranges.
+    ///   Either bound can be empty: `filter_roe:10:` means ROE >= 10,
+    ///   `filter_pettm::50` means P/E <= 50. Units follow what `screener indicators` shows.
+    ///   --market is required in Mode B (default: US).
     ///
     /// Example: longbridge screener search --strategy-id 42
-    /// Example: longbridge screener search --market HK
+    /// Example: `longbridge screener search --market HK --filter filter_marketcap:100:1000 --filter filter_divyld:3:`
     Search {
         /// Strategy ID from `screener strategies` output (Mode A)
         #[arg(long)]
         strategy_id: Option<i64>,
-        /// Market to search in: US | HK | CN (default: US)
+        /// Filter condition: key:min:max (repeatable, Mode B).
+        /// Run `screener indicators` to get valid keys, units, and value ranges.
+        /// Omit either bound to leave it unbounded: `filter_roe:10:` (>= 10), `filter_pettm::50` (<= 50).
+        #[arg(long = "filter", value_name = "KEY:MIN:MAX")]
+        filters: Vec<String>,
+        /// Market to search in: US | HK | CN (default: US). Mode B only —
+        /// in Mode A the strategy's built-in market overrides this value.
         #[arg(long, default_value = "US")]
         market: String,
         /// Number of results (default: 20)
@@ -1767,9 +1775,9 @@ pub enum StockEventSort {
 impl StockEventSort {
     pub fn as_api_value(&self) -> u8 {
         match self {
-            Self::Time   => 0,
+            Self::Time => 0,
             Self::Change => 1,
-            Self::Hot    => 2,
+            Self::Hot => 2,
         }
     }
 }
@@ -3484,14 +3492,14 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             ScreenerCmd::Strategies { mine, all, id } => {
                 screener::cmd_screener_strategies(mine, all, id, format, verbose).await
             }
-            ScreenerCmd::Search { strategy_id, market, count } => {
-                screener::cmd_screener_search(strategy_id, market.as_str(), count, format, verbose).await
+            ScreenerCmd::Search { strategy_id, filters, market, count } => {
+                screener::cmd_screener_search(strategy_id, filters.as_slice(), market.as_str(), count, format, verbose).await
             }
             ScreenerCmd::Indicators { symbol } => {
                 screener::cmd_screener_indicators(symbol.clone(), format, verbose).await
             }
         },
-        Commands::Compare { base, others, currency } => {
+        Commands::Compare { symbol: base, others, currency } => {
             fundamental::cmd_compare(base.as_str(), others.as_slice(), currency.as_str(), format, verbose).await
         }
         Commands::Alert { symbol, cmd } => match cmd {
