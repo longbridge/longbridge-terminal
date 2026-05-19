@@ -1025,24 +1025,61 @@ pub async fn cmd_trading_days(
     Ok(())
 }
 
-pub async fn cmd_security_list(market: &str, category: &str, format: &OutputFormat) -> Result<()> {
+pub async fn cmd_security_list(
+    market: &str,
+    category: &str,
+    page: usize,
+    count: usize,
+    format: &OutputFormat,
+) -> Result<()> {
+    if page == 0 {
+        bail!("Page number must be >= 1");
+    }
     let ctx = crate::openapi::quote();
     let m = parse_market(market)?;
     let cat = parse_security_list_category(category);
     let securities = ctx.security_list(m, cat).await?;
+    let total = securities.len();
 
-    let headers = &["Symbol", "Name"];
-    let rows = securities
-        .iter()
-        .map(|s| {
-            vec![
-                s.symbol.clone(),
-                locale_name(&s.name_en, &s.name_cn).to_owned(),
-            ]
-        })
-        .collect();
+    let start = (page - 1) * count;
+    if start >= total && total > 0 {
+        bail!(
+            "Page {page} out of range — total {total} records, {} per page",
+            count
+        );
+    }
 
-    print_table(headers, rows, format);
+    let page_items: Vec<_> = securities.iter().skip(start).take(count).collect();
+
+    match format {
+        OutputFormat::Json => {
+            let records: Vec<serde_json::Value> = page_items
+                .iter()
+                .map(|s| {
+                    serde_json::json!({
+                        "symbol": s.symbol,
+                        "name_en": s.name_en,
+                        "name_cn": s.name_cn,
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&records)?);
+        }
+        _ => {
+            let headers = &["Symbol", "Name"];
+            let rows = page_items
+                .iter()
+                .map(|s| {
+                    vec![
+                        s.symbol.clone(),
+                        locale_name(&s.name_en, &s.name_cn).to_owned(),
+                    ]
+                })
+                .collect();
+            print_table(headers, rows, format);
+            eprintln!("Page {page} of {} ({total} total)", total.div_ceil(count),);
+        }
+    }
     Ok(())
 }
 
