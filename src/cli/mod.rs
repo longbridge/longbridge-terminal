@@ -324,13 +324,14 @@ pub enum Commands {
         cmd: TradingCmd,
     },
 
-    /// List of US overnight-eligible securities
+    /// List of overnight-eligible securities by market
     ///
-    /// Returns securities that can be traded in the US overnight session.
-    /// Only the US market is supported (Longbridge API limitation).
+    /// Returns securities that can be traded in the overnight session for the given market.
+    /// Supported markets: US, HK, CN, SG
     /// Example: longbridge security-list US
+    /// Example: longbridge security-list HK
     SecurityList {
-        /// Market: only US is supported (overnight category)
+        /// Market: US, HK, CN, SG
         #[arg(default_value = "US")]
         market: String,
         /// NOTE: currently unused — the SDK only exposes the Overnight category.
@@ -3723,6 +3724,12 @@ mod tests {
         let cli = parse(&["longbridge", "security-list", "US"]).unwrap();
         if let Some(Commands::SecurityList { market, .. }) = cli.command {
             assert_eq!(market, "US");
+        } else {
+            panic!("expected SecurityList command");
+        }
+        let cli = parse(&["longbridge", "security-list", "HK"]).unwrap();
+        if let Some(Commands::SecurityList { market, .. }) = cli.command {
+            assert_eq!(market, "HK");
         } else {
             panic!("expected SecurityList command");
         }
