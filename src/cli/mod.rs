@@ -981,7 +981,15 @@ pub enum Commands {
 
     /// Strategy screener — browse strategies, execute stock filters, view indicator config
     ///
-    /// Subcommands: strategies | search | indicators
+    /// Two workflows:
+    ///
+    /// Workflow A — use a saved strategy:
+    ///   1. `screener strategies` to list recommended strategies and get an ID
+    ///   2. `screener search --strategy-id <ID>` to run the strategy
+    ///
+    /// Workflow B — custom filter using indicator conditions:
+    ///   1. `screener indicators` to discover available indicator IDs and value ranges
+    ///   2. `screener search --market US` with custom conditions (see --help for details)
     ///
     /// Example: longbridge screener strategies
     /// Example: longbridge screener strategies --mine
@@ -1663,11 +1671,14 @@ impl IndustryRankSortType {
 
 #[derive(Subcommand)]
 pub enum ScreenerCmd {
-    /// List stock-selection strategies (recommended by default)
+    /// List stock-selection strategies and their filter conditions
     ///
-    /// --mine: user's saved strategies.
-    /// --all: all strategies (recommended + user).
-    /// --id N: single strategy's filter conditions.
+    /// Default: platform recommended strategies (use ID with `screener search`).
+    /// --mine:  your saved strategies.
+    /// --all:   all strategies (recommended + user).
+    /// --id N:  show the full filter conditions of a single strategy.
+    ///
+    /// The `id` field in the output is passed to `screener search --strategy-id`.
     ///
     /// Example: longbridge screener strategies
     /// Example: longbridge screener strategies --mine
@@ -1679,20 +1690,27 @@ pub enum ScreenerCmd {
         /// Show all strategies (recommended + user)
         #[arg(long)]
         all: bool,
-        /// Show filter conditions for a single strategy
+        /// Show the filter conditions of a single strategy by its ID
         #[arg(long, value_name = "ID")]
         id: Option<i64>,
     },
 
-    /// Execute a strategy or custom filter to find matching stocks
+    /// Find stocks matching a strategy or custom indicator conditions
+    ///
+    /// Mode A — strategy: pass --strategy-id from `screener strategies` output.
+    ///   The strategy's pre-configured conditions are applied automatically.
+    ///
+    /// Mode B — custom: omit --strategy-id and the server uses any indicator
+    ///   conditions you configure. Use `screener indicators` to discover
+    ///   available indicator IDs, keys, and valid value ranges.
     ///
     /// Example: longbridge screener search --strategy-id 42
-    /// Example: longbridge screener search --market US
+    /// Example: longbridge screener search --market HK
     Search {
-        /// Run a saved strategy by ID (from `screener strategies`)
+        /// Strategy ID from `screener strategies` output (Mode A)
         #[arg(long)]
         strategy_id: Option<i64>,
-        /// Market: US | HK | CN (default: US)
+        /// Market to search in: US | HK | CN (default: US)
         #[arg(long, default_value = "US")]
         market: String,
         /// Number of results (default: 20)
@@ -1700,11 +1718,15 @@ pub enum ScreenerCmd {
         count: u32,
     },
 
-    /// List all available filter indicators and their value ranges
+    /// List all available filter indicators with IDs, keys, and value ranges
+    ///
+    /// Use indicator IDs and keys to build custom conditions for `screener search`.
+    /// Each indicator shows: id, key (e.g. `filter_pettm`), name, unit,
+    /// default value range (min/max), and recommended range options.
     ///
     /// Example: longbridge screener indicators
     Indicators {
-        /// Optional symbol to get symbol-specific indicator values
+        /// Optional symbol — filter to indicators relevant for that symbol
         symbol: Option<String>,
     },
 }
