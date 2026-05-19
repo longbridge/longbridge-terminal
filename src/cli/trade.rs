@@ -10,7 +10,7 @@ use std::str::FromStr;
 
 use super::{
     api::TradeApi,
-    output::{fmt_datetime, fmt_decimal, parse_datetime_end, parse_datetime_start, print_table},
+    output::{fmt_decimal, parse_datetime_end, parse_datetime_start, print_table},
     OutputFormat,
 };
 use crate::utils::datetime::fmt_rfc3339;
@@ -109,7 +109,7 @@ pub async fn cmd_orders(
                 fmt_decimal(&o.price),
                 o.executed_quantity.to_string(),
                 fmt_decimal(&o.executed_price),
-                fmt_datetime(o.submitted_at),
+                fmt_rfc3339(o.submitted_at),
             ]
         })
         .collect();
@@ -193,13 +193,10 @@ pub async fn cmd_order_detail(order_id: String, format: &OutputFormat) -> Result
                 ],
                 vec!["Outside RTH".to_string(), outside_rth],
                 vec!["Currency".to_string(), detail.currency.clone()],
-                vec![
-                    "Submitted At".to_string(),
-                    fmt_datetime(detail.submitted_at),
-                ],
+                vec!["Submitted At".to_string(), fmt_rfc3339(detail.submitted_at)],
                 vec![
                     "Updated At".to_string(),
-                    detail.updated_at.map(fmt_datetime).unwrap_or_default(),
+                    detail.updated_at.map(fmt_rfc3339).unwrap_or_default(),
                 ],
                 vec!["Remark".to_string(), detail.msg.clone()],
             ];
@@ -215,7 +212,7 @@ pub async fn cmd_order_detail(order_id: String, format: &OutputFormat) -> Result
                     .map(|h| {
                         vec![
                             format!("{:?}", h.status),
-                            fmt_datetime(h.time),
+                            fmt_rfc3339(h.time),
                             h.price.to_string(),
                             h.quantity.to_string(),
                             h.msg.clone(),
@@ -283,47 +280,24 @@ pub async fn cmd_executions(
         (execs, map)
     };
 
-    match format {
-        OutputFormat::Json => {
-            let records: Vec<serde_json::Value> = executions
-                .iter()
-                .map(|e| {
-                    let side = side_map
-                        .get(&e.order_id)
-                        .map_or("-".to_string(), |s| format!("{s:?}"));
-                    serde_json::json!({
-                        "order_id": e.order_id,
-                        "symbol": e.symbol,
-                        "side": side,
-                        "price": e.price.to_string(),
-                        "quantity": e.quantity.to_string(),
-                        "time": fmt_rfc3339(e.trade_done_at),
-                    })
-                })
-                .collect();
-            println!("{}", serde_json::to_string_pretty(&records)?);
-        }
-        OutputFormat::Pretty => {
-            let headers = &["Order ID", "Symbol", "Side", "Price", "Quantity", "Time"];
-            let rows = executions
-                .iter()
-                .map(|e| {
-                    let side = side_map
-                        .get(&e.order_id)
-                        .map_or("-".to_string(), |s| format!("{s:?}"));
-                    vec![
-                        e.order_id.clone(),
-                        e.symbol.clone(),
-                        side,
-                        e.price.to_string(),
-                        e.quantity.to_string(),
-                        fmt_datetime(e.trade_done_at),
-                    ]
-                })
-                .collect();
-            print_table(headers, rows, &OutputFormat::Pretty);
-        }
-    }
+    let headers = &["Order ID", "Symbol", "Side", "Price", "Quantity", "Time"];
+    let rows = executions
+        .iter()
+        .map(|e| {
+            let side = side_map
+                .get(&e.order_id)
+                .map_or("-".to_string(), |s| format!("{s:?}"));
+            vec![
+                e.order_id.clone(),
+                e.symbol.clone(),
+                side,
+                e.price.to_string(),
+                e.quantity.to_string(),
+                fmt_rfc3339(e.trade_done_at),
+            ]
+        })
+        .collect();
+    print_table(headers, rows, format);
     Ok(())
 }
 
@@ -646,7 +620,7 @@ pub async fn cmd_cash_flow(
                 format!("{:?}", f.business_type),
                 f.balance.to_string(),
                 f.currency.clone(),
-                fmt_datetime(f.business_time),
+                fmt_rfc3339(f.business_time),
                 f.description.clone(),
             ]
         })
@@ -999,7 +973,7 @@ pub async fn run_today_orders(
                 format!("{:?}", o.status),
                 o.quantity.to_string(),
                 fmt_decimal(&o.price),
-                fmt_datetime(o.submitted_at),
+                fmt_rfc3339(o.submitted_at),
             ]
         })
         .collect();
@@ -1034,7 +1008,7 @@ pub async fn run_history_orders(
                 format!("{:?}", o.status),
                 o.quantity.to_string(),
                 fmt_decimal(&o.price),
-                fmt_datetime(o.submitted_at),
+                fmt_rfc3339(o.submitted_at),
             ]
         })
         .collect();
@@ -1085,7 +1059,7 @@ pub async fn run_today_executions(
                 e.symbol.clone(),
                 e.price.to_string(),
                 e.quantity.to_string(),
-                fmt_datetime(e.trade_done_at),
+                fmt_rfc3339(e.trade_done_at),
             ]
         })
         .collect();
@@ -1111,7 +1085,7 @@ pub async fn run_history_executions(
                 e.symbol.clone(),
                 e.price.to_string(),
                 e.quantity.to_string(),
-                fmt_datetime(e.trade_done_at),
+                fmt_rfc3339(e.trade_done_at),
             ]
         })
         .collect();
@@ -1180,7 +1154,7 @@ pub async fn run_cash_flow(
                 format!("{:?}", f.business_type),
                 f.balance.to_string(),
                 f.currency.clone(),
-                fmt_datetime(f.business_time),
+                fmt_rfc3339(f.business_time),
             ]
         })
         .collect();
