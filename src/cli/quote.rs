@@ -2939,7 +2939,7 @@ pub async fn cmd_short_positions(
                 }
                 (true, false) => {
                     // HK positions
-                    let headers = ["date", "short_shares", "balance(HKD)", "cost", "rate%"];
+                    let headers = ["date", "short_shares", "balance", "cost", "rate%"];
                     let rows: Vec<Vec<String>> = items
                         .iter()
                         .map(|item| {
@@ -2948,12 +2948,11 @@ pub async fn cmd_short_positions(
                                 |_| val_str(&item["rate"]),
                                 |v| format!("{:.2}%", v * 100.0),
                             );
-                            let amount: i64 = val_str(&item["amount"]).parse().unwrap_or(0);
-                            let balance: i64 = val_str(&item["balance"]).parse().unwrap_or(0);
+                            let amount: i64 = item["amount"].as_i64().unwrap_or(0);
                             vec![
                                 fmt_ts(&ts),
                                 format_with_commas(amount),
-                                format_with_commas(balance),
+                                val_str(&item["balance"]),
                                 val_str(&item["cost"]),
                                 rate,
                             ]
@@ -2966,7 +2965,7 @@ pub async fn cmd_short_positions(
                     let headers = [
                         "date",
                         "short_shares",
-                        "balance(HKD)",
+                        "balance",
                         "total_vol",
                         "rate%",
                         "close",
@@ -2979,16 +2978,12 @@ pub async fn cmd_short_positions(
                                 |_| val_str(&item["rate"]),
                                 |v| format!("{:.2}%", v * 100.0),
                             );
-                            let amount: i64 = val_str(&item["amount"]).parse().unwrap_or(0);
-                            let balance: i64 = val_str(&item["balance"])
-                                .parse::<f64>()
-                                .map(|f| f as i64)
-                                .unwrap_or(0);
-                            let total: i64 = val_str(&item["total_amount"]).parse().unwrap_or(0);
+                            let amount: i64 = item["amount"].as_i64().unwrap_or(0);
+                            let total: i64 = item["total_amount"].as_i64().unwrap_or(0);
                             vec![
                                 fmt_ts(&ts),
                                 format_with_commas(amount),
-                                format_with_commas(balance),
+                                val_str(&item["balance"]),
                                 format_with_commas(total),
                                 rate,
                                 val_str(&item["close"]),
