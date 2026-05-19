@@ -366,8 +366,9 @@ longbridge dca set-reminder 6                                 # Set reminder hou
 ### Short Selling
 
 ```bash
-longbridge short-positions AAPL.US                            # US stock short selling data (short interest, ratio, days to cover)
-longbridge short-positions TSLA.US --count 50                 # Return last 50 short interest records
+longbridge short-positions AAPL.US                            # US: bi-weekly FINRA short interest (short interest, rate, days to cover)
+longbridge short-positions 700.HK                             # HK: daily HKEX disclosed short positions (open short shares, balance, cost, rate)
+longbridge short-positions TSLA.US --count 50                 # Return last 50 records
 longbridge short-trades AAPL.US                               # Daily short sale volume (FINRA/NASDAQ for US; HKEX for HK)
 longbridge short-trades 700.HK [--count 50]                   # HK: amount, balance, total amount, rate, close per trading day
 ```
