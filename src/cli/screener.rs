@@ -253,21 +253,29 @@ pub async fn cmd_screener_search(
                         row.extend(indicators.iter().take(5).map(|ind| {
                             let v = val_str(&ind["value"]);
                             let unit = val_str(&ind["unit"]);
-                            let display_v = match unit.as_str() {
-                                "亿" => v
-                                    .parse::<f64>()
-                                    .map(|f| format!("{:.2}", f / 1e8))
-                                    .unwrap_or(v),
+                            let (display_v, display_unit) = match unit.as_str() {
+                                "亿" => (
+                                    v.parse::<f64>()
+                                        .map(|f| format!("{:.2}", f / 1e8))
+                                        .unwrap_or(v),
+                                    "亿".to_string(),
+                                ),
                                 "万" => v
                                     .parse::<f64>()
-                                    .map(|f| format!("{:.2}", f / 1e4))
-                                    .unwrap_or(v),
-                                _ => v,
+                                    .map(|f| {
+                                        if f >= 1e8 {
+                                            (format!("{:.2}", f / 1e8), "亿".to_string())
+                                        } else {
+                                            (format!("{:.2}", f / 1e4), "万".to_string())
+                                        }
+                                    })
+                                    .unwrap_or((v, unit)),
+                                _ => (v, unit),
                             };
-                            if unit.is_empty() || unit == "-" {
+                            if display_unit.is_empty() || display_unit == "-" {
                                 display_v
                             } else {
-                                format!("{display_v} {unit}")
+                                format!("{display_v} {display_unit}")
                             }
                         }));
                     }
