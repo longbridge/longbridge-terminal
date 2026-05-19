@@ -953,17 +953,21 @@ pub enum Commands {
         count: i32,
     },
 
-    /// Hot stock anomaly events with alert reason and pinned news
+    /// Top stocks with abnormal price movements and correlated news
     ///
-    /// Different from `anomaly` (technical signals only): `stock-events` includes
-    /// the reason text (e.g. "波动超 20 日均值"), pinned news, and industry tags.
+    /// When a stock's price fluctuation exceeds its standard deviation over the
+    /// past ~20 trading days, it is flagged as an abnormal change. The system
+    /// then correlates related news to provide an interpretation of the move.
     ///
-    /// Sort values: hot (default) | time | change
+    /// Different from `anomaly` (pure technical signals): `top-movers` pairs
+    /// each alert with a reason summary, pinned news article, and industry tags.
     ///
-    /// Example: longbridge stock-events
-    /// Example: longbridge stock-events --market HK
-    /// Example: longbridge stock-events --market US --sort time --count 50
-    StockEvents {
+    /// Sort: hot (default) | time | change
+    ///
+    /// Example: longbridge top-movers
+    /// Example: longbridge top-movers --market HK
+    /// Example: longbridge top-movers --market US --sort time --count 50
+    TopMovers {
         /// Market filter: HK | US | CN | SG (omit for all markets)
         #[arg(long)]
         market: Option<String>,
@@ -1137,25 +1141,41 @@ pub enum Commands {
     },
 
     // ── Short positions ─────────────────────────────────────────────────
-    /// Short selling data — open positions or daily short sale volume
+    /// Short selling open interest — undisclosed short positions held over time
     ///
-    /// Supports US and HK markets. Market is inferred from the symbol suffix.
-    /// Without --trades: short interest / open short positions.
-    /// With --trades: daily short sale volume.
+    /// Supports US and HK markets; market is inferred from the symbol suffix.
     ///
-    /// US positions: `short_interest`, `rate`, `days_to_cover`, `close`
-    /// HK positions: `open_short_shares`, `balance`, `cost`, `rate`
+    /// US: bi-weekly FINRA short interest data (`short_interest`, `rate`, `days_to_cover`, `close`).
+    /// HK: daily HKEX disclosed short positions (`open_short_shares`, `balance`, `cost`, `rate`).
+    ///
+    /// For daily short sale volume (shares sold short each day), use `short-trades`.
     ///
     /// Example: longbridge short-positions AAPL.US
     /// Example: longbridge short-positions 700.HK
-    /// Example: longbridge short-positions AAPL.US --trades
-    /// Example: longbridge short-positions 700.HK --trades
     ShortPositions {
         /// Symbol in <CODE>.<MARKET> format (US or HK, e.g. AAPL.US 700.HK)
         symbol: String,
-        /// Show short sale volume (trades) instead of open positions
-        #[arg(long)]
-        trades: bool,
+        /// Number of records to return (1–100, default: 20)
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: u32,
+    },
+
+    /// Daily short sale volume — shares sold short each trading day
+    ///
+    /// Supports US and HK markets; market is inferred from the symbol suffix.
+    ///
+    /// US: FINRA/NASDAQ daily short volume (`nus_amount`, `ny_amount`, `total_amount`, `rate`, `close`).
+    ///     Data source: NASDAQ + NYSE consolidated short sale reports.
+    /// HK: HKEX daily short sale volume (`amount`, `balance`, `total_amount`, `rate`, `close`).
+    ///     Data source: HKEX daily short selling disclosure.
+    ///
+    /// For total open short interest (cumulative undisclosed positions), use `short-positions`.
+    ///
+    /// Example: longbridge short-trades AAPL.US
+    /// Example: longbridge short-trades 700.HK
+    ShortTrades {
+        /// Symbol in <CODE>.<MARKET> format (US or HK, e.g. AAPL.US 700.HK)
+        symbol: String,
         /// Number of records to return (1–100, default: 20)
         #[arg(long, alias = "limit", default_value = "20")]
         count: u32,
@@ -3409,7 +3429,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             symbol,
             count,
         } => quote::cmd_anomaly(&market, symbol, count, format, verbose).await,
-        Commands::StockEvents { market, sort, count } => {
+        Commands::TopMovers { market, sort, count } => {
             quote::cmd_stock_events(market, sort.as_api_value(), count, format, verbose).await
         }
         Commands::Screener { cmd } => match cmd {
@@ -3502,8 +3522,11 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             limit,
         } => dca::cmd_dca(cmd, status.as_deref(), symbol.as_deref(), page, limit, format).await,
 
-        Commands::ShortPositions { symbol, trades, count } => {
-            quote::cmd_short_positions(symbol, trades, count, format, verbose).await
+        Commands::ShortPositions { symbol, count } => {
+            quote::cmd_short_positions(symbol, false, count, format, verbose).await
+        }
+        Commands::ShortTrades { symbol, count } => {
+            quote::cmd_short_positions(symbol, true, count, format, verbose).await
         }
 
         Commands::Sharelist { cmd, count } => {
