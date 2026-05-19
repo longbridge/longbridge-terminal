@@ -1002,6 +1002,29 @@ pub enum Commands {
         cmd: ScreenerCmd,
     },
 
+    /// LB popularity ranking lists (热度排行榜)
+    ///
+    /// Returns stocks ranked by a composite heat score combining trading activity,
+    /// media coverage, community discussion, and price volatility.
+    ///
+    /// Use `rank categories` to discover available tab keys, then pass a key to
+    /// list the corresponding ranking.
+    ///
+    /// Example: longbridge rank categories
+    /// Example: longbridge rank --key hotness --market US
+    /// Example: longbridge rank --key trading --market HK --count 20
+    Rank {
+        /// Ranking tab key (from `rank categories`). Omit to show categories.
+        #[arg(long)]
+        key: Option<String>,
+        /// Market filter applied when listing (default: US)
+        #[arg(long, default_value = "US")]
+        market: String,
+        /// Number of results (default: 20)
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: u32,
+    },
+
     /// Multi-stock valuation comparison (PE, PB, PS, market cap, close price)
     ///
     /// Compare 2–5 stocks side-by-side on valuation multiples.
@@ -3451,6 +3474,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             symbol,
             count,
         } => quote::cmd_anomaly(&market, symbol, count, format, verbose).await,
+        Commands::Rank { key, market, count } => {
+            quote::cmd_rank(key.clone(), market.as_str(), count, format, verbose).await
+        }
         Commands::TopMovers { market, sort, count } => {
             quote::cmd_stock_events(market, sort.as_api_value(), count, format, verbose).await
         }

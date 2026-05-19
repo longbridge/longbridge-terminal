@@ -2983,6 +2983,84 @@ pub async fn cmd_stock_events(
     Ok(())
 }
 
+
+pub async fn cmd_rank(
+    key: Option<String>,
+    market: &str,
+    count: u32,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    match key {
+        None => {
+            let data = http_get("/v1/quote/market/rank/categories", &[], verbose).await?;
+            match format {
+                OutputFormat::Json => print_json(&data),
+                OutputFormat::Pretty => {
+                    let tags = data.get("first_tags").and_then(|v| v.as_array());
+                    match tags {
+                        Some(a) if !a.is_empty() => {
+                            println!("Ranking Categories (use second-level key with --key)\n");
+                            let headers = ["key", "name", "sub-key", "market"];
+                            let mut rows: Vec<Vec<String>> = Vec::new();
+                            for tag in a {
+                                let k = val_str(&tag["key"]);
+                                let n = val_str(&tag["name"]);
+                                if let Some(subs) = tag["second_tags"].as_array() {
+                                    for sub in subs {
+                                        rows.push(vec![k.clone(), n.clone(),
+                                            val_str(&sub["key"]), val_str(&sub["market"])]);
+                                    }
+                                } else {
+                                    rows.push(vec![k, n, String::new(), String::new()]);
+                                }
+                            }
+                            print_table(&headers, rows, format);
+                        }
+                        _ => println!("No ranking categories found."),
+                    }
+                }
+            }
+        }
+        Some(k) => {
+            let count_str = count.to_string();
+            let data = http_get(
+                "/v1/quote/market/rank/list",
+                &[
+                    ("key", k.as_str()),
+                    ("delay_bmp", "false"),
+                    ("need_article", "true"),
+                    ("market", market),
+                    ("size", count_str.as_str()),
+                ],
+                verbose,
+            ).await?;
+            match format {
+                OutputFormat::Json => print_json(&data),
+                OutputFormat::Pretty => {
+                    let lists = match data.get("lists").and_then(|v| v.as_array()) {
+                        Some(a) if !a.is_empty() => a,
+                        _ => {
+                            println!("No ranking data found for key \'{k}\'.");
+                            return Ok(());
+                        }
+                    };
+                    println!("Ranking: {k} ({market})\n");
+                    let headers = ["rank", "symbol", "name", "price", "chg%", "pre/post", "pre/post chg%"];
+                    let rows: Vec<Vec<String>> = lists.iter().enumerate().map(|(i, s)| {
+                        let sym = crate::utils::counter::counter_id_to_symbol(&val_str(&s["counter_id"]));
+                        vec![(i + 1).to_string(), sym, val_str(&s["name"]),
+                             val_str(&s["last_done"]), val_str(&s["chg"]),
+                             val_str(&s["pre_post_price"]), val_str(&s["pre_post_chg"])]
+                    }).collect();
+                    print_table(&headers, rows, format);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
