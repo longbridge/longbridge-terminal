@@ -2315,11 +2315,13 @@ pub enum OrderCmd {
     ///
     /// Short selling: submitting a sell order for a symbol with no existing position
     /// opens a short. US stocks support short selling without additional account setup.
-    /// HK stocks require signing the Securities Borrowing and Lending (SBL) agreement
-    /// first — open the Longbridge mobile app, place your first HK short sell order
-    /// there, and complete the in-app SBL agreement signing flow. After that, the API,
-    /// CLI, and MCP can short HK stocks directly. Without the agreement, the API
-    /// returns error 602301.
+    /// HK stocks require two steps: (1) contact Longbridge customer support to apply
+    /// for HK short selling permission and wait for approval (error 602101 until
+    /// approved); (2) once approved, open the Longbridge mobile app, place your first
+    /// HK short sell order there, and complete the in-app SBL (Securities Borrowing
+    /// and Lending) agreement signing flow. After both steps, the API, CLI, and MCP
+    /// can short HK stocks directly. Without the agreement, the API returns error
+    /// 602301.
     ///
     /// Example: longbridge order sell TSLA.US 100 --price 260.00
     /// Example: longbridge order sell NVDA.US 10 --order-type MIT --trigger-price 177.89 --tif Day
