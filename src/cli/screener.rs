@@ -253,12 +253,16 @@ pub async fn cmd_screener_search(
                         row.extend(indicators.iter().take(5).map(|ind| {
                             let v = val_str(&ind["value"]);
                             let unit = val_str(&ind["unit"]);
-                            let display_v = if unit == "亿" {
-                                v.parse::<f64>()
+                            let display_v = match unit.as_str() {
+                                "亿" => v
+                                    .parse::<f64>()
                                     .map(|f| format!("{:.2}", f / 1e8))
-                                    .unwrap_or(v)
-                            } else {
-                                v
+                                    .unwrap_or(v),
+                                "万" => v
+                                    .parse::<f64>()
+                                    .map(|f| format!("{:.2}", f / 1e4))
+                                    .unwrap_or(v),
+                                _ => v,
                             };
                             if unit.is_empty() || unit == "-" {
                                 display_v
