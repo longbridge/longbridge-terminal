@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
 
 use super::{output::print_table, OutputFormat};
-use crate::utils::datetime::format_datetime;
+use crate::utils::datetime::fmt_rfc3339;
 
 const NEWS_DETAIL_HOST: &str = "https://longbridge.com";
 
@@ -38,7 +38,7 @@ pub async fn cmd_news(symbol: String, count: usize, format: &OutputFormat) -> Re
                     "id": item.id,
                     "title": title,
                     "url": item.url,
-                    "published_at": format_datetime(item.published_at),
+                    "published_at": fmt_rfc3339(item.published_at),
                     "likes_count": item.likes_count,
                     "comments_count": item.comments_count,
                 })
@@ -63,7 +63,7 @@ pub async fn cmd_news(symbol: String, count: usize, format: &OutputFormat) -> Re
             vec![
                 item.id.clone(),
                 truncate_display(display, 70),
-                format_datetime(item.published_at),
+                fmt_rfc3339(item.published_at),
                 item.likes_count.to_string(),
                 item.comments_count.to_string(),
             ]
@@ -94,7 +94,7 @@ pub async fn cmd_filings(symbol: String, count: usize, format: &OutputFormat) ->
                     "title": item.title,
                     "description": item.description,
                     "file_name": item.file_name,
-                    "publish_at": format_datetime(item.published_at),
+                    "publish_at": fmt_rfc3339(item.published_at),
                     "file_count": item.file_urls.len(),
                     "file_urls": item.file_urls,
                 })
@@ -116,7 +116,7 @@ pub async fn cmd_filings(symbol: String, count: usize, format: &OutputFormat) ->
                 truncate_display(&item.title, 60),
                 item.file_name.clone(),
                 item.file_urls.len().to_string(),
-                format_datetime(item.published_at),
+                fmt_rfc3339(item.published_at),
             ]
         })
         .collect();
@@ -261,7 +261,7 @@ pub async fn cmd_topics(symbol: String, count: usize, format: &OutputFormat) -> 
                     "title": item.title,
                     "excerpt": crate::cli::topic::format_topic_contents(&item.description),
                     "url": item.url,
-                    "published_at": format_datetime(item.published_at),
+                    "published_at": fmt_rfc3339(item.published_at),
                     "likes_count": item.likes_count,
                     "comments_count": item.comments_count,
                     "shares_count": item.shares_count,
@@ -287,7 +287,7 @@ pub async fn cmd_topics(symbol: String, count: usize, format: &OutputFormat) -> 
             vec![
                 item.id.clone(),
                 truncate_display(display, 60),
-                format_datetime(item.published_at),
+                fmt_rfc3339(item.published_at),
                 item.likes_count.to_string(),
                 item.comments_count.to_string(),
                 item.shares_count.to_string(),

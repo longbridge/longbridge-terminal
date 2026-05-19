@@ -69,7 +69,7 @@ fn fmt_datetime_hkt(v: &Value) -> String {
                     ) {
                         let hkt = UtcOffset::from_hms(8, 0, 0).unwrap_or(UtcOffset::UTC);
                         let dt = OffsetDateTime::new_in_offset(date, time, hkt);
-                        return crate::utils::datetime::format_datetime(dt);
+                        return crate::utils::datetime::fmt_rfc3339(dt);
                     }
                 }
             }

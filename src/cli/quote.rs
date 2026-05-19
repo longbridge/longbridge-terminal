@@ -85,7 +85,7 @@ fn change_val(last: rust_decimal::Decimal, prev_close: rust_decimal::Decimal) ->
 fn pre_post_quote_to_json(q: &PrePostQuote) -> serde_json::Value {
     serde_json::json!({
         "last": q.last_done.to_string(),
-        "timestamp": crate::utils::datetime::format_datetime(q.timestamp),
+        "timestamp": crate::utils::datetime::fmt_rfc3339(q.timestamp),
         "high": q.high.to_string(),
         "low": q.low.to_string(),
         "volume": q.volume,
@@ -325,7 +325,7 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
                                     fmt_dec(pmq.low),
                                     pmq.volume.to_string(),
                                     fmt_dec(pmq.prev_close),
-                                    crate::utils::datetime::format_datetime(pmq.timestamp),
+                                    crate::utils::datetime::fmt_rfc3339(pmq.timestamp),
                                 ]
                             })
                         })
@@ -840,7 +840,7 @@ pub async fn cmd_capital_dist(symbol: String, format: &OutputFormat) -> Result<(
         OutputFormat::Json => {
             let val = serde_json::json!({
                 "symbol": symbol,
-                "timestamp": crate::utils::datetime::format_datetime(dist.timestamp),
+                "timestamp": crate::utils::datetime::fmt_rfc3339(dist.timestamp),
                 "capital_in": {
                     "large": dist.capital_in.large.to_string(),
                     "medium": dist.capital_in.medium.to_string(),
@@ -1116,7 +1116,7 @@ pub async fn cmd_option_quote(symbols: Vec<String>, format: &OutputFormat) -> Re
                         "open": q.open.to_string(),
                         "high": q.high.to_string(),
                         "low": q.low.to_string(),
-                        "timestamp": crate::utils::datetime::format_datetime(q.timestamp),
+                        "timestamp": crate::utils::datetime::fmt_rfc3339(q.timestamp),
                         "volume": q.volume,
                         "turnover": q.turnover.to_string(),
                         "trade_status": format!("{:?}", q.trade_status),

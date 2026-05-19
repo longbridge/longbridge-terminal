@@ -13,6 +13,7 @@ use super::{
     output::{fmt_datetime, fmt_decimal, parse_datetime_end, parse_datetime_start, print_table},
     OutputFormat,
 };
+use crate::utils::datetime::fmt_rfc3339;
 
 fn risk_level_name(level: i32) -> &'static str {
     match level {
@@ -134,7 +135,7 @@ pub async fn cmd_order_detail(order_id: String, format: &OutputFormat) -> Result
                 .map(|h| {
                     serde_json::json!({
                         "status": format!("{:?}", h.status),
-                        "time": fmt_datetime(h.time),
+                        "time": fmt_rfc3339(h.time),
                         "price": h.price.to_string(),
                         "quantity": h.quantity.to_string(),
                         "msg": h.msg,
@@ -156,8 +157,8 @@ pub async fn cmd_order_detail(order_id: String, format: &OutputFormat) -> Result
                 "time_in_force": format!("{:?}", detail.time_in_force),
                 "outside_rth": outside_rth,
                 "currency": detail.currency,
-                "submitted_at": fmt_datetime(detail.submitted_at),
-                "updated_at": detail.updated_at.map(fmt_datetime).unwrap_or_default(),
+                "submitted_at": fmt_rfc3339(detail.submitted_at),
+                "updated_at": detail.updated_at.map(fmt_rfc3339).unwrap_or_default(),
                 "remark": detail.msg,
                 "history": history,
             });
