@@ -16,7 +16,7 @@ use time::OffsetDateTime;
 use tokio::sync::mpsc;
 use tui_markdown::{Options, StyleSheet};
 
-use crate::{data::Counter, tui::app::RT, tui::ui::styles, utils::datetime::format_datetime};
+use crate::{data::Counter, tui::app::RT, tui::ui::styles, utils::datetime::fmt_rfc3339};
 
 // ─── Markdown StyleSheet ─────────────────────────────────────────────────────
 
@@ -351,7 +351,7 @@ fn render_news_list(frame: &mut Frame, rect: Rect, compact: bool) {
                 ListItem::new(vec![
                     Line::from(item.title.clone()),
                     Line::from(Span::styled(
-                        format_datetime(item.published_at),
+                        fmt_rfc3339(item.published_at),
                         styles::dark_gray(),
                     )),
                 ])

@@ -10,9 +10,10 @@ use std::str::FromStr;
 
 use super::{
     api::TradeApi,
-    output::{fmt_datetime, fmt_decimal, parse_datetime_end, parse_datetime_start, print_table},
+    output::{fmt_decimal, parse_datetime_end, parse_datetime_start, print_table},
     OutputFormat,
 };
+use crate::utils::datetime::fmt_rfc3339;
 
 fn risk_level_name(level: i32) -> &'static str {
     match level {
@@ -108,7 +109,7 @@ pub async fn cmd_orders(
                 fmt_decimal(&o.price),
                 o.executed_quantity.to_string(),
                 fmt_decimal(&o.executed_price),
-                fmt_datetime(o.submitted_at),
+                fmt_rfc3339(o.submitted_at),
             ]
         })
         .collect();
@@ -121,10 +122,29 @@ pub async fn cmd_order_detail(order_id: String, format: &OutputFormat) -> Result
     let ctx = crate::openapi::trade();
     let detail = ctx.order_detail(order_id).await?;
 
+    let executed_amount = detail.executed_price.map(|p| p * detail.executed_quantity);
+    let outside_rth = detail
+        .outside_rth
+        .map_or_else(|| "-".to_string(), |v| format!("{v:?}"));
+
     match format {
         OutputFormat::Json => {
+            let history: Vec<serde_json::Value> = detail
+                .history
+                .iter()
+                .map(|h| {
+                    serde_json::json!({
+                        "status": format!("{:?}", h.status),
+                        "time": fmt_rfc3339(h.time),
+                        "price": h.price.to_string(),
+                        "quantity": h.quantity.to_string(),
+                        "msg": h.msg,
+                    })
+                })
+                .collect();
             let val = serde_json::json!({
                 "order_id": detail.order_id,
+                "stock_name": detail.stock_name,
                 "symbol": detail.symbol,
                 "side": format!("{:?}", detail.side),
                 "order_type": format!("{:?}", detail.order_type),
@@ -133,9 +153,14 @@ pub async fn cmd_order_detail(order_id: String, format: &OutputFormat) -> Result
                 "price": fmt_decimal(&detail.price),
                 "executed_quantity": detail.executed_quantity.to_string(),
                 "executed_price": fmt_decimal(&detail.executed_price),
-                "submitted_at": fmt_datetime(detail.submitted_at),
-                "updated_at": detail.updated_at.map(fmt_datetime).unwrap_or_default(),
+                "executed_amount": executed_amount.map(|a| a.to_string()).unwrap_or_default(),
+                "time_in_force": format!("{:?}", detail.time_in_force),
+                "outside_rth": outside_rth,
+                "currency": detail.currency,
+                "submitted_at": fmt_rfc3339(detail.submitted_at),
+                "updated_at": detail.updated_at.map(fmt_rfc3339).unwrap_or_default(),
                 "remark": detail.msg,
+                "history": history,
             });
             println!("{}", serde_json::to_string_pretty(&val)?);
         }
@@ -143,6 +168,7 @@ pub async fn cmd_order_detail(order_id: String, format: &OutputFormat) -> Result
             let headers = &["Field", "Value"];
             let rows = vec![
                 vec!["Order ID".to_string(), detail.order_id.clone()],
+                vec!["Stock Name".to_string(), detail.stock_name.clone()],
                 vec!["Symbol".to_string(), detail.symbol.clone()],
                 vec!["Side".to_string(), format!("{:?}", detail.side)],
                 vec!["Order Type".to_string(), format!("{:?}", detail.order_type)],
@@ -158,16 +184,43 @@ pub async fn cmd_order_detail(order_id: String, format: &OutputFormat) -> Result
                     fmt_decimal(&detail.executed_price),
                 ],
                 vec![
-                    "Submitted At".to_string(),
-                    fmt_datetime(detail.submitted_at),
+                    "Executed Amount".to_string(),
+                    executed_amount.map(|a| a.to_string()).unwrap_or_default(),
                 ],
                 vec![
+                    "Time in Force".to_string(),
+                    format!("{:?}", detail.time_in_force),
+                ],
+                vec!["Outside RTH".to_string(), outside_rth],
+                vec!["Currency".to_string(), detail.currency.clone()],
+                vec!["Submitted At".to_string(), fmt_rfc3339(detail.submitted_at)],
+                vec![
                     "Updated At".to_string(),
-                    detail.updated_at.map(fmt_datetime).unwrap_or_default(),
+                    detail.updated_at.map(fmt_rfc3339).unwrap_or_default(),
                 ],
                 vec!["Remark".to_string(), detail.msg.clone()],
             ];
             print_table(headers, rows, &OutputFormat::Pretty);
+
+            if !detail.history.is_empty() {
+                println!();
+                println!("History");
+                let hist_headers = &["Status", "Time", "Price", "Quantity", "Message"];
+                let hist_rows = detail
+                    .history
+                    .iter()
+                    .map(|h| {
+                        vec![
+                            format!("{:?}", h.status),
+                            fmt_rfc3339(h.time),
+                            h.price.to_string(),
+                            h.quantity.to_string(),
+                            h.msg.clone(),
+                        ]
+                    })
+                    .collect();
+                print_table(hist_headers, hist_rows, &OutputFormat::Pretty);
+            }
         }
     }
     Ok(())
@@ -180,45 +233,70 @@ pub async fn cmd_executions(
     symbol: Option<String>,
     format: &OutputFormat,
 ) -> Result<()> {
+    use std::collections::HashMap;
+
     let ctx = crate::openapi::trade();
 
-    let executions = if history {
-        let mut opts = longbridge::trade::GetHistoryExecutionsOptions::new();
-        if let Some(s) = symbol {
-            opts = opts.symbol(s);
+    let (executions, side_map) = if history {
+        let start_dt = start.as_deref().map(parse_datetime_start).transpose()?;
+        let end_dt = end.as_deref().map(parse_datetime_end).transpose()?;
+
+        let mut exec_opts = longbridge::trade::GetHistoryExecutionsOptions::new();
+        let mut order_opts = longbridge::trade::GetHistoryOrdersOptions::new();
+        if let Some(s) = &symbol {
+            exec_opts = exec_opts.symbol(s.clone());
+            order_opts = order_opts.symbol(s.clone());
         }
-        if let Some(s) = start {
-            opts = opts.start_at(parse_datetime_start(&s)?);
+        if let Some(dt) = start_dt {
+            exec_opts = exec_opts.start_at(dt);
+            order_opts = order_opts.start_at(dt);
         }
-        if let Some(e) = end {
-            opts = opts.end_at(parse_datetime_end(&e)?);
+        if let Some(dt) = end_dt {
+            exec_opts = exec_opts.end_at(dt);
+            order_opts = order_opts.end_at(dt);
         }
-        ctx.history_executions(opts).await?
+
+        let (execs, orders) = tokio::try_join!(
+            ctx.history_executions(exec_opts),
+            ctx.history_orders(order_opts)
+        )?;
+        let map: HashMap<String, OrderSide> =
+            orders.into_iter().map(|o| (o.order_id, o.side)).collect();
+        (execs, map)
     } else {
-        let mut opts = longbridge::trade::GetTodayExecutionsOptions::new();
-        if let Some(s) = symbol {
-            opts = opts.symbol(s);
+        let mut exec_opts = longbridge::trade::GetTodayExecutionsOptions::new();
+        let mut order_opts = longbridge::trade::GetTodayOrdersOptions::new();
+        if let Some(s) = &symbol {
+            exec_opts = exec_opts.symbol(s.clone());
+            order_opts = order_opts.symbol(s.clone());
         }
-        ctx.today_executions(opts).await?
+
+        let (execs, orders) = tokio::try_join!(
+            ctx.today_executions(exec_opts),
+            ctx.today_orders(order_opts)
+        )?;
+        let map: HashMap<String, OrderSide> =
+            orders.into_iter().map(|o| (o.order_id, o.side)).collect();
+        (execs, map)
     };
 
-    let headers = &[
-        "Order ID", "Trade ID", "Symbol", "Price", "Quantity", "Time",
-    ];
+    let headers = &["Order ID", "Symbol", "Side", "Price", "Quantity", "Time"];
     let rows = executions
         .iter()
         .map(|e| {
+            let side = side_map
+                .get(&e.order_id)
+                .map_or("-".to_string(), |s| format!("{s:?}"));
             vec![
                 e.order_id.clone(),
-                e.trade_id.clone(),
                 e.symbol.clone(),
+                side,
                 e.price.to_string(),
                 e.quantity.to_string(),
-                fmt_datetime(e.trade_done_at),
+                fmt_rfc3339(e.trade_done_at),
             ]
         })
         .collect();
-
     print_table(headers, rows, format);
     Ok(())
 }
@@ -542,7 +620,7 @@ pub async fn cmd_cash_flow(
                 format!("{:?}", f.business_type),
                 f.balance.to_string(),
                 f.currency.clone(),
-                fmt_datetime(f.business_time),
+                fmt_rfc3339(f.business_time),
                 f.description.clone(),
             ]
         })
@@ -895,7 +973,7 @@ pub async fn run_today_orders(
                 format!("{:?}", o.status),
                 o.quantity.to_string(),
                 fmt_decimal(&o.price),
-                fmt_datetime(o.submitted_at),
+                fmt_rfc3339(o.submitted_at),
             ]
         })
         .collect();
@@ -930,7 +1008,7 @@ pub async fn run_history_orders(
                 format!("{:?}", o.status),
                 o.quantity.to_string(),
                 fmt_decimal(&o.price),
-                fmt_datetime(o.submitted_at),
+                fmt_rfc3339(o.submitted_at),
             ]
         })
         .collect();
@@ -981,7 +1059,7 @@ pub async fn run_today_executions(
                 e.symbol.clone(),
                 e.price.to_string(),
                 e.quantity.to_string(),
-                fmt_datetime(e.trade_done_at),
+                fmt_rfc3339(e.trade_done_at),
             ]
         })
         .collect();
@@ -1007,7 +1085,7 @@ pub async fn run_history_executions(
                 e.symbol.clone(),
                 e.price.to_string(),
                 e.quantity.to_string(),
-                fmt_datetime(e.trade_done_at),
+                fmt_rfc3339(e.trade_done_at),
             ]
         })
         .collect();
@@ -1076,7 +1154,7 @@ pub async fn run_cash_flow(
                 format!("{:?}", f.business_type),
                 f.balance.to_string(),
                 f.currency.clone(),
-                fmt_datetime(f.business_time),
+                fmt_rfc3339(f.business_time),
             ]
         })
         .collect();
