@@ -283,25 +283,47 @@ pub async fn cmd_executions(
         (execs, map)
     };
 
-    let headers = &["Order ID", "Symbol", "Side", "Price", "Quantity", "Time"];
-    let rows = executions
-        .iter()
-        .map(|e| {
-            let side = side_map
-                .get(&e.order_id)
-                .map_or("-".to_string(), |s| format!("{s:?}"));
-            vec![
-                e.order_id.clone(),
-                e.symbol.clone(),
-                side,
-                e.price.to_string(),
-                e.quantity.to_string(),
-                fmt_datetime(e.trade_done_at),
-            ]
-        })
-        .collect();
-
-    print_table(headers, rows, format);
+    match format {
+        OutputFormat::Json => {
+            let records: Vec<serde_json::Value> = executions
+                .iter()
+                .map(|e| {
+                    let side = side_map
+                        .get(&e.order_id)
+                        .map_or("-".to_string(), |s| format!("{s:?}"));
+                    serde_json::json!({
+                        "order_id": e.order_id,
+                        "symbol": e.symbol,
+                        "side": side,
+                        "price": e.price.to_string(),
+                        "quantity": e.quantity.to_string(),
+                        "time": fmt_rfc3339(e.trade_done_at),
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&records)?);
+        }
+        OutputFormat::Pretty => {
+            let headers = &["Order ID", "Symbol", "Side", "Price", "Quantity", "Time"];
+            let rows = executions
+                .iter()
+                .map(|e| {
+                    let side = side_map
+                        .get(&e.order_id)
+                        .map_or("-".to_string(), |s| format!("{s:?}"));
+                    vec![
+                        e.order_id.clone(),
+                        e.symbol.clone(),
+                        side,
+                        e.price.to_string(),
+                        e.quantity.to_string(),
+                        fmt_datetime(e.trade_done_at),
+                    ]
+                })
+                .collect();
+            print_table(headers, rows, &OutputFormat::Pretty);
+        }
+    }
     Ok(())
 }
 
