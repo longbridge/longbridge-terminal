@@ -253,10 +253,17 @@ pub async fn cmd_screener_search(
                         row.extend(indicators.iter().take(5).map(|ind| {
                             let v = val_str(&ind["value"]);
                             let unit = val_str(&ind["unit"]);
-                            if unit.is_empty() || unit == "-" {
-                                v
+                            let display_v = if unit == "亿" {
+                                v.parse::<f64>()
+                                    .map(|f| format!("{:.2}", f / 1e8))
+                                    .unwrap_or(v)
                             } else {
-                                format!("{v} {unit}")
+                                v
+                            };
+                            if unit.is_empty() || unit == "-" {
+                                display_v
+                            } else {
+                                format!("{display_v} {unit}")
                             }
                         }));
                     }
