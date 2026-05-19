@@ -2312,6 +2312,17 @@ pub enum OrderCmd {
     ///   (case-insensitive)
     /// Trailing orders (TSLPAMT/TSLPPCT) require --trailing-amount/--trailing-percent
     ///   and --limit-offset.
+    ///
+    /// Short selling: submitting a sell order for a symbol with no existing position
+    /// opens a short. US and HK markets must each be activated separately before
+    /// short selling is available via the API, CLI, or MCP:
+    /// (1) open the Longbridge mobile app and place your first short sell order for
+    ///     that market — the app will trigger an SBL (Securities Borrowing and
+    ///     Lending) agreement signing flow;
+    /// (2) complete the signing, then wait for the review to be approved.
+    /// Once approved, short selling for that market is available. The API returns
+    /// error 602301 before the agreement is signed.
+    ///
     /// Example: longbridge order sell TSLA.US 100 --price 260.00
     /// Example: longbridge order sell NVDA.US 10 --order-type MIT --trigger-price 177.89 --tif Day
     /// Example: longbridge order sell TSLA.US 130 --order-type TSLPPCT --trailing-percent 3 --limit-offset 1 --tif gtc
