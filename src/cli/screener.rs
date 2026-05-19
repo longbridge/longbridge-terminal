@@ -104,36 +104,99 @@ pub async fn cmd_screener_search(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let mut body = serde_json::json!({
-        "market": market.to_uppercase(),
+    // When a strategy ID is given, fetch recommend list to get its groups (no extra request needed).
+    let (mkt, filters, returns) = if let Some(sid) = strategy_id {
+        let strategies = http_get("/v1/quote/screener/strategies/recommend", &[], verbose).await?;
+        // Also try user strategies if not found in recommend
+        let strategy_obj = strategies["screeners"].as_array()
+            .and_then(|arr| arr.iter().find(|s| s["id"].as_i64() == Some(sid)))
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        // Fall back to fetching by ID if not in list
+        let strategy = if strategy_obj.is_null() {
+            let sid_str = sid.to_string();
+            http_get("/v1/quote/screener/strategy", &[("id", sid_str.as_str())], verbose).await?
+        } else {
+            strategy_obj
+        };
+        let mut mkt = market.to_uppercase();
+        let mut filters: Vec<serde_json::Value> = Vec::new();
+        let mut returns: Vec<String> = Vec::new();
+        if let Some(groups) = strategy["groups"].as_array() {
+            for group in groups {
+                if let Some(indicators) = group["indicators"].as_array() {
+                    for ind in indicators {
+                        let key = val_str(&ind["key"]);
+                        let id = ind["id"].as_i64().unwrap_or(0);
+                        if id == -1 && key == "filter_market" {
+                            // Market indicator — extract market value
+                            let v = val_str(&ind["value"]);
+                            if !v.is_empty() && v != "-" { mkt = v; }
+                        } else {
+                            let min = val_str(&ind["min"]);
+                            let max = val_str(&ind["max"]);
+                            let has_range = (!min.is_empty() && min != "-") || (!max.is_empty() && max != "-");
+                            if has_range || id > 0 {
+                                filters.push(serde_json::json!({
+                                    "key": key,
+                                    "min": min,
+                                    "max": max,
+                                    "tech_values": {}
+                                }));
+                                returns.push(key);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        (mkt, filters, returns)
+    } else {
+        (market.to_uppercase(), Vec::new(), Vec::new())
+    };
+
+    let body = serde_json::json!({
+        "market": mkt,
         "page": 1,
         "size": count,
+        "filters": filters,
+        "returns": returns,
+        "sort_by": 0,
+        "sort_order": 1,
+        "industries": [],
     });
-    if let Some(sid) = strategy_id {
-        body["id"] = serde_json::json!(sid.to_string());
-    }
     let data = http_post("/v1/quote/screener/search", body, verbose).await?;
     match format {
         OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&data).unwrap_or_default()),
         OutputFormat::Pretty => {
-            let total = data["total"].as_i64().unwrap_or(0);
-            let strategy_label = strategy_id
-                .map_or_else(|| format!("Custom filter ({market})"), |id| format!("Strategy #{id}"));
-            println!("{strategy_label} — {total} stocks found\n");
-            let stocks = match data.get("stocks").and_then(|v| v.as_array()) {
+            let total = data.get("total").and_then(|v| v.as_i64()).unwrap_or_else(|| data["items"].as_array().map(|a| a.len() as i64).unwrap_or(0));
+            let label = strategy_id
+                .map_or_else(|| format!("Custom filter ({mkt})"), |id| format!("Strategy #{id} ({mkt})"));
+            println!("{label} — {total} stocks found\n");
+            let stocks = match data.get("items").and_then(|v| v.as_array()) {
                 Some(a) if !a.is_empty() => a,
                 _ => {
                     println!("No stocks found matching the criteria.");
                     return Ok(());
                 }
             };
-            let headers = ["Symbol", "Name"];
+            // Build column headers from returns keys
+            let mut headers = vec!["Symbol".to_string(), "Name".to_string()];
+            headers.extend(returns.iter().take(5).map(|k| k.replace("filter_", "")));
+            let header_refs: Vec<&str> = headers.iter().map(String::as_str).collect();
             let rows: Vec<Vec<String>> = stocks.iter().map(|s| {
-                let cid = val_str(&s["counter_id"]);
-                let sym = crate::utils::counter::counter_id_to_symbol(&cid);
-                vec![sym, val_str(&s["name"])]
+                let sym = crate::utils::counter::counter_id_to_symbol(&val_str(&s["counter_id"]));
+                let mut row = vec![sym, val_str(&s["name"])];
+                if let Some(indicators) = s["indicators"].as_array() {
+                    row.extend(indicators.iter().take(5).map(|ind| {
+                        let v = val_str(&ind["value"]);
+                        let unit = val_str(&ind["unit"]);
+                        if unit.is_empty() || unit == "-" { v } else { format!("{v} {unit}") }
+                    }));
+                }
+                row
             }).collect();
-            print_table(&headers, rows, format);
+            print_table(&header_refs, rows, format);
         }
     }
     Ok(())
