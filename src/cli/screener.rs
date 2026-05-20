@@ -3,6 +3,7 @@ use serde_json::Value;
 
 use super::{api::http_get, api::http_post, output::print_table, OutputFormat};
 use crate::utils::counter::symbol_to_counter_id;
+use crate::utils::number::format_financial_value;
 
 fn normalize_key(key: &str) -> String {
     if key.starts_with("filter_") {
@@ -280,37 +281,7 @@ async fn print_screener_results(
                                 return "-".to_string();
                             }
                             let unit = val_str(&ind["unit"]);
-                            let (display_v, display_unit) = match unit.as_str() {
-                                "亿" => (
-                                    v.parse::<f64>()
-                                        .map(|f| format!("{:.2}", f / 1e8))
-                                        .unwrap_or(v),
-                                    "亿".to_string(),
-                                ),
-                                "万" => v
-                                    .parse::<f64>()
-                                    .map(|f| {
-                                        if f >= 1e8 {
-                                            (format!("{:.2}", f / 1e8), "亿".to_string())
-                                        } else {
-                                            (format!("{:.2}", f / 1e4), "万".to_string())
-                                        }
-                                    })
-                                    .unwrap_or((v, unit)),
-                                "%" => (
-                                    v.parse::<f64>().map(|f| format!("{f:.2}")).unwrap_or(v),
-                                    "%".to_string(),
-                                ),
-                                _ => (
-                                    v.parse::<f64>().map(|f| format!("{f:.2}")).unwrap_or(v),
-                                    unit,
-                                ),
-                            };
-                            if display_unit.is_empty() || display_unit == "-" {
-                                display_v
-                            } else {
-                                format!("{display_v}{display_unit}")
-                            }
+                            format_financial_value(&v, unit == "%")
                         }));
                     }
                     row

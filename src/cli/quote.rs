@@ -1044,10 +1044,7 @@ pub async fn cmd_security_list(
 
     let start = (page - 1) * count;
     if start >= total && total > 0 {
-        bail!(
-            "Page {page} out of range — total {total} records, {} per page",
-            count
-        );
+        bail!("Page {page} out of range — total {total} records, {count} per page");
     }
 
     let page_items: Vec<_> = securities.iter().skip(start).take(count).collect();
@@ -1066,7 +1063,7 @@ pub async fn cmd_security_list(
                 .collect();
             println!("{}", serde_json::to_string_pretty(&records)?);
         }
-        _ => {
+        OutputFormat::Pretty => {
             let headers = &["Symbol", "Name"];
             let rows = page_items
                 .iter()
@@ -1078,7 +1075,7 @@ pub async fn cmd_security_list(
                 })
                 .collect();
             print_table(headers, rows, format);
-            eprintln!("Page {page} of {} ({total} total)", total.div_ceil(count),);
+            eprintln!("Page {page} of {} ({total} total)", total.div_ceil(count));
         }
     }
     Ok(())
