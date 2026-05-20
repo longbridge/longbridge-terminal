@@ -901,7 +901,7 @@ fn print_fund_holders(data: &Value) {
 
 // ── shareholders ─────────────────────────────────────────────────────────────
 
-fn print_shareholders(data: &Value) {
+fn print_shareholders(data: &Value, limit: usize) {
     let items = match data.get("shareholder_list").and_then(|v| v.as_array()) {
         Some(a) if !a.is_empty() => a,
         _ => {
@@ -910,8 +910,13 @@ fn print_shareholders(data: &Value) {
         }
     };
 
-    let total = data["total"].as_i64().unwrap_or(0);
-    println!("Total shareholders: {total}\n");
+    let total = items.len();
+    let showing = total.min(limit);
+    if showing < total {
+        println!("Showing {showing} of {total} shareholders\n");
+    } else {
+        println!("Total shareholders: {total}\n");
+    }
 
     let headers = [
         "shareholder",
@@ -922,6 +927,7 @@ fn print_shareholders(data: &Value) {
     ];
     let rows: Vec<Vec<String>> = items
         .iter()
+        .take(limit)
         .map(|item| {
             // Related public stock symbol (institution may itself be listed)
             let symbol = item["stocks"]
@@ -1191,23 +1197,21 @@ pub async fn cmd_shareholders(
     verbose: bool,
 ) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
-    let count_str = count.to_string();
     let data = http_get(
         "/v1/quote/shareholders",
         &[
             ("counter_id", cid.as_str()),
-            ("position", "entry"),
+            ("position", "detail"),
             ("range", range.as_str()),
             ("sort_field", sort_field.as_str()),
             ("sort_order", sort_order.as_str()),
-            ("count", count_str.as_str()),
         ],
         verbose,
     )
     .await?;
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_shareholders(&data),
+        OutputFormat::Pretty => print_shareholders(&data, count as usize),
     }
     Ok(())
 }

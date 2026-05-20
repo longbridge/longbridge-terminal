@@ -799,7 +799,7 @@ pub enum Commands {
         #[arg(long, default_value = "desc")]
         order: String,
         /// Max number of institutions to show (default mode)
-        #[arg(long, default_value = "20")]
+        #[arg(long, default_value = "50")]
         count: u32,
         /// Number of reporting periods to show with --top (default: 1 = Latest only)
         #[arg(long, default_value = "1")]
