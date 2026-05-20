@@ -220,7 +220,12 @@ async fn print_screener_results(
                 }
             };
             let mut headers = vec!["Symbol".to_string(), "Name".to_string()];
-            headers.extend(returns.iter().take(5).map(|k| k.replace("filter_", "")));
+            headers.extend(
+                returns
+                    .iter()
+                    .take(5)
+                    .map(|k| k.replace("filter_", "").to_uppercase()),
+            );
             let header_refs: Vec<&str> = headers.iter().map(String::as_str).collect();
             let rows: Vec<Vec<String>> = stocks
                 .iter()
