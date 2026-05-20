@@ -16,6 +16,7 @@ use super::{
     OutputFormat,
 };
 use crate::utils::counter::symbol_to_counter_id;
+use crate::utils::number::format_financial_value;
 
 /// Return the locale-appropriate display name for a security.
 ///
@@ -2939,7 +2940,7 @@ pub async fn cmd_short_positions(
                 }
                 (true, false) => {
                     // HK positions
-                    let headers = ["date", "short_shares", "balance", "cost", "rate%"];
+                    let headers = ["date", "short_shares", "balance(HKD)", "cost", "rate%"];
                     let rows: Vec<Vec<String>> = items
                         .iter()
                         .map(|item| {
@@ -2948,11 +2949,12 @@ pub async fn cmd_short_positions(
                                 |_| val_str(&item["rate"]),
                                 |v| format!("{:.2}%", v * 100.0),
                             );
-                            let amount: i64 = item["amount"].as_i64().unwrap_or(0);
+                            let amount: i64 = val_str(&item["amount"]).parse().unwrap_or(0);
+                            let balance = format_financial_value(&val_str(&item["balance"]), false);
                             vec![
                                 fmt_ts(&ts),
                                 format_with_commas(amount),
-                                val_str(&item["balance"]),
+                                balance,
                                 val_str(&item["cost"]),
                                 rate,
                             ]
@@ -2965,7 +2967,7 @@ pub async fn cmd_short_positions(
                     let headers = [
                         "date",
                         "short_shares",
-                        "balance",
+                        "balance(HKD)",
                         "total_vol",
                         "rate%",
                         "close",
@@ -2978,12 +2980,13 @@ pub async fn cmd_short_positions(
                                 |_| val_str(&item["rate"]),
                                 |v| format!("{:.2}%", v * 100.0),
                             );
-                            let amount: i64 = item["amount"].as_i64().unwrap_or(0);
-                            let total: i64 = item["total_amount"].as_i64().unwrap_or(0);
+                            let amount: i64 = val_str(&item["amount"]).parse().unwrap_or(0);
+                            let total: i64 = val_str(&item["total_amount"]).parse().unwrap_or(0);
+                            let balance = format_financial_value(&val_str(&item["balance"]), false);
                             vec![
                                 fmt_ts(&ts),
                                 format_with_commas(amount),
-                                val_str(&item["balance"]),
+                                balance,
                                 format_with_commas(total),
                                 rate,
                                 val_str(&item["close"]),

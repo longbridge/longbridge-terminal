@@ -8,7 +8,7 @@ use super::OutputFormat;
 
 use crate::utils::counter::{counter_id_to_symbol, symbol_to_counter_id};
 use crate::utils::datetime::format_date;
-use crate::utils::number::{format_financial_value, format_volume};
+use crate::utils::number::format_financial_value;
 use crate::utils::text::strip_html;
 
 async fn http_get(path: &str, params: &[(&str, &str)], verbose: bool) -> Result<Value> {
@@ -951,8 +951,12 @@ fn print_shareholders(data: &Value, limit: usize) {
                     if f == 0.0 {
                         return "-".to_string();
                     }
-                    let sign = if f > 0.0 { "+" } else { "-" };
-                    format!("{sign}{}", format_volume(f.abs() as u64))
+                    let formatted = format_financial_value(&f.to_string(), false);
+                    if f > 0.0 {
+                        format!("+{formatted}")
+                    } else {
+                        formatted
+                    }
                 })
                 .unwrap_or(chg_raw);
 
@@ -1013,9 +1017,9 @@ pub async fn cmd_shareholders_top(
                 let mut deduped: Vec<&Value> = Vec::new();
                 for h in raw_holders {
                     let oid = val_str(&h["object_id"]);
-                    let date = val_str(&h["filing_date"]);
+                    let filing_date = val_str(&h["filing_date"]);
                     if let Some(&idx) = seen.get(&oid) {
-                        if date > val_str(&deduped[idx]["filing_date"]) {
+                        if filing_date > val_str(&deduped[idx]["filing_date"]) {
                             deduped[idx] = h;
                         }
                     } else {
@@ -1048,11 +1052,7 @@ pub async fn cmd_shareholders_top(
                 let rows: Vec<Vec<String>> = holders
                     .iter()
                     .map(|h| {
-                        let shares_raw = val_str(&h["shares_held"]);
-                        let shares = shares_raw
-                            .parse::<f64>()
-                            .map(|f| format_volume(f as u64))
-                            .unwrap_or(shares_raw);
+                        let shares = format_financial_value(&val_str(&h["shares_held"]), false);
                         let changed_raw = val_str(&h["shares_changed"]);
                         let changed = changed_raw.parse::<f64>().map_or_else(
                             |_| changed_raw,
@@ -1060,8 +1060,12 @@ pub async fn cmd_shareholders_top(
                                 if f == 0.0 {
                                     return "-".to_string();
                                 }
-                                let sign = if f > 0.0 { "+" } else { "-" };
-                                format!("{sign}{}", format_volume(f.abs() as u64))
+                                let formatted = format_financial_value(&f.to_string(), false);
+                                if f > 0.0 {
+                                    format!("+{formatted}")
+                                } else {
+                                    formatted
+                                }
                             },
                         );
                         let pct = val_str(&h["percent_shares_held"]);
@@ -1127,7 +1131,7 @@ pub async fn cmd_shareholder_detail(
                                         if f == 0.0 {
                                             "-".to_string()
                                         } else {
-                                            format_volume(f as u64)
+                                            format_financial_value(&f.to_string(), false)
                                         }
                                     })
                                     .unwrap_or(raw)
