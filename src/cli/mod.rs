@@ -3495,7 +3495,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             quote::cmd_rank(key.clone(), market.as_str(), count, format, verbose).await
         }
         Commands::TopMovers { market, sort, count } => {
-            quote::cmd_stock_events(market, sort.as_api_value(), count, format, verbose).await
+            quote::cmd_top_movers(market, sort.as_api_value(), count, format, verbose).await
         }
         Commands::Screener { cmd } => match cmd {
             ScreenerCmd::Strategies { mine, all, id } => {

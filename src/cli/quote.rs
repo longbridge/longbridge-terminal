@@ -3001,7 +3001,7 @@ pub async fn cmd_short_positions(
     Ok(())
 }
 
-pub async fn cmd_stock_events(
+pub async fn cmd_top_movers(
     market: Option<String>,
     sort: u8,
     count: u32,
@@ -3038,7 +3038,11 @@ pub async fn cmd_stock_events(
                     let ts = val_str(&e["timestamp"]);
                     let code = val_str(&stock["code"]);
                     let mkt = val_str(&stock["market"]);
-                    let chg = val_str(&stock["change"]);
+                    let chg_raw = val_str(&stock["change"]);
+                    let chg = chg_raw
+                        .parse::<f64>()
+                        .map(|f| format!("{f:+.2}%"))
+                        .unwrap_or(chg_raw);
                     let reason = val_str(&e["alert_reason"]);
                     let tags = stock["labels"]
                         .as_array()
