@@ -58,8 +58,10 @@ curl -Lo "$tmp_dir/$bin_name.tar.gz" $download_url
 tar zxf "$tmp_dir/$bin_name.tar.gz" -C "$tmp_dir"
 
 if test $(id -u) -eq 0; then
+  mkdir -p /usr/local/bin
   mv "$tmp_dir/$bin_name" /usr/local/bin/$bin_name
 else
+  sudo mkdir -p /usr/local/bin
   sudo mv "$tmp_dir/$bin_name" /usr/local/bin/$bin_name
 fi
 echo "Longbridge CLI $version has installed successfully."
