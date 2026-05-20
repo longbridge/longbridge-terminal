@@ -324,15 +324,22 @@ pub enum Commands {
         cmd: TradingCmd,
     },
 
-    /// List of US overnight-eligible securities
+    /// List of overnight-eligible securities by market
     ///
-    /// Returns securities that can be traded in the US overnight session.
-    /// Only the US market is supported (Longbridge API limitation).
+    /// Returns securities that can be traded in the overnight session for the given market.
+    /// Supported markets: US, HK, CN, SG
     /// Example: longbridge security-list US
+    /// Example: longbridge security-list HK --page 2 --count 50
     SecurityList {
-        /// Market: only US is supported (overnight category)
+        /// Market: US, HK, CN, SG
         #[arg(default_value = "US")]
         market: String,
+        /// Page number (1-based)
+        #[arg(long, default_value = "1")]
+        page: usize,
+        /// Records per page
+        #[arg(long, alias = "limit", default_value = "50")]
+        count: usize,
         /// NOTE: currently unused — the SDK only exposes the Overnight category.
         #[arg(long, default_value = "main", hide = true)]
         category: String,
@@ -2784,9 +2791,12 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 quote::cmd_trading_days(&market, start, end, format).await
             }
         },
-        Commands::SecurityList { market, category } => {
-            quote::cmd_security_list(&market, &category, format).await
-        }
+        Commands::SecurityList {
+            market,
+            page,
+            count,
+            category,
+        } => quote::cmd_security_list(&market, &category, page, count, format).await,
         Commands::Participants => quote::cmd_participants(format).await,
         Commands::Subscriptions => quote::cmd_subscriptions(format).await,
         Commands::Option { cmd } => match cmd {
@@ -3733,6 +3743,12 @@ mod tests {
         let cli = parse(&["longbridge", "security-list", "US"]).unwrap();
         if let Some(Commands::SecurityList { market, .. }) = cli.command {
             assert_eq!(market, "US");
+        } else {
+            panic!("expected SecurityList command");
+        }
+        let cli = parse(&["longbridge", "security-list", "HK"]).unwrap();
+        if let Some(Commands::SecurityList { market, .. }) = cli.command {
+            assert_eq!(market, "HK");
         } else {
             panic!("expected SecurityList command");
         }
