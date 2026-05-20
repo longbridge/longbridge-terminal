@@ -211,9 +211,15 @@ async fn print_screener_results(
     verbose: bool,
 ) -> Result<()> {
     let sort_key = sort.map(normalize_key);
+    let mut effective_returns = returns.to_vec();
+    if let Some(ref k) = sort_key {
+        if !effective_returns.contains(k) {
+            effective_returns.push(k.clone());
+        }
+    }
     let sort_by = sort_key
         .as_deref()
-        .and_then(|k| returns.iter().position(|r| r == k))
+        .and_then(|k| effective_returns.iter().position(|r| r == k))
         .unwrap_or(0);
     let sort_order: u8 = u8::from(order != "asc");
     let body = serde_json::json!({
@@ -221,7 +227,7 @@ async fn print_screener_results(
         "page": 1,
         "size": count,
         "filters": filters,
-        "returns": returns,
+        "returns": effective_returns,
         "sort_by": sort_by,
         "sort_order": sort_order,
         "industries": [],
@@ -256,7 +262,7 @@ async fn print_screener_results(
             };
             let mut headers = vec!["Symbol".to_string(), "Name".to_string()];
             headers.extend(
-                returns
+                effective_returns
                     .iter()
                     .map(|k| k.replace("filter_", "").to_uppercase()),
             );
@@ -270,6 +276,9 @@ async fn print_screener_results(
                     if let Some(indicators) = s["indicators"].as_array() {
                         row.extend(indicators.iter().map(|ind| {
                             let v = val_str(&ind["value"]);
+                            if v.is_empty() || v == "-" {
+                                return "-".to_string();
+                            }
                             let unit = val_str(&ind["unit"]);
                             let (display_v, display_unit) = match unit.as_str() {
                                 "亿" => (
