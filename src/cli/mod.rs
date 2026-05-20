@@ -798,6 +798,12 @@ pub enum Commands {
         /// Sort order: desc | asc
         #[arg(long, default_value = "desc")]
         order: String,
+        /// Max number of institutions to show (default mode)
+        #[arg(long, default_value = "20")]
+        count: u32,
+        /// Number of reporting periods to show with --top (default: 1 = Latest only)
+        #[arg(long, default_value = "1")]
+        periods: u32,
     },
 
     // ── Pending Commands ──────────────────────────────────────────────────────
@@ -3366,13 +3372,16 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             range,
             sort,
             order,
+            count,
+            periods,
         } => {
             if top {
-                fundamental::cmd_shareholders_top(symbol, format, verbose).await
+                fundamental::cmd_shareholders_top(symbol, periods, format, verbose).await
             } else if let Some(oid) = object_id {
                 fundamental::cmd_shareholder_detail(symbol, oid, format, verbose).await
             } else {
-                fundamental::cmd_shareholders(symbol, range, sort, order, format, verbose).await
+                fundamental::cmd_shareholders(symbol, range, sort, order, count, format, verbose)
+                    .await
             }
         }
         Commands::FundHolder { symbol, count } => {

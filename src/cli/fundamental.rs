@@ -8,7 +8,7 @@ use super::OutputFormat;
 
 use crate::utils::counter::{counter_id_to_symbol, symbol_to_counter_id};
 use crate::utils::datetime::format_date;
-use crate::utils::number::format_financial_value;
+use crate::utils::number::{format_financial_value, format_volume};
 use crate::utils::text::strip_html;
 
 async fn http_get(path: &str, params: &[(&str, &str)], verbose: bool) -> Result<Value> {
@@ -942,8 +942,11 @@ fn print_shareholders(data: &Value) {
             let chg = chg_raw
                 .parse::<f64>()
                 .map(|f| {
-                    let sign = if f > 0.0 { "+" } else { "" };
-                    format!("{sign}{}", format_financial_value(&f.to_string(), false))
+                    if f == 0.0 {
+                        return "-".to_string();
+                    }
+                    let sign = if f > 0.0 { "+" } else { "-" };
+                    format!("{sign}{}", format_volume(f.abs() as u64))
                 })
                 .unwrap_or(chg_raw);
 
@@ -962,6 +965,7 @@ fn print_shareholders(data: &Value) {
 /// Fetch institutional shareholders for a symbol.
 pub async fn cmd_shareholders_top(
     symbol: String,
+    periods: u32,
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
@@ -982,42 +986,85 @@ pub async fn cmd_shareholders_top(
                     return Ok(());
                 }
             };
-            for period_entry in info {
+            let display_count = periods as usize;
+            // The first entry is an aggregate snapshot ("Latest") that duplicates the most
+            // recent quarter. Show only it when periods==1; skip it when showing multiple.
+            let iter: Box<dyn Iterator<Item = &Value>> = if periods == 1 {
+                Box::new(info.iter().take(1))
+            } else {
+                Box::new(info.iter().skip(1).take(display_count))
+            };
+            for period_entry in iter {
                 let period = val_str(&period_entry["period"]);
                 println!("{symbol} — Period: {period}\n");
-                let holders = match period_entry["share_holders"].as_array() {
+                let raw_holders = match period_entry["share_holders"].as_array() {
                     Some(a) if !a.is_empty() => a,
                     _ => continue,
                 };
-                let headers = [
-                    "object_id",
-                    "name",
-                    "title",
-                    "shares_held",
-                    "percent%",
-                    "changed",
-                    "filing_date",
-                ];
+                // Deduplicate by object_id, keeping the entry with the latest filing_date.
+                let mut seen: std::collections::HashMap<String, usize> =
+                    std::collections::HashMap::new();
+                let mut deduped: Vec<&Value> = Vec::new();
+                for h in raw_holders {
+                    let oid = val_str(&h["object_id"]);
+                    let date = val_str(&h["filing_date"]);
+                    if let Some(&idx) = seen.get(&oid) {
+                        if date > val_str(&deduped[idx]["filing_date"]) {
+                            deduped[idx] = h;
+                        }
+                    } else {
+                        seen.insert(oid, deduped.len());
+                        deduped.push(h);
+                    }
+                }
+                let holders: &[&Value] = &deduped;
+                let has_title = holders.iter().any(|h| !val_str(&h["title"]).is_empty());
+                let headers: Vec<&str> = if has_title {
+                    vec![
+                        "object_id",
+                        "name",
+                        "title",
+                        "shares_held",
+                        "percent%",
+                        "changed",
+                        "filing_date",
+                    ]
+                } else {
+                    vec![
+                        "object_id",
+                        "name",
+                        "shares_held",
+                        "percent%",
+                        "changed",
+                        "filing_date",
+                    ]
+                };
                 let rows: Vec<Vec<String>> = holders
                     .iter()
                     .map(|h| {
-                        let shares: i64 = val_str(&h["shares_held"]).parse().unwrap_or(0);
-                        let changed: i64 = val_str(&h["shares_changed"]).parse().unwrap_or(0);
-                        let pct = val_str(&h["percent_shares_held"])
+                        let shares_raw = val_str(&h["shares_held"]);
+                        let shares = shares_raw
                             .parse::<f64>()
-                            .map_or_else(
-                                |_| val_str(&h["percent_shares_held"]),
-                                |v| format!("{v:.2}"),
-                            );
-                        vec![
-                            val_str(&h["object_id"]),
-                            val_str(&h["name"]),
-                            val_str(&h["title"]),
-                            shares.to_string(),
-                            pct,
-                            changed.to_string(),
-                            val_str(&h["filing_date"]),
-                        ]
+                            .map(|f| format_volume(f as u64))
+                            .unwrap_or(shares_raw);
+                        let changed_raw = val_str(&h["shares_changed"]);
+                        let changed = changed_raw.parse::<f64>().map_or_else(
+                            |_| changed_raw,
+                            |f| {
+                                if f == 0.0 {
+                                    return "-".to_string();
+                                }
+                                let sign = if f > 0.0 { "+" } else { "-" };
+                                format!("{sign}{}", format_volume(f.abs() as u64))
+                            },
+                        );
+                        let pct = val_str(&h["percent_shares_held"]);
+                        let mut row = vec![val_str(&h["object_id"]), val_str(&h["name"])];
+                        if has_title {
+                            row.push(val_str(&h["title"]));
+                        }
+                        row.extend([shares, pct, changed, val_str(&h["filing_date"])]);
+                        row
                     })
                     .collect();
                 super::output::print_table(&headers, rows, format);
@@ -1067,10 +1114,22 @@ pub async fn cmd_shareholder_detail(
                                     |_| val_str(&s["percent_stock_price_changed"]),
                                     |v| format!("{v:+.2}%"),
                                 );
+                            let fmt_vol = |key: &str| {
+                                let raw = val_str(&s[key]);
+                                raw.parse::<f64>()
+                                    .map(|f| {
+                                        if f == 0.0 {
+                                            "-".to_string()
+                                        } else {
+                                            format_volume(f as u64)
+                                        }
+                                    })
+                                    .unwrap_or(raw)
+                            };
                             vec![
                                 val_str(&s["period"]),
-                                val_str(&s["accum_buy"]),
-                                val_str(&s["accum_sell"]),
+                                fmt_vol("accum_buy"),
+                                fmt_vol("accum_sell"),
                                 val_str(&s["stock_price"]),
                                 pct,
                             ]
@@ -1127,10 +1186,12 @@ pub async fn cmd_shareholders(
     range: String,
     sort_field: String,
     sort_order: String,
+    count: u32,
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
+    let count_str = count.to_string();
     let data = http_get(
         "/v1/quote/shareholders",
         &[
@@ -1139,6 +1200,7 @@ pub async fn cmd_shareholders(
             ("range", range.as_str()),
             ("sort_field", sort_field.as_str()),
             ("sort_order", sort_order.as_str()),
+            ("count", count_str.as_str()),
         ],
         verbose,
     )
