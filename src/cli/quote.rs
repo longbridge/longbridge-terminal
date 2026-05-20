@@ -85,7 +85,7 @@ fn change_val(last: rust_decimal::Decimal, prev_close: rust_decimal::Decimal) ->
 fn pre_post_quote_to_json(q: &PrePostQuote) -> serde_json::Value {
     serde_json::json!({
         "last": q.last_done.to_string(),
-        "timestamp": crate::utils::datetime::format_datetime(q.timestamp),
+        "timestamp": crate::utils::datetime::fmt_rfc3339(q.timestamp),
         "high": q.high.to_string(),
         "low": q.low.to_string(),
         "volume": q.volume,
@@ -325,7 +325,7 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
                                     fmt_dec(pmq.low),
                                     pmq.volume.to_string(),
                                     fmt_dec(pmq.prev_close),
-                                    crate::utils::datetime::format_datetime(pmq.timestamp),
+                                    crate::utils::datetime::fmt_rfc3339(pmq.timestamp),
                                 ]
                             })
                         })
@@ -840,7 +840,7 @@ pub async fn cmd_capital_dist(symbol: String, format: &OutputFormat) -> Result<(
         OutputFormat::Json => {
             let val = serde_json::json!({
                 "symbol": symbol,
-                "timestamp": crate::utils::datetime::format_datetime(dist.timestamp),
+                "timestamp": crate::utils::datetime::fmt_rfc3339(dist.timestamp),
                 "capital_in": {
                     "large": dist.capital_in.large.to_string(),
                     "medium": dist.capital_in.medium.to_string(),
@@ -1025,27 +1025,61 @@ pub async fn cmd_trading_days(
     Ok(())
 }
 
-pub async fn cmd_security_list(market: &str, category: &str, format: &OutputFormat) -> Result<()> {
-    if !matches!(market.to_uppercase().as_str(), "US") {
-        bail!("Only US market is supported for security-list (Longbridge API only exposes the Overnight category)");
+pub async fn cmd_security_list(
+    market: &str,
+    category: &str,
+    page: usize,
+    count: usize,
+    format: &OutputFormat,
+) -> Result<()> {
+    if page == 0 {
+        bail!("Page number must be >= 1");
     }
     let ctx = crate::openapi::quote();
     let m = parse_market(market)?;
     let cat = parse_security_list_category(category);
     let securities = ctx.security_list(m, cat).await?;
+    let total = securities.len();
 
-    let headers = &["Symbol", "Name"];
-    let rows = securities
-        .iter()
-        .map(|s| {
-            vec![
-                s.symbol.clone(),
-                locale_name(&s.name_en, &s.name_cn).to_owned(),
-            ]
-        })
-        .collect();
+    let start = (page - 1) * count;
+    if start >= total && total > 0 {
+        bail!(
+            "Page {page} out of range — total {total} records, {} per page",
+            count
+        );
+    }
 
-    print_table(headers, rows, format);
+    let page_items: Vec<_> = securities.iter().skip(start).take(count).collect();
+
+    match format {
+        OutputFormat::Json => {
+            let records: Vec<serde_json::Value> = page_items
+                .iter()
+                .map(|s| {
+                    serde_json::json!({
+                        "symbol": s.symbol,
+                        "name_en": s.name_en,
+                        "name_cn": s.name_cn,
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&records)?);
+        }
+        _ => {
+            let headers = &["Symbol", "Name"];
+            let rows = page_items
+                .iter()
+                .map(|s| {
+                    vec![
+                        s.symbol.clone(),
+                        locale_name(&s.name_en, &s.name_cn).to_owned(),
+                    ]
+                })
+                .collect();
+            print_table(headers, rows, format);
+            eprintln!("Page {page} of {} ({total} total)", total.div_ceil(count),);
+        }
+    }
     Ok(())
 }
 
@@ -1116,7 +1150,7 @@ pub async fn cmd_option_quote(symbols: Vec<String>, format: &OutputFormat) -> Re
                         "open": q.open.to_string(),
                         "high": q.high.to_string(),
                         "low": q.low.to_string(),
-                        "timestamp": crate::utils::datetime::format_datetime(q.timestamp),
+                        "timestamp": crate::utils::datetime::fmt_rfc3339(q.timestamp),
                         "volume": q.volume,
                         "turnover": q.turnover.to_string(),
                         "trade_status": format!("{:?}", q.trade_status),
@@ -2115,12 +2149,11 @@ fn print_json(data: &Value) {
 }
 
 /// Convert index symbol to IX/ prefix `counter_id` (e.g. `HSI.HK` → `IX/HK/HSI`,
-/// `.DJI.US` → `IX/US/DJI`).
+/// `.DJI.US` → `IX/US/.DJI`).
 fn index_symbol_to_counter_id(symbol: &str) -> String {
     if let Some((code, market)) = symbol.rsplit_once('.') {
         let market = market.to_uppercase();
-        // Strip leading dot from code (e.g. `.DJI.US` → code part is `.DJI`, strip to `DJI`)
-        let code = code.trim_start_matches('.');
+        // Preserve the leading dot — US index counter_ids include it (e.g. `.DJI.US` → `IX/US/.DJI`)
         format!("IX/{market}/{code}")
     } else {
         symbol.to_string()
@@ -2189,21 +2222,12 @@ pub async fn cmd_history_intraday(
 pub async fn cmd_constituent(
     symbol: String,
     limit: i32,
-    sort: &str,
-    order: &str,
+    sort: &crate::cli::ConstituentSort,
+    order: &crate::cli::ConstituentOrder,
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
     let cid = index_symbol_to_counter_id(&symbol);
-    let indicator = match sort {
-        "price" => "2",
-        "turnover" => "3",
-        "inflow" => "4",
-        "turnover_rate" => "5",
-        "market_cap" => "6",
-        _ => "1", // change% default
-    };
-    let order_val = if order == "asc" { "1" } else { "0" };
     let limit_str = limit.to_string();
     let data = http_get(
         "/v1/quote/index-constituents",
@@ -2211,8 +2235,8 @@ pub async fn cmd_constituent(
             ("counter_id", cid.as_str()),
             ("offset", "0"),
             ("limit", limit_str.as_str()),
-            ("indicator", indicator),
-            ("order", order_val),
+            ("indicator", sort.as_indicator()),
+            ("order", order.as_indicator()),
         ],
         verbose,
     )

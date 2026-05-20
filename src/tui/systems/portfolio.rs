@@ -333,6 +333,8 @@ pub fn render_portfolio(
                     t!("Holding.Price"),
                     t!("Holding.Cost Price"),
                     t!("Holding.Market Value"),
+                    t!("Holding.Intraday P/L"),
+                    t!("Holding.Intraday P/L%"),
                     t!("Holding.P/L"),
                     t!("Holding.P/L%"),
                 ])
@@ -361,6 +363,23 @@ pub fn render_portfolio(
 
                         let pl_style = styles::up(profit_loss.cmp(&Decimal::ZERO));
 
+                        // Calculate today's P/L from prev_close
+                        let (today_pl, today_pl_percent) = if let Some(prev_close) =
+                            holding.prev_close
+                        {
+                            if prev_close > Decimal::ZERO {
+                                let tpl = (holding.market_price - prev_close) * holding.quantity;
+                                let tpl_pct = (holding.market_price - prev_close) / prev_close
+                                    * Decimal::from(100);
+                                (tpl, tpl_pct)
+                            } else {
+                                (Decimal::ZERO, Decimal::ZERO)
+                            }
+                        } else {
+                            (Decimal::ZERO, Decimal::ZERO)
+                        };
+                        let today_pl_style = styles::up(today_pl.cmp(&Decimal::ZERO));
+
                         // Get currency string
                         let currency_str = match holding.currency {
                             crate::data::Currency::HKD => "HKD",
@@ -387,6 +406,8 @@ pub fn render_portfolio(
                                     .map_or("-".to_string(), |p| format!("{p:.2} {currency_str}")),
                             ),
                             Cell::from(format!("{:.2} {}", holding.market_value, currency_str)),
+                            Cell::from(format!("{today_pl:+.2}")).style(today_pl_style),
+                            Cell::from(format!("{today_pl_percent:+.2}%")).style(today_pl_style),
                             Cell::from(format!("{profit_loss:+.2}")).style(pl_style),
                             Cell::from(format!("{profit_loss_percent:+.2}%")).style(pl_style),
                         ])
@@ -396,14 +417,16 @@ pub fn render_portfolio(
                 let table = Table::new(
                     rows,
                     [
-                        Constraint::Percentage(10), // Code
-                        Constraint::Percentage(10), // Name
-                        Constraint::Percentage(8),  // Quantity
-                        Constraint::Percentage(14), // Price (with currency)
-                        Constraint::Percentage(14), // Cost Price (with currency)
-                        Constraint::Percentage(16), // Market Value (with currency)
-                        Constraint::Percentage(10), // P/L
-                        Constraint::Percentage(10), // P/L%
+                        Constraint::Percentage(9),  // Code
+                        Constraint::Percentage(9),  // Name
+                        Constraint::Percentage(7),  // Quantity
+                        Constraint::Percentage(12), // Price (with currency)
+                        Constraint::Percentage(12), // Cost Price (with currency)
+                        Constraint::Percentage(13), // Market Value (with currency)
+                        Constraint::Percentage(10), // Today P/L
+                        Constraint::Percentage(10), // Today P/L%
+                        Constraint::Percentage(9),  // P/L
+                        Constraint::Percentage(9),  // P/L%
                     ],
                 )
                 .header(header)

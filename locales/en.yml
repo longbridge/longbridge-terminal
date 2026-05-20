@@ -143,13 +143,13 @@ Holding.Cost Price: Cost
 Holding.Hold Ratio: Owned%
 Holding.Holding: "Holding"
 Holding.Intraday P/L: Intraday
-Holding.Intraday P/L%: Intraday P/L%
-Holding.Market Value: Mkt value
+Holding.Intraday P/L%: Intra%
+Holding.Market Value: Mkt Val
 Holding.Name: Name
 Holding.P/L: Floating
-Holding.P/L%: Floating P/L%
+Holding.P/L%: Float%
 Holding.Price: Price
-Holding.Quantity: Quantity
+Holding.Quantity: Qty
 StockDepth:
   Bid: "Bid"
   Ask: "Ask"

@@ -760,7 +760,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "cli-candlestick-chart"
-version = "0.20.1"
+version = "0.21.0"
 dependencies = [
  "ansi-parser 0.8.0",
  "clap 2.34.0",
@@ -2619,7 +2619,7 @@ dependencies = [
 
 [[package]]
 name = "longbridge-terminal"
-version = "0.20.1"
+version = "0.21.0"
 dependencies = [
  "ansi-parser 0.9.1",
  "ansi-to-tui",
@@ -2649,6 +2649,8 @@ dependencies = [
  "once_cell",
  "open",
  "percent-encoding",
+ "phf",
+ "phf_codegen",
  "prost 0.12.6",
  "qrcode",
  "ratatui",
@@ -4342,7 +4344,7 @@ checksum = "1c107b6f4780854c8b126e228ea8869f4d7b71260f962fefb57b996b8959ba6b"
 
 [[package]]
 name = "sec2md"
-version = "0.20.1"
+version = "0.21.0"
 dependencies = [
  "scraper",
 ]
@@ -5128,9 +5130,7 @@ dependencies = [
  "bytes",
  "libc",
  "mio 1.1.1",
- "parking_lot",
  "pin-project-lite",
- "signal-hook-registry",
  "socket2 0.6.2",
  "tokio-macros",
  "windows-sys 0.61.2",

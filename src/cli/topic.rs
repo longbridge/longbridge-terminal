@@ -6,7 +6,7 @@ use longbridge::content::{
 use regex::Regex;
 
 use super::{output::print_table, OutputFormat};
-use crate::utils::datetime::format_datetime;
+use crate::utils::datetime::fmt_rfc3339;
 
 /// Format topic content by replacing `[st]ST/MARKET/SYMBOL#...[/st]` tags with ticker symbols like `TSLA.US`.
 pub fn format_topic_contents(text: &str) -> String {
@@ -103,7 +103,7 @@ pub async fn cmd_topics_mine(
                 item.id.clone(),
                 display,
                 item.topic_type.clone(),
-                format_datetime(item.created_at),
+                fmt_rfc3339(item.created_at),
                 item.likes_count.to_string(),
                 item.comments_count.to_string(),
                 item.views_count.to_string(),
@@ -158,7 +158,7 @@ pub async fn cmd_topic_detail_api(id: String, format: &OutputFormat) -> Result<(
         "Stats:    {} likes  {} comments  {} views",
         item.likes_count, item.comments_count, item.views_count
     );
-    println!("Created:  {}", format_datetime(item.created_at));
+    println!("Created:  {}", fmt_rfc3339(item.created_at));
     println!("URL:      {}", item.detail_url);
     let content = if item.topic_type == "post" {
         item.description.clone()
@@ -215,7 +215,7 @@ pub async fn cmd_topic_replies(
             "Stats:   {} likes  {} replies",
             item.likes_count, item.comments_count
         );
-        println!("Created: {}", format_datetime(item.created_at));
+        println!("Created: {}", fmt_rfc3339(item.created_at));
         let body = format_topic_contents(&item.body);
         if !body.is_empty() {
             println!("\n{body}");

@@ -12,13 +12,13 @@ pub fn format_date(ts: i64) -> String {
 /// Falls back to the original string if parsing fails.
 pub fn format_timestamp(ts: i64) -> String {
     match OffsetDateTime::from_unix_timestamp(ts) {
-        Ok(dt) => format_datetime(dt),
+        Ok(dt) => fmt_rfc3339(dt),
         Err(_) => ts.to_string(),
     }
 }
 
 /// Format an `OffsetDateTime` as RFC 3339 (e.g. `"2024-01-15T07:50:00Z"`).
-pub fn format_datetime(dt: OffsetDateTime) -> String {
+pub fn fmt_rfc3339(dt: OffsetDateTime) -> String {
     dt.format(&time::format_description::well_known::Rfc3339)
         .unwrap_or_default()
 }
@@ -30,12 +30,12 @@ mod tests {
     #[test]
     fn unix_epoch() {
         let dt = OffsetDateTime::from_unix_timestamp(0).unwrap();
-        assert_eq!(format_datetime(dt), "1970-01-01T00:00:00Z");
+        assert_eq!(fmt_rfc3339(dt), "1970-01-01T00:00:00Z");
     }
 
     #[test]
     fn realistic_timestamp() {
         let dt = OffsetDateTime::from_unix_timestamp(1_705_305_000).unwrap();
-        assert_eq!(format_datetime(dt), "2024-01-15T07:50:00Z");
+        assert_eq!(fmt_rfc3339(dt), "2024-01-15T07:50:00Z");
     }
 }

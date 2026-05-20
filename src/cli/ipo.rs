@@ -32,7 +32,61 @@ fn fmt_ts(v: &Value) -> String {
     ts.map_or_else(|| val_str(v), crate::utils::datetime::format_timestamp)
 }
 
+/// Parse a datetime string in `"YYYY.MM.DD HH:MM"` or `"YYYY-MM-DD HH:MM"` format
+/// (HKT = UTC+8) and return an RFC 3339 string. Falls back to the original string.
+fn fmt_datetime_hkt(v: &Value) -> String {
+    use time::{Date, Month, OffsetDateTime, Time, UtcOffset};
+
+    // Try Unix timestamp first.
+    let ts = match v {
+        Value::Number(n) => n.as_i64(),
+        Value::String(s) => s.parse::<i64>().ok(),
+        _ => None,
+    };
+    if let Some(ts) = ts {
+        return crate::utils::datetime::format_timestamp(ts);
+    }
+
+    let s = val_str(v);
+    // Accept "YYYY.MM.DD HH:MM" or "YYYY-MM-DD HH:MM"
+    let s = s.replace('.', "-");
+    let parts: Vec<&str> = s.splitn(2, ' ').collect();
+    if parts.len() == 2 {
+        let date_parts: Vec<&str> = parts[0].splitn(3, '-').collect();
+        let time_parts: Vec<&str> = parts[1].splitn(2, ':').collect();
+        if date_parts.len() == 3 && time_parts.len() == 2 {
+            if let (Ok(y), Ok(m), Ok(d), Ok(h), Ok(min)) = (
+                date_parts[0].parse::<i32>(),
+                date_parts[1].parse::<u8>(),
+                date_parts[2].parse::<u8>(),
+                time_parts[0].parse::<u8>(),
+                time_parts[1].parse::<u8>(),
+            ) {
+                if let Ok(month) = Month::try_from(m) {
+                    if let (Ok(date), Ok(time)) = (
+                        Date::from_calendar_date(y, month, d),
+                        Time::from_hms(h, min, 0),
+                    ) {
+                        let hkt = UtcOffset::from_hms(8, 0, 0).unwrap_or(UtcOffset::UTC);
+                        let dt = OffsetDateTime::new_in_offset(date, time, hkt);
+                        return crate::utils::datetime::fmt_rfc3339(dt);
+                    }
+                }
+            }
+        }
+    }
+    val_str(v)
+}
+
 fn fmt_date_opt(v: &Value) -> String {
+    if let Value::String(s) = v {
+        if s.len() == 8 && s.chars().all(|c| c.is_ascii_digit()) {
+            return format!("{}-{}-{}", &s[..4], &s[4..6], &s[6..]);
+        }
+        if s.len() == 10 && s.as_bytes()[4] == b'-' && s.as_bytes()[7] == b'-' {
+            return s.clone();
+        }
+    }
     let ts = match v {
         Value::Number(n) => n.as_i64(),
         Value::String(s) => s.parse::<i64>().ok(),
@@ -41,14 +95,7 @@ fn fmt_date_opt(v: &Value) -> String {
     match ts {
         Some(n) if n > 0 => crate::utils::datetime::format_date(n),
         Some(_) => "-".to_string(),
-        None => {
-            let s = val_str(v);
-            if s.len() == 8 && s.chars().all(|c| c.is_ascii_digit()) {
-                format!("{}-{}-{}", &s[..4], &s[4..6], &s[6..])
-            } else {
-                s
-            }
-        }
+        None => val_str(v),
     }
 }
 
@@ -121,7 +168,6 @@ fn sub_state_label(v: &Value) -> &'static str {
 
 // Fields that are unix timestamps (numeric) and should be formatted as RFC 3339.
 const TS_FIELDS: &[&str] = &[
-    "ipo_date",
     "sub_date",
     "sub_end_date",
     "result_date",
@@ -347,7 +393,7 @@ pub async fn cmd_ipo_wait_listing(format: &OutputFormat, verbose: bool) -> Resul
             val_str(&item["name"]),
             counter_id_to_symbol(&val_str(&item["counter_id"])),
             val_str(&item["issue_price"]),
-            fmt_ts(&item["ipo_date"]),
+            fmt_date_opt(&item["ipo_date"]),
             state_stage_label(&item["state_stage"]).to_string(),
         ]
     };
@@ -598,8 +644,37 @@ pub async fn cmd_ipo_detail(
     verbose: bool,
 ) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
+    // Auto-detect market from symbol suffix (e.g. SUJA.US → US); fall back to --market arg.
+    let detected = symbol.rsplit_once('.').map(|(_, m)| m.to_uppercase());
+    let market = match detected.as_deref() {
+        Some("US") => "US",
+        Some("HK") => "HK",
+        _ => market,
+    };
     let account_channel = crate::auth::account_channel_or_default();
-    let profile_params = [("counter_id", cid.as_str())];
+    let profile_result =
+        http_get("/v1/ipo/profile", &[("counter_id", cid.as_str())], verbose).await;
+    let profile_key = if market == "US" { "us" } else { "hk" };
+    let profile_data = match profile_result {
+        Ok(v) => v,
+        Err(e) => {
+            // A business-level error from the OpenAPI layer (code != 0) means the
+            // stock has no IPO data; surface everything else as a real error.
+            if e.downcast_ref::<longbridge::httpclient::HttpClientError>()
+                .is_some_and(|he| {
+                    matches!(he, longbridge::httpclient::HttpClientError::OpenApi { .. })
+                })
+            {
+                println!("No IPO detail found for {symbol}.");
+                return Ok(());
+            }
+            return Err(e);
+        }
+    };
+    if profile_data[profile_key].is_null() {
+        println!("No IPO detail found for {symbol}.");
+        return Ok(());
+    }
     let timeline_params = [
         ("counter_id", cid.as_str()),
         ("market", market),
@@ -611,13 +686,11 @@ pub async fn cmd_ipo_detail(
         ("need_realtime", "true"),
         ("account_channel", account_channel.as_str()),
     ];
-    let (profile_data, timeline_data, eligibility_data, holdings_data) = tokio::join!(
-        http_get("/v1/ipo/profile", &profile_params, verbose),
+    let (timeline_data, eligibility_data, holdings_data) = tokio::join!(
         http_get("/v1/ipo/timeline", &timeline_params, verbose),
         http_get("/v1/ipo/eligibility", &eligibility_params, verbose),
         http_get("/v1/ipo/holdings", &holdings_params, verbose),
     );
-    let profile_data = profile_data?;
     let timeline_data = timeline_data?;
     let eligibility_data = eligibility_data?;
     let holdings_data = holdings_data?;
@@ -662,12 +735,8 @@ pub async fn cmd_ipo_detail(
                 .unwrap_or_default()
             };
 
-            let profile = if market == "US" {
-                &profile_data["us"]
-            } else {
-                &profile_data["hk"]
-            };
-            if !profile.is_null() {
+            let profile = &profile_data[profile_key];
+            {
                 let ipo_date = fmt_date_opt(&profile["ipo_date"]);
                 if ipo_date != "-" {
                     kv("IPO Date", &ipo_date);
@@ -774,12 +843,13 @@ pub async fn cmd_ipo_detail(
             // Eligibility + timeline meta
             let eligible = eligibility_data["can_subscribe"].as_bool();
             let can_sub = timeline_data["can_subscribe"].as_bool().unwrap_or(false);
-            let pay_end = val_str(&timeline_data["pay_end_date"]);
-            if eligible.is_some() || can_sub || (pay_end != "-" && !pay_end.is_empty()) {
+            let pay_end = fmt_datetime_hkt(&timeline_data["pay_end_date"]);
+            let pay_end_valid = pay_end != "-" && !pay_end.is_empty();
+            if eligible.is_some() || can_sub || pay_end_valid {
                 if let Some(e) = eligible {
                     kv("Can Subscribe", if e { "Yes" } else { "No" });
                 }
-                if pay_end != "-" && !pay_end.is_empty() {
+                if pay_end_valid {
                     kv("Payment Deadline", &pay_end);
                 }
                 println!();
@@ -811,7 +881,6 @@ pub async fn cmd_ipo_detail(
                     .iter()
                     .any(|v| *v != "-" && !v.is_empty() && *v != "0" && *v != "0.00");
                 if has_data {
-                    println!();
                     if max_purchase != "-" && !max_purchase.is_empty() && max_purchase != "0" {
                         kv("Max Purchase", &max_purchase);
                     }
@@ -1188,7 +1257,7 @@ pub async fn cmd_ipo_us_wait_listing(format: &OutputFormat, verbose: bool) -> Re
                             val_str(&item["name"]),
                             counter_id_to_symbol(&val_str(&item["counter_id"])),
                             val_str(&item["issue_price"]),
-                            fmt_ts(&item["ipo_date"]),
+                            fmt_date_opt(&item["ipo_date"]),
                             state_stage_label(&item["state_stage"]).to_string(),
                         ]
                     })

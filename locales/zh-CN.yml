@@ -143,13 +143,13 @@ Holding.Cost Price: 成本价
 Holding.Hold Ratio: 占比%
 Holding.Holding: "持仓列表"
 Holding.Intraday P/L: 当日盈亏
-Holding.Intraday P/L%: "当日盈亏率%"
-Holding.Market Value: 股票市值
+Holding.Intraday P/L%: 当日%
+Holding.Market Value: 市值
 Holding.Name: 名称
 Holding.P/L: 浮动盈亏
-Holding.P/L%: "浮动盈亏率%"
+Holding.P/L%: 浮动%
 Holding.Price: 最新价
-Holding.Quantity: 持仓数量
+Holding.Quantity: 持仓量
 StockDepth:
   Bid: "买盘"
   Ask: "卖盘"
