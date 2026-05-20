@@ -3055,7 +3055,25 @@ pub async fn cmd_compare(
             let mut name_row = vec!["Name".to_string()];
             name_row.extend(names);
             rows.push(name_row);
-            // Scalar metric rows — all available fields
+            let fmt_val = |key: &str, raw: String| -> String {
+                if raw == "-" || raw.is_empty() {
+                    return raw;
+                }
+                match key {
+                    "market_value" | "net_income" | "sales" | "assets" | "liabilities"
+                    | "volume" => format_financial_value(&raw, false),
+                    "div_yld" | "div_payout_ratio" => raw
+                        .parse::<f64>()
+                        .map(|f| format!("{:.2}%", f * 100.0))
+                        .unwrap_or(raw),
+                    "roe" | "roa" | "net_margin" | "liabilities_assets" | "turnover" => raw
+                        .parse::<f64>()
+                        .map(|f| format!("{f:.2}%"))
+                        .unwrap_or(raw),
+                    _ => raw.parse::<f64>().map(|f| format!("{f:.2}")).unwrap_or(raw),
+                }
+            };
+            // Scalar metric rows
             for (label, key) in &[
                 ("Close", "price_close"),
                 ("Market Cap", "market_value"),
@@ -3080,7 +3098,7 @@ pub async fn cmd_compare(
                 ("Leverage", "leverage"),
             ] {
                 let mut row = vec![label.to_string()];
-                row.extend(list.iter().map(|s| val_str(&s[*key])));
+                row.extend(list.iter().map(|s| fmt_val(key, val_str(&s[*key]))));
                 rows.push(row);
             }
             // PB/PS from history (latest entry)
@@ -3090,7 +3108,7 @@ pub async fn cmd_compare(
                     let v = stock["history"]
                         .as_array()
                         .and_then(|h| h.last())
-                        .map_or_else(|| "-".to_string(), |e| val_str(&e[key]));
+                        .map_or_else(|| "-".to_string(), |e| fmt_val(key, val_str(&e[key])));
                     row.push(v);
                 }
                 rows.push(row);

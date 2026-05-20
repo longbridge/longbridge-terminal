@@ -249,12 +249,19 @@ async fn print_screener_results(
                                         }
                                     })
                                     .unwrap_or((v, unit)),
-                                _ => (v, unit),
+                                "%" => (
+                                    v.parse::<f64>().map(|f| format!("{f:.2}")).unwrap_or(v),
+                                    "%".to_string(),
+                                ),
+                                _ => (
+                                    v.parse::<f64>().map(|f| format!("{f:.2}")).unwrap_or(v),
+                                    unit,
+                                ),
                             };
                             if display_unit.is_empty() || display_unit == "-" {
                                 display_v
                             } else {
-                                format!("{display_v} {display_unit}")
+                                format!("{display_v}{display_unit}")
                             }
                         }));
                     }
