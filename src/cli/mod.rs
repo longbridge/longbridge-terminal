@@ -985,22 +985,19 @@ pub enum Commands {
         count: u32,
     },
 
-    /// Strategy screener — browse strategies, execute stock filters, view indicator config
+    /// Strategy screener — browse strategies, run filters, view indicator config
     ///
-    /// Two workflows:
+    /// Workflow A — run a saved strategy:
+    ///   1. `screener strategies` to list recommended strategies and note the ID
+    ///   2. `screener run <ID>` to execute it
     ///
-    /// Workflow A — use a saved strategy:
-    ///   1. `screener strategies` to list recommended strategies and get an ID
-    ///   2. `screener search --strategy-id <ID>` to run the strategy
-    ///
-    /// Workflow B — custom filter using indicator conditions:
-    ///   1. `screener indicators` to discover available indicator keys and value ranges
-    ///   2. `screener search --market HK --filter filter_marketcap:100:1000 --filter filter_divyld:3:`
+    /// Workflow B — custom filter:
+    ///   1. `screener indicators` to discover available keys and value ranges
+    ///   2. `screener filter KEY:MIN:MAX ... --market HK`
     ///
     /// Example: longbridge screener strategies
-    /// Example: longbridge screener strategies --mine
-    /// Example: longbridge screener search --strategy-id 42
-    /// Example: `longbridge screener search --market HK --filter filter_marketcap:100:1000 --filter filter_divyld:3:`
+    /// Example: longbridge screener run 42
+    /// Example: longbridge screener filter pettm:10:50 roe:5: --market HK
     /// Example: longbridge screener indicators
     Screener {
         #[command(subcommand)]
@@ -1718,31 +1715,32 @@ pub enum ScreenerCmd {
         all: bool,
     },
 
-    /// Find stocks matching a strategy or custom indicator conditions
+    /// Run a saved strategy by its ID (from `screener strategies` output)
     ///
-    /// Mode A — strategy: pass --strategy-id from `screener strategies` output.
-    ///   The strategy's pre-configured market and conditions are applied automatically.
-    ///   --market is ignored in Mode A — the strategy's built-in market takes precedence.
+    /// The strategy's built-in market and filter conditions are applied automatically.
     ///
-    /// Mode B — custom: use --filter key:min:max (repeatable) to specify conditions.
-    ///   Run `screener indicators` first to discover available keys, units, and ranges.
-    ///   Either bound can be empty: `filter_roe:10:` means ROE >= 10,
-    ///   `filter_pettm::50` means P/E <= 50. Units follow what `screener indicators` shows.
-    ///   --market is required in Mode B (default: US).
+    /// Example: longbridge screener run 42
+    Run {
+        /// Strategy ID from `screener strategies` output
+        id: i64,
+        /// Number of results (default: 20)
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: u32,
+    },
+
+    /// Filter stocks with custom indicator conditions
     ///
-    /// Example: longbridge screener search --strategy-id 42
-    /// Example: `longbridge screener search --market HK --filter filter_marketcap:100:1000 --filter filter_divyld:3:`
-    Search {
-        /// Strategy ID from `screener strategies` output (Mode A)
-        #[arg(long)]
-        strategy_id: Option<i64>,
-        /// Filter condition: key:min:max (repeatable, Mode B).
-        /// Run `screener indicators` to get valid keys, units, and value ranges.
-        /// Omit either bound to leave it unbounded: `filter_roe:10:` (>= 10), `filter_pettm::50` (<= 50).
-        #[arg(long = "filter", value_name = "KEY:MIN:MAX")]
-        filters: Vec<String>,
-        /// Market to search in: US | HK | CN (default: US). Mode B only —
-        /// in Mode A the strategy's built-in market overrides this value.
+    /// Each condition is KEY:MIN:MAX. Omit either bound to leave it open:
+    ///   `pettm:10:` means P/E >= 10, `pettm::50` means P/E <= 50.
+    /// Run `screener indicators` to discover available keys and value ranges.
+    ///
+    /// Example: longbridge screener filter pettm:10:50 roe:5: --market HK
+    /// Example: longbridge screener filter marketcap:100: divyld:3: --market US
+    Filter {
+        /// Filter conditions in KEY:MIN:MAX format
+        #[arg(value_name = "KEY:MIN:MAX")]
+        conditions: Vec<String>,
+        /// Market: US | HK | CN (default: US)
         #[arg(long, default_value = "US")]
         market: String,
         /// Number of results (default: 20)
@@ -1750,15 +1748,15 @@ pub enum ScreenerCmd {
         count: u32,
     },
 
-    /// List all available filter indicators with IDs, keys, and value ranges
+    /// List all available filter indicators with keys and value ranges
     ///
-    /// Use indicator IDs and keys to build custom conditions for `screener search`.
-    /// Each indicator shows: id, key (e.g. `filter_pettm`), name, unit,
-    /// default value range (min/max), and recommended range options.
+    /// Use keys to build conditions for `screener filter` (without the `filter_` prefix).
     ///
     /// Example: longbridge screener indicators
+    /// Example: longbridge screener indicators --symbol AAPL.US
     Indicators {
-        /// Optional symbol — filter to indicators relevant for that symbol
+        /// Filter to indicators relevant for this symbol
+        #[arg(long)]
         symbol: Option<String>,
     },
 }
@@ -3496,8 +3494,11 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             ScreenerCmd::Strategies { mine, all } => {
                 screener::cmd_screener_strategies(mine, all, format, verbose).await
             }
-            ScreenerCmd::Search { strategy_id, filters, market, count } => {
-                screener::cmd_screener_search(strategy_id, filters.as_slice(), market.as_str(), count, format, verbose).await
+            ScreenerCmd::Run { id, count } => {
+                screener::cmd_screener_run(id, count, format, verbose).await
+            }
+            ScreenerCmd::Filter { conditions, market, count } => {
+                screener::cmd_screener_filter(conditions.as_slice(), market.as_str(), count, format, verbose).await
             }
             ScreenerCmd::Indicators { symbol } => {
                 screener::cmd_screener_indicators(symbol.clone(), format, verbose).await
