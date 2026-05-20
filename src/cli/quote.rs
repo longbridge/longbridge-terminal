@@ -3041,7 +3041,7 @@ pub async fn cmd_top_movers(
                     let chg_raw = val_str(&stock["change"]);
                     let chg = chg_raw
                         .parse::<f64>()
-                        .map(|f| format!("{f:+.2}%"))
+                        .map(|f| format!("{:+.2}%", f * 100.0))
                         .unwrap_or(chg_raw);
                     let reason = val_str(&e["alert_reason"]);
                     let tags = stock["labels"]
