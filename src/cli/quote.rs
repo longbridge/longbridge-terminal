@@ -3054,7 +3054,15 @@ pub async fn cmd_top_movers(
                                 .join(", ")
                         })
                         .unwrap_or_default();
-                    vec![fmt_ts(&ts), symbol, chg, reason, tags]
+                    vec![
+                        ts.parse::<i64>()
+                            .map(crate::utils::datetime::format_timestamp)
+                            .unwrap_or(ts),
+                        symbol,
+                        chg,
+                        reason,
+                        tags,
+                    ]
                 })
                 .collect();
             print_table(&headers, rows, format);
