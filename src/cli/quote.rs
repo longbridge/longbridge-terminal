@@ -3030,7 +3030,7 @@ pub async fn cmd_top_movers(
                     return Ok(());
                 }
             };
-            let headers = ["time", "symbol", "market", "change%", "reason", "tags"];
+            let headers = ["time", "symbol", "change%", "reason", "tags"];
             let rows: Vec<Vec<String>> = events
                 .iter()
                 .map(|e| {
@@ -3038,6 +3038,7 @@ pub async fn cmd_top_movers(
                     let ts = val_str(&e["timestamp"]);
                     let code = val_str(&stock["code"]);
                     let mkt = val_str(&stock["market"]);
+                    let symbol = format!("{code}.{mkt}");
                     let chg_raw = val_str(&stock["change"]);
                     let chg = chg_raw
                         .parse::<f64>()
@@ -3053,7 +3054,7 @@ pub async fn cmd_top_movers(
                                 .join(", ")
                         })
                         .unwrap_or_default();
-                    vec![fmt_ts(&ts), code, mkt, chg, reason, tags]
+                    vec![fmt_ts(&ts), symbol, chg, reason, tags]
                 })
                 .collect();
             print_table(&headers, rows, format);
