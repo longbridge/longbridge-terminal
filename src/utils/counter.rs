@@ -1,4 +1,8 @@
-include!(concat!(env!("OUT_DIR"), "/special_counter_ids.rs"));
+#[allow(clippy::unreadable_literal)]
+mod generated {
+    include!(concat!(env!("OUT_DIR"), "/special_counter_ids.rs"));
+}
+use generated::SPECIAL_COUNTER_IDS;
 
 /// Convert a `counter_id` (e.g. `ST/US/TSLA`, `ETF/US/SPY`, `IX/US/.DJI`, `ST/HK/700`) back to
 /// a display symbol (e.g. `TSLA.US`, `SPY.US`, `.DJI.US`, `700.HK`).

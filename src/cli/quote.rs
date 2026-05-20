@@ -8,7 +8,7 @@ use time::Date;
 use serde_json::Value;
 
 use super::{
-    api::{http_get, LbQuoteApi, QuoteApi},
+    api::{http_get, http_post, LbQuoteApi, QuoteApi},
     output::{
         fmt_date, fmt_datetime, fmt_dec, fmt_decimal, fmt_decimal_div100, fmt_decimal_div252,
         parse_date, print_table,
@@ -16,6 +16,7 @@ use super::{
     OutputFormat,
 };
 use crate::utils::counter::symbol_to_counter_id;
+use crate::utils::number::format_financial_value;
 
 /// Return the locale-appropriate display name for a security.
 ///
@@ -2848,19 +2849,27 @@ pub async fn cmd_option_volume_daily(
 
 pub async fn cmd_short_positions(
     symbol: String,
+    trades: bool,
     count: u32,
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
+    let is_hk = symbol.to_uppercase().ends_with(".HK");
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
         .to_string();
     let count_str = count.clamp(1, 100).to_string();
+    let path = match (is_hk, trades) {
+        (true, false) => "/v1/quote/short-positions/hk",
+        (true, true) => "/v1/quote/short-trades/hk",
+        (false, false) => "/v1/quote/short-positions/us",
+        (false, true) => "/v1/quote/short-trades/us",
+    };
     let data = http_get(
-        "/v1/quote/short-positions/us",
+        path,
         &[
             ("counter_id", cid.as_str()),
             ("last_timestamp", now.as_str()),
@@ -2880,40 +2889,325 @@ pub async fn cmd_short_positions(
                 }
             };
             items.reverse();
-            println!("Short Selling Data — {symbol}\n");
-            let headers = [
-                "date",
-                "rate%",
-                "short_shares",
-                "avg_daily_vol",
-                "days_cover",
-                "close",
-            ];
-            let rows: Vec<Vec<String>> = items
+            let label = if trades {
+                "Short Trades"
+            } else {
+                "Short Positions"
+            };
+            println!("{label} — {symbol}");
+            if let Some(ts) = data
+                .get("update_timestamp")
+                .and_then(serde_json::Value::as_i64)
+            {
+                println!("Updated: {}\n", fmt_ts(&ts.to_string()));
+            } else {
+                println!();
+            }
+            match (is_hk, trades) {
+                (false, false) => {
+                    // US positions: existing layout
+                    let headers = [
+                        "date",
+                        "rate%",
+                        "short_shares",
+                        "avg_daily_vol",
+                        "days_cover",
+                        "close",
+                    ];
+                    let rows: Vec<Vec<String>> = items
+                        .iter()
+                        .map(|item| {
+                            let ts = val_str(&item["timestamp"]);
+                            let rate = val_str(&item["rate"]).parse::<f64>().map_or_else(
+                                |_| val_str(&item["rate"]),
+                                |v| format!("{:.2}%", v * 100.0),
+                            );
+                            let short_shares: i64 =
+                                val_str(&item["current_shares_short"]).parse().unwrap_or(0);
+                            let avg_vol: i64 = val_str(&item["avg_daily_share_volume"])
+                                .parse()
+                                .unwrap_or(0);
+                            vec![
+                                fmt_ts(&ts),
+                                rate,
+                                format_with_commas(short_shares),
+                                format_with_commas(avg_vol),
+                                val_str(&item["days_to_cover"]),
+                                val_str(&item["close"]),
+                            ]
+                        })
+                        .collect();
+                    print_table(&headers, rows, format);
+                }
+                (false, true) => {
+                    // US trades
+                    let headers = [
+                        "date",
+                        "nas_short",
+                        "ny_short",
+                        "total_vol",
+                        "rate%",
+                        "close",
+                    ];
+                    let rows: Vec<Vec<String>> = items
+                        .iter()
+                        .map(|item| {
+                            let ts = val_str(&item["timestamp"]);
+                            let rate = val_str(&item["rate"]).parse::<f64>().map_or_else(
+                                |_| val_str(&item["rate"]),
+                                |v| format!("{:.2}%", v * 100.0),
+                            );
+                            let nus: i64 = val_str(&item["nus_amount"]).parse().unwrap_or(0);
+                            let ny: i64 = val_str(&item["ny_amount"]).parse().unwrap_or(0);
+                            let tot: i64 = val_str(&item["total_amount"]).parse().unwrap_or(0);
+                            vec![
+                                fmt_ts(&ts),
+                                format_with_commas(nus),
+                                format_with_commas(ny),
+                                format_with_commas(tot),
+                                rate,
+                                val_str(&item["close"]),
+                            ]
+                        })
+                        .collect();
+                    print_table(&headers, rows, format);
+                }
+                (true, false) => {
+                    // HK positions
+                    let headers = ["date", "short_shares", "balance(HKD)", "cost", "rate%"];
+                    let rows: Vec<Vec<String>> = items
+                        .iter()
+                        .map(|item| {
+                            let ts = val_str(&item["timestamp"]);
+                            let rate = val_str(&item["rate"]).parse::<f64>().map_or_else(
+                                |_| val_str(&item["rate"]),
+                                |v| format!("{:.2}%", v * 100.0),
+                            );
+                            let amount: i64 = val_str(&item["amount"]).parse().unwrap_or(0);
+                            let balance = format_financial_value(&val_str(&item["balance"]), false);
+                            vec![
+                                fmt_ts(&ts),
+                                format_with_commas(amount),
+                                balance,
+                                val_str(&item["cost"]),
+                                rate,
+                            ]
+                        })
+                        .collect();
+                    print_table(&headers, rows, format);
+                }
+                (true, true) => {
+                    // HK trades
+                    let headers = [
+                        "date",
+                        "short_shares",
+                        "balance(HKD)",
+                        "total_vol",
+                        "rate%",
+                        "close",
+                    ];
+                    let rows: Vec<Vec<String>> = items
+                        .iter()
+                        .map(|item| {
+                            let ts = val_str(&item["timestamp"]);
+                            let rate = val_str(&item["rate"]).parse::<f64>().map_or_else(
+                                |_| val_str(&item["rate"]),
+                                |v| format!("{:.2}%", v * 100.0),
+                            );
+                            let amount: i64 = val_str(&item["amount"]).parse().unwrap_or(0);
+                            let total: i64 = val_str(&item["total_amount"]).parse().unwrap_or(0);
+                            let balance = format_financial_value(&val_str(&item["balance"]), false);
+                            vec![
+                                fmt_ts(&ts),
+                                format_with_commas(amount),
+                                balance,
+                                format_with_commas(total),
+                                rate,
+                                val_str(&item["close"]),
+                            ]
+                        })
+                        .collect();
+                    print_table(&headers, rows, format);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+pub async fn cmd_top_movers(
+    market: Option<String>,
+    sort: u8,
+    count: u32,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let markets: Vec<String> = market.map(|m| vec![m.to_uppercase()]).unwrap_or_default();
+    let body = serde_json::json!({
+        "limit": u64::from(count),
+        "sort": sort,
+        "markets": markets,
+        "next_params": {},
+        "date": "",
+    });
+    let data = http_post("/v1/quote/market/stock-events", body, verbose).await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            if let Some(ts) = data.get("updated_at").and_then(serde_json::Value::as_i64) {
+                println!("Updated: {}\n", fmt_ts(&ts.to_string()));
+            }
+            let events = match data.get("events").and_then(|v| v.as_array()) {
+                Some(a) if !a.is_empty() => a,
+                _ => {
+                    println!("No events found.");
+                    return Ok(());
+                }
+            };
+            let headers = ["time", "symbol", "change%", "reason", "tags"];
+            let rows: Vec<Vec<String>> = events
                 .iter()
-                .map(|item| {
-                    let ts = val_str(&item["timestamp"]);
-                    let rate = val_str(&item["rate"])
+                .map(|e| {
+                    let stock = &e["stock"];
+                    let ts = val_str(&e["timestamp"]);
+                    let code = val_str(&stock["code"]);
+                    let mkt = val_str(&stock["market"]);
+                    let symbol = format!("{code}.{mkt}");
+                    let chg_raw = val_str(&stock["change"]);
+                    let chg = chg_raw
                         .parse::<f64>()
-                        .map_or_else(|_| val_str(&item["rate"]), |v| format!("{:.2}%", v * 100.0));
-                    let short_shares: i64 =
-                        val_str(&item["current_shares_short"]).parse().unwrap_or(0);
-                    let avg_vol: i64 = val_str(&item["avg_daily_share_volume"])
-                        .parse()
-                        .unwrap_or(0);
-                    let days = val_str(&item["days_to_cover"]);
-                    let close = val_str(&item["close"]);
+                        .map(|f| format!("{:+.2}%", f * 100.0))
+                        .unwrap_or(chg_raw);
+                    let reason = val_str(&e["alert_reason"]);
+                    let tags = stock["labels"]
+                        .as_array()
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|v| v.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        })
+                        .unwrap_or_default();
                     vec![
-                        fmt_ts(&ts),
-                        rate,
-                        format_with_commas(short_shares),
-                        format_with_commas(avg_vol),
-                        days,
-                        close,
+                        ts.parse::<i64>()
+                            .map(crate::utils::datetime::format_timestamp)
+                            .unwrap_or(ts),
+                        symbol,
+                        chg,
+                        reason,
+                        tags,
                     ]
                 })
                 .collect();
             print_table(&headers, rows, format);
+        }
+    }
+    Ok(())
+}
+
+pub async fn cmd_rank(
+    key: Option<String>,
+    market: &str,
+    count: u32,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    match key {
+        None => {
+            let data = http_get("/v1/quote/market/rank/categories", &[], verbose).await?;
+            match format {
+                OutputFormat::Json => print_json(&data),
+                OutputFormat::Pretty => {
+                    let tags = data.get("first_tags").and_then(|v| v.as_array());
+                    match tags {
+                        Some(a) if !a.is_empty() => {
+                            println!("Ranking Categories (use second-level key with --key)\n");
+                            let headers = ["key", "name", "sub-key", "market"];
+                            let mut rows: Vec<Vec<String>> = Vec::new();
+                            for tag in a {
+                                let k = val_str(&tag["key"]);
+                                let n = val_str(&tag["name"]);
+                                if let Some(subs) = tag["second_tags"].as_array() {
+                                    for sub in subs {
+                                        rows.push(vec![
+                                            k.clone(),
+                                            n.clone(),
+                                            val_str(&sub["key"]),
+                                            val_str(&sub["market"]),
+                                        ]);
+                                    }
+                                } else {
+                                    rows.push(vec![k, n, String::new(), String::new()]);
+                                }
+                            }
+                            print_table(&headers, rows, format);
+                        }
+                        _ => println!("No ranking categories found."),
+                    }
+                }
+            }
+        }
+        Some(k) => {
+            let count_str = count.to_string();
+            // Derive market from key suffix (e.g. ib_hot_all-hk → HK); fall back to --market.
+            let key_market = k
+                .rsplit_once('-')
+                .map(|(_, m)| m.to_uppercase())
+                .filter(|m| matches!(m.as_str(), "US" | "HK" | "CN" | "SG"))
+                .unwrap_or_else(|| market.to_uppercase());
+            let data = http_get(
+                "/v1/quote/market/rank/list",
+                &[
+                    ("key", k.as_str()),
+                    ("delay_bmp", "false"),
+                    ("need_article", "true"),
+                    ("market", key_market.as_str()),
+                    ("size", count_str.as_str()),
+                ],
+                verbose,
+            )
+            .await?;
+            match format {
+                OutputFormat::Json => print_json(&data),
+                OutputFormat::Pretty => {
+                    let lists = match data.get("lists").and_then(|v| v.as_array()) {
+                        Some(a) if !a.is_empty() => a,
+                        _ => {
+                            println!("No ranking data found for key \'{k}\'.");
+                            return Ok(());
+                        }
+                    };
+                    println!("Ranking: {k} ({key_market})\n");
+                    let headers = [
+                        "rank",
+                        "symbol",
+                        "name",
+                        "price",
+                        "chg%",
+                        "pre/post",
+                        "pre/post chg%",
+                    ];
+                    let rows: Vec<Vec<String>> = lists
+                        .iter()
+                        .enumerate()
+                        .map(|(i, s)| {
+                            let sym = crate::utils::counter::counter_id_to_symbol(&val_str(
+                                &s["counter_id"],
+                            ));
+                            vec![
+                                (i + 1).to_string(),
+                                sym,
+                                val_str(&s["name"]),
+                                val_str(&s["last_done"]),
+                                val_str(&s["chg"]),
+                                val_str(&s["pre_post_price"]),
+                                val_str(&s["pre_post_chg"]),
+                            ]
+                        })
+                        .collect();
+                    print_table(&headers, rows, format);
+                }
+            }
         }
     }
     Ok(())

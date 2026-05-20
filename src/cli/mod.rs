@@ -19,6 +19,7 @@ pub mod output;
 pub mod quant_render;
 pub mod quote;
 pub mod run_script;
+pub mod screener;
 pub mod search;
 pub mod sharelist;
 pub mod statement;
@@ -430,7 +431,7 @@ pub enum Commands {
     /// Industry ranking list by market and indicator
     ///
     /// Returns a ranked list of industries. The "Counter ID" column contains BK
-    /// counter_ids (e.g. BK/US/IN00258) that can be passed directly to `industry-peers`
+    /// `counter_ids` (e.g. BK/US/IN00258) that can be passed directly to `industry-peers`
     /// to explore the sub-sector hierarchy for that industry.
     ///
     /// Example: longbridge industry-rank --market US
@@ -451,7 +452,7 @@ pub enum Commands {
         count: u32,
     },
 
-    /// Industry peer group tree for a BK counter_id
+    /// Industry peer group tree for a BK `counter_id`
     ///
     /// Returns the hierarchical sub-sector tree for an industry group, with stock
     /// count, daily change, and YTD change at each level.
@@ -461,7 +462,7 @@ pub enum Commands {
     /// Example: longbridge industry-peers BK/US/IN00258
     /// Example: longbridge industry-peers BK/HK/IN20337
     IndustryPeers {
-        /// BK counter_id from `industry-rank`, e.g. BK/US/IN00258
+        /// BK `counter_id` from `industry-rank`, e.g. BK/US/IN00258
         symbol: String,
         /// Market override (default: inferred from symbol suffix)
         #[arg(long)]
@@ -778,13 +779,23 @@ pub enum Commands {
 
     /// Institutional shareholders for a symbol
     ///
-    /// Returns: shareholder name, related symbol (if listed), % shares held, share change, report date.
+    /// Without flags: institution list (change direction, sort).
+    /// --top: Top20 major shareholders across multiple periods (includes individuals and insiders).
+    /// --object-id: Holding history and trade detail for a specific shareholder (use `object_id` from --top).
+    ///
     /// Example: longbridge shareholder AAPL.US
+    /// Example: longbridge shareholder AAPL.US --top
+    /// Example: longbridge shareholder AAPL.US --object-id 1001
     /// Example: longbridge shareholder AAPL.US --range inc --sort owned
-    /// Example: longbridge shareholder AAPL.US --format json
     Shareholder {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
+        /// Show Top20 major shareholders (multi-period, includes individuals and insiders)
+        #[arg(long)]
+        top: bool,
+        /// Show holding and trade detail for a specific shareholder ID (from --top output)
+        #[arg(long, value_name = "ID")]
+        object_id: Option<i64>,
         /// Filter by change direction: all | inc (increase) | dec (decrease)
         #[arg(long, default_value = "all")]
         range: String,
@@ -794,6 +805,12 @@ pub enum Commands {
         /// Sort order: desc | asc
         #[arg(long, default_value = "desc")]
         order: String,
+        /// Max number of institutions to show (default mode)
+        #[arg(long, default_value = "50")]
+        count: u32,
+        /// Number of reporting periods to show with --top (default: 1 = Latest only)
+        #[arg(long, default_value = "1")]
+        periods: u32,
     },
 
     // ── Pending Commands ──────────────────────────────────────────────────────
@@ -949,6 +966,91 @@ pub enum Commands {
         count: i32,
     },
 
+    /// Top stocks with abnormal price movements and correlated news
+    ///
+    /// When a stock's price fluctuation exceeds its standard deviation over the
+    /// past ~20 trading days, it is flagged as an abnormal change. The system
+    /// then correlates related news to provide an interpretation of the move.
+    ///
+    /// Different from `anomaly` (pure technical signals): `top-movers` pairs
+    /// each alert with a reason summary, pinned news article, and industry tags.
+    ///
+    /// Sort: hot (default) | time | change
+    ///
+    /// Example: longbridge top-movers
+    /// Example: longbridge top-movers --market HK
+    /// Example: longbridge top-movers --market US --sort time --count 50
+    TopMovers {
+        /// Market filter: HK | US | CN | SG (omit for all markets)
+        #[arg(long)]
+        market: Option<String>,
+        /// Sort order: hot (default) | time | change
+        #[arg(long, default_value = "hot")]
+        sort: StockEventSort,
+        /// Number of results (default: 20)
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: u32,
+    },
+
+    /// Strategy screener — browse strategies, run filters, view indicator config
+    ///
+    /// Workflow A — run a saved strategy:
+    ///   1. `screener strategies` to list recommended strategies and note the ID
+    ///   2. `screener run <ID>` to execute it
+    ///
+    /// Workflow B — custom filter:
+    ///   1. `screener indicators` to discover available keys and value ranges
+    ///   2. `screener filter KEY:MIN:MAX ... --market HK`
+    ///
+    /// Example: longbridge screener strategies
+    /// Example: longbridge screener run 42
+    /// Example: longbridge screener filter pettm:10:50 roe:5: --market HK
+    /// Example: longbridge screener indicators
+    Screener {
+        #[command(subcommand)]
+        cmd: ScreenerCmd,
+    },
+
+    /// LB popularity ranking lists (热度排行榜)
+    ///
+    /// Returns stocks ranked by a composite heat score combining trading activity,
+    /// media coverage, community discussion, and price volatility.
+    ///
+    /// Run `rank` without --key to list all available tab keys (e.g. `ib_hot_all-us`).
+    /// Then pass a key to `--key` to get the corresponding ranking.
+    ///
+    /// Example: longbridge rank
+    /// Example: longbridge rank --key ib_hot_all-us
+    /// Example: longbridge rank --key ib_trade_heat-hk --count 20
+    Rank {
+        /// Ranking tab key (from `rank` with no --key). Omit to list available keys.
+        #[arg(long)]
+        key: Option<String>,
+        /// Market filter applied when listing (default: US)
+        #[arg(long, default_value = "US")]
+        market: String,
+        /// Number of results (default: 20)
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: u32,
+    },
+
+    /// Multi-stock valuation comparison (price, market cap, PE/PB/PS, ROE, ROA, div yield, and more)
+    ///
+    /// Without extra symbols: shows the stock alongside server-selected industry peers.
+    /// With extra symbols: compares the specified stocks side by side.
+    ///
+    /// Example: longbridge compare AAPL.US
+    /// Example: longbridge compare 9988.HK 700.HK 9999.HK --currency HKD
+    Compare {
+        /// Base symbol in <CODE>.<MARKET> format
+        symbol: String,
+        /// Additional symbols to compare (up to 4)
+        others: Vec<String>,
+        /// Currency: USD | HKD | CNY (default: USD)
+        #[arg(long, default_value = "USD")]
+        currency: String,
+    },
+
     /// Price alerts (list, add, delete)
     ///
     /// Without subcommand: lists all alerts.
@@ -1079,13 +1181,40 @@ pub enum Commands {
     },
 
     // ── Short positions ─────────────────────────────────────────────────
-    /// US stock short selling data (short interest, short ratio, days to cover)
+    /// Short selling open interest — undisclosed short positions held over time
     ///
-    /// Only supports US-listed stocks and ETFs.
+    /// Supports US and HK markets; market is inferred from the symbol suffix.
+    ///
+    /// US: bi-weekly FINRA short interest data (`short_interest`, `rate`, `days_to_cover`, `close`).
+    /// HK: daily HKEX disclosed short positions (`open_short_shares`, `balance`, `cost`, `rate`).
+    ///
+    /// For daily short sale volume (shares sold short each day), use `short-trades`.
+    ///
     /// Example: longbridge short-positions AAPL.US
-    /// Example: longbridge short-positions TSLA.US --count 50
+    /// Example: longbridge short-positions 700.HK
     ShortPositions {
-        /// Symbol in <CODE>.<MARKET> format (US market only, e.g. AAPL.US)
+        /// Symbol in <CODE>.<MARKET> format (US or HK, e.g. AAPL.US 700.HK)
+        symbol: String,
+        /// Number of records to return (1–100, default: 20)
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: u32,
+    },
+
+    /// Daily short sale volume — shares sold short each trading day
+    ///
+    /// Supports US and HK markets; market is inferred from the symbol suffix.
+    ///
+    /// US: FINRA/NASDAQ daily short volume (`nus_amount`, `ny_amount`, `total_amount`, `rate`, `close`).
+    ///     Data source: NASDAQ + NYSE consolidated short sale reports.
+    /// HK: HKEX daily short sale volume (`amount`, `balance`, `total_amount`, `rate`, `close`).
+    ///     Data source: HKEX daily short selling disclosure.
+    ///
+    /// For total open short interest (cumulative undisclosed positions), use `short-positions`.
+    ///
+    /// Example: longbridge short-trades AAPL.US
+    /// Example: longbridge short-trades 700.HK
+    ShortTrades {
+        /// Symbol in <CODE>.<MARKET> format (US or HK, e.g. AAPL.US 700.HK)
         symbol: String,
         /// Number of records to return (1–100, default: 20)
         #[arg(long, alias = "limit", default_value = "20")]
@@ -1568,6 +1697,114 @@ impl IndustryRankSortType {
         match self {
             Self::Single => "0",
             Self::Multi => "1",
+        }
+    }
+}
+
+#[derive(Subcommand)]
+pub enum ScreenerCmd {
+    /// List stock-selection strategies and their filter conditions
+    ///
+    /// Default: platform recommended strategies (use ID with `screener search`).
+    /// --mine:  your saved strategies.
+    /// --all:   all strategies (recommended + user).
+    ///
+    /// The `id` field in the output is passed to `screener search --strategy-id`.
+    ///
+    /// Example: longbridge screener strategies
+    /// Example: longbridge screener strategies --mine
+    Strategies {
+        /// Show user's saved strategies
+        #[arg(long)]
+        mine: bool,
+        /// Show all strategies (recommended + user)
+        #[arg(long)]
+        all: bool,
+    },
+
+    /// Run a saved strategy by its ID (from `screener strategies` output)
+    ///
+    /// The strategy's built-in market and filter conditions are applied automatically.
+    ///
+    /// Example: longbridge screener run 42
+    /// Example: longbridge screener run 42 --sort roe --order asc
+    /// Example: longbridge screener run 42 --show pettm --show pbmrq
+    Run {
+        /// Strategy ID from `screener strategies` output
+        id: i64,
+        /// Sort results by this indicator key (default: first column, descending)
+        #[arg(long)]
+        sort: Option<String>,
+        /// Sort direction: desc (default) | asc
+        #[arg(long, default_value = "desc")]
+        order: String,
+        /// Extra columns to display without adding a filter condition
+        #[arg(long = "show", value_name = "KEY")]
+        show: Vec<String>,
+        /// Number of results (default: 20)
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: u32,
+    },
+
+    /// Filter stocks with custom indicator conditions
+    ///
+    /// Each condition is KEY:MIN:MAX. Omit either bound to leave it open:
+    ///   `pettm:10:` means P/E >= 10, `pettm::50` means P/E <= 50.
+    /// Run `screener indicators` to discover available keys and value ranges.
+    ///
+    /// Example: longbridge screener filter pettm:10:50 roe:5: --market HK
+    /// Example: longbridge screener filter marketcap:100: divyld:3: --market US
+    /// Example: longbridge screener filter roe:20: --market HK --sort roe --show pettm --show pbmrq
+    Filter {
+        /// Filter conditions in KEY:MIN:MAX format
+        #[arg(value_name = "KEY:MIN:MAX")]
+        conditions: Vec<String>,
+        /// Market: US | HK | CN (default: US)
+        #[arg(long, default_value = "US")]
+        market: String,
+        /// Sort results by this indicator key (default: first condition, descending)
+        #[arg(long)]
+        sort: Option<String>,
+        /// Sort direction: desc (default) | asc
+        #[arg(long, default_value = "desc")]
+        order: String,
+        /// Extra columns to display without adding a filter condition
+        #[arg(long = "show", value_name = "KEY")]
+        show: Vec<String>,
+        /// Number of results (default: 20)
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: u32,
+    },
+
+    /// List all available filter indicators with keys and value ranges
+    ///
+    /// Use keys to build conditions for `screener filter` (without the `filter_` prefix).
+    ///
+    /// Example: longbridge screener indicators
+    /// Example: longbridge screener indicators --symbol AAPL.US
+    Indicators {
+        /// Filter to indicators relevant for this symbol
+        #[arg(long)]
+        symbol: Option<String>,
+    },
+}
+
+#[derive(ValueEnum, Clone, Debug)]
+pub enum StockEventSort {
+    #[value(name = "hot")]
+    Hot,
+    #[value(name = "time")]
+    Time,
+    #[value(name = "change")]
+    Change,
+}
+
+impl StockEventSort {
+    pub fn as_api_value(&self) -> u8 {
+        match self {
+            Self::Time => 0,
+            Self::Change => 1,
+            Self::Hot => 2,
         }
     }
 }
@@ -3164,10 +3401,23 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
 
         Commands::Shareholder {
             symbol,
+            top,
+            object_id,
             range,
             sort,
             order,
-        } => fundamental::cmd_shareholders(symbol, range, sort, order, format, verbose).await,
+            count,
+            periods,
+        } => {
+            if top {
+                fundamental::cmd_shareholders_top(symbol, periods, format, verbose).await
+            } else if let Some(oid) = object_id {
+                fundamental::cmd_shareholder_detail(symbol, oid, format, verbose).await
+            } else {
+                fundamental::cmd_shareholders(symbol, range, sort, order, count, format, verbose)
+                    .await
+            }
+        }
         Commands::FundHolder { symbol, count } => {
             fundamental::cmd_fund_holders(symbol, count, format, verbose).await
         }
@@ -3275,6 +3525,29 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             symbol,
             count,
         } => quote::cmd_anomaly(&market, symbol, count, format, verbose).await,
+        Commands::Rank { key, market, count } => {
+            quote::cmd_rank(key.clone(), market.as_str(), count, format, verbose).await
+        }
+        Commands::TopMovers { market, sort, count } => {
+            quote::cmd_top_movers(market, sort.as_api_value(), count, format, verbose).await
+        }
+        Commands::Screener { cmd } => match cmd {
+            ScreenerCmd::Strategies { mine, all } => {
+                screener::cmd_screener_strategies(mine, all, format, verbose).await
+            }
+            ScreenerCmd::Run { id, sort, order, show, count } => {
+                screener::cmd_screener_run(id, sort.as_deref(), order.as_str(), show.as_slice(), count, format, verbose).await
+            }
+            ScreenerCmd::Filter { conditions, market, sort, order, show, count } => {
+                screener::cmd_screener_filter(conditions.as_slice(), market.as_str(), sort.as_deref(), order.as_str(), show.as_slice(), count, format, verbose).await
+            }
+            ScreenerCmd::Indicators { symbol } => {
+                screener::cmd_screener_indicators(symbol.clone(), format, verbose).await
+            }
+        },
+        Commands::Compare { symbol: base, others, currency } => {
+            fundamental::cmd_compare(base.as_str(), others.as_slice(), currency.as_str(), format, verbose).await
+        }
         Commands::Alert { symbol, cmd } => match cmd {
             Some(AlertCmd::Add {
                 symbol: s,
@@ -3352,7 +3625,10 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         } => dca::cmd_dca(cmd, status.as_deref(), symbol.as_deref(), page, limit, format).await,
 
         Commands::ShortPositions { symbol, count } => {
-            quote::cmd_short_positions(symbol, count, format, verbose).await
+            quote::cmd_short_positions(symbol, false, count, format, verbose).await
+        }
+        Commands::ShortTrades { symbol, count } => {
+            quote::cmd_short_positions(symbol, true, count, format, verbose).await
         }
 
         Commands::Sharelist { cmd, count } => {
