@@ -1720,9 +1720,20 @@ pub enum ScreenerCmd {
     /// The strategy's built-in market and filter conditions are applied automatically.
     ///
     /// Example: longbridge screener run 42
+    /// Example: longbridge screener run 42 --sort roe --order asc
+    /// Example: longbridge screener run 42 --show pettm --show pbmrq
     Run {
         /// Strategy ID from `screener strategies` output
         id: i64,
+        /// Sort results by this indicator key (default: first column, descending)
+        #[arg(long)]
+        sort: Option<String>,
+        /// Sort direction: desc (default) | asc
+        #[arg(long, default_value = "desc")]
+        order: String,
+        /// Extra columns to display without adding a filter condition
+        #[arg(long = "show", value_name = "KEY")]
+        show: Vec<String>,
         /// Number of results (default: 20)
         #[arg(long, alias = "limit", default_value = "20")]
         count: u32,
@@ -1736,6 +1747,7 @@ pub enum ScreenerCmd {
     ///
     /// Example: longbridge screener filter pettm:10:50 roe:5: --market HK
     /// Example: longbridge screener filter marketcap:100: divyld:3: --market US
+    /// Example: longbridge screener filter roe:20: --market HK --sort roe --show pettm --show pbmrq
     Filter {
         /// Filter conditions in KEY:MIN:MAX format
         #[arg(value_name = "KEY:MIN:MAX")]
@@ -1743,6 +1755,15 @@ pub enum ScreenerCmd {
         /// Market: US | HK | CN (default: US)
         #[arg(long, default_value = "US")]
         market: String,
+        /// Sort results by this indicator key (default: first condition, descending)
+        #[arg(long)]
+        sort: Option<String>,
+        /// Sort direction: desc (default) | asc
+        #[arg(long, default_value = "desc")]
+        order: String,
+        /// Extra columns to display without adding a filter condition
+        #[arg(long = "show", value_name = "KEY")]
+        show: Vec<String>,
         /// Number of results (default: 20)
         #[arg(long, alias = "limit", default_value = "20")]
         count: u32,
@@ -3494,11 +3515,11 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             ScreenerCmd::Strategies { mine, all } => {
                 screener::cmd_screener_strategies(mine, all, format, verbose).await
             }
-            ScreenerCmd::Run { id, count } => {
-                screener::cmd_screener_run(id, count, format, verbose).await
+            ScreenerCmd::Run { id, sort, order, show, count } => {
+                screener::cmd_screener_run(id, sort.as_deref(), order.as_str(), show.as_slice(), count, format, verbose).await
             }
-            ScreenerCmd::Filter { conditions, market, count } => {
-                screener::cmd_screener_filter(conditions.as_slice(), market.as_str(), count, format, verbose).await
+            ScreenerCmd::Filter { conditions, market, sort, order, show, count } => {
+                screener::cmd_screener_filter(conditions.as_slice(), market.as_str(), sort.as_deref(), order.as_str(), show.as_slice(), count, format, verbose).await
             }
             ScreenerCmd::Indicators { symbol } => {
                 screener::cmd_screener_indicators(symbol.clone(), format, verbose).await

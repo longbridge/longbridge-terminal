@@ -4,6 +4,14 @@ use serde_json::Value;
 use super::{api::http_get, api::http_post, output::print_table, OutputFormat};
 use crate::utils::counter::symbol_to_counter_id;
 
+fn normalize_key(key: &str) -> String {
+    if key.starts_with("filter_") {
+        key.to_string()
+    } else {
+        format!("filter_{key}")
+    }
+}
+
 fn val_str(v: &Value) -> String {
     match v {
         Value::String(s) => s.clone(),
@@ -72,6 +80,9 @@ pub async fn cmd_screener_strategies(
 
 pub async fn cmd_screener_run(
     id: i64,
+    sort: Option<&str>,
+    order: &str,
+    show: &[String],
     count: u32,
     format: &OutputFormat,
     verbose: bool,
@@ -127,12 +138,24 @@ pub async fn cmd_screener_run(
             }
         }
     }
-    print_screener_results(id, &mkt, &filters, &returns, count, format, verbose).await
+    for key in show {
+        let full_key = normalize_key(key);
+        if !returns.contains(&full_key) {
+            returns.push(full_key);
+        }
+    }
+    print_screener_results(
+        id, &mkt, &filters, &returns, sort, order, count, format, verbose,
+    )
+    .await
 }
 
 pub async fn cmd_screener_filter(
     conditions: &[String],
     market: &str,
+    sort: Option<&str>,
+    order: &str,
+    show: &[String],
     count: u32,
     format: &OutputFormat,
     verbose: bool,
@@ -145,11 +168,7 @@ pub async fn cmd_screener_filter(
         if raw_key.is_empty() {
             continue;
         }
-        let key = if raw_key.starts_with("filter_") {
-            raw_key.to_string()
-        } else {
-            format!("filter_{raw_key}")
-        };
+        let key = normalize_key(raw_key);
         let min = parts.get(1).copied().unwrap_or("").to_string();
         let max = parts.get(2).copied().unwrap_or("").to_string();
         filters.push(serde_json::json!({
@@ -160,11 +179,19 @@ pub async fn cmd_screener_filter(
         }));
         returns.push(key);
     }
+    for key in show {
+        let full_key = normalize_key(key);
+        if !returns.contains(&full_key) {
+            returns.push(full_key);
+        }
+    }
     print_screener_results(
         0,
         &market.to_uppercase(),
         &filters,
         &returns,
+        sort,
+        order,
         count,
         format,
         verbose,
@@ -177,18 +204,26 @@ async fn print_screener_results(
     market: &str,
     filters: &[serde_json::Value],
     returns: &[String],
+    sort: Option<&str>,
+    order: &str,
     count: u32,
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
+    let sort_key = sort.map(normalize_key);
+    let sort_by = sort_key
+        .as_deref()
+        .and_then(|k| returns.iter().position(|r| r == k))
+        .unwrap_or(0);
+    let sort_order: u8 = u8::from(order != "asc");
     let body = serde_json::json!({
         "market": market,
         "page": 1,
         "size": count,
         "filters": filters,
         "returns": returns,
-        "sort_by": 0,
-        "sort_order": 1,
+        "sort_by": sort_by,
+        "sort_order": sort_order,
         "industries": [],
     });
     let data = http_post("/v1/quote/screener/search", body, verbose).await?;
@@ -223,7 +258,6 @@ async fn print_screener_results(
             headers.extend(
                 returns
                     .iter()
-                    .take(5)
                     .map(|k| k.replace("filter_", "").to_uppercase()),
             );
             let header_refs: Vec<&str> = headers.iter().map(String::as_str).collect();
@@ -234,7 +268,7 @@ async fn print_screener_results(
                         crate::utils::counter::counter_id_to_symbol(&val_str(&s["counter_id"]));
                     let mut row = vec![sym, val_str(&s["name"])];
                     if let Some(indicators) = s["indicators"].as_array() {
-                        row.extend(indicators.iter().take(5).map(|ind| {
+                        row.extend(indicators.iter().map(|ind| {
                             let v = val_str(&ind["value"]);
                             let unit = val_str(&ind["unit"]);
                             let (display_v, display_unit) = match unit.as_str() {
