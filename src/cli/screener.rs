@@ -15,54 +15,9 @@ fn val_str(v: &Value) -> String {
 pub async fn cmd_screener_strategies(
     mine: bool,
     all: bool,
-    id: Option<i64>,
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    if let Some(sid) = id {
-        let sid_str = sid.to_string();
-        let data = http_get(
-            "/v1/quote/screener/strategy",
-            &[("id", sid_str.as_str())],
-            verbose,
-        )
-        .await?;
-        match format {
-            OutputFormat::Json => println!(
-                "{}",
-                serde_json::to_string_pretty(&data).unwrap_or_default()
-            ),
-            OutputFormat::Pretty => {
-                let name = val_str(&data["name"]);
-                println!("Strategy #{sid} — {name}\n");
-                if let Some(groups) = data["groups"].as_array() {
-                    for group in groups {
-                        let gname = val_str(&group["group_name"]);
-                        println!("  {gname}");
-                        if let Some(indicators) = group["indicators"].as_array() {
-                            let headers = ["id", "key", "name", "unit", "description"];
-                            let rows: Vec<Vec<String>> = indicators
-                                .iter()
-                                .map(|ind| {
-                                    vec![
-                                        val_str(&ind["id"]),
-                                        val_str(&ind["key"]),
-                                        val_str(&ind["name"]),
-                                        val_str(&ind["unit"]),
-                                        val_str(&ind["description"]),
-                                    ]
-                                })
-                                .collect();
-                            print_table(&headers, rows, format);
-                        }
-                        println!();
-                    }
-                }
-            }
-        }
-        return Ok(());
-    }
-
     let path = if mine {
         "/v1/quote/screener/strategies/mine"
     } else if all {

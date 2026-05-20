@@ -1704,13 +1704,11 @@ pub enum ScreenerCmd {
     /// Default: platform recommended strategies (use ID with `screener search`).
     /// --mine:  your saved strategies.
     /// --all:   all strategies (recommended + user).
-    /// --id N:  show the full filter conditions of a single strategy.
     ///
     /// The `id` field in the output is passed to `screener search --strategy-id`.
     ///
     /// Example: longbridge screener strategies
     /// Example: longbridge screener strategies --mine
-    /// Example: longbridge screener strategies --id 42
     Strategies {
         /// Show user's saved strategies
         #[arg(long)]
@@ -1718,9 +1716,6 @@ pub enum ScreenerCmd {
         /// Show all strategies (recommended + user)
         #[arg(long)]
         all: bool,
-        /// Show the filter conditions of a single strategy by its ID
-        #[arg(long, value_name = "ID")]
-        id: Option<i64>,
     },
 
     /// Find stocks matching a strategy or custom indicator conditions
@@ -3498,8 +3493,8 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             quote::cmd_top_movers(market, sort.as_api_value(), count, format, verbose).await
         }
         Commands::Screener { cmd } => match cmd {
-            ScreenerCmd::Strategies { mine, all, id } => {
-                screener::cmd_screener_strategies(mine, all, id, format, verbose).await
+            ScreenerCmd::Strategies { mine, all } => {
+                screener::cmd_screener_strategies(mine, all, format, verbose).await
             }
             ScreenerCmd::Search { strategy_id, filters, market, count } => {
                 screener::cmd_screener_search(strategy_id, filters.as_slice(), market.as_str(), count, format, verbose).await
