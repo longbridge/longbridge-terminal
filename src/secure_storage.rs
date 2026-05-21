@@ -11,10 +11,11 @@
 //! and migrated to the encrypted format on the next write.
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use aes_gcm::{
-    aead::{rand_core::RngCore, Aead, AeadCore, KeyInit, OsRng},
+    aead::{Aead, AeadCore, KeyInit, OsRng},
     Aes256Gcm, Key, Nonce,
 };
 use hkdf::Hkdf;
@@ -23,6 +24,8 @@ use serde::{Deserialize, Serialize};
 
 const MAGIC: &[u8; 3] = b"LB\x01";
 const HKDF_INFO: &[u8] = b"longbridge-token-v1";
+
+static MACHINE_ID: OnceLock<String> = OnceLock::new();
 
 /// Full token with extra metadata not present in `StoredToken`.
 pub struct FullToken {
@@ -69,27 +72,25 @@ impl From<EncryptedPayload> for FullToken {
 /// Token storage that encrypts files using a machine-derived AES-256-GCM key.
 pub struct EncryptedFileTokenStorage;
 
+fn load_payload_with_migration(client_id: &str) -> Option<EncryptedPayload> {
+    let path = token_path(client_id).ok()?;
+    let (payload, needs_migration) = read_payload(&path)?;
+    if needs_migration {
+        let _ = EncryptedFileTokenStorage.save(&StoredToken::from(payload.clone()));
+    }
+    Some(payload)
+}
+
 impl EncryptedFileTokenStorage {
     /// Load the full token (including `logged_in_at`) for the given client.
     pub fn load_full(client_id: &str) -> Option<FullToken> {
-        let path = token_path(client_id).ok()?;
-        let (payload, needs_migration) = read_payload(&path)?;
-        if needs_migration {
-            let storage = EncryptedFileTokenStorage;
-            let _ = storage.save(&StoredToken::from(payload.clone()));
-        }
-        Some(payload.into())
+        Some(load_payload_with_migration(client_id)?.into())
     }
 }
 
 impl TokenStorage for EncryptedFileTokenStorage {
     fn load(&self, client_id: &str) -> Option<StoredToken> {
-        let path = token_path(client_id).ok()?;
-        let (payload, needs_migration) = read_payload(&path)?;
-        if needs_migration {
-            let _ = self.save(&StoredToken::from(payload.clone()));
-        }
-        Some(payload.into())
+        Some(load_payload_with_migration(client_id)?.into())
     }
 
     fn save(&self, token: &StoredToken) -> OAuthResult<()> {
@@ -223,7 +224,12 @@ fn read_payload(path: &Path) -> Option<(EncryptedPayload, bool)> {
     let bytes = std::fs::read(path).ok()?;
 
     if bytes.starts_with(MAGIC) {
-        let plaintext = decrypt(&bytes).ok()?;
+        let plaintext = decrypt(&bytes)
+            .map_err(|e| {
+                tracing::warn!("Token decryption failed (machine-id changed?): {e}");
+                e
+            })
+            .ok()?;
         let payload = serde_json::from_slice(&plaintext).ok()?;
         Some((payload, false))
     } else {
@@ -255,7 +261,6 @@ fn encrypt(plaintext: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 fn decrypt(data: &[u8]) -> Result<Vec<u8>, String> {
-    // data = MAGIC[3] || NONCE[12] || CIPHERTEXT
     if data.len() < MAGIC.len() + 12 {
         return Err("data too short".into());
     }
@@ -268,7 +273,7 @@ fn decrypt(data: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 fn machine_derived_key() -> Result<Key<Aes256Gcm>, String> {
-    let id = machine_id();
+    let id = machine_id()?;
     let hk = Hkdf::<sha2::Sha256>::new(None, id.as_bytes());
     let mut key_bytes = [0u8; 32];
     hk.expand(HKDF_INFO, &mut key_bytes)
@@ -276,8 +281,16 @@ fn machine_derived_key() -> Result<Key<Aes256Gcm>, String> {
     Ok(*Key::<Aes256Gcm>::from_slice(&key_bytes))
 }
 
-/// Return a stable machine-specific identifier.
-fn machine_id() -> String {
+/// Return a cached, stable machine-specific identifier.
+fn machine_id() -> Result<&'static str, String> {
+    if let Some(id) = MACHINE_ID.get() {
+        return Ok(id.as_str());
+    }
+    let id = resolve_machine_id()?;
+    Ok(MACHINE_ID.get_or_init(|| id).as_str())
+}
+
+fn resolve_machine_id() -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
         if let Ok(out) = std::process::Command::new("sysctl")
@@ -286,7 +299,7 @@ fn machine_id() -> String {
         {
             let id = String::from_utf8_lossy(&out.stdout).trim().to_string();
             if !id.is_empty() {
-                return id;
+                return Ok(id);
             }
         }
     }
@@ -297,48 +310,11 @@ fn machine_id() -> String {
             if let Ok(s) = std::fs::read_to_string(path) {
                 let id = s.trim().to_string();
                 if !id.is_empty() {
-                    return id;
+                    return Ok(id);
                 }
             }
         }
     }
 
-    persistent_machine_id()
-}
-
-/// Read or generate a persistent machine ID at `~/.longbridge/machine-id`.
-fn persistent_machine_id() -> String {
-    let Some(home) = dirs::home_dir() else {
-        return "longbridge-fallback".to_string();
-    };
-    let path = home.join(".longbridge").join("machine-id");
-
-    if let Ok(s) = std::fs::read_to_string(&path) {
-        let id = s.trim().to_string();
-        if !id.is_empty() {
-            return id;
-        }
-    }
-
-    let mut bytes = [0u8; 16];
-    OsRng.fill_bytes(&mut bytes);
-    let id = format!(
-        "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
-        u32::from_be_bytes(bytes[0..4].try_into().unwrap()),
-        u16::from_be_bytes(bytes[4..6].try_into().unwrap()),
-        u16::from_be_bytes(bytes[6..8].try_into().unwrap()),
-        u16::from_be_bytes(bytes[8..10].try_into().unwrap()),
-        {
-            let mut v = [0u8; 8];
-            v[2..].copy_from_slice(&bytes[10..16]);
-            u64::from_be_bytes(v)
-        }
-    );
-
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let _ = std::fs::write(&path, &id);
-    harden_file_permissions(&path);
-    id
+    Err("No machine identifier available on this platform".to_string())
 }
