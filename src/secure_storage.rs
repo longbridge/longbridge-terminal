@@ -27,15 +27,6 @@ const HKDF_INFO: &[u8] = b"longbridge-token-v1";
 
 static MACHINE_ID: OnceLock<String> = OnceLock::new();
 
-/// Full token with extra metadata not present in `StoredToken`.
-pub struct FullToken {
-    pub client_id: String,
-    pub access_token: String,
-    pub refresh_token: Option<String>,
-    pub expires_at: u64,
-    pub logged_in_at: Option<u64>,
-}
-
 #[derive(Clone, Serialize, Deserialize)]
 struct EncryptedPayload {
     client_id: String,
@@ -57,18 +48,6 @@ impl From<EncryptedPayload> for StoredToken {
     }
 }
 
-impl From<EncryptedPayload> for FullToken {
-    fn from(p: EncryptedPayload) -> Self {
-        Self {
-            client_id: p.client_id,
-            access_token: p.access_token,
-            refresh_token: p.refresh_token,
-            expires_at: p.expires_at,
-            logged_in_at: p.logged_in_at,
-        }
-    }
-}
-
 /// Token storage that encrypts files using a machine-derived AES-256-GCM key.
 pub struct EncryptedFileTokenStorage;
 
@@ -82,9 +61,9 @@ fn load_payload_with_migration(client_id: &str) -> Option<EncryptedPayload> {
 }
 
 impl EncryptedFileTokenStorage {
-    /// Load the full token (including `logged_in_at`) for the given client.
-    pub fn load_full(client_id: &str) -> Option<FullToken> {
-        Some(load_payload_with_migration(client_id)?.into())
+    /// Load the full token payload as JSON (includes `logged_in_at` and all fields).
+    pub fn load_full(client_id: &str) -> Option<serde_json::Value> {
+        serde_json::to_value(load_payload_with_migration(client_id)?).ok()
     }
 }
 
@@ -290,35 +269,6 @@ fn machine_id() -> Result<&'static str, String> {
     if let Some(id) = MACHINE_ID.get() {
         return Ok(id.as_str());
     }
-    let id = resolve_machine_id()?;
+    let id = machine_uid::get().map_err(|e| format!("Failed to get machine ID: {e}"))?;
     Ok(MACHINE_ID.get_or_init(|| id).as_str())
-}
-
-fn resolve_machine_id() -> Result<String, String> {
-    #[cfg(target_os = "macos")]
-    {
-        if let Ok(out) = std::process::Command::new("sysctl")
-            .args(["-n", "kern.uuid"])
-            .output()
-        {
-            let id = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !id.is_empty() {
-                return Ok(id);
-            }
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        for path in &["/etc/machine-id", "/var/lib/dbus/machine-id"] {
-            if let Ok(s) = std::fs::read_to_string(path) {
-                let id = s.trim().to_string();
-                if !id.is_empty() {
-                    return Ok(id);
-                }
-            }
-        }
-    }
-
-    Err("No machine identifier available on this platform".to_string())
 }

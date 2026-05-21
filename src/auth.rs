@@ -73,7 +73,7 @@ fn decode_jwt_payload(token: &str) -> Option<serde_json::Value> {
 /// Read the logged-in user's `account_channel` from the local access token.
 pub fn account_channel() -> Option<String> {
     let full = crate::secure_storage::EncryptedFileTokenStorage::load_full(client_id())?;
-    let claims = decode_jwt_payload(&full.access_token)?;
+    let claims = decode_jwt_payload(full["access_token"].as_str()?)?;
     let sub_str = claims["sub"].as_str()?;
     let sub: serde_json::Value = serde_json::from_str(sub_str).ok()?;
     sub["account_channel"]
@@ -271,16 +271,16 @@ pub async fn refresh_if_expired() -> Result<()> {
         .unwrap()
         .as_secs();
 
-    if full.expires_at == 0 {
+    let expires_at = full["expires_at"].as_u64().unwrap_or(0);
+    if expires_at == 0 {
         return Ok(());
     }
-    if full.expires_at > now {
+    if expires_at > now {
         return Ok(());
     }
 
-    let Some(refresh_token) = full
-        .refresh_token
-        .as_deref()
+    let Some(refresh_token) = full["refresh_token"]
+        .as_str()
         .filter(|s| !s.is_empty())
         .map(str::to_owned)
     else {

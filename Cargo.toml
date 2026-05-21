@@ -78,6 +78,7 @@ roxmltree = "0.20"
 flate2 = "1"
 aes-gcm = "0.10"
 hkdf = "0.12"
+machine-uid = "0.6"
 sha2 = "0.10"
 
 [build-dependencies]

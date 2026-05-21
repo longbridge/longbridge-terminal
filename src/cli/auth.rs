@@ -92,18 +92,25 @@ fn read_token_state() -> Result<TokenState> {
         crate::secure_storage::EncryptedFileTokenStorage::load_full(crate::auth::client_id())
             .ok_or_else(|| anyhow::anyhow!("Failed to read token file"))?;
 
-    let logged_in_at = full.logged_in_at.or_else(|| {
-        full.refresh_token
-            .as_deref()
-            .and_then(|t| jwt_field(t, "iat"))
+    let expires_at = full["expires_at"].as_u64().unwrap_or(0);
+    let refresh_token = full["refresh_token"].as_str().unwrap_or("");
+    let logged_in_at = full["logged_in_at"].as_u64().or_else(|| {
+        if refresh_token.is_empty() {
+            None
+        } else {
+            jwt_field(refresh_token, "iat")
+        }
     });
-    let expires_at = full.expires_at;
     let access_token_exp = if expires_at > 0 {
         Some(expires_at)
     } else {
         None
     };
-    let refresh_token_exp = full.refresh_token.as_deref().and_then(jwt_exp);
+    let refresh_token_exp = if refresh_token.is_empty() {
+        None
+    } else {
+        jwt_exp(refresh_token)
+    };
 
     if expires_at == 0 {
         return Ok(TokenState {
