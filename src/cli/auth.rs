@@ -88,9 +88,19 @@ fn read_token_state() -> Result<TokenState> {
         });
     }
 
-    let full =
+    let Some(full) =
         crate::secure_storage::EncryptedFileTokenStorage::load_full(crate::auth::client_id())
-            .ok_or_else(|| anyhow::anyhow!("Failed to read token file"))?;
+    else {
+        return Ok(TokenState {
+            status: "decrypt_failed",
+            detail: format!(
+                "token cannot be decrypted — run {DIM}longbridge auth login{RESET} to re-authenticate"
+            ),
+            access_token_exp: None,
+            refresh_token_exp: None,
+            logged_in_at: None,
+        });
+    };
 
     let expires_at = full["expires_at"].as_u64().unwrap_or(0);
     let refresh_token = full["refresh_token"].as_str().unwrap_or("");
@@ -385,6 +395,7 @@ pub async fn cmd_auth_status(format: &OutputFormat, market: &str) -> Result<()> 
             // ── Token ──────────────────────────────────────────────────────────
             let (status_str, status_color) = match token.status {
                 "not_found" => ("not found", RED),
+                "decrypt_failed" => ("decrypt failed", RED),
                 "expired" => ("expired", RED),
                 "refresh_pending" => ("refresh pending", YELLOW),
                 _ => ("valid", GREEN),

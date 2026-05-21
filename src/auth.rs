@@ -38,7 +38,6 @@ fn oauth_base_url() -> String {
     format!("{host}{OAUTH_PATH}")
 }
 
-/// Token file path: `~/.longbridge/cli/auth-token`
 pub fn token_file_path() -> Result<PathBuf> {
     Ok(dirs::home_dir()
         .ok_or_else(|| anyhow::anyhow!("Failed to get home directory"))?

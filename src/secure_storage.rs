@@ -229,7 +229,7 @@ fn read_payload(path: &Path) -> Option<(EncryptedPayload, bool)> {
 }
 
 fn encrypt(plaintext: &[u8]) -> Result<Vec<u8>, String> {
-    let key = machine_derived_key()?;
+    let key = machine_derived_key();
     let cipher = Aes256Gcm::new(&key);
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
     let ciphertext = cipher
@@ -248,27 +248,115 @@ fn decrypt(data: &[u8]) -> Result<Vec<u8>, String> {
         return Err("data too short".into());
     }
     let nonce = Nonce::from_slice(&data[MAGIC.len()..MAGIC.len() + 12]);
-    let key = machine_derived_key()?;
+    let key = machine_derived_key();
     let cipher = Aes256Gcm::new(&key);
     cipher
         .decrypt(nonce, &data[MAGIC.len() + 12..])
         .map_err(|e| format!("AES-GCM decrypt: {e}"))
 }
 
-fn machine_derived_key() -> Result<Key<Aes256Gcm>, String> {
-    let id = machine_id()?;
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encrypt_decrypt_roundtrip() {
+        let plaintext = b"hello, longbridge token";
+        let encrypted = encrypt(plaintext).expect("encrypt failed");
+        assert!(encrypted.starts_with(MAGIC), "magic header missing");
+        let decrypted = decrypt(&encrypted).expect("decrypt failed");
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn decrypt_fails_on_tampered_ciphertext() {
+        let plaintext = b"some token data";
+        let mut encrypted = encrypt(plaintext).expect("encrypt failed");
+        // Flip a byte in the ciphertext region (after MAGIC + NONCE).
+        let idx = MAGIC.len() + 12;
+        encrypted[idx] ^= 0xFF;
+        assert!(
+            decrypt(&encrypted).is_err(),
+            "expected decryption failure on tampered data"
+        );
+    }
+
+    #[test]
+    fn encrypt_decrypt_with_empty_machine_id() {
+        // Simulate machine_id unavailable by deriving key with empty IKM directly.
+        let hk = hkdf::Hkdf::<sha2::Sha256>::new(None, b"");
+        let mut key_bytes = [0u8; 32];
+        hk.expand(HKDF_INFO, &mut key_bytes).unwrap();
+        let key = *aes_gcm::Key::<Aes256Gcm>::from_slice(&key_bytes);
+        let cipher = Aes256Gcm::new(&key);
+        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+        let plaintext = b"docker token payload";
+        let ciphertext = cipher.encrypt(&nonce, plaintext.as_ref()).unwrap();
+        let mut data = Vec::new();
+        data.extend_from_slice(MAGIC);
+        data.extend_from_slice(&nonce);
+        data.extend_from_slice(&ciphertext);
+        // Decryption must succeed when both sides use the same (empty-IKM) key.
+        let decrypted = cipher
+            .decrypt(&nonce, ciphertext.as_ref())
+            .expect("decrypt failed with empty machine id key");
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn decrypt_fails_on_truncated_data() {
+        let result = decrypt(b"LB\x01tooshort");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn save_and_load_roundtrip() {
+        // Write to a temp file by monkey-patching via a temp dir isn't easy
+        // without refactoring token_path(), so we exercise the encrypt/decrypt
+        // primitives directly via a known payload.
+        let payload = EncryptedPayload {
+            client_id: "test-client".to_string(),
+            access_token: "at_test".to_string(),
+            refresh_token: Some("rt_test".to_string()),
+            expires_at: 9_999_999_999,
+            logged_in_at: Some(1_700_000_000),
+        };
+
+        let json = serde_json::to_vec(&payload).unwrap();
+        let encrypted = encrypt(&json).unwrap();
+        let decrypted = decrypt(&encrypted).unwrap();
+        let loaded: EncryptedPayload = serde_json::from_slice(&decrypted).unwrap();
+
+        assert_eq!(loaded.access_token, "at_test");
+        assert_eq!(loaded.refresh_token.as_deref(), Some("rt_test"));
+        assert_eq!(loaded.expires_at, 9999999999);
+        assert_eq!(loaded.logged_in_at, Some(1_700_000_000));
+    }
+}
+
+fn machine_derived_key() -> Key<Aes256Gcm> {
+    let id = machine_id();
     let hk = Hkdf::<sha2::Sha256>::new(None, id.as_bytes());
     let mut key_bytes = [0u8; 32];
-    hk.expand(HKDF_INFO, &mut key_bytes)
-        .map_err(|e| format!("HKDF expand: {e}"))?;
-    Ok(*Key::<Aes256Gcm>::from_slice(&key_bytes))
+    // HKDF expand is infallible for output lengths ≤ 255 * HashLen.
+    let _ = hk.expand(HKDF_INFO, &mut key_bytes);
+    *Key::<Aes256Gcm>::from_slice(&key_bytes)
 }
 
 /// Return a cached, stable machine-specific identifier.
-fn machine_id() -> Result<&'static str, String> {
+///
+/// Falls back to an empty string when the machine ID is unavailable (e.g.
+/// minimal Docker containers without `/etc/machine-id`). Encryption still
+/// works in that case; only the machine-binding property is lost.
+fn machine_id() -> &'static str {
     if let Some(id) = MACHINE_ID.get() {
-        return Ok(id.as_str());
+        return id.as_str();
     }
-    let id = machine_uid::get().map_err(|e| format!("Failed to get machine ID: {e}"))?;
-    Ok(MACHINE_ID.get_or_init(|| id).as_str())
+    match machine_uid::get() {
+        Ok(id) => MACHINE_ID.get_or_init(|| id).as_str(),
+        Err(e) => {
+            tracing::warn!("Could not obtain machine ID (token will not be machine-bound): {e}");
+            ""
+        }
+    }
 }
