@@ -8,7 +8,8 @@
 //! kept in sync because the SDK's `OAuthBuilder` reads that path directly.
 //! The credential store provides an additional encrypted copy that:
 //!   - is protected by OS-level encryption (Keychain / DPAPI)
-//!   - is device-specific on macOS (`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`)
+//!   - uses `kSecAttrAccessibleWhenUnlocked` on macOS (accessible while the screen
+//!     is unlocked; items sync to iCloud Keychain if iCloud Keychain is enabled)
 //!   - allows recovering the file if it is accidentally deleted without re-login
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
