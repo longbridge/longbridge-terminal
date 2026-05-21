@@ -1,6 +1,7 @@
 //! Auth utilities for Longbridge `OpenAPI`.
 
 use anyhow::{Context, Result};
+use longbridge::oauth::TokenStorage as _;
 use std::fs;
 use std::path::PathBuf;
 
@@ -37,16 +38,13 @@ fn oauth_base_url() -> String {
     format!("{host}{OAUTH_PATH}")
 }
 
-/// Token file path: `~/.longbridge/openapi/tokens/<client_id>`
-///
-/// Must stay in sync with `longbridge-oauth` crate internals (`token_path_for_client_id`).
+/// Token file path: `~/.longbridge/cli/auth-token`
 pub fn token_file_path() -> Result<PathBuf> {
     Ok(dirs::home_dir()
         .ok_or_else(|| anyhow::anyhow!("Failed to get home directory"))?
         .join(".longbridge")
-        .join("openapi")
-        .join("tokens")
-        .join(client_id()))
+        .join("cli")
+        .join("auth-token"))
 }
 
 /// Invite code file path: `~/.longbridge/openapi/invite-code`
@@ -73,22 +71,9 @@ fn decode_jwt_payload(token: &str) -> Option<serde_json::Value> {
 }
 
 /// Read the logged-in user's `account_channel` from the local access token.
-///
-/// Longbridge tokens carry `sub` as a JSON-encoded string with fields like
-/// `client_id`, `member_id`, and `account_channel` (`"lb"`,
-/// `"lb_papertrading"`, etc.). Several APIs require this to match the
-/// token's own channel — e.g. `/v1/quote/my-quotes` returns 401004 when
-/// the request `account_channel` does not match.
-///
-/// Returns `None` if the token file is missing/unparseable or the JWT
-/// lacks the field. Use [`account_channel_or_default`] to get a usable
-/// string with a `"lb"` fallback.
 pub fn account_channel() -> Option<String> {
-    let path = token_file_path().ok()?;
-    let contents = fs::read_to_string(path).ok()?;
-    let data: serde_json::Value = serde_json::from_str(&contents).ok()?;
-    let token = data["access_token"].as_str()?;
-    let claims = decode_jwt_payload(token)?;
+    let full = crate::secure_storage::EncryptedFileTokenStorage::load_full(client_id())?;
+    let claims = decode_jwt_payload(&full.access_token)?;
     let sub_str = claims["sub"].as_str()?;
     let sub: serde_json::Value = serde_json::from_str(sub_str).ok()?;
     sub["account_channel"]
@@ -137,110 +122,7 @@ pub fn open_browser(url: &str) -> bool {
     open::that(url).is_ok()
 }
 
-/// Write a token JSON blob to the SDK token file path and to the OS credential store.
-///
-/// The file at `token_file_path()` is always written because the longbridge SDK's
-/// `OAuthBuilder` reads from that exact path. The OS credential store (macOS Keychain
-/// or Windows Credential Manager) is updated as a best-effort encrypted backup.
-///
-/// Preserves the existing `logged_in_at` field on refresh; sets it to now on initial
-/// login. The existing value is read from the file first, falling back to the credential
-/// store, so the timestamp survives even if the file was accidentally deleted.
-fn save_token(client_id: &str, token_resp: &serde_json::Value) -> Result<()> {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    let access_token = token_resp["access_token"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("No access_token in token response"))?;
-    let expires_in = token_resp["expires_in"].as_u64().unwrap_or(3600);
-    let refresh_token = token_resp["refresh_token"].as_str();
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let expires_at = now + expires_in;
-
-    let token_path = token_file_path()?;
-
-    // Preserve logged_in_at from the existing file; fall back to the credential
-    // store so the timestamp survives an accidental file deletion.
-    let existing_json = fs::read_to_string(&token_path)
-        .ok()
-        .or_else(|| crate::secure_storage::try_load(client_id));
-    let logged_in_at = existing_json
-        .as_deref()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
-        .and_then(|v| v["logged_in_at"].as_u64())
-        .unwrap_or(now);
-
-    let token = serde_json::json!({
-        "client_id": client_id,
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "expires_at": expires_at,
-        "logged_in_at": logged_in_at,
-    });
-
-    if let Some(parent) = token_path.parent() {
-        fs::create_dir_all(parent).context("Failed to create token directory")?;
-    }
-    let json_str = serde_json::to_string_pretty(&token).unwrap();
-    fs::write(&token_path, &json_str).context("Failed to write token file")?;
-    crate::secure_storage::harden_file_permissions(&token_path);
-    crate::secure_storage::try_store(client_id, &json_str);
-    Ok(())
-}
-
-/// Patch the token file written by the SDK's `OAuthBuilder` to add `logged_in_at` if missing.
-fn patch_token_logged_in_at() -> Result<()> {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    let token_path = token_file_path()?;
-    let contents = fs::read_to_string(&token_path)?;
-    let mut data: serde_json::Value = serde_json::from_str(&contents)?;
-
-    if data["logged_in_at"].is_null() {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        data["logged_in_at"] = serde_json::Value::from(now);
-        let json_str = serde_json::to_string_pretty(&data).unwrap();
-        fs::write(&token_path, &json_str).context("Failed to patch token file")?;
-        crate::secure_storage::try_store(client_id(), &json_str);
-    }
-    Ok(())
-}
-
-/// If the token file is missing but the OS credential store has a copy, restore
-/// the file from the credential store.
-///
-/// Called by `openapi::context::init_contexts` before the token-file existence
-/// check so that an accidentally deleted file does not force a re-login.
-pub fn try_restore_from_keychain() {
-    let Ok(token_path) = token_file_path() else {
-        return;
-    };
-    if token_path.exists() {
-        return;
-    }
-    let Some(json_str) = crate::secure_storage::try_load(client_id()) else {
-        return;
-    };
-    if let Some(parent) = token_path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    if fs::write(&token_path, &json_str).is_ok() {
-        crate::secure_storage::harden_file_permissions(&token_path);
-        tracing::debug!("Restored token file from OS credential store");
-    }
-}
-
 /// Device Authorization Flow (RFC 8628).
-///
-/// Displays a URL for the user to open in any browser (no localhost redirect needed).
-/// Polls for the token until the user completes authorization or the code expires.
-/// Works on any machine including SSH sessions, cloud agents, and headless servers.
 pub async fn device_login(verbose: bool) -> Result<()> {
     use std::time::{Duration, Instant};
 
@@ -249,7 +131,6 @@ pub async fn device_login(verbose: bool) -> Result<()> {
     let http_client = reqwest::Client::new();
     let invite_code = read_invite_code();
 
-    // Step 1: request device & user codes.
     let url = format!("{oauth_base}/device/authorize");
     if verbose {
         eprintln!("POST {url}");
@@ -294,7 +175,6 @@ pub async fn device_login(verbose: bool) -> Result<()> {
     let expires_in = device_resp["expires_in"].as_u64().unwrap_or(300);
     let interval = device_resp["interval"].as_u64().unwrap_or(5);
 
-    // Try to open the browser automatically; silently fall back to manual if unavailable.
     let opened = open_browser(verification_url);
 
     println!("Open the following URL in your browser to authorize:");
@@ -307,7 +187,6 @@ pub async fn device_login(verbose: bool) -> Result<()> {
         println!("Waiting for authorization...");
     }
 
-    // Step 2: poll until authorized or expired.
     let deadline = Instant::now() + Duration::from_secs(expires_in);
     let poll_interval = Duration::from_secs(interval);
 
@@ -339,7 +218,27 @@ pub async fn device_login(verbose: bool) -> Result<()> {
                 .json::<serde_json::Value>()
                 .await
                 .context("Failed to parse token response")?;
-            save_token(client_id, &token_resp)?;
+
+            let access_token = token_resp["access_token"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("No access_token in token response"))?;
+            let expires_in = token_resp["expires_in"].as_u64().unwrap_or(3600);
+            let refresh_token = token_resp["refresh_token"].as_str().map(str::to_owned);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+
+            let token = longbridge::oauth::StoredToken {
+                client_id: client_id.to_string(),
+                access_token: access_token.to_string(),
+                refresh_token,
+                expires_at: now + expires_in,
+            };
+            crate::secure_storage::EncryptedFileTokenStorage
+                .save(&token)
+                .map_err(|e| anyhow::anyhow!("Failed to save token: {e}"))?;
+
             println!("Successfully authenticated.");
             return Ok(());
         }
@@ -355,50 +254,41 @@ pub async fn device_login(verbose: bool) -> Result<()> {
 
 /// Refresh the access token in-place if it has expired.
 ///
-/// - Not expired → returns `Ok(())` immediately (no network call).
-/// - Expired, refresh succeeds → writes new token to disk, returns `Ok(())`.
-/// - Expired, refresh fails → returns an error; token file is **never** deleted
-///   so `auth status` shows "expired" rather than "not found".
-///
-/// Also performs a one-time migration: if the file exists but the OS credential
-/// store has no entry yet, the token is copied into the store silently.
+/// Not expired → returns immediately. Expired → refreshes via HTTP and saves.
+/// This runs before `OAuthBuilder::build()` to avoid that SDK's 5-minute
+/// browser-callback timeout when it encounters an expired token.
 pub async fn refresh_if_expired() -> Result<()> {
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    let token_path = token_file_path()?;
-    let Ok(contents) = fs::read_to_string(&token_path) else {
-        return Ok(()); // unreadable — let OAuthBuilder handle it
+    let storage = crate::secure_storage::EncryptedFileTokenStorage;
+    let Some(full) = crate::secure_storage::EncryptedFileTokenStorage::load_full(client_id())
+    else {
+        return Ok(());
     };
-    let Ok(data) = serde_json::from_str::<serde_json::Value>(&contents) else {
-        return Ok(()); // unparseable — let OAuthBuilder handle it
-    };
-
-    // One-time migration: copy the existing plaintext token into the credential
-    // store the first time a new binary (or an upgraded binary) reads it.
-    if crate::secure_storage::try_load(client_id()).is_none() {
-        crate::secure_storage::try_store(client_id(), &contents);
-    }
 
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    let expires_at = data["expires_at"].as_u64().unwrap_or(0);
-    if expires_at == 0 {
-        return Ok(()); // no expiry info — let OAuthBuilder handle it
+
+    if full.expires_at == 0 {
+        return Ok(());
     }
-    if expires_at > now {
-        return Ok(()); // still valid
+    if full.expires_at > now {
+        return Ok(());
     }
 
-    let Some(refresh_token) = data["refresh_token"].as_str().filter(|s| !s.is_empty()) else {
+    let Some(refresh_token) = full
+        .refresh_token
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+    else {
         return Err(anyhow::anyhow!(
             "No refresh token found. Please run 'longbridge auth login' to re-authenticate."
         ));
     };
-    let refresh_token = refresh_token.to_string();
 
-    let client_id = client_id();
     let http_client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .build()
@@ -412,7 +302,7 @@ pub async fn refresh_if_expired() -> Result<()> {
         .form(&[
             ("grant_type", "refresh_token"),
             ("refresh_token", refresh_token.as_str()),
-            ("client_id", client_id),
+            ("client_id", client_id()),
         ])
         .send()
         .await
@@ -425,12 +315,26 @@ pub async fn refresh_if_expired() -> Result<()> {
             .await
             .context("Failed to parse token refresh response")?;
 
-        // Preserve the existing refresh token if the server did not rotate it.
         if token_resp["refresh_token"].is_null() || token_resp["refresh_token"].as_str().is_none() {
             token_resp["refresh_token"] = serde_json::Value::String(refresh_token);
         }
 
-        save_token(client_id, &token_resp)?;
+        let access_token = token_resp["access_token"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("No access_token in refresh response"))?;
+        let expires_in = token_resp["expires_in"].as_u64().unwrap_or(3600);
+        let new_refresh = token_resp["refresh_token"].as_str().map(str::to_owned);
+
+        let token = longbridge::oauth::StoredToken {
+            client_id: client_id().to_string(),
+            access_token: access_token.to_string(),
+            refresh_token: new_refresh,
+            expires_at: now + expires_in,
+        };
+        storage
+            .save(&token)
+            .map_err(|e| anyhow::anyhow!("Failed to save refreshed token: {e}"))?;
+
         tracing::debug!("Access token refreshed successfully");
         return Ok(());
     }
@@ -444,7 +348,6 @@ pub async fn refresh_if_expired() -> Result<()> {
         ));
     }
 
-    // Other server errors (5xx etc.) — keep token intact, let the user retry.
     Err(anyhow::anyhow!(
         "Token refresh failed ({status}): {error} — please retry"
     ))
@@ -452,9 +355,6 @@ pub async fn refresh_if_expired() -> Result<()> {
 
 /// Authorization Code Flow: opens a browser on this machine and listens on
 /// `localhost:CALLBACK_PORT` for the OAuth callback.
-///
-/// Unlike `device_login`, this requires the browser to be on the same machine.
-/// The SDK handles the local callback server and token persistence.
 pub async fn auth_code_login() -> Result<()> {
     println!("Opening browser for authorization...");
     println!("Listening on localhost:{CALLBACK_PORT} for the OAuth callback.");
@@ -462,6 +362,7 @@ pub async fn auth_code_login() -> Result<()> {
 
     let oauth_result = longbridge::oauth::OAuthBuilder::new(client_id())
         .callback_port(CALLBACK_PORT)
+        .token_storage(crate::secure_storage::EncryptedFileTokenStorage)
         .build(|url| {
             let authorization_url = invite_code.as_deref().map_or_else(
                 || url.to_string(),
@@ -478,7 +379,6 @@ pub async fn auth_code_login() -> Result<()> {
 
     match oauth_result {
         Ok(_) => {
-            let _ = patch_token_logged_in_at();
             println!("Successfully authenticated.");
             Ok(())
         }
@@ -487,9 +387,6 @@ pub async fn auth_code_login() -> Result<()> {
 }
 
 /// Clear the stored OAuth token (logout).
-///
-/// Removes the token from both the OS credential store and the plaintext file
-/// used by the longbridge SDK.
 pub fn clear_token() -> Result<()> {
     crate::secure_storage::try_delete(client_id());
 

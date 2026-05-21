@@ -38,7 +38,7 @@ crossterm = { version = "0.29", features = ["event-stream"] }
 dashmap = "6.1"
 dirs = "5.0"
 csv = "1"
-longbridge = { git = "https://github.com/longbridge/openapi.git", branch = "main" }
+longbridge = { git = "https://github.com/longbridge/openapi.git", branch = "feat/oauth-token-storage" }
 futures = "0.3.28"
 open = "5"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "gzip", "brotli"] }
@@ -76,6 +76,9 @@ async-trait = "0.1"
 regex = "1.12.3"
 roxmltree = "0.20"
 flate2 = "1"
+aes-gcm = "0.10"
+hkdf = "0.12"
+sha2 = "0.10"
 
 [build-dependencies]
 phf_codegen = "0.11"
@@ -95,12 +98,6 @@ windows-sys = { version = "0.48.0", features = [
     "Win32_Storage_FileSystem",
     "Win32_System_IO",
 ] }
-
-# OS-native credential store: macOS Keychain and Windows Credential Manager.
-# Not enabled on Linux to avoid introducing a libdbus build-time dependency
-# (the project ships statically-linked musl binaries for Linux).
-[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
-keyring = { version = "3", default-features = false, features = ["apple-native", "windows-native"] }
 
 [lints.clippy]
 all = { level = "deny", priority = -1 }

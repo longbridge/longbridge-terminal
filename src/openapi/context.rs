@@ -58,10 +58,8 @@ pub async fn init_contexts() -> Result<(
         )
     } else {
         tracing::info!("No API key env vars found, using OAuth authentication");
-        // Attempt to restore the token file from the OS credential store if it
-        // was accidentally deleted.  This is a no-op when the file already exists
-        // or when no credential store entry is found.
-        crate::auth::try_restore_from_keychain();
+        // Migrate legacy plaintext token to encrypted storage on first run after upgrade.
+        crate::secure_storage::migrate_legacy_token(crate::auth::client_id());
 
         // If no token file exists, refuse to start a browser/callback-server flow.
         // CLI commands require a stored token; users must run `longbridge auth login` first.
@@ -81,6 +79,7 @@ pub async fn init_contexts() -> Result<(
         // expiry above; it is kept as a last-resort safety net.
         let oauth_result = longbridge::oauth::OAuthBuilder::new(crate::auth::client_id())
             .callback_port(crate::auth::CALLBACK_PORT)
+            .token_storage(crate::secure_storage::EncryptedFileTokenStorage)
             .build(|_url| {
                 tracing::warn!("OAuth browser flow triggered unexpectedly");
             })

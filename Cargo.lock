@@ -9,6 +9,41 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
+name = "aead"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d122413f284cf2d62fb1b7db97e02edb8cda96d769b16e443a4f6195e35662b0"
+dependencies = [
+ "crypto-common",
+ "generic-array 0.14.7",
+]
+
+[[package]]
+name = "aes"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b169f7a6d4742236a0a00c541b845991d0ac43e546831af1249753ab4c3aa3a0"
+dependencies = [
+ "cfg-if",
+ "cipher",
+ "cpufeatures",
+]
+
+[[package]]
+name = "aes-gcm"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "831010a0f742e1209b3bcea8fab6a8e149051ba6099432c8cb2cc117dec3ead1"
+dependencies = [
+ "aead",
+ "aes",
+ "cipher",
+ "ctr",
+ "ghash",
+ "subtle",
+]
+
+[[package]]
 name = "ahash"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -695,6 +730,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cipher"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "773f3b9af64447d2ce9850330c473515014aa235e6a783b02db81ff39e4a3dad"
+dependencies = [
+ "crypto-common",
+ "inout",
+]
+
+[[package]]
 name = "clap"
 version = "2.34.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1054,6 +1099,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
 dependencies = [
  "generic-array 0.14.7",
+ "rand_core 0.6.4",
  "typenum",
 ]
 
@@ -1109,6 +1155,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "704a3c26996a80471189265814dbc2c257598b96b8a7feae2d31ace646bb9782"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "ctr"
+version = "0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0369ee1ad671834580515889b80f2ea915f23b8be8d0daa4bbaf2ac5c7590835"
+dependencies = [
+ "cipher",
 ]
 
 [[package]]
@@ -1717,6 +1772,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ghash"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0d8a4362ccb29cb0b265253fb0a2728f592895ee6854fd9bc13f2ffda266ff1"
+dependencies = [
+ "opaque-debug",
+ "polyval",
+]
+
+[[package]]
 name = "glob"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1905,6 +1970,15 @@ name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+
+[[package]]
+name = "hkdf"
+version = "0.12.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b5f8eb2ad728638ea2c7d47a21db23b7b58a72ed6a38256b8a1849f15fbbdf7"
+dependencies = [
+ "hmac",
+]
 
 [[package]]
 name = "hmac"
@@ -2276,6 +2350,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "inout"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "879f10e63c20629ecabbb64a8010319738c66a5cd0c29b02d63d272b03751d01"
+dependencies = [
+ "generic-array 0.14.7",
+]
+
+[[package]]
 name = "instability"
 version = "0.3.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2516,8 +2599,8 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "longbridge"
-version = "4.0.5"
-source = "git+https://github.com/longbridge/openapi.git?branch=main#7c5154bdf76f252107ecea200ed9d24b210ed8af"
+version = "4.1.0"
+source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Foauth-token-storage#281ba275f2686f7e86fe1470c9cbbcd066edaaaa"
 dependencies = [
  "anyhow",
  "bitflags 2.10.0",
@@ -2551,8 +2634,8 @@ dependencies = [
 
 [[package]]
 name = "longbridge-candlesticks"
-version = "4.0.5"
-source = "git+https://github.com/longbridge/openapi.git?branch=main#7c5154bdf76f252107ecea200ed9d24b210ed8af"
+version = "4.1.0"
+source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Foauth-token-storage#281ba275f2686f7e86fe1470c9cbbcd066edaaaa"
 dependencies = [
  "bitflags 2.10.0",
  "num-traits",
@@ -2563,16 +2646,16 @@ dependencies = [
 
 [[package]]
 name = "longbridge-geo"
-version = "4.0.5"
-source = "git+https://github.com/longbridge/openapi.git?branch=main#7c5154bdf76f252107ecea200ed9d24b210ed8af"
+version = "4.1.0"
+source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Foauth-token-storage#281ba275f2686f7e86fe1470c9cbbcd066edaaaa"
 dependencies = [
  "reqwest 0.12.28",
 ]
 
 [[package]]
 name = "longbridge-httpcli"
-version = "4.0.5"
-source = "git+https://github.com/longbridge/openapi.git?branch=main#7c5154bdf76f252107ecea200ed9d24b210ed8af"
+version = "4.1.0"
+source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Foauth-token-storage#281ba275f2686f7e86fe1470c9cbbcd066edaaaa"
 dependencies = [
  "dotenv",
  "futures-util",
@@ -2593,8 +2676,8 @@ dependencies = [
 
 [[package]]
 name = "longbridge-oauth"
-version = "4.0.5"
-source = "git+https://github.com/longbridge/openapi.git?branch=main#7c5154bdf76f252107ecea200ed9d24b210ed8af"
+version = "4.1.0"
+source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Foauth-token-storage#281ba275f2686f7e86fe1470c9cbbcd066edaaaa"
 dependencies = [
  "dirs 6.0.0",
  "futures-util",
@@ -2610,8 +2693,8 @@ dependencies = [
 
 [[package]]
 name = "longbridge-proto"
-version = "4.0.5"
-source = "git+https://github.com/longbridge/openapi.git?branch=main#7c5154bdf76f252107ecea200ed9d24b210ed8af"
+version = "4.1.0"
+source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Foauth-token-storage#281ba275f2686f7e86fe1470c9cbbcd066edaaaa"
 dependencies = [
  "prost 0.14.3",
  "serde",
@@ -2621,6 +2704,7 @@ dependencies = [
 name = "longbridge-terminal"
 version = "0.21.0"
 dependencies = [
+ "aes-gcm",
  "ansi-parser 0.9.1",
  "ansi-to-tui",
  "anyhow",
@@ -2641,6 +2725,7 @@ dependencies = [
  "dirs 5.0.1",
  "flate2",
  "futures",
+ "hkdf",
  "indoc",
  "itertools 0.11.0",
  "longbridge",
@@ -2664,6 +2749,7 @@ dependencies = [
  "sec2md",
  "serde",
  "serde_json",
+ "sha2",
  "strum 0.26.3",
  "tabled",
  "tar",
@@ -2683,8 +2769,8 @@ dependencies = [
 
 [[package]]
 name = "longbridge-wscli"
-version = "4.0.5"
-source = "git+https://github.com/longbridge/openapi.git?branch=main#7c5154bdf76f252107ecea200ed9d24b210ed8af"
+version = "4.1.0"
+source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Foauth-token-storage#281ba275f2686f7e86fe1470c9cbbcd066edaaaa"
 dependencies = [
  "byteorder",
  "flate2",
@@ -3085,6 +3171,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "opaque-debug"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
+
+[[package]]
 name = "open"
 version = "5.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3394,6 +3486,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.114",
+]
+
+[[package]]
+name = "polyval"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d1fe60d06143b2430aa532c94cfe9e29783047f06c0d7fd359a9a51b729fa25"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "opaque-debug",
+ "universal-hash",
 ]
 
 [[package]]
@@ -5560,6 +5664,16 @@ name = "unicode-width"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
+
+[[package]]
+name = "universal-hash"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc1de2c688dc15305988b563c3854064043356019f97a4b46276fe734c4f07ea"
+dependencies = [
+ "crypto-common",
+ "subtle",
+]
 
 [[package]]
 name = "unsafe-libyaml"
