@@ -387,13 +387,10 @@ pub async fn auth_code_login() -> Result<()> {
 
 /// Clear the stored OAuth token (logout).
 pub fn clear_token() -> Result<()> {
-    crate::secure_storage::try_delete(client_id());
-
     let path = token_file_path()?;
     if path.exists() {
         fs::remove_file(&path).context("Failed to delete token file")?;
         tracing::debug!("OAuth token deleted: {}", path.display());
     }
-
     Ok(())
 }

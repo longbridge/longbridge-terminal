@@ -106,7 +106,13 @@ impl TokenStorage for EncryptedFileTokenStorage {
         let encrypted = encrypt(&json)
             .map_err(|e| OAuthError::Other(format!("Token encryption failed: {e}")))?;
 
-        std::fs::write(&path, &encrypted).map_err(|e| OAuthError::TokenFileWrite {
+        // Write to a sibling temp file then rename for atomic replacement.
+        let tmp = path.with_extension("tmp");
+        std::fs::write(&tmp, &encrypted).map_err(|e| OAuthError::TokenFileWrite {
+            path: tmp.clone(),
+            source: e,
+        })?;
+        std::fs::rename(&tmp, &path).map_err(|e| OAuthError::TokenFileWrite {
             path: path.clone(),
             source: e,
         })?;
@@ -118,10 +124,9 @@ impl TokenStorage for EncryptedFileTokenStorage {
 
 /// Migrate a legacy plaintext token file to the new encrypted location.
 ///
-/// Called once at startup. If the new file already exists, this is a no-op.
-/// Reads the old `~/.longbridge/openapi/tokens/<client_id>` file, re-saves it
-/// via `EncryptedFileTokenStorage` (which writes to `~/.longbridge/cli/auth-token`
-/// and deletes the legacy file).
+/// Called once at startup. Reads the old `~/.longbridge/openapi/tokens/<client_id>`
+/// file and re-saves it via `EncryptedFileTokenStorage`, then deletes the legacy file.
+/// If the new file already exists, only cleans up any leftover legacy file.
 pub fn migrate_legacy_token(client_id: &str) {
     let Ok(new_path) = token_path(client_id) else {
         return;
@@ -153,6 +158,11 @@ pub fn migrate_legacy_token(client_id: &str) {
     let Some(access_token) = json["access_token"].as_str() else {
         return;
     };
+
+    // Preserve logged_in_at from the legacy file if present; save() would
+    // otherwise set it to the migration timestamp instead of the real login time.
+    let legacy_logged_in_at = json["logged_in_at"].as_u64();
+
     let token = longbridge::oauth::StoredToken {
         client_id: client_id.to_string(),
         access_token: access_token.to_string(),
@@ -161,6 +171,24 @@ pub fn migrate_legacy_token(client_id: &str) {
     };
 
     if EncryptedFileTokenStorage.save(&token).is_ok() {
+        // Patch logged_in_at if the legacy file had it and save() used now instead.
+        if let Some(logged_in_at) = legacy_logged_in_at {
+            if let Ok(path) = token_path(client_id) {
+                if let Some((mut payload, _)) = read_payload(&path) {
+                    if payload.logged_in_at != Some(logged_in_at) {
+                        payload.logged_in_at = Some(logged_in_at);
+                        if let Ok(json) = serde_json::to_vec(&payload) {
+                            if let Ok(enc) = encrypt(&json) {
+                                let tmp = path.with_extension("tmp");
+                                if std::fs::write(&tmp, &enc).is_ok() {
+                                    let _ = std::fs::rename(&tmp, &path);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         let _ = std::fs::remove_file(&legacy);
         tracing::debug!("Migrated legacy token to encrypted storage");
     }
@@ -349,14 +377,15 @@ fn machine_derived_key() -> Key<Aes256Gcm> {
 /// minimal Docker containers without `/etc/machine-id`). Encryption still
 /// works in that case; only the machine-binding property is lost.
 fn machine_id() -> &'static str {
-    if let Some(id) = MACHINE_ID.get() {
-        return id.as_str();
-    }
-    match machine_uid::get() {
-        Ok(id) => MACHINE_ID.get_or_init(|| id).as_str(),
-        Err(e) => {
-            tracing::warn!("Could not obtain machine ID (token will not be machine-bound): {e}");
-            ""
-        }
-    }
+    MACHINE_ID
+        .get_or_init(|| match machine_uid::get() {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::warn!(
+                    "Could not obtain machine ID (token will not be machine-bound): {e}"
+                );
+                String::new()
+            }
+        })
+        .as_str()
 }
