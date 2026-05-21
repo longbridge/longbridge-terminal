@@ -2600,7 +2600,7 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 [[package]]
 name = "longbridge"
 version = "4.1.0"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Foauth-token-storage#281ba275f2686f7e86fe1470c9cbbcd066edaaaa"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#86c3fe56197de1a6a1993a58374f9d8763faea45"
 dependencies = [
  "anyhow",
  "bitflags 2.10.0",
@@ -2635,7 +2635,7 @@ dependencies = [
 [[package]]
 name = "longbridge-candlesticks"
 version = "4.1.0"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Foauth-token-storage#281ba275f2686f7e86fe1470c9cbbcd066edaaaa"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#86c3fe56197de1a6a1993a58374f9d8763faea45"
 dependencies = [
  "bitflags 2.10.0",
  "num-traits",
@@ -2647,7 +2647,7 @@ dependencies = [
 [[package]]
 name = "longbridge-geo"
 version = "4.1.0"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Foauth-token-storage#281ba275f2686f7e86fe1470c9cbbcd066edaaaa"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#86c3fe56197de1a6a1993a58374f9d8763faea45"
 dependencies = [
  "reqwest 0.12.28",
 ]
@@ -2655,7 +2655,7 @@ dependencies = [
 [[package]]
 name = "longbridge-httpcli"
 version = "4.1.0"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Foauth-token-storage#281ba275f2686f7e86fe1470c9cbbcd066edaaaa"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#86c3fe56197de1a6a1993a58374f9d8763faea45"
 dependencies = [
  "dotenv",
  "futures-util",
@@ -2677,7 +2677,7 @@ dependencies = [
 [[package]]
 name = "longbridge-oauth"
 version = "4.1.0"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Foauth-token-storage#281ba275f2686f7e86fe1470c9cbbcd066edaaaa"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#86c3fe56197de1a6a1993a58374f9d8763faea45"
 dependencies = [
  "dirs 6.0.0",
  "futures-util",
@@ -2694,7 +2694,7 @@ dependencies = [
 [[package]]
 name = "longbridge-proto"
 version = "4.1.0"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Foauth-token-storage#281ba275f2686f7e86fe1470c9cbbcd066edaaaa"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#86c3fe56197de1a6a1993a58374f9d8763faea45"
 dependencies = [
  "prost 0.14.3",
  "serde",
@@ -2770,7 +2770,7 @@ dependencies = [
 [[package]]
 name = "longbridge-wscli"
 version = "4.1.0"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Foauth-token-storage#281ba275f2686f7e86fe1470c9cbbcd066edaaaa"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#86c3fe56197de1a6a1993a58374f9d8763faea45"
 dependencies = [
  "byteorder",
  "flate2",
