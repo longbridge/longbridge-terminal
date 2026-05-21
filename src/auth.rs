@@ -43,8 +43,8 @@ pub fn token_file_path() -> Result<PathBuf> {
     Ok(dirs::home_dir()
         .ok_or_else(|| anyhow::anyhow!("Failed to get home directory"))?
         .join(".longbridge")
-        .join("cli")
-        .join("auth-token"))
+        .join("openapi")
+        .join("cli-auth"))
 }
 
 /// Invite code file path: `~/.longbridge/openapi/invite-code`

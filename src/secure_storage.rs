@@ -147,10 +147,6 @@ pub fn migrate_legacy_token(client_id: &str) {
     let Ok(new_path) = token_path(client_id) else {
         return;
     };
-    if new_path.exists() {
-        return;
-    }
-
     let Some(home) = dirs::home_dir() else {
         return;
     };
@@ -159,6 +155,14 @@ pub fn migrate_legacy_token(client_id: &str) {
         .join("openapi")
         .join("tokens")
         .join(client_id);
+
+    if new_path.exists() {
+        // New encrypted file already exists; clean up any leftover legacy file.
+        if legacy.exists() {
+            let _ = std::fs::remove_file(&legacy);
+        }
+        return;
+    }
 
     let Ok(bytes) = std::fs::read(&legacy) else {
         return;
@@ -213,8 +217,8 @@ fn token_path(_client_id: &str) -> anyhow::Result<PathBuf> {
     Ok(dirs::home_dir()
         .ok_or_else(|| anyhow::anyhow!("Failed to get home directory"))?
         .join(".longbridge")
-        .join("cli")
-        .join("auth-token"))
+        .join("openapi")
+        .join("cli-auth"))
 }
 
 /// Read and decrypt the payload at `path`.
