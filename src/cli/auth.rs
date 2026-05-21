@@ -88,21 +88,39 @@ fn read_token_state() -> Result<TokenState> {
         });
     }
 
-    let contents = std::fs::read_to_string(&token_path)?;
-    let data: serde_json::Value = serde_json::from_str(&contents)?;
+    let Some(full) =
+        crate::secure_storage::EncryptedFileTokenStorage::load_full(crate::auth::client_id())
+    else {
+        return Ok(TokenState {
+            status: "decrypt_failed",
+            detail: format!(
+                "token cannot be decrypted — run {DIM}longbridge auth login{RESET} to re-authenticate"
+            ),
+            access_token_exp: None,
+            refresh_token_exp: None,
+            logged_in_at: None,
+        });
+    };
 
-    let logged_in_at = data["logged_in_at"].as_u64().or_else(|| {
-        data["refresh_token"]
-            .as_str()
-            .and_then(|t| jwt_field(t, "iat"))
+    let expires_at = full["expires_at"].as_u64().unwrap_or(0);
+    let refresh_token = full["refresh_token"].as_str().unwrap_or("");
+    let logged_in_at = full["logged_in_at"].as_u64().or_else(|| {
+        if refresh_token.is_empty() {
+            None
+        } else {
+            jwt_field(refresh_token, "iat")
+        }
     });
-    let expires_at = data["expires_at"].as_u64().unwrap_or(0);
     let access_token_exp = if expires_at > 0 {
         Some(expires_at)
     } else {
         None
     };
-    let refresh_token_exp = data["refresh_token"].as_str().and_then(jwt_exp);
+    let refresh_token_exp = if refresh_token.is_empty() {
+        None
+    } else {
+        jwt_exp(refresh_token)
+    };
 
     if expires_at == 0 {
         return Ok(TokenState {
@@ -377,6 +395,7 @@ pub async fn cmd_auth_status(format: &OutputFormat, market: &str) -> Result<()> 
             // ── Token ──────────────────────────────────────────────────────────
             let (status_str, status_color) = match token.status {
                 "not_found" => ("not found", RED),
+                "decrypt_failed" => ("decrypt failed", RED),
                 "expired" => ("expired", RED),
                 "refresh_pending" => ("refresh pending", YELLOW),
                 _ => ("valid", GREEN),
@@ -446,16 +465,6 @@ pub async fn cmd_auth_status(format: &OutputFormat, market: &str) -> Result<()> 
                     );
                 }
             }
-            let display_path = dirs::home_dir()
-                .and_then(|h| {
-                    token_path
-                        .strip_prefix(&h)
-                        .ok()
-                        .map(|p| format!("~/{}", p.display()))
-                })
-                .unwrap_or_else(|| token_path.display().to_string());
-            println!("{:<W$} {DIM}{display_path}{RESET}", "Session Path", W = W);
-
             // ── Account ────────────────────────────────────────────────────────
             if let Some(acc) = &account {
                 println!();
