@@ -137,9 +137,15 @@ pub fn open_browser(url: &str) -> bool {
     open::that(url).is_ok()
 }
 
-/// Write a token JSON blob to the SDK token file path.
+/// Write a token JSON blob to the SDK token file path and to the OS credential store.
 ///
-/// Preserves the existing `logged_in_at` field on refresh; sets it to now on initial login.
+/// The file at `token_file_path()` is always written because the longbridge SDK's
+/// `OAuthBuilder` reads from that exact path. The OS credential store (macOS Keychain
+/// or Windows Credential Manager) is updated as a best-effort encrypted backup.
+///
+/// Preserves the existing `logged_in_at` field on refresh; sets it to now on initial
+/// login. The existing value is read from the file first, falling back to the credential
+/// store, so the timestamp survives even if the file was accidentally deleted.
 fn save_token(client_id: &str, token_resp: &serde_json::Value) -> Result<()> {
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -155,9 +161,15 @@ fn save_token(client_id: &str, token_resp: &serde_json::Value) -> Result<()> {
     let expires_at = now + expires_in;
 
     let token_path = token_file_path()?;
-    let logged_in_at = fs::read_to_string(&token_path)
+
+    // Preserve logged_in_at from the existing file; fall back to the credential
+    // store so the timestamp survives an accidental file deletion.
+    let existing_json = fs::read_to_string(&token_path)
         .ok()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .or_else(|| crate::secure_storage::try_load(client_id));
+    let logged_in_at = existing_json
+        .as_deref()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
         .and_then(|v| v["logged_in_at"].as_u64())
         .unwrap_or(now);
 
@@ -172,8 +184,10 @@ fn save_token(client_id: &str, token_resp: &serde_json::Value) -> Result<()> {
     if let Some(parent) = token_path.parent() {
         fs::create_dir_all(parent).context("Failed to create token directory")?;
     }
-    fs::write(&token_path, serde_json::to_string_pretty(&token).unwrap())
-        .context("Failed to write token file")?;
+    let json_str = serde_json::to_string_pretty(&token).unwrap();
+    fs::write(&token_path, &json_str).context("Failed to write token file")?;
+    crate::secure_storage::harden_file_permissions(&token_path);
+    crate::secure_storage::try_store(client_id, &json_str);
     Ok(())
 }
 
@@ -191,10 +205,35 @@ fn patch_token_logged_in_at() -> Result<()> {
             .unwrap()
             .as_secs();
         data["logged_in_at"] = serde_json::Value::from(now);
-        fs::write(&token_path, serde_json::to_string_pretty(&data).unwrap())
-            .context("Failed to patch token file")?;
+        let json_str = serde_json::to_string_pretty(&data).unwrap();
+        fs::write(&token_path, &json_str).context("Failed to patch token file")?;
+        crate::secure_storage::try_store(client_id(), &json_str);
     }
     Ok(())
+}
+
+/// If the token file is missing but the OS credential store has a copy, restore
+/// the file from the credential store.
+///
+/// Called by `openapi::context::init_contexts` before the token-file existence
+/// check so that an accidentally deleted file does not force a re-login.
+pub fn try_restore_from_keychain() {
+    let Ok(token_path) = token_file_path() else {
+        return;
+    };
+    if token_path.exists() {
+        return;
+    }
+    let Some(json_str) = crate::secure_storage::try_load(client_id()) else {
+        return;
+    };
+    if let Some(parent) = token_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if fs::write(&token_path, &json_str).is_ok() {
+        crate::secure_storage::harden_file_permissions(&token_path);
+        tracing::debug!("Restored token file from OS credential store");
+    }
 }
 
 /// Device Authorization Flow (RFC 8628).
@@ -320,6 +359,9 @@ pub async fn device_login(verbose: bool) -> Result<()> {
 /// - Expired, refresh succeeds → writes new token to disk, returns `Ok(())`.
 /// - Expired, refresh fails → returns an error; token file is **never** deleted
 ///   so `auth status` shows "expired" rather than "not found".
+///
+/// Also performs a one-time migration: if the file exists but the OS credential
+/// store has no entry yet, the token is copied into the store silently.
 pub async fn refresh_if_expired() -> Result<()> {
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -330,6 +372,12 @@ pub async fn refresh_if_expired() -> Result<()> {
     let Ok(data) = serde_json::from_str::<serde_json::Value>(&contents) else {
         return Ok(()); // unparseable — let OAuthBuilder handle it
     };
+
+    // One-time migration: copy the existing plaintext token into the credential
+    // store the first time a new binary (or an upgraded binary) reads it.
+    if crate::secure_storage::try_load(client_id()).is_none() {
+        crate::secure_storage::try_store(client_id(), &contents);
+    }
 
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -438,10 +486,14 @@ pub async fn auth_code_login() -> Result<()> {
     }
 }
 
-/// Clear the stored OAuth token (logout). Deletes the token file used by the longbridge SDK.
+/// Clear the stored OAuth token (logout).
+///
+/// Removes the token from both the OS credential store and the plaintext file
+/// used by the longbridge SDK.
 pub fn clear_token() -> Result<()> {
-    let path = token_file_path()?;
+    crate::secure_storage::try_delete(client_id());
 
+    let path = token_file_path()?;
     if path.exists() {
         fs::remove_file(&path).context("Failed to delete token file")?;
         tracing::debug!("OAuth token deleted: {}", path.display());

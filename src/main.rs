@@ -13,6 +13,7 @@ pub mod openapi;
 #[cfg_attr(target_family = "unix", path = "os/unix.rs")]
 pub mod os;
 pub mod region;
+pub mod secure_storage;
 pub mod tui;
 pub mod update;
 pub mod utils;

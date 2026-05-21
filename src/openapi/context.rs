@@ -58,6 +58,11 @@ pub async fn init_contexts() -> Result<(
         )
     } else {
         tracing::info!("No API key env vars found, using OAuth authentication");
+        // Attempt to restore the token file from the OS credential store if it
+        // was accidentally deleted.  This is a no-op when the file already exists
+        // or when no credential store entry is found.
+        crate::auth::try_restore_from_keychain();
+
         // If no token file exists, refuse to start a browser/callback-server flow.
         // CLI commands require a stored token; users must run `longbridge auth login` first.
         let token_path = crate::auth::token_file_path()?;
