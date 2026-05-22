@@ -91,6 +91,7 @@ pub async fn cmd_screener_run(
     sort: Option<&str>,
     order: &str,
     show: &[String],
+    page: u32,
     count: u32,
     format: &OutputFormat,
     verbose: bool,
@@ -129,7 +130,7 @@ pub async fn cmd_screener_run(
         }
     }
     print_screener_results(
-        id, &mkt, &filters, &returns, sort, order, count, format, verbose,
+        id, &mkt, &filters, &returns, sort, order, page, count, format, verbose,
     )
     .await
 }
@@ -140,6 +141,7 @@ pub async fn cmd_screener_filter(
     sort: Option<&str>,
     order: &str,
     show: &[String],
+    page: u32,
     count: u32,
     format: &OutputFormat,
     verbose: bool,
@@ -175,6 +177,7 @@ pub async fn cmd_screener_filter(
         &returns,
         sort,
         order,
+        page,
         count,
         format,
         verbose,
@@ -189,6 +192,7 @@ async fn print_screener_results(
     returns: &[String],
     sort: Option<&str>,
     order: &str,
+    page: u32,
     count: u32,
     format: &OutputFormat,
     verbose: bool,
@@ -207,7 +211,7 @@ async fn print_screener_results(
     let sort_order: u8 = u8::from(order != "asc");
     let body = serde_json::json!({
         "market": market,
-        "page": 1,
+        "page": page,
         "size": count,
         "filters": filters,
         "returns": effective_returns,

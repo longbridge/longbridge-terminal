@@ -1730,6 +1730,7 @@ pub enum ScreenerCmd {
     ///
     /// Example: longbridge screener run 42
     /// Example: longbridge screener run 42 --sort pettm --order desc
+    /// Example: longbridge screener run 42 --page 2 --count 50
     /// Example: longbridge screener run 42 --show roe --show divyld
     Run {
         /// Strategy ID from `screener strategies` output
@@ -1743,7 +1744,10 @@ pub enum ScreenerCmd {
         /// Extra columns to display without adding a filter condition
         #[arg(long = "show", value_name = "KEY")]
         show: Vec<String>,
-        /// Number of results (default: 20)
+        /// Page number (default: 1)
+        #[arg(long, default_value = "1")]
+        page: u32,
+        /// Records per page (default: 20)
         #[arg(long, alias = "limit", default_value = "20")]
         count: u32,
     },
@@ -1758,6 +1762,7 @@ pub enum ScreenerCmd {
     /// Example: longbridge screener filter pettm:10:50 roe:5: --market HK
     /// Example: longbridge screener filter marketcap:100: divyld:3: --market US
     /// Example: longbridge screener filter roe:20: --market HK --sort roe --show divyld
+    /// Example: longbridge screener filter `pettm::20` --market HK --page 2 --count 50
     Filter {
         /// Filter conditions in KEY:MIN:MAX format
         #[arg(value_name = "KEY:MIN:MAX")]
@@ -1774,7 +1779,10 @@ pub enum ScreenerCmd {
         /// Extra columns to display without adding a filter condition
         #[arg(long = "show", value_name = "KEY")]
         show: Vec<String>,
-        /// Number of results (default: 20)
+        /// Page number (default: 1)
+        #[arg(long, default_value = "1")]
+        page: u32,
+        /// Records per page (default: 20)
         #[arg(long, alias = "limit", default_value = "20")]
         count: u32,
     },
@@ -3538,11 +3546,11 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             ScreenerCmd::Strategies { mine, market } => {
                 screener::cmd_screener_strategies(mine, market.as_str(), format, verbose).await
             }
-            ScreenerCmd::Run { id, sort, order, show, count } => {
-                screener::cmd_screener_run(id, sort.as_deref(), order.as_str(), show.as_slice(), count, format, verbose).await
+            ScreenerCmd::Run { id, sort, order, show, page, count } => {
+                screener::cmd_screener_run(id, sort.as_deref(), order.as_str(), show.as_slice(), page, count, format, verbose).await
             }
-            ScreenerCmd::Filter { conditions, market, sort, order, show, count } => {
-                screener::cmd_screener_filter(conditions.as_slice(), market.as_str(), sort.as_deref(), order.as_str(), show.as_slice(), count, format, verbose).await
+            ScreenerCmd::Filter { conditions, market, sort, order, show, page, count } => {
+                screener::cmd_screener_filter(conditions.as_slice(), market.as_str(), sort.as_deref(), order.as_str(), show.as_slice(), page, count, format, verbose).await
             }
             ScreenerCmd::Indicators { symbol } => {
                 screener::cmd_screener_indicators(symbol.clone(), format, verbose).await
