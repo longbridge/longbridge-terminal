@@ -210,7 +210,7 @@ async fn print_screener_results(
         "sort_order": sort_order,
         "industries": [],
     });
-    let data = http_post("/v1/quote/screener/search", body, verbose).await?;
+    let data = http_post("/v1/quote/ai/screener/search", body, verbose).await?;
     match format {
         OutputFormat::Json => println!(
             "{}",
@@ -281,7 +281,7 @@ pub async fn cmd_screener_indicators(
         cid = symbol_to_counter_id(sym);
         params.push(("counter_id", cid.as_str()));
     }
-    let data = http_get("/v1/quote/screener/indicators", &params, verbose).await?;
+    let data = http_get("/v1/quote/ai/screener/indicators", &params, verbose).await?;
     match format {
         OutputFormat::Json => println!(
             "{}",
