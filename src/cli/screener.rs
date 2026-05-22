@@ -244,33 +244,34 @@ async fn print_screener_results(
             return Ok(());
         }
     };
-    let mut headers = vec!["Symbol".to_string(), "Name".to_string()];
-    headers.extend(
-        effective_returns
-            .iter()
-            .map(|k| k.replace("filter_", "").to_uppercase()),
-    );
-    let header_refs: Vec<&str> = headers.iter().map(String::as_str).collect();
-    let rows: Vec<Vec<String>> = stocks
-        .iter()
-        .map(|s| {
-            let sym = crate::utils::counter::counter_id_to_symbol(&val_str(&s["counter_id"]));
-            let mut row = vec![sym, val_str(&s["name"])];
-            if let Some(indicators) = s["indicators"].as_array() {
-                row.extend(indicators.iter().map(|ind| {
-                    let v = val_str(&ind["value"]);
-                    if v.is_empty() || v == "-" {
-                        return "-".to_string();
-                    }
-                    let unit = val_str(&ind["unit"]);
-                    format_financial_value(&v, unit == "%")
-                }));
-            }
-            row
-        })
-        .collect();
     match format {
         OutputFormat::Pretty => {
+            let mut headers = vec!["Symbol".to_string(), "Name".to_string()];
+            headers.extend(
+                effective_returns
+                    .iter()
+                    .map(|k| k.replace("filter_", "").to_uppercase()),
+            );
+            let header_refs: Vec<&str> = headers.iter().map(String::as_str).collect();
+            let rows: Vec<Vec<String>> = stocks
+                .iter()
+                .map(|s| {
+                    let sym =
+                        crate::utils::counter::counter_id_to_symbol(&val_str(&s["counter_id"]));
+                    let mut row = vec![sym, val_str(&s["name"])];
+                    if let Some(indicators) = s["indicators"].as_array() {
+                        row.extend(indicators.iter().map(|ind| {
+                            let v = val_str(&ind["value"]);
+                            if v.is_empty() || v == "-" {
+                                return "-".to_string();
+                            }
+                            let unit = val_str(&ind["unit"]);
+                            format_financial_value(&v, unit == "%")
+                        }));
+                    }
+                    row
+                })
+                .collect();
             let label = if strategy_id > 0 {
                 format!("Strategy #{strategy_id} ({market})")
             } else {
@@ -280,16 +281,26 @@ async fn print_screener_results(
             print_table(&header_refs, rows, format);
         }
         OutputFormat::Json => {
-            let items: Vec<serde_json::Value> = rows
-                .into_iter()
-                .map(|row| {
+            let items: Vec<serde_json::Value> = stocks
+                .iter()
+                .map(|s| {
+                    let sym =
+                        crate::utils::counter::counter_id_to_symbol(&val_str(&s["counter_id"]));
                     let mut map = serde_json::Map::new();
-                    for (i, val) in row.into_iter().enumerate() {
-                        if let Some(key) = header_refs.get(i) {
-                            map.insert(
-                                key.to_lowercase().replace(' ', "_"),
-                                serde_json::Value::String(val),
-                            );
+                    map.insert("symbol".to_string(), serde_json::Value::String(sym));
+                    map.insert(
+                        "name".to_string(),
+                        serde_json::Value::String(val_str(&s["name"])),
+                    );
+                    if let Some(indicators) = s["indicators"].as_array() {
+                        for ind in indicators {
+                            let key = val_str(&ind["key"]).replace("filter_", "");
+                            let raw = val_str(&ind["value"]);
+                            let json_val = raw
+                                .parse::<f64>()
+                                .map(|n| serde_json::json!(n))
+                                .unwrap_or(serde_json::Value::String(raw));
+                            map.insert(key, json_val);
                         }
                     }
                     serde_json::Value::Object(map)
@@ -346,7 +357,7 @@ pub async fn cmd_screener_indicators(
                             let max = val_str(&ind["default_range"]["max"]);
                             vec![
                                 val_str(&ind["id"]),
-                                val_str(&ind["key"]),
+                                val_str(&ind["key"]).replace("filter_", ""),
                                 val_str(&ind["name"]),
                                 val_str(&ind["unit"]),
                                 min,
