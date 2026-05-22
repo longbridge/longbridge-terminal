@@ -5,6 +5,16 @@ use super::{api::http_get, api::http_post, output::print_table, OutputFormat};
 use crate::utils::counter::symbol_to_counter_id;
 use crate::utils::number::format_financial_value;
 
+const DEFAULT_RETURNS: &[&str] = &[
+    "filter_prevclose",
+    "filter_prevchg",
+    "filter_marketcap",
+    "filter_salesgrowthyoy",
+    "filter_pettm",
+    "filter_pbmrq",
+    "filter_industry",
+];
+
 fn normalize_key(key: &str) -> String {
     if key.starts_with("filter_") {
         key.to_string()
@@ -98,7 +108,6 @@ pub async fn cmd_screener_run(
     };
 
     let mut filters: Vec<serde_json::Value> = Vec::new();
-    let mut returns: Vec<String> = Vec::new();
     if let Some(f) = strategy["filter"]["filters"].as_array() {
         for ind in f {
             let key = val_str(&ind["key"]);
@@ -113,9 +122,9 @@ pub async fn cmd_screener_run(
                 "max": max,
                 "tech_values": {}
             }));
-            returns.push(key);
         }
     }
+    let mut returns: Vec<String> = DEFAULT_RETURNS.iter().map(ToString::to_string).collect();
     for key in show {
         let full_key = normalize_key(key);
         if !returns.contains(&full_key) {
@@ -139,7 +148,6 @@ pub async fn cmd_screener_filter(
     verbose: bool,
 ) -> Result<()> {
     let mut filters: Vec<serde_json::Value> = Vec::new();
-    let mut returns: Vec<String> = Vec::new();
     for cond in conditions {
         let parts: Vec<&str> = cond.splitn(3, ':').collect();
         let raw_key = parts.first().copied().unwrap_or("");
@@ -155,8 +163,8 @@ pub async fn cmd_screener_filter(
             "max": max,
             "tech_values": {}
         }));
-        returns.push(key);
     }
+    let mut returns: Vec<String> = DEFAULT_RETURNS.iter().map(ToString::to_string).collect();
     for key in show {
         let full_key = normalize_key(key);
         if !returns.contains(&full_key) {
