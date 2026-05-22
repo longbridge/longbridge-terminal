@@ -84,23 +84,13 @@ pub async fn cmd_screener_run(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let strategies = http_get("/v1/quote/ai/screener/strategies/recommend", &[], verbose).await?;
-    let strategy_obj = strategies["screeners"]
-        .as_array()
-        .and_then(|arr| arr.iter().find(|s| s["id"].as_i64() == Some(id)))
-        .cloned()
-        .unwrap_or(serde_json::Value::Null);
-    let strategy = if strategy_obj.is_null() {
-        let id_str = id.to_string();
-        http_get(
-            "/v1/quote/ai/screener/strategy",
-            &[("id", id_str.as_str())],
-            verbose,
-        )
-        .await?
-    } else {
-        strategy_obj
-    };
+    let id_str = id.to_string();
+    let strategy = http_get(
+        "/v1/quote/ai/screener/strategy",
+        &[("id", id_str.as_str())],
+        verbose,
+    )
+    .await?;
 
     let mut mkt = "US".to_string();
     let mut filters: Vec<serde_json::Value> = Vec::new();
