@@ -44,48 +44,45 @@ pub async fn cmd_screener_strategies(
     };
     let mkt = market.to_uppercase();
     let data = http_get(path, &[("market", mkt.as_str())], verbose).await?;
-    match format {
-        OutputFormat::Json => println!(
-            "{}",
-            serde_json::to_string_pretty(&data).unwrap_or_default()
-        ),
-        OutputFormat::Pretty => {
-            let screeners = match data
-                .get("strategys")
-                .or_else(|| data.get("screeners"))
-                .and_then(|v| v.as_array())
-            {
-                Some(a) if !a.is_empty() => a,
-                _ => {
-                    println!("No strategies found.");
-                    return Ok(());
-                }
-            };
-            let label = if mine {
-                "My Strategies"
-            } else {
-                "Preset Strategies"
-            };
-            println!("{label}\n");
-            let headers = ["ID", "Name", "Avg Day Chg", "Type"];
-            let rows: Vec<Vec<String>> = screeners
-                .iter()
-                .map(|s| {
-                    let type_str = match s["type"].as_i64() {
-                        Some(1) => "User",
-                        _ => "Platform",
-                    };
-                    vec![
-                        val_str(&s["id"]),
-                        val_str(&s["name"]),
-                        val_str(&s["average_day_chg"]),
-                        type_str.to_string(),
-                    ]
-                })
-                .collect();
-            print_table(&headers, rows, format);
+    let screeners = match data
+        .get("strategys")
+        .or_else(|| data.get("screeners"))
+        .and_then(|v| v.as_array())
+    {
+        Some(a) if !a.is_empty() => a,
+        _ => {
+            match format {
+                OutputFormat::Json => println!("[]"),
+                OutputFormat::Pretty => println!("No strategies found."),
+            }
+            return Ok(());
         }
+    };
+    if matches!(format, OutputFormat::Pretty) {
+        let label = if mine {
+            "My Strategies"
+        } else {
+            "Preset Strategies"
+        };
+        println!("{label}\n");
     }
+    let headers = ["ID", "Name", "Avg Day Chg", "Type"];
+    let rows: Vec<Vec<String>> = screeners
+        .iter()
+        .map(|s| {
+            let type_str = match s["type"].as_i64() {
+                Some(1) => "User",
+                _ => "Platform",
+            };
+            vec![
+                val_str(&s["id"]),
+                val_str(&s["name"]),
+                val_str(&s["average_day_chg"]),
+                type_str.to_string(),
+            ]
+        })
+        .collect();
+    print_table(&headers, rows, format);
     Ok(())
 }
 
@@ -219,62 +216,58 @@ async fn print_screener_results(
         "industries": [],
     });
     let data = http_post("/v1/quote/ai/screener/search", body, verbose).await?;
-    match format {
-        OutputFormat::Json => println!(
-            "{}",
-            serde_json::to_string_pretty(&data).unwrap_or_default()
-        ),
-        OutputFormat::Pretty => {
-            let total = data
-                .get("total")
-                .and_then(serde_json::Value::as_i64)
-                .unwrap_or_else(|| {
-                    data["items"]
-                        .as_array()
-                        .map_or(0, |a| i64::try_from(a.len()).unwrap_or(0))
-                });
-            let label = if strategy_id > 0 {
-                format!("Strategy #{strategy_id} ({market})")
-            } else {
-                format!("Custom filter ({market})")
-            };
-            println!("{label} — {total} stocks found\n");
-            let stocks = match data.get("items").and_then(|v| v.as_array()) {
-                Some(a) if !a.is_empty() => a,
-                _ => {
-                    println!("No stocks found matching the criteria.");
-                    return Ok(());
-                }
-            };
-            let mut headers = vec!["Symbol".to_string(), "Name".to_string()];
-            headers.extend(
-                effective_returns
-                    .iter()
-                    .map(|k| k.replace("filter_", "").to_uppercase()),
-            );
-            let header_refs: Vec<&str> = headers.iter().map(String::as_str).collect();
-            let rows: Vec<Vec<String>> = stocks
-                .iter()
-                .map(|s| {
-                    let sym =
-                        crate::utils::counter::counter_id_to_symbol(&val_str(&s["counter_id"]));
-                    let mut row = vec![sym, val_str(&s["name"])];
-                    if let Some(indicators) = s["indicators"].as_array() {
-                        row.extend(indicators.iter().map(|ind| {
-                            let v = val_str(&ind["value"]);
-                            if v.is_empty() || v == "-" {
-                                return "-".to_string();
-                            }
-                            let unit = val_str(&ind["unit"]);
-                            format_financial_value(&v, unit == "%")
-                        }));
-                    }
-                    row
-                })
-                .collect();
-            print_table(&header_refs, rows, format);
+    let total = data
+        .get("total")
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or_else(|| {
+            data["items"]
+                .as_array()
+                .map_or(0, |a| i64::try_from(a.len()).unwrap_or(0))
+        });
+    let stocks = match data.get("items").and_then(|v| v.as_array()) {
+        Some(a) if !a.is_empty() => a,
+        _ => {
+            match format {
+                OutputFormat::Json => println!("[]"),
+                OutputFormat::Pretty => println!("No stocks found matching the criteria."),
+            }
+            return Ok(());
         }
+    };
+    let mut headers = vec!["Symbol".to_string(), "Name".to_string()];
+    headers.extend(
+        effective_returns
+            .iter()
+            .map(|k| k.replace("filter_", "").to_uppercase()),
+    );
+    let header_refs: Vec<&str> = headers.iter().map(String::as_str).collect();
+    let rows: Vec<Vec<String>> = stocks
+        .iter()
+        .map(|s| {
+            let sym = crate::utils::counter::counter_id_to_symbol(&val_str(&s["counter_id"]));
+            let mut row = vec![sym, val_str(&s["name"])];
+            if let Some(indicators) = s["indicators"].as_array() {
+                row.extend(indicators.iter().map(|ind| {
+                    let v = val_str(&ind["value"]);
+                    if v.is_empty() || v == "-" {
+                        return "-".to_string();
+                    }
+                    let unit = val_str(&ind["unit"]);
+                    format_financial_value(&v, unit == "%")
+                }));
+            }
+            row
+        })
+        .collect();
+    if matches!(format, OutputFormat::Pretty) {
+        let label = if strategy_id > 0 {
+            format!("Strategy #{strategy_id} ({market})")
+        } else {
+            format!("Custom filter ({market})")
+        };
+        println!("{label} — {total} stocks found\n");
     }
+    print_table(&header_refs, rows, format);
     Ok(())
 }
 
@@ -290,24 +283,47 @@ pub async fn cmd_screener_indicators(
         params.push(("counter_id", cid.as_str()));
     }
     let data = http_get("/v1/quote/ai/screener/indicators", &params, verbose).await?;
+    let groups = match data.get("groups").and_then(|v| v.as_array()) {
+        Some(a) if !a.is_empty() => a,
+        _ => {
+            match format {
+                OutputFormat::Json => println!("[]"),
+                OutputFormat::Pretty => println!("No indicator config found."),
+            }
+            return Ok(());
+        }
+    };
+    let headers = ["ID", "Key", "Name", "Unit", "Min", "Max"];
     match format {
-        OutputFormat::Json => println!(
-            "{}",
-            serde_json::to_string_pretty(&data).unwrap_or_default()
-        ),
+        OutputFormat::Json => {
+            let rows: Vec<Vec<String>> = groups
+                .iter()
+                .flat_map(|group| {
+                    group["indicators"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .map(|ind| {
+                            let min = val_str(&ind["default_range"]["min"]);
+                            let max = val_str(&ind["default_range"]["max"]);
+                            vec![
+                                val_str(&ind["id"]),
+                                val_str(&ind["key"]),
+                                val_str(&ind["name"]),
+                                val_str(&ind["unit"]),
+                                min,
+                                max,
+                            ]
+                        })
+                })
+                .collect();
+            print_table(&headers, rows, format);
+        }
         OutputFormat::Pretty => {
-            let groups = match data.get("groups").and_then(|v| v.as_array()) {
-                Some(a) if !a.is_empty() => a,
-                _ => {
-                    println!("No indicator config found.");
-                    return Ok(());
-                }
-            };
             for group in groups {
                 let gname = val_str(&group["group_name"]);
                 println!("── {gname} ──");
                 if let Some(indicators) = group["indicators"].as_array() {
-                    let headers = ["ID", "Key", "Name", "Unit", "Min", "Max"];
                     let rows: Vec<Vec<String>> = indicators
                         .iter()
                         .map(|ind| {

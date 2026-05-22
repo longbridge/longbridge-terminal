@@ -1725,14 +1725,16 @@ pub enum ScreenerCmd {
     /// Run a saved strategy by its ID (from `screener strategies` output)
     ///
     /// The strategy's built-in market and filter conditions are applied automatically.
+    /// Output columns: prevclose, prevchg, marketcap, salesgrowthyoy, pettm, pbmrq, industry.
+    /// Use --show to add extra columns; run `screener indicators` to discover valid keys.
     ///
     /// Example: longbridge screener run 42
-    /// Example: longbridge screener run 42 --sort roe --order asc
-    /// Example: longbridge screener run 42 --show pettm --show pbmrq
+    /// Example: longbridge screener run 42 --sort pettm --order desc
+    /// Example: longbridge screener run 42 --show roe --show divyld
     Run {
         /// Strategy ID from `screener strategies` output
         id: i64,
-        /// Sort results by this indicator key (default: first column, descending)
+        /// Sort results by this indicator key (default: prevclose, descending)
         #[arg(long)]
         sort: Option<String>,
         /// Sort direction: desc (default) | asc
@@ -1750,11 +1752,12 @@ pub enum ScreenerCmd {
     ///
     /// Each condition is KEY:MIN:MAX. Omit either bound to leave it open:
     ///   `pettm:10:` means P/E >= 10, `pettm::50` means P/E <= 50.
-    /// Run `screener indicators` to discover available keys and value ranges.
+    /// Output columns: prevclose, prevchg, marketcap, salesgrowthyoy, pettm, pbmrq, industry.
+    /// Use --show to add extra columns; run `screener indicators` to discover valid keys.
     ///
     /// Example: longbridge screener filter pettm:10:50 roe:5: --market HK
     /// Example: longbridge screener filter marketcap:100: divyld:3: --market US
-    /// Example: longbridge screener filter roe:20: --market HK --sort roe --show pettm --show pbmrq
+    /// Example: longbridge screener filter roe:20: --market HK --sort roe --show divyld
     Filter {
         /// Filter conditions in KEY:MIN:MAX format
         #[arg(value_name = "KEY:MIN:MAX")]
@@ -1762,7 +1765,7 @@ pub enum ScreenerCmd {
         /// Market: US | HK | CN (default: US)
         #[arg(long, default_value = "US")]
         market: String,
-        /// Sort results by this indicator key (default: first condition, descending)
+        /// Sort results by this indicator key (default: prevclose, descending)
         #[arg(long)]
         sort: Option<String>,
         /// Sort direction: desc (default) | asc
