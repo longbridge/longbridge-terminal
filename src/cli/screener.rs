@@ -207,7 +207,7 @@ async fn print_screener_results(
     let sort_by = sort_key
         .as_deref()
         .and_then(|k| effective_returns.iter().position(|r| r == k))
-        .unwrap_or(0);
+        .unwrap_or(1);
     let sort_order: u8 = u8::from(order != "asc");
     let body = serde_json::json!({
         "market": market,

@@ -1735,7 +1735,7 @@ pub enum ScreenerCmd {
     Run {
         /// Strategy ID from `screener strategies` output
         id: i64,
-        /// Sort results by this indicator key (default: prevclose, descending)
+        /// Sort by indicator key (default: prevchg desc). Default column indices: 0=prevclose 1=prevchg 2=marketcap 3=salesgrowthyoy 4=pettm 5=pbmrq 6=industry
         #[arg(long)]
         sort: Option<String>,
         /// Sort direction: desc (default) | asc
@@ -1770,7 +1770,7 @@ pub enum ScreenerCmd {
         /// Market: US | HK | CN (default: US)
         #[arg(long, default_value = "US")]
         market: String,
-        /// Sort results by this indicator key (default: prevclose, descending)
+        /// Sort by indicator key (default: prevchg desc). Default column indices: 0=prevclose 1=prevchg 2=marketcap 3=salesgrowthyoy 4=pettm 5=pbmrq 6=industry
         #[arg(long)]
         sort: Option<String>,
         /// Sort direction: desc (default) | asc
