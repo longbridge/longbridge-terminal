@@ -58,14 +58,36 @@ pub async fn cmd_screener_strategies(
             return Ok(());
         }
     };
-    if matches!(format, OutputFormat::Pretty) {
-        let label = if mine {
-            "My Strategies"
-        } else {
-            "Preset Strategies"
-        };
-        println!("{label}\n");
+    if matches!(format, OutputFormat::Json) {
+        let items: Vec<serde_json::Value> = screeners
+            .iter()
+            .map(|s| {
+                let type_str = match s["type"].as_i64() {
+                    Some(1) => "user",
+                    _ => "platform",
+                };
+                let id = s["id"]
+                    .as_i64()
+                    .unwrap_or_else(|| val_str(&s["id"]).parse::<i64>().unwrap_or(0));
+                serde_json::json!({
+                    "id": id,
+                    "name": val_str(&s["name"]),
+                    "type": type_str,
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&items).unwrap_or_default()
+        );
+        return Ok(());
     }
+    let label = if mine {
+        "My Strategies"
+    } else {
+        "Preset Strategies"
+    };
+    println!("{label}\n");
     let headers = ["ID", "Name", "Avg Day Chg", "Type"];
     let rows: Vec<Vec<String>> = screeners
         .iter()
@@ -257,7 +279,7 @@ async fn print_screener_results(
                 OutputFormat::Json => println!(
                     "{}",
                     serde_json::to_string_pretty(&serde_json::json!({
-                        "total": total, "page": page, "items": []
+                        "market": market, "total": total, "page": page, "items": []
                     }))
                     .unwrap_or_default()
                 ),
@@ -331,6 +353,7 @@ async fn print_screener_results(
             println!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
+                    "market": market,
                     "total": total,
                     "page": page,
                     "items": items,
