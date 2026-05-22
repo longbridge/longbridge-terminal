@@ -90,7 +90,6 @@ pub async fn cmd_screener_run(
 ) -> Result<()> {
     let path = format!("/v1/quote/ai/screener/strategy/{id}");
     let strategy = http_get(&path, &[], verbose).await?;
-
     let mkt = val_str(&strategy["market"]);
     let mkt = if mkt.is_empty() || mkt == "-" {
         "US".to_string()
