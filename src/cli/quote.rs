@@ -3122,14 +3122,17 @@ pub async fn cmd_rank(
                             let headers = ["key", "name", "sub-key", "market"];
                             let mut rows: Vec<Vec<String>> = Vec::new();
                             for tag in a {
-                                let k = val_str(&tag["key"]);
+                                let k = val_str(&tag["key"]).trim_start_matches("ib_").to_string();
                                 let n = val_str(&tag["name"]);
                                 if let Some(subs) = tag["second_tags"].as_array() {
                                     for sub in subs {
+                                        let sk = val_str(&sub["key"])
+                                            .trim_start_matches("ib_")
+                                            .to_string();
                                         rows.push(vec![
                                             k.clone(),
                                             n.clone(),
-                                            val_str(&sub["key"]),
+                                            sk,
                                             val_str(&sub["market"]),
                                         ]);
                                     }
