@@ -995,7 +995,7 @@ pub enum Commands {
     /// Strategy screener — browse strategies, run filters, view indicator config
     ///
     /// Workflow A — run a saved strategy:
-    ///   1. `screener strategies` to list recommended strategies and note the ID
+    ///   1. `screener strategies` to list preset strategies and note the ID
     ///   2. `screener run <ID>` to execute it
     ///
     /// Workflow B — custom filter:
@@ -1705,34 +1705,37 @@ impl IndustryRankSortType {
 pub enum ScreenerCmd {
     /// List stock-selection strategies and their filter conditions
     ///
-    /// Default: platform recommended strategies (use ID with `screener search`).
+    /// Default: platform preset strategies (use ID with `screener run`).
     /// --mine:  your saved strategies.
-    /// --all:   all strategies (recommended + user).
     ///
-    /// The `id` field in the output is passed to `screener search --strategy-id`.
+    /// The `id` field in the output is passed to `screener run <ID>`.
     ///
     /// Example: longbridge screener strategies
+    /// Example: longbridge screener strategies --market HK
     /// Example: longbridge screener strategies --mine
     Strategies {
         /// Show user's saved strategies
         #[arg(long)]
         mine: bool,
-        /// Show all strategies (recommended + user)
-        #[arg(long)]
-        all: bool,
+        /// Market: US | HK | CN | SG (default: US)
+        #[arg(long, default_value = "US")]
+        market: String,
     },
 
     /// Run a saved strategy by its ID (from `screener strategies` output)
     ///
     /// The strategy's built-in market and filter conditions are applied automatically.
+    /// Output columns: prevclose, prevchg, marketcap, salesgrowthyoy, pettm, pbmrq, industry.
+    /// Use --show to add extra columns; run `screener indicators` to discover valid keys.
     ///
     /// Example: longbridge screener run 42
-    /// Example: longbridge screener run 42 --sort roe --order asc
-    /// Example: longbridge screener run 42 --show pettm --show pbmrq
+    /// Example: longbridge screener run 42 --sort pettm --order desc
+    /// Example: longbridge screener run 42 --page 1 --count 50
+    /// Example: longbridge screener run 42 --show roe --show divyld
     Run {
         /// Strategy ID from `screener strategies` output
         id: i64,
-        /// Sort results by this indicator key (default: first column, descending)
+        /// Sort by indicator key (default: prevchg desc). Default column indices: 0=prevclose 1=prevchg 2=marketcap 3=salesgrowthyoy 4=pettm 5=pbmrq 6=industry
         #[arg(long)]
         sort: Option<String>,
         /// Sort direction: desc (default) | asc
@@ -1741,20 +1744,27 @@ pub enum ScreenerCmd {
         /// Extra columns to display without adding a filter condition
         #[arg(long = "show", value_name = "KEY")]
         show: Vec<String>,
-        /// Number of results (default: 20)
+        /// Page number (default: 0)
+        #[arg(long, default_value = "0")]
+        page: u32,
+        /// Records per page (default: 20)
         #[arg(long, alias = "limit", default_value = "20")]
         count: u32,
     },
 
     /// Filter stocks with custom indicator conditions
     ///
-    /// Each condition is KEY:MIN:MAX. Omit either bound to leave it open:
-    ///   `pettm:10:` means P/E >= 10, `pettm::50` means P/E <= 50.
-    /// Run `screener indicators` to discover available keys and value ranges.
+    /// Condition format: KEY:MIN:MAX or KEY:MIN:MAX:k=v,k=v for technical indicators.
+    /// Omit either bound to leave it open: `pettm:10:` means P/E >= 10, `pettm::50` means P/E <= 50.
+    /// Technical indicators use `tech_values` instead of min/max; run `screener indicators --format json`
+    /// to see valid `tech_values` options per key (field: `tech_values`).
+    /// Output columns: prevclose, prevchg, marketcap, salesgrowthyoy, pettm, pbmrq, industry.
+    /// Use --show to add extra columns.
     ///
     /// Example: longbridge screener filter pettm:10:50 roe:5: --market HK
     /// Example: longbridge screener filter marketcap:100: divyld:3: --market US
-    /// Example: longbridge screener filter roe:20: --market HK --sort roe --show pettm --show pbmrq
+    /// Example: longbridge screener filter `macd_day:::category=goldenfork,period=day` --market HK
+    /// Example: longbridge screener filter `pettm::20` --market HK --page 1 --count 50
     Filter {
         /// Filter conditions in KEY:MIN:MAX format
         #[arg(value_name = "KEY:MIN:MAX")]
@@ -1762,7 +1772,7 @@ pub enum ScreenerCmd {
         /// Market: US | HK | CN (default: US)
         #[arg(long, default_value = "US")]
         market: String,
-        /// Sort results by this indicator key (default: first condition, descending)
+        /// Sort by indicator key (default: prevchg desc). Default column indices: 0=prevclose 1=prevchg 2=marketcap 3=salesgrowthyoy 4=pettm 5=pbmrq 6=industry
         #[arg(long)]
         sort: Option<String>,
         /// Sort direction: desc (default) | asc
@@ -1771,7 +1781,10 @@ pub enum ScreenerCmd {
         /// Extra columns to display without adding a filter condition
         #[arg(long = "show", value_name = "KEY")]
         show: Vec<String>,
-        /// Number of results (default: 20)
+        /// Page number (default: 0)
+        #[arg(long, default_value = "0")]
+        page: u32,
+        /// Records per page (default: 20)
         #[arg(long, alias = "limit", default_value = "20")]
         count: u32,
     },
@@ -3532,14 +3545,14 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             quote::cmd_top_movers(market, sort.as_api_value(), count, format, verbose).await
         }
         Commands::Screener { cmd } => match cmd {
-            ScreenerCmd::Strategies { mine, all } => {
-                screener::cmd_screener_strategies(mine, all, format, verbose).await
+            ScreenerCmd::Strategies { mine, market } => {
+                screener::cmd_screener_strategies(mine, market.as_str(), format, verbose).await
             }
-            ScreenerCmd::Run { id, sort, order, show, count } => {
-                screener::cmd_screener_run(id, sort.as_deref(), order.as_str(), show.as_slice(), count, format, verbose).await
+            ScreenerCmd::Run { id, sort, order, show, page, count } => {
+                screener::cmd_screener_run(id, sort.as_deref(), order.as_str(), show.as_slice(), page, count, format, verbose).await
             }
-            ScreenerCmd::Filter { conditions, market, sort, order, show, count } => {
-                screener::cmd_screener_filter(conditions.as_slice(), market.as_str(), sort.as_deref(), order.as_str(), show.as_slice(), count, format, verbose).await
+            ScreenerCmd::Filter { conditions, market, sort, order, show, page, count } => {
+                screener::cmd_screener_filter(conditions.as_slice(), market.as_str(), sort.as_deref(), order.as_str(), show.as_slice(), page, count, format, verbose).await
             }
             ScreenerCmd::Indicators { symbol } => {
                 screener::cmd_screener_indicators(symbol.clone(), format, verbose).await
