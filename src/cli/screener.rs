@@ -40,7 +40,11 @@ pub async fn cmd_screener_strategies(
             serde_json::to_string_pretty(&data).unwrap_or_default()
         ),
         OutputFormat::Pretty => {
-            let screeners = match data.get("screeners").and_then(|v| v.as_array()) {
+            let screeners = match data
+                .get("strategys")
+                .or_else(|| data.get("screeners"))
+                .and_then(|v| v.as_array())
+            {
                 Some(a) if !a.is_empty() => a,
                 _ => {
                     println!("No strategies found.");
