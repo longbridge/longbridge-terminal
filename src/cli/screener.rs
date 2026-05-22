@@ -91,37 +91,30 @@ pub async fn cmd_screener_run(
     let path = format!("/v1/quote/ai/screener/strategy/{id}");
     let strategy = http_get(&path, &[], verbose).await?;
 
-    let mut mkt = "US".to_string();
+    let mkt = val_str(&strategy["market"]);
+    let mkt = if mkt.is_empty() || mkt == "-" {
+        "US".to_string()
+    } else {
+        mkt.to_uppercase()
+    };
+
     let mut filters: Vec<serde_json::Value> = Vec::new();
     let mut returns: Vec<String> = Vec::new();
-    if let Some(groups) = strategy["groups"].as_array() {
-        for group in groups {
-            if let Some(indicators) = group["indicators"].as_array() {
-                for ind in indicators {
-                    let key = val_str(&ind["key"]);
-                    let ind_id = ind["id"].as_i64().unwrap_or(0);
-                    if ind_id == -1 && key == "filter_market" {
-                        let v = val_str(&ind["value"]);
-                        if !v.is_empty() && v != "-" {
-                            mkt = v;
-                        }
-                    } else {
-                        let min = val_str(&ind["min"]);
-                        let max = val_str(&ind["max"]);
-                        let has_range =
-                            (!min.is_empty() && min != "-") || (!max.is_empty() && max != "-");
-                        if has_range || ind_id > 0 {
-                            filters.push(serde_json::json!({
-                                "key": key,
-                                "min": min,
-                                "max": max,
-                                "tech_values": {}
-                            }));
-                            returns.push(key);
-                        }
-                    }
-                }
+    if let Some(f) = strategy["filter"]["filters"].as_array() {
+        for ind in f {
+            let key = val_str(&ind["key"]);
+            if key.is_empty() || key == "-" {
+                continue;
             }
+            let min = val_str(&ind["min"]);
+            let max = val_str(&ind["max"]);
+            filters.push(serde_json::json!({
+                "key": key,
+                "min": min,
+                "max": max,
+                "tech_values": {}
+            }));
+            returns.push(key);
         }
     }
     for key in show {
