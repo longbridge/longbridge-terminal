@@ -1754,14 +1754,16 @@ pub enum ScreenerCmd {
 
     /// Filter stocks with custom indicator conditions
     ///
-    /// Each condition is KEY:MIN:MAX. Omit either bound to leave it open:
-    ///   `pettm:10:` means P/E >= 10, `pettm::50` means P/E <= 50.
+    /// Condition format: KEY:MIN:MAX or KEY:MIN:MAX:k=v,k=v for technical indicators.
+    /// Omit either bound to leave it open: `pettm:10:` means P/E >= 10, `pettm::50` means P/E <= 50.
+    /// Technical indicators use `tech_values` instead of min/max; run `screener indicators --format json`
+    /// to see valid `tech_values` options per key (field: `tech_values`).
     /// Output columns: prevclose, prevchg, marketcap, salesgrowthyoy, pettm, pbmrq, industry.
-    /// Use --show to add extra columns; run `screener indicators` to discover valid keys.
+    /// Use --show to add extra columns.
     ///
     /// Example: longbridge screener filter pettm:10:50 roe:5: --market HK
     /// Example: longbridge screener filter marketcap:100: divyld:3: --market US
-    /// Example: longbridge screener filter roe:20: --market HK --sort roe --show divyld
+    /// Example: longbridge screener filter `macd_day:::category=goldenfork,period=day` --market HK
     /// Example: longbridge screener filter `pettm::20` --market HK --page 1 --count 50
     Filter {
         /// Filter conditions in KEY:MIN:MAX format

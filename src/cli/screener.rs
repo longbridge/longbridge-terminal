@@ -114,11 +114,17 @@ pub async fn cmd_screener_run(
             }
             let min = val_str(&ind["min"]);
             let max = val_str(&ind["max"]);
+            let tech_values = ind["tech_values"].clone();
+            let tech_values = if tech_values.is_object() {
+                tech_values
+            } else {
+                serde_json::json!({})
+            };
             filters.push(serde_json::json!({
                 "key": key,
                 "min": min,
                 "max": max,
-                "tech_values": {}
+                "tech_values": tech_values,
             }));
         }
     }
@@ -148,7 +154,7 @@ pub async fn cmd_screener_filter(
 ) -> Result<()> {
     let mut filters: Vec<serde_json::Value> = Vec::new();
     for cond in conditions {
-        let parts: Vec<&str> = cond.splitn(3, ':').collect();
+        let parts: Vec<&str> = cond.splitn(4, ':').collect();
         let raw_key = parts.first().copied().unwrap_or("");
         if raw_key.is_empty() {
             continue;
@@ -156,11 +162,27 @@ pub async fn cmd_screener_filter(
         let key = normalize_key(raw_key);
         let min = parts.get(1).copied().unwrap_or("").to_string();
         let max = parts.get(2).copied().unwrap_or("").to_string();
+        let tech_values: serde_json::Map<String, serde_json::Value> = parts
+            .get(3)
+            .map(|s| {
+                s.split(',')
+                    .filter_map(|kv| {
+                        let mut it = kv.splitn(2, '=');
+                        let k = it.next()?.trim();
+                        let v = it.next()?.trim();
+                        if k.is_empty() || v.is_empty() {
+                            return None;
+                        }
+                        Some((k.to_string(), serde_json::Value::String(v.to_string())))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         filters.push(serde_json::json!({
             "key": key,
             "min": min,
             "max": max,
-            "tech_values": {}
+            "tech_values": tech_values,
         }));
     }
     let mut returns: Vec<String> = DEFAULT_RETURNS.iter().map(ToString::to_string).collect();
@@ -345,7 +367,7 @@ pub async fn cmd_screener_indicators(
     let headers = ["ID", "Key", "Name", "Unit", "Min", "Max"];
     match format {
         OutputFormat::Json => {
-            let rows: Vec<Vec<String>> = groups
+            let items: Vec<serde_json::Value> = groups
                 .iter()
                 .flat_map(|group| {
                     group["indicators"]
@@ -355,18 +377,43 @@ pub async fn cmd_screener_indicators(
                         .map(|ind| {
                             let min = val_str(&ind["default_range"]["min"]);
                             let max = val_str(&ind["default_range"]["max"]);
-                            vec![
-                                val_str(&ind["id"]),
-                                val_str(&ind["key"]).replace("filter_", ""),
-                                val_str(&ind["name"]),
-                                val_str(&ind["unit"]),
-                                min,
-                                max,
-                            ]
+                            let mut obj = serde_json::json!({
+                                "id": val_str(&ind["id"]),
+                                "key": val_str(&ind["key"]).replace("filter_", ""),
+                                "name": val_str(&ind["name"]),
+                                "unit": val_str(&ind["unit"]),
+                                "min": if min == "-" { serde_json::Value::Null } else { serde_json::Value::String(min) },
+                                "max": if max == "-" { serde_json::Value::Null } else { serde_json::Value::String(max) },
+                            });
+                            if let Some(tech_inds) = ind["tech_indicators"].as_array() {
+                                let tv: serde_json::Map<String, serde_json::Value> = tech_inds
+                                    .iter()
+                                    .map(|ti| {
+                                        let key = val_str(&ti["tech_key"]);
+                                        let opts: Vec<serde_json::Value> = ti["tech_items"]
+                                            .as_array()
+                                            .unwrap_or(&vec![])
+                                            .iter()
+                                            .map(|item| serde_json::json!({
+                                                "value": val_str(&item["item_value"]),
+                                                "label": val_str(&item["item_name"]),
+                                            }))
+                                            .collect();
+                                        (key, serde_json::Value::Array(opts))
+                                    })
+                                    .collect();
+                                if !tv.is_empty() {
+                                    obj["tech_values"] = serde_json::Value::Object(tv);
+                                }
+                            }
+                            obj
                         })
                 })
                 .collect();
-            print_table(&headers, rows, format);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&items).unwrap_or_default()
+            );
         }
         OutputFormat::Pretty => {
             for group in groups {
