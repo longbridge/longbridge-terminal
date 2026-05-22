@@ -88,13 +88,8 @@ pub async fn cmd_screener_run(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let id_str = id.to_string();
-    let strategy = http_get(
-        "/v1/quote/ai/screener/strategy",
-        &[("id", id_str.as_str())],
-        verbose,
-    )
-    .await?;
+    let path = format!("/v1/quote/ai/screener/strategy/{id}");
+    let strategy = http_get(&path, &[], verbose).await?;
 
     let mut mkt = "US".to_string();
     let mut filters: Vec<serde_json::Value> = Vec::new();
