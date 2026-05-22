@@ -995,7 +995,7 @@ pub enum Commands {
     /// Strategy screener — browse strategies, run filters, view indicator config
     ///
     /// Workflow A — run a saved strategy:
-    ///   1. `screener strategies` to list recommended strategies and note the ID
+    ///   1. `screener strategies` to list preset strategies and note the ID
     ///   2. `screener run <ID>` to execute it
     ///
     /// Workflow B — custom filter:
@@ -1705,11 +1705,10 @@ impl IndustryRankSortType {
 pub enum ScreenerCmd {
     /// List stock-selection strategies and their filter conditions
     ///
-    /// Default: platform recommended strategies (use ID with `screener search`).
+    /// Default: platform preset strategies (use ID with `screener run`).
     /// --mine:  your saved strategies.
-    /// --all:   all strategies (recommended + user).
     ///
-    /// The `id` field in the output is passed to `screener search --strategy-id`.
+    /// The `id` field in the output is passed to `screener run <ID>`.
     ///
     /// Example: longbridge screener strategies
     /// Example: longbridge screener strategies --mine
@@ -1717,9 +1716,6 @@ pub enum ScreenerCmd {
         /// Show user's saved strategies
         #[arg(long)]
         mine: bool,
-        /// Show all strategies (recommended + user)
-        #[arg(long)]
-        all: bool,
     },
 
     /// Run a saved strategy by its ID (from `screener strategies` output)
@@ -3532,8 +3528,8 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             quote::cmd_top_movers(market, sort.as_api_value(), count, format, verbose).await
         }
         Commands::Screener { cmd } => match cmd {
-            ScreenerCmd::Strategies { mine, all } => {
-                screener::cmd_screener_strategies(mine, all, format, verbose).await
+            ScreenerCmd::Strategies { mine } => {
+                screener::cmd_screener_strategies(mine, format, verbose).await
             }
             ScreenerCmd::Run { id, sort, order, show, count } => {
                 screener::cmd_screener_run(id, sort.as_deref(), order.as_str(), show.as_slice(), count, format, verbose).await

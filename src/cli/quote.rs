@@ -3144,7 +3144,12 @@ pub async fn cmd_rank(
                 }
             }
         }
-        Some(k) => {
+        Some(raw_k) => {
+            let k = if raw_k.starts_with("ib_") {
+                raw_k
+            } else {
+                format!("ib_{raw_k}")
+            };
             let count_str = count.to_string();
             // Derive market from key suffix (e.g. ib_hot_all-hk → HK); fall back to --market.
             let key_market = k

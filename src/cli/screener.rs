@@ -23,16 +23,13 @@ fn val_str(v: &Value) -> String {
 
 pub async fn cmd_screener_strategies(
     mine: bool,
-    all: bool,
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
     let path = if mine {
-        "/v1/quote/screener/strategies/mine"
-    } else if all {
-        "/v1/quote/screener/strategies"
+        "/v1/quote/ai/screener/strategies/mine"
     } else {
-        "/v1/quote/screener/strategies/recommend"
+        "/v1/quote/ai/screener/strategies/recommend"
     };
 
     let data = http_get(path, &[], verbose).await?;
@@ -51,10 +48,8 @@ pub async fn cmd_screener_strategies(
             };
             let label = if mine {
                 "My Strategies"
-            } else if all {
-                "All Strategies"
             } else {
-                "Recommended Strategies"
+                "Preset Strategies"
             };
             println!("{label}\n");
             let headers = ["ID", "Name", "Avg Day Chg", "Type"];
@@ -88,7 +83,7 @@ pub async fn cmd_screener_run(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let strategies = http_get("/v1/quote/screener/strategies/recommend", &[], verbose).await?;
+    let strategies = http_get("/v1/quote/ai/screener/strategies/recommend", &[], verbose).await?;
     let strategy_obj = strategies["screeners"]
         .as_array()
         .and_then(|arr| arr.iter().find(|s| s["id"].as_i64() == Some(id)))
@@ -97,7 +92,7 @@ pub async fn cmd_screener_run(
     let strategy = if strategy_obj.is_null() {
         let id_str = id.to_string();
         http_get(
-            "/v1/quote/screener/strategy",
+            "/v1/quote/ai/screener/strategy",
             &[("id", id_str.as_str())],
             verbose,
         )
