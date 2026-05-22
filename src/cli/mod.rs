@@ -1730,7 +1730,7 @@ pub enum ScreenerCmd {
     ///
     /// Example: longbridge screener run 42
     /// Example: longbridge screener run 42 --sort pettm --order desc
-    /// Example: longbridge screener run 42 --page 2 --count 50
+    /// Example: longbridge screener run 42 --page 1 --count 50
     /// Example: longbridge screener run 42 --show roe --show divyld
     Run {
         /// Strategy ID from `screener strategies` output
@@ -1744,8 +1744,8 @@ pub enum ScreenerCmd {
         /// Extra columns to display without adding a filter condition
         #[arg(long = "show", value_name = "KEY")]
         show: Vec<String>,
-        /// Page number (default: 1)
-        #[arg(long, default_value = "1")]
+        /// Page number (default: 0)
+        #[arg(long, default_value = "0")]
         page: u32,
         /// Records per page (default: 20)
         #[arg(long, alias = "limit", default_value = "20")]
@@ -1762,7 +1762,7 @@ pub enum ScreenerCmd {
     /// Example: longbridge screener filter pettm:10:50 roe:5: --market HK
     /// Example: longbridge screener filter marketcap:100: divyld:3: --market US
     /// Example: longbridge screener filter roe:20: --market HK --sort roe --show divyld
-    /// Example: longbridge screener filter `pettm::20` --market HK --page 2 --count 50
+    /// Example: longbridge screener filter `pettm::20` --market HK --page 1 --count 50
     Filter {
         /// Filter conditions in KEY:MIN:MAX format
         #[arg(value_name = "KEY:MIN:MAX")]
