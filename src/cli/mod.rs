@@ -1779,8 +1779,8 @@ pub enum ScreenerCmd {
         /// Extra columns to display without adding a filter condition
         #[arg(long = "show", value_name = "KEY")]
         show: Vec<String>,
-        /// Page number (default: 1)
-        #[arg(long, default_value = "1")]
+        /// Page number (default: 0)
+        #[arg(long, default_value = "0")]
         page: u32,
         /// Records per page (default: 20)
         #[arg(long, alias = "limit", default_value = "20")]

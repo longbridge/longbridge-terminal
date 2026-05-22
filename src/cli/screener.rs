@@ -232,7 +232,13 @@ async fn print_screener_results(
         Some(a) if !a.is_empty() => a,
         _ => {
             match format {
-                OutputFormat::Json => println!("[]"),
+                OutputFormat::Json => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "total": total, "page": page, "items": []
+                    }))
+                    .unwrap_or_default()
+                ),
                 OutputFormat::Pretty => println!("No stocks found matching the criteria."),
             }
             return Ok(());
@@ -263,15 +269,43 @@ async fn print_screener_results(
             row
         })
         .collect();
-    if matches!(format, OutputFormat::Pretty) {
-        let label = if strategy_id > 0 {
-            format!("Strategy #{strategy_id} ({market})")
-        } else {
-            format!("Custom filter ({market})")
-        };
-        println!("{label} — {total} stocks found\n");
+    match format {
+        OutputFormat::Pretty => {
+            let label = if strategy_id > 0 {
+                format!("Strategy #{strategy_id} ({market})")
+            } else {
+                format!("Custom filter ({market})")
+            };
+            println!("{label} — {total} stocks found\n");
+            print_table(&header_refs, rows, format);
+        }
+        OutputFormat::Json => {
+            let items: Vec<serde_json::Value> = rows
+                .into_iter()
+                .map(|row| {
+                    let mut map = serde_json::Map::new();
+                    for (i, val) in row.into_iter().enumerate() {
+                        if let Some(key) = header_refs.get(i) {
+                            map.insert(
+                                key.to_lowercase().replace(' ', "_"),
+                                serde_json::Value::String(val),
+                            );
+                        }
+                    }
+                    serde_json::Value::Object(map)
+                })
+                .collect();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "total": total,
+                    "page": page,
+                    "items": items,
+                }))
+                .unwrap_or_default()
+            );
+        }
     }
-    print_table(&header_refs, rows, format);
     Ok(())
 }
 
