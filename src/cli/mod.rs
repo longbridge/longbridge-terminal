@@ -1711,11 +1711,15 @@ pub enum ScreenerCmd {
     /// The `id` field in the output is passed to `screener run <ID>`.
     ///
     /// Example: longbridge screener strategies
+    /// Example: longbridge screener strategies --market HK
     /// Example: longbridge screener strategies --mine
     Strategies {
         /// Show user's saved strategies
         #[arg(long)]
         mine: bool,
+        /// Market: US | HK | CN | SG (default: US)
+        #[arg(long, default_value = "US")]
+        market: String,
     },
 
     /// Run a saved strategy by its ID (from `screener strategies` output)
@@ -3528,8 +3532,8 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             quote::cmd_top_movers(market, sort.as_api_value(), count, format, verbose).await
         }
         Commands::Screener { cmd } => match cmd {
-            ScreenerCmd::Strategies { mine } => {
-                screener::cmd_screener_strategies(mine, format, verbose).await
+            ScreenerCmd::Strategies { mine, market } => {
+                screener::cmd_screener_strategies(mine, market.as_str(), format, verbose).await
             }
             ScreenerCmd::Run { id, sort, order, show, count } => {
                 screener::cmd_screener_run(id, sort.as_deref(), order.as_str(), show.as_slice(), count, format, verbose).await

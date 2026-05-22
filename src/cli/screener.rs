@@ -23,6 +23,7 @@ fn val_str(v: &Value) -> String {
 
 pub async fn cmd_screener_strategies(
     mine: bool,
+    market: &str,
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
@@ -31,8 +32,8 @@ pub async fn cmd_screener_strategies(
     } else {
         "/v1/quote/ai/screener/strategies/recommend"
     };
-
-    let data = http_get(path, &[], verbose).await?;
+    let mkt = market.to_uppercase();
+    let data = http_get(path, &[("market", mkt.as_str())], verbose).await?;
     match format {
         OutputFormat::Json => println!(
             "{}",
