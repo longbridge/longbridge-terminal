@@ -2154,7 +2154,7 @@ fn replace_counter_ids(v: &mut Value) {
             if let Some(cid) = map.remove("counter_id") {
                 let sym = cid
                     .as_str()
-                    .map(|s| crate::utils::counter::counter_id_to_symbol(s))
+                    .map(crate::utils::counter::counter_id_to_symbol)
                     .unwrap_or_default();
                 map.insert("symbol".to_string(), Value::String(sym));
             }
@@ -3144,7 +3144,41 @@ pub async fn cmd_rank(
         None => {
             let data = http_get("/v1/quote/market/rank/categories", &[], verbose).await?;
             match format {
-                OutputFormat::Json => print_json(&data),
+                OutputFormat::Json => {
+                    let tags = data.get("first_tags").and_then(|v| v.as_array());
+                    let items: Vec<serde_json::Value> = tags
+                        .into_iter()
+                        .flatten()
+                        .flat_map(|tag| {
+                            let name = val_str(&tag["name"]);
+                            let k = val_str(&tag["key"]).trim_start_matches("ib_").to_string();
+                            if let Some(subs) = tag["second_tags"].as_array() {
+                                subs.iter()
+                                    .map(|sub| {
+                                        let sk = val_str(&sub["key"])
+                                            .trim_start_matches("ib_")
+                                            .to_string();
+                                        serde_json::json!({
+                                            "key": sk,
+                                            "name": name,
+                                            "market": val_str(&sub["market"]),
+                                        })
+                                    })
+                                    .collect::<Vec<_>>()
+                            } else {
+                                vec![serde_json::json!({
+                                    "key": k,
+                                    "name": name,
+                                    "market": "",
+                                })]
+                            }
+                        })
+                        .collect();
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&items).unwrap_or_default()
+                    );
+                }
                 OutputFormat::Pretty => {
                     let tags = data.get("first_tags").and_then(|v| v.as_array());
                     match tags {
