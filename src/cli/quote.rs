@@ -892,8 +892,16 @@ pub async fn cmd_market_temp(
 
     if history {
         let now = time::OffsetDateTime::now_utc().date();
-        let start_date = start.as_deref().map(parse_date).transpose()?.unwrap_or(now);
         let end_date = end.as_deref().map(parse_date).transpose()?.unwrap_or(now);
+        let start_date = start
+            .as_deref()
+            .map(parse_date)
+            .transpose()?
+            .unwrap_or_else(|| {
+                end_date
+                    .checked_sub(time::Duration::days(30))
+                    .unwrap_or(end_date)
+            });
         let resp = ctx
             .history_market_temperature(m, start_date, end_date)
             .await?;

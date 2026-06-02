@@ -304,7 +304,7 @@ pub enum Commands {
         /// Return historical records instead of current value
         #[arg(long)]
         history: bool,
-        /// Start date for history (YYYY-MM-DD). Defaults to today if omitted.
+        /// Start date for history (YYYY-MM-DD). Defaults to 30 days before end if omitted.
         #[arg(long)]
         start: Option<String>,
         /// End date for history (YYYY-MM-DD). Defaults to today if omitted.
