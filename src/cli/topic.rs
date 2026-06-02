@@ -48,8 +48,8 @@ fn owned_topic_to_json(item: &OwnedTopic) -> serde_json::Value {
         "views_count": item.views_count,
         "shares_count": item.shares_count,
         "url": format!("https://longbridge.com/topics/{}", item.id),
-        "created_at": item.created_at.unix_timestamp(),
-        "updated_at": item.updated_at.unix_timestamp(),
+        "created_at": fmt_rfc3339(item.created_at),
+        "updated_at": fmt_rfc3339(item.updated_at),
     })
 }
 
@@ -127,7 +127,7 @@ fn topic_reply_to_json(item: &TopicReply) -> serde_json::Value {
         },
         "likes_count": item.likes_count,
         "comments_count": item.comments_count,
-        "created_at": item.created_at.unix_timestamp(),
+        "created_at": fmt_rfc3339(item.created_at),
     })
 }
 
