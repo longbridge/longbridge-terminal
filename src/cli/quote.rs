@@ -10,12 +10,13 @@ use serde_json::Value;
 use super::{
     api::{http_get, http_post, LbQuoteApi, QuoteApi},
     output::{
-        fmt_date, fmt_datetime, fmt_dec, fmt_decimal, fmt_decimal_div100, fmt_decimal_div252,
-        parse_date, print_table,
+        fmt_date, fmt_dec, fmt_decimal, fmt_decimal_div100, fmt_decimal_div252, parse_date,
+        print_table,
     },
     OutputFormat,
 };
 use crate::utils::counter::symbol_to_counter_id;
+use crate::utils::datetime::fmt_rfc3339;
 use crate::utils::number::format_financial_value;
 
 /// Return the locale-appropriate display name for a security.
@@ -491,7 +492,7 @@ pub async fn cmd_trades(symbol: String, count: usize, format: &OutputFormat) -> 
         .iter()
         .map(|t| {
             vec![
-                fmt_datetime(t.timestamp),
+                fmt_rfc3339(t.timestamp),
                 fmt_dec(t.price),
                 t.volume.to_string(),
                 format!("{:?}", t.direction),
@@ -517,7 +518,7 @@ pub async fn cmd_intraday(symbol: String, session: &str, format: &OutputFormat) 
         .iter()
         .map(|l| {
             vec![
-                fmt_datetime(l.timestamp),
+                fmt_rfc3339(l.timestamp),
                 fmt_dec(l.price),
                 l.volume.to_string(),
                 fmt_dec(l.turnover),
@@ -558,7 +559,7 @@ pub async fn cmd_kline(
             .iter()
             .map(|c| {
                 vec![
-                    fmt_datetime(c.timestamp),
+                    fmt_rfc3339(c.timestamp),
                     fmt_trade_session(c.trade_session).to_string(),
                     fmt_dec(c.open),
                     fmt_dec(c.high),
@@ -576,7 +577,7 @@ pub async fn cmd_kline(
             .iter()
             .map(|c| {
                 vec![
-                    fmt_datetime(c.timestamp),
+                    fmt_rfc3339(c.timestamp),
                     fmt_dec(c.open),
                     fmt_dec(c.high),
                     fmt_dec(c.low),
@@ -635,7 +636,7 @@ pub async fn cmd_kline_history(
             .iter()
             .map(|c| {
                 vec![
-                    fmt_datetime(c.timestamp),
+                    fmt_rfc3339(c.timestamp),
                     fmt_trade_session(c.trade_session).to_string(),
                     fmt_dec(c.open),
                     fmt_dec(c.high),
@@ -653,7 +654,7 @@ pub async fn cmd_kline_history(
             .iter()
             .map(|c| {
                 vec![
-                    fmt_datetime(c.timestamp),
+                    fmt_rfc3339(c.timestamp),
                     fmt_dec(c.open),
                     fmt_dec(c.high),
                     fmt_dec(c.low),
@@ -826,7 +827,7 @@ pub async fn cmd_capital_flow(symbol: String, format: &OutputFormat) -> Result<(
     let headers = &["Time", "Inflow"];
     let rows = flows
         .iter()
-        .map(|f| vec![fmt_datetime(f.timestamp), fmt_dec(f.inflow)])
+        .map(|f| vec![fmt_rfc3339(f.timestamp), fmt_dec(f.inflow)])
         .collect();
 
     print_table(headers, rows, format);
@@ -856,7 +857,7 @@ pub async fn cmd_capital_dist(symbol: String, format: &OutputFormat) -> Result<(
             println!("{}", serde_json::to_string_pretty(&val)?);
         }
         OutputFormat::Pretty => {
-            println!("Symbol: {}  Time: {}", symbol, fmt_datetime(dist.timestamp));
+            println!("Symbol: {}  Time: {}", symbol, fmt_rfc3339(dist.timestamp));
             let headers = &["Direction", "Large", "Medium", "Small"];
             let rows = vec![
                 vec![
@@ -908,7 +909,7 @@ pub async fn cmd_market_temp(
             .iter()
             .map(|t| {
                 vec![
-                    fmt_datetime(t.timestamp),
+                    fmt_rfc3339(t.timestamp),
                     t.temperature.to_string(),
                     t.valuation.to_string(),
                     t.sentiment.to_string(),
@@ -1510,7 +1511,7 @@ pub async fn run_trades(
         .iter()
         .map(|t| {
             vec![
-                fmt_datetime(t.timestamp),
+                fmt_rfc3339(t.timestamp),
                 fmt_dec(t.price),
                 t.volume.to_string(),
                 format!("{:?}", t.direction),
@@ -1532,7 +1533,7 @@ pub async fn run_intraday(api: &dyn QuoteApi, symbol: String, format: &OutputFor
         .iter()
         .map(|l| {
             vec![
-                fmt_datetime(l.timestamp),
+                fmt_rfc3339(l.timestamp),
                 fmt_dec(l.price),
                 l.volume.to_string(),
                 fmt_dec(l.turnover),
@@ -1563,7 +1564,7 @@ pub async fn run_kline(
         .iter()
         .map(|c| {
             vec![
-                fmt_datetime(c.timestamp),
+                fmt_rfc3339(c.timestamp),
                 fmt_dec(c.open),
                 fmt_dec(c.high),
                 fmt_dec(c.low),
@@ -1601,7 +1602,7 @@ pub async fn run_kline_history(
         .iter()
         .map(|c| {
             vec![
-                fmt_datetime(c.timestamp),
+                fmt_rfc3339(c.timestamp),
                 fmt_dec(c.open),
                 fmt_dec(c.high),
                 fmt_dec(c.low),
@@ -1683,7 +1684,7 @@ pub async fn run_capital_flow(
     let headers = &["Time", "Inflow"];
     let rows = flows
         .iter()
-        .map(|f| vec![fmt_datetime(f.timestamp), fmt_dec(f.inflow)])
+        .map(|f| vec![fmt_rfc3339(f.timestamp), fmt_dec(f.inflow)])
         .collect();
     print_table(headers, rows, format);
     Ok(())
@@ -1751,7 +1752,7 @@ pub async fn run_market_temp_history(
         .iter()
         .map(|t| {
             vec![
-                fmt_datetime(t.timestamp),
+                fmt_rfc3339(t.timestamp),
                 t.temperature.to_string(),
                 t.valuation.to_string(),
                 t.sentiment.to_string(),

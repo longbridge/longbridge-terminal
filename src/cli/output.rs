@@ -134,12 +134,6 @@ pub fn parse_datetime_end(s: &str) -> anyhow::Result<time::OffsetDateTime> {
     parse_datetime_with_fallback(s, end_of_day)
 }
 
-/// Format an `OffsetDateTime` as a readable string
-pub fn fmt_datetime(dt: time::OffsetDateTime) -> String {
-    let fmt = time::macros::format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
-    dt.format(&fmt).unwrap_or_else(|_| dt.to_string())
-}
-
 /// Format a Date as string
 pub fn fmt_date(d: time::Date) -> String {
     let fmt = time::macros::format_description!("[year]-[month]-[day]");
