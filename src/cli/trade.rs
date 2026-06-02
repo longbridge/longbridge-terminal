@@ -10,7 +10,9 @@ use std::str::FromStr;
 
 use super::{
     api::TradeApi,
-    output::{fmt_decimal, parse_datetime_end, parse_datetime_start, print_table},
+    output::{
+        fmt_decimal, parse_datetime_end, parse_datetime_start, print_account_banner, print_table,
+    },
     OutputFormat,
 };
 use crate::utils::datetime::fmt_rfc3339;
@@ -576,6 +578,7 @@ fn print_assets(balances: &[longbridge::trade::AccountBalance], format: &OutputF
 pub async fn cmd_assets(currency: Option<String>, format: &OutputFormat) -> Result<()> {
     let ctx = crate::openapi::trade();
     let balances = ctx.account_balance(currency.as_deref()).await?;
+    print_account_banner(format);
     print_assets(&balances, format);
     Ok(())
 }
@@ -634,6 +637,7 @@ pub async fn cmd_positions(format: &OutputFormat) -> Result<()> {
     let ctx = crate::openapi::trade();
     let resp = ctx.stock_positions(None).await?;
 
+    print_account_banner(format);
     let headers = &[
         "Symbol",
         "Name",
@@ -666,6 +670,7 @@ pub async fn cmd_fund_positions(format: &OutputFormat) -> Result<()> {
     let ctx = crate::openapi::trade();
     let resp = ctx.fund_positions(None).await?;
 
+    print_account_banner(format);
     let headers = &[
         "Symbol",
         "Name",
@@ -764,6 +769,7 @@ pub async fn cmd_max_qty(
 pub async fn cmd_portfolio(format: &OutputFormat) -> Result<()> {
     let portfolio = crate::openapi::account::fetch_portfolio().await?;
 
+    print_account_banner(format);
     match format {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&portfolio)?);

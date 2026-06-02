@@ -2,6 +2,31 @@ use tabled::{builder::Builder, settings::Style};
 
 use super::OutputFormat;
 
+// ANSI colors for the account-type banner.
+const GREEN: &str = "\x1b[32m";
+const YELLOW: &str = "\x1b[33m";
+const RESET: &str = "\x1b[0m";
+
+/// Print a one-line account-type banner (paper vs. live) ahead of
+/// position/asset output so the reader can immediately tell whether the data
+/// belongs to a paper-trading or a live account.
+///
+/// Only rendered for `Pretty`; JSON output is intentionally left untouched so
+/// existing consumers keep parsing the top-level array/object unchanged.
+pub fn print_account_banner(format: &OutputFormat) {
+    if !matches!(format, OutputFormat::Pretty) {
+        return;
+    }
+    let is_paper = crate::auth::account_channel().as_deref() == Some("lb_papertrading");
+    let (color, label) = if is_paper {
+        (YELLOW, "Account: Demo A/C (simulated account)")
+    } else {
+        (GREEN, "Account: Live A/C (real account)")
+    };
+    println!("{color}{label}{RESET}");
+    println!();
+}
+
 fn print_markdown_table(headers: &[&str], rows: &[Vec<String>]) {
     let mut builder = Builder::default();
     builder.push_record(headers.iter().copied());
