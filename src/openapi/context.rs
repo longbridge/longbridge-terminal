@@ -112,6 +112,11 @@ pub async fn init_contexts() -> Result<(
     let mut config_builder = config_builder;
     let mut http_client_config = http_client_config;
 
+    // Enable the US overnight market so `quote` returns `overnight_quote`.
+    // Pre/post-market quotes are returned without this flag, but the overnight
+    // session is gated behind it (matches the longbridge-mcp server).
+    config_builder = config_builder.enable_overnight();
+
     // If LONGBRIDGE_ENV=staging, override all endpoints to test environment.
     // This takes highest priority over region detection.
     let effective_http_url;
