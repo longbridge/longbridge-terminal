@@ -96,6 +96,14 @@ fn pre_post_quote_to_json(q: &PrePostQuote) -> serde_json::Value {
     })
 }
 
+/// Whether a pre/post/overnight session actually has data. The API returns a
+/// zero-filled struct (`last` = 0) for sessions that have not traded yet;
+/// rendering those produces a bogus -100% change, so they must be treated as
+/// "no data".
+fn pre_post_has_data(q: &PrePostQuote) -> bool {
+    q.last_done > rust_decimal::Decimal::ZERO
+}
+
 type CalcIndexExtractor = fn(&longbridge::quote::SecurityCalcIndex) -> String;
 
 fn calc_index_column(key: &str) -> Option<(&'static str, CalcIndexExtractor)> {
@@ -259,9 +267,9 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
                         "volume": q.volume,
                         "turnover": q.turnover.to_string(),
                         "status": format!("{:?}", q.trade_status),
-                        "pre_market_quote": q.pre_market_quote.as_ref().map(pre_post_quote_to_json),
-                        "post_market_quote": q.post_market_quote.as_ref().map(pre_post_quote_to_json),
-                        "overnight_quote": q.overnight_quote.as_ref().map(pre_post_quote_to_json),
+                        "post_market": q.post_market_quote.as_ref().filter(|p| pre_post_has_data(p)).map(pre_post_quote_to_json),
+                        "overnight": q.overnight_quote.as_ref().filter(|p| pre_post_has_data(p)).map(pre_post_quote_to_json),
+                        "pre_market": q.pre_market_quote.as_ref().filter(|p| pre_post_has_data(p)).map(pre_post_quote_to_json),
                     })
                 })
                 .collect();
@@ -304,32 +312,51 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
                 .collect();
             print_table(headers, rows, format);
 
-            // Show extended-hours rows when available
+            // Show extended-hours rows. For any symbol with at least one active
+            // extended session, emit all three rows in Post / Overnight / Pre
+            // order; sessions without data render as "--" instead of a bogus
+            // zero / -100% line. Symbols with no extended data at all are skipped.
             let ext_rows: Vec<Vec<String>> = quotes
                 .iter()
                 .flat_map(|q| {
                     let sessions: &[(&str, &Option<PrePostQuote>)] = &[
-                        ("Pre", &q.pre_market_quote),
                         ("Post", &q.post_market_quote),
                         ("Overnight", &q.overnight_quote),
+                        ("Pre", &q.pre_market_quote),
                     ];
+                    let any_data = sessions
+                        .iter()
+                        .any(|(_, opt)| opt.as_ref().is_some_and(pre_post_has_data));
+                    if !any_data {
+                        return Vec::new();
+                    }
                     sessions
                         .iter()
-                        .filter_map(|(label, opt)| {
-                            opt.as_ref().map(|pmq| {
-                                vec![
-                                    q.symbol.clone(),
-                                    label.to_string(),
-                                    fmt_dec(pmq.last_done),
-                                    change_val(pmq.last_done, pmq.prev_close),
-                                    change_pct(pmq.last_done, pmq.prev_close).unwrap_or_default(),
-                                    fmt_dec(pmq.high),
-                                    fmt_dec(pmq.low),
-                                    pmq.volume.to_string(),
-                                    fmt_dec(pmq.prev_close),
-                                    crate::utils::datetime::fmt_rfc3339(pmq.timestamp),
-                                ]
-                            })
+                        .map(|(label, opt)| match opt.as_ref().filter(|p| pre_post_has_data(p)) {
+                            Some(pmq) => vec![
+                                q.symbol.clone(),
+                                label.to_string(),
+                                fmt_dec(pmq.last_done),
+                                change_val(pmq.last_done, pmq.prev_close),
+                                change_pct(pmq.last_done, pmq.prev_close).unwrap_or_default(),
+                                fmt_dec(pmq.high),
+                                fmt_dec(pmq.low),
+                                pmq.volume.to_string(),
+                                fmt_dec(pmq.prev_close),
+                                crate::utils::datetime::fmt_rfc3339(pmq.timestamp),
+                            ],
+                            None => vec![
+                                q.symbol.clone(),
+                                label.to_string(),
+                                "--".to_string(),
+                                "--".to_string(),
+                                "--".to_string(),
+                                "--".to_string(),
+                                "--".to_string(),
+                                "--".to_string(),
+                                "--".to_string(),
+                                "--".to_string(),
+                            ],
                         })
                         .collect::<Vec<_>>()
                 })
