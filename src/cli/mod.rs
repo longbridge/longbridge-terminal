@@ -21,6 +21,7 @@ pub mod quote;
 pub mod run_script;
 pub mod screener;
 pub mod search;
+pub mod sec_edgar;
 pub mod sharelist;
 pub mod statement;
 pub mod topic;
@@ -883,18 +884,20 @@ pub enum Commands {
     ///
     /// For an index, lists its member stocks. US index symbols require a leading
     /// dot (e.g. .DJI.US, .SPX.US, .IXIC.US); HK indexes use the plain code (e.g.
-    /// HSI.HK). For an ETF, shows its asset allocation breakdown (holdings,
-    /// regional, asset class, industry) instead; --sort/--order are ignored for
-    /// ETFs since the data is already weight-ranked.
+    /// HSI.HK). For a US ETF, fetches full holdings from SEC EDGAR (N-PORT) by
+    /// default, falling back to the platform asset-allocation summary when SEC
+    /// data is unavailable (e.g. UIT funds like SPY, or very new tickers). For
+    /// non-US ETFs the platform asset-allocation breakdown is used. --sort/--order
+    /// are ignored for ETFs since the data is already weight-ranked.
     ///
     /// Example: longbridge constituent HSI.HK
     /// Example: longbridge constituent .SPX.US --sort market-cap --order asc
     /// Example: longbridge constituent HSI.HK --limit 20 --sort change
-    /// Example: longbridge constituent QQQ.US
+    /// Example: longbridge constituent IVV.US --limit 0   (full SEC holdings)
     Constituent {
-        /// Index or ETF symbol in <CODE>.<MARKET> format (e.g. HSI.HK, .SPX.US, QQQ.US)
+        /// Index or ETF symbol in <CODE>.<MARKET> format (e.g. HSI.HK, .SPX.US, IVV.US)
         symbol: String,
-        /// Number of results to return
+        /// Number of results to return (0 = all, for ETF SEC holdings)
         #[arg(long, default_value = "50")]
         limit: i32,
         /// Sort indicator
