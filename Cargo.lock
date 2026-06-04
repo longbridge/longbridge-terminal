@@ -2600,7 +2600,7 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 [[package]]
 name = "longbridge"
 version = "4.2.2"
-source = "git+https://github.com/longbridge/openapi.git?branch=update-us-etf-list#e08cb7cea9ad69e38904ec96b670e38e27614490"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#89e44368eba0d1ba107fd98d5988ab3a2ee0e7ec"
 dependencies = [
  "anyhow",
  "bitflags 2.10.0",
@@ -2635,7 +2635,7 @@ dependencies = [
 [[package]]
 name = "longbridge-candlesticks"
 version = "4.2.2"
-source = "git+https://github.com/longbridge/openapi.git?branch=update-us-etf-list#e08cb7cea9ad69e38904ec96b670e38e27614490"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#89e44368eba0d1ba107fd98d5988ab3a2ee0e7ec"
 dependencies = [
  "bitflags 2.10.0",
  "num-traits",
@@ -2647,7 +2647,7 @@ dependencies = [
 [[package]]
 name = "longbridge-geo"
 version = "4.2.2"
-source = "git+https://github.com/longbridge/openapi.git?branch=update-us-etf-list#e08cb7cea9ad69e38904ec96b670e38e27614490"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#89e44368eba0d1ba107fd98d5988ab3a2ee0e7ec"
 dependencies = [
  "reqwest 0.12.28",
 ]
@@ -2655,7 +2655,7 @@ dependencies = [
 [[package]]
 name = "longbridge-httpcli"
 version = "4.2.2"
-source = "git+https://github.com/longbridge/openapi.git?branch=update-us-etf-list#e08cb7cea9ad69e38904ec96b670e38e27614490"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#89e44368eba0d1ba107fd98d5988ab3a2ee0e7ec"
 dependencies = [
  "dotenv",
  "futures-util",
@@ -2677,7 +2677,7 @@ dependencies = [
 [[package]]
 name = "longbridge-oauth"
 version = "4.2.2"
-source = "git+https://github.com/longbridge/openapi.git?branch=update-us-etf-list#e08cb7cea9ad69e38904ec96b670e38e27614490"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#89e44368eba0d1ba107fd98d5988ab3a2ee0e7ec"
 dependencies = [
  "dirs 6.0.0",
  "futures-util",
@@ -2694,7 +2694,7 @@ dependencies = [
 [[package]]
 name = "longbridge-proto"
 version = "4.2.2"
-source = "git+https://github.com/longbridge/openapi.git?branch=update-us-etf-list#e08cb7cea9ad69e38904ec96b670e38e27614490"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#89e44368eba0d1ba107fd98d5988ab3a2ee0e7ec"
 dependencies = [
  "prost 0.14.3",
  "serde",
@@ -2769,7 +2769,7 @@ dependencies = [
 [[package]]
 name = "longbridge-wscli"
 version = "4.2.2"
-source = "git+https://github.com/longbridge/openapi.git?branch=update-us-etf-list#e08cb7cea9ad69e38904ec96b670e38e27614490"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#89e44368eba0d1ba107fd98d5988ab3a2ee0e7ec"
 dependencies = [
  "byteorder",
  "flate2",
