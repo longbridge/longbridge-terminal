@@ -901,6 +901,19 @@ pub enum Commands {
         order: ConstituentOrder,
     },
 
+    /// ETF asset allocation breakdown (holdings, regional, asset class, industry)
+    ///
+    /// Returns the fund's composition grouped by element type. Holdings include
+    /// the underlying security symbol and industry; the other groups show name
+    /// and weight only.
+    ///
+    /// Example: longbridge etf-asset-allocation QQQ.US
+    /// Example: longbridge etf-asset-allocation 2800.HK --format json
+    EtfAssetAllocation {
+        /// ETF symbol in <CODE>.<MARKET> format (e.g. QQQ.US, 2800.HK)
+        symbol: String,
+    },
+
     /// Market open/close status for each exchange
     ///
     /// Example: longbridge market-status
@@ -3495,6 +3508,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             sort,
             order,
         } => quote::cmd_constituent(symbol, limit, &sort, &order, format, verbose).await,
+        Commands::EtfAssetAllocation { symbol } => {
+            quote::cmd_etf_asset_allocation(symbol, format).await
+        }
         Commands::MarketStatus => quote::cmd_market_status(format, verbose).await,
         Commands::BrokerHolding {
             symbol,

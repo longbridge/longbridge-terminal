@@ -3319,6 +3319,108 @@ pub async fn cmd_rank(
     Ok(())
 }
 
+/// Human-readable label for an ETF asset-allocation group type.
+fn asset_allocation_type_label(t: longbridge::quote::ElementType) -> &'static str {
+    use longbridge::quote::ElementType;
+    match t {
+        ElementType::Holdings => "Holdings",
+        ElementType::Regional => "Regional",
+        ElementType::AssetClass => "Asset Class",
+        ElementType::Industry => "Industry",
+        ElementType::Unknown => "Unknown",
+    }
+}
+
+/// Format an ETF position-ratio string (e.g. `0.0861114`) as a percentage.
+fn fmt_position_ratio(raw: &str) -> String {
+    raw.parse::<f64>()
+        .map_or_else(|_| raw.to_string(), |v| format!("{:.2}%", v * 100.0))
+}
+
+/// Pick the locale-appropriate display name for an asset-allocation item,
+/// falling back to the default `name` when no localized variant exists.
+fn allocation_item_name(item: &longbridge::quote::AssetAllocationItem) -> String {
+    let locale = crate::locale::get();
+    let keys: &[&str] = match locale {
+        "zh-CN" => &["zh-CN", "zh-HK"],
+        "zh-HK" => &["zh-HK", "zh-CN"],
+        _ => &["en"],
+    };
+    for key in keys {
+        if let Some(name) = item.name_locales.get(*key) {
+            if !name.is_empty() {
+                return name.clone();
+            }
+        }
+    }
+    item.name.clone()
+}
+
+pub async fn cmd_etf_asset_allocation(symbol: String, format: &OutputFormat) -> Result<()> {
+    let ctx = crate::openapi::quote();
+    let resp = ctx.etf_asset_allocation(symbol.clone()).await?;
+
+    match format {
+        OutputFormat::Json => {
+            let value = serde_json::to_value(&resp)?;
+            print_json(&value);
+        }
+        OutputFormat::Pretty => {
+            if resp.info.is_empty() {
+                println!("No ETF asset allocation data found for {symbol}.");
+                return Ok(());
+            }
+            println!("ETF Asset Allocation — {symbol}\n");
+            for group in &resp.info {
+                let label = asset_allocation_type_label(group.asset_type);
+                println!("{label}  (report date: {})", group.report_date);
+                if group.lists.is_empty() {
+                    println!("  (no elements)\n");
+                    continue;
+                }
+                let is_holdings =
+                    matches!(group.asset_type, longbridge::quote::ElementType::Holdings);
+                if is_holdings {
+                    let headers = ["name", "symbol", "weight", "industry"];
+                    let rows: Vec<Vec<String>> = group
+                        .lists
+                        .iter()
+                        .map(|item| {
+                            let industry = item
+                                .holding_detail
+                                .as_ref()
+                                .map(|d| d.industry_name.clone())
+                                .unwrap_or_default();
+                            vec![
+                                allocation_item_name(item),
+                                item.symbol.clone(),
+                                fmt_position_ratio(&item.position_ratio),
+                                industry,
+                            ]
+                        })
+                        .collect();
+                    print_table(&headers, rows, format);
+                } else {
+                    let headers = ["name", "weight"];
+                    let rows: Vec<Vec<String>> = group
+                        .lists
+                        .iter()
+                        .map(|item| {
+                            vec![
+                                allocation_item_name(item),
+                                fmt_position_ratio(&item.position_ratio),
+                            ]
+                        })
+                        .collect();
+                    print_table(&headers, rows, format);
+                }
+                println!();
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
