@@ -332,32 +332,34 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
                     }
                     sessions
                         .iter()
-                        .map(|(label, opt)| match opt.as_ref().filter(|p| pre_post_has_data(p)) {
-                            Some(pmq) => vec![
-                                q.symbol.clone(),
-                                label.to_string(),
-                                fmt_dec(pmq.last_done),
-                                change_val(pmq.last_done, pmq.prev_close),
-                                change_pct(pmq.last_done, pmq.prev_close).unwrap_or_default(),
-                                fmt_dec(pmq.high),
-                                fmt_dec(pmq.low),
-                                pmq.volume.to_string(),
-                                fmt_dec(pmq.prev_close),
-                                crate::utils::datetime::fmt_rfc3339(pmq.timestamp),
-                            ],
-                            None => vec![
-                                q.symbol.clone(),
-                                label.to_string(),
-                                "--".to_string(),
-                                "--".to_string(),
-                                "--".to_string(),
-                                "--".to_string(),
-                                "--".to_string(),
-                                "--".to_string(),
-                                "--".to_string(),
-                                "--".to_string(),
-                            ],
-                        })
+                        .map(
+                            |(label, opt)| match opt.as_ref().filter(|p| pre_post_has_data(p)) {
+                                Some(pmq) => vec![
+                                    q.symbol.clone(),
+                                    label.to_string(),
+                                    fmt_dec(pmq.last_done),
+                                    change_val(pmq.last_done, pmq.prev_close),
+                                    change_pct(pmq.last_done, pmq.prev_close).unwrap_or_default(),
+                                    fmt_dec(pmq.high),
+                                    fmt_dec(pmq.low),
+                                    pmq.volume.to_string(),
+                                    fmt_dec(pmq.prev_close),
+                                    crate::utils::datetime::fmt_rfc3339(pmq.timestamp),
+                                ],
+                                None => vec![
+                                    q.symbol.clone(),
+                                    label.to_string(),
+                                    "--".to_string(),
+                                    "--".to_string(),
+                                    "--".to_string(),
+                                    "--".to_string(),
+                                    "--".to_string(),
+                                    "--".to_string(),
+                                    "--".to_string(),
+                                    "--".to_string(),
+                                ],
+                            },
+                        )
                         .collect::<Vec<_>>()
                 })
                 .collect();
@@ -2280,10 +2282,32 @@ pub async fn cmd_constituent(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    // ETF symbols expose their composition via the fundamental asset-allocation
-    // endpoint rather than the index-constituents endpoint. Non-ETF symbols
-    // (indexes) keep the original index-constituents behaviour unchanged.
+    // ETF symbols expose their composition via SEC N-PORT full holdings (US
+    // ETFs, default) or the fundamental asset-allocation endpoint. Non-ETF
+    // symbols (indexes) keep the original index-constituents behaviour.
     if crate::utils::counter::is_etf(&symbol) {
+        // For US ETFs, prefer SEC EDGAR full holdings (N-PORT). This is the
+        // authoritative full constituent list rather than a top-10 summary.
+        if symbol.to_uppercase().ends_with(".US") {
+            match crate::cli::sec_edgar::fetch_etf_holdings(&symbol).await {
+                Ok(holdings) => {
+                    render_sec_holdings(&holdings, &symbol, limit, format);
+                    return Ok(());
+                }
+                Err(e) => {
+                    // SEC unavailable (UIT funds like SPY, too-new tickers,
+                    // network/parse errors) — fall back to platform data.
+                    if matches!(format, OutputFormat::Pretty) {
+                        println!(
+                            "SEC N-PORT data unavailable for {symbol} (falling back to platform data)"
+                        );
+                        if verbose {
+                            eprintln!("  reason: {e}");
+                        }
+                    }
+                }
+            }
+        }
         let resp = crate::openapi::fundamental()
             .etf_asset_allocation(symbol.clone())
             .await?;
@@ -3356,6 +3380,99 @@ fn allocation_item_name(item: &longbridge::fundamental::AssetAllocationItem) -> 
         }
     }
     item.name.clone()
+}
+
+/// Format a weight percentage (e.g. `7.564` -> `7.564%`), capped to 3 places.
+fn fmt_weight_pct(weight: Option<f64>) -> String {
+    match weight {
+        Some(w) => format!("{w:.3}%"),
+        None => "-".to_string(),
+    }
+}
+
+/// Render SEC N-PORT full ETF holdings for the `constituent` command.
+///
+/// `limit` controls the number of rows shown in pretty mode (`0` = all). JSON
+/// mode always emits the full, untruncated holdings list.
+fn render_sec_holdings(
+    holdings: &crate::cli::sec_edgar::EtfHoldings,
+    symbol: &str,
+    limit: i32,
+    format: &OutputFormat,
+) {
+    let total = holdings.holdings.len();
+    match format {
+        OutputFormat::Json => {
+            let value = serde_json::json!({
+                "symbol": symbol,
+                "series_name": holdings.series_name,
+                "report_period": holdings.report_period,
+                "filed_date": holdings.filed_date,
+                "total_holdings": total,
+                "holdings": holdings.holdings,
+            });
+            print_json(&value);
+        }
+        OutputFormat::Pretty => {
+            let name = if holdings.series_name.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", holdings.series_name)
+            };
+            println!("ETF Holdings — {symbol}{name}");
+            println!(
+                "Source: SEC N-PORT, report period {}, filed {}, {total} holdings\n",
+                if holdings.report_period.is_empty() {
+                    "-"
+                } else {
+                    &holdings.report_period
+                },
+                if holdings.filed_date.is_empty() {
+                    "-"
+                } else {
+                    &holdings.filed_date
+                },
+            );
+
+            if total == 0 {
+                println!("No holdings found.");
+                return;
+            }
+
+            // limit == 0 means "show all"; otherwise cap the displayed rows.
+            let take = if limit <= 0 {
+                total
+            } else {
+                usize::try_from(limit).unwrap_or(total).min(total)
+            };
+
+            let headers = ["#", "name", "cusip", "weight", "shares", "value(USD)"];
+            let rows: Vec<Vec<String>> = holdings
+                .holdings
+                .iter()
+                .take(take)
+                .enumerate()
+                .map(|(i, h)| {
+                    vec![
+                        (i + 1).to_string(),
+                        h.name.clone(),
+                        h.cusip.clone().unwrap_or_else(|| "-".to_string()),
+                        fmt_weight_pct(h.weight),
+                        h.shares
+                            .map_or_else(|| "-".to_string(), |s| format_with_commas(s as i64)),
+                        h.value_usd
+                            .map_or_else(|| "-".to_string(), |v| format_with_commas(v as i64)),
+                    ]
+                })
+                .collect();
+            print_table(&headers, rows, format);
+
+            if take < total {
+                let more = total - take;
+                println!("\n... and {more} more (use --limit 0 for all)");
+            }
+        }
+    }
 }
 
 /// Render an ETF asset-allocation response for the `constituent` command.
