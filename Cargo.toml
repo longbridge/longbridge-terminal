@@ -18,7 +18,6 @@ split-debuginfo = "packed" # Pack debug info into .pdb (Windows) or .dSYM (macOS
 strip = "symbols"          # Strip all symbols from the final binary
 
 [dependencies]
-phf = "0.11"
 ansi-parser = "0.9.1"
 ansi-to-tui = "8.0.1"
 anyhow = "1.0"
@@ -38,7 +37,8 @@ crossterm = { version = "0.29", features = ["event-stream"] }
 dashmap = "6.1"
 dirs = "5.0"
 csv = "1"
-longbridge = { git = "https://github.com/longbridge/openapi.git", branch = "main" }
+# TODO: revert to main after openapi PR #537 merges
+longbridge = { git = "https://github.com/longbridge/openapi.git", branch = "update-us-etf-list" }
 futures = "0.3.28"
 open = "5"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "gzip", "brotli"] }
@@ -80,9 +80,6 @@ aes-gcm = "0.10"
 hkdf = "0.12"
 machine-uid = "0.6"
 sha2 = "0.10"
-
-[build-dependencies]
-phf_codegen = "0.11"
 
 [dev-dependencies]
 mockall = "0.13"

@@ -2213,18 +2213,6 @@ fn print_json_with_symbols(data: &Value) {
     println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
 }
 
-/// Convert index symbol to IX/ prefix `counter_id` (e.g. `HSI.HK` → `IX/HK/HSI`,
-/// `.DJI.US` → `IX/US/.DJI`).
-fn index_symbol_to_counter_id(symbol: &str) -> String {
-    if let Some((code, market)) = symbol.rsplit_once('.') {
-        let market = market.to_uppercase();
-        // Preserve the leading dot — US index counter_ids include it (e.g. `.DJI.US` → `IX/US/.DJI`)
-        format!("IX/{market}/{code}")
-    } else {
-        symbol.to_string()
-    }
-}
-
 pub async fn cmd_history_intraday(
     symbol: String,
     session: &str,
@@ -2306,7 +2294,7 @@ pub async fn cmd_constituent(
         // No allocation data available — fall through to index-constituents.
     }
 
-    let cid = index_symbol_to_counter_id(&symbol);
+    let cid = longbridge::counter::index_symbol_to_counter_id(&symbol);
     let limit_str = limit.to_string();
     let data = http_get(
         "/v1/quote/index-constituents",
