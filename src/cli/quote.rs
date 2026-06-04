@@ -2292,6 +2292,20 @@ pub async fn cmd_constituent(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
+    // ETF symbols expose their composition via the fundamental asset-allocation
+    // endpoint rather than the index-constituents endpoint. Non-ETF symbols
+    // (indexes) keep the original index-constituents behaviour unchanged.
+    if crate::utils::counter::is_etf(&symbol) {
+        let resp = crate::openapi::fundamental()
+            .etf_asset_allocation(symbol.clone())
+            .await?;
+        if !resp.info.is_empty() {
+            render_etf_asset_allocation(&resp, &symbol, limit, format);
+            return Ok(());
+        }
+        // No allocation data available — fall through to index-constituents.
+    }
+
     let cid = index_symbol_to_counter_id(&symbol);
     let limit_str = limit.to_string();
     let data = http_get(
@@ -3320,8 +3334,8 @@ pub async fn cmd_rank(
 }
 
 /// Human-readable label for an ETF asset-allocation group type.
-fn asset_allocation_type_label(t: longbridge::quote::ElementType) -> &'static str {
-    use longbridge::quote::ElementType;
+fn asset_allocation_type_label(t: longbridge::fundamental::ElementType) -> &'static str {
+    use longbridge::fundamental::ElementType;
     match t {
         ElementType::Holdings => "Holdings",
         ElementType::Regional => "Regional",
@@ -3339,7 +3353,7 @@ fn fmt_position_ratio(raw: &str) -> String {
 
 /// Pick the locale-appropriate display name for an asset-allocation item,
 /// falling back to the default `name` when no localized variant exists.
-fn allocation_item_name(item: &longbridge::quote::AssetAllocationItem) -> String {
+fn allocation_item_name(item: &longbridge::fundamental::AssetAllocationItem) -> String {
     let locale = crate::locale::get();
     let keys: &[&str] = match locale {
         "zh-CN" => &["zh-CN", "zh-HK"],
@@ -3356,20 +3370,26 @@ fn allocation_item_name(item: &longbridge::quote::AssetAllocationItem) -> String
     item.name.clone()
 }
 
-pub async fn cmd_etf_asset_allocation(symbol: String, format: &OutputFormat) -> Result<()> {
-    let ctx = crate::openapi::quote();
-    let resp = ctx.etf_asset_allocation(symbol.clone()).await?;
-
+/// Render an ETF asset-allocation response for the `constituent` command.
+///
+/// Holdings rows are capped at `limit`; the other groups (Regional / Asset Class /
+/// Industry) are shown in full as they are already weight-ranked summaries.
+///
+/// The `--sort` / `--order` flags do not apply to this data source — the API
+/// returns each group pre-sorted by weight — so they are intentionally ignored.
+fn render_etf_asset_allocation(
+    resp: &longbridge::fundamental::AssetAllocationResponse,
+    symbol: &str,
+    limit: i32,
+    format: &OutputFormat,
+) {
     match format {
         OutputFormat::Json => {
-            let value = serde_json::to_value(&resp)?;
-            print_json(&value);
+            if let Ok(value) = serde_json::to_value(resp) {
+                print_json(&value);
+            }
         }
         OutputFormat::Pretty => {
-            if resp.info.is_empty() {
-                println!("No ETF asset allocation data found for {symbol}.");
-                return Ok(());
-            }
             println!("ETF Asset Allocation — {symbol}\n");
             for group in &resp.info {
                 let label = asset_allocation_type_label(group.asset_type);
@@ -3378,13 +3398,17 @@ pub async fn cmd_etf_asset_allocation(symbol: String, format: &OutputFormat) -> 
                     println!("  (no elements)\n");
                     continue;
                 }
-                let is_holdings =
-                    matches!(group.asset_type, longbridge::quote::ElementType::Holdings);
+                let is_holdings = matches!(
+                    group.asset_type,
+                    longbridge::fundamental::ElementType::Holdings
+                );
                 if is_holdings {
                     let headers = ["name", "symbol", "weight", "industry"];
+                    let take = usize::try_from(limit).unwrap_or(usize::MAX);
                     let rows: Vec<Vec<String>> = group
                         .lists
                         .iter()
+                        .take(take)
                         .map(|item| {
                             let industry = item
                                 .holding_detail
@@ -3418,7 +3442,6 @@ pub async fn cmd_etf_asset_allocation(symbol: String, format: &OutputFormat) -> 
             }
         }
     }
-    Ok(())
 }
 
 #[cfg(test)]

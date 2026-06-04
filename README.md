@@ -143,7 +143,7 @@ longbridge capital TSLA.US                          # Capital distribution snaps
 longbridge capital TSLA.US --flow                   # Intraday capital flow time series (large/medium/small money in vs out)
 longbridge market-temp [HK|US|CN|SG]                # Market sentiment temperature index (0–100, higher = more bullish)
 longbridge constituent .SPX.US [--sort market-cap]  # Index constituent stocks (US indexes need a leading dot, e.g. .DJI.US, .SPX.US)
-longbridge etf-asset-allocation QQQ.US              # ETF asset allocation breakdown (holdings, regional, asset class, industry)
+longbridge constituent QQQ.US                       # For an ETF, shows asset allocation breakdown (holdings, regional, asset class, industry)
 longbridge trading session                          # Trading session schedule (open/close times) for all markets
 longbridge trading days HK                          # Trading days and half-trading days for a market
 longbridge security-list HK                         # Full list of securities available in a market

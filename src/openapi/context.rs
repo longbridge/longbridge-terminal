@@ -15,6 +15,9 @@ pub static TRADE_CTX: OnceLock<longbridge::trade::TradeContext> = OnceLock::new(
 /// Global `ContentContext` for news and topics
 pub static CONTENT_CTX: OnceLock<longbridge::ContentContext> = OnceLock::new();
 
+/// Global `FundamentalContext` for fundamental data (ratings, dividends, ETF allocation, etc.)
+pub static FUNDAMENTAL_CTX: OnceLock<longbridge::FundamentalContext> = OnceLock::new();
+
 /// Global `HttpClient` for making authenticated requests to the Longbridge `OpenAPI`
 pub static HTTP_CLIENT: OnceLock<longbridge::httpclient::HttpClient> = OnceLock::new();
 
@@ -184,6 +187,11 @@ pub async fn init_contexts() -> Result<(
         .set(statement_ctx)
         .map_err(|_| anyhow::anyhow!("AssetContext already initialized"))?;
 
+    let fundamental_ctx = longbridge::FundamentalContext::new(Arc::clone(&config));
+    FUNDAMENTAL_CTX
+        .set(fundamental_ctx)
+        .map_err(|_| anyhow::anyhow!("FundamentalContext already initialized"))?;
+
     // Also inject into the standalone HttpClient used for direct REST calls.
     let mut http_client = longbridge::httpclient::HttpClient::new(http_client_config);
     http_client = http_client.header("user-agent", user_agent);
@@ -258,6 +266,13 @@ pub fn content() -> &'static longbridge::ContentContext {
     CONTENT_CTX
         .get()
         .expect("ContentContext not initialized, please call init_contexts() first")
+}
+
+/// Get global `FundamentalContext` for fundamental data
+pub fn fundamental() -> &'static longbridge::FundamentalContext {
+    FUNDAMENTAL_CTX
+        .get()
+        .expect("FundamentalContext not initialized, please call init_contexts() first")
 }
 
 /// Get the global authenticated `HttpClient` for direct `OpenAPI` requests
