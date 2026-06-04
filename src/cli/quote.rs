@@ -2292,6 +2292,20 @@ pub async fn cmd_constituent(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
+    // ETF symbols expose their composition via the fundamental asset-allocation
+    // endpoint rather than the index-constituents endpoint. Non-ETF symbols
+    // (indexes) keep the original index-constituents behaviour unchanged.
+    if crate::utils::counter::is_etf(&symbol) {
+        let resp = crate::openapi::fundamental()
+            .etf_asset_allocation(symbol.clone())
+            .await?;
+        if !resp.info.is_empty() {
+            render_etf_asset_allocation(&resp, &symbol, limit, format);
+            return Ok(());
+        }
+        // No allocation data available — fall through to index-constituents.
+    }
+
     let cid = index_symbol_to_counter_id(&symbol);
     let limit_str = limit.to_string();
     let data = http_get(
@@ -3317,6 +3331,117 @@ pub async fn cmd_rank(
         }
     }
     Ok(())
+}
+
+/// Human-readable label for an ETF asset-allocation group type.
+fn asset_allocation_type_label(t: longbridge::fundamental::ElementType) -> &'static str {
+    use longbridge::fundamental::ElementType;
+    match t {
+        ElementType::Holdings => "Holdings",
+        ElementType::Regional => "Regional",
+        ElementType::AssetClass => "Asset Class",
+        ElementType::Industry => "Industry",
+        ElementType::Unknown => "Unknown",
+    }
+}
+
+/// Format an ETF position-ratio string (e.g. `0.0861114`) as a percentage.
+fn fmt_position_ratio(raw: &str) -> String {
+    raw.parse::<f64>()
+        .map_or_else(|_| raw.to_string(), |v| format!("{:.2}%", v * 100.0))
+}
+
+/// Pick the locale-appropriate display name for an asset-allocation item,
+/// falling back to the default `name` when no localized variant exists.
+fn allocation_item_name(item: &longbridge::fundamental::AssetAllocationItem) -> String {
+    let locale = crate::locale::get();
+    let keys: &[&str] = match locale {
+        "zh-CN" => &["zh-CN", "zh-HK"],
+        "zh-HK" => &["zh-HK", "zh-CN"],
+        _ => &["en"],
+    };
+    for key in keys {
+        if let Some(name) = item.name_locales.get(*key) {
+            if !name.is_empty() {
+                return name.clone();
+            }
+        }
+    }
+    item.name.clone()
+}
+
+/// Render an ETF asset-allocation response for the `constituent` command.
+///
+/// Holdings rows are capped at `limit`; the other groups (Regional / Asset Class /
+/// Industry) are shown in full as they are already weight-ranked summaries.
+///
+/// The `--sort` / `--order` flags do not apply to this data source — the API
+/// returns each group pre-sorted by weight — so they are intentionally ignored.
+fn render_etf_asset_allocation(
+    resp: &longbridge::fundamental::AssetAllocationResponse,
+    symbol: &str,
+    limit: i32,
+    format: &OutputFormat,
+) {
+    match format {
+        OutputFormat::Json => {
+            if let Ok(value) = serde_json::to_value(resp) {
+                print_json(&value);
+            }
+        }
+        OutputFormat::Pretty => {
+            println!("ETF Asset Allocation — {symbol}\n");
+            for group in &resp.info {
+                let label = asset_allocation_type_label(group.asset_type);
+                println!("{label}  (report date: {})", group.report_date);
+                if group.lists.is_empty() {
+                    println!("  (no elements)\n");
+                    continue;
+                }
+                let is_holdings = matches!(
+                    group.asset_type,
+                    longbridge::fundamental::ElementType::Holdings
+                );
+                if is_holdings {
+                    let headers = ["name", "symbol", "weight", "industry"];
+                    let take = usize::try_from(limit).unwrap_or(usize::MAX);
+                    let rows: Vec<Vec<String>> = group
+                        .lists
+                        .iter()
+                        .take(take)
+                        .map(|item| {
+                            let industry = item
+                                .holding_detail
+                                .as_ref()
+                                .map(|d| d.industry_name.clone())
+                                .unwrap_or_default();
+                            vec![
+                                allocation_item_name(item),
+                                item.symbol.clone(),
+                                fmt_position_ratio(&item.position_ratio),
+                                industry,
+                            ]
+                        })
+                        .collect();
+                    print_table(&headers, rows, format);
+                } else {
+                    let headers = ["name", "weight"];
+                    let rows: Vec<Vec<String>> = group
+                        .lists
+                        .iter()
+                        .map(|item| {
+                            vec![
+                                allocation_item_name(item),
+                                fmt_position_ratio(&item.position_ratio),
+                            ]
+                        })
+                        .collect();
+                    print_table(&headers, rows, format);
+                }
+                println!();
+            }
+        }
+    }
 }
 
 #[cfg(test)]

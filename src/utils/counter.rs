@@ -52,6 +52,14 @@ pub fn symbol_to_counter_id(symbol: &str) -> String {
     }
 }
 
+/// Whether a user-supplied symbol resolves to an ETF (e.g. `QQQ.US`, `SPY.US`).
+///
+/// Determined by checking the embedded special `counter_id` set: a symbol is an ETF
+/// when `symbol_to_counter_id` maps it to an `ETF/...` `counter_id`.
+pub fn is_etf(symbol: &str) -> bool {
+    symbol_to_counter_id(symbol).starts_with("ETF/")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -59,6 +67,19 @@ mod tests {
     #[test]
     fn stock_us() {
         assert_eq!(symbol_to_counter_id("TSLA.US"), "ST/US/TSLA");
+    }
+
+    #[test]
+    fn is_etf_us() {
+        assert!(is_etf("QQQ.US"));
+        assert!(is_etf("SPY.US"));
+    }
+
+    #[test]
+    fn is_etf_non_etf() {
+        assert!(!is_etf("TSLA.US"));
+        assert!(!is_etf("HSI.HK"));
+        assert!(!is_etf("700.HK"));
     }
 
     #[test]

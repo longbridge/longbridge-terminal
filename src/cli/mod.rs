@@ -881,14 +881,18 @@ pub enum Commands {
 
     /// Index or ETF constituent stocks
     ///
-    /// US index symbols require a leading dot (e.g. .DJI.US, .SPX.US, .IXIC.US).
-    /// HK indexes use the plain code (e.g. HSI.HK).
+    /// For an index, lists its member stocks. US index symbols require a leading
+    /// dot (e.g. .DJI.US, .SPX.US, .IXIC.US); HK indexes use the plain code (e.g.
+    /// HSI.HK). For an ETF, shows its asset allocation breakdown (holdings,
+    /// regional, asset class, industry) instead; --sort/--order are ignored for
+    /// ETFs since the data is already weight-ranked.
     ///
     /// Example: longbridge constituent HSI.HK
     /// Example: longbridge constituent .SPX.US --sort market-cap --order asc
     /// Example: longbridge constituent HSI.HK --limit 20 --sort change
+    /// Example: longbridge constituent QQQ.US
     Constituent {
-        /// Index symbol in <CODE>.<MARKET> format (e.g. HSI.HK, .DJI.US, .SPX.US)
+        /// Index or ETF symbol in <CODE>.<MARKET> format (e.g. HSI.HK, .SPX.US, QQQ.US)
         symbol: String,
         /// Number of results to return
         #[arg(long, default_value = "50")]
