@@ -372,21 +372,38 @@ pub async fn auth_code_login() -> Result<()> {
     }
 }
 
-/// Restore a chat-pasted authorization code to the standard base64 form the
-/// token endpoint expects. The connect page displays codes in a chat-safe
-/// base64url form without padding (`+` -> `-`, `/` -> `_`, trailing `=`
-/// stripped) because raw base64 gets escaped or truncated by chat apps.
-/// Surrounding whitespace, quotes, and backticks picked up while copying are
-/// stripped as well.
-fn normalize_auth_code(input: &str) -> String {
-    let stripped = input
+/// Build the ordered exchange candidates for a user-pasted authorization
+/// code. The connect page displays codes in a pure-alphanumeric base58 form
+/// (raw standard-base64 codes get escaped or truncated by chat apps); legacy
+/// pages used an unpadded base64url form. Candidate order: base58-decoded,
+/// base64url-restored, the string as pasted. A rejected lookup does not
+/// consume the one-time code, so later attempts are safe.
+///
+/// Mirrors the hosted MCP server's `authenticate` tool — keep the two in
+/// sync (both repos pin the same shared test vector).
+fn auth_code_candidates(input: &str) -> Vec<String> {
+    use base64::Engine as _;
+    let raw = input
         .trim()
-        .trim_matches(|c| matches!(c, '"' | '\'' | '`'));
-    let mut code = stripped.replace('-', "+").replace('_', "/");
-    while !code.is_empty() && code.len() % 4 != 0 {
-        code.push('=');
+        .trim_matches(|c| matches!(c, '"' | '\'' | '`'))
+        .to_string();
+    if raw.is_empty() {
+        return Vec::new();
     }
-    code
+    let mut candidates: Vec<String> = Vec::new();
+    if let Ok(bytes) = bs58::decode(&raw).into_vec() {
+        candidates.push(base64::engine::general_purpose::STANDARD.encode(bytes));
+    }
+    if let Ok(bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(&raw) {
+        let restored = base64::engine::general_purpose::STANDARD.encode(bytes);
+        if !candidates.contains(&restored) {
+            candidates.push(restored);
+        }
+    }
+    if !candidates.contains(&raw) {
+        candidates.push(raw);
+    }
+    candidates
 }
 
 /// Agent Auth Code reverse-authorization flow.
@@ -396,29 +413,21 @@ fn normalize_auth_code(input: &str) -> String {
 /// access/refresh token in a single synchronous call. No browser, no polling,
 /// no local callback server.
 ///
-/// The pasted code is first restored from the chat-safe base64url display
-/// form via [`normalize_auth_code`]; the string as pasted is kept as a
-/// fallback candidate (a rejected lookup does not consume the one-time code,
-/// so a second attempt is safe).
+/// The pasted code is restored from its chat-safe display form via
+/// [`auth_code_candidates`] (base58 / legacy base64url / raw, in order); a
+/// rejected lookup does not consume the one-time code, so trying multiple
+/// candidates is safe.
 ///
 /// The resulting tokens are written to the same encrypted token cache used by
 /// every other login path, so subsequent refresh logic is fully shared.
 pub async fn auth_code_exchange_login(code: &str) -> Result<()> {
-    let raw = code
-        .trim()
-        .trim_matches(|c| matches!(c, '"' | '\'' | '`'))
-        .to_string();
-    let normalized = normalize_auth_code(code);
-    if normalized.is_empty() {
+    let candidates = auth_code_candidates(code);
+    if candidates.is_empty() {
         anyhow::bail!(
             "Empty authorization code. Generate one at {} and pass it as \
              `longbridge auth login --auth-code <CODE>`.",
             connect_url()
         );
-    }
-    let mut candidates = vec![normalized];
-    if !raw.is_empty() && !candidates.contains(&raw) {
-        candidates.push(raw);
     }
 
     let url = format!("{}/token", oauth_base_url());
@@ -531,4 +540,45 @@ pub fn clear_token() -> Result<()> {
         tracing::debug!("OAuth token deleted: {}", path.display());
     }
     Ok(())
+}
+
+
+#[cfg(test)]
+mod auth_code_tests {
+    use super::*;
+
+    // Shared vector with longbridge-mcp: the connect page displays
+    // `RKBXES26iL0CdQL85vXz+tSNeoHeqyUuLEz3nVWgqVU=` as
+    // `5ctXgj3mEtEHoUBRwJnyURf4EkfA1924fY3o9Njev2zp` (base58).
+    const ORIGINAL: &str = "RKBXES26iL0CdQL85vXz+tSNeoHeqyUuLEz3nVWgqVU=";
+    const BASE58_FORM: &str = "5ctXgj3mEtEHoUBRwJnyURf4EkfA1924fY3o9Njev2zp";
+    const BASE64URL_FORM: &str = "RKBXES26iL0CdQL85vXz-tSNeoHeqyUuLEz3nVWgqVU";
+
+    #[test]
+    fn base58_display_form_decodes_to_original_code() {
+        assert_eq!(auth_code_candidates(BASE58_FORM)[0], ORIGINAL);
+    }
+
+    #[test]
+    fn legacy_base64url_form_is_restored() {
+        assert!(auth_code_candidates(BASE64URL_FORM).contains(&ORIGINAL.to_string()));
+    }
+
+    #[test]
+    fn original_base64_passes_through() {
+        assert!(auth_code_candidates(ORIGINAL).contains(&ORIGINAL.to_string()));
+    }
+
+    #[test]
+    fn chat_copy_junk_is_stripped() {
+        assert_eq!(
+            auth_code_candidates(&format!("  `{BASE58_FORM}`  "))[0],
+            ORIGINAL
+        );
+    }
+
+    #[test]
+    fn empty_input_yields_no_candidates() {
+        assert!(auth_code_candidates("   ").is_empty());
+    }
 }
