@@ -8,9 +8,6 @@ use crate::region;
 
 const CONNECT_TIMEOUT_SECS: u64 = 5;
 const PROBE_COUNT: usize = 10;
-const GLOBAL_HTTP_URL: &str = "https://openapi.longbridge.com";
-const GLOBAL_PROBE_URL: &str = "https://openapi.longbridge.com/health";
-const CN_PROBE_URL: &str = "https://openapi.longbridge.cn/health";
 
 // ANSI colors
 const GREEN: &str = "\x1b[32m";
@@ -114,7 +111,9 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
     }
 
     // ── Connectivity (concurrent) ─────────────────────────────────────────────
-    let (global, cn) = tokio::join!(probe(GLOBAL_PROBE_URL), probe(CN_PROBE_URL),);
+    let global_probe_url = format!("{}/health", region::HTTP_URL_GLOBAL);
+    let cn_probe_url = format!("{}/health", region::HTTP_URL_CN);
+    let (global, cn) = tokio::join!(probe(&global_probe_url), probe(&cn_probe_url),);
 
     match format {
         OutputFormat::Json => {
@@ -128,7 +127,7 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
                     "active": if is_cn { "CN" } else { "Global" },
                 },
                 "connectivity": {
-                    "global": { "url": GLOBAL_HTTP_URL, "ok": global.ok, "ms": global.ms },
+                    "global": { "url": region::HTTP_URL_GLOBAL, "ok": global.ok, "ms": global.ms },
                     "cn":     { "url": region::HTTP_URL_CN, "ok": cn.ok, "ms": cn.ms },
                 },
             });
@@ -161,7 +160,7 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
 
             println!();
             println!("Connectivity {DIM}(avg of {PROBE_COUNT}){RESET}");
-            println!("{}", probe_line("global", &global, GLOBAL_HTTP_URL));
+            println!("{}", probe_line("global", &global, region::HTTP_URL_GLOBAL));
             println!("{}", probe_line("cn", &cn, region::HTTP_URL_CN));
         }
     }

@@ -13,8 +13,6 @@ const CHECK_INTERVAL_SECS: u64 = 86400; // 24 hours
 const FETCH_TIMEOUT_SECS: u64 = 5;
 const DOWNLOAD_TIMEOUT_SECS: u64 = 300;
 
-const HOST_GLOBAL: &str = "https://open.longbridge.com";
-const HOST_CN: &str = "https://open.longbridge.cn";
 const RELEASE_PATH: &str = "/github/release/longbridge-terminal";
 const RELEASE_NOTES_PATH: &str = "/docs/cli/release-notes.md";
 
@@ -156,11 +154,7 @@ async fn fetch_latest_version() -> Option<String> {
 }
 
 fn get_host() -> &'static str {
-    if crate::region::is_cn_cached() {
-        HOST_CN
-    } else {
-        HOST_GLOBAL
-    }
+    crate::region::open_url()
 }
 
 async fn fetch_latest_version_for_update() -> anyhow::Result<String> {

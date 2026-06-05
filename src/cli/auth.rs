@@ -89,7 +89,7 @@ fn read_token_state() -> Result<TokenState> {
     }
 
     let Some(full) =
-        crate::secure_storage::EncryptedFileTokenStorage::load_full(crate::auth::client_id())
+        crate::secure_storage::EncryptedFileTokenStorage::load_full(crate::region::client_id())
     else {
         return Ok(TokenState {
             status: "decrypt_failed",
