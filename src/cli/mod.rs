@@ -2948,13 +2948,22 @@ pub enum AuthCmd {
     /// CLI polls until authorization is complete. Works on any machine including
     /// SSH sessions and headless servers.
     ///
-    /// Use `--auth-code` for the Authorization Code flow: opens a browser on this
-    /// machine and listens on `localhost:60355` for the OAuth callback.
+    /// Pass `--auth-code <CODE>` to exchange an authorization code generated at
+    /// <https://open.longbridge.com/connect> — a single synchronous call with no
+    /// browser, polling, or local callback server. Ideal for AI agents.
+    ///
+    /// Pass `--auth-code` with no value for the browser Authorization Code flow:
+    /// opens a browser on this machine and listens on `localhost:60355` for the
+    /// OAuth callback.
     Login {
-        /// Authorization Code flow: opens a browser and handles the localhost callback.
-        /// Requires the browser to be on the same machine (local use only).
-        #[arg(long)]
-        auth_code: bool,
+        /// Authorize using a code instead of the device flow.
+        ///
+        /// With a value (`--auth-code <CODE>`): exchange an authorization code
+        /// from <https://open.longbridge.com/connect> in one synchronous call.
+        /// Without a value (`--auth-code`): run the browser Authorization Code
+        /// flow that handles the localhost callback (local use only).
+        #[arg(long, value_name = "CODE", num_args = 0..=1, default_missing_value = "")]
+        auth_code: Option<String>,
         /// Print request/response details for each OAuth step.
         #[arg(short, long)]
         verbose: bool,

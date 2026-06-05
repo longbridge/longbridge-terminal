@@ -5,37 +5,22 @@ use longbridge::oauth::TokenStorage as _;
 use std::fs;
 use std::path::PathBuf;
 
-const OAUTH_CLIENT_ID: &str = "fd52fbc5-02a9-47f5-ad30-0842c841aae9";
-const OAUTH_PATH: &str = "/oauth2";
-
-const OAUTH_TEST_CLIENT_ID: &str = "37435cdf-c7e4-4de9-8715-b20d33416196";
-
 pub const CALLBACK_PORT: u16 = 60355;
-
-/// Whether the staging environment is active (`LONGBRIDGE_ENV=staging`).
-pub fn is_test_env() -> bool {
-    std::env::var("LONGBRIDGE_ENV").is_ok_and(|v| v == "staging")
-}
-
-/// Return the OAuth client ID for the current environment.
-pub fn client_id() -> &'static str {
-    if is_test_env() {
-        OAUTH_TEST_CLIENT_ID
-    } else {
-        OAUTH_CLIENT_ID
-    }
-}
 
 /// Return the OAuth base URL for the current environment and region.
 fn oauth_base_url() -> String {
-    let host = if is_test_env() {
-        crate::region::HTTP_URL_TEST
-    } else if crate::region::is_cn_cached() {
-        crate::region::HTTP_URL_CN
-    } else {
-        crate::region::HTTP_URL_GLOBAL
-    };
-    format!("{host}{OAUTH_PATH}")
+    format!("{}/oauth2", crate::region::http_url())
+}
+
+/// `/connect` reverse-authorization page URL for the current region.
+fn connect_url() -> String {
+    format!("{}/connect", crate::region::open_url())
+}
+
+/// Redirect URI registered for the "AI Agent" client. Must exactly match the
+/// `redirect_uri` bound to the authorization code generated at [`connect_url`].
+fn agent_redirect_uri() -> String {
+    format!("{}/connect/done", crate::region::open_url())
 }
 
 pub fn token_file_path() -> Result<PathBuf> {
@@ -71,7 +56,8 @@ fn decode_jwt_payload(token: &str) -> Option<serde_json::Value> {
 
 /// Read the logged-in user's `account_channel` from the local access token.
 pub fn account_channel() -> Option<String> {
-    let full = crate::secure_storage::EncryptedFileTokenStorage::load_full(client_id())?;
+    let full =
+        crate::secure_storage::EncryptedFileTokenStorage::load_full(crate::region::client_id())?;
     let claims = decode_jwt_payload(full["access_token"].as_str()?)?;
     let sub_str = claims["sub"].as_str()?;
     let sub: serde_json::Value = serde_json::from_str(sub_str).ok()?;
@@ -126,7 +112,7 @@ pub async fn device_login(verbose: bool) -> Result<()> {
     use std::time::{Duration, Instant};
 
     let oauth_base = oauth_base_url();
-    let client_id = client_id();
+    let client_id = crate::region::client_id();
     let http_client = reqwest::Client::new();
     let invite_code = read_invite_code();
 
@@ -260,7 +246,8 @@ pub async fn refresh_if_expired() -> Result<()> {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     let storage = crate::secure_storage::EncryptedFileTokenStorage;
-    let Some(full) = crate::secure_storage::EncryptedFileTokenStorage::load_full(client_id())
+    let Some(full) =
+        crate::secure_storage::EncryptedFileTokenStorage::load_full(crate::region::client_id())
     else {
         return Ok(());
     };
@@ -301,7 +288,7 @@ pub async fn refresh_if_expired() -> Result<()> {
         .form(&[
             ("grant_type", "refresh_token"),
             ("refresh_token", refresh_token.as_str()),
-            ("client_id", client_id()),
+            ("client_id", crate::region::client_id()),
         ])
         .send()
         .await
@@ -325,7 +312,7 @@ pub async fn refresh_if_expired() -> Result<()> {
         let new_refresh = token_resp["refresh_token"].as_str().map(str::to_owned);
 
         let token = longbridge::oauth::StoredToken {
-            client_id: client_id().to_string(),
+            client_id: crate::region::client_id().to_string(),
             access_token: access_token.to_string(),
             refresh_token: new_refresh,
             expires_at: now + expires_in,
@@ -359,7 +346,7 @@ pub async fn auth_code_login() -> Result<()> {
     println!("Listening on localhost:{CALLBACK_PORT} for the OAuth callback.");
     let invite_code = read_invite_code();
 
-    let oauth_result = longbridge::oauth::OAuthBuilder::new(client_id())
+    let oauth_result = longbridge::oauth::OAuthBuilder::new(crate::region::client_id())
         .callback_port(CALLBACK_PORT)
         .token_storage(crate::secure_storage::EncryptedFileTokenStorage)
         .build(|url| {
@@ -382,6 +369,157 @@ pub async fn auth_code_login() -> Result<()> {
             Ok(())
         }
         Err(e) => Err(anyhow::anyhow!("OAuth authorization failed: {e}")),
+    }
+}
+
+/// Restore a chat-pasted authorization code to the standard base64 form the
+/// token endpoint expects. The connect page displays codes in a chat-safe
+/// base64url form without padding (`+` -> `-`, `/` -> `_`, trailing `=`
+/// stripped) because raw base64 gets escaped or truncated by chat apps.
+/// Surrounding whitespace, quotes, and backticks picked up while copying are
+/// stripped as well.
+fn normalize_auth_code(input: &str) -> String {
+    let stripped = input
+        .trim()
+        .trim_matches(|c| matches!(c, '"' | '\'' | '`'));
+    let mut code = stripped.replace('-', "+").replace('_', "/");
+    while !code.is_empty() && code.len() % 4 != 0 {
+        code.push('=');
+    }
+    code
+}
+
+/// Agent Auth Code reverse-authorization flow.
+///
+/// Exchanges a standard OAuth authorization code — generated by the user at
+/// <https://open.longbridge.com/connect> (5-minute, single-use) — for an
+/// access/refresh token in a single synchronous call. No browser, no polling,
+/// no local callback server.
+///
+/// The pasted code is first restored from the chat-safe base64url display
+/// form via [`normalize_auth_code`]; the string as pasted is kept as a
+/// fallback candidate (a rejected lookup does not consume the one-time code,
+/// so a second attempt is safe).
+///
+/// The resulting tokens are written to the same encrypted token cache used by
+/// every other login path, so subsequent refresh logic is fully shared.
+pub async fn auth_code_exchange_login(code: &str) -> Result<()> {
+    let raw = code
+        .trim()
+        .trim_matches(|c| matches!(c, '"' | '\'' | '`'))
+        .to_string();
+    let normalized = normalize_auth_code(code);
+    if normalized.is_empty() {
+        anyhow::bail!(
+            "Empty authorization code. Generate one at {} and pass it as \
+             `longbridge auth login --auth-code <CODE>`.",
+            connect_url()
+        );
+    }
+    let mut candidates = vec![normalized];
+    if !raw.is_empty() && !candidates.contains(&raw) {
+        candidates.push(raw);
+    }
+
+    let url = format!("{}/token", oauth_base_url());
+    let http_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .context("Failed to build HTTP client for authorization code exchange")?;
+
+    // Public client: token endpoint auth method `none` (no client_secret),
+    // no PKCE (no code_verifier).
+    let redirect_uri = agent_redirect_uri();
+    let mut last_rejection: Option<(reqwest::StatusCode, serde_json::Value)> = None;
+    for candidate in &candidates {
+        tracing::debug!("Exchanging authorization code via {url}");
+        let send_result = http_client
+            .post(&url)
+            .form(&[
+                ("grant_type", "authorization_code"),
+                ("code", candidate.as_str()),
+                ("redirect_uri", redirect_uri.as_str()),
+                ("client_id", crate::region::agent_client_id()),
+            ])
+            .send()
+            .await;
+        let resp = match send_result {
+            Ok(resp) => resp,
+            // Keep the first definitive rejection instead of failing on a
+            // transport error from the fallback attempt.
+            Err(_) if last_rejection.is_some() => break,
+            Err(e) => {
+                return Err(anyhow::Error::new(e).context(
+                    "Authorization request failed — check your network connection and try again.",
+                ));
+            }
+        };
+
+        let status = resp.status();
+        if !status.is_success() {
+            let err_resp = resp.json::<serde_json::Value>().await.unwrap_or_default();
+            last_rejection = Some((status, err_resp));
+            continue;
+        }
+
+        let token_resp = resp
+            .json::<serde_json::Value>()
+            .await
+            .context("Failed to parse token response")?;
+
+        let access_token = token_resp["access_token"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("No access_token in token response"))?;
+        let expires_in = token_resp["expires_in"].as_u64().unwrap_or(3600);
+        let refresh_token = token_resp["refresh_token"].as_str().map(str::to_owned);
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // Persist under the regular runtime client_id (not the agent client_id):
+        // the token cache is a single shared file and the existing refresh path
+        // (`refresh_if_expired`) posts `client_id()`, so storing it this way lets
+        // refresh be reused as-is. The agent client_id is only used to *exchange*
+        // the authorization code above.
+        let token = longbridge::oauth::StoredToken {
+            client_id: crate::region::client_id().to_string(),
+            access_token: access_token.to_string(),
+            refresh_token,
+            expires_at: now + expires_in,
+        };
+        crate::secure_storage::EncryptedFileTokenStorage
+            .save(&token)
+            .map_err(|e| anyhow::anyhow!("Failed to save token: {e}"))?;
+
+        println!("Successfully authenticated.");
+        return Ok(());
+    }
+
+    // Surface a self-healing hint: an invalid/expired/used code means the agent
+    // should ask the user to regenerate one.
+    let (status, err_resp) = last_rejection.unwrap_or_default();
+    let error = err_resp["error"].as_str().unwrap_or("unknown");
+    let description = err_resp["error_description"].as_str().unwrap_or("");
+
+    match error {
+        "invalid_grant" | "invalid_request" | "expired_token" | "access_denied" => {
+            anyhow::bail!(
+                "Authorization code is invalid, expired, or already used. \
+                 Please generate a new one at {} \
+                 and run `longbridge auth login --auth-code <CODE>` again.",
+                connect_url()
+            )
+        }
+        _ => {
+            let detail = if description.is_empty() {
+                error.to_string()
+            } else {
+                format!("{error}: {description}")
+            };
+            anyhow::bail!("Authorization code exchange failed ({status}): {detail}")
+        }
     }
 }
 

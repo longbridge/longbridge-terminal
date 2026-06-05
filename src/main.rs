@@ -167,11 +167,21 @@ async fn main() {
         }
 
         Some(cli::Commands::Auth {
-            cmd: cli::AuthCmd::Login {
-                auth_code: true, ..
-            },
+            cmd:
+                cli::AuthCmd::Login {
+                    auth_code: Some(code),
+                    ..
+                },
         }) => {
-            if let Err(e) = auth::auth_code_login().await {
+            // `--auth-code <CODE>` (non-empty): exchange an authorization code in
+            // a single synchronous call. `--auth-code` with no value falls back to
+            // the browser Authorization Code flow.
+            let result = if code.is_empty() {
+                auth::auth_code_login().await
+            } else {
+                auth::auth_code_exchange_login(&code).await
+            };
+            if let Err(e) = result {
                 eprintln!("Authentication failed: {e:#}");
                 std::process::exit(1);
             }
@@ -180,7 +190,7 @@ async fn main() {
         Some(cli::Commands::Auth {
             cmd:
                 cli::AuthCmd::Login {
-                    auth_code: false,
+                    auth_code: None,
                     verbose,
                 },
         }) => {
