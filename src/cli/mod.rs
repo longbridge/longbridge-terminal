@@ -544,9 +544,9 @@ pub enum Commands {
     /// With a code (from the list output), returns historical releases with actual / forecast / previous values.
     ///
     /// Example: longbridge macrodata
-    /// Example: longbridge macrodata USCPI
-    /// Example: longbridge macrodata USCPI --start 2024-01-01 --end 2024-12-31
-    /// Example: longbridge macrodata USCPI --limit 12 --format json
+    /// Example: longbridge macrodata US00175
+    /// Example: longbridge macrodata US00175 --start 2024-01-01 --end 2024-12-31
+    /// Example: longbridge macrodata US00175 --limit 12 --format json
     Macrodata {
         /// Indicator code (from `longbridge macrodata` list output). Omit to list all indicators.
         code: Option<String>,
