@@ -3382,9 +3382,14 @@ fn print_financial_report_snapshot(data: &Value) {
 
 // ── macrodata ────────────────────────────────────────────────────────────────
 
-/// Convert a `YYYY-MM-DD` date string to ISO 8601 UTC datetime: `YYYY-MM-DDT00:00:00Z`.
-fn date_to_iso8601(date: &str) -> String {
+/// Convert a `YYYY-MM-DD` date string to ISO 8601 UTC start of day: `YYYY-MM-DDT00:00:00Z`.
+fn date_to_iso8601_start(date: &str) -> String {
     format!("{date}T00:00:00Z")
+}
+
+/// Convert a `YYYY-MM-DD` date string to ISO 8601 UTC end of day: `YYYY-MM-DDT23:59:59Z`.
+fn date_to_iso8601_end(date: &str) -> String {
+    format!("{date}T23:59:59Z")
 }
 
 /// Walk a JSON value and convert any ISO 8601 datetime string
@@ -3560,8 +3565,8 @@ pub async fn cmd_macrodata(
         }
         Some(indicator_code) => {
             let limit_str = limit.unwrap_or(20).to_string();
-            let start_iso = start.as_deref().map(date_to_iso8601);
-            let end_iso = end.as_deref().map(date_to_iso8601);
+            let start_iso = start.as_deref().map(date_to_iso8601_start);
+            let end_iso = end.as_deref().map(date_to_iso8601_end);
             let mut params: Vec<(&str, &str)> =
                 vec![("indicator_code", &indicator_code), ("limit", &limit_str)];
             if let Some(ref s) = start_iso {
