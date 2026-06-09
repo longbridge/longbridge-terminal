@@ -3379,3 +3379,153 @@ fn print_financial_report_snapshot(data: &Value) {
         );
     }
 }
+
+// ── macrodata ────────────────────────────────────────────────────────────────
+
+fn print_macrodata_list(data: &Value) {
+    let empty = vec![];
+    let items = data["list"].as_array().unwrap_or(&empty);
+    if items.is_empty() {
+        println!("No indicators found.");
+        return;
+    }
+
+    let rows: Vec<Vec<String>> = items
+        .iter()
+        .map(|item| {
+            let name = item["name"]["simplified_chinese"]
+                .as_str()
+                .or_else(|| item["name"]["english"].as_str())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| item["indicator_code"].as_str().unwrap_or("-"))
+                .to_owned();
+            vec![
+                val_str(&item["indicator_code"]),
+                name,
+                val_str(&item["category"]),
+                val_str(&item["country"]),
+                val_str(&item["periodicity"]),
+                val_str(&item["source_org"]),
+            ]
+        })
+        .collect();
+
+    super::output::print_table(
+        &["Code", "Name", "Category", "Country", "Frequency", "Source"],
+        rows,
+        &OutputFormat::Pretty,
+    );
+}
+
+fn print_macrodata_history(data: &Value) {
+    let empty = vec![];
+    let info = &data["info"];
+    let indicator_code = info["indicator_code"].as_str().unwrap_or("-");
+    let name = info["name"]["simplified_chinese"]
+        .as_str()
+        .or_else(|| info["name"]["english"].as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(indicator_code);
+    let describe = info["describe"]
+        .as_object()
+        .and_then(|_| {
+            info["describe"]["simplified_chinese"]
+                .as_str()
+                .or_else(|| info["describe"]["english"].as_str())
+        })
+        .unwrap_or("");
+    let source = info["source_org"].as_str().unwrap_or("-");
+    let periodicity = info["periodicity"].as_str().unwrap_or("-");
+
+    println!("{name}  [{source}  {periodicity}]");
+    if !describe.is_empty() {
+        println!("{describe}");
+    }
+    println!();
+
+    let records = data["data"].as_array().unwrap_or(&empty);
+    if records.is_empty() {
+        println!("No data.");
+        return;
+    }
+
+    let rows: Vec<Vec<String>> = records
+        .iter()
+        .map(|r| {
+            let unit = r["unit"]["simplified_chinese"]
+                .as_str()
+                .or_else(|| r["unit"]["english"].as_str())
+                .unwrap_or("")
+                .to_owned();
+            let prefix = r["unit_prefix"]["simplified_chinese"]
+                .as_str()
+                .or_else(|| r["unit_prefix"]["english"].as_str())
+                .unwrap_or("")
+                .to_owned();
+            let unit_str = if prefix.is_empty() {
+                unit
+            } else {
+                format!("{prefix}{unit}")
+            };
+            vec![
+                val_str(&r["period"]),
+                val_str(&r["actual_value"]),
+                val_str(&r["forecast_value"]),
+                val_str(&r["previous_value"]),
+                val_str(&r["revised_value"]),
+                unit_str,
+            ]
+        })
+        .collect();
+
+    super::output::print_table(
+        &[
+            "Period", "Actual", "Forecast", "Previous", "Revised", "Unit",
+        ],
+        rows,
+        &OutputFormat::Pretty,
+    );
+}
+
+/// List all macroeconomic indicators, or query historical data for one indicator.
+pub async fn cmd_macrodata(
+    code: Option<String>,
+    start: Option<String>,
+    end: Option<String>,
+    limit: u32,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    match code {
+        None => {
+            // List all indicators (fetch up to 1000)
+            let data = http_get(
+                "/v1/quote/macrodata",
+                &[("offset", "0"), ("limit", "1000")],
+                verbose,
+            )
+            .await?;
+            match format {
+                OutputFormat::Json => print_json(&data),
+                OutputFormat::Pretty => print_macrodata_list(&data),
+            }
+        }
+        Some(indicator_code) => {
+            let limit_str = limit.to_string();
+            let mut params: Vec<(&str, &str)> =
+                vec![("indicator_code", &indicator_code), ("limit", &limit_str)];
+            if let Some(ref s) = start {
+                params.push(("start_time", s.as_str()));
+            }
+            if let Some(ref e) = end {
+                params.push(("end_time", e.as_str()));
+            }
+            let data = http_get("/v1/quote/macrodata/history", &params, verbose).await?;
+            match format {
+                OutputFormat::Json => print_json(&data),
+                OutputFormat::Pretty => print_macrodata_history(&data),
+            }
+        }
+    }
+    Ok(())
+}

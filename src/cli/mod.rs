@@ -538,6 +538,29 @@ pub enum Commands {
         symbol: String,
     },
 
+    /// Macroeconomic indicators: list all supported indicators or query historical data
+    ///
+    /// Without a code, lists all available indicators (name, category, country, periodicity).
+    /// With a code (from the list output), returns historical releases with actual / forecast / previous values.
+    ///
+    /// Example: longbridge macrodata
+    /// Example: longbridge macrodata USCPI
+    /// Example: longbridge macrodata USCPI --start 2024-01-01 --end 2024-12-31
+    /// Example: longbridge macrodata USCPI --limit 12 --format json
+    Macrodata {
+        /// Indicator code (from `longbridge macrodata` list output). Omit to list all indicators.
+        code: Option<String>,
+        /// Filter start date for historical data (YYYY-MM-DD)
+        #[arg(long)]
+        start: Option<String>,
+        /// Filter end date for historical data (YYYY-MM-DD)
+        #[arg(long)]
+        end: Option<String>,
+        /// Maximum number of historical records to return (default 20, max 100)
+        #[arg(long, default_value = "20")]
+        limit: u32,
+    },
+
     /// Finance calendar: upcoming events by category
     ///
     /// Example: longbridge finance-calendar report
@@ -3202,6 +3225,12 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         Commands::IndustryPeers { symbol, market } => {
             fundamental::cmd_industry_peers(symbol, market, format, verbose).await
         }
+        Commands::Macrodata {
+            code,
+            start,
+            end,
+            limit,
+        } => fundamental::cmd_macrodata(code, start, end, limit, format, verbose).await,
         Commands::FinanceCalendar { cmd } => {
             let (event_type, opts, star) = match cmd {
                 FinanceCalendarCmd::Report { opts } => ("report", opts, vec![]),
