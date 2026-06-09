@@ -557,11 +557,11 @@ pub enum Commands {
         #[arg(long)]
         end: Option<String>,
         /// Maximum number of records to return.
-        /// For indicator list: default 100, max 1000.
-        /// For historical data: default 20, max 100.
+        /// Without CODE (list): default 1000, max 1000.
+        /// With CODE (history): default 20, max 100.
         #[arg(long)]
         limit: Option<u32>,
-        /// Page number (1-based), for indicator list only
+        /// Page number, 1-based. Only applies to indicator list (without CODE).
         #[arg(long, default_value = "1")]
         page: u32,
     },

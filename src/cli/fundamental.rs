@@ -3505,7 +3505,7 @@ pub async fn cmd_macrodata(
 ) -> Result<()> {
     match code {
         None => {
-            let limit_val = limit.unwrap_or(100);
+            let limit_val = limit.unwrap_or(1000);
             let offset = (page.saturating_sub(1)) * limit_val;
             let limit_str = limit_val.to_string();
             let offset_str = offset.to_string();
