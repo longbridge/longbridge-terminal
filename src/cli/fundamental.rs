@@ -3382,6 +3382,41 @@ fn print_financial_report_snapshot(data: &Value) {
 
 // ── macrodata ────────────────────────────────────────────────────────────────
 
+/// Convert a `YYYY-MM-DD` date string to ISO 8601 UTC datetime: `YYYY-MM-DDT00:00:00Z`.
+fn date_to_iso8601(date: &str) -> String {
+    format!("{date}T00:00:00Z")
+}
+
+/// Walk a JSON value and convert any ISO 8601 datetime string
+/// (`YYYY-MM-DDTHH:MM:SSZ`) to a Unix timestamp string, matching the
+/// format used by other CLI commands.
+fn normalize_timestamps(v: &mut Value) {
+    match v {
+        Value::String(s) => {
+            if let Some(ts) = parse_iso8601_to_unix(s) {
+                *s = ts.to_string();
+            }
+        }
+        Value::Array(arr) => arr.iter_mut().for_each(normalize_timestamps),
+        Value::Object(map) => map.values_mut().for_each(normalize_timestamps),
+        _ => {}
+    }
+}
+
+/// Parse an ISO 8601 UTC datetime string to a Unix timestamp.
+/// Accepts `YYYY-MM-DDTHH:MM:SSZ` only.
+fn parse_iso8601_to_unix(s: &str) -> Option<i64> {
+    use time::format_description::well_known::Rfc3339;
+    use time::OffsetDateTime;
+    // Only convert strings that look like datetimes, not plain dates like "2026-05-01"
+    if !s.contains('T') {
+        return None;
+    }
+    OffsetDateTime::parse(s, &Rfc3339)
+        .ok()
+        .map(|dt| dt.unix_timestamp())
+}
+
 fn print_macrodata_list(data: &Value) {
     let empty = vec![];
     let items = data["list"].as_array().unwrap_or(&empty);
@@ -3509,30 +3544,38 @@ pub async fn cmd_macrodata(
             let offset = (page.saturating_sub(1)) * limit_val;
             let limit_str = limit_val.to_string();
             let offset_str = offset.to_string();
-            let data = http_get(
+            let mut data = http_get(
                 "/v1/quote/macrodata",
                 &[("offset", &offset_str), ("limit", &limit_str)],
                 verbose,
             )
             .await?;
             match format {
-                OutputFormat::Json => print_json(&data),
+                OutputFormat::Json => {
+                    normalize_timestamps(&mut data);
+                    print_json(&data);
+                }
                 OutputFormat::Pretty => print_macrodata_list(&data),
             }
         }
         Some(indicator_code) => {
             let limit_str = limit.unwrap_or(20).to_string();
+            let start_iso = start.as_deref().map(date_to_iso8601);
+            let end_iso = end.as_deref().map(date_to_iso8601);
             let mut params: Vec<(&str, &str)> =
                 vec![("indicator_code", &indicator_code), ("limit", &limit_str)];
-            if let Some(ref s) = start {
+            if let Some(ref s) = start_iso {
                 params.push(("start_time", s.as_str()));
             }
-            if let Some(ref e) = end {
+            if let Some(ref e) = end_iso {
                 params.push(("end_time", e.as_str()));
             }
-            let data = http_get("/v1/quote/macrodata/history", &params, verbose).await?;
+            let mut data = http_get("/v1/quote/macrodata/history", &params, verbose).await?;
             match format {
-                OutputFormat::Json => print_json(&data),
+                OutputFormat::Json => {
+                    normalize_timestamps(&mut data);
+                    print_json(&data);
+                }
                 OutputFormat::Pretty => print_macrodata_history(&data),
             }
         }
