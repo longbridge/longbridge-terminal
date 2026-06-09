@@ -561,6 +561,9 @@ pub enum Commands {
         /// For historical data: default 20, max 100.
         #[arg(long)]
         limit: Option<u32>,
+        /// Page number (1-based), for indicator list only
+        #[arg(long, default_value = "1")]
+        page: u32,
     },
 
     /// Finance calendar: upcoming events by category
@@ -3232,7 +3235,8 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             start,
             end,
             limit,
-        } => fundamental::cmd_macrodata(code, start, end, limit, format, verbose).await,
+            page,
+        } => fundamental::cmd_macrodata(code, start, end, limit, page, format, verbose).await,
         Commands::FinanceCalendar { cmd } => {
             let (event_type, opts, star) = match cmd {
                 FinanceCalendarCmd::Report { opts } => ("report", opts, vec![]),

@@ -3499,15 +3499,19 @@ pub async fn cmd_macrodata(
     start: Option<String>,
     end: Option<String>,
     limit: Option<u32>,
+    page: u32,
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
     match code {
         None => {
-            let limit_str = limit.unwrap_or(100).to_string();
+            let limit_val = limit.unwrap_or(100);
+            let offset = (page.saturating_sub(1)) * limit_val;
+            let limit_str = limit_val.to_string();
+            let offset_str = offset.to_string();
             let data = http_get(
                 "/v1/quote/macrodata",
-                &[("offset", "0"), ("limit", &limit_str)],
+                &[("offset", &offset_str), ("limit", &limit_str)],
                 verbose,
             )
             .await?;
