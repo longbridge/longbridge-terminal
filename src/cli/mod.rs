@@ -2941,27 +2941,22 @@ pub enum TradingCmd {
 
 #[derive(Subcommand)]
 pub enum AuthCmd {
-    /// Authenticate via Device Authorization Flow (default) or browser OAuth
+    /// Authenticate via OAuth
     ///
-    /// By default uses the Device Authorization Flow (RFC 8628): displays a URL,
-    /// the user opens it in any browser (no localhost redirect needed), and the
-    /// CLI polls until authorization is complete. Works on any machine including
-    /// SSH sessions and headless servers.
+    /// By default opens a browser on this machine and listens on
+    /// `localhost:60355` for the OAuth callback.
     ///
     /// Pass `--auth-code <CODE>` to exchange an authorization code generated at
     /// <https://open.longbridge.com/connect> — a single synchronous call with no
-    /// browser, polling, or local callback server. Ideal for AI agents.
-    ///
-    /// Pass `--auth-code` with no value for the browser Authorization Code flow:
-    /// opens a browser on this machine and listens on `localhost:60355` for the
-    /// OAuth callback.
+    /// browser or local callback server. Ideal for MCP / AI agents on headless
+    /// or remote machines.
     Login {
-        /// Authorize using a code instead of the device flow.
+        /// Exchange a pasted authorization code instead of opening a browser.
         ///
         /// With a value (`--auth-code <CODE>`): exchange an authorization code
-        /// from <https://open.longbridge.com/connect> in one synchronous call.
-        /// Without a value (`--auth-code`): run the browser Authorization Code
-        /// flow that handles the localhost callback (local use only).
+        /// from <https://open.longbridge.com/connect> in one synchronous call
+        /// (for MCP / headless / remote machines). Without it, the browser flow
+        /// runs and handles the localhost callback.
         #[arg(long, value_name = "CODE", num_args = 0..=1, default_missing_value = "")]
         auth_code: Option<String>,
         /// Client name to register with the OAuth server.

@@ -61,9 +61,6 @@ pub async fn init_contexts() -> Result<(
         )
     } else {
         tracing::info!("No API key env vars found, using OAuth authentication");
-        // Migrate legacy plaintext token to encrypted storage on first run after upgrade.
-        crate::secure_storage::migrate_legacy_token(crate::region::client_id());
-
         // If no token file exists, refuse to start a browser/callback-server flow.
         // CLI commands require a stored token; users must run `longbridge auth login` first.
         let token_path = crate::auth::token_file_path()?;
@@ -74,21 +71,31 @@ pub async fn init_contexts() -> Result<(
         }
         // If the token file exists but cannot be decrypted (e.g. machine ID
         // changed), fail fast rather than hanging in the OAuth browser flow.
-        if crate::secure_storage::EncryptedFileTokenStorage::load_full(crate::region::client_id())
-            .is_none()
-        {
+        let Some(stored_token) = crate::secure_storage::EncryptedFileTokenStorage::load_full()
+        else {
             return Err(anyhow::anyhow!(
                 "Failed to decrypt auth token. Please run 'longbridge auth login' to \
                  re-authenticate."
             ));
-        }
+        };
+        let client_id = stored_token["client_id"]
+            .as_str()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Stored token has no client_id. Please run 'longbridge auth login' to \
+                     re-authenticate."
+                )
+            })?
+            .to_string();
 
         // Refresh the access token ourselves if it has expired, before handing
         // off to the SDK.  This avoids a 5-minute browser-callback timeout that
         // the SDK would trigger when its own refresh fallback fires.
         crate::auth::refresh_if_expired().await?;
 
-        let oauth_result = longbridge::oauth::OAuthBuilder::new(crate::region::client_id())
+        // Use the client_id the stored token was issued with, so the SDK's
+        // refresh fallback posts the correct client_id.
+        let oauth_result = longbridge::oauth::OAuthBuilder::new(client_id)
             .callback_port(crate::auth::CALLBACK_PORT)
             .token_storage(crate::secure_storage::EncryptedFileTokenStorage)
             .build(|_url| {
