@@ -192,7 +192,7 @@ async fn main() {
 
         Some(cli::Commands::Auth {
             cmd: cli::AuthCmd::Logout,
-        }) => match auth::clear_token() {
+        }) => match auth::clear_token().await {
             Ok(()) => println!("Successfully logged out."),
             Err(e) => {
                 eprintln!("Failed to clear credentials: {e}");

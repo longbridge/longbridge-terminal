@@ -17,12 +17,129 @@ pub fn is_test_env() -> bool {
     std::env::var("LONGBRIDGE_ENV").is_ok_and(|v| v == "staging")
 }
 
-/// Return the OAuth client ID for the current environment.
+/// Return the hardcoded fallback OAuth client ID for the current environment.
 pub fn client_id() -> &'static str {
     if is_test_env() {
         OAUTH_TEST_CLIENT_ID
     } else {
         OAUTH_CLIENT_ID
+    }
+}
+
+/// Return the effective client ID: the dynamically registered one if present,
+/// otherwise the hardcoded fallback (pre-existing installs, test env).
+pub fn effective_client_id() -> String {
+    load_registration().map_or_else(|| client_id().to_owned(), |r| r.client_id)
+}
+
+/// OAuth client registration info persisted after dynamic client registration (RFC 7591).
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+struct ClientRegistration {
+    client_id: String,
+    registration_access_token: String,
+    registration_client_uri: String,
+}
+
+fn registration_file_path() -> Result<PathBuf> {
+    Ok(dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("Failed to get home directory"))?
+        .join(".longbridge")
+        .join("openapi")
+        .join("cli-registration"))
+}
+
+fn load_registration() -> Option<ClientRegistration> {
+    let path = registration_file_path().ok()?;
+    let content = fs::read_to_string(path).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
+fn save_registration(reg: &ClientRegistration) -> Result<()> {
+    let path = registration_file_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).context("Failed to create config directory")?;
+    }
+    let json = serde_json::to_string_pretty(reg).context("Failed to serialize registration")?;
+    fs::write(&path, json).context("Failed to write registration file")?;
+    crate::secure_storage::harden_file_permissions(&path);
+    Ok(())
+}
+
+/// Build a reqwest HTTP client with the Longbridge terminal User-Agent.
+fn build_http_client() -> Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .user_agent(concat!("longbridge-terminal/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .context("Failed to build HTTP client")
+}
+
+/// Register a new OAuth client via RFC 7591 dynamic client registration.
+async fn register_new_client(
+    http_client: &reqwest::Client,
+    verbose: bool,
+) -> Result<ClientRegistration> {
+    let url = format!("{}/register", oauth_base_url());
+    if verbose {
+        eprintln!("POST {url}  (dynamic client registration)");
+    }
+
+    let body = serde_json::json!({
+        "client_name": "longbridge-terminal",
+        "redirect_uris": [format!("http://localhost:{CALLBACK_PORT}/callback")],
+    });
+
+    let resp = http_client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .context("Client registration request failed")?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        anyhow::bail!("Client registration failed ({status}): {text}");
+    }
+
+    let data: serde_json::Value = resp
+        .json()
+        .await
+        .context("Failed to parse registration response")?;
+
+    Ok(ClientRegistration {
+        client_id: data["client_id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("No client_id in registration response"))?
+            .to_owned(),
+        registration_access_token: data["registration_access_token"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("No registration_access_token in response"))?
+            .to_owned(),
+        registration_client_uri: data["registration_client_uri"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("No registration_client_uri in response"))?
+            .to_owned(),
+    })
+}
+
+/// Revoke the stored client registration via RFC 7592 DELETE, then remove the local file.
+/// Silently succeeds if no registration is stored or the server returns an error.
+async fn revoke_client_registration(http_client: &reqwest::Client) {
+    let Some(reg) = load_registration() else {
+        return;
+    };
+
+    if let Ok(resp) = http_client
+        .delete(&reg.registration_client_uri)
+        .bearer_auth(&reg.registration_access_token)
+        .send()
+        .await
+    {
+        tracing::debug!("Client registration revocation: HTTP {}", resp.status());
+    }
+
+    if let Ok(path) = registration_file_path() {
+        let _ = fs::remove_file(path);
     }
 }
 
@@ -126,9 +243,11 @@ pub async fn device_login(verbose: bool) -> Result<()> {
     use std::time::{Duration, Instant};
 
     let oauth_base = oauth_base_url();
-    let client_id = client_id();
-    let http_client = reqwest::Client::new();
+    let http_client = build_http_client()?;
     let invite_code = read_invite_code();
+
+    let reg = register_new_client(&http_client, verbose).await?;
+    let client_id = reg.client_id.as_str();
 
     let url = format!("{oauth_base}/device/authorize");
     if verbose {
@@ -238,6 +357,8 @@ pub async fn device_login(verbose: bool) -> Result<()> {
                 .save(&token)
                 .map_err(|e| anyhow::anyhow!("Failed to save token: {e}"))?;
 
+            save_registration(&reg)?;
+
             println!("Successfully authenticated.");
             return Ok(());
         }
@@ -289,6 +410,7 @@ pub async fn refresh_if_expired() -> Result<()> {
     };
 
     let http_client = reqwest::Client::builder()
+        .user_agent(concat!("longbridge-terminal/", env!("CARGO_PKG_VERSION")))
         .timeout(std::time::Duration::from_secs(15))
         .build()
         .context("Failed to build HTTP client for token refresh")?;
@@ -296,12 +418,13 @@ pub async fn refresh_if_expired() -> Result<()> {
     let url = format!("{}/token", oauth_base_url());
     tracing::debug!("Refreshing expired access token via {url}");
 
+    let dynamic_client_id = effective_client_id();
     let resp = http_client
         .post(&url)
         .form(&[
             ("grant_type", "refresh_token"),
             ("refresh_token", refresh_token.as_str()),
-            ("client_id", client_id()),
+            ("client_id", dynamic_client_id.as_str()),
         ])
         .send()
         .await
@@ -325,7 +448,7 @@ pub async fn refresh_if_expired() -> Result<()> {
         let new_refresh = token_resp["refresh_token"].as_str().map(str::to_owned);
 
         let token = longbridge::oauth::StoredToken {
-            client_id: client_id().to_string(),
+            client_id: dynamic_client_id.clone(),
             access_token: access_token.to_string(),
             refresh_token: new_refresh,
             expires_at: now + expires_in,
@@ -359,7 +482,10 @@ pub async fn auth_code_login() -> Result<()> {
     println!("Listening on localhost:{CALLBACK_PORT} for the OAuth callback.");
     let invite_code = read_invite_code();
 
-    let oauth_result = longbridge::oauth::OAuthBuilder::new(client_id())
+    let http_client = build_http_client()?;
+    let reg = register_new_client(&http_client, false).await?;
+
+    let oauth_result = longbridge::oauth::OAuthBuilder::new(&reg.client_id)
         .callback_port(CALLBACK_PORT)
         .token_storage(crate::secure_storage::EncryptedFileTokenStorage)
         .build(|url| {
@@ -378,6 +504,7 @@ pub async fn auth_code_login() -> Result<()> {
 
     match oauth_result {
         Ok(_) => {
+            save_registration(&reg)?;
             println!("Successfully authenticated.");
             Ok(())
         }
@@ -386,7 +513,14 @@ pub async fn auth_code_login() -> Result<()> {
 }
 
 /// Clear the stored OAuth token (logout).
-pub fn clear_token() -> Result<()> {
+///
+/// Revokes the dynamic client registration on the server (RFC 7592) before
+/// deleting the local token file, so the token cannot be reused on other machines.
+pub async fn clear_token() -> Result<()> {
+    if let Ok(http_client) = build_http_client() {
+        revoke_client_registration(&http_client).await;
+    }
+
     let path = token_file_path()?;
     if path.exists() {
         fs::remove_file(&path).context("Failed to delete token file")?;
