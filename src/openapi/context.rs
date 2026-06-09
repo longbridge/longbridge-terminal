@@ -61,8 +61,6 @@ pub async fn init_contexts() -> Result<(
         )
     } else {
         tracing::info!("No API key env vars found, using OAuth authentication");
-        // Migrate legacy plaintext token to encrypted storage on first run after upgrade.
-        crate::secure_storage::migrate_legacy_token(crate::region::client_id());
 
         // If no token file exists, refuse to start a browser/callback-server flow.
         // CLI commands require a stored token; users must run `longbridge auth login` first.
@@ -74,8 +72,10 @@ pub async fn init_contexts() -> Result<(
         }
         // If the token file exists but cannot be decrypted (e.g. machine ID
         // changed), fail fast rather than hanging in the OAuth browser flow.
-        if crate::secure_storage::EncryptedFileTokenStorage::load_full(crate::region::client_id())
-            .is_none()
+        if crate::secure_storage::EncryptedFileTokenStorage::load_full(
+            &crate::auth::effective_client_id(),
+        )
+        .is_none()
         {
             return Err(anyhow::anyhow!(
                 "Failed to decrypt auth token. Please run 'longbridge auth login' to \
@@ -88,7 +88,7 @@ pub async fn init_contexts() -> Result<(
         // the SDK would trigger when its own refresh fallback fires.
         crate::auth::refresh_if_expired().await?;
 
-        let oauth_result = longbridge::oauth::OAuthBuilder::new(crate::region::client_id())
+        let oauth_result = longbridge::oauth::OAuthBuilder::new(crate::auth::effective_client_id())
             .callback_port(crate::auth::CALLBACK_PORT)
             .token_storage(crate::secure_storage::EncryptedFileTokenStorage)
             .build(|_url| {

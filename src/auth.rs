@@ -7,10 +7,19 @@ use std::path::PathBuf;
 
 pub const CALLBACK_PORT: u16 = 60355;
 
-/// Return the effective client ID: the dynamically registered one if present,
-/// otherwise the hardcoded fallback from the region config (pre-existing installs).
+/// Return the effective client ID used to build the runtime OAuth context and
+/// refresh tokens.
+///
+/// The browser / device login flows perform RFC 7591 dynamic client
+/// registration and persist the resulting `client_id` locally; that registered
+/// id is returned here. The paste-code (`--auth-code <CODE>`) flow does not
+/// register a client — it authenticates with the dedicated public agent client
+/// — so when no local registration exists we fall back to
+/// [`crate::region::agent_client_id`].
 pub fn effective_client_id() -> String {
-    load_registration().map_or_else(|| crate::region::client_id().to_owned(), |r| r.client_id)
+    load_registration()
+        .map(|r| r.client_id)
+        .unwrap_or_else(|| crate::region::agent_client_id().to_owned())
 }
 
 /// OAuth client registration info persisted after dynamic client registration (RFC 7591).
@@ -22,11 +31,19 @@ struct ClientRegistration {
 }
 
 fn registration_file_path() -> Result<PathBuf> {
+    // Keep staging and production registrations separate: a `client_id`
+    // registered against one environment is not valid on the other, so they
+    // must not share a file.
+    let filename = if crate::region::is_test_env() {
+        "cli-registration-staging"
+    } else {
+        "cli-registration"
+    };
     Ok(dirs::home_dir()
         .ok_or_else(|| anyhow::anyhow!("Failed to get home directory"))?
         .join(".longbridge")
         .join("openapi")
-        .join("cli-registration"))
+        .join(filename))
 }
 
 fn load_registration() -> Option<ClientRegistration> {
@@ -233,8 +250,7 @@ fn decode_jwt_payload(token: &str) -> Option<serde_json::Value> {
 
 /// Read the logged-in user's `account_channel` from the local access token.
 pub fn account_channel() -> Option<String> {
-    let full =
-        crate::secure_storage::EncryptedFileTokenStorage::load_full(crate::region::client_id())?;
+    let full = crate::secure_storage::EncryptedFileTokenStorage::load_full(&effective_client_id())?;
     let claims = decode_jwt_payload(full["access_token"].as_str()?)?;
     let sub_str = claims["sub"].as_str()?;
     let sub: serde_json::Value = serde_json::from_str(sub_str).ok()?;
@@ -428,7 +444,7 @@ pub async fn refresh_if_expired() -> Result<()> {
 
     let storage = crate::secure_storage::EncryptedFileTokenStorage;
     let Some(full) =
-        crate::secure_storage::EncryptedFileTokenStorage::load_full(crate::region::client_id())
+        crate::secure_storage::EncryptedFileTokenStorage::load_full(&effective_client_id())
     else {
         return Ok(());
     };
@@ -674,13 +690,12 @@ pub async fn auth_code_exchange_login(code: &str) -> Result<()> {
             .unwrap()
             .as_secs();
 
-        // Persist under the regular runtime client_id (not the agent client_id):
-        // the token cache is a single shared file and the existing refresh path
-        // (`refresh_if_expired`) posts `client_id()`, so storing it this way lets
-        // refresh be reused as-is. The agent client_id is only used to *exchange*
-        // the authorization code above.
+        // Persist under the agent client_id used to exchange the code. This flow
+        // performs no dynamic registration, so refresh_if_expired's
+        // effective_client_id() resolves to the same agent client and refresh
+        // reuses it as-is.
         let token = longbridge::oauth::StoredToken {
-            client_id: crate::region::client_id().to_string(),
+            client_id: crate::region::agent_client_id().to_string(),
             access_token: access_token.to_string(),
             refresh_token,
             expires_at: now + expires_in,
