@@ -79,7 +79,9 @@ flate2 = "1"
 aes-gcm = "0.10"
 hkdf = "0.12"
 machine-uid = "0.6"
+hostname = "0.4"
 sha2 = "0.10"
+whoami = "1.5"
 
 [dev-dependencies]
 mockall = "0.13"

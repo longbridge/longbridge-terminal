@@ -7,6 +7,200 @@ use std::path::PathBuf;
 
 pub const CALLBACK_PORT: u16 = 60355;
 
+/// Return the effective client ID used to build the runtime OAuth context and
+/// refresh tokens.
+///
+/// The browser / device login flows perform RFC 7591 dynamic client
+/// registration and persist the resulting `client_id` locally; that registered
+/// id is returned here. The paste-code (`--auth-code <CODE>`) flow does not
+/// register a client — it authenticates with the dedicated public agent client
+/// — so when no local registration exists we fall back to
+/// [`crate::region::agent_client_id`].
+pub fn effective_client_id() -> String {
+    load_registration()
+        .map(|r| r.client_id)
+        .unwrap_or_else(|| crate::region::agent_client_id().to_owned())
+}
+
+/// OAuth client registration info persisted after dynamic client registration (RFC 7591).
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+struct ClientRegistration {
+    client_id: String,
+    registration_access_token: String,
+    registration_client_uri: String,
+}
+
+fn registration_file_path() -> Result<PathBuf> {
+    // Keep staging and production registrations separate: a `client_id`
+    // registered against one environment is not valid on the other, so they
+    // must not share a file.
+    let filename = if crate::region::is_test_env() {
+        "cli-registration-staging"
+    } else {
+        "cli-registration"
+    };
+    Ok(dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("Failed to get home directory"))?
+        .join(".longbridge")
+        .join("openapi")
+        .join(filename))
+}
+
+fn load_registration() -> Option<ClientRegistration> {
+    let path = registration_file_path().ok()?;
+    let content = fs::read_to_string(path).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
+fn save_registration(reg: &ClientRegistration) -> Result<()> {
+    let path = registration_file_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).context("Failed to create config directory")?;
+    }
+    let json = serde_json::to_string_pretty(reg).context("Failed to serialize registration")?;
+    fs::write(&path, json).context("Failed to write registration file")?;
+    crate::secure_storage::harden_file_permissions(&path);
+    Ok(())
+}
+
+/// Build the OAuth client name used for dynamic registration, identifying the device
+/// in the user's authorized-apps list.
+///
+/// Format is `<user>@<machine> (Longbridge CLI)`, e.g. `jason@huacnlee-macbook
+/// (Longbridge CLI)`. The login user name comes first, followed by the host name (which
+/// usually encodes the device type). When the host name is unavailable it falls back to
+/// the OS label so a generic server login still gets a device hint, e.g. `ubuntu@Linux
+/// (Longbridge CLI)`. When the user name is unavailable the machine part is used alone.
+fn client_name() -> String {
+    let os = match std::env::consts::OS {
+        "macos" => "macOS",
+        "windows" => "Windows",
+        "linux" => "Linux",
+        "ios" => "iOS",
+        "android" => "Android",
+        "freebsd" => "FreeBSD",
+        other => other,
+    };
+
+    let machine = hostname::get()
+        .ok()
+        .and_then(|h| h.into_string().ok())
+        .and_then(|h| h.split('.').next().map(str::to_owned))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| os.to_owned());
+
+    match whoami::fallible::username().ok().filter(|s| !s.is_empty()) {
+        Some(user) => format!("{user}@{machine} (Longbridge CLI)"),
+        None => format!("{machine} (Longbridge CLI)"),
+    }
+}
+
+/// Build a reqwest HTTP client with the Longbridge terminal User-Agent.
+fn build_http_client() -> Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .user_agent(concat!("longbridge-terminal/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .context("Failed to build HTTP client")
+}
+
+/// Register a new OAuth client via RFC 7591 dynamic client registration.
+///
+/// `name_override` lets the caller declare an explicit client name (e.g. via
+/// `--client-name`); when `None` the auto-derived [`client_name`] is used.
+async fn register_new_client(
+    http_client: &reqwest::Client,
+    verbose: bool,
+    name_override: Option<String>,
+) -> Result<ClientRegistration> {
+    let url = format!("{}/register", oauth_base_url());
+    if verbose {
+        eprintln!("POST {url}  (dynamic client registration)");
+    }
+
+    let body = serde_json::json!({
+        "client_name": name_override.unwrap_or_else(client_name),
+        "redirect_uris": [format!("http://localhost:{CALLBACK_PORT}/callback")],
+    });
+
+    let resp = http_client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .context("Client registration request failed")?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        anyhow::bail!("Client registration failed ({status}): {text}");
+    }
+
+    let data: serde_json::Value = resp
+        .json()
+        .await
+        .context("Failed to parse registration response")?;
+
+    Ok(ClientRegistration {
+        client_id: data["client_id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("No client_id in registration response"))?
+            .to_owned(),
+        registration_access_token: data["registration_access_token"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("No registration_access_token in response"))?
+            .to_owned(),
+        registration_client_uri: data["registration_client_uri"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("No registration_client_uri in response"))?
+            .to_owned(),
+    })
+}
+
+/// Return the locally persisted client registration if present, otherwise register a
+/// new one (RFC 7591). Reusing the stored registration across logins avoids creating a
+/// duplicate `client_id` on the server every time the CLI authenticates.
+async fn get_or_register_client(
+    http_client: &reqwest::Client,
+    verbose: bool,
+    name_override: Option<String>,
+) -> Result<ClientRegistration> {
+    if let Some(reg) = load_registration() {
+        if verbose {
+            eprintln!("Reusing existing client registration ({})", reg.client_id);
+        }
+        return Ok(reg);
+    }
+    // Persist immediately, before the (interactive, possibly-abandoned) login
+    // proceeds. If we waited until login succeeded, an aborted login — timeout,
+    // Ctrl+C, or an unauthorized browser — would leave a server-side client_id
+    // with no local record, and the next attempt would register a duplicate.
+    // Saving here guarantees one machine keeps exactly one client_id.
+    let reg = register_new_client(http_client, verbose, name_override).await?;
+    save_registration(&reg)?;
+    Ok(reg)
+}
+
+/// Revoke the stored client registration via RFC 7592 DELETE, then remove the local file.
+/// Silently succeeds if no registration is stored or the server returns an error.
+async fn revoke_client_registration(http_client: &reqwest::Client) {
+    let Some(reg) = load_registration() else {
+        return;
+    };
+
+    if let Ok(resp) = http_client
+        .delete(&reg.registration_client_uri)
+        .bearer_auth(&reg.registration_access_token)
+        .send()
+        .await
+    {
+        tracing::debug!("Client registration revocation: HTTP {}", resp.status());
+    }
+
+    if let Ok(path) = registration_file_path() {
+        let _ = fs::remove_file(path);
+    }
+}
+
 /// Return the OAuth base URL for the current environment and region.
 fn oauth_base_url() -> String {
     format!("{}/oauth2", crate::region::http_url())
@@ -56,8 +250,7 @@ fn decode_jwt_payload(token: &str) -> Option<serde_json::Value> {
 
 /// Read the logged-in user's `account_channel` from the local access token.
 pub fn account_channel() -> Option<String> {
-    let full =
-        crate::secure_storage::EncryptedFileTokenStorage::load_full(crate::region::client_id())?;
+    let full = crate::secure_storage::EncryptedFileTokenStorage::load_full(&effective_client_id())?;
     let claims = decode_jwt_payload(full["access_token"].as_str()?)?;
     let sub_str = claims["sub"].as_str()?;
     let sub: serde_json::Value = serde_json::from_str(sub_str).ok()?;
@@ -108,13 +301,15 @@ pub fn open_browser(url: &str) -> bool {
 }
 
 /// Device Authorization Flow (RFC 8628).
-pub async fn device_login(verbose: bool) -> Result<()> {
+pub async fn device_login(verbose: bool, client_name: Option<String>) -> Result<()> {
     use std::time::{Duration, Instant};
 
     let oauth_base = oauth_base_url();
-    let client_id = crate::region::client_id();
-    let http_client = reqwest::Client::new();
+    let http_client = build_http_client()?;
     let invite_code = read_invite_code();
+
+    let reg = get_or_register_client(&http_client, verbose, client_name).await?;
+    let client_id = reg.client_id.as_str();
 
     let url = format!("{oauth_base}/device/authorize");
     if verbose {
@@ -224,6 +419,8 @@ pub async fn device_login(verbose: bool) -> Result<()> {
                 .save(&token)
                 .map_err(|e| anyhow::anyhow!("Failed to save token: {e}"))?;
 
+            // Registration was already persisted in get_or_register_client, so
+            // there is nothing more to store here.
             println!("Successfully authenticated.");
             return Ok(());
         }
@@ -247,7 +444,7 @@ pub async fn refresh_if_expired() -> Result<()> {
 
     let storage = crate::secure_storage::EncryptedFileTokenStorage;
     let Some(full) =
-        crate::secure_storage::EncryptedFileTokenStorage::load_full(crate::region::client_id())
+        crate::secure_storage::EncryptedFileTokenStorage::load_full(&effective_client_id())
     else {
         return Ok(());
     };
@@ -276,6 +473,7 @@ pub async fn refresh_if_expired() -> Result<()> {
     };
 
     let http_client = reqwest::Client::builder()
+        .user_agent(concat!("longbridge-terminal/", env!("CARGO_PKG_VERSION")))
         .timeout(std::time::Duration::from_secs(15))
         .build()
         .context("Failed to build HTTP client for token refresh")?;
@@ -283,12 +481,13 @@ pub async fn refresh_if_expired() -> Result<()> {
     let url = format!("{}/token", oauth_base_url());
     tracing::debug!("Refreshing expired access token via {url}");
 
+    let dynamic_client_id = effective_client_id();
     let resp = http_client
         .post(&url)
         .form(&[
             ("grant_type", "refresh_token"),
             ("refresh_token", refresh_token.as_str()),
-            ("client_id", crate::region::client_id()),
+            ("client_id", dynamic_client_id.as_str()),
         ])
         .send()
         .await
@@ -312,7 +511,7 @@ pub async fn refresh_if_expired() -> Result<()> {
         let new_refresh = token_resp["refresh_token"].as_str().map(str::to_owned);
 
         let token = longbridge::oauth::StoredToken {
-            client_id: crate::region::client_id().to_string(),
+            client_id: dynamic_client_id.clone(),
             access_token: access_token.to_string(),
             refresh_token: new_refresh,
             expires_at: now + expires_in,
@@ -341,12 +540,15 @@ pub async fn refresh_if_expired() -> Result<()> {
 
 /// Authorization Code Flow: opens a browser on this machine and listens on
 /// `localhost:CALLBACK_PORT` for the OAuth callback.
-pub async fn auth_code_login() -> Result<()> {
+pub async fn auth_code_login(client_name: Option<String>) -> Result<()> {
     println!("Opening browser for authorization...");
     println!("Listening on localhost:{CALLBACK_PORT} for the OAuth callback.");
     let invite_code = read_invite_code();
 
-    let oauth_result = longbridge::oauth::OAuthBuilder::new(crate::region::client_id())
+    let http_client = build_http_client()?;
+    let reg = get_or_register_client(&http_client, false, client_name).await?;
+
+    let oauth_result = longbridge::oauth::OAuthBuilder::new(&reg.client_id)
         .callback_port(CALLBACK_PORT)
         .token_storage(crate::secure_storage::EncryptedFileTokenStorage)
         .build(|url| {
@@ -365,6 +567,7 @@ pub async fn auth_code_login() -> Result<()> {
 
     match oauth_result {
         Ok(_) => {
+            // Registration was already persisted in get_or_register_client.
             println!("Successfully authenticated.");
             Ok(())
         }
@@ -487,13 +690,12 @@ pub async fn auth_code_exchange_login(code: &str) -> Result<()> {
             .unwrap()
             .as_secs();
 
-        // Persist under the regular runtime client_id (not the agent client_id):
-        // the token cache is a single shared file and the existing refresh path
-        // (`refresh_if_expired`) posts `client_id()`, so storing it this way lets
-        // refresh be reused as-is. The agent client_id is only used to *exchange*
-        // the authorization code above.
+        // Persist under the agent client_id used to exchange the code. This flow
+        // performs no dynamic registration, so refresh_if_expired's
+        // effective_client_id() resolves to the same agent client and refresh
+        // reuses it as-is.
         let token = longbridge::oauth::StoredToken {
-            client_id: crate::region::client_id().to_string(),
+            client_id: crate::region::agent_client_id().to_string(),
             access_token: access_token.to_string(),
             refresh_token,
             expires_at: now + expires_in,
@@ -533,7 +735,14 @@ pub async fn auth_code_exchange_login(code: &str) -> Result<()> {
 }
 
 /// Clear the stored OAuth token (logout).
-pub fn clear_token() -> Result<()> {
+///
+/// Revokes the dynamic client registration on the server (RFC 7592) before
+/// deleting the local token file, so the token cannot be reused on other machines.
+pub async fn clear_token() -> Result<()> {
+    if let Ok(http_client) = build_http_client() {
+        revoke_client_registration(&http_client).await;
+    }
+
     let path = token_file_path()?;
     if path.exists() {
         fs::remove_file(&path).context("Failed to delete token file")?;
@@ -541,7 +750,6 @@ pub fn clear_token() -> Result<()> {
     }
     Ok(())
 }
-
 
 #[cfg(test)]
 mod auth_code_tests {
