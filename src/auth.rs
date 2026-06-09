@@ -7,6 +7,12 @@ use std::path::PathBuf;
 
 pub const CALLBACK_PORT: u16 = 60355;
 
+/// Return the effective client ID: the dynamically registered one if present,
+/// otherwise the hardcoded fallback from the region config (pre-existing installs).
+pub fn effective_client_id() -> String {
+    load_registration().map_or_else(|| crate::region::client_id().to_owned(), |r| r.client_id)
+}
+
 /// OAuth client registration info persisted after dynamic client registration (RFC 7591).
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 struct ClientRegistration {
@@ -227,7 +233,8 @@ fn decode_jwt_payload(token: &str) -> Option<serde_json::Value> {
 
 /// Read the logged-in user's `account_channel` from the local access token.
 pub fn account_channel() -> Option<String> {
-    let full = crate::secure_storage::EncryptedFileTokenStorage::load_full()?;
+    let full =
+        crate::secure_storage::EncryptedFileTokenStorage::load_full(crate::region::client_id())?;
     let claims = decode_jwt_payload(full["access_token"].as_str()?)?;
     let sub_str = claims["sub"].as_str()?;
     let sub: serde_json::Value = serde_json::from_str(sub_str).ok()?;
@@ -277,6 +284,140 @@ pub fn open_browser(url: &str) -> bool {
     open::that(url).is_ok()
 }
 
+/// Device Authorization Flow (RFC 8628).
+pub async fn device_login(verbose: bool, client_name: Option<String>) -> Result<()> {
+    use std::time::{Duration, Instant};
+
+    let oauth_base = oauth_base_url();
+    let http_client = build_http_client()?;
+    let invite_code = read_invite_code();
+
+    let reg = get_or_register_client(&http_client, verbose, client_name).await?;
+    let client_id = reg.client_id.as_str();
+
+    let url = format!("{oauth_base}/device/authorize");
+    if verbose {
+        eprintln!("POST {url}");
+    }
+    let mut device_auth_form: Vec<(&str, &str)> = vec![("client_id", client_id)];
+    if let Some(ref invite_code) = invite_code {
+        device_auth_form.push(("invite-code", invite_code.as_str()));
+    }
+    let raw = http_client
+        .post(&url)
+        .form(&device_auth_form)
+        .send()
+        .await
+        .context("Device authorization request failed")?;
+
+    let status = raw.status();
+    if !status.is_success() {
+        let body = raw.text().await.unwrap_or_default();
+        anyhow::bail!("Device authorization failed ({status}): {body}");
+    }
+
+    let device_resp = raw
+        .json::<serde_json::Value>()
+        .await
+        .context("Failed to parse device authorization response")?;
+
+    let device_code = device_resp["device_code"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("No device_code in response"))?
+        .to_owned();
+    let verification_url_base = device_resp["verification_uri_complete"]
+        .as_str()
+        .unwrap_or_else(|| device_resp["verification_uri"].as_str().unwrap_or(""));
+    let verification_url_owned;
+    let verification_url = if let Some(ref invite_code) = invite_code {
+        verification_url_owned =
+            append_query_param(verification_url_base, "invite-code", invite_code);
+        verification_url_owned.as_str()
+    } else {
+        verification_url_base
+    };
+    let expires_in = device_resp["expires_in"].as_u64().unwrap_or(300);
+    let interval = device_resp["interval"].as_u64().unwrap_or(5);
+
+    let opened = open_browser(verification_url);
+
+    println!("Open the following URL in your browser to authorize:");
+    println!();
+    println!("{verification_url}");
+    println!();
+    if opened {
+        println!("Browser opened. Waiting for authorization...");
+    } else {
+        println!("Waiting for authorization...");
+    }
+
+    let deadline = Instant::now() + Duration::from_secs(expires_in);
+    let poll_interval = Duration::from_secs(interval);
+
+    loop {
+        tokio::time::sleep(poll_interval).await;
+
+        if Instant::now() >= deadline {
+            anyhow::bail!("Device authorization timed out — please try again.");
+        }
+
+        let url = format!("{oauth_base}/token");
+        if verbose {
+            eprintln!("POST {url}  grant_type=device_code");
+        }
+        let raw = http_client
+            .post(&url)
+            .form(&[
+                ("client_id", client_id),
+                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+                ("device_code", device_code.as_str()),
+            ])
+            .send()
+            .await
+            .context("Token poll request failed")?;
+
+        let status = raw.status();
+        if status.is_success() {
+            let token_resp = raw
+                .json::<serde_json::Value>()
+                .await
+                .context("Failed to parse token response")?;
+
+            let access_token = token_resp["access_token"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("No access_token in token response"))?;
+            let expires_in = token_resp["expires_in"].as_u64().unwrap_or(3600);
+            let refresh_token = token_resp["refresh_token"].as_str().map(str::to_owned);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+
+            let token = longbridge::oauth::StoredToken {
+                client_id: client_id.to_string(),
+                access_token: access_token.to_string(),
+                refresh_token,
+                expires_at: now + expires_in,
+            };
+            crate::secure_storage::EncryptedFileTokenStorage
+                .save(&token)
+                .map_err(|e| anyhow::anyhow!("Failed to save token: {e}"))?;
+
+            // Registration was already persisted in get_or_register_client, so
+            // there is nothing more to store here.
+            println!("Successfully authenticated.");
+            return Ok(());
+        }
+
+        let err_resp = raw.json::<serde_json::Value>().await.unwrap_or_default();
+        match err_resp["error"].as_str() {
+            Some("authorization_pending" | "slow_down") => {}
+            Some(other) => anyhow::bail!("Authorization failed: {other}"),
+            None => anyhow::bail!("Unexpected token poll response"),
+        }
+    }
+}
+
 /// Refresh the access token in-place if it has expired.
 ///
 /// Not expired → returns immediately. Expired → refreshes via HTTP and saves.
@@ -286,7 +427,9 @@ pub async fn refresh_if_expired() -> Result<()> {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     let storage = crate::secure_storage::EncryptedFileTokenStorage;
-    let Some(full) = crate::secure_storage::EncryptedFileTokenStorage::load_full() else {
+    let Some(full) =
+        crate::secure_storage::EncryptedFileTokenStorage::load_full(crate::region::client_id())
+    else {
         return Ok(());
     };
 
@@ -322,24 +465,13 @@ pub async fn refresh_if_expired() -> Result<()> {
     let url = format!("{}/token", oauth_base_url());
     tracing::debug!("Refreshing expired access token via {url}");
 
-    // Refresh under the same client_id the token was issued with (stored in the
-    // token file): a dynamically-registered id for the browser flow, the agent
-    // client for the paste-code flow.
-    let client_id = full["client_id"]
-        .as_str()
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Stored token has no client_id. Please run 'longbridge auth login' to \
-                 re-authenticate."
-            )
-        })?
-        .to_owned();
+    let dynamic_client_id = effective_client_id();
     let resp = http_client
         .post(&url)
         .form(&[
             ("grant_type", "refresh_token"),
             ("refresh_token", refresh_token.as_str()),
-            ("client_id", client_id.as_str()),
+            ("client_id", dynamic_client_id.as_str()),
         ])
         .send()
         .await
@@ -363,7 +495,7 @@ pub async fn refresh_if_expired() -> Result<()> {
         let new_refresh = token_resp["refresh_token"].as_str().map(str::to_owned);
 
         let token = longbridge::oauth::StoredToken {
-            client_id: client_id.clone(),
+            client_id: dynamic_client_id.clone(),
             access_token: access_token.to_string(),
             refresh_token: new_refresh,
             expires_at: now + expires_in,
@@ -392,13 +524,13 @@ pub async fn refresh_if_expired() -> Result<()> {
 
 /// Authorization Code Flow: opens a browser on this machine and listens on
 /// `localhost:CALLBACK_PORT` for the OAuth callback.
-pub async fn auth_code_login(verbose: bool, client_name: Option<String>) -> Result<()> {
+pub async fn auth_code_login(client_name: Option<String>) -> Result<()> {
     println!("Opening browser for authorization...");
     println!("Listening on localhost:{CALLBACK_PORT} for the OAuth callback.");
     let invite_code = read_invite_code();
 
     let http_client = build_http_client()?;
-    let reg = get_or_register_client(&http_client, verbose, client_name).await?;
+    let reg = get_or_register_client(&http_client, false, client_name).await?;
 
     let oauth_result = longbridge::oauth::OAuthBuilder::new(&reg.client_id)
         .callback_port(CALLBACK_PORT)
@@ -542,10 +674,13 @@ pub async fn auth_code_exchange_login(code: &str) -> Result<()> {
             .unwrap()
             .as_secs();
 
-        // Store under the agent client_id used to exchange the code. The refresh
-        // path posts the token's stored client_id, so this keeps refresh working.
+        // Persist under the regular runtime client_id (not the agent client_id):
+        // the token cache is a single shared file and the existing refresh path
+        // (`refresh_if_expired`) posts `client_id()`, so storing it this way lets
+        // refresh be reused as-is. The agent client_id is only used to *exchange*
+        // the authorization code above.
         let token = longbridge::oauth::StoredToken {
-            client_id: crate::region::agent_client_id().to_string(),
+            client_id: crate::region::client_id().to_string(),
             access_token: access_token.to_string(),
             refresh_token,
             expires_at: now + expires_in,

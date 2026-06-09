@@ -23,6 +23,11 @@ pub const HTTP_URL_TEST: &str = "https://openapi.longbridge.xyz";
 pub const QUOTE_WS_URL_TEST: &str = "wss://openapi-quote.longbridge.xyz/v2";
 pub const TRADE_WS_URL_TEST: &str = "wss://openapi-trade.longbridge.xyz/v2";
 
+// OAuth client IDs (shared between Global and CN: the `.cn` and `.com`
+// endpoints share user data and token validation, differing only in routing)
+pub const CLIENT_ID: &str = "fd52fbc5-02a9-47f5-ad30-0842c841aae9";
+pub const CLIENT_ID_TEST: &str = "37435cdf-c7e4-4de9-8715-b20d33416196";
+
 // Dedicated "AI Agent" public client (token endpoint auth method `none`,
 // no client_secret, no PKCE) used exclusively by the
 // `longbridge auth login --auth-code <CODE>` reverse-authorization flow.
@@ -52,6 +57,15 @@ pub fn open_url() -> &'static str {
         OPEN_URL_CN
     } else {
         OPEN_URL_GLOBAL
+    }
+}
+
+/// CLI OAuth client ID for the current environment.
+pub fn client_id() -> &'static str {
+    if is_test_env() {
+        CLIENT_ID_TEST
+    } else {
+        CLIENT_ID
     }
 }
 

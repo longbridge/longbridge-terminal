@@ -51,8 +51,8 @@ impl From<EncryptedPayload> for StoredToken {
 /// Token storage that encrypts files using a machine-derived AES-256-GCM key.
 pub struct EncryptedFileTokenStorage;
 
-fn load_payload_with_migration() -> Option<EncryptedPayload> {
-    let path = token_path().ok()?;
+fn load_payload_with_migration(client_id: &str) -> Option<EncryptedPayload> {
+    let path = token_path(client_id).ok()?;
     let (payload, needs_migration) = read_payload(&path)?;
     if needs_migration {
         let _ = EncryptedFileTokenStorage.save(&StoredToken::from(payload.clone()));
@@ -62,18 +62,18 @@ fn load_payload_with_migration() -> Option<EncryptedPayload> {
 
 impl EncryptedFileTokenStorage {
     /// Load the full token payload as JSON (includes `logged_in_at` and all fields).
-    pub fn load_full() -> Option<serde_json::Value> {
-        serde_json::to_value(load_payload_with_migration()?).ok()
+    pub fn load_full(client_id: &str) -> Option<serde_json::Value> {
+        serde_json::to_value(load_payload_with_migration(client_id)?).ok()
     }
 }
 
 impl TokenStorage for EncryptedFileTokenStorage {
-    fn load(&self, _client_id: &str) -> Option<StoredToken> {
-        Some(load_payload_with_migration()?.into())
+    fn load(&self, client_id: &str) -> Option<StoredToken> {
+        Some(load_payload_with_migration(client_id)?.into())
     }
 
     fn save(&self, token: &StoredToken) -> OAuthResult<()> {
-        let path = token_path().map_err(|e| OAuthError::Other(e.to_string()))?;
+        let path = token_path(&token.client_id).map_err(|e| OAuthError::Other(e.to_string()))?;
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -122,9 +122,81 @@ impl TokenStorage for EncryptedFileTokenStorage {
     }
 }
 
+/// Migrate a legacy plaintext token file to the new encrypted location.
+///
+/// Called once at startup. Reads the old `~/.longbridge/openapi/tokens/<client_id>`
+/// file and re-saves it via `EncryptedFileTokenStorage`, then deletes the legacy file.
+/// If the new file already exists, only cleans up any leftover legacy file.
+pub fn migrate_legacy_token(client_id: &str) {
+    let Ok(new_path) = token_path(client_id) else {
+        return;
+    };
+    let Some(home) = dirs::home_dir() else {
+        return;
+    };
+    let legacy = home
+        .join(".longbridge")
+        .join("openapi")
+        .join("tokens")
+        .join(client_id);
+
+    if new_path.exists() {
+        // New encrypted file already exists; clean up any leftover legacy file.
+        if legacy.exists() {
+            let _ = std::fs::remove_file(&legacy);
+        }
+        return;
+    }
+
+    let Ok(bytes) = std::fs::read(&legacy) else {
+        return;
+    };
+    let Ok(json) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return;
+    };
+
+    let Some(access_token) = json["access_token"].as_str() else {
+        return;
+    };
+
+    // Preserve logged_in_at from the legacy file if present; save() would
+    // otherwise set it to the migration timestamp instead of the real login time.
+    let legacy_logged_in_at = json["logged_in_at"].as_u64();
+
+    let token = longbridge::oauth::StoredToken {
+        client_id: client_id.to_string(),
+        access_token: access_token.to_string(),
+        refresh_token: json["refresh_token"].as_str().map(str::to_owned),
+        expires_at: json["expires_at"].as_u64().unwrap_or(0),
+    };
+
+    if EncryptedFileTokenStorage.save(&token).is_ok() {
+        // Patch logged_in_at if the legacy file had it and save() used now instead.
+        if let Some(logged_in_at) = legacy_logged_in_at {
+            if let Ok(path) = token_path(client_id) {
+                if let Some((mut payload, _)) = read_payload(&path) {
+                    if payload.logged_in_at != Some(logged_in_at) {
+                        payload.logged_in_at = Some(logged_in_at);
+                        if let Ok(json) = serde_json::to_vec(&payload) {
+                            if let Ok(enc) = encrypt(&json) {
+                                let tmp = path.with_extension("tmp");
+                                if std::fs::write(&tmp, &enc).is_ok() {
+                                    let _ = std::fs::rename(&tmp, &path);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let _ = std::fs::remove_file(&legacy);
+        tracing::debug!("Migrated legacy token to encrypted storage");
+    }
+}
+
 /// Delete the token file for `client_id`.
-pub fn try_delete(_client_id: &str) {
-    if let Ok(path) = token_path() {
+pub fn try_delete(client_id: &str) {
+    if let Ok(path) = token_path(client_id) {
         if path.exists() {
             let _ = std::fs::remove_file(path);
         }
@@ -148,7 +220,7 @@ pub fn harden_file_permissions(path: &Path) {
     }
 }
 
-fn token_path() -> anyhow::Result<PathBuf> {
+fn token_path(_client_id: &str) -> anyhow::Result<PathBuf> {
     Ok(dirs::home_dir()
         .ok_or_else(|| anyhow::anyhow!("Failed to get home directory"))?
         .join(".longbridge")

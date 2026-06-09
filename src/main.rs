@@ -169,19 +169,34 @@ async fn main() {
         Some(cli::Commands::Auth {
             cmd:
                 cli::AuthCmd::Login {
-                    auth_code,
+                    auth_code: Some(code),
+                    client_name,
+                    ..
+                },
+        }) => {
+            // `--auth-code <CODE>` (non-empty): exchange an authorization code in
+            // a single synchronous call. `--auth-code` with no value falls back to
+            // the browser Authorization Code flow.
+            let result = if code.is_empty() {
+                auth::auth_code_login(client_name).await
+            } else {
+                auth::auth_code_exchange_login(&code).await
+            };
+            if let Err(e) = result {
+                eprintln!("Authentication failed: {e:#}");
+                std::process::exit(1);
+            }
+        }
+
+        Some(cli::Commands::Auth {
+            cmd:
+                cli::AuthCmd::Login {
+                    auth_code: None,
                     client_name,
                     verbose,
                 },
         }) => {
-            // `--auth-code <CODE>` (non-empty): exchange a pasted authorization
-            // code (MCP / headless). Otherwise open the browser and listen on the
-            // local callback port.
-            let result = match auth_code {
-                Some(code) if !code.is_empty() => auth::auth_code_exchange_login(&code).await,
-                _ => auth::auth_code_login(verbose, client_name).await,
-            };
-            if let Err(e) = result {
+            if let Err(e) = auth::device_login(verbose, client_name).await {
                 eprintln!("Authentication failed: {e:#}");
                 std::process::exit(1);
             }
