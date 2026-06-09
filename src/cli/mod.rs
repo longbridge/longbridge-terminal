@@ -556,9 +556,11 @@ pub enum Commands {
         /// Filter end date for historical data (YYYY-MM-DD)
         #[arg(long)]
         end: Option<String>,
-        /// Maximum number of historical records to return (default 20, max 100)
-        #[arg(long, default_value = "20")]
-        limit: u32,
+        /// Maximum number of records to return.
+        /// For indicator list: default 100, max 1000.
+        /// For historical data: default 20, max 100.
+        #[arg(long)]
+        limit: Option<u32>,
     },
 
     /// Finance calendar: upcoming events by category

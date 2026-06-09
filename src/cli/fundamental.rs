@@ -3498,16 +3498,16 @@ pub async fn cmd_macrodata(
     code: Option<String>,
     start: Option<String>,
     end: Option<String>,
-    limit: u32,
+    limit: Option<u32>,
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
     match code {
         None => {
-            // List all indicators (fetch up to 1000)
+            let limit_str = limit.unwrap_or(100).to_string();
             let data = http_get(
                 "/v1/quote/macrodata",
-                &[("offset", "0"), ("limit", "1000")],
+                &[("offset", "0"), ("limit", &limit_str)],
                 verbose,
             )
             .await?;
@@ -3517,7 +3517,7 @@ pub async fn cmd_macrodata(
             }
         }
         Some(indicator_code) => {
-            let limit_str = limit.to_string();
+            let limit_str = limit.unwrap_or(20).to_string();
             let mut params: Vec<(&str, &str)> =
                 vec![("indicator_code", &indicator_code), ("limit", &limit_str)];
             if let Some(ref s) = start {
