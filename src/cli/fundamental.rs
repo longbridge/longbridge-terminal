@@ -3434,10 +3434,16 @@ fn print_macrodata_history(data: &Value) {
                 .or_else(|| info["describe"]["english"].as_str())
         })
         .unwrap_or("");
+    let category = info["category"].as_str().unwrap_or("");
     let source = info["source_org"].as_str().unwrap_or("-");
     let periodicity = info["periodicity"].as_str().unwrap_or("-");
 
-    println!("{name}  [{source}  {periodicity}]");
+    let meta = if category.is_empty() {
+        format!("{source}  {periodicity}")
+    } else {
+        format!("{category}  |  {source}  {periodicity}")
+    };
+    println!("{name}  [{meta}]");
     if !describe.is_empty() {
         println!("{describe}");
     }
