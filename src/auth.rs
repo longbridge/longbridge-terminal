@@ -46,6 +46,38 @@ fn save_registration(reg: &ClientRegistration) -> Result<()> {
     Ok(())
 }
 
+/// Build the OAuth client name used for dynamic registration, identifying the device
+/// in the user's authorized-apps list.
+///
+/// Format is `<user>@<machine> (Longbridge CLI)`, e.g. `jason@huacnlee-macbook
+/// (Longbridge CLI)`. The login user name comes first, followed by the host name (which
+/// usually encodes the device type). When the host name is unavailable it falls back to
+/// the OS label so a generic server login still gets a device hint, e.g. `ubuntu@Linux
+/// (Longbridge CLI)`. When the user name is unavailable the machine part is used alone.
+fn client_name() -> String {
+    let os = match std::env::consts::OS {
+        "macos" => "macOS",
+        "windows" => "Windows",
+        "linux" => "Linux",
+        "ios" => "iOS",
+        "android" => "Android",
+        "freebsd" => "FreeBSD",
+        other => other,
+    };
+
+    let machine = hostname::get()
+        .ok()
+        .and_then(|h| h.into_string().ok())
+        .and_then(|h| h.split('.').next().map(str::to_owned))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| os.to_owned());
+
+    match whoami::fallible::username().ok().filter(|s| !s.is_empty()) {
+        Some(user) => format!("{user}@{machine} (Longbridge CLI)"),
+        None => format!("{machine} (Longbridge CLI)"),
+    }
+}
+
 /// Build a reqwest HTTP client with the Longbridge terminal User-Agent.
 fn build_http_client() -> Result<reqwest::Client> {
     reqwest::Client::builder()
@@ -65,7 +97,7 @@ async fn register_new_client(
     }
 
     let body = serde_json::json!({
-        "client_name": "longbridge-terminal",
+        "client_name": client_name(),
         "redirect_uris": [format!("http://localhost:{CALLBACK_PORT}/callback")],
     });
 
@@ -101,6 +133,22 @@ async fn register_new_client(
             .ok_or_else(|| anyhow::anyhow!("No registration_client_uri in response"))?
             .to_owned(),
     })
+}
+
+/// Return the locally persisted client registration if present, otherwise register a
+/// new one (RFC 7591). Reusing the stored registration across logins avoids creating a
+/// duplicate `client_id` on the server every time the CLI authenticates.
+async fn get_or_register_client(
+    http_client: &reqwest::Client,
+    verbose: bool,
+) -> Result<ClientRegistration> {
+    if let Some(reg) = load_registration() {
+        if verbose {
+            eprintln!("Reusing existing client registration ({})", reg.client_id);
+        }
+        return Ok(reg);
+    }
+    register_new_client(http_client, verbose).await
 }
 
 /// Revoke the stored client registration via RFC 7592 DELETE, then remove the local file.
@@ -232,7 +280,7 @@ pub async fn device_login(verbose: bool) -> Result<()> {
     let http_client = build_http_client()?;
     let invite_code = read_invite_code();
 
-    let reg = register_new_client(&http_client, verbose).await?;
+    let reg = get_or_register_client(&http_client, verbose).await?;
     let client_id = reg.client_id.as_str();
 
     let url = format!("{oauth_base}/device/authorize");
@@ -470,7 +518,7 @@ pub async fn auth_code_login() -> Result<()> {
     let invite_code = read_invite_code();
 
     let http_client = build_http_client()?;
-    let reg = register_new_client(&http_client, false).await?;
+    let reg = get_or_register_client(&http_client, false).await?;
 
     let oauth_result = longbridge::oauth::OAuthBuilder::new(&reg.client_id)
         .callback_port(CALLBACK_PORT)
