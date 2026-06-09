@@ -87,9 +87,13 @@ fn build_http_client() -> Result<reqwest::Client> {
 }
 
 /// Register a new OAuth client via RFC 7591 dynamic client registration.
+///
+/// `name_override` lets the caller declare an explicit client name (e.g. via
+/// `--client-name`); when `None` the auto-derived [`client_name`] is used.
 async fn register_new_client(
     http_client: &reqwest::Client,
     verbose: bool,
+    name_override: Option<String>,
 ) -> Result<ClientRegistration> {
     let url = format!("{}/register", oauth_base_url());
     if verbose {
@@ -97,7 +101,7 @@ async fn register_new_client(
     }
 
     let body = serde_json::json!({
-        "client_name": client_name(),
+        "client_name": name_override.unwrap_or_else(client_name),
         "redirect_uris": [format!("http://localhost:{CALLBACK_PORT}/callback")],
     });
 
@@ -141,6 +145,7 @@ async fn register_new_client(
 async fn get_or_register_client(
     http_client: &reqwest::Client,
     verbose: bool,
+    name_override: Option<String>,
 ) -> Result<ClientRegistration> {
     if let Some(reg) = load_registration() {
         if verbose {
@@ -148,7 +153,14 @@ async fn get_or_register_client(
         }
         return Ok(reg);
     }
-    register_new_client(http_client, verbose).await
+    // Persist immediately, before the (interactive, possibly-abandoned) login
+    // proceeds. If we waited until login succeeded, an aborted login — timeout,
+    // Ctrl+C, or an unauthorized browser — would leave a server-side client_id
+    // with no local record, and the next attempt would register a duplicate.
+    // Saving here guarantees one machine keeps exactly one client_id.
+    let reg = register_new_client(http_client, verbose, name_override).await?;
+    save_registration(&reg)?;
+    Ok(reg)
 }
 
 /// Revoke the stored client registration via RFC 7592 DELETE, then remove the local file.
@@ -273,14 +285,14 @@ pub fn open_browser(url: &str) -> bool {
 }
 
 /// Device Authorization Flow (RFC 8628).
-pub async fn device_login(verbose: bool) -> Result<()> {
+pub async fn device_login(verbose: bool, client_name: Option<String>) -> Result<()> {
     use std::time::{Duration, Instant};
 
     let oauth_base = oauth_base_url();
     let http_client = build_http_client()?;
     let invite_code = read_invite_code();
 
-    let reg = get_or_register_client(&http_client, verbose).await?;
+    let reg = get_or_register_client(&http_client, verbose, client_name).await?;
     let client_id = reg.client_id.as_str();
 
     let url = format!("{oauth_base}/device/authorize");
@@ -391,8 +403,8 @@ pub async fn device_login(verbose: bool) -> Result<()> {
                 .save(&token)
                 .map_err(|e| anyhow::anyhow!("Failed to save token: {e}"))?;
 
-            save_registration(&reg)?;
-
+            // Registration was already persisted in get_or_register_client, so
+            // there is nothing more to store here.
             println!("Successfully authenticated.");
             return Ok(());
         }
@@ -512,13 +524,13 @@ pub async fn refresh_if_expired() -> Result<()> {
 
 /// Authorization Code Flow: opens a browser on this machine and listens on
 /// `localhost:CALLBACK_PORT` for the OAuth callback.
-pub async fn auth_code_login() -> Result<()> {
+pub async fn auth_code_login(client_name: Option<String>) -> Result<()> {
     println!("Opening browser for authorization...");
     println!("Listening on localhost:{CALLBACK_PORT} for the OAuth callback.");
     let invite_code = read_invite_code();
 
     let http_client = build_http_client()?;
-    let reg = get_or_register_client(&http_client, false).await?;
+    let reg = get_or_register_client(&http_client, false, client_name).await?;
 
     let oauth_result = longbridge::oauth::OAuthBuilder::new(&reg.client_id)
         .callback_port(CALLBACK_PORT)
@@ -539,7 +551,7 @@ pub async fn auth_code_login() -> Result<()> {
 
     match oauth_result {
         Ok(_) => {
-            save_registration(&reg)?;
+            // Registration was already persisted in get_or_register_client.
             println!("Successfully authenticated.");
             Ok(())
         }
