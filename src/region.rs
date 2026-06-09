@@ -10,16 +10,73 @@ const GEOTEST_TIMEOUT_SECS: u64 = 3;
 
 // Global endpoint URLs
 pub const HTTP_URL_GLOBAL: &str = "https://openapi.longbridge.com";
+pub const OPEN_URL_GLOBAL: &str = "https://open.longbridge.com";
 
 // CN endpoint URLs
 pub const HTTP_URL_CN: &str = "https://openapi.longbridge.cn";
 pub const QUOTE_WS_URL_CN: &str = "wss://openapi-quote.longbridge.cn/v2";
 pub const TRADE_WS_URL_CN: &str = "wss://openapi-trade.longbridge.cn/v2";
+pub const OPEN_URL_CN: &str = "https://open.longbridge.cn";
 
 // Test environment URLs (openapi.longbridge.xyz)
 pub const HTTP_URL_TEST: &str = "https://openapi.longbridge.xyz";
 pub const QUOTE_WS_URL_TEST: &str = "wss://openapi-quote.longbridge.xyz/v2";
 pub const TRADE_WS_URL_TEST: &str = "wss://openapi-trade.longbridge.xyz/v2";
+
+// OAuth client IDs (shared between Global and CN: the `.cn` and `.com`
+// endpoints share user data and token validation, differing only in routing)
+pub const CLIENT_ID: &str = "fd52fbc5-02a9-47f5-ad30-0842c841aae9";
+pub const CLIENT_ID_TEST: &str = "37435cdf-c7e4-4de9-8715-b20d33416196";
+
+// Dedicated "AI Agent" public client (token endpoint auth method `none`,
+// no client_secret, no PKCE) used exclusively by the
+// `longbridge auth login --auth-code <CODE>` reverse-authorization flow.
+pub const AGENT_CLIENT_ID: &str = "c91cd252-2f89-4024-9c5d-7b1340fc3bd1";
+pub const AGENT_CLIENT_ID_TEST: &str = "c0c3ae51-dd73-4706-8d29-601ae376034c";
+
+/// Whether the staging environment is active (`LONGBRIDGE_ENV=staging`).
+pub fn is_test_env() -> bool {
+    std::env::var("LONGBRIDGE_ENV").is_ok_and(|v| v == "staging")
+}
+
+/// `OpenAPI` HTTP base URL for the current environment and region.
+pub fn http_url() -> &'static str {
+    if is_test_env() {
+        HTTP_URL_TEST
+    } else if is_cn_cached() {
+        HTTP_URL_CN
+    } else {
+        HTTP_URL_GLOBAL
+    }
+}
+
+/// Developer portal host (`open.longbridge.*`) for the current region:
+/// release CDN, docs, and the `/connect` reverse-authorization page.
+pub fn open_url() -> &'static str {
+    if is_cn_cached() {
+        OPEN_URL_CN
+    } else {
+        OPEN_URL_GLOBAL
+    }
+}
+
+/// CLI OAuth client ID for the current environment.
+pub fn client_id() -> &'static str {
+    if is_test_env() {
+        CLIENT_ID_TEST
+    } else {
+        CLIENT_ID
+    }
+}
+
+/// "AI Agent" OAuth client ID for the current environment.
+pub fn agent_client_id() -> &'static str {
+    if is_test_env() {
+        AGENT_CLIENT_ID_TEST
+    } else {
+        AGENT_CLIENT_ID
+    }
+}
 
 fn cache_file_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".longbridge").join("openapi").join("region-cache"))

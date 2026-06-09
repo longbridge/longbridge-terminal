@@ -597,6 +597,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bs58"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf88ba1141d185c399bee5288d850d63b8369520c1eafc32a0430b5b6c287bf4"
+dependencies = [
+ "tinyvec",
+]
+
+[[package]]
 name = "bstr"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -805,7 +814,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "cli-candlestick-chart"
-version = "0.22.2"
+version = "0.23.0"
 dependencies = [
  "ansi-parser 0.8.0",
  "clap 2.34.0",
@@ -2599,8 +2608,8 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "longbridge"
-version = "4.1.0"
-source = "git+https://github.com/longbridge/openapi.git?branch=main#86c3fe56197de1a6a1993a58374f9d8763faea45"
+version = "4.3.0"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#573846945971adf7586376292c318dc389b16552"
 dependencies = [
  "anyhow",
  "bitflags 2.10.0",
@@ -2634,8 +2643,8 @@ dependencies = [
 
 [[package]]
 name = "longbridge-candlesticks"
-version = "4.1.0"
-source = "git+https://github.com/longbridge/openapi.git?branch=main#86c3fe56197de1a6a1993a58374f9d8763faea45"
+version = "4.3.0"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#573846945971adf7586376292c318dc389b16552"
 dependencies = [
  "bitflags 2.10.0",
  "num-traits",
@@ -2646,16 +2655,16 @@ dependencies = [
 
 [[package]]
 name = "longbridge-geo"
-version = "4.1.0"
-source = "git+https://github.com/longbridge/openapi.git?branch=main#86c3fe56197de1a6a1993a58374f9d8763faea45"
+version = "4.3.0"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#573846945971adf7586376292c318dc389b16552"
 dependencies = [
  "reqwest 0.12.28",
 ]
 
 [[package]]
 name = "longbridge-httpcli"
-version = "4.1.0"
-source = "git+https://github.com/longbridge/openapi.git?branch=main#86c3fe56197de1a6a1993a58374f9d8763faea45"
+version = "4.3.0"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#573846945971adf7586376292c318dc389b16552"
 dependencies = [
  "dotenv",
  "futures-util",
@@ -2676,8 +2685,8 @@ dependencies = [
 
 [[package]]
 name = "longbridge-oauth"
-version = "4.1.0"
-source = "git+https://github.com/longbridge/openapi.git?branch=main#86c3fe56197de1a6a1993a58374f9d8763faea45"
+version = "4.3.0"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#573846945971adf7586376292c318dc389b16552"
 dependencies = [
  "dirs 6.0.0",
  "futures-util",
@@ -2693,8 +2702,8 @@ dependencies = [
 
 [[package]]
 name = "longbridge-proto"
-version = "4.1.0"
-source = "git+https://github.com/longbridge/openapi.git?branch=main#86c3fe56197de1a6a1993a58374f9d8763faea45"
+version = "4.3.0"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#573846945971adf7586376292c318dc389b16552"
 dependencies = [
  "prost 0.14.3",
  "serde",
@@ -2702,7 +2711,7 @@ dependencies = [
 
 [[package]]
 name = "longbridge-terminal"
-version = "0.22.2"
+version = "0.23.0"
 dependencies = [
  "aes-gcm",
  "ansi-parser 0.9.1",
@@ -2715,6 +2724,7 @@ dependencies = [
  "bevy_app",
  "bevy_ecs",
  "bitflags 2.10.0",
+ "bs58",
  "bytemuck",
  "clap 4.5.60",
  "clap_complete",
@@ -2735,8 +2745,6 @@ dependencies = [
  "once_cell",
  "open",
  "percent-encoding",
- "phf",
- "phf_codegen",
  "prost 0.12.6",
  "qrcode",
  "ratatui",
@@ -2770,8 +2778,8 @@ dependencies = [
 
 [[package]]
 name = "longbridge-wscli"
-version = "4.1.0"
-source = "git+https://github.com/longbridge/openapi.git?branch=main#86c3fe56197de1a6a1993a58374f9d8763faea45"
+version = "4.3.0"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#573846945971adf7586376292c318dc389b16552"
 dependencies = [
  "byteorder",
  "flate2",
@@ -4460,7 +4468,7 @@ checksum = "1c107b6f4780854c8b126e228ea8869f4d7b71260f962fefb57b996b8959ba6b"
 
 [[package]]
 name = "sec2md"
-version = "0.22.2"
+version = "0.23.0"
 dependencies = [
  "scraper",
 ]

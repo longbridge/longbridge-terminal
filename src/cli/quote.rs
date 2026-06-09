@@ -96,6 +96,14 @@ fn pre_post_quote_to_json(q: &PrePostQuote) -> serde_json::Value {
     })
 }
 
+/// Whether a pre/post/overnight session actually has data. The API returns a
+/// zero-filled struct (`last` = 0) for sessions that have not traded yet;
+/// rendering those produces a bogus -100% change, so they must be treated as
+/// "no data".
+fn pre_post_has_data(q: &PrePostQuote) -> bool {
+    q.last_done > rust_decimal::Decimal::ZERO
+}
+
 type CalcIndexExtractor = fn(&longbridge::quote::SecurityCalcIndex) -> String;
 
 fn calc_index_column(key: &str) -> Option<(&'static str, CalcIndexExtractor)> {
@@ -259,9 +267,9 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
                         "volume": q.volume,
                         "turnover": q.turnover.to_string(),
                         "status": format!("{:?}", q.trade_status),
-                        "pre_market_quote": q.pre_market_quote.as_ref().map(pre_post_quote_to_json),
-                        "post_market_quote": q.post_market_quote.as_ref().map(pre_post_quote_to_json),
-                        "overnight_quote": q.overnight_quote.as_ref().map(pre_post_quote_to_json),
+                        "post_market": q.post_market_quote.as_ref().filter(|p| pre_post_has_data(p)).map(pre_post_quote_to_json),
+                        "overnight": q.overnight_quote.as_ref().filter(|p| pre_post_has_data(p)).map(pre_post_quote_to_json),
+                        "pre_market": q.pre_market_quote.as_ref().filter(|p| pre_post_has_data(p)).map(pre_post_quote_to_json),
                     })
                 })
                 .collect();
@@ -304,20 +312,29 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
                 .collect();
             print_table(headers, rows, format);
 
-            // Show extended-hours rows when available
+            // Show extended-hours rows. For any symbol with at least one active
+            // extended session, emit all three rows in Post / Overnight / Pre
+            // order; sessions without data render as "--" instead of a bogus
+            // zero / -100% line. Symbols with no extended data at all are skipped.
             let ext_rows: Vec<Vec<String>> = quotes
                 .iter()
                 .flat_map(|q| {
                     let sessions: &[(&str, &Option<PrePostQuote>)] = &[
-                        ("Pre", &q.pre_market_quote),
                         ("Post", &q.post_market_quote),
                         ("Overnight", &q.overnight_quote),
+                        ("Pre", &q.pre_market_quote),
                     ];
+                    let any_data = sessions
+                        .iter()
+                        .any(|(_, opt)| opt.as_ref().is_some_and(pre_post_has_data));
+                    if !any_data {
+                        return Vec::new();
+                    }
                     sessions
                         .iter()
-                        .filter_map(|(label, opt)| {
-                            opt.as_ref().map(|pmq| {
-                                vec![
+                        .map(
+                            |(label, opt)| match opt.as_ref().filter(|p| pre_post_has_data(p)) {
+                                Some(pmq) => vec![
                                     q.symbol.clone(),
                                     label.to_string(),
                                     fmt_dec(pmq.last_done),
@@ -328,9 +345,21 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
                                     pmq.volume.to_string(),
                                     fmt_dec(pmq.prev_close),
                                     crate::utils::datetime::fmt_rfc3339(pmq.timestamp),
-                                ]
-                            })
-                        })
+                                ],
+                                None => vec![
+                                    q.symbol.clone(),
+                                    label.to_string(),
+                                    "--".to_string(),
+                                    "--".to_string(),
+                                    "--".to_string(),
+                                    "--".to_string(),
+                                    "--".to_string(),
+                                    "--".to_string(),
+                                    "--".to_string(),
+                                    "--".to_string(),
+                                ],
+                            },
+                        )
                         .collect::<Vec<_>>()
                 })
                 .collect();
@@ -2186,18 +2215,6 @@ fn print_json_with_symbols(data: &Value) {
     println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
 }
 
-/// Convert index symbol to IX/ prefix `counter_id` (e.g. `HSI.HK` → `IX/HK/HSI`,
-/// `.DJI.US` → `IX/US/.DJI`).
-fn index_symbol_to_counter_id(symbol: &str) -> String {
-    if let Some((code, market)) = symbol.rsplit_once('.') {
-        let market = market.to_uppercase();
-        // Preserve the leading dot — US index counter_ids include it (e.g. `.DJI.US` → `IX/US/.DJI`)
-        format!("IX/{market}/{code}")
-    } else {
-        symbol.to_string()
-    }
-}
-
 pub async fn cmd_history_intraday(
     symbol: String,
     session: &str,
@@ -2265,7 +2282,43 @@ pub async fn cmd_constituent(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = index_symbol_to_counter_id(&symbol);
+    // ETF symbols expose their composition via SEC N-PORT full holdings (US
+    // ETFs, default) or the fundamental asset-allocation endpoint. Non-ETF
+    // symbols (indexes) keep the original index-constituents behaviour.
+    if crate::utils::counter::is_etf(&symbol) {
+        // For US ETFs, prefer SEC EDGAR full holdings (N-PORT). This is the
+        // authoritative full constituent list rather than a top-10 summary.
+        if symbol.to_uppercase().ends_with(".US") {
+            match crate::cli::sec_edgar::fetch_etf_holdings(&symbol).await {
+                Ok(holdings) => {
+                    render_sec_holdings(&holdings, &symbol, limit, format);
+                    return Ok(());
+                }
+                Err(e) => {
+                    // SEC unavailable (UIT funds like SPY, too-new tickers,
+                    // network/parse errors) — fall back to platform data.
+                    if matches!(format, OutputFormat::Pretty) {
+                        println!(
+                            "SEC N-PORT data unavailable for {symbol} (falling back to platform data)"
+                        );
+                        if verbose {
+                            eprintln!("  reason: {e}");
+                        }
+                    }
+                }
+            }
+        }
+        let resp = crate::openapi::fundamental()
+            .etf_asset_allocation(symbol.clone())
+            .await?;
+        if !resp.info.is_empty() {
+            render_etf_asset_allocation(&resp, &symbol, limit, format);
+            return Ok(());
+        }
+        // No allocation data available — fall through to index-constituents.
+    }
+
+    let cid = longbridge::counter::index_symbol_to_counter_id(&symbol);
     let limit_str = limit.to_string();
     let data = http_get(
         "/v1/quote/index-constituents",
@@ -3290,6 +3343,210 @@ pub async fn cmd_rank(
         }
     }
     Ok(())
+}
+
+/// Human-readable label for an ETF asset-allocation group type.
+fn asset_allocation_type_label(t: longbridge::fundamental::ElementType) -> &'static str {
+    use longbridge::fundamental::ElementType;
+    match t {
+        ElementType::Holdings => "Holdings",
+        ElementType::Regional => "Regional",
+        ElementType::AssetClass => "Asset Class",
+        ElementType::Industry => "Industry",
+        ElementType::Unknown => "Unknown",
+    }
+}
+
+/// Format an ETF position-ratio string (e.g. `0.0861114`) as a percentage.
+fn fmt_position_ratio(raw: &str) -> String {
+    raw.parse::<f64>()
+        .map_or_else(|_| raw.to_string(), |v| format!("{:.2}%", v * 100.0))
+}
+
+/// Pick the locale-appropriate display name for an asset-allocation item,
+/// falling back to the default `name` when no localized variant exists.
+fn allocation_item_name(item: &longbridge::fundamental::AssetAllocationItem) -> String {
+    let locale = crate::locale::get();
+    let keys: &[&str] = match locale {
+        "zh-CN" => &["zh-CN", "zh-HK"],
+        "zh-HK" => &["zh-HK", "zh-CN"],
+        _ => &["en"],
+    };
+    for key in keys {
+        if let Some(name) = item.name_locales.get(*key) {
+            if !name.is_empty() {
+                return name.clone();
+            }
+        }
+    }
+    item.name.clone()
+}
+
+/// Format a weight percentage (e.g. `7.564` -> `7.564%`), capped to 3 places.
+fn fmt_weight_pct(weight: Option<f64>) -> String {
+    match weight {
+        Some(w) => format!("{w:.3}%"),
+        None => "-".to_string(),
+    }
+}
+
+/// Render SEC N-PORT full ETF holdings for the `constituent` command.
+///
+/// `limit` controls the number of rows shown in pretty mode (`0` = all). JSON
+/// mode always emits the full, untruncated holdings list.
+fn render_sec_holdings(
+    holdings: &crate::cli::sec_edgar::EtfHoldings,
+    symbol: &str,
+    limit: i32,
+    format: &OutputFormat,
+) {
+    let total = holdings.holdings.len();
+    match format {
+        OutputFormat::Json => {
+            let value = serde_json::json!({
+                "symbol": symbol,
+                "series_name": holdings.series_name,
+                "report_period": holdings.report_period,
+                "filed_date": holdings.filed_date,
+                "total_holdings": total,
+                "holdings": holdings.holdings,
+            });
+            print_json(&value);
+        }
+        OutputFormat::Pretty => {
+            let name = if holdings.series_name.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", holdings.series_name)
+            };
+            println!("ETF Holdings — {symbol}{name}");
+            println!(
+                "Source: SEC N-PORT, report period {}, filed {}, {total} holdings\n",
+                if holdings.report_period.is_empty() {
+                    "-"
+                } else {
+                    &holdings.report_period
+                },
+                if holdings.filed_date.is_empty() {
+                    "-"
+                } else {
+                    &holdings.filed_date
+                },
+            );
+
+            if total == 0 {
+                println!("No holdings found.");
+                return;
+            }
+
+            // limit == 0 means "show all"; otherwise cap the displayed rows.
+            let take = if limit <= 0 {
+                total
+            } else {
+                usize::try_from(limit).unwrap_or(total).min(total)
+            };
+
+            let headers = ["#", "name", "cusip", "weight", "shares", "value(USD)"];
+            let rows: Vec<Vec<String>> = holdings
+                .holdings
+                .iter()
+                .take(take)
+                .enumerate()
+                .map(|(i, h)| {
+                    vec![
+                        (i + 1).to_string(),
+                        h.name.clone(),
+                        h.cusip.clone().unwrap_or_else(|| "-".to_string()),
+                        fmt_weight_pct(h.weight),
+                        h.shares
+                            .map_or_else(|| "-".to_string(), |s| format_with_commas(s as i64)),
+                        h.value_usd
+                            .map_or_else(|| "-".to_string(), |v| format_with_commas(v as i64)),
+                    ]
+                })
+                .collect();
+            print_table(&headers, rows, format);
+
+            if take < total {
+                let more = total - take;
+                println!("\n... and {more} more (use --limit 0 for all)");
+            }
+        }
+    }
+}
+
+/// Render an ETF asset-allocation response for the `constituent` command.
+///
+/// Holdings rows are capped at `limit`; the other groups (Regional / Asset Class /
+/// Industry) are shown in full as they are already weight-ranked summaries.
+///
+/// The `--sort` / `--order` flags do not apply to this data source — the API
+/// returns each group pre-sorted by weight — so they are intentionally ignored.
+fn render_etf_asset_allocation(
+    resp: &longbridge::fundamental::AssetAllocationResponse,
+    symbol: &str,
+    limit: i32,
+    format: &OutputFormat,
+) {
+    match format {
+        OutputFormat::Json => {
+            if let Ok(value) = serde_json::to_value(resp) {
+                print_json(&value);
+            }
+        }
+        OutputFormat::Pretty => {
+            println!("ETF Asset Allocation — {symbol}\n");
+            for group in &resp.info {
+                let label = asset_allocation_type_label(group.asset_type);
+                println!("{label}  (report date: {})", group.report_date);
+                if group.lists.is_empty() {
+                    println!("  (no elements)\n");
+                    continue;
+                }
+                let is_holdings = matches!(
+                    group.asset_type,
+                    longbridge::fundamental::ElementType::Holdings
+                );
+                if is_holdings {
+                    let headers = ["name", "symbol", "weight", "industry"];
+                    let take = usize::try_from(limit).unwrap_or(usize::MAX);
+                    let rows: Vec<Vec<String>> = group
+                        .lists
+                        .iter()
+                        .take(take)
+                        .map(|item| {
+                            let industry = item
+                                .holding_detail
+                                .as_ref()
+                                .map(|d| d.industry_name.clone())
+                                .unwrap_or_default();
+                            vec![
+                                allocation_item_name(item),
+                                item.symbol.clone(),
+                                fmt_position_ratio(&item.position_ratio),
+                                industry,
+                            ]
+                        })
+                        .collect();
+                    print_table(&headers, rows, format);
+                } else {
+                    let headers = ["name", "weight"];
+                    let rows: Vec<Vec<String>> = group
+                        .lists
+                        .iter()
+                        .map(|item| {
+                            vec![
+                                allocation_item_name(item),
+                                fmt_position_ratio(&item.position_ratio),
+                            ]
+                        })
+                        .collect();
+                    print_table(&headers, rows, format);
+                }
+                println!();
+            }
+        }
+    }
 }
 
 #[cfg(test)]

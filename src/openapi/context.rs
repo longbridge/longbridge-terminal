@@ -15,6 +15,9 @@ pub static TRADE_CTX: OnceLock<longbridge::trade::TradeContext> = OnceLock::new(
 /// Global `ContentContext` for news and topics
 pub static CONTENT_CTX: OnceLock<longbridge::ContentContext> = OnceLock::new();
 
+/// Global `FundamentalContext` for fundamental data (ratings, dividends, ETF allocation, etc.)
+pub static FUNDAMENTAL_CTX: OnceLock<longbridge::FundamentalContext> = OnceLock::new();
+
 /// Global `HttpClient` for making authenticated requests to the Longbridge `OpenAPI`
 pub static HTTP_CLIENT: OnceLock<longbridge::httpclient::HttpClient> = OnceLock::new();
 
@@ -59,7 +62,7 @@ pub async fn init_contexts() -> Result<(
     } else {
         tracing::info!("No API key env vars found, using OAuth authentication");
         // Migrate legacy plaintext token to encrypted storage on first run after upgrade.
-        crate::secure_storage::migrate_legacy_token(crate::auth::client_id());
+        crate::secure_storage::migrate_legacy_token(crate::region::client_id());
 
         // If no token file exists, refuse to start a browser/callback-server flow.
         // CLI commands require a stored token; users must run `longbridge auth login` first.
@@ -71,7 +74,7 @@ pub async fn init_contexts() -> Result<(
         }
         // If the token file exists but cannot be decrypted (e.g. machine ID
         // changed), fail fast rather than hanging in the OAuth browser flow.
-        if crate::secure_storage::EncryptedFileTokenStorage::load_full(crate::auth::client_id())
+        if crate::secure_storage::EncryptedFileTokenStorage::load_full(crate::region::client_id())
             .is_none()
         {
             return Err(anyhow::anyhow!(
@@ -85,7 +88,7 @@ pub async fn init_contexts() -> Result<(
         // the SDK would trigger when its own refresh fallback fires.
         crate::auth::refresh_if_expired().await?;
 
-        let oauth_result = longbridge::oauth::OAuthBuilder::new(crate::auth::client_id())
+        let oauth_result = longbridge::oauth::OAuthBuilder::new(crate::region::client_id())
             .callback_port(crate::auth::CALLBACK_PORT)
             .token_storage(crate::secure_storage::EncryptedFileTokenStorage)
             .build(|_url| {
@@ -112,10 +115,15 @@ pub async fn init_contexts() -> Result<(
     let mut config_builder = config_builder;
     let mut http_client_config = http_client_config;
 
+    // Enable the US overnight market so `quote` returns `overnight_quote`.
+    // Pre/post-market quotes are returned without this flag, but the overnight
+    // session is gated behind it (matches the longbridge-mcp server).
+    config_builder = config_builder.enable_overnight();
+
     // If LONGBRIDGE_ENV=staging, override all endpoints to test environment.
     // This takes highest priority over region detection.
     let effective_http_url;
-    if crate::auth::is_test_env() {
+    if crate::region::is_test_env() {
         tracing::info!("Using TEST environment endpoints (openapi.longbridge.xyz)");
         config_builder = config_builder
             .http_url(crate::region::HTTP_URL_TEST)
@@ -136,7 +144,7 @@ pub async fn init_contexts() -> Result<(
         http_client_config = http_client_config.http_url(crate::region::HTTP_URL_CN);
         effective_http_url = crate::region::HTTP_URL_CN;
     } else {
-        effective_http_url = "https://openapi.longbridge.com";
+        effective_http_url = crate::region::HTTP_URL_GLOBAL;
     }
 
     // Extract x-cli-cmd and x-cli-args from process arguments.
@@ -178,6 +186,11 @@ pub async fn init_contexts() -> Result<(
     STATEMENT_CTX
         .set(statement_ctx)
         .map_err(|_| anyhow::anyhow!("AssetContext already initialized"))?;
+
+    let fundamental_ctx = longbridge::FundamentalContext::new(Arc::clone(&config));
+    FUNDAMENTAL_CTX
+        .set(fundamental_ctx)
+        .map_err(|_| anyhow::anyhow!("FundamentalContext already initialized"))?;
 
     // Also inject into the standalone HttpClient used for direct REST calls.
     let mut http_client = longbridge::httpclient::HttpClient::new(http_client_config);
@@ -253,6 +266,13 @@ pub fn content() -> &'static longbridge::ContentContext {
     CONTENT_CTX
         .get()
         .expect("ContentContext not initialized, please call init_contexts() first")
+}
+
+/// Get global `FundamentalContext` for fundamental data
+pub fn fundamental() -> &'static longbridge::FundamentalContext {
+    FUNDAMENTAL_CTX
+        .get()
+        .expect("FundamentalContext not initialized, please call init_contexts() first")
 }
 
 /// Get the global authenticated `HttpClient` for direct `OpenAPI` requests

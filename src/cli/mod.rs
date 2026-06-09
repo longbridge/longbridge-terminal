@@ -21,6 +21,7 @@ pub mod quote;
 pub mod run_script;
 pub mod screener;
 pub mod search;
+pub mod sec_edgar;
 pub mod sharelist;
 pub mod statement;
 pub mod topic;
@@ -881,16 +882,22 @@ pub enum Commands {
 
     /// Index or ETF constituent stocks
     ///
-    /// US index symbols require a leading dot (e.g. .DJI.US, .SPX.US, .IXIC.US).
-    /// HK indexes use the plain code (e.g. HSI.HK).
+    /// For an index, lists its member stocks. US index symbols require a leading
+    /// dot (e.g. .DJI.US, .SPX.US, .IXIC.US); HK indexes use the plain code (e.g.
+    /// HSI.HK). For a US ETF, fetches full holdings from SEC EDGAR (N-PORT) by
+    /// default, falling back to the platform asset-allocation summary when SEC
+    /// data is unavailable (e.g. UIT funds like SPY, or very new tickers). For
+    /// non-US ETFs the platform asset-allocation breakdown is used. --sort/--order
+    /// are ignored for ETFs since the data is already weight-ranked.
     ///
     /// Example: longbridge constituent HSI.HK
     /// Example: longbridge constituent .SPX.US --sort market-cap --order asc
     /// Example: longbridge constituent HSI.HK --limit 20 --sort change
+    /// Example: longbridge constituent IVV.US --limit 0   (full SEC holdings)
     Constituent {
-        /// Index symbol in <CODE>.<MARKET> format (e.g. HSI.HK, .DJI.US, .SPX.US)
+        /// Index or ETF symbol in <CODE>.<MARKET> format (e.g. HSI.HK, .SPX.US, IVV.US)
         symbol: String,
-        /// Number of results to return
+        /// Number of results to return (0 = all, for ETF SEC holdings)
         #[arg(long, default_value = "50")]
         limit: i32,
         /// Sort indicator
@@ -2941,13 +2948,22 @@ pub enum AuthCmd {
     /// CLI polls until authorization is complete. Works on any machine including
     /// SSH sessions and headless servers.
     ///
-    /// Use `--auth-code` for the Authorization Code flow: opens a browser on this
-    /// machine and listens on `localhost:60355` for the OAuth callback.
+    /// Pass `--auth-code <CODE>` to exchange an authorization code generated at
+    /// <https://open.longbridge.com/connect> — a single synchronous call with no
+    /// browser, polling, or local callback server. Ideal for AI agents.
+    ///
+    /// Pass `--auth-code` with no value for the browser Authorization Code flow:
+    /// opens a browser on this machine and listens on `localhost:60355` for the
+    /// OAuth callback.
     Login {
-        /// Authorization Code flow: opens a browser and handles the localhost callback.
-        /// Requires the browser to be on the same machine (local use only).
-        #[arg(long)]
-        auth_code: bool,
+        /// Authorize using a code instead of the device flow.
+        ///
+        /// With a value (`--auth-code <CODE>`): exchange an authorization code
+        /// from <https://open.longbridge.com/connect> in one synchronous call.
+        /// Without a value (`--auth-code`): run the browser Authorization Code
+        /// flow that handles the localhost callback (local use only).
+        #[arg(long, value_name = "CODE", num_args = 0..=1, default_missing_value = "")]
+        auth_code: Option<String>,
         /// Print request/response details for each OAuth step.
         #[arg(short, long)]
         verbose: bool,
