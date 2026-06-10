@@ -3536,13 +3536,19 @@ pub async fn cmd_macrodata(
     limit: Option<u32>,
     page: u32,
     format: &OutputFormat,
-    _verbose: bool,
+    verbose: bool,
 ) -> Result<()> {
+    if verbose {
+        eprintln!("* Using FundamentalContext SDK (longbridge/openapi#540)");
+    }
     let ctx = crate::openapi::fundamental();
     match code {
         None => {
             let limit_val = limit.unwrap_or(1000);
             let offset = (page.saturating_sub(1)) * limit_val;
+            if verbose {
+                eprintln!("* macrodata_indicators(offset={offset}, limit={limit_val})");
+            }
             let indicators = ctx
                 .macrodata_indicators(Some(offset as i32), Some(limit_val as i32))
                 .await?;
@@ -3555,10 +3561,29 @@ pub async fn cmd_macrodata(
                 OutputFormat::Pretty => print_macrodata_list(&indicators),
             }
         }
-        Some(indicator_code) => {
+        Some(ref indicator_code) => {
+            if verbose {
+                eprintln!(
+                    "* macrodata(code={indicator_code}, start={}, end={}, limit={})",
+                    start.as_deref().unwrap_or("-"),
+                    end.as_deref().unwrap_or("-"),
+                    limit.unwrap_or(20),
+                );
+            }
             let resp = ctx
-                .macrodata(indicator_code, start, end, limit.map(|l| l as i32))
-                .await?;
+                .macrodata(indicator_code.clone(), start, end, limit.map(|l| l as i32))
+                .await
+                .map_err(|e| {
+                    let msg = e.to_string();
+                    if msg.contains("null") || msg.contains("deserialize") {
+                        anyhow::anyhow!(
+                            "Indicator code '{}' not found or returned no data",
+                            indicator_code
+                        )
+                    } else {
+                        anyhow::Error::from(e)
+                    }
+                })?;
             match format {
                 OutputFormat::Json => {
                     let json = serde_json::json!({
