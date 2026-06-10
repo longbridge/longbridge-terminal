@@ -3437,7 +3437,10 @@ fn print_macrodata_history(resp: &MacrodataResponse) {
     let meta = if info.category.is_empty() {
         format!("{}  {}", info.source_org, info.periodicity)
     } else {
-        format!("{}  |  {}  {}", info.category, info.source_org, info.periodicity)
+        format!(
+            "{}  |  {}  {}",
+            info.category, info.source_org, info.periodicity
+        )
     };
     println!("{display_name}  [{meta}]");
     if !describe.is_empty() {
@@ -3473,54 +3476,55 @@ fn print_macrodata_history(resp: &MacrodataResponse) {
         })
         .collect();
     super::output::print_table(
-        &["Period", "Actual", "Forecast", "Previous", "Revised", "Unit"],
+        &[
+            "Period", "Actual", "Forecast", "Previous", "Revised", "Unit",
+        ],
         rows,
         &OutputFormat::Pretty,
     );
 }
 
+fn opt_ts(dt: Option<time::OffsetDateTime>) -> Value {
+    match dt {
+        Some(t) => Value::Number(t.unix_timestamp().into()),
+        None => Value::Null,
+    }
+}
+
+fn ml_text_json(t: &longbridge::fundamental::MultiLanguageText) -> Value {
+    serde_json::json!({
+        "english":            t.english,
+        "simplified_chinese": t.simplified_chinese,
+        "traditional_chinese":t.traditional_chinese,
+    })
+}
+
 fn macrodata_indicator_to_json(i: &MacrodataIndicator) -> Value {
     serde_json::json!({
-        "indicator_code": i.indicator_code,
-        "source_org":     i.source_org,
-        "country":        i.country,
-        "name": {
-            "english":            i.name.english,
-            "simplified_chinese": i.name.simplified_chinese,
-            "traditional_chinese":i.name.traditional_chinese,
-        },
+        "indicator_code":    i.indicator_code,
+        "source_org":        i.source_org,
+        "country":           i.country,
+        "name":              ml_text_json(&i.name),
         "adjustment_factor": i.adjustment_factor,
         "periodicity":       i.periodicity,
         "category":          i.category,
-        "describe": {
-            "english":            i.describe.english,
-            "simplified_chinese": i.describe.simplified_chinese,
-            "traditional_chinese":i.describe.traditional_chinese,
-        },
-        "importance": i.importance,
-        "start_date": i.start_date,
+        "describe":          ml_text_json(&i.describe),
+        "importance":        i.importance,
+        "start_date":        opt_ts(i.start_date),
     })
 }
 
 fn macrodata_record_to_json(r: &Macrodata) -> Value {
     serde_json::json!({
         "period":          r.period,
-        "release_at":      r.release_at,
+        "release_at":      opt_ts(r.release_at),
         "actual_value":    r.actual_value,
         "previous_value":  r.previous_value,
         "forecast_value":  r.forecast_value,
         "revised_value":   r.revised_value,
-        "next_release_at": r.next_release_at,
-        "unit": {
-            "english":            r.unit.english,
-            "simplified_chinese": r.unit.simplified_chinese,
-            "traditional_chinese":r.unit.traditional_chinese,
-        },
-        "unit_prefix": {
-            "english":            r.unit_prefix.english,
-            "simplified_chinese": r.unit_prefix.simplified_chinese,
-            "traditional_chinese":r.unit_prefix.traditional_chinese,
-        },
+        "next_release_at": opt_ts(r.next_release_at),
+        "unit":            ml_text_json(&r.unit),
+        "unit_prefix":     ml_text_json(&r.unit_prefix),
     })
 }
 
@@ -3540,10 +3544,7 @@ pub async fn cmd_macrodata(
             let limit_val = limit.unwrap_or(1000);
             let offset = (page.saturating_sub(1)) * limit_val;
             let indicators = ctx
-                .macrodata_indicators(
-                    Some(offset as i32),
-                    Some(limit_val as i32),
-                )
+                .macrodata_indicators(Some(offset as i32), Some(limit_val as i32))
                 .await?;
             match format {
                 OutputFormat::Json => {
@@ -3556,12 +3557,7 @@ pub async fn cmd_macrodata(
         }
         Some(indicator_code) => {
             let resp = ctx
-                .macrodata(
-                    indicator_code,
-                    start,
-                    end,
-                    limit.map(|l| l as i32),
-                )
+                .macrodata(indicator_code, start, end, limit.map(|l| l as i32))
                 .await?;
             match format {
                 OutputFormat::Json => {
