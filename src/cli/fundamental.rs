@@ -3534,6 +3534,14 @@ fn print_macrodata_history(data: &Value) {
 }
 
 /// List all macroeconomic indicators, or query historical data for one indicator.
+///
+/// TODO(sdk): migrate to `FundamentalContext::macrodata_indicators` /
+/// `FundamentalContext::macrodata` once longbridge/openapi#540 is merged and
+/// the `longbridge` crate dependency is bumped. The SDK methods accept
+/// `Option<i32>` for offset/limit and `Option<String>` YYYY-MM-DD for dates,
+/// returning typed `MacrodataIndicator` / `MacrodataResponse` structs whose
+/// timestamp fields are already `Option<i64>` unix seconds — no manual
+/// `normalize_timestamps` needed.
 pub async fn cmd_macrodata(
     code: Option<String>,
     start: Option<String>,
