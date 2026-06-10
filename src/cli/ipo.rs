@@ -253,7 +253,7 @@ fn transform_order_item(item: &Value) -> Value {
 }
 
 async fn member_id() -> Result<i64> {
-    crate::openapi::quote()
+    crate::openapi::quote_cmd()
         .member_id()
         .await
         .map_err(anyhow::Error::from)
