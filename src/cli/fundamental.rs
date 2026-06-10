@@ -3597,6 +3597,9 @@ pub async fn cmd_macrodata(
             }
         }
         Some(ref indicator_code) => {
+            if country.is_some() {
+                eprintln!("Note: --country is ignored when CODE is specified");
+            }
             let limit_val = limit.unwrap_or(20);
             let offset = (page.saturating_sub(1)) * limit_val;
             if verbose {
