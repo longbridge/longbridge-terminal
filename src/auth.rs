@@ -71,6 +71,22 @@ fn save_registration(reg: &ClientRegistration) -> Result<()> {
     Ok(())
 }
 
+/// Suffix appended to every registered client name so the entry is identifiable
+/// as a Longbridge CLI login in the user's authorized-apps list.
+const CLIENT_NAME_SUFFIX: &str = " (Longbridge CLI)";
+
+/// Normalize a user-supplied client name (from `--client-name`) by appending the
+/// [`CLIENT_NAME_SUFFIX`], e.g. `Claude Code` becomes `Claude Code (Longbridge CLI)`.
+/// The suffix is not duplicated if the input already ends with it.
+fn apply_client_name_suffix(name: String) -> String {
+    let name = name.trim();
+    if name.ends_with(CLIENT_NAME_SUFFIX) {
+        name.to_owned()
+    } else {
+        format!("{name}{CLIENT_NAME_SUFFIX}")
+    }
+}
+
 /// Build the OAuth client name used for dynamic registration, identifying the device
 /// in the user's authorized-apps list.
 ///
@@ -98,8 +114,8 @@ fn client_name() -> String {
         .unwrap_or_else(|| os.to_owned());
 
     match whoami::fallible::username().ok().filter(|s| !s.is_empty()) {
-        Some(user) => format!("{user}@{machine} (Longbridge CLI)"),
-        None => format!("{machine} (Longbridge CLI)"),
+        Some(user) => format!("{user}@{machine}{CLIENT_NAME_SUFFIX}"),
+        None => format!("{machine}{CLIENT_NAME_SUFFIX}"),
     }
 }
 
@@ -126,7 +142,7 @@ async fn register_new_client(
     }
 
     let body = serde_json::json!({
-        "client_name": name_override.unwrap_or_else(client_name),
+        "client_name": name_override.map_or_else(client_name, apply_client_name_suffix),
         "redirect_uris": [format!("http://localhost:{CALLBACK_PORT}/callback")],
     });
 
@@ -171,12 +187,20 @@ async fn register_new_client(
 /// Return the locally persisted client registration if present, otherwise register a
 /// new one (RFC 7591). Reusing the stored registration across logins avoids creating a
 /// duplicate `client_id` on the server every time the CLI authenticates.
+///
+/// An explicit `name_override` (from `--client-name`) forces a fresh registration so the
+/// new name takes effect: any prior registration is revoked (RFC 7592) and replaced,
+/// rather than silently reused.
 async fn get_or_register_client(
     http_client: &reqwest::Client,
     verbose: bool,
     name_override: Option<String>,
 ) -> Result<ClientRegistration> {
-    if let Some(reg) = load_registration() {
+    if name_override.is_some() {
+        // Explicit name requested: drop the old client so the new name replaces it
+        // instead of being ignored in favor of the cached registration.
+        revoke_client_registration(http_client).await;
+    } else if let Some(reg) = load_registration() {
         if verbose {
             eprintln!("Reusing existing client registration ({})", reg.client_id);
         }
@@ -664,7 +688,9 @@ fn unpack_agent_code(input: &str) -> Option<(String, String)> {
     if bytes.len() < 2 + cid_len {
         return None;
     }
-    let client_id = std::str::from_utf8(&bytes[2..2 + cid_len]).ok()?.to_string();
+    let client_id = std::str::from_utf8(&bytes[2..2 + cid_len])
+        .ok()?
+        .to_string();
     let auth_code = std::str::from_utf8(&bytes[2 + cid_len..]).ok()?.to_string();
     if client_id.is_empty() || auth_code.is_empty() {
         return None;

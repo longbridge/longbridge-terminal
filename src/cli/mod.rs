@@ -2969,6 +2969,8 @@ pub enum AuthCmd {
         /// Used for dynamic client registration so the device is identifiable in
         /// the authorized-apps list. Only applies the first time this machine
         /// registers; later logins reuse the existing client and ignore this.
+        /// A ` (Longbridge CLI)` suffix is appended automatically, e.g.
+        /// `Claude Code` becomes `Claude Code (Longbridge CLI)`.
         /// Defaults to `<user>@<machine> (Longbridge CLI)`.
         #[arg(long, value_name = "NAME")]
         client_name: Option<String>,
