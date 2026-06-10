@@ -3382,74 +3382,42 @@ fn print_financial_report_snapshot(data: &Value) {
 
 // ── macrodata ────────────────────────────────────────────────────────────────
 
-/// Convert a `YYYY-MM-DD` date string to ISO 8601 UTC start of day: `YYYY-MM-DDT00:00:00Z`.
-fn date_to_iso8601_start(date: &str) -> String {
-    format!("{date}T00:00:00Z")
-}
+use longbridge::fundamental::{Macrodata, MacrodataIndicator, MacrodataResponse};
 
-/// Convert a `YYYY-MM-DD` date string to ISO 8601 UTC end of day: `YYYY-MM-DDT23:59:59Z`.
-fn date_to_iso8601_end(date: &str) -> String {
-    format!("{date}T23:59:59Z")
-}
-
-/// Walk a JSON value and convert any ISO 8601 datetime string
-/// (`YYYY-MM-DDTHH:MM:SSZ`) to a Unix timestamp string, matching the
-/// format used by other CLI commands.
-fn normalize_timestamps(v: &mut Value) {
-    match v {
-        Value::String(s) => {
-            if let Some(ts) = parse_iso8601_to_unix(s) {
-                *s = ts.to_string();
-            }
-        }
-        Value::Array(arr) => arr.iter_mut().for_each(normalize_timestamps),
-        Value::Object(map) => map.values_mut().for_each(normalize_timestamps),
-        _ => {}
+fn ml_text(t: &longbridge::fundamental::MultiLanguageText) -> &str {
+    if !t.simplified_chinese.is_empty() {
+        &t.simplified_chinese
+    } else if !t.english.is_empty() {
+        &t.english
+    } else {
+        ""
     }
 }
 
-/// Parse an ISO 8601 UTC datetime string to a Unix timestamp.
-/// Accepts `YYYY-MM-DDTHH:MM:SSZ` only.
-fn parse_iso8601_to_unix(s: &str) -> Option<i64> {
-    use time::format_description::well_known::Rfc3339;
-    use time::OffsetDateTime;
-    // Only convert strings that look like datetimes, not plain dates like "2026-05-01"
-    if !s.contains('T') {
-        return None;
-    }
-    OffsetDateTime::parse(s, &Rfc3339)
-        .ok()
-        .map(|dt| dt.unix_timestamp())
-}
-
-fn print_macrodata_list(data: &Value) {
-    let empty = vec![];
-    let items = data["list"].as_array().unwrap_or(&empty);
-    if items.is_empty() {
+fn print_macrodata_list(indicators: &[MacrodataIndicator]) {
+    if indicators.is_empty() {
         println!("No indicators found.");
         return;
     }
-
-    let rows: Vec<Vec<String>> = items
+    let rows: Vec<Vec<String>> = indicators
         .iter()
-        .map(|item| {
-            let name = item["name"]["simplified_chinese"]
-                .as_str()
-                .or_else(|| item["name"]["english"].as_str())
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| item["indicator_code"].as_str().unwrap_or("-"))
-                .to_owned();
+        .map(|i| {
+            let name = ml_text(&i.name);
+            let display_name = if name.is_empty() {
+                i.indicator_code.as_str()
+            } else {
+                name
+            };
             vec![
-                val_str(&item["indicator_code"]),
-                name,
-                val_str(&item["category"]),
-                val_str(&item["country"]),
-                val_str(&item["periodicity"]),
-                val_str(&item["source_org"]),
+                i.indicator_code.clone(),
+                display_name.to_owned(),
+                i.category.clone(),
+                i.country.clone(),
+                i.periodicity.clone(),
+                i.source_org.clone(),
             ]
         })
         .collect();
-
     super::output::print_table(
         &["Code", "Name", "Category", "Country", "Frequency", "Source"],
         rows,
@@ -3457,91 +3425,106 @@ fn print_macrodata_list(data: &Value) {
     );
 }
 
-fn print_macrodata_history(data: &Value) {
-    let empty = vec![];
-    let info = &data["info"];
-    let indicator_code = info["indicator_code"].as_str().unwrap_or("-");
-    let name = info["name"]["simplified_chinese"]
-        .as_str()
-        .or_else(|| info["name"]["english"].as_str())
-        .filter(|s| !s.is_empty())
-        .unwrap_or(indicator_code);
-    let describe = info["describe"]
-        .as_object()
-        .and_then(|_| {
-            info["describe"]["simplified_chinese"]
-                .as_str()
-                .or_else(|| info["describe"]["english"].as_str())
-        })
-        .unwrap_or("");
-    let category = info["category"].as_str().unwrap_or("");
-    let source = info["source_org"].as_str().unwrap_or("-");
-    let periodicity = info["periodicity"].as_str().unwrap_or("-");
-
-    let meta = if category.is_empty() {
-        format!("{source}  {periodicity}")
+fn print_macrodata_history(resp: &MacrodataResponse) {
+    let info = &resp.info;
+    let name = ml_text(&info.name);
+    let display_name = if name.is_empty() {
+        info.indicator_code.as_str()
     } else {
-        format!("{category}  |  {source}  {periodicity}")
+        name
     };
-    println!("{name}  [{meta}]");
+    let describe = ml_text(&info.describe);
+    let meta = if info.category.is_empty() {
+        format!("{}  {}", info.source_org, info.periodicity)
+    } else {
+        format!("{}  |  {}  {}", info.category, info.source_org, info.periodicity)
+    };
+    println!("{display_name}  [{meta}]");
     if !describe.is_empty() {
         println!("{describe}");
     }
     println!();
 
-    let records = data["data"].as_array().unwrap_or(&empty);
-    if records.is_empty() {
+    if resp.data.is_empty() {
         println!("No data.");
         return;
     }
-
-    let rows: Vec<Vec<String>> = records
+    let rows: Vec<Vec<String>> = resp
+        .data
         .iter()
         .map(|r| {
-            let unit = r["unit"]["simplified_chinese"]
-                .as_str()
-                .or_else(|| r["unit"]["english"].as_str())
-                .unwrap_or("")
-                .to_owned();
-            let prefix = r["unit_prefix"]["simplified_chinese"]
-                .as_str()
-                .or_else(|| r["unit_prefix"]["english"].as_str())
-                .unwrap_or("")
-                .to_owned();
-            let unit_str = if prefix.is_empty() {
-                unit
-            } else {
-                format!("{prefix}{unit}")
+            let unit_str = {
+                let prefix = ml_text(&r.unit_prefix);
+                let unit = ml_text(&r.unit);
+                if prefix.is_empty() {
+                    unit.to_owned()
+                } else {
+                    format!("{prefix}{unit}")
+                }
             };
             vec![
-                val_str(&r["period"]),
-                val_str(&r["actual_value"]),
-                val_str(&r["forecast_value"]),
-                val_str(&r["previous_value"]),
-                val_str(&r["revised_value"]),
+                r.period.clone(),
+                r.actual_value.clone(),
+                r.forecast_value.clone(),
+                r.previous_value.clone(),
+                r.revised_value.clone(),
                 unit_str,
             ]
         })
         .collect();
-
     super::output::print_table(
-        &[
-            "Period", "Actual", "Forecast", "Previous", "Revised", "Unit",
-        ],
+        &["Period", "Actual", "Forecast", "Previous", "Revised", "Unit"],
         rows,
         &OutputFormat::Pretty,
     );
 }
 
+fn macrodata_indicator_to_json(i: &MacrodataIndicator) -> Value {
+    serde_json::json!({
+        "indicator_code": i.indicator_code,
+        "source_org":     i.source_org,
+        "country":        i.country,
+        "name": {
+            "english":            i.name.english,
+            "simplified_chinese": i.name.simplified_chinese,
+            "traditional_chinese":i.name.traditional_chinese,
+        },
+        "adjustment_factor": i.adjustment_factor,
+        "periodicity":       i.periodicity,
+        "category":          i.category,
+        "describe": {
+            "english":            i.describe.english,
+            "simplified_chinese": i.describe.simplified_chinese,
+            "traditional_chinese":i.describe.traditional_chinese,
+        },
+        "importance": i.importance,
+        "start_date": i.start_date,
+    })
+}
+
+fn macrodata_record_to_json(r: &Macrodata) -> Value {
+    serde_json::json!({
+        "period":          r.period,
+        "release_at":      r.release_at,
+        "actual_value":    r.actual_value,
+        "previous_value":  r.previous_value,
+        "forecast_value":  r.forecast_value,
+        "revised_value":   r.revised_value,
+        "next_release_at": r.next_release_at,
+        "unit": {
+            "english":            r.unit.english,
+            "simplified_chinese": r.unit.simplified_chinese,
+            "traditional_chinese":r.unit.traditional_chinese,
+        },
+        "unit_prefix": {
+            "english":            r.unit_prefix.english,
+            "simplified_chinese": r.unit_prefix.simplified_chinese,
+            "traditional_chinese":r.unit_prefix.traditional_chinese,
+        },
+    })
+}
+
 /// List all macroeconomic indicators, or query historical data for one indicator.
-///
-/// TODO(sdk): migrate to `FundamentalContext::macrodata_indicators` /
-/// `FundamentalContext::macrodata` once longbridge/openapi#540 is merged and
-/// the `longbridge` crate dependency is bumped. The SDK methods accept
-/// `Option<i32>` for offset/limit and `Option<String>` YYYY-MM-DD for dates,
-/// returning typed `MacrodataIndicator` / `MacrodataResponse` structs whose
-/// timestamp fields are already `Option<i64>` unix seconds — no manual
-/// `normalize_timestamps` needed.
 pub async fn cmd_macrodata(
     code: Option<String>,
     start: Option<String>,
@@ -3549,47 +3532,46 @@ pub async fn cmd_macrodata(
     limit: Option<u32>,
     page: u32,
     format: &OutputFormat,
-    verbose: bool,
+    _verbose: bool,
 ) -> Result<()> {
+    let ctx = crate::openapi::fundamental();
     match code {
         None => {
             let limit_val = limit.unwrap_or(1000);
             let offset = (page.saturating_sub(1)) * limit_val;
-            let limit_str = limit_val.to_string();
-            let offset_str = offset.to_string();
-            let mut data = http_get(
-                "/v1/quote/macrodata",
-                &[("offset", &offset_str), ("limit", &limit_str)],
-                verbose,
-            )
-            .await?;
+            let indicators = ctx
+                .macrodata_indicators(
+                    Some(offset as i32),
+                    Some(limit_val as i32),
+                )
+                .await?;
             match format {
                 OutputFormat::Json => {
-                    normalize_timestamps(&mut data);
-                    print_json(&data);
+                    let arr: Vec<Value> =
+                        indicators.iter().map(macrodata_indicator_to_json).collect();
+                    print_json(&Value::Array(arr));
                 }
-                OutputFormat::Pretty => print_macrodata_list(&data),
+                OutputFormat::Pretty => print_macrodata_list(&indicators),
             }
         }
         Some(indicator_code) => {
-            let limit_str = limit.unwrap_or(20).to_string();
-            let start_iso = start.as_deref().map(date_to_iso8601_start);
-            let end_iso = end.as_deref().map(date_to_iso8601_end);
-            let mut params: Vec<(&str, &str)> =
-                vec![("indicator_code", &indicator_code), ("limit", &limit_str)];
-            if let Some(ref s) = start_iso {
-                params.push(("start_time", s.as_str()));
-            }
-            if let Some(ref e) = end_iso {
-                params.push(("end_time", e.as_str()));
-            }
-            let mut data = http_get("/v1/quote/macrodata/history", &params, verbose).await?;
+            let resp = ctx
+                .macrodata(
+                    indicator_code,
+                    start,
+                    end,
+                    limit.map(|l| l as i32),
+                )
+                .await?;
             match format {
                 OutputFormat::Json => {
-                    normalize_timestamps(&mut data);
-                    print_json(&data);
+                    let json = serde_json::json!({
+                        "info": macrodata_indicator_to_json(&resp.info),
+                        "data": resp.data.iter().map(macrodata_record_to_json).collect::<Vec<_>>(),
+                    });
+                    print_json(&json);
                 }
-                OutputFormat::Pretty => print_macrodata_history(&data),
+                OutputFormat::Pretty => print_macrodata_history(&resp),
             }
         }
     }
