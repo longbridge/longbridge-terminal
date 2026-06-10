@@ -3382,7 +3382,10 @@ fn print_financial_report_snapshot(data: &Value) {
 
 // ── macrodata ────────────────────────────────────────────────────────────────
 
-use longbridge::fundamental::{Macrodata, MacrodataIndicator, MacrodataResponse};
+use longbridge::fundamental::{
+    Macrodata, MacrodataCountry, MacrodataIndicator, MacrodataIndicatorListResponse,
+    MacrodataResponse,
+};
 
 fn ml_text(t: &longbridge::fundamental::MultiLanguageText) -> &str {
     if !t.simplified_chinese.is_empty() {
@@ -3394,12 +3397,13 @@ fn ml_text(t: &longbridge::fundamental::MultiLanguageText) -> &str {
     }
 }
 
-fn print_macrodata_list(indicators: &[MacrodataIndicator]) {
-    if indicators.is_empty() {
+fn print_macrodata_list(resp: &MacrodataIndicatorListResponse) {
+    if resp.data.is_empty() {
         println!("No indicators found.");
         return;
     }
-    let rows: Vec<Vec<String>> = indicators
+    let rows: Vec<Vec<String>> = resp
+        .data
         .iter()
         .map(|i| {
             let name = ml_text(&i.name);
@@ -3418,6 +3422,7 @@ fn print_macrodata_list(indicators: &[MacrodataIndicator]) {
             ]
         })
         .collect();
+    println!("Total: {}", resp.count);
     super::output::print_table(
         &["Code", "Name", "Category", "Country", "Frequency", "Source"],
         rows,
@@ -3528,9 +3533,22 @@ fn macrodata_record_to_json(r: &Macrodata) -> Value {
     })
 }
 
+fn parse_country(s: &str) -> Option<MacrodataCountry> {
+    match s.to_uppercase().as_str() {
+        "HK" => Some(MacrodataCountry::HongKong),
+        "CN" => Some(MacrodataCountry::China),
+        "US" => Some(MacrodataCountry::UnitedStates),
+        "EU" => Some(MacrodataCountry::EuroZone),
+        "JP" => Some(MacrodataCountry::Japan),
+        "SG" => Some(MacrodataCountry::Singapore),
+        _ => None,
+    }
+}
+
 /// List all macroeconomic indicators, or query historical data for one indicator.
 pub async fn cmd_macrodata(
     code: Option<String>,
+    country: Option<String>,
     start: Option<String>,
     end: Option<String>,
     limit: Option<u32>,
@@ -3546,39 +3564,62 @@ pub async fn cmd_macrodata(
         None => {
             let limit_val = limit.unwrap_or(1000);
             let offset = (page.saturating_sub(1)) * limit_val;
-            if verbose {
-                eprintln!("* macrodata_indicators(offset={offset}, limit={limit_val})");
-            }
-            let indicators = ctx
-                .macrodata_indicators(Some(offset as i32), Some(limit_val as i32))
-                .await?;
-            match format {
-                OutputFormat::Json => {
-                    let arr: Vec<Value> =
-                        indicators.iter().map(macrodata_indicator_to_json).collect();
-                    print_json(&Value::Array(arr));
-                }
-                OutputFormat::Pretty => print_macrodata_list(&indicators),
-            }
-        }
-        Some(ref indicator_code) => {
+            let country_filter = country
+                .as_deref()
+                .map(|c| {
+                    parse_country(c).ok_or_else(|| {
+                        anyhow::anyhow!("Unknown country '{c}'. Use: HK, CN, US, EU, JP, SG")
+                    })
+                })
+                .transpose()?;
             if verbose {
                 eprintln!(
-                    "* macrodata(code={indicator_code}, start={}, end={}, limit={})",
-                    start.as_deref().unwrap_or("-"),
-                    end.as_deref().unwrap_or("-"),
-                    limit.unwrap_or(20),
+                    "* macrodata_indicators(country={:?}, offset={offset}, limit={limit_val})",
+                    country.as_deref().unwrap_or("-")
                 );
             }
             let resp = ctx
-                .macrodata(indicator_code.clone(), start, end, limit.map(|l| l as i32))
+                .macrodata_indicators(
+                    country_filter,
+                    Some(offset.cast_signed()),
+                    Some(limit_val.cast_signed()),
+                )
+                .await?;
+            match format {
+                OutputFormat::Json => {
+                    let json = serde_json::json!({
+                        "count": resp.count,
+                        "list": resp.data.iter().map(macrodata_indicator_to_json).collect::<Vec<_>>(),
+                    });
+                    print_json(&json);
+                }
+                OutputFormat::Pretty => print_macrodata_list(&resp),
+            }
+        }
+        Some(ref indicator_code) => {
+            let limit_val = limit.unwrap_or(20);
+            let offset = (page.saturating_sub(1)) * limit_val;
+            if verbose {
+                eprintln!(
+                    "* macrodata(code={indicator_code}, start={}, end={}, offset={offset}, limit={limit_val})",
+                    start.as_deref().unwrap_or("-"),
+                    end.as_deref().unwrap_or("-"),
+                );
+            }
+            let resp = ctx
+                .macrodata(
+                    indicator_code.clone(),
+                    start,
+                    end,
+                    Some(offset.cast_signed()),
+                    Some(limit_val.cast_signed()),
+                )
                 .await
                 .map_err(|e| {
                     let msg = e.to_string();
                     if msg.contains("null") || msg.contains("deserialize") {
                         anyhow::anyhow!(
-                            "Indicator code '{}' not found or returned no data",
-                            indicator_code
+                            "Indicator code '{indicator_code}' not found or returned no data"
                         )
                     } else {
                         anyhow::Error::from(e)
@@ -3587,6 +3628,7 @@ pub async fn cmd_macrodata(
             match format {
                 OutputFormat::Json => {
                     let json = serde_json::json!({
+                        "count": resp.count,
                         "info": macrodata_indicator_to_json(&resp.info),
                         "data": resp.data.iter().map(macrodata_record_to_json).collect::<Vec<_>>(),
                     });

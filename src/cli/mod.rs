@@ -550,6 +550,10 @@ pub enum Commands {
     Macrodata {
         /// Indicator code (from `longbridge macrodata` list output). Omit to list all indicators.
         code: Option<String>,
+        /// Filter by country (list only).
+        /// Values: HK, CN, US, EU, JP, SG
+        #[arg(long, value_name = "COUNTRY")]
+        country: Option<String>,
         /// Filter start date for historical data (YYYY-MM-DD)
         #[arg(long)]
         start: Option<String>,
@@ -561,7 +565,7 @@ pub enum Commands {
         /// With CODE (history): default 20, max 100.
         #[arg(long)]
         limit: Option<u32>,
-        /// Page number, 1-based. Only applies to indicator list (without CODE).
+        /// Page number, 1-based.
         #[arg(long, default_value = "1")]
         page: u32,
     },
@@ -3232,11 +3236,12 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         }
         Commands::Macrodata {
             code,
+            country,
             start,
             end,
             limit,
             page,
-        } => fundamental::cmd_macrodata(code, start, end, limit, page, format, verbose).await,
+        } => fundamental::cmd_macrodata(code, country, start, end, limit, page, format, verbose).await,
         Commands::FinanceCalendar { cmd } => {
             let (event_type, opts, star) = match cmd {
                 FinanceCalendarCmd::Report { opts } => ("report", opts, vec![]),
