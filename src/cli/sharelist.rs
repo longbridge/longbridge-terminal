@@ -126,7 +126,7 @@ async fn cmd_detail(id: String, format: &OutputFormat) -> Result<()> {
                     .collect();
 
                 let quote_map: HashMap<String, (String, String)> = {
-                    let ctx = crate::openapi::quote();
+                    let ctx = crate::openapi::quote_cmd();
                     ctx.quote(symbols)
                         .await
                         .unwrap_or_default()

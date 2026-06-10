@@ -767,6 +767,9 @@ pub async fn cmd_max_qty(
 }
 
 pub async fn cmd_portfolio(format: &OutputFormat) -> Result<()> {
+    // Portfolio reaches QuoteContext (WS) through the shared `account` helper, so
+    // record the WS quote operation here at the CLI entry point.
+    crate::openapi::track_quote_cmd();
     let portfolio = crate::openapi::account::fetch_portfolio().await?;
 
     print_account_banner(format);

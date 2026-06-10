@@ -94,7 +94,7 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
         token_ok = false;
         token_detail = e.to_string();
     } else {
-        let ctx = crate::openapi::quote();
+        let ctx = crate::openapi::quote_cmd();
         match ctx.market_temperature(longbridge::Market::HK).await {
             Ok(temp) => {
                 token_ok = true;

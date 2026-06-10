@@ -307,7 +307,7 @@ async fn fetch_account_channel_from_positions() -> Option<String> {
 async fn fetch_account_info(market: &str) -> Result<AccountInfo> {
     let account_channel = crate::auth::account_channel_or_default();
     let (member_id, level_center, statement_info, account_channel) = tokio::join!(
-        crate::openapi::quote().member_id(),
+        crate::openapi::quote_cmd().member_id(),
         fetch_my_quotes(market, &account_channel),
         fetch_account_info_from_statement(),
         fetch_account_channel_from_positions(),

@@ -254,6 +254,46 @@ pub fn trade() -> &'static longbridge::trade::TradeContext {
         .expect("TradeContext not initialized, please call init_contexts() first")
 }
 
+/// Server-side beacon endpoint. Quote operations flow over the WebSocket quote
+/// channel and never reach the HTTP access log; a request to this fake path lets
+/// the server record (and count) that a WS-backed quote command ran. The path
+/// only needs to exist server-side to be logged.
+pub(crate) const QUOTE_CMD_PATH: &str = "/v1/quote/cmd";
+
+/// Send the tracking beacon over `client`. The (empty) body and any transport
+/// error are ignored — the server only needs the access-log entry. Extracted as
+/// its own awaitable function so the integration test can drive it against a
+/// local server deterministically.
+pub(crate) async fn send_quote_cmd(client: &longbridge::httpclient::HttpClient) {
+    let _ = client
+        .request(reqwest::Method::GET, QUOTE_CMD_PATH)
+        .response::<String>()
+        .send()
+        .await;
+}
+
+/// Fire a best-effort `GET /v1/quote/cmd` so the server records a log entry for a
+/// WS-backed quote operation. It reuses the global `HttpClient`, which already
+/// carries the tracking headers (`user-agent`, `x-cli-cmd`, `x-cli-args`) and the
+/// OAuth token, so no extra payload is needed. Fire-and-forget: spawned on the
+/// runtime with its result and errors ignored, never blocking or delaying the
+/// real quote call. Call this directly at CLI quote entry points that reach
+/// `QuoteContext` only through shared helpers (e.g. portfolio via `account`).
+pub fn track_quote_cmd() {
+    let Some(client) = HTTP_CLIENT.get() else {
+        return;
+    };
+    tokio::spawn(send_quote_cmd(client));
+}
+
+/// Get the global `QuoteContext` and record the WS quote operation server-side.
+/// Use this at every CLI quote command entry point instead of [`quote`] so the
+/// otherwise-unlogged WebSocket request is counted. See [`track_quote_cmd`].
+pub fn quote_cmd() -> &'static longbridge::quote::QuoteContext {
+    track_quote_cmd();
+    quote()
+}
+
 /// Get rate-limited `QuoteContext` (recommended for all API calls)
 pub fn quote_limited() -> &'static RateLimitedQuoteContext {
     RATE_LIMITED_QUOTE_CTX
@@ -294,4 +334,126 @@ pub fn statement() -> &'static longbridge::AssetContext {
     STATEMENT_CTX
         .get()
         .expect("AssetContext not initialized, please call init_contexts() first")
+}
+
+#[cfg(test)]
+mod quote_cmd_tests {
+    use super::{send_quote_cmd, QUOTE_CMD_PATH};
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// Start a throwaway HTTP server on an ephemeral port that captures the raw
+    /// bytes of the first request, replies `200`, and hands the request back over
+    /// a oneshot channel. A real socket — no HTTP mocking — so the test exercises
+    /// the actual SDK `HttpClient` send path and survives future refactors.
+    async fn spawn_capture_server() -> (u16, tokio::sync::oneshot::Receiver<String>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                return;
+            };
+            let mut buf = [0u8; 4096];
+            let mut data = Vec::new();
+            // Read until the end of the request headers.
+            while !data.windows(4).any(|w| w == b"\r\n\r\n") {
+                match socket.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => data.extend_from_slice(&buf[..n]),
+                }
+            }
+            let _ = socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                .await;
+            let _ = socket.flush().await;
+            let _ = tx.send(String::from_utf8_lossy(&data).into_owned());
+        });
+        (port, rx)
+    }
+
+    /// `send_quote_cmd` must issue `GET /v1/quote/cmd` and carry whatever tracking
+    /// headers the client was built with, so the server can attribute the
+    /// otherwise-invisible WS quote operation.
+    #[tokio::test]
+    async fn send_quote_cmd_hits_endpoint_with_tracking_headers() {
+        let (port, rx) = spawn_capture_server().await;
+
+        // Build a client the same way production does (token + tracking headers),
+        // but pointed at the local capture server.
+        let oauth = longbridge::oauth::OAuth::from_token("test-token");
+        let config = longbridge::httpclient::HttpClientConfig::from_oauth(oauth)
+            .http_url(format!("http://127.0.0.1:{port}"));
+        let client = longbridge::httpclient::HttpClient::new(config)
+            .header("user-agent", "longbridge-cli/test")
+            .header("x-cli-cmd", "quote");
+
+        send_quote_cmd(&client).await;
+
+        let request = tokio::time::timeout(Duration::from_secs(5), rx)
+            .await
+            .expect("capture server did not receive a request in time")
+            .expect("capture server dropped the request");
+
+        let request_line = request.lines().next().unwrap_or_default();
+        assert!(
+            request_line.starts_with(&format!("GET {QUOTE_CMD_PATH}")),
+            "expected `GET {QUOTE_CMD_PATH}`, got request line: {request_line}"
+        );
+
+        let lower = request.to_lowercase();
+        assert!(
+            lower.contains("user-agent: longbridge-cli/test"),
+            "tracking user-agent header missing; request was:\n{request}"
+        );
+        assert!(
+            lower.contains("x-cli-cmd: quote"),
+            "x-cli-cmd tracking header missing; request was:\n{request}"
+        );
+    }
+
+    /// Recursively collect `.rs` files under `dir`.
+    fn rs_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut out = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    out.extend(rs_files(&path));
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    out.push(path);
+                }
+            }
+        }
+        out
+    }
+
+    /// Guard: every `QuoteContext` access inside `src/cli/` must go through the
+    /// tracking accessor `quote_cmd()` (which fires the `/v1/quote/cmd` beacon),
+    /// never the raw `quote()`. This turns "did we remember to track every
+    /// command" from manual review into an enforced invariant — a new CLI
+    /// command that reaches for `openapi::quote()` directly fails this test.
+    ///
+    /// Blind spot: commands that touch `QuoteContext` only through shared helpers
+    /// in `src/openapi/` (e.g. portfolio via `account`) are not visible here;
+    /// those fire the beacon explicitly at their CLI entry via `track_quote_cmd`.
+    #[test]
+    fn cli_uses_only_tracking_quote_accessor() {
+        let cli_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cli");
+        let mut offenders = Vec::new();
+        for file in rs_files(&cli_dir) {
+            let src = std::fs::read_to_string(&file).unwrap();
+            for (i, line) in src.lines().enumerate() {
+                if line.contains("openapi::quote()") {
+                    offenders.push(format!("{}:{}", file.display(), i + 1));
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "CLI must use `openapi::quote_cmd()` (fires the /v1/quote/cmd beacon), \
+             not raw `openapi::quote()`. Untracked QuoteContext access at:\n{}",
+            offenders.join("\n")
+        );
+    }
 }
