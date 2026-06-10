@@ -542,7 +542,6 @@ pub fn clear_token() -> Result<()> {
     Ok(())
 }
 
-
 #[cfg(test)]
 mod auth_code_tests {
     use super::*;
