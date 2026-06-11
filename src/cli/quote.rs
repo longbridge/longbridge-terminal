@@ -243,7 +243,7 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
     if symbols.is_empty() {
         bail!("At least one symbol is required");
     }
-    let ctx = crate::openapi::quote();
+    let ctx = crate::openapi::quote_cmd();
     let input = symbols.clone();
     let quotes = ctx.quote(symbols).await?;
 
@@ -390,7 +390,7 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
 }
 
 pub async fn cmd_depth(symbol: String, format: &OutputFormat) -> Result<()> {
-    let ctx = crate::openapi::quote();
+    let ctx = crate::openapi::quote_cmd();
     let depth = ctx.depth(symbol.clone()).await?;
     if depth.asks.is_empty() && depth.bids.is_empty() {
         hint_symbol_do_you_mean(&symbol);
@@ -453,7 +453,7 @@ pub async fn cmd_depth(symbol: String, format: &OutputFormat) -> Result<()> {
 }
 
 pub async fn cmd_brokers(symbol: String, format: &OutputFormat) -> Result<()> {
-    let ctx = crate::openapi::quote();
+    let ctx = crate::openapi::quote_cmd();
     let brokers = ctx.brokers(symbol.clone()).await?;
 
     match format {
@@ -513,7 +513,7 @@ pub async fn cmd_brokers(symbol: String, format: &OutputFormat) -> Result<()> {
 }
 
 pub async fn cmd_trades(symbol: String, count: usize, format: &OutputFormat) -> Result<()> {
-    let ctx = crate::openapi::quote();
+    let ctx = crate::openapi::quote_cmd();
     let trades = ctx.trades(symbol.clone(), count).await?;
 
     let headers = &["Time", "Price", "Volume", "Direction", "Type"];
@@ -538,7 +538,7 @@ pub async fn cmd_trades(symbol: String, count: usize, format: &OutputFormat) -> 
 }
 
 pub async fn cmd_intraday(symbol: String, session: &str, format: &OutputFormat) -> Result<()> {
-    let ctx = crate::openapi::quote();
+    let ctx = crate::openapi::quote_cmd();
     let trade_sessions = parse_trade_sessions(session)?;
     let lines = ctx.intraday(symbol.clone(), trade_sessions).await?;
 
@@ -571,7 +571,7 @@ pub async fn cmd_kline(
     session: &str,
     format: &OutputFormat,
 ) -> Result<()> {
-    let ctx = crate::openapi::quote();
+    let ctx = crate::openapi::quote_cmd();
     let p = parse_period(period)?;
     let adj = parse_adjust(adjust)?;
     let trade_sessions = parse_trade_sessions(session)?;
@@ -633,7 +633,7 @@ pub async fn cmd_kline_history(
     session: &str,
     format: &OutputFormat,
 ) -> Result<()> {
-    let ctx = crate::openapi::quote();
+    let ctx = crate::openapi::quote_cmd();
     let p = parse_period(period)?;
     let adj = parse_adjust(adjust)?;
     let trade_sessions = parse_trade_sessions(session)?;
@@ -705,7 +705,7 @@ pub async fn cmd_static(symbols: Vec<String>, format: &OutputFormat) -> Result<(
     if symbols.is_empty() {
         bail!("At least one symbol is required");
     }
-    let ctx = crate::openapi::quote();
+    let ctx = crate::openapi::quote_cmd();
     let input = symbols.clone();
     let infos = ctx.static_info(symbols).await?;
 
@@ -772,7 +772,7 @@ pub async fn cmd_calc_index(
     if symbols.is_empty() {
         bail!("At least one symbol is required");
     }
-    let ctx = crate::openapi::quote();
+    let ctx = crate::openapi::quote_cmd();
 
     // Check if using stock defaults; if results are all empty, retry with option fields
     let is_stock_default =
@@ -850,7 +850,7 @@ pub async fn cmd_calc_index(
 }
 
 pub async fn cmd_capital_flow(symbol: String, format: &OutputFormat) -> Result<()> {
-    let ctx = crate::openapi::quote();
+    let ctx = crate::openapi::quote_cmd();
     let flows = ctx.capital_flow(symbol).await?;
 
     let headers = &["Time", "Inflow"];
@@ -864,7 +864,7 @@ pub async fn cmd_capital_flow(symbol: String, format: &OutputFormat) -> Result<(
 }
 
 pub async fn cmd_capital_dist(symbol: String, format: &OutputFormat) -> Result<()> {
-    let ctx = crate::openapi::quote();
+    let ctx = crate::openapi::quote_cmd();
     let dist = ctx.capital_distribution(symbol.clone()).await?;
 
     match format {
@@ -916,7 +916,7 @@ pub async fn cmd_market_temp(
     _granularity: &str,
     format: &OutputFormat,
 ) -> Result<()> {
-    let ctx = crate::openapi::quote();
+    let ctx = crate::openapi::quote_cmd();
     let m = parse_market(market)?;
 
     if history {
@@ -971,7 +971,7 @@ pub async fn cmd_market_temp(
 }
 
 pub async fn cmd_trading_session(format: &OutputFormat) -> Result<()> {
-    let ctx = crate::openapi::quote();
+    let ctx = crate::openapi::quote_cmd();
     let sessions = ctx.trading_session().await?;
 
     match format {
@@ -1016,7 +1016,7 @@ pub async fn cmd_trading_days(
     end: Option<String>,
     format: &OutputFormat,
 ) -> Result<()> {
-    let ctx = crate::openapi::quote();
+    let ctx = crate::openapi::quote_cmd();
     let m = parse_market(market)?;
 
     let now = time::OffsetDateTime::now_utc().date();
@@ -1074,7 +1074,7 @@ pub async fn cmd_security_list(
     if page == 0 {
         bail!("Page number must be >= 1");
     }
-    let ctx = crate::openapi::quote();
+    let ctx = crate::openapi::quote_cmd();
     let m = parse_market(market)?;
     let cat = parse_security_list_category(category);
     let securities = ctx.security_list(m, cat).await?;
@@ -1120,7 +1120,7 @@ pub async fn cmd_security_list(
 }
 
 pub async fn cmd_participants(format: &OutputFormat) -> Result<()> {
-    let ctx = crate::openapi::quote();
+    let ctx = crate::openapi::quote_cmd();
     let participants = ctx.participants().await?;
 
     let headers = &["Broker ID", "Name EN", "Name CN"];
@@ -1144,7 +1144,7 @@ pub async fn cmd_participants(format: &OutputFormat) -> Result<()> {
 }
 
 pub async fn cmd_subscriptions(format: &OutputFormat) -> Result<()> {
-    let ctx = crate::openapi::quote();
+    let ctx = crate::openapi::quote_cmd();
     let subs = ctx.subscriptions().await?;
 
     let headers = &["Symbol", "Sub Types", "Candlestick Periods"];
@@ -1171,7 +1171,7 @@ pub async fn cmd_option_quote(symbols: Vec<String>, format: &OutputFormat) -> Re
     if symbols.is_empty() {
         bail!("At least one symbol is required");
     }
-    let ctx = crate::openapi::quote();
+    let ctx = crate::openapi::quote_cmd();
     let quotes = ctx.option_quote(symbols).await?;
 
     match format {
@@ -1258,7 +1258,7 @@ pub async fn cmd_option_chain(
     date: Option<String>,
     format: &OutputFormat,
 ) -> Result<()> {
-    let api = LbQuoteApi::new(crate::openapi::quote());
+    let api = LbQuoteApi::new(crate::openapi::quote_cmd());
     run_option_chain(&api, symbol, date, format).await
 }
 
@@ -1266,7 +1266,7 @@ pub async fn cmd_warrant_quote(symbols: Vec<String>, format: &OutputFormat) -> R
     if symbols.is_empty() {
         bail!("At least one symbol is required");
     }
-    let ctx = crate::openapi::quote();
+    let ctx = crate::openapi::quote_cmd();
     let quotes = ctx.warrant_quote(symbols).await?;
 
     let headers = &[
@@ -1296,7 +1296,7 @@ pub async fn cmd_warrant_quote(symbols: Vec<String>, format: &OutputFormat) -> R
 }
 
 pub async fn cmd_warrant_list(symbol: String, format: &OutputFormat) -> Result<()> {
-    let ctx = crate::openapi::quote();
+    let ctx = crate::openapi::quote_cmd();
     let warrants = ctx
         .warrant_list(
             symbol,
@@ -1330,7 +1330,7 @@ pub async fn cmd_warrant_list(symbol: String, format: &OutputFormat) -> Result<(
 }
 
 pub async fn cmd_warrant_issuers(format: &OutputFormat) -> Result<()> {
-    let ctx = crate::openapi::quote();
+    let ctx = crate::openapi::quote_cmd();
     let issuers = ctx.warrant_issuers().await?;
 
     let headers = &["ID", "Name EN", "Name CN"];

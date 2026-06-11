@@ -31,7 +31,7 @@ fn sorted_securities(
 }
 
 async fn cmd_list(format: &OutputFormat) -> Result<()> {
-    let ctx = crate::openapi::quote();
+    let ctx = crate::openapi::quote_cmd();
     let groups = ctx.watchlist().await?;
 
     match format {
@@ -76,7 +76,7 @@ async fn cmd_list(format: &OutputFormat) -> Result<()> {
 }
 
 async fn cmd_show(group: String, format: &OutputFormat) -> Result<()> {
-    let ctx = crate::openapi::quote();
+    let ctx = crate::openapi::quote_cmd();
     let groups = ctx.watchlist().await?;
 
     // Match by numeric ID first, then fall back to name (case-insensitive)
@@ -152,7 +152,7 @@ async fn cmd_pin(securities: Vec<String>, remove: Vec<String>) -> Result<()> {
 }
 
 async fn cmd_create(name: String) -> Result<()> {
-    let ctx = crate::openapi::quote();
+    let ctx = crate::openapi::quote_cmd();
     let req = RequestCreateWatchlistGroup {
         name: name.clone(),
         securities: None,
@@ -175,7 +175,7 @@ async fn cmd_delete(id: i64, purge: bool, yes: bool) -> Result<()> {
         }
     }
 
-    let ctx = crate::openapi::quote();
+    let ctx = crate::openapi::quote_cmd();
     ctx.delete_watchlist_group(id, purge).await?;
     println!("Deleted watchlist group {id}.");
     Ok(())
@@ -189,7 +189,7 @@ async fn cmd_update(
     mode: &str,
     _format: &OutputFormat,
 ) -> Result<()> {
-    let ctx = crate::openapi::quote();
+    let ctx = crate::openapi::quote_cmd();
 
     let update_mode = match mode {
         "remove" => SecuritiesUpdateMode::Remove,

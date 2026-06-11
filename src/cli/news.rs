@@ -76,7 +76,7 @@ pub async fn cmd_news(symbol: String, count: usize, format: &OutputFormat) -> Re
 
 /// Fetch regulatory filings for a symbol.
 pub async fn cmd_filings(symbol: String, count: usize, format: &OutputFormat) -> Result<()> {
-    let items = crate::openapi::quote().filings(&symbol).await?;
+    let items = crate::openapi::quote_cmd().filings(&symbol).await?;
 
     if items.is_empty() {
         println!("No filings found for {symbol}.");
@@ -139,7 +139,7 @@ pub async fn cmd_filing_detail(
     list_files: bool,
     file_index: usize,
 ) -> Result<()> {
-    let items = crate::openapi::quote().filings(&symbol).await?;
+    let items = crate::openapi::quote_cmd().filings(&symbol).await?;
 
     let filing = items
         .into_iter()

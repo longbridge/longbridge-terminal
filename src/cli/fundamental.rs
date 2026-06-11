@@ -1481,7 +1481,7 @@ pub async fn cmd_finance_calendar(
     if let Some(ref src) = filter {
         match src.as_str() {
             "watchlist" => {
-                let ctx = crate::openapi::quote();
+                let ctx = crate::openapi::quote_cmd();
                 let groups = ctx.watchlist().await?;
                 let mut seen = std::collections::HashSet::new();
                 for group in groups {

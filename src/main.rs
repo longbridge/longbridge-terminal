@@ -170,6 +170,7 @@ async fn main() {
             cmd:
                 cli::AuthCmd::Login {
                     auth_code: Some(code),
+                    client_name,
                     ..
                 },
         }) => {
@@ -177,7 +178,7 @@ async fn main() {
             // a single synchronous call. `--auth-code` with no value falls back to
             // the browser Authorization Code flow.
             let result = if code.is_empty() {
-                auth::auth_code_login().await
+                auth::auth_code_login(client_name).await
             } else {
                 auth::auth_code_exchange_login(&code).await
             };
@@ -191,10 +192,11 @@ async fn main() {
             cmd:
                 cli::AuthCmd::Login {
                     auth_code: None,
+                    client_name,
                     verbose,
                 },
         }) => {
-            if let Err(e) = auth::device_login(verbose).await {
+            if let Err(e) = auth::device_login(verbose, client_name).await {
                 eprintln!("Authentication failed: {e:#}");
                 std::process::exit(1);
             }
@@ -202,7 +204,7 @@ async fn main() {
 
         Some(cli::Commands::Auth {
             cmd: cli::AuthCmd::Logout,
-        }) => match auth::clear_token() {
+        }) => match auth::clear_token().await {
             Ok(()) => println!("Successfully logged out."),
             Err(e) => {
                 eprintln!("Failed to clear credentials: {e}");

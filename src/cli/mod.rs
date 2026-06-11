@@ -2996,6 +2996,16 @@ pub enum AuthCmd {
         /// flow that handles the localhost callback (local use only).
         #[arg(long, value_name = "CODE", num_args = 0..=1, default_missing_value = "")]
         auth_code: Option<String>,
+        /// Client name to register with the OAuth server.
+        ///
+        /// Used for dynamic client registration so the device is identifiable in
+        /// the authorized-apps list. Only applies the first time this machine
+        /// registers; later logins reuse the existing client and ignore this.
+        /// A ` (Longbridge CLI)` suffix is appended automatically, e.g.
+        /// `Claude Code` becomes `Claude Code (Longbridge CLI)`.
+        /// Defaults to `<user>@<machine> (Longbridge CLI)`.
+        #[arg(long, value_name = "NAME")]
+        client_name: Option<String>,
         /// Print request/response details for each OAuth step.
         #[arg(short, long)]
         verbose: bool,
