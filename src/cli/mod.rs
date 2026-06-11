@@ -543,12 +543,12 @@ pub enum Commands {
     /// Without a code, lists all available indicators (name, category, country, periodicity).
     /// With a code (from the list output), returns historical releases with actual / forecast / previous values.
     ///
-    /// Example: longbridge macrodata
-    /// Example: longbridge macrodata US00175
-    /// Example: longbridge macrodata US00175 --start 2024-01-01 --end 2024-12-31
-    /// Example: longbridge macrodata US00175 --limit 12 --format json
-    Macrodata {
-        /// Indicator code (from `longbridge macrodata` list output). Omit to list all indicators.
+    /// Example: longbridge macroeconomic
+    /// Example: longbridge macroeconomic US00175
+    /// Example: longbridge macroeconomic US00175 --start 2024-01-01 --end 2024-12-31
+    /// Example: longbridge macroeconomic US00175 --limit 12 --format json
+    Macroeconomic {
+        /// Indicator code (from `longbridge macroeconomic` list output). Omit to list all indicators.
         code: Option<String>,
         /// Filter by country (list only).
         /// Values: HK, CN, US, EU, JP, SG
@@ -3234,14 +3234,14 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         Commands::IndustryPeers { symbol, market } => {
             fundamental::cmd_industry_peers(symbol, market, format, verbose).await
         }
-        Commands::Macrodata {
+        Commands::Macroeconomic {
             code,
             country,
             start,
             end,
             limit,
             page,
-        } => fundamental::cmd_macrodata(code, country, start, end, limit, page, format, verbose).await,
+        } => fundamental::cmd_macroeconomic(code, country, start, end, limit, page, format, verbose).await,
         Commands::FinanceCalendar { cmd } => {
             let (event_type, opts, star) = match cmd {
                 FinanceCalendarCmd::Report { opts } => ("report", opts, vec![]),

@@ -3383,8 +3383,8 @@ fn print_financial_report_snapshot(data: &Value) {
 // ── macrodata ────────────────────────────────────────────────────────────────
 
 use longbridge::fundamental::{
-    Macrodata, MacrodataCountry, MacrodataIndicator, MacrodataIndicatorListResponse,
-    MacrodataResponse,
+    Macroeconomic, MacroeconomicCountry, MacroeconomicIndicator,
+    MacroeconomicIndicatorListResponse, MacroeconomicResponse,
 };
 
 fn ml_text(t: &longbridge::fundamental::MultiLanguageText) -> &str {
@@ -3397,7 +3397,7 @@ fn ml_text(t: &longbridge::fundamental::MultiLanguageText) -> &str {
     }
 }
 
-fn print_macrodata_list(resp: &MacrodataIndicatorListResponse) {
+fn print_macroeconomic_list(resp: &MacroeconomicIndicatorListResponse) {
     if resp.data.is_empty() {
         println!("No indicators found.");
         return;
@@ -3430,7 +3430,7 @@ fn print_macrodata_list(resp: &MacrodataIndicatorListResponse) {
     );
 }
 
-fn print_macrodata_history(resp: &MacrodataResponse) {
+fn print_macroeconomic_history(resp: &MacroeconomicResponse) {
     let info = &resp.info;
     let name = ml_text(&info.name);
     let display_name = if name.is_empty() {
@@ -3504,7 +3504,7 @@ fn ml_text_json(t: &longbridge::fundamental::MultiLanguageText) -> Value {
     })
 }
 
-fn macrodata_indicator_to_json(i: &MacrodataIndicator) -> Value {
+fn macroeconomic_indicator_to_json(i: &MacroeconomicIndicator) -> Value {
     serde_json::json!({
         "indicator_code":    i.indicator_code,
         "source_org":        i.source_org,
@@ -3519,7 +3519,7 @@ fn macrodata_indicator_to_json(i: &MacrodataIndicator) -> Value {
     })
 }
 
-fn macrodata_record_to_json(r: &Macrodata) -> Value {
+fn macroeconomic_record_to_json(r: &Macroeconomic) -> Value {
     serde_json::json!({
         "period":          r.period,
         "release_at":      opt_ts(r.release_at),
@@ -3533,20 +3533,20 @@ fn macrodata_record_to_json(r: &Macrodata) -> Value {
     })
 }
 
-fn parse_country(s: &str) -> Option<MacrodataCountry> {
+fn parse_macroeconomic_country(s: &str) -> Option<MacroeconomicCountry> {
     match s.to_uppercase().as_str() {
-        "HK" => Some(MacrodataCountry::HongKong),
-        "CN" => Some(MacrodataCountry::China),
-        "US" => Some(MacrodataCountry::UnitedStates),
-        "EU" => Some(MacrodataCountry::EuroZone),
-        "JP" => Some(MacrodataCountry::Japan),
-        "SG" => Some(MacrodataCountry::Singapore),
+        "HK" => Some(MacroeconomicCountry::HongKong),
+        "CN" => Some(MacroeconomicCountry::China),
+        "US" => Some(MacroeconomicCountry::UnitedStates),
+        "EU" => Some(MacroeconomicCountry::EuroZone),
+        "JP" => Some(MacroeconomicCountry::Japan),
+        "SG" => Some(MacroeconomicCountry::Singapore),
         _ => None,
     }
 }
 
 /// List all macroeconomic indicators, or query historical data for one indicator.
-pub async fn cmd_macrodata(
+pub async fn cmd_macroeconomic(
     code: Option<String>,
     country: Option<String>,
     start: Option<String>,
@@ -3557,7 +3557,7 @@ pub async fn cmd_macrodata(
     verbose: bool,
 ) -> Result<()> {
     if verbose {
-        eprintln!("* Using FundamentalContext SDK (longbridge/openapi#540)");
+        eprintln!("* Using FundamentalContext SDK macroeconomic methods (longbridge/openapi#540)");
     }
     let ctx = crate::openapi::fundamental();
     match code {
@@ -3567,19 +3567,19 @@ pub async fn cmd_macrodata(
             let country_filter = country
                 .as_deref()
                 .map(|c| {
-                    parse_country(c).ok_or_else(|| {
+                    parse_macroeconomic_country(c).ok_or_else(|| {
                         anyhow::anyhow!("Unknown country '{c}'. Use: HK, CN, US, EU, JP, SG")
                     })
                 })
                 .transpose()?;
             if verbose {
                 eprintln!(
-                    "* macrodata_indicators(country={:?}, offset={offset}, limit={limit_val})",
+                    "* macroeconomic_indicators(country={:?}, offset={offset}, limit={limit_val})",
                     country.as_deref().unwrap_or("-")
                 );
             }
             let resp = ctx
-                .macrodata_indicators(
+                .macroeconomic_indicators(
                     country_filter,
                     Some(offset.cast_signed()),
                     Some(limit_val.cast_signed()),
@@ -3589,11 +3589,11 @@ pub async fn cmd_macrodata(
                 OutputFormat::Json => {
                     let json = serde_json::json!({
                         "count": resp.count,
-                        "list": resp.data.iter().map(macrodata_indicator_to_json).collect::<Vec<_>>(),
+                        "list": resp.data.iter().map(macroeconomic_indicator_to_json).collect::<Vec<_>>(),
                     });
                     print_json(&json);
                 }
-                OutputFormat::Pretty => print_macrodata_list(&resp),
+                OutputFormat::Pretty => print_macroeconomic_list(&resp),
             }
         }
         Some(ref indicator_code) => {
@@ -3610,7 +3610,7 @@ pub async fn cmd_macrodata(
                 );
             }
             let resp = ctx
-                .macrodata(
+                .macroeconomic(
                     indicator_code.clone(),
                     start,
                     end,
@@ -3632,12 +3632,12 @@ pub async fn cmd_macrodata(
                 OutputFormat::Json => {
                     let json = serde_json::json!({
                         "count": resp.count,
-                        "info": macrodata_indicator_to_json(&resp.info),
-                        "data": resp.data.iter().map(macrodata_record_to_json).collect::<Vec<_>>(),
+                        "info": macroeconomic_indicator_to_json(&resp.info),
+                        "data": resp.data.iter().map(macroeconomic_record_to_json).collect::<Vec<_>>(),
                     });
                     print_json(&json);
                 }
-                OutputFormat::Pretty => print_macrodata_history(&resp),
+                OutputFormat::Pretty => print_macroeconomic_history(&resp),
             }
         }
     }
