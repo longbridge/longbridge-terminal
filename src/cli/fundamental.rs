@@ -3628,6 +3628,9 @@ pub async fn cmd_macroeconomic(
                         anyhow::Error::from(e)
                     }
                 })?;
+            if resp.info.indicator_code.is_empty() {
+                anyhow::bail!("Indicator code '{indicator_code}' not found");
+            }
             match format {
                 OutputFormat::Json => {
                     let json = serde_json::json!({
