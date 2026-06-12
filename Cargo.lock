@@ -1334,7 +1334,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1433,7 +1433,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2619,8 +2619,8 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "longbridge"
-version = "4.3.1"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fmacroeconomic-v2#db9675c7528488bc96efc179bdfab77dc3e3c7dc"
+version = "4.3.2"
+source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fmacroeconomic-v2#e68728fea944412756987f8a6b2b98fd59c0ddd5"
 dependencies = [
  "anyhow",
  "bitflags 2.10.0",
@@ -2654,8 +2654,8 @@ dependencies = [
 
 [[package]]
 name = "longbridge-candlesticks"
-version = "4.3.1"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fmacroeconomic-v2#db9675c7528488bc96efc179bdfab77dc3e3c7dc"
+version = "4.3.2"
+source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fmacroeconomic-v2#e68728fea944412756987f8a6b2b98fd59c0ddd5"
 dependencies = [
  "bitflags 2.10.0",
  "num-traits",
@@ -2666,16 +2666,16 @@ dependencies = [
 
 [[package]]
 name = "longbridge-geo"
-version = "4.3.1"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fmacroeconomic-v2#db9675c7528488bc96efc179bdfab77dc3e3c7dc"
+version = "4.3.2"
+source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fmacroeconomic-v2#e68728fea944412756987f8a6b2b98fd59c0ddd5"
 dependencies = [
  "reqwest 0.12.28",
 ]
 
 [[package]]
 name = "longbridge-httpcli"
-version = "4.3.1"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fmacroeconomic-v2#db9675c7528488bc96efc179bdfab77dc3e3c7dc"
+version = "4.3.2"
+source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fmacroeconomic-v2#e68728fea944412756987f8a6b2b98fd59c0ddd5"
 dependencies = [
  "dotenv",
  "futures-util",
@@ -2696,8 +2696,8 @@ dependencies = [
 
 [[package]]
 name = "longbridge-oauth"
-version = "4.3.1"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fmacroeconomic-v2#db9675c7528488bc96efc179bdfab77dc3e3c7dc"
+version = "4.3.2"
+source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fmacroeconomic-v2#e68728fea944412756987f8a6b2b98fd59c0ddd5"
 dependencies = [
  "dirs 6.0.0",
  "futures-util",
@@ -2713,8 +2713,8 @@ dependencies = [
 
 [[package]]
 name = "longbridge-proto"
-version = "4.3.1"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fmacroeconomic-v2#db9675c7528488bc96efc179bdfab77dc3e3c7dc"
+version = "4.3.2"
+source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fmacroeconomic-v2#e68728fea944412756987f8a6b2b98fd59c0ddd5"
 dependencies = [
  "prost 0.14.3",
  "serde",
@@ -2791,8 +2791,8 @@ dependencies = [
 
 [[package]]
 name = "longbridge-wscli"
-version = "4.3.1"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fmacroeconomic-v2#db9675c7528488bc96efc179bdfab77dc3e3c7dc"
+version = "4.3.2"
+source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fmacroeconomic-v2#e68728fea944412756987f8a6b2b98fd59c0ddd5"
 dependencies = [
  "byteorder",
  "flate2",
@@ -3089,7 +3089,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3685,7 +3685,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27c6023962132f4b30eb4c172c91ce92d933da334c59c23cddee82358ddafb0b"
 dependencies = [
  "anyhow",
- "itertools 0.11.0",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.114",
@@ -3800,7 +3800,7 @@ dependencies = [
  "once_cell",
  "socket2 0.6.2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -4343,7 +4343,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5007,7 +5007,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.3",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6063,7 +6063,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

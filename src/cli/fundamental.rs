@@ -3550,13 +3550,13 @@ pub async fn cmd_macroeconomic(
                 .transpose()?;
             if verbose {
                 eprintln!(
-                    "* macroeconomic_indicators_v2(country={:?}, keyword={:?}, offset={offset}, limit={limit_val})",
+                    "* macroeconomic_indicators(country={:?}, keyword={:?}, offset={offset}, limit={limit_val})",
                     country.as_deref().unwrap_or("-"),
                     keyword.as_deref().unwrap_or("-"),
                 );
             }
             let resp = ctx
-                .macroeconomic_indicators_v2(
+                .macroeconomic_indicators(
                     country_filter,
                     keyword.clone(),
                     Some(offset.cast_signed()),
