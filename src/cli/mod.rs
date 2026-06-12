@@ -538,7 +538,10 @@ pub enum Commands {
         symbol: String,
     },
 
-    /// Macroeconomic indicators: list all supported indicators or query historical data
+    /// Macroeconomic data by indicator: list all supported indicators or query historical data
+    ///
+    /// The indicator-dimension counterpart of `finance-calendar macrodata` (which is
+    /// release-time-dimension): same underlying data, organized by indicator instead of by date.
     ///
     /// Without a code, lists all available indicators (name, category, country, periodicity).
     /// With a code (from the list output), returns historical releases with actual / forecast / previous values.
@@ -546,13 +549,14 @@ pub enum Commands {
     /// Results are paginated (20 per page; use --page / --limit). Names and descriptions
     /// follow the global --lang flag (zh-CN / zh-HK / en).
     ///
-    /// Example: longbridge macroeconomic
-    /// Example: longbridge macroeconomic --page 2
-    /// Example: longbridge --lang en macroeconomic US00175
-    /// Example: longbridge macroeconomic US00175 --start 2024-01-01 --end 2024-12-31
-    /// Example: longbridge macroeconomic US00175 --limit 12 --format json
+    /// Example: longbridge macrodata
+    /// Example: longbridge macrodata --page 2
+    /// Example: longbridge --lang en macrodata US00175
+    /// Example: longbridge macrodata US00175 --start 2024-01-01 --end 2024-12-31
+    /// Example: longbridge macrodata US00175 --limit 12 --format json
+    #[command(name = "macrodata")]
     Macroeconomic {
-        /// Indicator code (from `longbridge macroeconomic` list output). Omit to list all indicators.
+        /// Indicator code (from `longbridge macrodata` list output). Omit to list all indicators.
         code: Option<String>,
         /// Filter by country (list only).
         /// Values: HK, CN, US, EU, JP, SG
