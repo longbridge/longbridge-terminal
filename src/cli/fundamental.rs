@@ -3447,32 +3447,33 @@ fn print_macroeconomic_history(resp: &MacroeconomicResponse) {
         println!("No data.");
         return;
     }
+    let has_unit = resp.data.iter().any(|r| !r.unit.is_empty());
     let rows: Vec<Vec<String>> = resp
         .data
         .iter()
         .map(|r| {
-            let unit_str = if r.unit_prefix.is_empty() {
-                r.unit.clone()
-            } else {
-                format!("{}{}", r.unit_prefix, r.unit)
-            };
-            vec![
+            let mut row = vec![
                 r.period.clone(),
                 r.actual_value.clone(),
                 r.forecast_value.clone(),
                 r.previous_value.clone(),
-                r.revised_value.clone(),
-                unit_str,
-            ]
+            ];
+            if has_unit {
+                let unit_str = if r.unit_prefix.is_empty() {
+                    r.unit.clone()
+                } else {
+                    format!("{}{}", r.unit_prefix, r.unit)
+                };
+                row.push(unit_str);
+            }
+            row
         })
         .collect();
-    super::output::print_table(
-        &[
-            "Period", "Actual", "Forecast", "Previous", "Revised", "Unit",
-        ],
-        rows,
-        &OutputFormat::Pretty,
-    );
+    let mut headers = vec!["Period", "Actual", "Forecast", "Previous"];
+    if has_unit {
+        headers.push("Unit");
+    }
+    super::output::print_table(&headers, rows, &OutputFormat::Pretty);
 }
 
 fn opt_ts(dt: Option<time::OffsetDateTime>) -> Value {
@@ -3484,31 +3485,27 @@ fn opt_ts(dt: Option<time::OffsetDateTime>) -> Value {
 
 fn macroeconomic_indicator_to_json(i: &MacroeconomicIndicator) -> Value {
     serde_json::json!({
-        "indicator_code":    i.indicator_code,
-        "source_org":        i.source_org,
-        "country":           i.country,
-        "name":              i.name,
-        "adjustment_factor": i.adjustment_factor,
-        "periodicity":       i.periodicity,
-        "category":          i.category,
-        "describe":          i.describe,
-        "importance":        i.importance,
-        "start_date":        opt_ts(i.start_date),
+        "indicator_code": i.indicator_code,
+        "country":        i.country,
+        "name":           i.name,
+        "describe":       i.describe,
+        "importance":     i.importance,
+        "periodicity":    i.periodicity,
     })
 }
 
 fn macroeconomic_record_to_json(r: &Macroeconomic) -> Value {
-    serde_json::json!({
-        "period":          r.period,
-        "release_at":      opt_ts(r.release_at),
-        "actual_value":    r.actual_value,
-        "previous_value":  r.previous_value,
-        "forecast_value":  r.forecast_value,
-        "revised_value":   r.revised_value,
-        "next_release_at": opt_ts(r.next_release_at),
-        "unit":            r.unit,
-        "unit_prefix":     r.unit_prefix,
-    })
+    let mut obj = serde_json::json!({
+        "period":         r.period,
+        "release_at":     opt_ts(r.release_at),
+        "actual_value":   r.actual_value,
+        "previous_value": r.previous_value,
+        "forecast_value": r.forecast_value,
+    });
+    if !r.unit.is_empty() {
+        obj["unit"] = Value::String(r.unit.clone());
+    }
+    obj
 }
 
 fn parse_macroeconomic_country(s: &str) -> Option<MacroeconomicCountry> {
@@ -3527,6 +3524,7 @@ fn parse_macroeconomic_country(s: &str) -> Option<MacroeconomicCountry> {
 pub async fn cmd_macroeconomic(
     code: Option<String>,
     country: Option<String>,
+    keyword: Option<String>,
     start: Option<String>,
     end: Option<String>,
     limit: u32,
@@ -3552,13 +3550,15 @@ pub async fn cmd_macroeconomic(
                 .transpose()?;
             if verbose {
                 eprintln!(
-                    "* macroeconomic_indicators(country={:?}, offset={offset}, limit={limit_val})",
-                    country.as_deref().unwrap_or("-")
+                    "* macroeconomic_indicators_v2(country={:?}, keyword={:?}, offset={offset}, limit={limit_val})",
+                    country.as_deref().unwrap_or("-"),
+                    keyword.as_deref().unwrap_or("-"),
                 );
             }
             let resp = ctx
-                .macroeconomic_indicators(
+                .macroeconomic_indicators_v2(
                     country_filter,
+                    keyword.clone(),
                     Some(offset.cast_signed()),
                     Some(limit_val.cast_signed()),
                 )
@@ -3587,6 +3587,9 @@ pub async fn cmd_macroeconomic(
         Some(ref indicator_code) => {
             if country.is_some() {
                 eprintln!("Note: --country is ignored when CODE is specified");
+            }
+            if keyword.is_some() {
+                eprintln!("Note: --keyword is ignored when CODE is specified");
             }
             let limit_val = limit;
             let offset = (page.saturating_sub(1)) * limit_val;

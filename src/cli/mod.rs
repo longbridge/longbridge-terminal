@@ -550,6 +550,8 @@ pub enum Commands {
     /// follow the global --lang flag (zh-CN / zh-HK / en).
     ///
     /// Example: longbridge macrodata
+    /// Example: longbridge macrodata --keyword CPI
+    /// Example: longbridge macrodata --keyword CPI --country US
     /// Example: longbridge macrodata --page 2
     /// Example: longbridge --lang en macrodata US00175
     /// Example: longbridge macrodata US00175 --start 2024-01-01 --end 2024-12-31
@@ -562,6 +564,9 @@ pub enum Commands {
         /// Values: HK, CN, US, EU, JP, SG
         #[arg(long, value_name = "COUNTRY")]
         country: Option<String>,
+        /// Search by keyword in indicator name (list only)
+        #[arg(long)]
+        keyword: Option<String>,
         /// Filter start date for historical data (YYYY-MM-DD)
         #[arg(long)]
         start: Option<String>,
@@ -3253,11 +3258,12 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         Commands::Macroeconomic {
             code,
             country,
+            keyword,
             start,
             end,
             limit,
             page,
-        } => fundamental::cmd_macroeconomic(code, country, start, end, limit, page, format, verbose).await,
+        } => fundamental::cmd_macroeconomic(code, country, keyword, start, end, limit, page, format, verbose).await,
         Commands::FinanceCalendar { cmd } => {
             let (event_type, opts, star) = match cmd {
                 FinanceCalendarCmd::Report { opts } => ("report", opts, vec![]),
