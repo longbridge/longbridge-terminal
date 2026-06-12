@@ -3423,15 +3423,21 @@ fn print_macroeconomic_list(resp: &MacroeconomicIndicatorListResponse) {
 fn print_macroeconomic_history(resp: &MacroeconomicResponse) {
     let info = &resp.info;
     let name = display_name(&info.name, &info.indicator_code);
-    let meta = if info.category.is_empty() {
-        format!("{}  {}", info.source_org, info.periodicity)
+    let mut meta_parts: Vec<&str> = Vec::new();
+    if !info.category.is_empty() {
+        meta_parts.push(&info.category);
+    }
+    if !info.source_org.is_empty() {
+        meta_parts.push(&info.source_org);
+    }
+    if !info.periodicity.is_empty() {
+        meta_parts.push(&info.periodicity);
+    }
+    if meta_parts.is_empty() {
+        println!("{name}");
     } else {
-        format!(
-            "{}  |  {}  {}",
-            info.category, info.source_org, info.periodicity
-        )
-    };
-    println!("{name}  [{meta}]");
+        println!("{name}  [{}]", meta_parts.join("  |  "));
+    }
     if !info.describe.is_empty() {
         println!("{}", info.describe);
     }
