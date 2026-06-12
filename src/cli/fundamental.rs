@@ -3608,9 +3608,14 @@ pub async fn cmd_macroeconomic(
                 .await
                 .map_err(|e| {
                     let msg = e.to_string();
-                    if msg.contains("null") || msg.contains("deserialize") {
+                    if msg.contains("null")
+                        || msg.contains("deserialize")
+                        || msg.contains("code 13")
+                        || msg.contains("internal server error")
+                    {
                         anyhow::anyhow!(
-                            "Indicator code '{indicator_code}' not found or returned no data"
+                            "Indicator code '{indicator_code}' not found. \
+                             Use `longbridge macrodata` to list valid codes."
                         )
                     } else {
                         anyhow::Error::from(e)
