@@ -3400,38 +3400,24 @@ fn print_macroeconomic_list(resp: &MacroeconomicIndicatorListResponse) {
         println!("No indicators found.");
         return;
     }
-    let has_category = resp.data.iter().any(|i| !i.category.is_empty());
-    let has_source = resp.data.iter().any(|i| !i.source_org.is_empty());
-
-    let mut headers = vec!["Code", "Name", "Country", "Frequency"];
-    if has_category {
-        headers.insert(2, "Category");
-    }
-    if has_source {
-        headers.push("Source");
-    }
-
     let rows: Vec<Vec<String>> = resp
         .data
         .iter()
         .map(|i| {
-            let mut row = vec![
+            vec![
                 i.indicator_code.clone(),
                 display_name(&i.name, &i.indicator_code).to_owned(),
                 i.country.clone(),
                 i.periodicity.clone(),
-            ];
-            if has_category {
-                row.insert(2, i.category.clone());
-            }
-            if has_source {
-                row.push(i.source_org.clone());
-            }
-            row
+            ]
         })
         .collect();
     println!("Total: {}", resp.count);
-    super::output::print_table(&headers, rows, &OutputFormat::Pretty);
+    super::output::print_table(
+        &["Code", "Name", "Country", "Frequency"],
+        rows,
+        &OutputFormat::Pretty,
+    );
 }
 
 fn print_macroeconomic_history(resp: &MacroeconomicResponse) {
