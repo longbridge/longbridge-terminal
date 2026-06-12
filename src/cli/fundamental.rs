@@ -3387,15 +3387,12 @@ use longbridge::fundamental::{
     MacroeconomicIndicatorListResponse, MacroeconomicResponse,
 };
 
-/// Pick the field of a `MultiLanguageText` matching the effective content
-/// language (`--lang`), falling back to other languages when it is empty.
-fn ml_text(t: &longbridge::fundamental::MultiLanguageText) -> &str {
-    let candidates: [&str; 3] = match crate::locale::get() {
-        "zh-CN" => [&t.simplified_chinese, &t.english, &t.traditional_chinese],
-        "zh-HK" => [&t.traditional_chinese, &t.simplified_chinese, &t.english],
-        _ => [&t.english, &t.simplified_chinese, &t.traditional_chinese],
-    };
-    candidates.into_iter().find(|s| !s.is_empty()).unwrap_or("")
+fn display_name<'a>(name: &'a str, fallback: &'a str) -> &'a str {
+    if name.is_empty() {
+        fallback
+    } else {
+        name
+    }
 }
 
 fn print_macroeconomic_list(resp: &MacroeconomicIndicatorListResponse) {
@@ -3403,43 +3400,43 @@ fn print_macroeconomic_list(resp: &MacroeconomicIndicatorListResponse) {
         println!("No indicators found.");
         return;
     }
+    let has_category = resp.data.iter().any(|i| !i.category.is_empty());
+    let has_source = resp.data.iter().any(|i| !i.source_org.is_empty());
+
+    let mut headers = vec!["Code", "Name", "Country", "Frequency"];
+    if has_category {
+        headers.insert(2, "Category");
+    }
+    if has_source {
+        headers.push("Source");
+    }
+
     let rows: Vec<Vec<String>> = resp
         .data
         .iter()
         .map(|i| {
-            let name = ml_text(&i.name);
-            let display_name = if name.is_empty() {
-                i.indicator_code.as_str()
-            } else {
-                name
-            };
-            vec![
+            let mut row = vec![
                 i.indicator_code.clone(),
-                display_name.to_owned(),
-                i.category.clone(),
+                display_name(&i.name, &i.indicator_code).to_owned(),
                 i.country.clone(),
                 i.periodicity.clone(),
-                i.source_org.clone(),
-            ]
+            ];
+            if has_category {
+                row.insert(2, i.category.clone());
+            }
+            if has_source {
+                row.push(i.source_org.clone());
+            }
+            row
         })
         .collect();
     println!("Total: {}", resp.count);
-    super::output::print_table(
-        &["Code", "Name", "Category", "Country", "Frequency", "Source"],
-        rows,
-        &OutputFormat::Pretty,
-    );
+    super::output::print_table(&headers, rows, &OutputFormat::Pretty);
 }
 
 fn print_macroeconomic_history(resp: &MacroeconomicResponse) {
     let info = &resp.info;
-    let name = ml_text(&info.name);
-    let display_name = if name.is_empty() {
-        info.indicator_code.as_str()
-    } else {
-        name
-    };
-    let describe = ml_text(&info.describe);
+    let name = display_name(&info.name, &info.indicator_code);
     let meta = if info.category.is_empty() {
         format!("{}  {}", info.source_org, info.periodicity)
     } else {
@@ -3448,9 +3445,9 @@ fn print_macroeconomic_history(resp: &MacroeconomicResponse) {
             info.category, info.source_org, info.periodicity
         )
     };
-    println!("{display_name}  [{meta}]");
-    if !describe.is_empty() {
-        println!("{describe}");
+    println!("{name}  [{meta}]");
+    if !info.describe.is_empty() {
+        println!("{}", info.describe);
     }
     println!();
 
@@ -3462,14 +3459,10 @@ fn print_macroeconomic_history(resp: &MacroeconomicResponse) {
         .data
         .iter()
         .map(|r| {
-            let unit_str = {
-                let prefix = ml_text(&r.unit_prefix);
-                let unit = ml_text(&r.unit);
-                if prefix.is_empty() {
-                    unit.to_owned()
-                } else {
-                    format!("{prefix}{unit}")
-                }
+            let unit_str = if r.unit_prefix.is_empty() {
+                r.unit.clone()
+            } else {
+                format!("{}{}", r.unit_prefix, r.unit)
             };
             vec![
                 r.period.clone(),
@@ -3502,11 +3495,11 @@ fn macroeconomic_indicator_to_json(i: &MacroeconomicIndicator) -> Value {
         "indicator_code":    i.indicator_code,
         "source_org":        i.source_org,
         "country":           i.country,
-        "name":              ml_text(&i.name),
+        "name":              i.name,
         "adjustment_factor": i.adjustment_factor,
         "periodicity":       i.periodicity,
         "category":          i.category,
-        "describe":          ml_text(&i.describe),
+        "describe":          i.describe,
         "importance":        i.importance,
         "start_date":        opt_ts(i.start_date),
     })
@@ -3521,8 +3514,8 @@ fn macroeconomic_record_to_json(r: &Macroeconomic) -> Value {
         "forecast_value":  r.forecast_value,
         "revised_value":   r.revised_value,
         "next_release_at": opt_ts(r.next_release_at),
-        "unit":            ml_text(&r.unit),
-        "unit_prefix":     ml_text(&r.unit_prefix),
+        "unit":            r.unit,
+        "unit_prefix":     r.unit_prefix,
     })
 }
 
