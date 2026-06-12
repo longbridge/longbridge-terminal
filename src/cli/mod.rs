@@ -543,8 +543,12 @@ pub enum Commands {
     /// Without a code, lists all available indicators (name, category, country, periodicity).
     /// With a code (from the list output), returns historical releases with actual / forecast / previous values.
     ///
+    /// Results are paginated (20 per page; use --page / --limit). Names and descriptions
+    /// follow the global --lang flag (zh-CN / zh-HK / en).
+    ///
     /// Example: longbridge macroeconomic
-    /// Example: longbridge macroeconomic US00175
+    /// Example: longbridge macroeconomic --page 2
+    /// Example: longbridge --lang en macroeconomic US00175
     /// Example: longbridge macroeconomic US00175 --start 2024-01-01 --end 2024-12-31
     /// Example: longbridge macroeconomic US00175 --limit 12 --format json
     Macroeconomic {
@@ -560,11 +564,9 @@ pub enum Commands {
         /// Filter end date for historical data (YYYY-MM-DD)
         #[arg(long)]
         end: Option<String>,
-        /// Maximum number of records to return.
-        /// Without CODE (list): default 1000, max 1000.
-        /// With CODE (history): default 20, max 100.
-        #[arg(long)]
-        limit: Option<u32>,
+        /// Records per page (default: 20). Applies to both the indicator list and history.
+        #[arg(long, default_value = "20")]
+        limit: u32,
         /// Page number, 1-based.
         #[arg(long, default_value = "1")]
         page: u32,

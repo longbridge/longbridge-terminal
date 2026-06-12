@@ -3387,14 +3387,15 @@ use longbridge::fundamental::{
     MacroeconomicIndicatorListResponse, MacroeconomicResponse,
 };
 
+/// Pick the field of a `MultiLanguageText` matching the effective content
+/// language (`--lang`), falling back to other languages when it is empty.
 fn ml_text(t: &longbridge::fundamental::MultiLanguageText) -> &str {
-    if !t.simplified_chinese.is_empty() {
-        &t.simplified_chinese
-    } else if !t.english.is_empty() {
-        &t.english
-    } else {
-        ""
-    }
+    let candidates: [&str; 3] = match crate::locale::get() {
+        "zh-CN" => [&t.simplified_chinese, &t.english, &t.traditional_chinese],
+        "zh-HK" => [&t.traditional_chinese, &t.simplified_chinese, &t.english],
+        _ => [&t.english, &t.simplified_chinese, &t.traditional_chinese],
+    };
+    candidates.into_iter().find(|s| !s.is_empty()).unwrap_or("")
 }
 
 fn print_macroeconomic_list(resp: &MacroeconomicIndicatorListResponse) {
@@ -3496,24 +3497,16 @@ fn opt_ts(dt: Option<time::OffsetDateTime>) -> Value {
     }
 }
 
-fn ml_text_json(t: &longbridge::fundamental::MultiLanguageText) -> Value {
-    serde_json::json!({
-        "english":            t.english,
-        "simplified_chinese": t.simplified_chinese,
-        "traditional_chinese":t.traditional_chinese,
-    })
-}
-
 fn macroeconomic_indicator_to_json(i: &MacroeconomicIndicator) -> Value {
     serde_json::json!({
         "indicator_code":    i.indicator_code,
         "source_org":        i.source_org,
         "country":           i.country,
-        "name":              ml_text_json(&i.name),
+        "name":              ml_text(&i.name),
         "adjustment_factor": i.adjustment_factor,
         "periodicity":       i.periodicity,
         "category":          i.category,
-        "describe":          ml_text_json(&i.describe),
+        "describe":          ml_text(&i.describe),
         "importance":        i.importance,
         "start_date":        opt_ts(i.start_date),
     })
@@ -3528,8 +3521,8 @@ fn macroeconomic_record_to_json(r: &Macroeconomic) -> Value {
         "forecast_value":  r.forecast_value,
         "revised_value":   r.revised_value,
         "next_release_at": opt_ts(r.next_release_at),
-        "unit":            ml_text_json(&r.unit),
-        "unit_prefix":     ml_text_json(&r.unit_prefix),
+        "unit":            ml_text(&r.unit),
+        "unit_prefix":     ml_text(&r.unit_prefix),
     })
 }
 
@@ -3551,7 +3544,7 @@ pub async fn cmd_macroeconomic(
     country: Option<String>,
     start: Option<String>,
     end: Option<String>,
-    limit: Option<u32>,
+    limit: u32,
     page: u32,
     format: &OutputFormat,
     verbose: bool,
@@ -3562,7 +3555,7 @@ pub async fn cmd_macroeconomic(
     let ctx = crate::openapi::fundamental();
     match code {
         None => {
-            let limit_val = limit.unwrap_or(1000);
+            let limit_val = limit;
             let offset = (page.saturating_sub(1)) * limit_val;
             let country_filter = country
                 .as_deref()
@@ -3585,22 +3578,32 @@ pub async fn cmd_macroeconomic(
                     Some(limit_val.cast_signed()),
                 )
                 .await?;
+            let total = u64::try_from(resp.count).unwrap_or(0);
+            let has_more = u64::from(offset) + (resp.data.len() as u64) < total;
             match format {
                 OutputFormat::Json => {
                     let json = serde_json::json!({
                         "count": resp.count,
+                        "page": page,
+                        "limit": limit_val,
+                        "has_more": has_more,
                         "list": resp.data.iter().map(macroeconomic_indicator_to_json).collect::<Vec<_>>(),
                     });
                     print_json(&json);
                 }
-                OutputFormat::Pretty => print_macroeconomic_list(&resp),
+                OutputFormat::Pretty => {
+                    print_macroeconomic_list(&resp);
+                    if has_more {
+                        println!("(more results available, use --page to paginate)");
+                    }
+                }
             }
         }
         Some(ref indicator_code) => {
             if country.is_some() {
                 eprintln!("Note: --country is ignored when CODE is specified");
             }
-            let limit_val = limit.unwrap_or(20);
+            let limit_val = limit;
             let offset = (page.saturating_sub(1)) * limit_val;
             if verbose {
                 eprintln!(
@@ -3631,16 +3634,26 @@ pub async fn cmd_macroeconomic(
             if resp.info.indicator_code.is_empty() {
                 anyhow::bail!("Indicator code '{indicator_code}' not found");
             }
+            let total = u64::try_from(resp.count).unwrap_or(0);
+            let has_more = u64::from(offset) + (resp.data.len() as u64) < total;
             match format {
                 OutputFormat::Json => {
                     let json = serde_json::json!({
                         "count": resp.count,
+                        "page": page,
+                        "limit": limit_val,
+                        "has_more": has_more,
                         "info": macroeconomic_indicator_to_json(&resp.info),
                         "data": resp.data.iter().map(macroeconomic_record_to_json).collect::<Vec<_>>(),
                     });
                     print_json(&json);
                 }
-                OutputFormat::Pretty => print_macroeconomic_history(&resp),
+                OutputFormat::Pretty => {
+                    print_macroeconomic_history(&resp);
+                    if has_more {
+                        println!("(more results available, use --page to paginate)");
+                    }
+                }
             }
         }
     }

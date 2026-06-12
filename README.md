@@ -210,6 +210,8 @@ longbridge corp-action 700.HK [--all]                                 # Corporat
 longbridge business-segments AAPL.US [--history] [--report qf|saf|af] [--cate <cate>]  # Revenue segment breakdown (current snapshot or historical trends)
 longbridge industry-rank --market US|HK|CN|SG [--indicator leading-gainer|...|net-profit-growth]  # Industry ranking list; output symbols feed into industry-peers
 longbridge industry-peers IN00446.US                                  # Industry peer group hierarchy tree for an industry index symbol (from industry-rank)
+longbridge macroeconomic [--country US] [--page 1] [--limit 20]       # List macroeconomic indicators (20/page); names follow --lang
+longbridge macroeconomic US00175 [--start 2024-01-01] [--end 2024-12-31]  # Historical releases for one indicator (actual / forecast / previous)
 ```
 
 ### Deposits & Withdrawals
