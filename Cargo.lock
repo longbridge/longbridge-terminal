@@ -2620,7 +2620,7 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 [[package]]
 name = "longbridge"
 version = "4.3.2"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fmacroeconomic-v2#e68728fea944412756987f8a6b2b98fd59c0ddd5"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#ff567d0932fc93710222277e65d0bd87276c432e"
 dependencies = [
  "anyhow",
  "bitflags 2.10.0",
@@ -2655,7 +2655,7 @@ dependencies = [
 [[package]]
 name = "longbridge-candlesticks"
 version = "4.3.2"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fmacroeconomic-v2#e68728fea944412756987f8a6b2b98fd59c0ddd5"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#ff567d0932fc93710222277e65d0bd87276c432e"
 dependencies = [
  "bitflags 2.10.0",
  "num-traits",
@@ -2667,7 +2667,7 @@ dependencies = [
 [[package]]
 name = "longbridge-geo"
 version = "4.3.2"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fmacroeconomic-v2#e68728fea944412756987f8a6b2b98fd59c0ddd5"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#ff567d0932fc93710222277e65d0bd87276c432e"
 dependencies = [
  "reqwest 0.12.28",
 ]
@@ -2675,7 +2675,7 @@ dependencies = [
 [[package]]
 name = "longbridge-httpcli"
 version = "4.3.2"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fmacroeconomic-v2#e68728fea944412756987f8a6b2b98fd59c0ddd5"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#ff567d0932fc93710222277e65d0bd87276c432e"
 dependencies = [
  "dotenv",
  "futures-util",
@@ -2697,7 +2697,7 @@ dependencies = [
 [[package]]
 name = "longbridge-oauth"
 version = "4.3.2"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fmacroeconomic-v2#e68728fea944412756987f8a6b2b98fd59c0ddd5"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#ff567d0932fc93710222277e65d0bd87276c432e"
 dependencies = [
  "dirs 6.0.0",
  "futures-util",
@@ -2714,7 +2714,7 @@ dependencies = [
 [[package]]
 name = "longbridge-proto"
 version = "4.3.2"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fmacroeconomic-v2#e68728fea944412756987f8a6b2b98fd59c0ddd5"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#ff567d0932fc93710222277e65d0bd87276c432e"
 dependencies = [
  "prost 0.14.3",
  "serde",
@@ -2792,7 +2792,7 @@ dependencies = [
 [[package]]
 name = "longbridge-wscli"
 version = "4.3.2"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fmacroeconomic-v2#e68728fea944412756987f8a6b2b98fd59c0ddd5"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#ff567d0932fc93710222277e65d0bd87276c432e"
 dependencies = [
  "byteorder",
  "flate2",
