@@ -3379,3 +3379,276 @@ fn print_financial_report_snapshot(data: &Value) {
         );
     }
 }
+
+// ── macrodata ────────────────────────────────────────────────────────────────
+
+use longbridge::fundamental::{
+    Macroeconomic, MacroeconomicCountry, MacroeconomicIndicator,
+    MacroeconomicIndicatorListResponse, MacroeconomicResponse,
+};
+
+fn display_name<'a>(name: &'a str, fallback: &'a str) -> &'a str {
+    if name.is_empty() {
+        fallback
+    } else {
+        name
+    }
+}
+
+fn print_macroeconomic_list(resp: &MacroeconomicIndicatorListResponse) {
+    if resp.data.is_empty() {
+        println!("No indicators found.");
+        return;
+    }
+    let rows: Vec<Vec<String>> = resp
+        .data
+        .iter()
+        .map(|i| {
+            vec![
+                i.indicator_code.clone(),
+                display_name(&i.name, &i.indicator_code).to_owned(),
+                i.country.clone(),
+                i.periodicity.clone(),
+            ]
+        })
+        .collect();
+    println!("Total: {}", resp.count);
+    super::output::print_table(
+        &["Code", "Name", "Country", "Frequency"],
+        rows,
+        &OutputFormat::Pretty,
+    );
+}
+
+fn print_macroeconomic_history(resp: &MacroeconomicResponse) {
+    let info = &resp.info;
+    let name = display_name(&info.name, &info.indicator_code);
+    let mut meta_parts: Vec<&str> = Vec::new();
+    if !info.category.is_empty() {
+        meta_parts.push(&info.category);
+    }
+    if !info.source_org.is_empty() {
+        meta_parts.push(&info.source_org);
+    }
+    if !info.periodicity.is_empty() {
+        meta_parts.push(&info.periodicity);
+    }
+    if meta_parts.is_empty() {
+        println!("{name}");
+    } else {
+        println!("{name}  [{}]", meta_parts.join("  |  "));
+    }
+    if !info.describe.is_empty() {
+        println!("{}", info.describe);
+    }
+    println!();
+
+    if resp.data.is_empty() {
+        println!("No data.");
+        return;
+    }
+    let has_unit = resp.data.iter().any(|r| !r.unit.is_empty());
+    let rows: Vec<Vec<String>> = resp
+        .data
+        .iter()
+        .map(|r| {
+            let mut row = vec![
+                r.period.clone(),
+                r.actual_value.clone(),
+                r.forecast_value.clone(),
+                r.previous_value.clone(),
+            ];
+            if has_unit {
+                let unit_str = if r.unit_prefix.is_empty() {
+                    r.unit.clone()
+                } else {
+                    format!("{}{}", r.unit_prefix, r.unit)
+                };
+                row.push(unit_str);
+            }
+            row
+        })
+        .collect();
+    let mut headers = vec!["Period", "Actual", "Forecast", "Previous"];
+    if has_unit {
+        headers.push("Unit");
+    }
+    super::output::print_table(&headers, rows, &OutputFormat::Pretty);
+}
+
+fn opt_ts(dt: Option<time::OffsetDateTime>) -> Value {
+    match dt {
+        Some(t) => Value::Number(t.unix_timestamp().into()),
+        None => Value::Null,
+    }
+}
+
+fn macroeconomic_indicator_to_json(i: &MacroeconomicIndicator) -> Value {
+    serde_json::json!({
+        "indicator_code": i.indicator_code,
+        "country":        i.country,
+        "name":           i.name,
+        "describe":       i.describe,
+        "importance":     i.importance,
+        "periodicity":    i.periodicity,
+    })
+}
+
+fn macroeconomic_record_to_json(r: &Macroeconomic) -> Value {
+    let mut obj = serde_json::json!({
+        "period":         r.period,
+        "release_at":     opt_ts(r.release_at),
+        "actual_value":   r.actual_value,
+        "previous_value": r.previous_value,
+        "forecast_value": r.forecast_value,
+    });
+    if !r.unit.is_empty() {
+        obj["unit"] = Value::String(r.unit.clone());
+    }
+    obj
+}
+
+fn parse_macroeconomic_country(s: &str) -> Option<MacroeconomicCountry> {
+    match s.to_uppercase().as_str() {
+        "HK" => Some(MacroeconomicCountry::HongKong),
+        "CN" => Some(MacroeconomicCountry::China),
+        "US" => Some(MacroeconomicCountry::UnitedStates),
+        "EU" => Some(MacroeconomicCountry::EuroZone),
+        "JP" => Some(MacroeconomicCountry::Japan),
+        "SG" => Some(MacroeconomicCountry::Singapore),
+        _ => None,
+    }
+}
+
+/// List all macroeconomic indicators, or query historical data for one indicator.
+pub async fn cmd_macroeconomic(
+    code: Option<String>,
+    country: Option<String>,
+    keyword: Option<String>,
+    start: Option<String>,
+    end: Option<String>,
+    limit: u32,
+    page: u32,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    if verbose {
+        eprintln!("* Using FundamentalContext SDK macroeconomic methods (longbridge/openapi#540)");
+    }
+    let ctx = crate::openapi::fundamental();
+    match code {
+        None => {
+            let limit_val = limit;
+            let offset = (page.saturating_sub(1)) * limit_val;
+            let country_filter = country
+                .as_deref()
+                .map(|c| {
+                    parse_macroeconomic_country(c).ok_or_else(|| {
+                        anyhow::anyhow!("Unknown country '{c}'. Use: HK, CN, US, EU, JP, SG")
+                    })
+                })
+                .transpose()?;
+            if verbose {
+                eprintln!(
+                    "* macroeconomic_indicators(country={:?}, keyword={:?}, offset={offset}, limit={limit_val})",
+                    country.as_deref().unwrap_or("-"),
+                    keyword.as_deref().unwrap_or("-"),
+                );
+            }
+            let resp = ctx
+                .macroeconomic_indicators(
+                    country_filter,
+                    keyword.clone(),
+                    Some(offset.cast_signed()),
+                    Some(limit_val.cast_signed()),
+                )
+                .await?;
+            let total = u64::try_from(resp.count).unwrap_or(0);
+            let has_more = u64::from(offset) + (resp.data.len() as u64) < total;
+            match format {
+                OutputFormat::Json => {
+                    let json = serde_json::json!({
+                        "count": resp.count,
+                        "page": page,
+                        "limit": limit_val,
+                        "has_more": has_more,
+                        "list": resp.data.iter().map(macroeconomic_indicator_to_json).collect::<Vec<_>>(),
+                    });
+                    print_json(&json);
+                }
+                OutputFormat::Pretty => {
+                    print_macroeconomic_list(&resp);
+                    if has_more {
+                        println!("(more results available, use --page to paginate)");
+                    }
+                }
+            }
+        }
+        Some(ref indicator_code) => {
+            if country.is_some() {
+                eprintln!("Note: --country is ignored when CODE is specified");
+            }
+            if keyword.is_some() {
+                eprintln!("Note: --keyword is ignored when CODE is specified");
+            }
+            let limit_val = limit;
+            let offset = (page.saturating_sub(1)) * limit_val;
+            if verbose {
+                eprintln!(
+                    "* macrodata(code={indicator_code}, start={}, end={}, offset={offset}, limit={limit_val})",
+                    start.as_deref().unwrap_or("-"),
+                    end.as_deref().unwrap_or("-"),
+                );
+            }
+            let resp = ctx
+                .macroeconomic(
+                    indicator_code.clone(),
+                    start,
+                    end,
+                    Some(offset.cast_signed()),
+                    Some(limit_val.cast_signed()),
+                )
+                .await
+                .map_err(|e| {
+                    let msg = e.to_string();
+                    if msg.contains("null")
+                        || msg.contains("deserialize")
+                        || msg.contains("code 13")
+                        || msg.contains("internal server error")
+                    {
+                        anyhow::anyhow!(
+                            "Indicator code '{indicator_code}' not found. \
+                             Use `longbridge macrodata` to list valid codes."
+                        )
+                    } else {
+                        anyhow::Error::from(e)
+                    }
+                })?;
+            if resp.info.indicator_code.is_empty() {
+                anyhow::bail!("Indicator code '{indicator_code}' not found");
+            }
+            let total = u64::try_from(resp.count).unwrap_or(0);
+            let has_more = u64::from(offset) + (resp.data.len() as u64) < total;
+            match format {
+                OutputFormat::Json => {
+                    let json = serde_json::json!({
+                        "count": resp.count,
+                        "page": page,
+                        "limit": limit_val,
+                        "has_more": has_more,
+                        "info": macroeconomic_indicator_to_json(&resp.info),
+                        "data": resp.data.iter().map(macroeconomic_record_to_json).collect::<Vec<_>>(),
+                    });
+                    print_json(&json);
+                }
+                OutputFormat::Pretty => {
+                    print_macroeconomic_history(&resp);
+                    if has_more {
+                        println!("(more results available, use --page to paginate)");
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
