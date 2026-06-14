@@ -132,7 +132,7 @@ pub fn try_delete(client_id: &str) {
 }
 
 /// Set file permissions to 0600 on Unix.
-pub fn harden_file_permissions(path: &Path) {
+pub fn harden_file_permissions(_path: &Path) {
     #[cfg(target_family = "unix")]
     {
         use std::os::unix::fs::PermissionsExt;
