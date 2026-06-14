@@ -132,6 +132,7 @@ pub fn try_delete(client_id: &str) {
 }
 
 /// Set file permissions to 0600 on Unix.
+#[allow(unused_variables)]
 pub fn harden_file_permissions(path: &Path) {
     #[cfg(target_family = "unix")]
     {

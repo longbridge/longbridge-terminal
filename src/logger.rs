@@ -4,13 +4,13 @@ use std::path::PathBuf;
 pub fn default_log_dir() -> PathBuf {
     #[cfg(target_os = "macos")]
     {
-        let mut path = dirs::home_dir().expect("Unable to get user home directory");
+        let mut path = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
         path.push("Library/Logs/Longbridge");
         path
     }
     #[cfg(target_os = "windows")]
     {
-        let mut path = dirs::data_local_dir().expect("Unable to get local data directory");
+        let mut path = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
         path.push("Longbridge\\Logs");
         path
     }
@@ -18,7 +18,7 @@ pub fn default_log_dir() -> PathBuf {
     {
         let mut path = dirs::data_local_dir()
             .or_else(|| dirs::home_dir().map(|p| p.join(".local/share")))
-            .expect("Unable to get data directory");
+            .unwrap_or_else(|| PathBuf::from("."));
         path.push("longbridge/logs");
         path
     }
@@ -37,13 +37,29 @@ pub fn init() -> impl Any {
     let log_dir = default_log_dir();
     std::fs::create_dir_all(&log_dir).ok();
 
-    let writer = RollingFileAppender::builder()
+    let writer = match RollingFileAppender::builder()
         .filename_prefix("longbridge")
         .filename_suffix("log")
         .max_log_files(5)
         .rotation(Rotation::DAILY)
-        .build(log_dir)
-        .expect("fail to create log file");
+        .build(&log_dir)
+    {
+        Ok(writer) => writer,
+        Err(e) => {
+            eprintln!(
+                "Warning: Failed to create log file in {}: {e}",
+                log_dir.display()
+            );
+            // Fallback to current directory
+            RollingFileAppender::builder()
+                .filename_prefix("longbridge")
+                .filename_suffix("log")
+                .max_log_files(5)
+                .rotation(Rotation::DAILY)
+                .build(".")
+                .expect("Failed to create log file in current directory")
+        }
+    };
     let (writer, guard) = tracing_appender::non_blocking(writer);
 
     let timer = fmt::time::OffsetTime::new(
