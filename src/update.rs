@@ -593,6 +593,7 @@ pub fn check_and_show_release_notes() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn test_is_newer() {
@@ -616,6 +617,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_release_notes_url_respects_region() {
         // Force global
         std::env::set_var("LONGBRIDGE_REGION", "global");
@@ -637,6 +639,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_last_run_version_roundtrip() {
         let path = last_run_version_path().expect("home dir should exist");
         let backup = std::fs::read_to_string(&path).ok();
