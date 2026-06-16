@@ -3554,7 +3554,7 @@ mod tests {
             (101, "Closed"),
             (103, "Morning Break"),
             (106, "Mid-Day Break"),
-            (123, "Realtime Quotes"),
+            (123, "Temporary Break"),
             (202, "Trading"),
             (204, "Closed"),
             (206, "Pre-Market"),
