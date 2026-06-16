@@ -2379,12 +2379,12 @@ pub async fn cmd_constituent(
 fn market_trade_status_label(code: i64) -> &'static str {
     match code {
         101 => "Pre-Open",
-        102 | 103 | 105 | 202 | 203 => "Trading",
+        102 | 103 | 105 | 202 => "Trading",
         104 => "Lunch Break",
         106 => "Post-Trading",
         108 => "Closed",
         201 => "Pre-Market",
-        204 => "Post-Market",
+        203 | 204 => "Post-Market",
         _ => "Unknown",
     }
 }
