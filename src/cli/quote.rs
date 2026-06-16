@@ -2377,16 +2377,10 @@ pub async fn cmd_constituent(
 }
 
 fn market_trade_status_label(code: i64) -> &'static str {
-    match code {
-        101 => "Pre-Open",
-        102 | 103 | 105 | 202 => "Trading",
-        104 => "Lunch Break",
-        106 => "Post-Trading",
-        108 => "Closed",
-        201 => "Pre-Market",
-        203 | 204 => "Post-Market",
-        _ => "Unknown",
-    }
+    i32::try_from(code)
+        .map(longbridge::market::TradeStatus::from)
+        .unwrap_or_default()
+        .name()
 }
 
 pub async fn cmd_market_status(format: &OutputFormat, verbose: bool) -> Result<()> {
@@ -3553,6 +3547,25 @@ fn render_etf_asset_allocation(
 mod tests {
     use super::*;
     use crate::cli::api::MockQuoteApi;
+
+    #[test]
+    fn test_market_trade_status_label_matches_openapi_status() {
+        let cases = [
+            (101, "Closed"),
+            (103, "Morning Break"),
+            (106, "Mid-Day Break"),
+            (123, "Realtime Quotes"),
+            (202, "Trading"),
+            (204, "Closed"),
+            (206, "Pre-Market"),
+            (210, "Trading"),
+            (456, "Unknown"),
+        ];
+
+        for (code, expected) in cases {
+            assert_eq!(market_trade_status_label(code), expected, "code {code}");
+        }
+    }
 
     #[tokio::test]
     async fn test_run_quote_dispatches() {
