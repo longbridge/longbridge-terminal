@@ -677,10 +677,10 @@ pub enum Commands {
         /// Return historical orders instead of today's (list mode only)
         #[arg(long)]
         history: bool,
-        /// Filter start date (YYYY-MM-DD)
+        /// Filter start date/time (local YYYY-MM-DD, local "YYYY-MM-DD HH:MM", or RFC 3339)
         #[arg(long)]
         start: Option<String>,
-        /// Filter end date (YYYY-MM-DD)
+        /// Filter end date/time (local YYYY-MM-DD, local "YYYY-MM-DD HH:MM", or RFC 3339)
         #[arg(long)]
         end: Option<String>,
         /// Filter by symbol (e.g. TSLA.US)
@@ -709,10 +709,10 @@ pub enum Commands {
     /// Defaults to last 30 days if no dates provided.
     /// Example: longbridge cash-flow --start 2024-01-01 --end 2024-03-31
     CashFlow {
-        /// Start date (YYYY-MM-DD), defaults to 30 days ago
+        /// Start date/time (local YYYY-MM-DD, local "YYYY-MM-DD HH:MM", or RFC 3339), defaults to 30 days ago
         #[arg(long)]
         start: Option<String>,
-        /// End date (YYYY-MM-DD), defaults to today
+        /// End date/time (local YYYY-MM-DD, local "YYYY-MM-DD HH:MM", or RFC 3339), defaults to today
         #[arg(long)]
         end: Option<String>,
     },
@@ -1082,10 +1082,10 @@ pub enum Commands {
     /// Example: longbridge profit-analysis detail 700.HK
     /// Example: longbridge profit-analysis by-market --market HK
     ProfitAnalysis {
-        /// Start date (YYYY-MM-DD)
+        /// Start date/time (local YYYY-MM-DD, local "YYYY-MM-DD HH:MM", or RFC 3339)
         #[arg(long)]
         start: Option<String>,
-        /// End date (YYYY-MM-DD)
+        /// End date/time (local YYYY-MM-DD, local "YYYY-MM-DD HH:MM", or RFC 3339)
         #[arg(long)]
         end: Option<String>,
         #[command(subcommand)]
@@ -1370,10 +1370,10 @@ pub enum QuantCmd {
         /// K-line period: 1m 5m 15m 30m 1h day week month year (default: day)
         #[arg(long, default_value = "day")]
         period: String,
-        /// Start date/datetime for the K-line range (YYYY-MM-DD or "YYYY-MM-DD HH:MM")
+        /// Start date/time for the K-line range (local YYYY-MM-DD, local "YYYY-MM-DD HH:MM", or RFC 3339)
         #[arg(long)]
         start: String,
-        /// End date/datetime for the K-line range (YYYY-MM-DD or "YYYY-MM-DD HH:MM")
+        /// End date/time for the K-line range (local YYYY-MM-DD, local "YYYY-MM-DD HH:MM", or RFC 3339)
         #[arg(long)]
         end: String,
         /// Script text. Omit to read from stdin (e.g. echo "..." | longbridge quant run ...)
@@ -1883,10 +1883,10 @@ pub enum ProfitAnalysisCmd {
     Detail {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
-        /// Start date (YYYY-MM-DD)
+        /// Start date/time (local YYYY-MM-DD, local "YYYY-MM-DD HH:MM", or RFC 3339)
         #[arg(long)]
         start: Option<String>,
-        /// End date (YYYY-MM-DD)
+        /// End date/time (local YYYY-MM-DD, local "YYYY-MM-DD HH:MM", or RFC 3339)
         #[arg(long)]
         end: Option<String>,
         /// Currency filter (e.g. HKD, USD, CNH)
@@ -1911,10 +1911,10 @@ pub enum ProfitAnalysisCmd {
     ByMarket {
         /// Market filter (e.g. HK, US, SH, SZ)
         market: Option<String>,
-        /// Start date (YYYY-MM-DD)
+        /// Start date/time (local YYYY-MM-DD, local "YYYY-MM-DD HH:MM", or RFC 3339)
         #[arg(long)]
         start: Option<String>,
-        /// End date (YYYY-MM-DD)
+        /// End date/time (local YYYY-MM-DD, local "YYYY-MM-DD HH:MM", or RFC 3339)
         #[arg(long)]
         end: Option<String>,
         /// Currency filter (e.g. HKD, USD, CNH)
@@ -2504,10 +2504,10 @@ pub enum OrderCmd {
         /// Return historical executions instead of today's
         #[arg(long)]
         history: bool,
-        /// Filter start date (YYYY-MM-DD)
+        /// Filter start date/time (local YYYY-MM-DD, local "YYYY-MM-DD HH:MM", or RFC 3339)
         #[arg(long)]
         start: Option<String>,
-        /// Filter end date (YYYY-MM-DD)
+        /// Filter end date/time (local YYYY-MM-DD, local "YYYY-MM-DD HH:MM", or RFC 3339)
         #[arg(long)]
         end: Option<String>,
         /// Filter by symbol

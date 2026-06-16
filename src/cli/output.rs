@@ -129,34 +129,68 @@ pub fn parse_date(s: &str) -> anyhow::Result<time::Date> {
     time::Date::parse(s, &fmt).map_err(|e| anyhow::anyhow!("Invalid date '{s}': {e}"))
 }
 
-/// Parse a datetime string (YYYY-MM-DD or YYYY-MM-DD HH:MM) into `OffsetDateTime`.
-/// Returns the exact time if minutes are provided, otherwise uses the given fallback time.
+fn local_offset_for_datetime(dt: time::PrimitiveDateTime) -> time::UtcOffset {
+    let mut offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
+    for _ in 0..3 {
+        let candidate = dt.assume_offset(offset);
+        let Ok(next) = time::UtcOffset::local_offset_at(candidate) else {
+            break;
+        };
+        if next == offset {
+            break;
+        }
+        offset = next;
+    }
+    offset
+}
+
+fn assume_local(dt: time::PrimitiveDateTime) -> time::OffsetDateTime {
+    dt.assume_offset(local_offset_for_datetime(dt))
+}
+
+/// Parse a datetime string into `OffsetDateTime`.
+///
+/// Accepts RFC 3339 datetimes with an explicit offset, local `YYYY-MM-DD HH:MM`,
+/// or local `YYYY-MM-DD`. Date-only inputs use the supplied fallback time.
 fn parse_datetime_with_fallback(
     s: &str,
     fallback: time::Time,
 ) -> anyhow::Result<time::OffsetDateTime> {
+    let s = s.trim();
+    if let Ok(dt) = time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339) {
+        return Ok(dt);
+    }
+
     if s.contains(' ') {
         let fmt = time::macros::format_description!("[year]-[month]-[day] [hour]:[minute]");
         let dt = time::PrimitiveDateTime::parse(s, &fmt)
             .map_err(|e| anyhow::anyhow!("Invalid datetime '{s}': {e}"))?;
-        Ok(dt.assume_utc())
+        Ok(assume_local(dt))
     } else {
         let date = parse_date(s)?;
-        Ok(date.with_time(fallback).assume_utc())
+        Ok(assume_local(date.with_time(fallback)))
     }
 }
 
-/// Parse a date/datetime string into `OffsetDateTime` at start of day UTC.
-/// Accepts YYYY-MM-DD or YYYY-MM-DD HH:MM.
+/// Parse a date/datetime string into `OffsetDateTime` at the local start of day.
+/// Accepts RFC 3339, YYYY-MM-DD, or YYYY-MM-DD HH:MM.
 pub fn parse_datetime_start(s: &str) -> anyhow::Result<time::OffsetDateTime> {
     parse_datetime_with_fallback(s, time::Time::MIDNIGHT)
 }
 
-/// Parse a date/datetime string into `OffsetDateTime` at end of day UTC.
-/// Accepts YYYY-MM-DD or YYYY-MM-DD HH:MM.
+/// Parse a date/datetime string into `OffsetDateTime` at the local end of day.
+/// Accepts RFC 3339, YYYY-MM-DD, or YYYY-MM-DD HH:MM.
 pub fn parse_datetime_end(s: &str) -> anyhow::Result<time::OffsetDateTime> {
     let end_of_day = time::Time::from_hms(23, 59, 59).unwrap();
     parse_datetime_with_fallback(s, end_of_day)
+}
+
+pub fn parse_datetime_start_timestamp(s: &str) -> anyhow::Result<String> {
+    Ok(parse_datetime_start(s)?.unix_timestamp().to_string())
+}
+
+pub fn parse_datetime_end_timestamp(s: &str) -> anyhow::Result<String> {
+    Ok(parse_datetime_end(s)?.unix_timestamp().to_string())
 }
 
 /// Format a Date as string
@@ -192,8 +226,54 @@ pub fn strip_private_fields(v: &mut serde_json::Value) {
 
 #[cfg(test)]
 mod tests {
-    use super::strip_private_fields;
+    use super::{parse_datetime_end, parse_datetime_start, strip_private_fields};
     use serde_json::json;
+
+    #[test]
+    fn parse_datetime_accepts_rfc3339_with_offset() {
+        let actual = parse_datetime_start("2026-06-16T09:30:00+08:00").unwrap();
+        let expected = time::OffsetDateTime::parse(
+            "2026-06-16T09:30:00+08:00",
+            &time::format_description::well_known::Rfc3339,
+        )
+        .unwrap();
+
+        assert_eq!(actual.unix_timestamp(), expected.unix_timestamp());
+        assert_eq!(actual.offset(), expected.offset());
+    }
+
+    #[test]
+    fn parse_date_only_uses_current_local_offset_at_day_boundary() {
+        let local_offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
+        if local_offset == time::UtcOffset::UTC {
+            return;
+        }
+
+        let local_date = time::OffsetDateTime::now_utc()
+            .to_offset(local_offset)
+            .date();
+        let input = local_date.to_string();
+
+        let start = parse_datetime_start(&input).unwrap();
+        let end = parse_datetime_end(&input).unwrap();
+
+        assert_eq!(start.offset(), local_offset);
+        assert_eq!(
+            start.unix_timestamp(),
+            local_date
+                .with_time(time::Time::MIDNIGHT)
+                .assume_offset(local_offset)
+                .unix_timestamp()
+        );
+        assert_eq!(end.offset(), local_offset);
+        assert_eq!(
+            end.unix_timestamp(),
+            local_date
+                .with_time(time::Time::from_hms(23, 59, 59).unwrap())
+                .assume_offset(local_offset)
+                .unix_timestamp()
+        );
+    }
 
     #[test]
     fn flat_object_aaid_removed() {
