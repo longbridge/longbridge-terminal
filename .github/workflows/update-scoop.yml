@@ -76,7 +76,7 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           GITHUB_URL="https://github.com/${REPO}/releases/download/${TAG}/longbridge-terminal-windows-amd64.zip"
-          CDN_URL="https://open.longbridge.cn/github/release/longbridge-terminal/v${VERSION}/longbridge-terminal-windows-amd64.zip"
+          CDN_URL="https://open.longbridge.com/github/release/longbridge-terminal/v${VERSION}/longbridge-terminal-windows-amd64.zip"
 
           # Update .scoop/longbridge.json (GitHub URL, committed back to repo)
           jq \
