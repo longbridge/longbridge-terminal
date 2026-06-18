@@ -4418,7 +4418,7 @@ mod tests {
         assert!(matches!(
             cli.command,
             Some(Commands::Order {
-                cmd: Some(OrderCmd::Detail { order_id }),
+                cmd: Some(OrderCmd::Detail { order_id, .. }),
                 ..
             }) if order_id == "order-123"
         ));
