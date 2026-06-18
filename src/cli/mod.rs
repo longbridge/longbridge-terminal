@@ -84,7 +84,6 @@ pub struct Cli {
 }
 
 #[derive(Subcommand)]
-#[allow(clippy::large_enum_variant)]
 pub enum Commands {
     /// Authenticate or clear credentials
     ///
@@ -688,7 +687,7 @@ pub enum Commands {
         #[arg(long)]
         symbol: Option<String>,
         #[command(subcommand)]
-        cmd: Option<OrderCmd>,
+        cmd: Option<Box<OrderCmd>>,
     },
 
     /// Account asset overview — net assets, cash, buy power, margins, and per-currency breakdown
@@ -3396,7 +3395,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             end,
             symbol,
             cmd,
-        } => match cmd {
+        } => match cmd.map(|c| *c) {
             Some(OrderCmd::Detail { order_id, is_attached }) => {
                 trade::cmd_order_detail(order_id, is_attached, format).await
             }
@@ -4415,27 +4414,25 @@ mod tests {
     #[test]
     fn test_order_detail_subcommand() {
         let cli = parse(&["longbridge", "order", "detail", "order-123"]).unwrap();
-        assert!(matches!(
-            cli.command,
-            Some(Commands::Order {
-                cmd: Some(OrderCmd::Detail { order_id, .. }),
-                ..
-            }) if order_id == "order-123"
-        ));
+        let Some(Commands::Order { cmd: Some(cmd), .. }) = cli.command else {
+            panic!("expected Order command");
+        };
+        let OrderCmd::Detail { order_id, .. } = *cmd else {
+            panic!("expected Detail subcommand");
+        };
+        assert_eq!(order_id, "order-123");
     }
 
     #[test]
     fn test_order_executions_subcommand() {
         let cli = parse(&["longbridge", "order", "executions"]).unwrap();
-        if let Some(Commands::Order {
-            cmd: Some(OrderCmd::Executions { history, .. }),
-            ..
-        }) = cli.command
-        {
-            assert!(!history);
-        } else {
-            panic!("expected Order Executions command");
-        }
+        let Some(Commands::Order { cmd: Some(cmd), .. }) = cli.command else {
+            panic!("expected Order command");
+        };
+        let OrderCmd::Executions { history, .. } = *cmd else {
+            panic!("expected Executions subcommand");
+        };
+        assert!(!history);
     }
 
     #[test]
@@ -4450,27 +4447,25 @@ mod tests {
             "250.00",
         ])
         .unwrap();
-        if let Some(Commands::Order {
-            cmd:
-                Some(OrderCmd::Buy {
-                    symbol,
-                    quantity,
-                    price,
-                    order_type,
-                    tif,
-                    ..
-                }),
+        let Some(Commands::Order { cmd: Some(cmd), .. }) = cli.command else {
+            panic!("expected Order command");
+        };
+        let OrderCmd::Buy {
+            symbol,
+            quantity,
+            price,
+            order_type,
+            tif,
             ..
-        }) = cli.command
-        {
-            assert_eq!(symbol, "TSLA.US");
-            assert_eq!(quantity, 100);
-            assert_eq!(price, Some("250.00".to_string()));
-            assert_eq!(order_type, "LO");
-            assert_eq!(tif, "day");
-        } else {
-            panic!("expected Order Buy command");
-        }
+        } = *cmd
+        else {
+            panic!("expected Buy subcommand");
+        };
+        assert_eq!(symbol, "TSLA.US");
+        assert_eq!(quantity, 100);
+        assert_eq!(price, Some("250.00".to_string()));
+        assert_eq!(order_type, "LO");
+        assert_eq!(tif, "day");
     }
 
     #[test]
@@ -4485,35 +4480,33 @@ mod tests {
             "260.00",
         ])
         .unwrap();
-        if let Some(Commands::Order {
-            cmd:
-                Some(OrderCmd::Sell {
-                    symbol,
-                    quantity,
-                    price,
-                    ..
-                }),
+        let Some(Commands::Order { cmd: Some(cmd), .. }) = cli.command else {
+            panic!("expected Order command");
+        };
+        let OrderCmd::Sell {
+            symbol,
+            quantity,
+            price,
             ..
-        }) = cli.command
-        {
-            assert_eq!(symbol, "TSLA.US");
-            assert_eq!(quantity, 50);
-            assert_eq!(price, Some("260.00".to_string()));
-        } else {
-            panic!("expected Order Sell command");
-        }
+        } = *cmd
+        else {
+            panic!("expected Sell subcommand");
+        };
+        assert_eq!(symbol, "TSLA.US");
+        assert_eq!(quantity, 50);
+        assert_eq!(price, Some("260.00".to_string()));
     }
 
     #[test]
     fn test_order_cancel_subcommand() {
         let cli = parse(&["longbridge", "order", "cancel", "order-456"]).unwrap();
-        assert!(matches!(
-            cli.command,
-            Some(Commands::Order {
-                cmd: Some(OrderCmd::Cancel { order_id, .. }),
-                ..
-            }) if order_id == "order-456"
-        ));
+        let Some(Commands::Order { cmd: Some(cmd), .. }) = cli.command else {
+            panic!("expected Order command");
+        };
+        let OrderCmd::Cancel { order_id, .. } = *cmd else {
+            panic!("expected Cancel subcommand");
+        };
+        assert_eq!(order_id, "order-456");
     }
 
     #[test]
@@ -4529,23 +4522,21 @@ mod tests {
             "255.00",
         ])
         .unwrap();
-        if let Some(Commands::Order {
-            cmd:
-                Some(OrderCmd::Replace {
-                    order_id,
-                    qty,
-                    price,
-                    ..
-                }),
+        let Some(Commands::Order { cmd: Some(cmd), .. }) = cli.command else {
+            panic!("expected Order command");
+        };
+        let OrderCmd::Replace {
+            order_id,
+            qty,
+            price,
             ..
-        }) = cli.command
-        {
-            assert_eq!(order_id, "order-789");
-            assert_eq!(qty, Some(200));
-            assert_eq!(price, Some("255.00".to_string()));
-        } else {
-            panic!("expected Order Replace command");
-        }
+        } = *cmd
+        else {
+            panic!("expected Replace subcommand");
+        };
+        assert_eq!(order_id, "order-789");
+        assert_eq!(qty, Some(200));
+        assert_eq!(price, Some("255.00".to_string()));
     }
 
     #[test]
