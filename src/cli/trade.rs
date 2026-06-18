@@ -2,7 +2,8 @@ use anyhow::{bail, Result};
 use longbridge::trade::{
     EstimateMaxPurchaseQuantityOptions, GetCashFlowOptions, GetHistoryExecutionsOptions,
     GetHistoryOrdersOptions, GetTodayExecutionsOptions, GetTodayOrdersOptions, OrderSide,
-    OrderType, OutsideRTH, ReplaceOrderOptions, SubmitOrderOptions, TimeInForceType,
+    OrderType, OutsideRTH, ReplaceOrderOptions, SubmitAttachedParams, SubmitOrderOptions,
+    TimeInForceType,
 };
 use rust_decimal::Decimal;
 use std::fmt::Write as _;
@@ -43,6 +44,16 @@ fn parse_order_type(s: &str) -> Result<OrderType> {
         _ => {
             bail!("Unknown order type '{s}'. Use: LO MO ELO AO ALO ODD SLO LIT MIT TSLPAMT TSLPPCT")
         }
+    }
+}
+
+fn parse_attached_type(s: &str) -> Result<longbridge::trade::AttachedOrderType> {
+    use longbridge::trade::AttachedOrderType;
+    match s.to_lowercase().replace('-', "_").as_str() {
+        "profit_taker" => Ok(AttachedOrderType::ProfitTaker),
+        "stop_loss" => Ok(AttachedOrderType::StopLoss),
+        "bracket" => Ok(AttachedOrderType::Bracket),
+        _ => bail!("Invalid attached-type '{s}'. Use: profit-taker | stop-loss | bracket"),
     }
 }
 
@@ -120,9 +131,20 @@ pub async fn cmd_orders(
     Ok(())
 }
 
-pub async fn cmd_order_detail(order_id: String, format: &OutputFormat) -> Result<()> {
+pub async fn cmd_order_detail(
+    order_id: String,
+    is_attached: bool,
+    format: &OutputFormat,
+) -> Result<()> {
+    use longbridge::trade::GetOrderDetailOptions;
     let ctx = crate::openapi::trade();
-    let detail = ctx.order_detail(order_id).await?;
+    let opts = GetOrderDetailOptions::new(order_id);
+    let opts = if is_attached {
+        opts.is_attached()
+    } else {
+        opts
+    };
+    let detail = ctx.order_detail(opts).await?;
 
     let executed_amount = detail.executed_price.map(|p| p * detail.executed_quantity);
     let outside_rth = detail
@@ -141,6 +163,24 @@ pub async fn cmd_order_detail(order_id: String, format: &OutputFormat) -> Result
                         "price": h.price.to_string(),
                         "quantity": h.quantity.to_string(),
                         "msg": h.msg,
+                    })
+                })
+                .collect();
+            let attached_orders: Vec<serde_json::Value> = detail
+                .attached_orders
+                .iter()
+                .map(|a| {
+                    serde_json::json!({
+                        "order_id": a.order_id,
+                        "type": format!("{:?}", a.attached_type_display),
+                        "status": format!("{:?}", a.status),
+                        "trigger_price": a.trigger_price.map(|v| v.to_string()),
+                        "submit_price": a.submit_price.map(|v| v.to_string()),
+                        "executed_price": a.executed_price.map(|v| v.to_string()),
+                        "quantity": a.quantity.to_string(),
+                        "executed_qty": a.executed_qty.to_string(),
+                        "submitted_at": fmt_rfc3339(a.submitted_at),
+                        "updated_at": fmt_rfc3339(a.updated_at),
                     })
                 })
                 .collect();
@@ -163,6 +203,7 @@ pub async fn cmd_order_detail(order_id: String, format: &OutputFormat) -> Result
                 "updated_at": detail.updated_at.map(fmt_rfc3339).unwrap_or_default(),
                 "remark": detail.msg,
                 "history": history,
+                "attached_orders": attached_orders,
             });
             println!("{}", serde_json::to_string_pretty(&val)?);
         }
@@ -222,6 +263,36 @@ pub async fn cmd_order_detail(order_id: String, format: &OutputFormat) -> Result
                     })
                     .collect();
                 print_table(hist_headers, hist_rows, &OutputFormat::Pretty);
+            }
+
+            if !detail.attached_orders.is_empty() {
+                println!();
+                println!("Attached Orders");
+                let att_headers = &[
+                    "Order ID",
+                    "Type",
+                    "Status",
+                    "Trigger Price",
+                    "Submit Price",
+                    "Qty",
+                ];
+                let att_rows: Vec<Vec<String>> = detail
+                    .attached_orders
+                    .iter()
+                    .map(|a| {
+                        vec![
+                            a.order_id.clone(),
+                            format!("{:?}", a.attached_type_display),
+                            format!("{:?}", a.status),
+                            a.trigger_price
+                                .map_or_else(|| "-".to_string(), |v| v.to_string()),
+                            a.submit_price
+                                .map_or_else(|| "-".to_string(), |v| v.to_string()),
+                            a.quantity.to_string(),
+                        ]
+                    })
+                    .collect();
+                print_table(att_headers, att_rows, &OutputFormat::Pretty);
             }
         }
     }
@@ -323,6 +394,14 @@ pub async fn cmd_submit_order(
     expire_date: Option<String>,
     outside_rth: Option<String>,
     remark: Option<String>,
+    attached_type: Option<String>,
+    attached_profit_taker_price: Option<String>,
+    attached_stop_loss_price: Option<String>,
+    attached_tif: Option<String>,
+    attached_profit_taker_submit_price: Option<String>,
+    attached_stop_loss_submit_price: Option<String>,
+    attached_activate_order_type: Option<String>,
+    attached_activate_rth: Option<String>,
     order_type: String,
     tif: String,
     side: OrderSide,
@@ -374,6 +453,43 @@ pub async fn cmd_submit_order(
     if let Some(ref r) = remark {
         opts = opts.remark(r.clone());
     }
+    if let Some(ref at) = attached_type {
+        let mut ap = SubmitAttachedParams::new(parse_attached_type(at)?);
+        if let Some(ref v) = attached_profit_taker_price {
+            ap = ap.profit_taker_price(
+                Decimal::from_str(v)
+                    .map_err(|_| anyhow::anyhow!("Invalid attached-profit-taker-price: {v}"))?,
+            );
+        }
+        if let Some(ref v) = attached_stop_loss_price {
+            ap = ap.stop_loss_price(
+                Decimal::from_str(v)
+                    .map_err(|_| anyhow::anyhow!("Invalid attached-stop-loss-price: {v}"))?,
+            );
+        }
+        if let Some(ref v) = attached_tif {
+            ap = ap.time_in_force(parse_tif(v)?);
+        }
+        if let Some(ref v) = attached_profit_taker_submit_price {
+            ap =
+                ap.profit_taker_submit_price(Decimal::from_str(v).map_err(|_| {
+                    anyhow::anyhow!("Invalid attached-profit-taker-submit-price: {v}")
+                })?);
+        }
+        if let Some(ref v) = attached_stop_loss_submit_price {
+            ap = ap
+                .stop_loss_submit_price(Decimal::from_str(v).map_err(|_| {
+                    anyhow::anyhow!("Invalid attached-stop-loss-submit-price: {v}")
+                })?);
+        }
+        if let Some(ref v) = attached_activate_order_type {
+            ap = ap.activate_order_type(parse_order_type(v)?);
+        }
+        if let Some(ref v) = attached_activate_rth {
+            ap = ap.activate_rth(parse_outside_rth(v)?);
+        }
+        opts = opts.attached_params(ap);
+    }
 
     // Confirm before submitting
     let mut price_display = match (price.as_deref(), trigger_price.as_deref()) {
@@ -396,6 +512,16 @@ pub async fn cmd_submit_order(
     }
     if let Some(ref rth) = outside_rth {
         let _ = write!(price_display, " outside-rth: {rth}");
+    }
+    if let Some(ref at) = attached_type {
+        let _ = write!(price_display, " [attached:{at}");
+        if let Some(ref v) = attached_profit_taker_price {
+            let _ = write!(price_display, " tp:{v}");
+        }
+        if let Some(ref v) = attached_stop_loss_price {
+            let _ = write!(price_display, " sl:{v}");
+        }
+        let _ = write!(price_display, "]");
     }
     println!("Submitting {side:?} order: {quantity} {symbol} @ {price_display}");
     if !yes {
