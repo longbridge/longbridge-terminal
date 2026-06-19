@@ -1146,6 +1146,35 @@ fn section_file_name(section: &StatementSection) -> &'static str {
     }
 }
 
+pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::ResponseSchema> {
+    use super::schema::{array, object};
+
+    let command = path.join(" ");
+    let schema = match command.as_str() {
+        "statement" | "statement list" => array("Available statements", &["date", "file_key"]),
+        "statement export" => object("Exported statement sections", statement_section_fields()),
+        _ => return None,
+    };
+    Some(schema)
+}
+
+fn statement_section_fields() -> &'static [&'static str] {
+    &[
+        "asset",
+        "account_balances",
+        "equity_holdings",
+        "account_balance_changes",
+        "stock_trades",
+        "equity_holding_changes",
+        "option_trades",
+        "fund_trades",
+        "ipo_trades",
+        "interests",
+        "corps",
+        "outstandings",
+    ]
+}
+
 impl SectionData<'_> {
     fn to_csv(&self) -> Result<String> {
         let mut wtr = csv::Writer::from_writer(vec![]);

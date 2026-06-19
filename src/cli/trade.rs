@@ -1466,6 +1466,105 @@ pub async fn cmd_alert_set_enabled(
     Ok(())
 }
 
+pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::ResponseSchema> {
+    use super::schema::{array, object, text};
+
+    let command = path.join(" ");
+    let schema = match command.as_str() {
+        "order" => array("Order list", order_schema_fields()),
+        "order detail" => object("Order detail", &["order_id", "symbol", "side", "status"]),
+        "order executions" => array(
+            "Order executions",
+            &[
+                "order_id", "trade_id", "symbol", "price", "quantity", "time",
+            ],
+        ),
+        "order buy" | "order sell" => object("Submitted order", &["order_id"]),
+        "order cancel" | "order replace" => text("Order mutation status message"),
+        "assets" => array(
+            "Account asset overview",
+            &[
+                "currency",
+                "net_assets",
+                "total_cash",
+                "buy_power",
+                "max_finance_amount",
+                "remaining_finance_amount",
+                "init_margin",
+                "maintenance_margin",
+                "margin_call",
+                "risk_level",
+                "cash_infos",
+            ],
+        ),
+        "cash-flow" => array(
+            "Cash flow records",
+            &[
+                "flow_name",
+                "symbol",
+                "business_type",
+                "balance",
+                "currency",
+                "time",
+                "description",
+            ],
+        ),
+        "portfolio" => object(
+            "Portfolio overview",
+            &["overview", "holdings", "cash_balances", "market_accounts"],
+        ),
+        "positions" => array(
+            "Current stock positions",
+            &[
+                "symbol",
+                "name",
+                "quantity",
+                "available",
+                "cost_price",
+                "currency",
+                "market",
+            ],
+        ),
+        "fund-positions" => array(
+            "Current fund positions",
+            &[
+                "symbol",
+                "name",
+                "current_net_asset_value",
+                "cost_net_asset_value",
+                "currency",
+                "holding_units",
+            ],
+        ),
+        "margin-ratio" | "max-qty" => {
+            array("Key/value account calculation result", &["field", "value"])
+        }
+        "alert" => object("Price alert list", &["lists"]),
+        "alert add" | "alert delete" => {
+            object("Price alert mutation result", &["id", "status", "data"])
+        }
+        "alert enable" | "alert disable" => object("Price alert status update", &["id", "status"]),
+        _ => return None,
+    };
+    Some(schema)
+}
+
+fn order_schema_fields() -> &'static [&'static str] {
+    &[
+        "order_id",
+        "symbol",
+        "name",
+        "side",
+        "type",
+        "status",
+        "price",
+        "quantity",
+        "filled",
+        "submitted_at",
+        "updated_at",
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

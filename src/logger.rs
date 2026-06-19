@@ -79,21 +79,6 @@ fn build_log_writer(log_dir: &Path, fallback_dir: &Path) -> (LogWriter, LogGuard
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn log_writer_falls_back_without_guard_when_file_appenders_fail() {
-        let primary = tempfile::NamedTempFile::new().expect("primary temp file");
-        let fallback = tempfile::NamedTempFile::new().expect("fallback temp file");
-
-        let (_writer, guard) = build_log_writer(primary.path(), fallback.path());
-
-        assert!(guard.is_none());
-    }
-}
-
 #[must_use]
 pub fn init() -> impl Any {
     use tracing_subscriber::fmt;
@@ -124,4 +109,19 @@ pub fn init() -> impl Any {
 
     tracing_subscriber::registry().with(subscriber).init();
     guard
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn log_writer_falls_back_without_guard_when_file_appenders_fail() {
+        let primary = tempfile::NamedTempFile::new().expect("primary temp file");
+        let fallback = tempfile::NamedTempFile::new().expect("fallback temp file");
+
+        let (_writer, guard) = build_log_writer(primary.path(), fallback.path());
+
+        assert!(guard.is_none());
+    }
 }

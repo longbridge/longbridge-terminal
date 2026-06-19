@@ -251,6 +251,52 @@ async fn cmd_popular(count: u32, format: &OutputFormat) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::ResponseSchema> {
+    use super::schema::{array, object, text};
+
+    let command = path.join(" ");
+    let schema = match command.as_str() {
+        "sharelist" => object(
+            "Sharelist groups",
+            &["sharelists", "subscribed_sharelists", "tail_mark"],
+        ),
+        "sharelist detail" => object(
+            "Sharelist detail",
+            &["sharelist", "group", "scopes", "stock_topics"],
+        ),
+        "sharelist create" | "sharelist delete" | "sharelist add" | "sharelist remove"
+        | "sharelist sort" => text("Sharelist mutation status message"),
+        "sharelist popular" => array("Popular sharelists", sharelist_schema_fields()),
+        _ => return None,
+    };
+    Some(schema)
+}
+
+fn sharelist_schema_fields() -> &'static [&'static str] {
+    &[
+        "id",
+        "group_id",
+        "stock_group_id",
+        "name",
+        "description",
+        "digest",
+        "cover",
+        "creator",
+        "sharelist_type",
+        "status",
+        "industry_code",
+        "stocks",
+        "stocks_count",
+        "subscribers_count",
+        "subscribed",
+        "created_at",
+        "edited_at",
+        "last_read_log_id",
+        "chg",
+        "this_year_chg",
+    ]
+}
+
 fn print_sharelist_table(sharelists: &[serde_json::Value], format: &OutputFormat) {
     let headers = &["ID", "Name", "Type", "Day Chg", "YTD Chg", "Subscribers"];
     let rows: Vec<Vec<String>> = sharelists

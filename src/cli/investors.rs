@@ -1195,3 +1195,46 @@ fn format_large_usd(usd: u64) -> String {
         format!("${usd}")
     }
 }
+
+pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::ResponseSchema> {
+    use super::schema::{json_schema, object};
+
+    let command = path.join(" ");
+    let schema = match command.as_str() {
+        "investors" => json_schema(
+            "SEC 13F investor list or holdings",
+            &[
+                "rank",
+                "name",
+                "aum_usd",
+                "period",
+                "cik",
+                "investor",
+                "firm",
+                "filing_date",
+                "accession_number",
+                "total_value_usd",
+                "total_holdings",
+                "holdings",
+            ],
+        ),
+        "investors changes" => object(
+            "SEC 13F position changes",
+            &[
+                "investor",
+                "firm",
+                "cik",
+                "period",
+                "filing_date",
+                "prev_report_date",
+                "new",
+                "added",
+                "reduced",
+                "exited",
+                "changes",
+            ],
+        ),
+        _ => return None,
+    };
+    Some(schema)
+}

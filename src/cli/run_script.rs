@@ -94,3 +94,14 @@ pub async fn cmd_run_script(
     }
     Ok(())
 }
+
+pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::ResponseSchema> {
+    (path == ["quant", "run"]).then(|| {
+        super::schema::object(
+            "Quant script execution result",
+            &[
+                "symbol", "period", "bars", "plots", "series", "errors", "runtime",
+            ],
+        )
+    })
+}

@@ -167,3 +167,22 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
 
     Ok(())
 }
+
+pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::ResponseSchema> {
+    use super::schema::{field, ResponseSchema, RootKind};
+
+    (path == ["check"]).then(|| ResponseSchema {
+        summary: "Check token validity, and API connectivity".to_string(),
+        root: RootKind::Object,
+        fields: vec![
+            field("session", "object", "Token validity details"),
+            field("region", "object", "Cached and active region details"),
+            field(
+                "connectivity",
+                "object",
+                "Global/CN connectivity probe results",
+            ),
+            field("status", "string", "Compatibility status summary"),
+        ],
+    })
+}

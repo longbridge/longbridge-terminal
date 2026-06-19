@@ -212,6 +212,34 @@ fn decrypt(data: &[u8]) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("AES-GCM decrypt: {e}"))
 }
 
+fn machine_derived_key() -> Key<Aes256Gcm> {
+    let id = machine_id();
+    let hk = Hkdf::<sha2::Sha256>::new(None, id.as_bytes());
+    let mut key_bytes = [0u8; 32];
+    // HKDF expand is infallible for output lengths ≤ 255 * HashLen.
+    let _ = hk.expand(HKDF_INFO, &mut key_bytes);
+    *Key::<Aes256Gcm>::from_slice(&key_bytes)
+}
+
+/// Return a cached, stable machine-specific identifier.
+///
+/// Falls back to an empty string when the machine ID is unavailable (e.g.
+/// minimal Docker containers without `/etc/machine-id`). Encryption still
+/// works in that case; only the machine-binding property is lost.
+fn machine_id() -> &'static str {
+    MACHINE_ID
+        .get_or_init(|| match machine_uid::get() {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::warn!(
+                    "Could not obtain machine ID (token will not be machine-bound): {e}"
+                );
+                String::new()
+            }
+        })
+        .as_str()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -286,35 +314,7 @@ mod tests {
 
         assert_eq!(loaded.access_token, "at_test");
         assert_eq!(loaded.refresh_token.as_deref(), Some("rt_test"));
-        assert_eq!(loaded.expires_at, 9999999999);
+        assert_eq!(loaded.expires_at, 9_999_999_999);
         assert_eq!(loaded.logged_in_at, Some(1_700_000_000));
     }
-}
-
-fn machine_derived_key() -> Key<Aes256Gcm> {
-    let id = machine_id();
-    let hk = Hkdf::<sha2::Sha256>::new(None, id.as_bytes());
-    let mut key_bytes = [0u8; 32];
-    // HKDF expand is infallible for output lengths ≤ 255 * HashLen.
-    let _ = hk.expand(HKDF_INFO, &mut key_bytes);
-    *Key::<Aes256Gcm>::from_slice(&key_bytes)
-}
-
-/// Return a cached, stable machine-specific identifier.
-///
-/// Falls back to an empty string when the machine ID is unavailable (e.g.
-/// minimal Docker containers without `/etc/machine-id`). Encryption still
-/// works in that case; only the machine-binding property is lost.
-fn machine_id() -> &'static str {
-    MACHINE_ID
-        .get_or_init(|| match machine_uid::get() {
-            Ok(id) => id,
-            Err(e) => {
-                tracing::warn!(
-                    "Could not obtain machine ID (token will not be machine-bound): {e}"
-                );
-                String::new()
-            }
-        })
-        .as_str()
 }

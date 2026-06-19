@@ -309,6 +309,107 @@ pub async fn cmd_create_topic(
     Ok(())
 }
 
+pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::ResponseSchema> {
+    use super::schema::{array, object};
+
+    let command = path.join(" ");
+    let schema = match command.as_str() {
+        "topic" => array(
+            "Community topics for a symbol",
+            &[
+                "id",
+                "title",
+                "url",
+                "excerpt",
+                "published_at",
+                "likes_count",
+                "comments_count",
+                "shares_count",
+            ],
+        ),
+        "topic detail" => object(
+            "Community topic detail",
+            &[
+                "id",
+                "topic_type",
+                "title",
+                "description",
+                "body",
+                "author",
+                "tickers",
+                "hashtags",
+                "images",
+                "likes_count",
+                "comments_count",
+                "views_count",
+                "shares_count",
+                "detail_url",
+                "created_at",
+                "updated_at",
+            ],
+        ),
+        "topic mine" => array(
+            "Authenticated user's topics",
+            &[
+                "id",
+                "topic_type",
+                "title",
+                "url",
+                "tickers",
+                "hashtags",
+                "likes_count",
+                "comments_count",
+                "views_count",
+                "shares_count",
+                "created_at",
+                "updated_at",
+            ],
+        ),
+        "topic create" => object("Created topic identifier", &["id"]),
+        "topic replies" => array(
+            "Community topic replies",
+            &[
+                "id",
+                "topic_id",
+                "body",
+                "reply_to_id",
+                "author",
+                "likes_count",
+                "comments_count",
+                "created_at",
+            ],
+        ),
+        "topic create-reply" => object(
+            "Created topic reply",
+            &[
+                "id",
+                "topic_id",
+                "body",
+                "reply_to_id",
+                "author",
+                "likes_count",
+                "comments_count",
+                "created_at",
+            ],
+        ),
+        "topic search" => array(
+            "Community topic search results",
+            &[
+                "id",
+                "title",
+                "url",
+                "creator_name",
+                "time",
+                "excerpt",
+                "likes_count",
+                "comments_count",
+            ],
+        ),
+        _ => return None,
+    };
+    Some(schema)
+}
+
 #[cfg(test)]
 mod tests {
     use super::format_topic_contents;

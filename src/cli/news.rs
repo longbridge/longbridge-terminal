@@ -353,6 +353,45 @@ pub async fn cmd_news_detail(id: String) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::ResponseSchema> {
+    use super::schema::{array, text};
+
+    let command = path.join(" ");
+    let schema = match command.as_str() {
+        "news" => array(
+            "Latest news articles",
+            &[
+                "id",
+                "title",
+                "url",
+                "published_at",
+                "likes_count",
+                "comments_count",
+            ],
+        ),
+        "news detail" => text("Full news article Markdown content"),
+        "news search" => array(
+            "News search results",
+            &["id", "title", "url", "source_name", "time", "excerpt"],
+        ),
+        "filing" => array(
+            "Regulatory filing list",
+            &[
+                "id",
+                "title",
+                "description",
+                "file_name",
+                "file_count",
+                "file_urls",
+                "publish_at",
+            ],
+        ),
+        "filing detail" => text("Full regulatory filing Markdown content or file list"),
+        _ => return None,
+    };
+    Some(schema)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
