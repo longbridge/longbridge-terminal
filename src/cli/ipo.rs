@@ -1320,3 +1320,81 @@ pub async fn cmd_ipo_us_listed(
     }
     Ok(())
 }
+
+pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::ResponseSchema> {
+    use super::schema::{array, object};
+
+    let command = path.join(" ");
+    let schema = match command.as_str() {
+        "ipo subscriptions" | "ipo wait-listing" | "ipo listed" => {
+            object("IPO stock lists grouped by market", &["hk", "us"])
+        }
+        "ipo calendar" => array(
+            "IPO calendar rows",
+            &[
+                "symbol",
+                "name",
+                "ipo_date",
+                "mart_date",
+                "sub_date",
+                "sub_end_date",
+                "result_date",
+                "state",
+                "tags",
+            ],
+        ),
+        "ipo detail" => object(
+            "IPO detail",
+            &["profile", "timeline", "eligibility", "holdings"],
+        ),
+        "ipo orders" => object("IPO orders", &["orders", "history"]),
+        "ipo orders detail" => object("IPO order detail", ipo_order_detail_schema_fields()),
+        "ipo profit-loss" => object("IPO profit/loss summary", &["summary", "items"]),
+        "ipo us-subscriptions" | "ipo us-wait-listing" | "ipo us-listed" => array(
+            "US IPO stock list",
+            &[
+                "symbol",
+                "name",
+                "market",
+                "issue_price",
+                "ipo_date",
+                "last_done",
+                "prev_close",
+                "sub_state",
+                "listed_day",
+                "win_qty",
+                "amount",
+                "description",
+                "icon",
+                "ipo_change",
+            ],
+        ),
+        _ => return None,
+    };
+    Some(schema)
+}
+
+fn ipo_order_detail_schema_fields() -> &'static [&'static str] {
+    &[
+        "id",
+        "batch_id",
+        "counter_id",
+        "code",
+        "name",
+        "market",
+        "currency",
+        "status",
+        "ipo_status",
+        "sub_qty",
+        "sub_amount",
+        "total_amount",
+        "current_amount",
+        "refund_amount",
+        "ipo_price",
+        "ipo_date",
+        "timeline",
+        "cards",
+        "doc",
+        "explanation",
+    ]
+}

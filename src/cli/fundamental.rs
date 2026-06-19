@@ -3264,6 +3264,162 @@ pub async fn cmd_financial_report_snapshot(
     Ok(())
 }
 
+pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::ResponseSchema> {
+    use super::schema::object;
+
+    let command = path.join(" ");
+    let schema = match command.as_str() {
+        "financial-report" => object("Financial statement report", &["report", "list"]),
+        "financial-report snapshot" => object(
+            "Financial report snapshot",
+            &[
+                "ticker",
+                "name",
+                "market",
+                "currency",
+                "report",
+                "report_desc",
+                "fiscal_year",
+                "fiscal_period",
+                "fp_start",
+                "fp_end",
+                "fo_revenue",
+                "fo_ebit",
+                "fo_eps",
+                "fr_revenue",
+                "fr_profit",
+                "fr_operate_cash",
+                "fr_invest_cash",
+                "fr_finance_cash",
+                "fr_total_assets",
+                "fr_total_liability",
+                "fr_roe_ttm",
+                "fr_profit_margin",
+                "fr_profit_margin_ttm",
+                "fr_asset_turn_ttm",
+                "fr_leverage_ttm",
+                "fr_debt_assets_ratio",
+                "opt_reports",
+            ],
+        ),
+        "business-segments" => object(
+            "Business segment breakdown or history",
+            &[
+                "date",
+                "report",
+                "report_txt",
+                "currency",
+                "total",
+                "business",
+                "regionals",
+                "bus_ids",
+                "reg_ids",
+                "yoy",
+                "fp_start",
+                "fp_end",
+                "rpt_date",
+                "historical",
+            ],
+        ),
+        "industry-rank" => object("Industry ranking list", &["items"]),
+        "industry-peers" => object("Industry peer group tree", &["chain", "top"]),
+        "institution-rating" => object("Institution rating summary", &["analyst", "instratings"]),
+        "institution-rating detail" => object(
+            "Institution rating detail",
+            &["ccy_symbol", "evaluate", "target"],
+        ),
+        "dividend" | "dividend detail" => object("Dividend history and detail", &["list"]),
+        "forecast-eps" => object("EPS forecasts", &["items"]),
+        "consensus" => object(
+            "Financial consensus detail",
+            &[
+                "currency",
+                "current_index",
+                "current_period",
+                "list",
+                "opt_periods",
+            ],
+        ),
+        "finance-calendar report"
+        | "finance-calendar dividend"
+        | "finance-calendar split"
+        | "finance-calendar ipo"
+        | "finance-calendar macrodata"
+        | "finance-calendar closed" => object(
+            "Finance calendar events",
+            &["date", "list", "next_date", "result"],
+        ),
+        "valuation" => object(
+            "Valuation detail or history",
+            &[
+                "overview", "history", "layouts", "peers", "stocks", "metrics", "range",
+            ],
+        ),
+        "shareholder" => object(
+            "Shareholder list, top holders, or detail",
+            &["shareholder_list", "total", "info", "periods", "items"],
+        ),
+        "company" => object(
+            "Company overview",
+            &[
+                "ticker",
+                "name",
+                "company_name",
+                "market",
+                "region",
+                "sector",
+                "category",
+                "profile",
+                "website",
+                "employees",
+                "listing_date",
+                "issue_price",
+                "founded",
+                "address",
+                "office_address",
+                "Phone",
+                "email",
+                "fax",
+                "zip_code",
+                "year_end",
+                "chairman",
+                "manager",
+                "secretary",
+                "legal_repr",
+                "securities_rep",
+                "accounting_firm",
+                "audit_inst",
+                "legal_counsel",
+                "bus_license",
+                "ads_ratio",
+                "shares_offered",
+                "icon",
+            ],
+        ),
+        "executive" => object("Company executives", &["professional_list"]),
+        "industry-valuation" => object("Industry valuation comparison", &["list"]),
+        "industry-valuation dist" => object("Industry valuation distribution", &["pe", "pb", "ps"]),
+        "operating" => object("Operating reviews", &["list"]),
+        "corp-action" => object("Corporate actions", &["items"]),
+        "invest-relation" => object(
+            "Investment relations",
+            &["total", "invest_securities", "forward_url"],
+        ),
+        "financial-statement" => object(
+            "Financial statement",
+            &["currency", "empty_fields", "list", "report"],
+        ),
+        "valuation-rank" => object(
+            "Valuation rank",
+            &["pe", "pb", "ps", "dvd", "kline_type", "max_num"],
+        ),
+        "compare" => object("Multi-stock valuation comparison", &["list"]),
+        "fund-holder" => object("Funds and ETFs holding a symbol", &["lists"]),
+        _ => return None,
+    };
+    Some(schema)
+}
+
 fn fmt_fo_row(label: &str, m: &Value) -> Vec<String> {
     let actual = val_str(&m["value"]);
     let yoy = val_str(&m["yoy"]);

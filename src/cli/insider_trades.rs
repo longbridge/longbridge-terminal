@@ -374,3 +374,23 @@ pub async fn cmd_insider_trades(symbol: &str, count: usize, format: &OutputForma
 
     Ok(())
 }
+
+pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::ResponseSchema> {
+    (path == ["insider-trades"]).then(|| {
+        super::schema::array(
+            "SEC Form 4 insider transactions",
+            &[
+                "code",
+                "date",
+                "filing_date",
+                "owner",
+                "title",
+                "type",
+                "shares",
+                "price",
+                "value",
+                "shares_after",
+            ],
+        )
+    })
+}

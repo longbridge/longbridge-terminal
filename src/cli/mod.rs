@@ -19,6 +19,7 @@ pub mod output;
 pub mod quant_render;
 pub mod quote;
 pub mod run_script;
+pub mod schema;
 pub mod screener;
 pub mod search;
 pub mod sec_edgar;
@@ -81,6 +82,10 @@ pub struct Cli {
     /// Defaults to system LANG env var, then en.
     #[arg(long, global = true)]
     pub lang: Option<String>,
+
+    /// Show response fields for this command and exit
+    #[arg(long, global = true)]
+    pub schema: bool,
 }
 
 #[derive(Subcommand)]

@@ -520,3 +520,68 @@ pub async fn cmd_short_margin(format: &OutputFormat, verbose: bool) -> Result<()
     }
     Ok(())
 }
+
+pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::ResponseSchema> {
+    use super::schema::object;
+
+    let command = path.join(" ");
+    let schema = match command.as_str() {
+        "exchange-rate" => object("Exchange rates", &["exchanges"]),
+        "portfolio short-margin" => object("Short-selling margin details", &["short_list"]),
+        "profit-analysis" => object("Account profit analysis", profit_analysis_schema_fields()),
+        "profit-analysis detail" => object(
+            "Stock profit analysis detail",
+            &[
+                "symbol",
+                "currency",
+                "profit",
+                "flows",
+                "position",
+                "updated_at",
+            ],
+        ),
+        "profit-analysis by-market" => object(
+            "Profit analysis by market",
+            &[
+                "currency",
+                "start",
+                "end",
+                "start_date",
+                "end_date",
+                "profit",
+                "stock_items",
+                "has_more",
+                "updated_at",
+                "updated_date",
+            ],
+        ),
+        _ => return None,
+    };
+    Some(schema)
+}
+
+fn profit_analysis_schema_fields() -> &'static [&'static str] {
+    &[
+        "currency",
+        "start_date",
+        "start_time",
+        "end_date",
+        "end_time",
+        "initial_asset_value",
+        "ending_asset_value",
+        "current_total_asset",
+        "invest_amount",
+        "sum_profit",
+        "sum_profit_rate",
+        "total_simple_earning_yield",
+        "total_time_earning_yield",
+        "trade_stock_num",
+        "trade_update_date",
+        "trade_update_time",
+        "updated_at",
+        "updated_date",
+        "is_traded",
+        "profits",
+        "sublist",
+    ]
+}

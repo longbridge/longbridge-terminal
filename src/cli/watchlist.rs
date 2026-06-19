@@ -269,6 +269,21 @@ pub async fn run_watchlist_update(
     Ok(())
 }
 
+pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::ResponseSchema> {
+    use super::schema::{array, object, text};
+
+    let command = path.join(" ");
+    let schema = match command.as_str() {
+        "watchlist" => array("Watchlist groups", &["id", "name", "securities"]),
+        "watchlist show" => object("Watchlist group detail", &["id", "name", "securities"]),
+        "watchlist create" | "watchlist delete" | "watchlist update" | "watchlist pin" => {
+            text("Watchlist mutation status message")
+        }
+        _ => return None,
+    };
+    Some(schema)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

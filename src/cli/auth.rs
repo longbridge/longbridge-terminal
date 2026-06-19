@@ -572,3 +572,19 @@ pub async fn cmd_auth_status(format: &OutputFormat, market: &str) -> Result<()> 
 
     Ok(())
 }
+
+pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::ResponseSchema> {
+    use super::schema::{object, text};
+
+    let schema = match path {
+        [cmd, sub] if cmd == "auth" && sub == "login" => text("OAuth login flow status messages"),
+        [cmd, sub] if cmd == "auth" && sub == "logout" => {
+            text("OAuth credential removal status message")
+        }
+        [cmd, sub] if cmd == "auth" && sub == "status" => {
+            object("Authentication status", &["token", "account"])
+        }
+        _ => return None,
+    };
+    Some(schema)
+}

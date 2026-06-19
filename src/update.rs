@@ -434,6 +434,10 @@ pub async fn cmd_update(verbose: bool, force: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub(crate) fn schema_for_path(path: &[String]) -> Option<crate::cli::schema::ResponseSchema> {
+    (path == ["update"]).then(|| crate::cli::schema::text("Update status or release-notes text"))
+}
+
 // ---------------------------------------------------------------------------
 // Release notes
 // ---------------------------------------------------------------------------
