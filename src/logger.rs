@@ -8,13 +8,13 @@ pub fn default_log_dir() -> PathBuf {
     #[cfg(target_os = "macos")]
     {
         let mut path = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-        path.push("Library/Logs/Longbridge");
+        path.push("Library/Logs/LongPort");
         path
     }
     #[cfg(target_os = "windows")]
     {
         let mut path = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
-        path.push("Longbridge\\Logs");
+        path.push("LongPort\\Logs");
         path
     }
     #[cfg(target_os = "linux")]
@@ -22,7 +22,7 @@ pub fn default_log_dir() -> PathBuf {
         let mut path = dirs::data_local_dir()
             .or_else(|| dirs::home_dir().map(|p| p.join(".local/share")))
             .unwrap_or_else(|| PathBuf::from("."));
-        path.push("longbridge/logs");
+        path.push("longport/logs");
         path
     }
 }
@@ -37,7 +37,7 @@ fn build_rolling_file_appender(
     use tracing_appender::rolling::{RollingFileAppender, Rotation};
 
     RollingFileAppender::builder()
-        .filename_prefix("longbridge")
+        .filename_prefix("longport")
         .filename_suffix("log")
         .max_log_files(5)
         .rotation(Rotation::DAILY)
@@ -103,8 +103,8 @@ pub fn init() -> impl Any {
         .with_line_number(file_line)
         .with_writer(writer);
 
-    let dirs = "error,longbridge=debug";
-    let dirs = std::env::var("LONGBRIDGE_LOG").unwrap_or_else(|_| dirs.to_string());
+    let dirs = "error,longport=debug";
+    let dirs = std::env::var("LONGPORT_LOG").unwrap_or_else(|_| dirs.to_string());
     let subscriber = subscriber.with_filter(tracing_subscriber::EnvFilter::new(dirs));
 
     tracing_subscriber::registry().with(subscriber).init();

@@ -8,7 +8,7 @@ use super::OutputFormat;
 
 // SEC EDGAR requires a declared automated tool User-Agent in the format:
 // "OrganizationName ApplicationName contact@email.com"
-const SEC_UA: &str = "Longbridge longbridge-terminal support@longbridge.com";
+const SEC_UA: &str = "LongPort longport-terminal support@longportapp.com";
 
 fn sec_client() -> reqwest::Client {
     reqwest::Client::builder()

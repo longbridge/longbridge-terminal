@@ -47,7 +47,7 @@ jobs:
         id: checksum
         run: |
           BASE_URL="https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}"
-          FILE="longbridge-terminal-windows-amd64.zip"
+          FILE="longport-terminal-windows-amd64.zip"
           URL="${BASE_URL}/${FILE}"
 
           # Retry up to 5 times; release assets may not be immediately available
@@ -76,20 +76,20 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          GITHUB_URL="https://github.com/${REPO}/releases/download/${TAG}/longbridge-terminal-windows-amd64.zip"
-          CDN_URL="https://assets.lbkrs.com/github/release/longbridge-terminal/v${VERSION}/longbridge-terminal-windows-amd64.zip"
-          CDN_AUTOUPDATE_URL='https://assets.lbkrs.com/github/release/longbridge-terminal/v$version/longbridge-terminal-windows-amd64.zip'
+          GITHUB_URL="https://github.com/${REPO}/releases/download/${TAG}/longport-terminal-windows-amd64.zip"
+          CDN_URL="https://assets.lbkrs.com/github/release/longport-terminal/v${VERSION}/longport-terminal-windows-amd64.zip"
+          CDN_AUTOUPDATE_URL='https://assets.lbkrs.com/github/release/longport-terminal/v$version/longport-terminal-windows-amd64.zip'
 
-          # Update .scoop/longbridge.json (GitHub URL, committed back to repo)
+          # Update .scoop/longport.json (GitHub URL, committed back to repo)
           jq \
             --arg version "$VERSION" \
             --arg url     "$GITHUB_URL" \
             --arg hash    "$SHA256" \
             '.version = $version | .architecture["64bit"].url = $url | .architecture["64bit"].hash = $hash' \
-            .scoop/longbridge.json > .scoop/longbridge.json.tmp
-          mv .scoop/longbridge.json.tmp .scoop/longbridge.json
+            .scoop/longport.json > .scoop/longport.json.tmp
+          mv .scoop/longport.json.tmp .scoop/longport.json
 
-          # Generate longbridge.json for OSS (CDN URL for both current download and autoupdate template)
+          # Generate longport.json for OSS (CDN URL for both current download and autoupdate template)
           jq \
             --arg version    "$VERSION" \
             --arg url        "$CDN_URL" \
@@ -99,10 +99,10 @@ jobs:
              | .architecture["64bit"].url = $url
              | .architecture["64bit"].hash = $hash
              | .autoupdate.architecture["64bit"].url = $autourl' \
-            .scoop/longbridge.json > longbridge.json
+            .scoop/longport.json > longport.json
 
-          echo "--- Updated manifest (.scoop/longbridge.json) ---"
-          cat .scoop/longbridge.json
+          echo "--- Updated manifest (.scoop/longport.json) ---"
+          cat .scoop/longport.json
 
       - name: Setup ossutil
         run: |
@@ -113,8 +113,8 @@ jobs:
       - name: Upload scoop manifest to OSS
         run: |
           set -euo pipefail
-          ./ossutil cp longbridge.json \
-            oss://lb-assets/github/release/longbridge-terminal/longbridge.json \
+          ./ossutil cp longport.json \
+            oss://lb-assets/github/release/longport-terminal/longport.json \
             -f \
             -e oss-cn-hangzhou.aliyuncs.com \
             -i ${{ secrets.FE_LB_ASSET_ACCESS_KEY_ID }} \
@@ -130,7 +130,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add .scoop/longbridge.json
+          git add .scoop/longport.json
 
           if git diff --cached --quiet; then
             echo "No changes detected — manifest is already up to date"

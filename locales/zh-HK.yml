@@ -22,12 +22,12 @@ my_quote:
   no_data: "暫無數據"
   qr_title: "購買行情套餐"
   scan_hint: |
-    請用 Longbridge App 內「我的」Tab 中的點擊掃碼開啟行情商城。
+    請用 LongPort App 內「我的」Tab 中的點擊掃碼開啟行情商城。
     也可以在 App 內點擊「我的」->「行情商店」直接進入。
 qrcode_view:
   scan_hint: |
     請使用長橋 iOS 或 Android app 掃描二維碼
-    https://longbridge.hk/download
+    https://longport.hk/download
   error:
     heading: "生成二維碼失敗"
     content: "請退出 app 後重試"

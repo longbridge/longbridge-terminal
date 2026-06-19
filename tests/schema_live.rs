@@ -15,7 +15,7 @@ struct Probe {
 }
 
 #[test]
-#[ignore = "requires authenticated Longbridge account and live read-only API access"]
+#[ignore = "requires authenticated LongPort account and live read-only API access"]
 fn read_only_live_json_shapes_match_schema() {
     for probe in read_only_probes() {
         let schema = run_schema(probe.path);
@@ -594,7 +594,7 @@ fn p(path: &'static [&'static str], args: &'static [&'static str]) -> Probe {
 }
 
 fn run_schema(path: &[&str]) -> Value {
-    let output = Command::new(env!("CARGO_BIN_EXE_longbridge"))
+    let output = Command::new(env!("CARGO_BIN_EXE_longport"))
         .args(path)
         .arg("--schema")
         .output()
@@ -616,21 +616,21 @@ fn run_schema(path: &[&str]) -> Value {
 }
 
 fn run_json(args: &[&str]) -> Value {
-    let output = Command::new(env!("CARGO_BIN_EXE_longbridge"))
+    let output = Command::new(env!("CARGO_BIN_EXE_longport"))
         .args(args)
         .output()
-        .unwrap_or_else(|e| panic!("run longbridge {args:?}: {e}"));
+        .unwrap_or_else(|e| panic!("run longport {args:?}: {e}"));
 
     assert!(
         output.status.success(),
-        "live command failed `longbridge {}`:\nstdout:\n{}\nstderr:\n{}",
+        "live command failed `longport {}`:\nstdout:\n{}\nstderr:\n{}",
         args.join(" "),
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
     serde_json::from_slice(&output.stdout).unwrap_or_else(|e| {
         panic!(
-            "live command did not return JSON `longbridge {}`: {e}\nstdout:\n{}\nstderr:\n{}",
+            "live command did not return JSON `longport {}`: {e}\nstdout:\n{}\nstderr:\n{}",
             args.join(" "),
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)

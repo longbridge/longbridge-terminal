@@ -81,7 +81,7 @@ fn probe_line(label: &str, r: &ProbeStats, url: &str) -> String {
 pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
     // ── Region cache ─────────────────────────────────────────────────────────
     let region_cached = dirs::home_dir()
-        .map(|h| h.join(".longbridge").join("openapi").join("region-cache"))
+        .map(|h| h.join(".longport").join("openapi").join("region-cache"))
         .and_then(|p| std::fs::read_to_string(p).ok())
         .map_or_else(|| "none".to_string(), |s| s.trim().to_lowercase());
     let is_cn = region::is_cn_cached();
@@ -95,7 +95,7 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
         token_detail = e.to_string();
     } else {
         let ctx = crate::openapi::quote_cmd();
-        match ctx.market_temperature(longbridge::Market::HK).await {
+        match ctx.market_temperature(longport::Market::HK).await {
             Ok(temp) => {
                 token_ok = true;
                 token_detail = format!(

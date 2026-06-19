@@ -2,67 +2,66 @@
 
 ## Overview
 
-Extend the existing `longbridge` binary — **no subcommand launches TUI, subcommand executes CLI command**. OAuth authentication shares the same token storage. `longbridge login` triggers the OAuth 2 flow already implemented in the TUI.
+Extend the existing `longport` binary so every subcommand executes a CLI command. OAuth authentication shares the same local token storage.
 
 ---
 
 ## Command Structure
 
 ```
-longbridge login                    # OAuth authentication (shared token)
-longbridge logout                   # Clear token
+longport login                    # OAuth authentication (shared token)
+longport logout                   # Clear token
 
 # ──── Quote ────
-longbridge quote TSLA.US AAPL.US    # Real-time quotes
-longbridge depth TSLA.US            # Order book depth
-longbridge brokers TSLA.US          # Broker queue
-longbridge trades TSLA.US           # Recent trades [--count 50]
-longbridge intraday TSLA.US         # Intraday lines
-longbridge kline TSLA.US            # Candlesticks [--period day|week|month|1m|5m...] [--count 100]
-longbridge kline history TSLA.US    # History candlesticks [--period day] [--start 2024-01-01] [--end 2024-12-31]
-longbridge static TSLA.US           # Static info (name, lot size, currency)
-longbridge calc-index TSLA.US       # Calculated indexes [--index pe,pb,eps]
-longbridge capital flow TSLA.US     # Capital flow
-longbridge capital dist TSLA.US     # Capital distribution
-longbridge market-temp HK           # Market temperature [HK|US|CN|SG]
-longbridge trading session          # Trading sessions per market
-longbridge trading days HK          # Trading calendar [--start ...] [--end ...]
-longbridge security-list HK         # Security list [--category main|gem|...]
-longbridge participants             # Market maker participants
-longbridge subscriptions            # Current subscriptions
+longport quote TSLA.US AAPL.US    # Real-time quotes
+longport depth TSLA.US            # Order book depth
+longport brokers TSLA.US          # Broker queue
+longport trades TSLA.US           # Recent trades [--count 50]
+longport intraday TSLA.US         # Intraday lines
+longport kline TSLA.US            # Candlesticks [--period day|week|month|1m|5m...] [--count 100]
+longport kline history TSLA.US    # History candlesticks [--period day] [--start 2024-01-01] [--end 2024-12-31]
+longport static TSLA.US           # Static info (name, lot size, currency)
+longport calc-index TSLA.US       # Calculated indexes [--index pe,pb,eps]
+longport capital flow TSLA.US     # Capital flow
+longport capital dist TSLA.US     # Capital distribution
+longport market-temp HK           # Market temperature [HK|US|CN|SG]
+longport trading session          # Trading sessions per market
+longport trading days HK          # Trading calendar [--start ...] [--end ...]
+longport security-list HK         # Security list [--category main|gem|...]
+longport participants             # Market maker participants
+longport subscriptions            # Current subscriptions
 
 # ──── Options / Warrants ────
-longbridge option quote AAPL240119C190000  # Option quote
-longbridge option chain AAPL               # Option chain expiry date list
-longbridge option chain AAPL --date 2024-01-19  # Option chain strike prices
-longbridge warrant quote 12345.HK          # Warrant quote
-longbridge warrant list 700.HK             # Warrant list for a security
-longbridge warrant issuers                 # Warrant issuer list
+longport option quote AAPL240119C190000  # Option quote
+longport option chain AAPL               # Option chain expiry date list
+longport option chain AAPL --date 2024-01-19  # Option chain strike prices
+longport warrant quote 12345.HK          # Warrant quote
+longport warrant list 700.HK             # Warrant list for a security
+longport warrant issuers                 # Warrant issuer list
 
 # ──── Watchlist ────
-longbridge watchlist                        # List all groups
-longbridge watchlist create "My Portfolio"  # Create group
-longbridge watchlist delete <id>            # Delete group
-longbridge watchlist update <id>            # Update [--name ...] [--add TSLA.US] [--remove AAPL.US] [--mode add|remove|replace]
+longport watchlist                        # List all groups
+longport watchlist create "My Portfolio"  # Create group
+longport watchlist delete <id>            # Delete group
+longport watchlist update <id>            # Update [--name ...] [--add TSLA.US] [--remove AAPL.US] [--mode add|remove|replace]
 
 # ──── Trade ────
-longbridge orders                           # Today's orders
-longbridge orders --history                 # History orders [--start ...] [--end ...] [--symbol TSLA.US] [--status filled]
-longbridge order <order_id>                 # Order detail
-longbridge executions                       # Today's executions
-longbridge executions --history             # History executions [--start ...] [--end ...]
-longbridge buy TSLA.US 100 --price 250      # Buy [--type LO|MO|ELO|ALO] [--tif day|gtc]
-longbridge sell TSLA.US 100 --price 260     # Sell
-longbridge cancel <order_id>               # Cancel order
-longbridge replace <order_id>              # Modify order [--qty 200] [--price 255]
-longbridge balance                          # Account balance [--currency USD]
-longbridge cash-flow                        # Cash flow [--start ...] [--end ...] [--type ...]
-longbridge positions                        # Stock positions
-longbridge fund-positions                   # Fund positions
-longbridge margin-ratio TSLA.US            # Margin ratio
-longbridge max-qty TSLA.US --side buy --price 250  # Max purchase quantity
+longport orders                           # Today's orders
+longport orders --history                 # History orders [--start ...] [--end ...] [--symbol TSLA.US] [--status filled]
+longport order <order_id>                 # Order detail
+longport executions                       # Today's executions
+longport executions --history             # History executions [--start ...] [--end ...]
+longport buy TSLA.US 100 --price 250      # Buy [--type LO|MO|ELO|ALO] [--tif day|gtc]
+longport sell TSLA.US 100 --price 260     # Sell
+longport cancel <order_id>               # Cancel order
+longport replace <order_id>              # Modify order [--qty 200] [--price 255]
+longport balance                          # Account balance [--currency USD]
+longport cash-flow                        # Cash flow [--start ...] [--end ...] [--type ...]
+longport positions                        # Stock positions
+longport fund-positions                   # Fund positions
+longport margin-ratio TSLA.US            # Margin ratio
+longport max-qty TSLA.US --side buy --price 250  # Max purchase quantity
 
-longbridge tui                           # Launch TUI (existing behavior)
 ```
 
 ---
@@ -81,9 +80,9 @@ Examples:
 
 ```bash
 # AI agent usage
-longbridge quote TSLA.US AAPL.US --format json | jq '.[] | {symbol, price, change_rate}'
-longbridge positions --format json
-longbridge orders --format csv > orders.csv
+longport quote TSLA.US AAPL.US --format json | jq '.[] | {symbol, price, change_rate}'
+longport positions --format json
+longport orders --format csv > orders.csv
 ```
 
 ---
@@ -92,7 +91,7 @@ longbridge orders --format csv > orders.csv
 
 ```
 src/
-├── main.rs              # Extended: no subcommand → TUI, subcommand → CLI dispatch
+├── main.rs              # CLI dispatch
 ├── cli/
 │   ├── mod.rs           # CLI entry, command tree (clap), dispatch
 │   ├── output.rs        # Output formatting (table/json/csv)
@@ -106,13 +105,13 @@ src/
 ## Authentication Design
 
 ```
-longbridge login
+longport login
   └─ calls openapi::init_contexts() (existing OAuth flow)
-     └─ token persisted by the longbridge SDK
-        └─ both TUI and CLI read from the same location
+     └─ token persisted by the longport SDK
+        └─ CLI commands reuse the same local token
 ```
 
-Token storage is managed internally by the `longbridge-oauth` SDK crate.
+Token storage is managed internally by the `longport-oauth` SDK crate.
 
 In CLI mode, no persistent WebSocket connection is needed: create Context → call HTTP API → output → exit.
 
@@ -146,51 +145,51 @@ clap = { version = "4", features = ["derive"] }  # Upgrade from v3 for derive ma
 | -------------------------------- | ------------------------------------------------- |
 | `subscribe` / `unsubscribe`      | (used internally by TUI)                          |
 | `subscribe_candlesticks`         | (used internally by TUI)                          |
-| `subscriptions`                  | `longbridge subscriptions`                        |
-| `static_info`                    | `longbridge static <symbols>`                     |
-| `quote`                          | `longbridge quote <symbols>`                      |
-| `option_quote`                   | `longbridge option quote <symbols>`               |
-| `warrant_quote`                  | `longbridge warrant quote <symbols>`              |
-| `depth`                          | `longbridge depth <symbol>`                       |
-| `brokers`                        | `longbridge brokers <symbol>`                     |
-| `participants`                   | `longbridge participants`                         |
-| `trades`                         | `longbridge trades <symbol>`                      |
-| `intraday`                       | `longbridge intraday <symbol>`                    |
-| `candlesticks`                   | `longbridge kline <symbol>`                       |
-| `history_candlesticks_by_offset` | `longbridge kline history <symbol>`               |
-| `history_candlesticks_by_date`   | `longbridge kline history <symbol> --start --end` |
-| `option_chain_expiry_date_list`  | `longbridge option chain <symbol>`                |
-| `option_chain_info_by_date`      | `longbridge option chain <symbol> --date`         |
-| `warrant_issuers`                | `longbridge warrant issuers`                      |
-| `warrant_list`                   | `longbridge warrant list <symbol>`                |
-| `trading_session`                | `longbridge trading session`                      |
-| `trading_days`                   | `longbridge trading days <market>`                |
-| `capital_flow`                   | `longbridge capital flow <symbol>`                |
-| `capital_distribution`           | `longbridge capital dist <symbol>`                |
-| `calc_indexes`                   | `longbridge calc-index <symbols>`                 |
-| `watchlist`                      | `longbridge watchlist`                            |
-| `create_watchlist_group`         | `longbridge watchlist create`                     |
-| `delete_watchlist_group`         | `longbridge watchlist delete`                     |
-| `update_watchlist_group`         | `longbridge watchlist update`                     |
-| `security_list`                  | `longbridge security-list <market>`               |
-| `market_temperature`             | `longbridge market-temp <market>`                 |
-| `history_market_temperature`     | `longbridge market-temp <market> --history`       |
+| `subscriptions`                  | `longport subscriptions`                        |
+| `static_info`                    | `longport static <symbols>`                     |
+| `quote`                          | `longport quote <symbols>`                      |
+| `option_quote`                   | `longport option quote <symbols>`               |
+| `warrant_quote`                  | `longport warrant quote <symbols>`              |
+| `depth`                          | `longport depth <symbol>`                       |
+| `brokers`                        | `longport brokers <symbol>`                     |
+| `participants`                   | `longport participants`                         |
+| `trades`                         | `longport trades <symbol>`                      |
+| `intraday`                       | `longport intraday <symbol>`                    |
+| `candlesticks`                   | `longport kline <symbol>`                       |
+| `history_candlesticks_by_offset` | `longport kline history <symbol>`               |
+| `history_candlesticks_by_date`   | `longport kline history <symbol> --start --end` |
+| `option_chain_expiry_date_list`  | `longport option chain <symbol>`                |
+| `option_chain_info_by_date`      | `longport option chain <symbol> --date`         |
+| `warrant_issuers`                | `longport warrant issuers`                      |
+| `warrant_list`                   | `longport warrant list <symbol>`                |
+| `trading_session`                | `longport trading session`                      |
+| `trading_days`                   | `longport trading days <market>`                |
+| `capital_flow`                   | `longport capital flow <symbol>`                |
+| `capital_distribution`           | `longport capital dist <symbol>`                |
+| `calc_indexes`                   | `longport calc-index <symbols>`                 |
+| `watchlist`                      | `longport watchlist`                            |
+| `create_watchlist_group`         | `longport watchlist create`                     |
+| `delete_watchlist_group`         | `longport watchlist delete`                     |
+| `update_watchlist_group`         | `longport watchlist update`                     |
+| `security_list`                  | `longport security-list <market>`               |
+| `market_temperature`             | `longport market-temp <market>`                 |
+| `history_market_temperature`     | `longport market-temp <market> --history`       |
 
 ### TradeContext Methods
 
 | Method                           | CLI Command                          |
 | -------------------------------- | ------------------------------------ |
-| `history_executions`             | `longbridge executions --history`    |
-| `today_executions`               | `longbridge executions`              |
-| `history_orders`                 | `longbridge orders --history`        |
-| `today_orders`                   | `longbridge orders`                  |
-| `replace_order`                  | `longbridge replace <order_id>`      |
-| `submit_order`                   | `longbridge buy` / `longbridge sell` |
-| `cancel_order`                   | `longbridge cancel <order_id>`       |
-| `account_balance`                | `longbridge balance`                 |
-| `cash_flow`                      | `longbridge cash-flow`               |
-| `fund_positions`                 | `longbridge fund-positions`          |
-| `stock_positions`                | `longbridge positions`               |
-| `margin_ratio`                   | `longbridge margin-ratio <symbol>`   |
-| `order_detail`                   | `longbridge order <order_id>`        |
-| `estimate_max_purchase_quantity` | `longbridge max-qty <symbol>`        |
+| `history_executions`             | `longport executions --history`    |
+| `today_executions`               | `longport executions`              |
+| `history_orders`                 | `longport orders --history`        |
+| `today_orders`                   | `longport orders`                  |
+| `replace_order`                  | `longport replace <order_id>`      |
+| `submit_order`                   | `longport buy` / `longport sell` |
+| `cancel_order`                   | `longport cancel <order_id>`       |
+| `account_balance`                | `longport balance`                 |
+| `cash_flow`                      | `longport cash-flow`               |
+| `fund_positions`                 | `longport fund-positions`          |
+| `stock_positions`                | `longport positions`               |
+| `margin_ratio`                   | `longport margin-ratio <symbol>`   |
+| `order_detail`                   | `longport order <order_id>`        |
+| `estimate_max_purchase_quantity` | `longport max-qty <symbol>`        |

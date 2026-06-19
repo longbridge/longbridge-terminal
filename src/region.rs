@@ -9,23 +9,23 @@ const GEOTEST_URL: &str = "https://geotest.lbkrs.com";
 const GEOTEST_TIMEOUT_SECS: u64 = 3;
 
 // Global endpoint URLs
-pub const HTTP_URL_GLOBAL: &str = "https://openapi.longbridge.com";
-pub const OPEN_URL_GLOBAL: &str = "https://open.longbridge.com";
+pub const HTTP_URL_GLOBAL: &str = "https://openapi.longportapp.com";
+pub const OPEN_URL_GLOBAL: &str = "https://open.longportapp.com";
 
 // CN endpoint URLs
-pub const HTTP_URL_CN: &str = "https://openapi.longbridge.cn";
-pub const QUOTE_WS_URL_CN: &str = "wss://openapi-quote.longbridge.cn/v2";
-pub const TRADE_WS_URL_CN: &str = "wss://openapi-trade.longbridge.cn/v2";
-pub const OPEN_URL_CN: &str = "https://open.longbridge.cn";
+pub const HTTP_URL_CN: &str = "https://openapi.longportapp.cn";
+pub const QUOTE_WS_URL_CN: &str = "wss://openapi-quote.longportapp.cn/v2";
+pub const TRADE_WS_URL_CN: &str = "wss://openapi-trade.longportapp.cn/v2";
+pub const OPEN_URL_CN: &str = "https://open.longportapp.cn";
 
-// Test environment URLs (openapi.longbridge.xyz)
-pub const HTTP_URL_TEST: &str = "https://openapi.longbridge.xyz";
-pub const QUOTE_WS_URL_TEST: &str = "wss://openapi-quote.longbridge.xyz/v2";
-pub const TRADE_WS_URL_TEST: &str = "wss://openapi-trade.longbridge.xyz/v2";
+// Test environment URLs (openapi.longportapp.xyz)
+pub const HTTP_URL_TEST: &str = "https://openapi.longportapp.xyz";
+pub const QUOTE_WS_URL_TEST: &str = "wss://openapi-quote.longportapp.xyz/v2";
+pub const TRADE_WS_URL_TEST: &str = "wss://openapi-trade.longportapp.xyz/v2";
 
-/// Whether the staging environment is active (`LONGBRIDGE_ENV=staging`).
+/// Whether the staging environment is active (`LONGPORT_ENV=staging`).
 pub fn is_test_env() -> bool {
-    std::env::var("LONGBRIDGE_ENV").is_ok_and(|v| v == "staging")
+    std::env::var("LONGPORT_ENV").is_ok_and(|v| v == "staging")
 }
 
 /// `OpenAPI` HTTP base URL for the current environment and region.
@@ -39,7 +39,7 @@ pub fn http_url() -> &'static str {
     }
 }
 
-/// Developer portal host (`open.longbridge.*`) for the current region:
+/// Developer portal host (`open.longport.*`) for the current region:
 /// release CDN, docs, and the `/connect` reverse-authorization page.
 pub fn open_url() -> &'static str {
     if is_cn_cached() {
@@ -50,16 +50,16 @@ pub fn open_url() -> &'static str {
 }
 
 fn cache_file_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".longbridge").join("openapi").join("region-cache"))
+    dirs::home_dir().map(|h| h.join(".longport").join("openapi").join("region-cache"))
 }
 
 /// Returns `true` if the region is known to be CN.
 ///
 /// Priority:
-/// 1. `LONGBRIDGE_REGION` env var (explicit override)
+/// 1. `LONGPORT_REGION` env var (explicit override)
 /// 2. Cached result from the last background geotest probe
 pub fn is_cn_cached() -> bool {
-    if let Ok(region) = std::env::var("LONGBRIDGE_REGION") {
+    if let Ok(region) = std::env::var("LONGPORT_REGION") {
         return region.trim().eq_ignore_ascii_case("cn");
     }
 

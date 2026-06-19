@@ -1,5 +1,5 @@
 use anyhow::Result;
-use longbridge::quote::{
+use longport::quote::{
     RequestCreateWatchlistGroup, RequestUpdateWatchlistGroup, SecuritiesUpdateMode,
 };
 
@@ -23,8 +23,8 @@ pub async fn cmd_watchlist(cmd: Option<WatchlistCmd>, format: &OutputFormat) -> 
 }
 
 fn sorted_securities(
-    securities: &[longbridge::quote::WatchlistSecurity],
-) -> Vec<&longbridge::quote::WatchlistSecurity> {
+    securities: &[longport::quote::WatchlistSecurity],
+) -> Vec<&longport::quote::WatchlistSecurity> {
     let mut sorted: Vec<_> = securities.iter().collect();
     sorted.sort_by_key(|s| !s.is_pinned);
     sorted

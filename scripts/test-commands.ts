@@ -4,7 +4,7 @@
  *
  * Usage:
  *   bun scripts/test-commands.ts                                    # cargo run -q --
- *   LONGBRIDGE_BIN=./target/debug/longbridge bun scripts/test-commands.ts
+ *   LONGPORT_BIN=./target/debug/longport bun scripts/test-commands.ts
  *
  * Mutating commands (buy, sell, cancel, replace, watchlist mutations)
  * are intentionally OMITTED — they must never run automatically.
@@ -79,9 +79,9 @@ const COMMANDS: Command[] = [
 
 // ── Binary invocation ─────────────────────────────────────────────────────────
 
-const LONGBRIDGE_BIN = process.env.LONGBRIDGE_BIN;
-const [bin, ...binPrefix] = LONGBRIDGE_BIN
-  ? [LONGBRIDGE_BIN]
+const LONGPORT_BIN = process.env.LONGPORT_BIN;
+const [bin, ...binPrefix] = LONGPORT_BIN
+  ? [LONGPORT_BIN]
   : ["cargo", "run", "-q", "--"];
 
 // ── Colors ────────────────────────────────────────────────────────────────────

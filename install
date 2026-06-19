@@ -2,7 +2,7 @@
 set -eu
 type curl > /dev/null || { echo "curl: not found"; exit 1; }
 
-repo='longbridge/longbridge-terminal'
+repo='longportapp/longport-terminal'
 
 get_latest_release() {
   url=$(curl --silent -o /dev/null -w "%{url_effective}" -L "https://github.com/$repo/releases/latest")
@@ -18,8 +18,8 @@ version=$(get_latest_release) || exit 1
 
 echo "Latest release: $version"
 
-bin_name='longbridge'
-package_name='longbridge-terminal'
+bin_name='longport'
+package_name='longport-terminal'
 
 
 platform="$(uname | tr "[A-Z]" "[a-z]")"  # Linux => linux
@@ -48,7 +48,7 @@ if [ "$platform" = "linux" ]; then
   libc='-musl'
 fi
 
-download_url=https://github.com/longbridge/longbridge-terminal/releases/download/$version/$package_name-$platform$libc-$arch.tar.gz
+download_url=https://github.com/longportapp/longport-terminal/releases/download/$version/$package_name-$platform$libc-$arch.tar.gz
 echo $download_url
 
 tmp_dir=$(mktemp -d)
@@ -64,7 +64,7 @@ else
   sudo mkdir -p /usr/local/bin
   sudo mv "$tmp_dir/$bin_name" /usr/local/bin/$bin_name
 fi
-echo "Longbridge CLI $version has installed successfully."
+echo "LongPort CLI $version has installed successfully."
 echo ""
-echo "You can use \`longbridge -h\` to get help."
+echo "You can use \`longport -h\` to get help."
 echo ""

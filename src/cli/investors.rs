@@ -13,7 +13,7 @@ use crate::utils::number::format_volume;
 
 // SEC EDGAR requires a declared automated tool User-Agent in the format:
 // "OrganizationName ApplicationName contact@email.com"
-const SEC_UA: &str = "Longbridge longbridge-terminal support@longbridge.com";
+const SEC_UA: &str = "LongPort longport-terminal support@longportapp.com";
 
 fn sec_client() -> reqwest::Client {
     reqwest::Client::builder()
@@ -337,7 +337,7 @@ async fn fetch_entity_names(
 const MAX_ACTIVE_HOLDINGS: u64 = 500;
 
 fn rankings_cache_path() -> Option<std::path::PathBuf> {
-    dirs::home_dir().map(|h| h.join(".longbridge").join("13f_rankings_cache_v2.json"))
+    dirs::home_dir().map(|h| h.join(".longport").join("13f_rankings_cache_v2.json"))
 }
 
 fn load_rankings_cache(zip_url: &str) -> Option<Vec<RankedFund>> {
@@ -493,7 +493,7 @@ pub async fn cmd_investors_list(top: usize, format: &OutputFormat) -> Result<()>
                 })
                 .collect();
             print_table(&["#", "name", "AUM", "period", "cik"], rows, format);
-            println!("\nView holdings: longbridge investors <SLUG|CIK>");
+            println!("\nView holdings: longport investors <SLUG|CIK>");
             let zip_name = zip_url.rsplit('/').next().unwrap_or("");
             println!("Source: SEC EDGAR 13F — {zip_name}");
         }

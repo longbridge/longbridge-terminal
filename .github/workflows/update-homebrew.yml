@@ -49,7 +49,7 @@ jobs:
           BASE_URL="https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}"
 
           for PLATFORM in darwin-amd64 darwin-arm64; do
-            FILE="longbridge-terminal-${PLATFORM}.tar.gz"
+            FILE="longport-terminal-${PLATFORM}.tar.gz"
             URL="${BASE_URL}/${FILE}"
 
             # Retry up to 5 times; release assets may not be immediately available
@@ -70,7 +70,7 @@ jobs:
       - name: Checkout homebrew-tap
         uses: actions/checkout@v4
         with:
-          repository: longbridge/homebrew-tap
+          repository: longport/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           path: homebrew-tap
 
@@ -85,19 +85,19 @@ jobs:
           python3 - <<'PYEOF'
           import os, textwrap
 
-          formula_path = "homebrew-tap/Casks/longbridge-terminal.rb"
+          formula_path = "homebrew-tap/Casks/longport-terminal.rb"
           version  = os.environ["VERSION"]
           tag      = os.environ["TAG"]
           repo     = os.environ["REPO"]
           base_url = f"https://github.com/{repo}/releases/download/{tag}"
 
-          arm64_url  = f"{base_url}/longbridge-terminal-darwin-arm64.tar.gz"
-          amd64_url  = f"{base_url}/longbridge-terminal-darwin-amd64.tar.gz"
+          arm64_url  = f"{base_url}/longport-terminal-darwin-arm64.tar.gz"
+          amd64_url  = f"{base_url}/longport-terminal-darwin-amd64.tar.gz"
           arm64_sha  = os.environ["DARWIN_ARM64_SHA256"]
           amd64_sha  = os.environ["DARWIN_AMD64_SHA256"]
 
           content = textwrap.dedent(f"""\
-            cask "longbridge-terminal" do
+            cask "longport-terminal" do
               version "{version}"
 
               on_arm do
@@ -110,10 +110,10 @@ jobs:
                 sha256 "{amd64_sha}"
               end
 
-              desc "Longbridge Terminal CLI for US and HK stock market data and trading"
-              homepage "https://github.com/longbridge/longbridge-terminal"
+              desc "LongPort Terminal CLI for US and HK stock market data and trading"
+              homepage "https://github.com/longportapp/longport-terminal"
 
-              binary "longbridge"
+              binary "longport"
 
               postflight do
                 system_command "/usr/bin/xattr",
@@ -122,7 +122,7 @@ jobs:
 
               caveats <<~EOS
                 Get started by running:
-                  longbridge -h
+                  longport -h
               EOS
             end
           """)
@@ -134,7 +134,7 @@ jobs:
           PYEOF
 
           echo "--- Updated formula ---"
-          cat homebrew-tap/Casks/longbridge-terminal.rb
+          cat homebrew-tap/Casks/longport-terminal.rb
 
       - name: Commit and push to main
         env:
@@ -147,14 +147,14 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add Casks/longbridge-terminal.rb
+          git add Casks/longport-terminal.rb
 
           if git diff --cached --quiet; then
             echo "No changes detected — formula is already up to date"
             exit 0
           fi
 
-          git commit -m "chore: bump longbridge-terminal to ${VERSION}
+          git commit -m "chore: bump longport-terminal to ${VERSION}
 
           Automated version bump triggered by https://github.com/${REPO}/actions/runs/${RUN_ID}"
           git push origin main

@@ -22,7 +22,7 @@ fn get_latest_log_file() -> Option<PathBuf> {
                 && path
                     .file_name()
                     .and_then(|n| n.to_str())
-                    .is_some_and(|n| n == "longbridge.log")
+                    .is_some_and(|n| n == "longport.log")
         })
         .collect();
 

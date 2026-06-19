@@ -9,7 +9,7 @@ The CLI layer has **three distinct testing concerns**:
 | Argument parsing  | `clap` parses flags/args correctly                 | No               |
 | Output formatting | `table`/`json`/`csv` renders mock data correctly   | No               |
 | Command dispatch  | Handler calls the right API method with right args | No (via mock)    |
-| Integration       | End-to-end with real Longbridge API                | Yes              |
+| Integration       | End-to-end with real LongPort API                | Yes              |
 
 100% command coverage is achieved by combining the first three layers. Integration tests are gated behind a `#[cfg(feature = "integration")]` flag and are never run in CI without real credentials.
 
@@ -23,51 +23,51 @@ The existing code uses global `OnceLock` (`QUOTE_CTX`, `TRADE_CTX`). To make the
 // src/cli/api.rs
 #[async_trait::async_trait]
 pub trait QuoteApi: Send + Sync {
-    async fn quote(&self, symbols: &[&str]) -> anyhow::Result<Vec<longbridge::quote::SecurityQuote>>;
-    async fn depth(&self, symbol: &str) -> anyhow::Result<longbridge::quote::SecurityDepth>;
-    async fn brokers(&self, symbol: &str) -> anyhow::Result<longbridge::quote::SecurityBrokers>;
-    async fn trades(&self, symbol: &str, count: usize) -> anyhow::Result<Vec<longbridge::quote::Trade>>;
-    async fn intraday(&self, symbol: &str) -> anyhow::Result<Vec<longbridge::quote::IntradayLine>>;
-    async fn candlesticks(&self, symbol: &str, period: longbridge::quote::Period, count: usize) -> anyhow::Result<Vec<longbridge::quote::Candlestick>>;
-    async fn history_candlesticks_by_date(&self, symbol: &str, period: longbridge::quote::Period, start: Option<time::Date>, end: Option<time::Date>) -> anyhow::Result<Vec<longbridge::quote::Candlestick>>;
-    async fn static_info(&self, symbols: &[&str]) -> anyhow::Result<Vec<longbridge::quote::SecurityStaticInfo>>;
-    async fn calc_indexes(&self, symbols: &[&str], indexes: &[longbridge::quote::CalcIndex]) -> anyhow::Result<Vec<longbridge::quote::SecurityCalcIndex>>;
-    async fn capital_flow(&self, symbol: &str) -> anyhow::Result<Vec<longbridge::quote::CapitalFlowLine>>;
-    async fn capital_distribution(&self, symbol: &str) -> anyhow::Result<longbridge::quote::CapitalDistributionResponse>;
-    async fn market_temperature(&self, market: longbridge::Market) -> anyhow::Result<longbridge::quote::MarketTemperatureResponse>;
-    async fn trading_session(&self) -> anyhow::Result<Vec<longbridge::quote::MarketTradingSession>>;
-    async fn trading_days(&self, market: longbridge::Market, start: time::Date, end: time::Date) -> anyhow::Result<longbridge::quote::MarketTradingDays>;
-    async fn security_list(&self, market: longbridge::Market, category: longbridge::quote::SecurityListCategory) -> anyhow::Result<Vec<longbridge::quote::Security>>;
-    async fn participants(&self) -> anyhow::Result<Vec<longbridge::quote::ParticipantInfo>>;
-    async fn subscriptions(&self) -> anyhow::Result<Vec<longbridge::quote::Subscription>>;
-    async fn option_quote(&self, symbols: &[&str]) -> anyhow::Result<Vec<longbridge::quote::OptionQuote>>;
+    async fn quote(&self, symbols: &[&str]) -> anyhow::Result<Vec<longport::quote::SecurityQuote>>;
+    async fn depth(&self, symbol: &str) -> anyhow::Result<longport::quote::SecurityDepth>;
+    async fn brokers(&self, symbol: &str) -> anyhow::Result<longport::quote::SecurityBrokers>;
+    async fn trades(&self, symbol: &str, count: usize) -> anyhow::Result<Vec<longport::quote::Trade>>;
+    async fn intraday(&self, symbol: &str) -> anyhow::Result<Vec<longport::quote::IntradayLine>>;
+    async fn candlesticks(&self, symbol: &str, period: longport::quote::Period, count: usize) -> anyhow::Result<Vec<longport::quote::Candlestick>>;
+    async fn history_candlesticks_by_date(&self, symbol: &str, period: longport::quote::Period, start: Option<time::Date>, end: Option<time::Date>) -> anyhow::Result<Vec<longport::quote::Candlestick>>;
+    async fn static_info(&self, symbols: &[&str]) -> anyhow::Result<Vec<longport::quote::SecurityStaticInfo>>;
+    async fn calc_indexes(&self, symbols: &[&str], indexes: &[longport::quote::CalcIndex]) -> anyhow::Result<Vec<longport::quote::SecurityCalcIndex>>;
+    async fn capital_flow(&self, symbol: &str) -> anyhow::Result<Vec<longport::quote::CapitalFlowLine>>;
+    async fn capital_distribution(&self, symbol: &str) -> anyhow::Result<longport::quote::CapitalDistributionResponse>;
+    async fn market_temperature(&self, market: longport::Market) -> anyhow::Result<longport::quote::MarketTemperatureResponse>;
+    async fn trading_session(&self) -> anyhow::Result<Vec<longport::quote::MarketTradingSession>>;
+    async fn trading_days(&self, market: longport::Market, start: time::Date, end: time::Date) -> anyhow::Result<longport::quote::MarketTradingDays>;
+    async fn security_list(&self, market: longport::Market, category: longport::quote::SecurityListCategory) -> anyhow::Result<Vec<longport::quote::Security>>;
+    async fn participants(&self) -> anyhow::Result<Vec<longport::quote::ParticipantInfo>>;
+    async fn subscriptions(&self) -> anyhow::Result<Vec<longport::quote::Subscription>>;
+    async fn option_quote(&self, symbols: &[&str]) -> anyhow::Result<Vec<longport::quote::OptionQuote>>;
     async fn option_chain_expiry_date_list(&self, symbol: &str) -> anyhow::Result<Vec<time::Date>>;
-    async fn option_chain_info_by_date(&self, symbol: &str, expiry_date: time::Date) -> anyhow::Result<Vec<longbridge::quote::StrikeInfo>>;
-    async fn warrant_quote(&self, symbols: &[&str]) -> anyhow::Result<Vec<longbridge::quote::WarrantQuote>>;
-    async fn warrant_list(&self, symbol: &str, opts: longbridge::quote::QueryWarrantOptions) -> anyhow::Result<Vec<longbridge::quote::Warrant>>;
-    async fn warrant_issuers(&self) -> anyhow::Result<Vec<longbridge::quote::IssuerInfo>>;
-    async fn watchlist(&self) -> anyhow::Result<Vec<longbridge::quote::WatchlistGroup>>;
+    async fn option_chain_info_by_date(&self, symbol: &str, expiry_date: time::Date) -> anyhow::Result<Vec<longport::quote::StrikeInfo>>;
+    async fn warrant_quote(&self, symbols: &[&str]) -> anyhow::Result<Vec<longport::quote::WarrantQuote>>;
+    async fn warrant_list(&self, symbol: &str, opts: longport::quote::QueryWarrantOptions) -> anyhow::Result<Vec<longport::quote::Warrant>>;
+    async fn warrant_issuers(&self) -> anyhow::Result<Vec<longport::quote::IssuerInfo>>;
+    async fn watchlist(&self) -> anyhow::Result<Vec<longport::quote::WatchlistGroup>>;
     async fn create_watchlist_group(&self, name: &str) -> anyhow::Result<i64>;
     async fn delete_watchlist_group(&self, id: i64) -> anyhow::Result<()>;
-    async fn update_watchlist_group(&self, opts: longbridge::quote::UpdateWatchlistGroup) -> anyhow::Result<()>;
+    async fn update_watchlist_group(&self, opts: longport::quote::UpdateWatchlistGroup) -> anyhow::Result<()>;
 }
 
 #[async_trait::async_trait]
 pub trait TradeApi: Send + Sync {
-    async fn today_orders(&self, opts: longbridge::trade::GetTodayOrdersOptions) -> anyhow::Result<Vec<longbridge::trade::Order>>;
-    async fn history_orders(&self, opts: longbridge::trade::GetHistoryOrdersOptions) -> anyhow::Result<Vec<longbridge::trade::Order>>;
-    async fn order_detail(&self, order_id: &str) -> anyhow::Result<longbridge::trade::OrderDetail>;
-    async fn today_executions(&self, opts: longbridge::trade::GetTodayExecutionsOptions) -> anyhow::Result<Vec<longbridge::trade::Execution>>;
-    async fn history_executions(&self, opts: longbridge::trade::GetHistoryExecutionsOptions) -> anyhow::Result<Vec<longbridge::trade::Execution>>;
-    async fn submit_order(&self, opts: longbridge::trade::SubmitOrderOptions) -> anyhow::Result<longbridge::trade::SubmitOrderResponse>;
+    async fn today_orders(&self, opts: longport::trade::GetTodayOrdersOptions) -> anyhow::Result<Vec<longport::trade::Order>>;
+    async fn history_orders(&self, opts: longport::trade::GetHistoryOrdersOptions) -> anyhow::Result<Vec<longport::trade::Order>>;
+    async fn order_detail(&self, order_id: &str) -> anyhow::Result<longport::trade::OrderDetail>;
+    async fn today_executions(&self, opts: longport::trade::GetTodayExecutionsOptions) -> anyhow::Result<Vec<longport::trade::Execution>>;
+    async fn history_executions(&self, opts: longport::trade::GetHistoryExecutionsOptions) -> anyhow::Result<Vec<longport::trade::Execution>>;
+    async fn submit_order(&self, opts: longport::trade::SubmitOrderOptions) -> anyhow::Result<longport::trade::SubmitOrderResponse>;
     async fn cancel_order(&self, order_id: &str) -> anyhow::Result<()>;
-    async fn replace_order(&self, opts: longbridge::trade::ReplaceOrderOptions) -> anyhow::Result<()>;
-    async fn account_balance(&self, currency: Option<&str>) -> anyhow::Result<Vec<longbridge::trade::AccountBalance>>;
-    async fn cash_flow(&self, opts: longbridge::trade::GetCashFlowOptions) -> anyhow::Result<Vec<longbridge::trade::CashFlow>>;
-    async fn stock_positions(&self, symbols: Option<&[&str]>) -> anyhow::Result<longbridge::trade::StockPositionsResponse>;
-    async fn fund_positions(&self, symbols: Option<&[&str]>) -> anyhow::Result<longbridge::trade::FundPositionsResponse>;
-    async fn margin_ratio(&self, symbol: &str) -> anyhow::Result<longbridge::trade::MarginRatio>;
-    async fn estimate_max_purchase_quantity(&self, opts: longbridge::trade::EstimateMaxPurchaseQuantityOptions) -> anyhow::Result<longbridge::trade::EstimateMaxPurchaseQuantityResponse>;
+    async fn replace_order(&self, opts: longport::trade::ReplaceOrderOptions) -> anyhow::Result<()>;
+    async fn account_balance(&self, currency: Option<&str>) -> anyhow::Result<Vec<longport::trade::AccountBalance>>;
+    async fn cash_flow(&self, opts: longport::trade::GetCashFlowOptions) -> anyhow::Result<Vec<longport::trade::CashFlow>>;
+    async fn stock_positions(&self, symbols: Option<&[&str]>) -> anyhow::Result<longport::trade::StockPositionsResponse>;
+    async fn fund_positions(&self, symbols: Option<&[&str]>) -> anyhow::Result<longport::trade::FundPositionsResponse>;
+    async fn margin_ratio(&self, symbol: &str) -> anyhow::Result<longport::trade::MarginRatio>;
+    async fn estimate_max_purchase_quantity(&self, opts: longport::trade::EstimateMaxPurchaseQuantityOptions) -> anyhow::Result<longport::trade::EstimateMaxPurchaseQuantityResponse>;
 }
 ```
 
@@ -123,13 +123,13 @@ Tests use `clap`'s `try_parse_from` — zero network calls.
 ```rust
 #[test]
 fn test_login_subcommand() {
-    let cli = Cli::try_parse_from(["longbridge", "login"]).unwrap();
+    let cli = Cli::try_parse_from(["longport", "login"]).unwrap();
     assert!(matches!(cli.command, Commands::Login));
 }
 
 #[test]
 fn test_logout_subcommand() {
-    let cli = Cli::try_parse_from(["longbridge", "logout"]).unwrap();
+    let cli = Cli::try_parse_from(["longport", "logout"]).unwrap();
     assert!(matches!(cli.command, Commands::Logout));
 }
 ```
@@ -140,7 +140,7 @@ fn test_logout_subcommand() {
 // quote TSLA.US AAPL.US
 #[test]
 fn test_quote_multiple_symbols() {
-    let cli = Cli::try_parse_from(["longbridge", "quote", "TSLA.US", "AAPL.US"]).unwrap();
+    let cli = Cli::try_parse_from(["longport", "quote", "TSLA.US", "AAPL.US"]).unwrap();
     let Commands::Quote { symbols, format } = cli.command else { panic!() };
     assert_eq!(symbols, ["TSLA.US", "AAPL.US"]);
     assert_eq!(format, OutputFormat::Table);
@@ -148,27 +148,27 @@ fn test_quote_multiple_symbols() {
 
 #[test]
 fn test_quote_json_format() {
-    let cli = Cli::try_parse_from(["longbridge", "quote", "TSLA.US", "--format", "json"]).unwrap();
+    let cli = Cli::try_parse_from(["longport", "quote", "TSLA.US", "--format", "json"]).unwrap();
     let Commands::Quote { format, .. } = cli.command else { panic!() };
     assert_eq!(format, OutputFormat::Json);
 }
 
 #[test]
 fn test_quote_csv_format() {
-    let cli = Cli::try_parse_from(["longbridge", "quote", "TSLA.US", "--format", "csv"]).unwrap();
+    let cli = Cli::try_parse_from(["longport", "quote", "TSLA.US", "--format", "csv"]).unwrap();
     let Commands::Quote { format, .. } = cli.command else { panic!() };
     assert_eq!(format, OutputFormat::Csv);
 }
 
 #[test]
 fn test_quote_requires_symbol() {
-    assert!(Cli::try_parse_from(["longbridge", "quote"]).is_err());
+    assert!(Cli::try_parse_from(["longport", "quote"]).is_err());
 }
 
 // depth
 #[test]
 fn test_depth_single_symbol() {
-    let cli = Cli::try_parse_from(["longbridge", "depth", "TSLA.US"]).unwrap();
+    let cli = Cli::try_parse_from(["longport", "depth", "TSLA.US"]).unwrap();
     let Commands::Depth { symbol, .. } = cli.command else { panic!() };
     assert_eq!(symbol, "TSLA.US");
 }
@@ -176,14 +176,14 @@ fn test_depth_single_symbol() {
 // trades --count
 #[test]
 fn test_trades_default_count() {
-    let cli = Cli::try_parse_from(["longbridge", "trades", "TSLA.US"]).unwrap();
+    let cli = Cli::try_parse_from(["longport", "trades", "TSLA.US"]).unwrap();
     let Commands::Trades { count, .. } = cli.command else { panic!() };
     assert_eq!(count, 50); // default
 }
 
 #[test]
 fn test_trades_custom_count() {
-    let cli = Cli::try_parse_from(["longbridge", "trades", "TSLA.US", "--count", "20"]).unwrap();
+    let cli = Cli::try_parse_from(["longport", "trades", "TSLA.US", "--count", "20"]).unwrap();
     let Commands::Trades { count, .. } = cli.command else { panic!() };
     assert_eq!(count, 20);
 }
@@ -191,7 +191,7 @@ fn test_trades_custom_count() {
 // kline --period --count
 #[test]
 fn test_kline_defaults() {
-    let cli = Cli::try_parse_from(["longbridge", "kline", "TSLA.US"]).unwrap();
+    let cli = Cli::try_parse_from(["longport", "kline", "TSLA.US"]).unwrap();
     let Commands::Kline { period, count, .. } = cli.command else { panic!() };
     assert_eq!(period, Period::Day);
     assert_eq!(count, 100);
@@ -199,7 +199,7 @@ fn test_kline_defaults() {
 
 #[test]
 fn test_kline_period_minute() {
-    let cli = Cli::try_parse_from(["longbridge", "kline", "TSLA.US", "--period", "5m"]).unwrap();
+    let cli = Cli::try_parse_from(["longport", "kline", "TSLA.US", "--period", "5m"]).unwrap();
     let Commands::Kline { period, .. } = cli.command else { panic!() };
     assert_eq!(period, Period::Min5);
 }
@@ -208,7 +208,7 @@ fn test_kline_period_minute() {
 #[test]
 fn test_kline_history_date_range() {
     let cli = Cli::try_parse_from([
-        "longbridge", "kline-history", "TSLA.US",
+        "longport", "kline-history", "TSLA.US",
         "--start", "2024-01-01", "--end", "2024-12-31",
     ]).unwrap();
     let Commands::KlineHistory { start, end, .. } = cli.command else { panic!() };
@@ -219,7 +219,7 @@ fn test_kline_history_date_range() {
 // calc-index --index
 #[test]
 fn test_calc_index_multiple() {
-    let cli = Cli::try_parse_from(["longbridge", "calc-index", "TSLA.US", "--index", "pe,pb,eps"]).unwrap();
+    let cli = Cli::try_parse_from(["longport", "calc-index", "TSLA.US", "--index", "pe,pb,eps"]).unwrap();
     let Commands::CalcIndex { indexes, .. } = cli.command else { panic!() };
     assert_eq!(indexes, ["pe", "pb", "eps"]);
 }
@@ -228,7 +228,7 @@ fn test_calc_index_multiple() {
 #[test]
 fn test_market_temp_valid_markets() {
     for market in ["HK", "US", "CN", "SG"] {
-        let cli = Cli::try_parse_from(["longbridge", "market-temp", market]).unwrap();
+        let cli = Cli::try_parse_from(["longport", "market-temp", market]).unwrap();
         let Commands::MarketTemp { market: m, .. } = cli.command else { panic!() };
         assert_eq!(m.to_string(), market);
     }
@@ -237,7 +237,7 @@ fn test_market_temp_valid_markets() {
 // trading-days --start --end
 #[test]
 fn test_trading_days_optional_range() {
-    let cli = Cli::try_parse_from(["longbridge", "trading-days", "HK"]).unwrap();
+    let cli = Cli::try_parse_from(["longport", "trading-days", "HK"]).unwrap();
     let Commands::TradingDays { start, end, .. } = cli.command else { panic!() };
     assert!(start.is_none());
     assert!(end.is_none());
@@ -246,7 +246,7 @@ fn test_trading_days_optional_range() {
 // security-list --category
 #[test]
 fn test_security_list_default_category() {
-    let cli = Cli::try_parse_from(["longbridge", "security-list", "HK"]).unwrap();
+    let cli = Cli::try_parse_from(["longport", "security-list", "HK"]).unwrap();
     let Commands::SecurityList { category, .. } = cli.command else { panic!() };
     assert_eq!(category, SecurityCategory::Main);
 }
@@ -257,7 +257,7 @@ fn test_security_list_default_category() {
 ```rust
 #[test]
 fn test_option_chain_no_date() {
-    let cli = Cli::try_parse_from(["longbridge", "option-chain", "AAPL"]).unwrap();
+    let cli = Cli::try_parse_from(["longport", "option-chain", "AAPL"]).unwrap();
     let Commands::OptionChain { symbol, date, .. } = cli.command else { panic!() };
     assert_eq!(symbol, "AAPL");
     assert!(date.is_none());
@@ -265,14 +265,14 @@ fn test_option_chain_no_date() {
 
 #[test]
 fn test_option_chain_with_date() {
-    let cli = Cli::try_parse_from(["longbridge", "option-chain", "AAPL", "--date", "2024-01-19"]).unwrap();
+    let cli = Cli::try_parse_from(["longport", "option-chain", "AAPL", "--date", "2024-01-19"]).unwrap();
     let Commands::OptionChain { date, .. } = cli.command else { panic!() };
     assert!(date.is_some());
 }
 
 #[test]
 fn test_warrant_list_symbol() {
-    let cli = Cli::try_parse_from(["longbridge", "warrant-list", "700.HK"]).unwrap();
+    let cli = Cli::try_parse_from(["longport", "warrant-list", "700.HK"]).unwrap();
     let Commands::WarrantList { symbol, .. } = cli.command else { panic!() };
     assert_eq!(symbol, "700.HK");
 }
@@ -283,20 +283,20 @@ fn test_warrant_list_symbol() {
 ```rust
 #[test]
 fn test_watchlist_list() {
-    let cli = Cli::try_parse_from(["longbridge", "watchlist"]).unwrap();
+    let cli = Cli::try_parse_from(["longport", "watchlist"]).unwrap();
     assert!(matches!(cli.command, Commands::Watchlist(WatchlistCmd::List { .. })));
 }
 
 #[test]
 fn test_watchlist_create() {
-    let cli = Cli::try_parse_from(["longbridge", "watchlist", "create", "My Portfolio"]).unwrap();
+    let cli = Cli::try_parse_from(["longport", "watchlist", "create", "My Portfolio"]).unwrap();
     let Commands::Watchlist(WatchlistCmd::Create { name, .. }) = cli.command else { panic!() };
     assert_eq!(name, "My Portfolio");
 }
 
 #[test]
 fn test_watchlist_delete() {
-    let cli = Cli::try_parse_from(["longbridge", "watchlist", "delete", "123"]).unwrap();
+    let cli = Cli::try_parse_from(["longport", "watchlist", "delete", "123"]).unwrap();
     let Commands::Watchlist(WatchlistCmd::Delete { id, .. }) = cli.command else { panic!() };
     assert_eq!(id, 123);
 }
@@ -304,7 +304,7 @@ fn test_watchlist_delete() {
 #[test]
 fn test_watchlist_update_add_remove() {
     let cli = Cli::try_parse_from([
-        "longbridge", "watchlist", "update", "42",
+        "longport", "watchlist", "update", "42",
         "--add", "TSLA.US", "--remove", "AAPL.US",
     ]).unwrap();
     let Commands::Watchlist(WatchlistCmd::Update { id, add, remove, .. }) = cli.command else { panic!() };
@@ -316,7 +316,7 @@ fn test_watchlist_update_add_remove() {
 #[test]
 fn test_watchlist_update_mode() {
     let cli = Cli::try_parse_from([
-        "longbridge", "watchlist", "update", "42", "--mode", "replace",
+        "longport", "watchlist", "update", "42", "--mode", "replace",
     ]).unwrap();
     let Commands::Watchlist(WatchlistCmd::Update { mode, .. }) = cli.command else { panic!() };
     assert_eq!(mode, WatchlistUpdateMode::Replace);
@@ -328,7 +328,7 @@ fn test_watchlist_update_mode() {
 ```rust
 #[test]
 fn test_orders_today() {
-    let cli = Cli::try_parse_from(["longbridge", "orders"]).unwrap();
+    let cli = Cli::try_parse_from(["longport", "orders"]).unwrap();
     let Commands::Orders { history, .. } = cli.command else { panic!() };
     assert!(!history);
 }
@@ -336,7 +336,7 @@ fn test_orders_today() {
 #[test]
 fn test_orders_history_with_filters() {
     let cli = Cli::try_parse_from([
-        "longbridge", "orders", "--history",
+        "longport", "orders", "--history",
         "--start", "2024-01-01", "--end", "2024-12-31",
         "--symbol", "TSLA.US", "--status", "filled",
     ]).unwrap();
@@ -349,7 +349,7 @@ fn test_orders_history_with_filters() {
 #[test]
 fn test_buy_required_args() {
     let cli = Cli::try_parse_from([
-        "longbridge", "buy", "TSLA.US", "100", "--price", "250",
+        "longport", "buy", "TSLA.US", "100", "--price", "250",
     ]).unwrap();
     let Commands::Buy { symbol, qty, price, .. } = cli.command else { panic!() };
     assert_eq!(symbol, "TSLA.US");
@@ -360,7 +360,7 @@ fn test_buy_required_args() {
 #[test]
 fn test_buy_with_order_type_and_tif() {
     let cli = Cli::try_parse_from([
-        "longbridge", "buy", "TSLA.US", "100", "--price", "250",
+        "longport", "buy", "TSLA.US", "100", "--price", "250",
         "--type", "LO", "--tif", "gtc",
     ]).unwrap();
     let Commands::Buy { order_type, tif, .. } = cli.command else { panic!() };
@@ -370,7 +370,7 @@ fn test_buy_with_order_type_and_tif() {
 
 #[test]
 fn test_sell_args() {
-    let cli = Cli::try_parse_from(["longbridge", "sell", "TSLA.US", "50", "--price", "260"]).unwrap();
+    let cli = Cli::try_parse_from(["longport", "sell", "TSLA.US", "50", "--price", "260"]).unwrap();
     let Commands::Sell { symbol, qty, price, .. } = cli.command else { panic!() };
     assert_eq!(symbol, "TSLA.US");
     assert_eq!(qty, 50);
@@ -380,7 +380,7 @@ fn test_sell_args() {
 #[test]
 fn test_replace_order_args() {
     let cli = Cli::try_parse_from([
-        "longbridge", "replace", "ORDER001", "--qty", "200", "--price", "255",
+        "longport", "replace", "ORDER001", "--qty", "200", "--price", "255",
     ]).unwrap();
     let Commands::Replace { order_id, qty, price, .. } = cli.command else { panic!() };
     assert_eq!(order_id, "ORDER001");
@@ -390,7 +390,7 @@ fn test_replace_order_args() {
 
 #[test]
 fn test_cancel_order() {
-    let cli = Cli::try_parse_from(["longbridge", "cancel", "ORDER001"]).unwrap();
+    let cli = Cli::try_parse_from(["longport", "cancel", "ORDER001"]).unwrap();
     let Commands::Cancel { order_id, .. } = cli.command else { panic!() };
     assert_eq!(order_id, "ORDER001");
 }
@@ -398,7 +398,7 @@ fn test_cancel_order() {
 #[test]
 fn test_max_qty_args() {
     let cli = Cli::try_parse_from([
-        "longbridge", "max-qty", "TSLA.US", "--side", "buy", "--price", "250",
+        "longport", "max-qty", "TSLA.US", "--side", "buy", "--price", "250",
     ]).unwrap();
     let Commands::MaxQty { symbol, side, price, .. } = cli.command else { panic!() };
     assert_eq!(symbol, "TSLA.US");
@@ -408,7 +408,7 @@ fn test_max_qty_args() {
 
 #[test]
 fn test_balance_currency_filter() {
-    let cli = Cli::try_parse_from(["longbridge", "balance", "--currency", "USD"]).unwrap();
+    let cli = Cli::try_parse_from(["longport", "balance", "--currency", "USD"]).unwrap();
     let Commands::Balance { currency, .. } = cli.command else { panic!() };
     assert_eq!(currency.unwrap(), "USD");
 }
@@ -416,7 +416,7 @@ fn test_balance_currency_filter() {
 #[test]
 fn test_cash_flow_date_range() {
     let cli = Cli::try_parse_from([
-        "longbridge", "cash-flow",
+        "longport", "cash-flow",
         "--start", "2024-01-01", "--end", "2024-12-31",
     ]).unwrap();
     let Commands::CashFlow { start, end, .. } = cli.command else { panic!() };
@@ -826,7 +826,7 @@ async fn cmd_quote_propagates_api_error() {
 // tests/cli_integration.rs
 #![cfg(feature = "integration")]
 
-// Requires valid token (run `longbridge login` first)
+// Requires valid token (run `longport login` first)
 // Run with: cargo test --features integration -- --test-threads=1
 
 #[tokio::test]
@@ -911,7 +911,7 @@ cargo test
 # With output formatting captured
 cargo test -- --nocapture
 
-# Integration tests (requires Longbridge auth)
+# Integration tests (requires LongPort auth)
 cargo test --features integration -- --test-threads=1
 
 # Coverage report (requires cargo-llvm-cov)

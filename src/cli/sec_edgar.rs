@@ -17,9 +17,9 @@ use std::time::{Duration, SystemTime};
 // that includes contact info. SEC's WAF rejects UAs containing a parenthesized
 // URL, so we use the documented "Organization Application contact-email" form.
 const SEC_UA: &str = concat!(
-    "Longbridge longbridge-terminal/",
+    "LongPort longport-terminal/",
     env!("CARGO_PKG_VERSION"),
-    " support@longbridge.com"
+    " support@longportapp.com"
 );
 
 // Mutual-fund / ETF ticker map. ~28k rows, refreshed roughly daily upstream.
@@ -73,7 +73,7 @@ fn normalize_ticker(symbol: &str) -> String {
 
 fn cache_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| {
-        h.join(".longbridge")
+        h.join(".longport")
             .join("sec")
             .join("company_tickers_mf.json")
     })

@@ -9,7 +9,3 @@ pub mod systems;
 pub mod ui;
 mod views;
 pub mod widgets;
-
-pub(crate) fn schema_for_path(path: &[String]) -> Option<crate::cli::schema::ResponseSchema> {
-    (path == ["tui"]).then(|| crate::cli::schema::text("Interactive terminal UI session"))
-}

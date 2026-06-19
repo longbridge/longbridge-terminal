@@ -2,8 +2,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use time::{OffsetDateTime, UtcOffset};
 
 use anyhow::Result;
-use longbridge::asset::{GetStatementListOptions, GetStatementOptions, StatementType};
-use longbridge::httpclient::Json;
+use longport::asset::{GetStatementListOptions, GetStatementOptions, StatementType};
+use longport::httpclient::Json;
 use reqwest::Method;
 use serde::Deserialize;
 use serde_json::json;
@@ -81,7 +81,7 @@ fn read_token_state() -> Result<TokenState> {
     if !token_path.exists() {
         return Ok(TokenState {
             status: "not_found",
-            detail: format!("run {DIM}longbridge auth login{RESET} to authenticate"),
+            detail: format!("run {DIM}longport auth login{RESET} to authenticate"),
             access_token_exp: None,
             refresh_token_exp: None,
             logged_in_at: None,
@@ -94,7 +94,7 @@ fn read_token_state() -> Result<TokenState> {
         return Ok(TokenState {
             status: "decrypt_failed",
             detail: format!(
-                "token cannot be decrypted — run {DIM}longbridge auth login{RESET} to re-authenticate"
+                "token cannot be decrypted — run {DIM}longport auth login{RESET} to re-authenticate"
             ),
             access_token_exp: None,
             refresh_token_exp: None,
@@ -160,7 +160,7 @@ fn read_token_state() -> Result<TokenState> {
         Ok(TokenState {
             status: "expired",
             detail: format!(
-                "{} ago — run {DIM}longbridge auth login{RESET} to re-authenticate",
+                "{} ago — run {DIM}longport auth login{RESET} to re-authenticate",
                 format_duration(now - expires_at)
             ),
             access_token_exp,

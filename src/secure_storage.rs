@@ -1,4 +1,4 @@
-//! Encrypted file token storage for Longbridge OAuth tokens.
+//! Encrypted file token storage for `LongPort` OAuth tokens.
 //!
 //! Tokens are AES-256-GCM encrypted using a key derived from a machine-specific
 //! identifier via HKDF-SHA256. This prevents token files from being used on a
@@ -19,11 +19,11 @@ use aes_gcm::{
     Aes256Gcm, Key, Nonce,
 };
 use hkdf::Hkdf;
-use longbridge::oauth::{OAuthError, OAuthResult, StoredToken, TokenStorage};
+use longport::oauth::{OAuthError, OAuthResult, StoredToken, TokenStorage};
 use serde::{Deserialize, Serialize};
 
 const MAGIC: &[u8; 3] = b"LB\x01";
-const HKDF_INFO: &[u8] = b"longbridge-token-v1";
+const HKDF_INFO: &[u8] = b"longport-token-v1";
 
 static MACHINE_ID: OnceLock<String> = OnceLock::new();
 
@@ -152,7 +152,7 @@ pub fn harden_file_permissions(path: &Path) {
 fn token_path(_client_id: &str) -> anyhow::Result<PathBuf> {
     Ok(dirs::home_dir()
         .ok_or_else(|| anyhow::anyhow!("Failed to get home directory"))?
-        .join(".longbridge")
+        .join(".longport")
         .join("openapi")
         .join("cli-auth"))
 }
@@ -246,7 +246,7 @@ mod tests {
 
     #[test]
     fn encrypt_decrypt_roundtrip() {
-        let plaintext = b"hello, longbridge token";
+        let plaintext = b"hello, longport token";
         let encrypted = encrypt(plaintext).expect("encrypt failed");
         assert!(encrypted.starts_with(MAGIC), "magic header missing");
         let decrypted = decrypt(&encrypted).expect("decrypt failed");
@@ -316,5 +316,15 @@ mod tests {
         assert_eq!(loaded.refresh_token.as_deref(), Some("rt_test"));
         assert_eq!(loaded.expires_at, 9_999_999_999);
         assert_eq!(loaded.logged_in_at, Some(1_700_000_000));
+    }
+
+    #[test]
+    fn encrypted_token_path_uses_longport_directory() {
+        let path = token_path("client-id").expect("token path");
+        assert!(path.ends_with(
+            std::path::Path::new(".longport")
+                .join("openapi")
+                .join("cli-auth")
+        ));
     }
 }

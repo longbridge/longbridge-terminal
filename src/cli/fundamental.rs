@@ -1,5 +1,5 @@
 use anyhow::Result;
-use longbridge::httpclient::Json;
+use longport::httpclient::Json;
 use reqwest::Method;
 use serde_json::{Map, Value};
 use unicode_width::UnicodeWidthStr;

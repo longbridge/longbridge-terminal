@@ -50,7 +50,7 @@ impl Default for Account {
             account_name: "Default Account".to_string(),
             account_type: "CashAccount".to_string(),
             org: OrgInfo {
-                name: "Longbridge".to_string(),
+                name: "LongPort".to_string(),
             },
         }
     }

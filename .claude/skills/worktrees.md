@@ -3,7 +3,7 @@ name: worktrees
 description: Worktree setup and parallel development workflow for this project. Use when creating an isolated workspace for a new feature branch.
 ---
 
-# Worktrees — longbridge-terminal
+# Worktrees — longport-terminal
 
 ## Convention
 

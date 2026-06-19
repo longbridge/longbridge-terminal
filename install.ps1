@@ -1,13 +1,13 @@
 #!/usr/bin/env pwsh
-# Longbridge Terminal CLI installer for Windows
-# Usage: iwr https://github.com/longbridge/longbridge-terminal/raw/main/install.ps1 | iex
+# LongPort Terminal CLI installer for Windows
+# Usage: iwr https://github.com/longportapp/longport-terminal/raw/main/install.ps1 | iex
 
 $ErrorActionPreference = 'Stop'
 
-$repo        = 'longbridge/longbridge-terminal'
-$binName     = 'longbridge'
-$packageName = 'longbridge-terminal'
-$installDir  = Join-Path $env:LOCALAPPDATA 'Programs\longbridge'
+$repo        = 'longportapp/longport-terminal'
+$binName     = 'longport'
+$packageName = 'longport-terminal'
+$installDir  = Join-Path $env:LOCALAPPDATA 'Programs\longport'
 
 # ── Resolve latest release version ───────────────────────────────────────────
 
@@ -80,7 +80,7 @@ if ($userPath -notlike "*$installDir*") {
 }
 
 Write-Host ""
-Write-Host "Longbridge CLI $version has been installed successfully."
+Write-Host "LongPort CLI $version has been installed successfully."
 Write-Host ""
-Write-Host "Run 'longbridge auth login' to authenticate, then 'longbridge -h' for help."
+Write-Host "Run 'longport auth login' to authenticate, then 'longport -h' for help."
 Write-Host ""

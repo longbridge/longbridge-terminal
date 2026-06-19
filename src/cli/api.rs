@@ -1,20 +1,20 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use longbridge::quote::{
+use longport::quote::{
     AdjustType, CalcIndex, Candlestick, CapitalDistributionResponse, CapitalFlowLine,
     HistoryMarketTemperatureResponse, IssuerInfo, MarketTemperature, MarketTradingDays,
     MarketTradingSession, OptionQuote, ParticipantInfo, Period, RequestUpdateWatchlistGroup,
     Security, SecurityBrokers, SecurityCalcIndex, SecurityDepth, SecurityQuote, SecurityStaticInfo,
     StrikePriceInfo, Subscription, Trade, WarrantInfo, WarrantQuote, WatchlistGroup,
 };
-use longbridge::trade::{
+use longport::trade::{
     AccountBalance, CashFlow, EstimateMaxPurchaseQuantityOptions,
     EstimateMaxPurchaseQuantityResponse, Execution, FundPositionsResponse, GetCashFlowOptions,
     GetHistoryExecutionsOptions, GetHistoryOrdersOptions, GetTodayExecutionsOptions,
     GetTodayOrdersOptions, MarginRatio, Order, OrderDetail, ReplaceOrderOptions,
     StockPositionsResponse, SubmitOrderOptions, SubmitOrderResponse,
 };
-use longbridge::{quote::IntradayLine, Market};
+use longport::{quote::IntradayLine, Market};
 use time::Date;
 
 /// Quote API trait for CLI commands. Implementations wrap the real SDK context;
@@ -116,13 +116,13 @@ pub trait TradeApi: Send + Sync {
 
 // ──── Production implementations ────────────────────────────────────────────
 
-/// Production `QuoteApi` backed by the global longbridge `QuoteContext`.
+/// Production `QuoteApi` backed by the global longport `QuoteContext`.
 pub struct LbQuoteApi {
-    ctx: &'static longbridge::quote::QuoteContext,
+    ctx: &'static longport::quote::QuoteContext,
 }
 
 impl LbQuoteApi {
-    pub fn new(ctx: &'static longbridge::quote::QuoteContext) -> Self {
+    pub fn new(ctx: &'static longport::quote::QuoteContext) -> Self {
         Self { ctx }
     }
 }
@@ -146,7 +146,7 @@ impl QuoteApi for LbQuoteApi {
     }
 
     async fn intraday(&self, symbol: String) -> Result<Vec<IntradayLine>> {
-        use longbridge::quote::TradeSessions;
+        use longport::quote::TradeSessions;
         Ok(self.ctx.intraday(symbol, TradeSessions::Intraday).await?)
     }
 
@@ -157,7 +157,7 @@ impl QuoteApi for LbQuoteApi {
         count: usize,
         adjust: AdjustType,
     ) -> Result<Vec<Candlestick>> {
-        use longbridge::quote::TradeSessions;
+        use longport::quote::TradeSessions;
         Ok(self
             .ctx
             .candlesticks(symbol, period, count, adjust, TradeSessions::Intraday)
@@ -172,7 +172,7 @@ impl QuoteApi for LbQuoteApi {
         start: Option<Date>,
         end: Option<Date>,
     ) -> Result<Vec<Candlestick>> {
-        use longbridge::quote::TradeSessions;
+        use longport::quote::TradeSessions;
         Ok(self
             .ctx
             .history_candlesticks_by_date(
@@ -193,7 +193,7 @@ impl QuoteApi for LbQuoteApi {
         adjust: AdjustType,
         count: usize,
     ) -> Result<Vec<Candlestick>> {
-        use longbridge::quote::TradeSessions;
+        use longport::quote::TradeSessions;
         Ok(self
             .ctx
             .history_candlesticks_by_offset(
@@ -293,7 +293,7 @@ impl QuoteApi for LbQuoteApi {
     }
 
     async fn warrant_list(&self, symbol: String) -> Result<Vec<WarrantInfo>> {
-        use longbridge::quote::{SortOrderType, WarrantSortBy};
+        use longport::quote::{SortOrderType, WarrantSortBy};
         Ok(self
             .ctx
             .warrant_list(
@@ -318,7 +318,7 @@ impl QuoteApi for LbQuoteApi {
     }
 
     async fn create_watchlist_group(&self, name: String) -> Result<i64> {
-        use longbridge::quote::RequestCreateWatchlistGroup;
+        use longport::quote::RequestCreateWatchlistGroup;
         Ok(self
             .ctx
             .create_watchlist_group(RequestCreateWatchlistGroup::new(name))
@@ -334,13 +334,13 @@ impl QuoteApi for LbQuoteApi {
     }
 }
 
-/// Production `TradeApi` backed by the global longbridge `TradeContext`.
+/// Production `TradeApi` backed by the global longport `TradeContext`.
 pub struct LbTradeApi {
-    ctx: &'static longbridge::trade::TradeContext,
+    ctx: &'static longport::trade::TradeContext,
 }
 
 impl LbTradeApi {
-    pub fn new(ctx: &'static longbridge::trade::TradeContext) -> Self {
+    pub fn new(ctx: &'static longport::trade::TradeContext) -> Self {
         Self { ctx }
     }
 }
@@ -417,7 +417,7 @@ pub async fn http_get(
     params: &[(&str, &str)],
     verbose: bool,
 ) -> Result<serde_json::Value> {
-    use longbridge::httpclient::Json;
+    use longport::httpclient::Json;
     use reqwest::Method;
 
     if verbose {
@@ -447,7 +447,7 @@ pub async fn http_post(
     body: serde_json::Value,
     verbose: bool,
 ) -> Result<serde_json::Value> {
-    use longbridge::httpclient::Json;
+    use longport::httpclient::Json;
     use reqwest::Method;
 
     if verbose {
@@ -475,7 +475,7 @@ pub async fn http_delete(
     body: serde_json::Value,
     verbose: bool,
 ) -> Result<serde_json::Value> {
-    use longbridge::httpclient::Json;
+    use longport::httpclient::Json;
     use reqwest::Method;
 
     if verbose {
@@ -503,7 +503,7 @@ pub async fn http_put(
     body: serde_json::Value,
     verbose: bool,
 ) -> Result<serde_json::Value> {
-    use longbridge::httpclient::Json;
+    use longport::httpclient::Json;
     use reqwest::Method;
 
     if verbose {

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use longbridge::content::{
+use longport::content::{
     CreateReplyOptions, CreateTopicOptions, ListTopicRepliesOptions, MyTopicsOptions, OwnedTopic,
     TopicReply,
 };
@@ -47,7 +47,7 @@ fn owned_topic_to_json(item: &OwnedTopic) -> serde_json::Value {
         "comments_count": item.comments_count,
         "views_count": item.views_count,
         "shares_count": item.shares_count,
-        "url": format!("https://longbridge.com/topics/{}", item.id),
+        "url": format!("https://longportapp.com/topics/{}", item.id),
         "created_at": fmt_rfc3339(item.created_at),
         "updated_at": fmt_rfc3339(item.updated_at),
     })
@@ -305,7 +305,7 @@ pub async fn cmd_create_topic(
 
     println!("Topic created successfully.");
     println!("  ID:   {id}");
-    println!("  URL:  https://longbridge.com/topics/{id}");
+    println!("  URL:  https://longportapp.com/topics/{id}");
     Ok(())
 }
 

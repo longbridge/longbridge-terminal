@@ -63,7 +63,7 @@ async fn fetch_account_channel() -> Option<String> {
 #[allow(clippy::too_many_lines)]
 pub async fn run(
     _args: crate::Args,
-    mut quote_receiver: impl tokio_stream::Stream<Item = longbridge::quote::PushEvent> + Unpin,
+    mut quote_receiver: impl tokio_stream::Stream<Item = longport::quote::PushEvent> + Unpin,
 ) {
     let (update_tx, mut update_rx) = mpsc::unbounded_channel();
     UPDATE_TX.set(update_tx.clone()).ok();
@@ -101,7 +101,7 @@ pub async fn run(
 
             // Then subscribe for real-time updates
             if let Err(e) = ctx
-                .subscribe(&symbols, longbridge::quote::SubFlags::QUOTE)
+                .subscribe(&symbols, longport::quote::SubFlags::QUOTE)
                 .await
             {
                 tracing::error!("Failed to subscribe indexes: {}", e);
@@ -320,7 +320,7 @@ pub async fn run(
                     .filter(|path| {
                         path.is_file()
                             && path.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
-                                n.starts_with("longbridge")
+                                n.starts_with("longport")
                                     && std::path::Path::new(n)
                                         .extension()
                                         .is_some_and(|ext| ext.eq_ignore_ascii_case("log"))
@@ -404,7 +404,7 @@ pub async fn run(
             Some(push_event) = tokio_stream::StreamExt::next(&mut quote_receiver) => {
                 // Handle WebSocket push events
                 // PushEvent contains symbol and detail
-                use longbridge::quote::PushEventDetail;
+                use longport::quote::PushEventDetail;
 
                 let symbol = push_event.symbol;
                 let counter = Counter::new(&symbol);
@@ -775,7 +775,7 @@ fn handle_global_keys(
         ) =>
         {
             if let Some(symbol) = get_active_symbol(app, state) {
-                systems::open_order_entry(symbol, longbridge::trade::OrderSide::Buy, None);
+                systems::open_order_entry(symbol, longport::trade::OrderSide::Buy, None);
                 POPUP.store(POPUP_ORDER_ENTRY, Ordering::Relaxed);
                 render_state.mark_dirty(DirtyFlags::ALL);
             }
@@ -791,7 +791,7 @@ fn handle_global_keys(
         ) =>
         {
             if let Some(symbol) = get_active_symbol(app, state) {
-                systems::open_order_entry(symbol, longbridge::trade::OrderSide::Sell, None);
+                systems::open_order_entry(symbol, longport::trade::OrderSide::Sell, None);
                 POPUP.store(POPUP_ORDER_ENTRY, Ordering::Relaxed);
                 render_state.mark_dirty(DirtyFlags::ALL);
             }

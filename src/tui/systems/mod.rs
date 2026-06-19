@@ -43,7 +43,7 @@ pub struct WsManager;
 impl WsManager {
     #[allow(clippy::unused_async)]
     pub async fn unmount(&self, _name: &str) -> anyhow::Result<()> {
-        // TODO: Use Longbridge SDK to unsubscribe
+        // TODO: Use LongPort SDK to unsubscribe
         Ok(())
     }
 
@@ -53,14 +53,14 @@ impl WsManager {
         symbols: &[Counter],
         _sub_type: SubTypes,
     ) -> anyhow::Result<()> {
-        // TODO: Use Longbridge SDK to resubscribe
+        // TODO: Use LongPort SDK to resubscribe
         let ctx = crate::openapi::quote();
         let symbol_strings: Vec<String> = symbols
             .iter()
             .map(std::string::ToString::to_string)
             .collect();
         let _ = ctx
-            .subscribe(&symbol_strings, longbridge::quote::SubFlags::QUOTE)
+            .subscribe(&symbol_strings, longport::quote::SubFlags::QUOTE)
             .await;
         Ok(())
     }
@@ -74,7 +74,7 @@ impl WsManager {
         let _ = ctx
             .subscribe(
                 &symbol_strings,
-                longbridge::quote::SubFlags::QUOTE | longbridge::quote::SubFlags::DEPTH,
+                longport::quote::SubFlags::QUOTE | longport::quote::SubFlags::DEPTH,
             )
             .await;
         Ok(())
@@ -87,7 +87,7 @@ impl WsManager {
             .map(std::string::ToString::to_string)
             .collect();
         let _ = ctx
-            .subscribe(&symbol_strings, longbridge::quote::SubFlags::TRADE)
+            .subscribe(&symbol_strings, longport::quote::SubFlags::TRADE)
             .await;
         Ok(())
     }

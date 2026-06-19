@@ -16,7 +16,7 @@ pub struct Stock {
     pub trade_session: TradeSession,
     pub quote: QuoteData,
     pub depth: DepthData,
-    pub static_info: Option<Arc<longbridge::quote::SecurityStaticInfo>>,
+    pub static_info: Option<Arc<longport::quote::SecurityStaticInfo>>,
     pub trades: Vec<TradeData>, // Recent trades
 }
 
@@ -50,8 +50,8 @@ impl Stock {
         }
     }
 
-    /// Update quote data (from longbridge SDK `PushQuote`, for WebSocket push)
-    pub fn update_from_push_quote(&mut self, quote: &longbridge::quote::PushQuote) {
+    /// Update quote data (from longport SDK `PushQuote`, for WebSocket push)
+    pub fn update_from_push_quote(&mut self, quote: &longport::quote::PushQuote) {
         self.quote.last_done = Some(quote.last_done);
         self.quote.open = Some(quote.open);
         self.quote.high = Some(quote.high);
@@ -66,7 +66,7 @@ impl Stock {
     }
 
     /// Update from `SecurityQuote` (full quote data from API, includes `prev_close` but NO `trade_session`)
-    pub fn update_from_security_quote(&mut self, quote: &longbridge::quote::SecurityQuote) {
+    pub fn update_from_security_quote(&mut self, quote: &longport::quote::SecurityQuote) {
         self.quote.last_done = Some(quote.last_done);
         self.quote.prev_close = Some(quote.prev_close);
         self.quote.open = Some(quote.open);
@@ -81,8 +81,8 @@ impl Stock {
         // trade_session will be updated from WebSocket PushQuote or calculated from market hours
     }
 
-    /// Update depth data (from longbridge SDK)
-    pub fn update_from_depth(&mut self, depth: &longbridge::quote::SecurityDepth) {
+    /// Update depth data (from longport SDK)
+    pub fn update_from_depth(&mut self, depth: &longport::quote::SecurityDepth) {
         self.depth.asks = depth
             .asks
             .iter()
@@ -106,8 +106,8 @@ impl Stock {
             .collect();
     }
 
-    /// Update trades data (from longbridge SDK)
-    pub fn update_from_trades(&mut self, trades: &[longbridge::quote::Trade]) {
+    /// Update trades data (from longport SDK)
+    pub fn update_from_trades(&mut self, trades: &[longport::quote::Trade]) {
         self.trades = trades
             .iter()
             .map(|t| TradeData {
@@ -120,8 +120,8 @@ impl Stock {
             .collect();
     }
 
-    /// Update static info (from longbridge SDK)
-    pub fn update_from_static_info(&mut self, info: longbridge::quote::SecurityStaticInfo) {
+    /// Update static info (from longport SDK)
+    pub fn update_from_static_info(&mut self, info: longport::quote::SecurityStaticInfo) {
         self.static_info = Some(Arc::new(info));
     }
 }

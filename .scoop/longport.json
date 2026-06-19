@@ -1,0 +1,23 @@
+{
+  "version": "0.23.3",
+  "description": "AI-native CLI for the LongPort trading platform — real-time market data, portfolio, and trading.",
+  "homepage": "https://github.com/longportapp/longport-terminal",
+  "license": "MIT",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/longportapp/longport-terminal/releases/download/v0.23.3/longport-terminal-windows-amd64.zip",
+      "hash": "3b8488a1e41e26b835cbb4dfa175c114bac9a3cdd9b449318c2029523eee5b39"
+    }
+  },
+  "bin": "longport.exe",
+  "checkver": {
+    "github": "https://github.com/longportapp/longport-terminal"
+  },
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/longportapp/longport-terminal/releases/download/v$version/longport-terminal-windows-amd64.zip"
+      }
+    }
+  }
+}

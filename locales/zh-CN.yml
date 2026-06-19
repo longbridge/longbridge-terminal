@@ -22,12 +22,12 @@ my_quote:
   no_data: "暂无数据"
   qr_title: "购买行情套餐"
   scan_hint: |
-    请用 Longbridge App 内「我的」Tab 中的点击扫码打开行情商城。
+    请用 LongPort App 内「我的」Tab 中的点击扫码打开行情商城。
     也可以在 App 内点击「我的」->「行情商店」直接进入。
 qrcode_view:
   scan_hint: |
-    请使用长桥 iOS 或 Android app 扫描二维码
-    https://longbridge.hk/download
+    请使用LongPort iOS 或 Android app 扫描二维码
+    https://longport.hk/download
   error:
     heading: "生成二维码失败"
     content: "请退出 app 后重试"
@@ -37,7 +37,7 @@ qrcode_view:
 user:
   open_account:
     heading: "请开户"
-    content: "请在其他长桥应用上开户后使用"
+    content: "请在其他LongPort应用上开户后使用"
 account:
   type:
     paper: "模拟账户"

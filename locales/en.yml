@@ -22,12 +22,12 @@ my_quote:
   no_data: "No data"
   qr_title: "Purchase Quote Packages"
   scan_hint: |
-    Scan with the QR scanner in the "Me" tab inside Longbridge App.
+    Scan with the QR scanner in the "Me" tab inside LongPort App.
     Or go to "Me" -> "Quote Store" in the app.
 qrcode_view:
   scan_hint: |
-    To sign in, scan the QR code using Longbridge iOS or Android app.
-    https://longbridge.hk/download
+    To sign in, scan the QR code using LongPort iOS or Android app.
+    https://longport.hk/download
   error:
     heading: "Failed to create QR code"
     content: "Please quit the app and try again"

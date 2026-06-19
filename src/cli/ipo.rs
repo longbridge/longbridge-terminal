@@ -660,9 +660,9 @@ pub async fn cmd_ipo_detail(
         Err(e) => {
             // A business-level error from the OpenAPI layer (code != 0) means the
             // stock has no IPO data; surface everything else as a real error.
-            if e.downcast_ref::<longbridge::httpclient::HttpClientError>()
+            if e.downcast_ref::<longport::httpclient::HttpClientError>()
                 .is_some_and(|he| {
-                    matches!(he, longbridge::httpclient::HttpClientError::OpenApi { .. })
+                    matches!(he, longport::httpclient::HttpClientError::OpenApi { .. })
                 })
             {
                 println!("No IPO detail found for {symbol}.");

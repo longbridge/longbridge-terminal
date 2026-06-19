@@ -283,7 +283,6 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<ResponseSchema> {
         "init" => init::schema_for_path(path),
         "check" => check::schema_for_path(path),
         "update" => crate::update::schema_for_path(path),
-        "tui" => crate::tui::schema_for_path(path),
         "completion" => completion::schema_for_path(path),
         "quote" | "depth" | "brokers" | "trades" | "intraday" | "kline" | "static"
         | "calc-index" | "capital" | "market-temp" | "trading" | "security-list"
@@ -439,9 +438,9 @@ fn inferred_type(key: &str) -> &'static str {
 
 fn print_no_schema_error(path: &[String]) {
     let name = if path.is_empty() {
-        "longbridge".to_string()
+        "longport".to_string()
     } else {
-        format!("longbridge {}", path.join(" "))
+        format!("longport {}", path.join(" "))
     };
     eprintln!(
         "{}",
@@ -505,7 +504,7 @@ mod tests {
         let paths = real_leaf_paths(&root);
         assert_eq!(
             paths.len(),
-            138,
+            137,
             "real command count changed; review schema coverage"
         );
 

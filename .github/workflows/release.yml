@@ -16,31 +16,31 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            name: longbridge-terminal-linux-amd64.tar.gz
+            name: longport-terminal-linux-amd64.tar.gz
             arch: x86_64
             cross: false
 
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
-            name: longbridge-terminal-linux-arm64.tar.gz
+            name: longport-terminal-linux-arm64.tar.gz
             arch: aarch64
             cross: true
 
           - target: x86_64-apple-darwin
             os: macOS-latest
-            name: longbridge-terminal-darwin-amd64.tar.gz
+            name: longport-terminal-darwin-amd64.tar.gz
             arch: x86_64
             cross: false
 
           - target: aarch64-apple-darwin
             os: macOS-latest
-            name: longbridge-terminal-darwin-arm64.tar.gz
+            name: longport-terminal-darwin-arm64.tar.gz
             arch: aarch64
             cross: false
 
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            name: longbridge-terminal-windows-amd64.zip
+            name: longport-terminal-windows-amd64.zip
             arch: x86_64
             cross: false
 
@@ -49,13 +49,13 @@ jobs:
           # the glibc version present on the host.
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
-            name: longbridge-terminal-linux-musl-amd64.tar.gz
+            name: longport-terminal-linux-musl-amd64.tar.gz
             arch: x86_64
             cross: false  # Compile natively on x86_64 runner with musl-tools
 
           - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
-            name: longbridge-terminal-linux-musl-arm64.tar.gz
+            name: longport-terminal-linux-musl-arm64.tar.gz
             arch: aarch64
             cross: true
 
@@ -108,8 +108,8 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: |
           cd target/${{ matrix.target }}/release
-          strip longbridge.exe
-          7z a ../../../${{ matrix.name }} longbridge.exe
+          strip longport.exe
+          7z a ../../../${{ matrix.name }} longport.exe
           cd -
 
       - name: Prepare artifacts [Linux & macOS]
@@ -117,22 +117,22 @@ jobs:
         run: |
           cd target/${{ matrix.target }}/release
           # TODO: investigate better cross platform stripping
-          strip longbridge || true
-          tar czvf ../../../${{ matrix.name }} longbridge
+          strip longport || true
+          tar czvf ../../../${{ matrix.name }} longport
           cd -
 
       - name: Test Bin [Linux & macOS]
         if: matrix.arch == 'x86_64' && matrix.os != 'windows-latest'
         run: |
           cd target/${{ matrix.target }}/release
-          ./longbridge --version
+          ./longport --version
           cd -
 
       - name: Test Bin [Windows]
         if: matrix.arch == 'x86_64' && matrix.os == 'windows-latest'
         run: |
           cd target/${{ matrix.target }}/release
-          ./longbridge.exe --version
+          ./longport.exe --version
           cd -
 
       - name: Deploy | Upload artifacts
@@ -210,7 +210,7 @@ jobs:
         run: |
           set -euo pipefail
           ./ossutil cp ./release-dist/ \
-            oss://lb-assets/github/release/longbridge-terminal/v${{ steps.version.outputs.version }}/ \
+            oss://lb-assets/github/release/longport-terminal/v${{ steps.version.outputs.version }}/ \
             -u -r -j 10 \
             -e oss-cn-hangzhou.aliyuncs.com \
             -i ${{ secrets.FE_LB_ASSET_ACCESS_KEY_ID }} \
@@ -221,7 +221,7 @@ jobs:
           set -euo pipefail
           echo "v${{ steps.version.outputs.version }}" > latest
           ./ossutil cp latest \
-            oss://lb-assets/github/release/longbridge-terminal/latest \
+            oss://lb-assets/github/release/longport-terminal/latest \
             -f \
             -e oss-cn-hangzhou.aliyuncs.com \
             -i ${{ secrets.FE_LB_ASSET_ACCESS_KEY_ID }} \

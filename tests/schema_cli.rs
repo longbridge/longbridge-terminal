@@ -7,10 +7,10 @@ struct CliOutput {
 }
 
 fn run(args: &[&str]) -> CliOutput {
-    let output = Command::new(env!("CARGO_BIN_EXE_longbridge"))
+    let output = Command::new(env!("CARGO_BIN_EXE_longport"))
         .args(args)
         .output()
-        .unwrap_or_else(|e| panic!("run longbridge {args:?}: {e}"));
+        .unwrap_or_else(|e| panic!("run longport {args:?}: {e}"));
 
     CliOutput {
         status: output.status.code().unwrap_or(-1),
@@ -75,7 +75,7 @@ fn command_group_schema_prints_help() {
 
     assert_eq!(out.status, 0, "stderr: {}", out.stderr);
     assert!(out.stderr.is_empty(), "stderr: {}", out.stderr);
-    assert!(out.stdout.contains("Usage: longbridge auth"));
+    assert!(out.stdout.contains("Usage: longport auth"));
     assert!(out.stdout.contains("Commands:"));
 }
 
@@ -100,6 +100,24 @@ fn root_schema_reports_no_response_schema() {
         serde_json::from_str(&out.stderr).expect("structured schema error");
     assert_eq!(
         err["error"],
-        "no response schema available for \"longbridge\""
+        "no response schema available for \"longport\""
+    );
+}
+
+#[test]
+fn root_help_does_not_offer_tui_command() {
+    let out = run(&["--help"]);
+
+    assert_eq!(out.status, 0, "stderr: {}", out.stderr);
+    assert!(
+        !out.stdout.contains("longport tui"),
+        "help still advertises disabled TUI command:\n{}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout
+            .contains("Launch the interactive full-screen TUI"),
+        "help still describes disabled TUI command:\n{}",
+        out.stdout
     );
 }

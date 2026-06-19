@@ -1,8 +1,8 @@
 use anyhow::{bail, Result};
-use longbridge::quote::{
+use longport::quote::{
     AdjustType, CalcIndex, Period, PrePostQuote, SecurityListCategory, TradeSession, TradeSessions,
 };
-use longbridge::Market;
+use longport::Market;
 use time::Date;
 
 use serde_json::Value;
@@ -104,7 +104,7 @@ fn pre_post_has_data(q: &PrePostQuote) -> bool {
     q.last_done > rust_decimal::Decimal::ZERO
 }
 
-type CalcIndexExtractor = fn(&longbridge::quote::SecurityCalcIndex) -> String;
+type CalcIndexExtractor = fn(&longport::quote::SecurityCalcIndex) -> String;
 
 fn calc_index_column(key: &str) -> Option<(&'static str, CalcIndexExtractor)> {
     match key {
@@ -224,12 +224,12 @@ fn parse_calc_indexes(indexes: &[String]) -> Vec<CalcIndex> {
         .collect()
 }
 
-fn parse_market(s: &str) -> Result<longbridge::Market> {
+fn parse_market(s: &str) -> Result<longport::Market> {
     match s.to_uppercase().as_str() {
-        "HK" => Ok(longbridge::Market::HK),
-        "US" => Ok(longbridge::Market::US),
-        "CN" | "SH" | "SZ" => Ok(longbridge::Market::CN),
-        "SG" => Ok(longbridge::Market::SG),
+        "HK" => Ok(longport::Market::HK),
+        "US" => Ok(longport::Market::US),
+        "CN" | "SH" | "SZ" => Ok(longport::Market::CN),
+        "SG" => Ok(longport::Market::SG),
         _ => bail!("Unknown market '{s}'. Use: HK US CN SG"),
     }
 }
@@ -1300,8 +1300,8 @@ pub async fn cmd_warrant_list(symbol: String, format: &OutputFormat) -> Result<(
     let warrants = ctx
         .warrant_list(
             symbol,
-            longbridge::quote::WarrantSortBy::LastDone,
-            longbridge::quote::SortOrderType::Descending,
+            longport::quote::WarrantSortBy::LastDone,
+            longport::quote::SortOrderType::Descending,
             None,
             None,
             None,
@@ -1977,7 +1977,7 @@ pub async fn run_option_chain_strikes(
     } else {
         api.option_quote(all_symbols).await.unwrap_or_default()
     };
-    let quote_map: std::collections::HashMap<&str, &longbridge::quote::OptionQuote> =
+    let quote_map: std::collections::HashMap<&str, &longport::quote::OptionQuote> =
         quotes.iter().map(|q| (q.symbol.as_str(), q)).collect();
 
     if quote_map.is_empty() {
@@ -2318,7 +2318,7 @@ pub async fn cmd_constituent(
         // No allocation data available — fall through to index-constituents.
     }
 
-    let cid = longbridge::counter::index_symbol_to_counter_id(&symbol);
+    let cid = longport::counter::index_symbol_to_counter_id(&symbol);
     let limit_str = limit.to_string();
     let data = http_get(
         "/v1/quote/index-constituents",
@@ -2378,7 +2378,7 @@ pub async fn cmd_constituent(
 
 fn market_trade_status_label(code: i64) -> &'static str {
     i32::try_from(code)
-        .map(longbridge::market::TradeStatus::from)
+        .map(longport::market::TradeStatus::from)
         .unwrap_or_default()
         .name()
 }
@@ -3340,8 +3340,8 @@ pub async fn cmd_rank(
 }
 
 /// Human-readable label for an ETF asset-allocation group type.
-fn asset_allocation_type_label(t: longbridge::fundamental::ElementType) -> &'static str {
-    use longbridge::fundamental::ElementType;
+fn asset_allocation_type_label(t: longport::fundamental::ElementType) -> &'static str {
+    use longport::fundamental::ElementType;
     match t {
         ElementType::Holdings => "Holdings",
         ElementType::Regional => "Regional",
@@ -3359,7 +3359,7 @@ fn fmt_position_ratio(raw: &str) -> String {
 
 /// Pick the locale-appropriate display name for an asset-allocation item,
 /// falling back to the default `name` when no localized variant exists.
-fn allocation_item_name(item: &longbridge::fundamental::AssetAllocationItem) -> String {
+fn allocation_item_name(item: &longport::fundamental::AssetAllocationItem) -> String {
     let locale = crate::locale::get();
     let keys: &[&str] = match locale {
         "zh-CN" => &["zh-CN", "zh-HK"],
@@ -3477,7 +3477,7 @@ fn render_sec_holdings(
 /// The `--sort` / `--order` flags do not apply to this data source — the API
 /// returns each group pre-sorted by weight — so they are intentionally ignored.
 fn render_etf_asset_allocation(
-    resp: &longbridge::fundamental::AssetAllocationResponse,
+    resp: &longport::fundamental::AssetAllocationResponse,
     symbol: &str,
     limit: i32,
     format: &OutputFormat,
@@ -3499,7 +3499,7 @@ fn render_etf_asset_allocation(
                 }
                 let is_holdings = matches!(
                     group.asset_type,
-                    longbridge::fundamental::ElementType::Holdings
+                    longport::fundamental::ElementType::Holdings
                 );
                 if is_holdings {
                     let headers = ["name", "symbol", "weight", "industry"];
@@ -3830,7 +3830,7 @@ mod tests {
             .with(mockall::predicate::eq("700.HK".to_string()))
             .times(1)
             .returning(|_| {
-                Ok(longbridge::quote::SecurityDepth {
+                Ok(longport::quote::SecurityDepth {
                     asks: vec![],
                     bids: vec![],
                 })
@@ -3847,7 +3847,7 @@ mod tests {
             .with(mockall::predicate::eq("700.HK".to_string()))
             .times(1)
             .returning(|_| {
-                Ok(longbridge::quote::SecurityBrokers {
+                Ok(longport::quote::SecurityBrokers {
                     ask_brokers: vec![],
                     bid_brokers: vec![],
                 })
@@ -3980,14 +3980,14 @@ mod tests {
             .with(mockall::predicate::eq("TSLA.US".to_string()))
             .times(1)
             .returning(|_| {
-                Ok(longbridge::quote::CapitalDistributionResponse {
+                Ok(longport::quote::CapitalDistributionResponse {
                     timestamp: time::OffsetDateTime::UNIX_EPOCH,
-                    capital_in: longbridge::quote::CapitalDistribution {
+                    capital_in: longport::quote::CapitalDistribution {
                         large: Decimal::ZERO,
                         medium: Decimal::ZERO,
                         small: Decimal::ZERO,
                     },
-                    capital_out: longbridge::quote::CapitalDistribution {
+                    capital_out: longport::quote::CapitalDistribution {
                         large: Decimal::ZERO,
                         medium: Decimal::ZERO,
                         small: Decimal::ZERO,
@@ -4014,10 +4014,10 @@ mod tests {
     async fn test_run_security_list_dispatches() {
         let mut mock = MockQuoteApi::new();
         mock.expect_security_list()
-            .with(mockall::predicate::eq(longbridge::Market::HK))
+            .with(mockall::predicate::eq(longport::Market::HK))
             .times(1)
             .returning(|_| Ok(vec![]));
-        run_security_list(&mock, longbridge::Market::HK, &OutputFormat::Pretty)
+        run_security_list(&mock, longport::Market::HK, &OutputFormat::Pretty)
             .await
             .unwrap();
     }

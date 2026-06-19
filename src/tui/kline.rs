@@ -134,27 +134,27 @@ impl KlineStore {
         _before: i64,
         count: usize,
     ) {
-        // Use Longbridge SDK to request candlestick data
+        // Use LongPort SDK to request candlestick data
         let ctx = crate::openapi::quote();
 
-        // Convert KlineType to Longbridge Period
+        // Convert KlineType to LongPort Period
         let period = match kline_type {
-            KlineType::PerMinute => longbridge::quote::Period::OneMinute,
-            KlineType::PerFiveMinutes => longbridge::quote::Period::FiveMinute,
-            KlineType::PerFifteenMinutes => longbridge::quote::Period::FifteenMinute,
-            KlineType::PerThirtyMinutes => longbridge::quote::Period::ThirtyMinute,
-            KlineType::PerHour => longbridge::quote::Period::SixtyMinute,
-            KlineType::PerDay => longbridge::quote::Period::Day,
-            KlineType::PerWeek => longbridge::quote::Period::Week,
-            KlineType::PerMonth => longbridge::quote::Period::Month,
-            KlineType::PerYear => longbridge::quote::Period::Year,
+            KlineType::PerMinute => longport::quote::Period::OneMinute,
+            KlineType::PerFiveMinutes => longport::quote::Period::FiveMinute,
+            KlineType::PerFifteenMinutes => longport::quote::Period::FifteenMinute,
+            KlineType::PerThirtyMinutes => longport::quote::Period::ThirtyMinute,
+            KlineType::PerHour => longport::quote::Period::SixtyMinute,
+            KlineType::PerDay => longport::quote::Period::Day,
+            KlineType::PerWeek => longport::quote::Period::Week,
+            KlineType::PerMonth => longport::quote::Period::Month,
+            KlineType::PerYear => longport::quote::Period::Year,
         };
 
         let adjust = adjust_type;
 
         // Select appropriate trading session based on period type
         // For all periods, use All to get complete data
-        let trade_session = longbridge::quote::TradeSessions::All;
+        let trade_session = longport::quote::TradeSessions::All;
 
         tracing::info!(
             "Requesting candlestick data: counter={}, period={:?}, count={}, adjust={:?}",

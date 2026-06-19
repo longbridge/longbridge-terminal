@@ -82,8 +82,8 @@ impl From<String> for Counter {
     }
 }
 
-/// Re-export `TradeStatus` and `TradeSession` from Longbridge SDK
-pub use longbridge::quote::{TradeSession, TradeStatus};
+/// Re-export `TradeStatus` and `TradeSession` from `LongPort` SDK
+pub use longport::quote::{TradeSession, TradeStatus};
 
 /// Extension trait for `TradeSession` to provide helper methods
 pub trait TradeSessionExt {
@@ -242,8 +242,8 @@ impl KlineType {
     }
 }
 
-/// Re-export `AdjustType` from Longbridge SDK
-pub use longbridge::quote::AdjustType;
+/// Re-export `AdjustType` from `LongPort` SDK
+pub use longport::quote::AdjustType;
 
 /// Candlestick data (detailed version with adjustment factors)
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -539,8 +539,8 @@ pub struct DepthData {
     pub bids: Vec<Depth>, // Bid orders
 }
 
-/// Re-export `TradeDirection` from Longbridge SDK
-pub use longbridge::quote::TradeDirection;
+/// Re-export `TradeDirection` from `LongPort` SDK
+pub use longport::quote::TradeDirection;
 
 /// Single trade record
 #[derive(Clone, Debug, Serialize, Deserialize)]

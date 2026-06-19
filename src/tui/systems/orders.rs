@@ -36,10 +36,10 @@ use super::{Command, NavFooter, PopUp, StockDetail};
 /// false = Today mode, true = History mode
 pub static ORDERS_MODE: AtomicBool = AtomicBool::new(false);
 
-pub static ORDERS_VIEW: LazyLock<RwLock<Vec<longbridge::trade::Order>>> =
+pub static ORDERS_VIEW: LazyLock<RwLock<Vec<longport::trade::Order>>> =
     LazyLock::new(|| RwLock::new(vec![]));
 
-pub static HISTORY_ORDERS_VIEW: LazyLock<RwLock<Vec<longbridge::trade::Order>>> =
+pub static HISTORY_ORDERS_VIEW: LazyLock<RwLock<Vec<longport::trade::Order>>> =
     LazyLock::new(|| RwLock::new(vec![]));
 
 pub static HISTORY_DATE_RANGE: LazyLock<RwLock<HistoryDateRange>> =
@@ -54,7 +54,7 @@ pub static ORDER_ENTRY_STATE: LazyLock<RwLock<Option<OrderEntryState>>> =
 pub static REPLACE_ORDER_STATE: LazyLock<RwLock<Option<ReplaceOrderState>>> =
     LazyLock::new(|| RwLock::new(None));
 
-pub static CANCEL_TARGET: LazyLock<RwLock<Option<longbridge::trade::Order>>> =
+pub static CANCEL_TARGET: LazyLock<RwLock<Option<longport::trade::Order>>> =
     LazyLock::new(|| RwLock::new(None));
 
 pub static ORDERS_TABLE: LazyLock<Mutex<TableState>> = LazyLock::new(Mutex::default);
@@ -105,11 +105,11 @@ pub enum DateFilterField {
 
 pub struct OrderEntryState {
     pub symbol: String,
-    pub side: longbridge::trade::OrderSide,
-    pub order_type: longbridge::trade::OrderType,
+    pub side: longport::trade::OrderSide,
+    pub order_type: longport::trade::OrderType,
     pub quantity_input: tui_input::Input,
     pub price_input: tui_input::Input,
-    pub tif: longbridge::trade::TimeInForceType,
+    pub tif: longport::trade::TimeInForceType,
     pub focused_field: OrderEntryField,
     pub max_qty: Option<Decimal>,
     pub confirm_button: ConfirmButton,
@@ -130,17 +130,17 @@ pub enum ConfirmButton {
     Cancel,
 }
 
-const ORDER_TYPES: &[longbridge::trade::OrderType] = &[
-    longbridge::trade::OrderType::LO,
-    longbridge::trade::OrderType::ELO,
-    longbridge::trade::OrderType::MO,
-    longbridge::trade::OrderType::AO,
-    longbridge::trade::OrderType::ALO,
+const ORDER_TYPES: &[longport::trade::OrderType] = &[
+    longport::trade::OrderType::LO,
+    longport::trade::OrderType::ELO,
+    longport::trade::OrderType::MO,
+    longport::trade::OrderType::AO,
+    longport::trade::OrderType::ALO,
 ];
 
-const TIF_TYPES: &[longbridge::trade::TimeInForceType] = &[
-    longbridge::trade::TimeInForceType::Day,
-    longbridge::trade::TimeInForceType::GoodTilCanceled,
+const TIF_TYPES: &[longport::trade::TimeInForceType] = &[
+    longport::trade::TimeInForceType::Day,
+    longport::trade::TimeInForceType::GoodTilCanceled,
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -161,7 +161,7 @@ pub struct ReplaceOrderState {
 
 pub fn open_order_entry(
     symbol: String,
-    side: longbridge::trade::OrderSide,
+    side: longport::trade::OrderSide,
     available_qty: Option<Decimal>,
 ) {
     let price_str = crate::data::STOCKS
@@ -173,22 +173,22 @@ pub fn open_order_entry(
     let state = OrderEntryState {
         symbol: symbol.clone(),
         side,
-        order_type: longbridge::trade::OrderType::LO,
+        order_type: longport::trade::OrderType::LO,
         quantity_input: tui_input::Input::default(),
         price_input: if price_str.is_empty() {
             tui_input::Input::default()
         } else {
             tui_input::Input::new(price_str)
         },
-        tif: longbridge::trade::TimeInForceType::Day,
+        tif: longport::trade::TimeInForceType::Day,
         focused_field: OrderEntryField::Quantity,
         max_qty: available_qty,
         confirm_button: ConfirmButton::Submit,
     };
     *ORDER_ENTRY_STATE.write().expect("poison") = Some(state);
 
-    if side == longbridge::trade::OrderSide::Buy {
-        fetch_max_qty(symbol, longbridge::trade::OrderType::LO, None);
+    if side == longport::trade::OrderSide::Buy {
+        fetch_max_qty(symbol, longport::trade::OrderType::LO, None);
     }
 }
 
@@ -196,7 +196,7 @@ pub fn refresh_orders() {
     RT.get().unwrap().spawn(async move {
         let ctx = crate::openapi::trade();
         match ctx
-            .today_orders(longbridge::trade::GetTodayOrdersOptions::new())
+            .today_orders(longport::trade::GetTodayOrdersOptions::new())
             .await
         {
             Ok(orders) => {
@@ -220,7 +220,7 @@ pub fn refresh_history_orders() {
     RT.get().unwrap().spawn(async move {
         let ctx = crate::openapi::trade();
         let fmt = time::macros::format_description!("[year]-[month]-[day]");
-        let mut opts = longbridge::trade::GetHistoryOrdersOptions::new();
+        let mut opts = longport::trade::GetHistoryOrdersOptions::new();
         if let Ok(date) = time::Date::parse(&range.0, &fmt) {
             opts = opts.start_at(date.with_time(time::Time::MIDNIGHT).assume_utc());
         }
@@ -293,11 +293,10 @@ pub fn submit_order() {
     };
     let qty = Decimal::from_str(&qty_str).unwrap_or_default();
     RT.get().unwrap().spawn(async move {
-        let mut opts =
-            longbridge::trade::SubmitOrderOptions::new(symbol, order_type, side, qty, tif);
+        let mut opts = longport::trade::SubmitOrderOptions::new(symbol, order_type, side, qty, tif);
         let price_only_for_lo = matches!(
             order_type,
-            longbridge::trade::OrderType::LO | longbridge::trade::OrderType::ELO
+            longport::trade::OrderType::LO | longport::trade::OrderType::ELO
         );
         if price_only_for_lo {
             if let Ok(price) = Decimal::from_str(&price_str) {
@@ -359,7 +358,7 @@ pub fn replace_order() {
         return;
     };
     RT.get().unwrap().spawn(async move {
-        let mut opts = longbridge::trade::ReplaceOrderOptions::new(
+        let mut opts = longport::trade::ReplaceOrderOptions::new(
             order_id.clone(),
             Decimal::from_str(&qty_str).unwrap_or(Decimal::ONE),
         );
@@ -389,15 +388,15 @@ pub fn replace_order() {
 
 pub fn fetch_max_qty(
     symbol: String,
-    order_type: longbridge::trade::OrderType,
+    order_type: longport::trade::OrderType,
     price: Option<Decimal>,
 ) {
     RT.get().unwrap().spawn(async move {
         let ctx = crate::openapi::trade();
-        let mut opts = longbridge::trade::EstimateMaxPurchaseQuantityOptions::new(
+        let mut opts = longport::trade::EstimateMaxPurchaseQuantityOptions::new(
             symbol,
             order_type,
-            longbridge::trade::OrderSide::Buy,
+            longport::trade::OrderSide::Buy,
         );
         if let Some(p) = price {
             opts = opts.price(p);
@@ -414,11 +413,11 @@ pub fn fetch_max_qty(
 
 fn order_entry_next_field(
     current: OrderEntryField,
-    order_type: longbridge::trade::OrderType,
+    order_type: longport::trade::OrderType,
 ) -> OrderEntryField {
     let price_editable = matches!(
         order_type,
-        longbridge::trade::OrderType::LO | longbridge::trade::OrderType::ELO
+        longport::trade::OrderType::LO | longport::trade::OrderType::ELO
     );
     match current {
         OrderEntryField::OrderType => OrderEntryField::Quantity,
@@ -437,11 +436,11 @@ fn order_entry_next_field(
 
 fn order_entry_prev_field(
     current: OrderEntryField,
-    order_type: longbridge::trade::OrderType,
+    order_type: longport::trade::OrderType,
 ) -> OrderEntryField {
     let price_editable = matches!(
         order_type,
-        longbridge::trade::OrderType::LO | longbridge::trade::OrderType::ELO
+        longport::trade::OrderType::LO | longport::trade::OrderType::ELO
     );
     match current {
         OrderEntryField::OrderType => OrderEntryField::Buttons,
@@ -459,9 +458,9 @@ fn order_entry_prev_field(
 }
 
 fn cycle_order_type(
-    current: longbridge::trade::OrderType,
+    current: longport::trade::OrderType,
     forward: bool,
-) -> longbridge::trade::OrderType {
+) -> longport::trade::OrderType {
     let idx = ORDER_TYPES.iter().position(|&t| t == current).unwrap_or(0);
     let len = ORDER_TYPES.len();
     let new_idx = if forward {
@@ -473,9 +472,9 @@ fn cycle_order_type(
 }
 
 fn cycle_tif(
-    current: longbridge::trade::TimeInForceType,
+    current: longport::trade::TimeInForceType,
     forward: bool,
-) -> longbridge::trade::TimeInForceType {
+) -> longport::trade::TimeInForceType {
     let idx = TIF_TYPES.iter().position(|&t| t == current).unwrap_or(0);
     let len = TIF_TYPES.len();
     let new_idx = if forward {
@@ -921,7 +920,7 @@ pub fn render_orders(
 }
 
 fn make_orders_table<'a>(
-    orders: &'a [longbridge::trade::Order],
+    orders: &'a [longport::trade::Order],
     is_history: bool,
     active: bool,
     title: String,
@@ -977,9 +976,9 @@ fn make_orders_table<'a>(
             let status_style = order_status_style(order.status);
             let status_label = order_status_label(order.status);
             let side_label = match order.side {
-                longbridge::trade::OrderSide::Buy => t!("Trade.Buy"),
-                longbridge::trade::OrderSide::Sell => t!("Trade.Sell"),
-                longbridge::trade::OrderSide::Unknown => std::borrow::Cow::Borrowed("–"),
+                longport::trade::OrderSide::Buy => t!("Trade.Buy"),
+                longport::trade::OrderSide::Sell => t!("Trade.Sell"),
+                longport::trade::OrderSide::Unknown => std::borrow::Cow::Borrowed("–"),
             };
             let type_label = order_type_label(order.order_type);
             let price_str = order.price.map_or("–".to_string(), |p| format!("{p:.2}"));
@@ -1029,8 +1028,8 @@ fn render_orders_list(frame: &mut Frame, rect: Rect) {
 
     let today_guard = ORDERS_VIEW.read().expect("poison");
     let history_guard = HISTORY_ORDERS_VIEW.read().expect("poison");
-    let today_orders: &[longbridge::trade::Order] = &today_guard;
-    let history_orders: &[longbridge::trade::Order] = &history_guard;
+    let today_orders: &[longport::trade::Order] = &today_guard;
+    let history_orders: &[longport::trade::Order] = &history_guard;
 
     // Allocate height: today gets enough for its rows (capped), history gets the rest
     let today_height = {
@@ -1161,59 +1160,59 @@ fn render_orders_list(frame: &mut Frame, rect: Rect) {
     }
 }
 
-fn order_status_style(status: longbridge::trade::OrderStatus) -> Style {
+fn order_status_style(status: longport::trade::OrderStatus) -> Style {
     match status {
-        longbridge::trade::OrderStatus::NotReported
-        | longbridge::trade::OrderStatus::ReplacedNotReported
-        | longbridge::trade::OrderStatus::ProtectedNotReported
-        | longbridge::trade::OrderStatus::VarietiesNotReported
-        | longbridge::trade::OrderStatus::WaitToNew
-        | longbridge::trade::OrderStatus::New
-        | longbridge::trade::OrderStatus::WaitToReplace
-        | longbridge::trade::OrderStatus::PendingReplace
-        | longbridge::trade::OrderStatus::WaitToCancel
-        | longbridge::trade::OrderStatus::PendingCancel => Style::default().fg(Color::Yellow),
-        longbridge::trade::OrderStatus::PartialFilled => Style::default().fg(Color::Cyan),
-        longbridge::trade::OrderStatus::Filled => Style::default().fg(Color::Green),
-        longbridge::trade::OrderStatus::Canceled
-        | longbridge::trade::OrderStatus::Replaced
-        | longbridge::trade::OrderStatus::PartialWithdrawal
-        | longbridge::trade::OrderStatus::Expired => Style::default().fg(Color::DarkGray),
-        longbridge::trade::OrderStatus::Rejected => Style::default().fg(Color::Red),
-        longbridge::trade::OrderStatus::Unknown => Style::default(),
+        longport::trade::OrderStatus::NotReported
+        | longport::trade::OrderStatus::ReplacedNotReported
+        | longport::trade::OrderStatus::ProtectedNotReported
+        | longport::trade::OrderStatus::VarietiesNotReported
+        | longport::trade::OrderStatus::WaitToNew
+        | longport::trade::OrderStatus::New
+        | longport::trade::OrderStatus::WaitToReplace
+        | longport::trade::OrderStatus::PendingReplace
+        | longport::trade::OrderStatus::WaitToCancel
+        | longport::trade::OrderStatus::PendingCancel => Style::default().fg(Color::Yellow),
+        longport::trade::OrderStatus::PartialFilled => Style::default().fg(Color::Cyan),
+        longport::trade::OrderStatus::Filled => Style::default().fg(Color::Green),
+        longport::trade::OrderStatus::Canceled
+        | longport::trade::OrderStatus::Replaced
+        | longport::trade::OrderStatus::PartialWithdrawal
+        | longport::trade::OrderStatus::Expired => Style::default().fg(Color::DarkGray),
+        longport::trade::OrderStatus::Rejected => Style::default().fg(Color::Red),
+        longport::trade::OrderStatus::Unknown => Style::default(),
     }
 }
 
-fn order_status_label(status: longbridge::trade::OrderStatus) -> &'static str {
+fn order_status_label(status: longport::trade::OrderStatus) -> &'static str {
     match status {
-        longbridge::trade::OrderStatus::NotReported => "NotReported",
-        longbridge::trade::OrderStatus::ReplacedNotReported => "ReplacedNR",
-        longbridge::trade::OrderStatus::ProtectedNotReported => "ProtectedNR",
-        longbridge::trade::OrderStatus::VarietiesNotReported => "VarietiesNR",
-        longbridge::trade::OrderStatus::WaitToNew => "PendingNew",
-        longbridge::trade::OrderStatus::New => "New",
-        longbridge::trade::OrderStatus::WaitToReplace => "PendingReplace",
-        longbridge::trade::OrderStatus::PendingReplace => "Replacing",
-        longbridge::trade::OrderStatus::Replaced => "Replaced",
-        longbridge::trade::OrderStatus::PartialFilled => "PartialFill",
-        longbridge::trade::OrderStatus::WaitToCancel => "PendingCancel",
-        longbridge::trade::OrderStatus::PendingCancel => "Cancelling",
-        longbridge::trade::OrderStatus::Filled => "Filled",
-        longbridge::trade::OrderStatus::Canceled => "Cancelled",
-        longbridge::trade::OrderStatus::Rejected => "Rejected",
-        longbridge::trade::OrderStatus::Expired => "Expired",
-        longbridge::trade::OrderStatus::PartialWithdrawal => "PartialWithdrawal",
-        longbridge::trade::OrderStatus::Unknown => "–",
+        longport::trade::OrderStatus::NotReported => "NotReported",
+        longport::trade::OrderStatus::ReplacedNotReported => "ReplacedNR",
+        longport::trade::OrderStatus::ProtectedNotReported => "ProtectedNR",
+        longport::trade::OrderStatus::VarietiesNotReported => "VarietiesNR",
+        longport::trade::OrderStatus::WaitToNew => "PendingNew",
+        longport::trade::OrderStatus::New => "New",
+        longport::trade::OrderStatus::WaitToReplace => "PendingReplace",
+        longport::trade::OrderStatus::PendingReplace => "Replacing",
+        longport::trade::OrderStatus::Replaced => "Replaced",
+        longport::trade::OrderStatus::PartialFilled => "PartialFill",
+        longport::trade::OrderStatus::WaitToCancel => "PendingCancel",
+        longport::trade::OrderStatus::PendingCancel => "Cancelling",
+        longport::trade::OrderStatus::Filled => "Filled",
+        longport::trade::OrderStatus::Canceled => "Cancelled",
+        longport::trade::OrderStatus::Rejected => "Rejected",
+        longport::trade::OrderStatus::Expired => "Expired",
+        longport::trade::OrderStatus::PartialWithdrawal => "PartialWithdrawal",
+        longport::trade::OrderStatus::Unknown => "–",
     }
 }
 
-fn order_type_label(order_type: longbridge::trade::OrderType) -> &'static str {
+fn order_type_label(order_type: longport::trade::OrderType) -> &'static str {
     match order_type {
-        longbridge::trade::OrderType::LO => "LO",
-        longbridge::trade::OrderType::ELO => "ELO",
-        longbridge::trade::OrderType::MO => "MO",
-        longbridge::trade::OrderType::AO => "AO",
-        longbridge::trade::OrderType::ALO => "ALO",
+        longport::trade::OrderType::LO => "LO",
+        longport::trade::OrderType::ELO => "ELO",
+        longport::trade::OrderType::MO => "MO",
+        longport::trade::OrderType::AO => "AO",
+        longport::trade::OrderType::ALO => "ALO",
         _ => "–",
     }
 }
@@ -1231,15 +1230,15 @@ pub fn render_order_entry_popup(frame: &mut Frame, rect: Rect) {
     frame.render_widget(Clear, popup_rect);
 
     let side_label = match state.side {
-        longbridge::trade::OrderSide::Buy => t!("Trade.Buy"),
-        longbridge::trade::OrderSide::Sell => t!("Trade.Sell"),
-        longbridge::trade::OrderSide::Unknown => std::borrow::Cow::Borrowed("–"),
+        longport::trade::OrderSide::Buy => t!("Trade.Buy"),
+        longport::trade::OrderSide::Sell => t!("Trade.Sell"),
+        longport::trade::OrderSide::Unknown => std::borrow::Cow::Borrowed("–"),
     };
 
     let side_style = match state.side {
-        longbridge::trade::OrderSide::Buy => styles::up(std::cmp::Ordering::Greater),
-        longbridge::trade::OrderSide::Sell => styles::up(std::cmp::Ordering::Less),
-        longbridge::trade::OrderSide::Unknown => styles::text(),
+        longport::trade::OrderSide::Buy => styles::up(std::cmp::Ordering::Greater),
+        longport::trade::OrderSide::Sell => styles::up(std::cmp::Ordering::Less),
+        longport::trade::OrderSide::Unknown => styles::text(),
     };
 
     let block = Block::default()
@@ -1266,23 +1265,23 @@ pub fn render_order_entry_popup(frame: &mut Frame, rect: Rect) {
 
     let price_editable = matches!(
         state.order_type,
-        longbridge::trade::OrderType::LO | longbridge::trade::OrderType::ELO
+        longport::trade::OrderType::LO | longport::trade::OrderType::ELO
     );
 
     let type_label = order_type_label(state.order_type);
     let tif_label = match state.tif {
-        longbridge::trade::TimeInForceType::GoodTilCanceled => "GTC",
+        longport::trade::TimeInForceType::GoodTilCanceled => "GTC",
         _ => "Day",
     };
 
     let max_str = match state.side {
-        longbridge::trade::OrderSide::Buy => state
+        longport::trade::OrderSide::Buy => state
             .max_qty
             .map_or(String::new(), |q| format!("  {} {q}", t!("Trade.MaxQty"))),
-        longbridge::trade::OrderSide::Sell => state.max_qty.map_or(String::new(), |q| {
+        longport::trade::OrderSide::Sell => state.max_qty.map_or(String::new(), |q| {
             format!("  {} {q}", t!("Trade.AvailableQty"))
         }),
-        longbridge::trade::OrderSide::Unknown => String::new(),
+        longport::trade::OrderSide::Unknown => String::new(),
     };
 
     let lbl = styles::label();
@@ -1452,9 +1451,9 @@ pub fn render_cancel_order_popup(frame: &mut Frame, rect: Rect) {
             price_str,
             t!("CancelOrder.Side"),
             match order.side {
-                longbridge::trade::OrderSide::Buy => t!("Trade.Buy").to_string(),
-                longbridge::trade::OrderSide::Sell => t!("Trade.Sell").to_string(),
-                longbridge::trade::OrderSide::Unknown => "–".to_string(),
+                longport::trade::OrderSide::Buy => t!("Trade.Buy").to_string(),
+                longport::trade::OrderSide::Sell => t!("Trade.Sell").to_string(),
+                longport::trade::OrderSide::Unknown => "–".to_string(),
             }
         ),
         String::new(),
@@ -1715,11 +1714,11 @@ pub fn try_open_cancel_for_selected() {
     };
     let terminal = matches!(
         order.status,
-        longbridge::trade::OrderStatus::Filled
-            | longbridge::trade::OrderStatus::Canceled
-            | longbridge::trade::OrderStatus::Rejected
-            | longbridge::trade::OrderStatus::Expired
-            | longbridge::trade::OrderStatus::PartialWithdrawal
+        longport::trade::OrderStatus::Filled
+            | longport::trade::OrderStatus::Canceled
+            | longport::trade::OrderStatus::Rejected
+            | longport::trade::OrderStatus::Expired
+            | longport::trade::OrderStatus::PartialWithdrawal
     );
     if terminal {
         set_toast(
@@ -1742,11 +1741,11 @@ pub fn try_open_replace_for_selected() {
     };
     let terminal = matches!(
         order.status,
-        longbridge::trade::OrderStatus::Filled
-            | longbridge::trade::OrderStatus::Canceled
-            | longbridge::trade::OrderStatus::Rejected
-            | longbridge::trade::OrderStatus::Expired
-            | longbridge::trade::OrderStatus::PartialWithdrawal
+        longport::trade::OrderStatus::Filled
+            | longport::trade::OrderStatus::Canceled
+            | longport::trade::OrderStatus::Rejected
+            | longport::trade::OrderStatus::Expired
+            | longport::trade::OrderStatus::PartialWithdrawal
     );
     if terminal {
         set_toast(

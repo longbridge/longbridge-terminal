@@ -14,11 +14,11 @@ pub fn render(frame: &mut Frame, rect: Rect) {
     let mut spans = vec![
         Line::from("\n"),
         Line::styled(
-            concat!("  Longbridge Terminal v", env!("CARGO_PKG_VERSION")),
+            concat!("  LongPort Terminal v", env!("CARGO_PKG_VERSION")),
             Style::default().add_modifier(Modifier::BOLD),
         ),
         Line::from("\n"),
-        Line::from("  https://longbridge.com"),
+        Line::from("  https://longportapp.com"),
         Line::from("\n"),
     ];
     let tips = t!("HelpTips");

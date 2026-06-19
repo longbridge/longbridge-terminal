@@ -13,12 +13,12 @@ const CHECK_INTERVAL_SECS: u64 = 86400; // 24 hours
 const FETCH_TIMEOUT_SECS: u64 = 5;
 const DOWNLOAD_TIMEOUT_SECS: u64 = 300;
 
-const RELEASE_PATH: &str = "/github/release/longbridge-terminal";
+const RELEASE_PATH: &str = "/github/release/longport-terminal";
 const RELEASE_NOTES_PATH: &str = "/docs/cli/release-notes.md";
 
 const RELEASES_LATEST_URL: &str =
-    "https://github.com/longbridge/longbridge-terminal/releases/latest";
-const PACKAGE_NAME: &str = "longbridge-terminal";
+    "https://github.com/longportapp/longport-terminal/releases/latest";
+const PACKAGE_NAME: &str = "longport-terminal";
 
 #[cfg(target_os = "macos")]
 const PLATFORM: &str = "darwin";
@@ -38,7 +38,7 @@ const ARCH: &str = "amd64";
 const ARCH: &str = "arm64";
 
 fn cache_file_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".longbridge").join(".terminal-latest-version"))
+    dirs::home_dir().map(|h| h.join(".longport").join(".terminal-latest-version"))
 }
 
 fn read_cached_version() -> Option<String> {
@@ -101,7 +101,7 @@ pub fn notify_if_update_available() {
         let reset = "\x1b[0m";
         let url = release_notes_url();
         eprintln!(
-            "\nNew version {latest} is available, run `{green}longbridge update{reset}` to update."
+            "\nNew version {latest} is available, run `{green}longport update{reset}` to update."
         );
         eprintln!("Release notes: {url}\n");
     }
@@ -141,7 +141,7 @@ async fn fetch_latest_version() -> Option<String> {
         return None;
     }
 
-    // Location: /longbridge/longbridge-terminal/releases/tag/v0.9.1
+    // Location: /longportapp/longport-terminal/releases/tag/v0.9.1
     let location = resp.headers().get("location")?.to_str().ok()?;
     let tag = location.rsplit('/').next()?;
     let version = tag.trim_start_matches('v');
@@ -228,7 +228,7 @@ fn sudo_mv(src: &std::path::Path, dest: &std::path::Path) -> anyhow::Result<()> 
         Ok(())
     } else {
         anyhow::bail!(
-            "sudo mv failed (exit code: {}).\nYou can also run: sudo longbridge update",
+            "sudo mv failed (exit code: {}).\nYou can also run: sudo longport update",
             status.code().unwrap_or(-1)
         )
     }
@@ -249,10 +249,10 @@ fn extract_and_replace(
     let tmp_dir = tempfile::tempdir()?;
     archive.unpack(tmp_dir.path())?;
 
-    // The archive contains a single binary named "longbridge"
-    let extracted = tmp_dir.path().join("longbridge");
+    // The archive contains a single binary named "longport"
+    let extracted = tmp_dir.path().join("longport");
     if !extracted.exists() {
-        anyhow::bail!("Binary 'longbridge' not found in archive");
+        anyhow::bail!("Binary 'longport' not found in archive");
     }
 
     // Set executable permission
@@ -276,7 +276,7 @@ fn extract_and_replace(
     // 2) atomically rename it over the running executable
     // This avoids writing directly to a running binary (ETXTBUSY).
     let staged_result = tempfile::Builder::new()
-        .prefix(".longbridge-update-")
+        .prefix(".longport-update-")
         .tempfile_in(target_dir);
 
     let staged_path = match staged_result {
@@ -336,9 +336,9 @@ fn extract_and_replace(
         );
     }
 
-    let extracted = tmp_dir.path().join("longbridge.exe");
+    let extracted = tmp_dir.path().join("longport.exe");
     if !extracted.exists() {
-        anyhow::bail!("Binary 'longbridge.exe' not found in archive");
+        anyhow::bail!("Binary 'longport.exe' not found in archive");
     }
 
     // Rename current running exe to .old (Windows allows renaming a running exe)
@@ -407,7 +407,7 @@ pub async fn cmd_update(verbose: bool, force: bool) -> anyhow::Result<()> {
     // Use into_temp_path() to close the file handle — on Windows,
     // NamedTempFile holds a lock that prevents PowerShell from reading it.
     let mut tmp_builder = tempfile::Builder::new();
-    tmp_builder.prefix("longbridge-update-");
+    tmp_builder.prefix("longport-update-");
     #[cfg(windows)]
     tmp_builder.suffix(".zip");
     let tmp_path = tmp_builder.tempfile()?.into_temp_path();
@@ -443,7 +443,7 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<crate::cli::schema::Res
 // ---------------------------------------------------------------------------
 
 fn last_run_version_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".longbridge").join(".terminal-last-run-version"))
+    dirs::home_dir().map(|h| h.join(".longport").join(".terminal-last-run-version"))
 }
 
 fn read_last_run_version() -> Option<String> {
@@ -562,7 +562,7 @@ fn render_release_notes(markdown: &str) {
     let _ = terminal::disable_raw_mode();
 }
 
-/// Show release notes for the `longbridge update --release-notes` command.
+/// Show release notes for the `longport update --release-notes` command.
 pub async fn cmd_release_notes() -> anyhow::Result<()> {
     let markdown = fetch_release_notes().await?;
     render_release_notes(&markdown);
@@ -624,22 +624,22 @@ mod tests {
     #[serial]
     fn test_release_notes_url_respects_region() {
         // Force global
-        std::env::set_var("LONGBRIDGE_REGION", "global");
+        std::env::set_var("LONGPORT_REGION", "global");
         let url_global = release_notes_url();
         assert_eq!(
             url_global,
-            "https://open.longbridge.com/docs/cli/release-notes.md"
+            "https://open.longportapp.com/docs/cli/release-notes.md"
         );
 
         // Force CN
-        std::env::set_var("LONGBRIDGE_REGION", "cn");
+        std::env::set_var("LONGPORT_REGION", "cn");
         let url_cn = release_notes_url();
         assert_eq!(
             url_cn,
-            "https://open.longbridge.cn/docs/cli/release-notes.md"
+            "https://open.longportapp.cn/docs/cli/release-notes.md"
         );
 
-        std::env::remove_var("LONGBRIDGE_REGION");
+        std::env::remove_var("LONGPORT_REGION");
     }
 
     #[test]

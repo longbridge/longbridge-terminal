@@ -1,13 +1,13 @@
-# Contributing to Longbridge Terminal
+# Contributing to LongPort Terminal
 
-Thank you for your interest in contributing to Longbridge Terminal! This document provides guidelines and instructions for contributing.
+Thank you for your interest in contributing to LongPort Terminal! This document provides guidelines and instructions for contributing.
 
 ## Getting Started
 
 ### Prerequisites
 
 - Rust toolchain (latest stable version)
-- Longbridge OpenAPI credentials ([Get them here](https://open.longbridge.com))
+- LongPort OpenAPI credentials ([Get them here](https://open.longportapp.com))
 - macOS or Linux
 
 ### Setup Development Environment
@@ -15,8 +15,8 @@ Thank you for your interest in contributing to Longbridge Terminal! This documen
 1. **Clone the repository**:
 
    ```bash
-   git clone https://github.com/longbridge/longbridge-terminal.git
-   cd longbridge-terminal
+   git clone https://github.com/longportapp/longport-terminal.git
+   cd longport-terminal
    ```
 
 2. **Build and run**:
@@ -115,7 +115,7 @@ Portfolio:
 
 ### Key Components
 
-- **`src/openapi/`**: Longbridge OpenAPI integration layer
+- **`src/openapi/`**: LongPort OpenAPI integration layer
   - `context.rs`: Global QuoteContext and TradeContext management
 - **`src/data/`**: Data models and global state
   - `stocks.rs`: Global stock cache using DashMap
@@ -180,12 +180,12 @@ This project uses [Ratatui](https://ratatui.rs/) for the TUI. For Ratatui-specif
 - [Ratatui Documentation](https://ratatui.rs/)
 - [Ratatui Examples](https://github.com/ratatui-org/ratatui/tree/main/examples)
 
-### Longbridge API
+### LongPort API
 
 - **Rate Limit**: Maximum 10 API calls per second
 - **Token Refresh**: The SDK automatically refreshes access tokens — no manual renewal needed
-- **Documentation**: [Longbridge OpenAPI Docs](https://open.longbridge.com)
-- **Rust SDK**: [SDK Documentation](https://longbridge.github.io/openapi/rust/longbridge/)
+- **Documentation**: [LongPort OpenAPI Docs](https://open.longportapp.com)
+- **Rust SDK**: [SDK Documentation](https://longport.github.io/openapi/rust/longport/)
 
 ### Debugging
 

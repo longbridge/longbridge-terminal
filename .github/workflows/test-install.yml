@@ -9,13 +9,13 @@ on:
     paths:
       - install
       - install.ps1
-      - .scoop/longbridge.json
+      - .scoop/longport.json
       - .github/workflows/test-install.yml
   pull_request:
     paths:
       - install
       - install.ps1
-      - .scoop/longbridge.json
+      - .scoop/longport.json
       - .github/workflows/test-install.yml
   workflow_dispatch:
 
@@ -33,12 +33,12 @@ jobs:
         run: sh install
 
       - name: Verify binary
-        run: longbridge --version
+        run: longport --version
 
   # The install script always downloads the statically-linked musl binary for
   # Linux.  This job explicitly verifies that the musl binary runs correctly on
   # a glibc-based Ubuntu runner – this is the scenario that caused the segfault
-  # reported in https://github.com/longbridge/longbridge-terminal/issues.
+  # reported in https://github.com/longportapp/longport-terminal/issues.
   linux-musl-on-glibc:
     name: Linux musl binary on glibc (Ubuntu)
     runs-on: ubuntu-latest
@@ -50,8 +50,8 @@ jobs:
 
       - name: Verify musl binary works on glibc system
         run: |
-          longbridge --version
-          file $(which longbridge)
+          longport --version
+          file $(which longport)
 
   windows:
     name: Windows (PowerShell)
@@ -67,8 +67,8 @@ jobs:
       - name: Verify binary
         shell: pwsh
         run: |
-          $installDir = Join-Path $env:LOCALAPPDATA 'Programs\longbridge'
-          & "$installDir\longbridge.exe" --version
+          $installDir = Join-Path $env:LOCALAPPDATA 'Programs\longport'
+          & "$installDir\longport.exe" --version
 
   windows-scoop:
     name: Windows (Scoop)
@@ -88,8 +88,8 @@ jobs:
 
       - name: Install via Scoop manifest
         shell: pwsh
-        run: scoop install .\.scoop\longbridge.json
+        run: scoop install .\.scoop\longport.json
 
       - name: Verify binary
         shell: pwsh
-        run: longbridge --version
+        run: longport --version

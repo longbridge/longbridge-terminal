@@ -4,22 +4,22 @@ use std::sync::{Arc, OnceLock};
 use super::wrapper::{RateLimitedQuoteContext, RateLimitedTradeContext};
 
 /// Global `QuoteContext`
-pub static QUOTE_CTX: OnceLock<longbridge::quote::QuoteContext> = OnceLock::new();
+pub static QUOTE_CTX: OnceLock<longport::quote::QuoteContext> = OnceLock::new();
 
 /// Global `AssetContext`
-pub static STATEMENT_CTX: OnceLock<longbridge::AssetContext> = OnceLock::new();
+pub static STATEMENT_CTX: OnceLock<longport::AssetContext> = OnceLock::new();
 
 /// Global `TradeContext`
-pub static TRADE_CTX: OnceLock<longbridge::trade::TradeContext> = OnceLock::new();
+pub static TRADE_CTX: OnceLock<longport::trade::TradeContext> = OnceLock::new();
 
 /// Global `ContentContext` for news and topics
-pub static CONTENT_CTX: OnceLock<longbridge::ContentContext> = OnceLock::new();
+pub static CONTENT_CTX: OnceLock<longport::ContentContext> = OnceLock::new();
 
 /// Global `FundamentalContext` for fundamental data (ratings, dividends, ETF allocation, etc.)
-pub static FUNDAMENTAL_CTX: OnceLock<longbridge::FundamentalContext> = OnceLock::new();
+pub static FUNDAMENTAL_CTX: OnceLock<longport::FundamentalContext> = OnceLock::new();
 
-/// Global `HttpClient` for making authenticated requests to the Longbridge `OpenAPI`
-pub static HTTP_CLIENT: OnceLock<longbridge::httpclient::HttpClient> = OnceLock::new();
+/// Global `HttpClient` for making authenticated requests to the `LongPort` `OpenAPI`
+pub static HTTP_CLIENT: OnceLock<longport::httpclient::HttpClient> = OnceLock::new();
 
 /// Global rate-limited `QuoteContext` wrapper
 pub static RATE_LIMITED_QUOTE_CTX: OnceLock<RateLimitedQuoteContext> = OnceLock::new();
@@ -28,28 +28,28 @@ pub static RATE_LIMITED_QUOTE_CTX: OnceLock<RateLimitedQuoteContext> = OnceLock:
 pub static RATE_LIMITED_TRADE_CTX: OnceLock<RateLimitedTradeContext> = OnceLock::new();
 
 /// Map the effective content language to the SDK Language enum.
-fn get_api_language() -> longbridge::Language {
+fn get_api_language() -> longport::Language {
     match crate::locale::get() {
-        "zh-CN" => longbridge::Language::ZH_CN,
-        "zh-HK" => longbridge::Language::ZH_HK,
-        _ => longbridge::Language::EN,
+        "zh-CN" => longport::Language::ZH_CN,
+        "zh-HK" => longport::Language::ZH_HK,
+        _ => longport::Language::EN,
     }
 }
 
 /// Initialize contexts (should be called once at app startup).
-/// If `LONGBRIDGE_APP_KEY`, `LONGBRIDGE_APP_SECRET`, and `LONGBRIDGE_ACCESS_TOKEN`
+/// If `LONGPORT_APP_KEY`, `LONGPORT_APP_SECRET`, and `LONGPORT_ACCESS_TOKEN`
 /// are all set, uses API key authentication (no browser needed).
 /// Otherwise falls back to OAuth: loads token from disk or runs browser flow.
 /// Returns `(quote_stream, using_api_key, http_url)` where `http_url` is the
 /// effective base URL that was configured (useful for diagnostics/verbose output).
 pub async fn init_contexts() -> Result<(
-    impl tokio_stream::Stream<Item = longbridge::quote::PushEvent> + Send + Unpin,
+    impl tokio_stream::Stream<Item = longport::quote::PushEvent> + Send + Unpin,
     bool,
     &'static str,
 )> {
     let (config_builder, http_client_config, using_api_key) = if let (Ok(config), Ok(http_config)) = (
-        longbridge::Config::from_apikey_env(),
-        longbridge::httpclient::HttpClientConfig::from_apikey_env(),
+        longport::Config::from_apikey_env(),
+        longport::httpclient::HttpClientConfig::from_apikey_env(),
     ) {
         tracing::info!("Using API key authentication (env vars)");
         (
@@ -63,11 +63,11 @@ pub async fn init_contexts() -> Result<(
         tracing::info!("No API key env vars found, using OAuth authentication");
 
         // If no token file exists, refuse to start a browser/callback-server flow.
-        // CLI commands require a stored token; users must run `longbridge auth login` first.
+        // CLI commands require a stored token; users must run `longport auth login` first.
         let token_path = crate::auth::token_file_path()?;
         if !token_path.exists() {
             return Err(anyhow::anyhow!(
-                "Not authenticated. Please run 'longbridge auth login' first."
+                "Not authenticated. Please run 'longport auth login' first."
             ));
         }
         // If the token file exists but cannot be decrypted (e.g. machine ID
@@ -78,7 +78,7 @@ pub async fn init_contexts() -> Result<(
         .is_none()
         {
             return Err(anyhow::anyhow!(
-                "Failed to decrypt auth token. Please run 'longbridge auth login' to \
+                "Failed to decrypt auth token. Please run 'longport auth login' to \
                  re-authenticate."
             ));
         }
@@ -88,7 +88,7 @@ pub async fn init_contexts() -> Result<(
         // the SDK would trigger when its own refresh fallback fires.
         crate::auth::refresh_if_expired().await?;
 
-        let oauth_result = longbridge::oauth::OAuthBuilder::new(crate::auth::effective_client_id())
+        let oauth_result = longport::oauth::OAuthBuilder::new(crate::auth::effective_client_id())
             .callback_port(crate::auth::CALLBACK_PORT)
             .token_storage(crate::secure_storage::EncryptedFileTokenStorage)
             .build(|_url| {
@@ -103,12 +103,11 @@ pub async fn init_contexts() -> Result<(
             }
         };
 
-        let config_builder = longbridge::Config::from_oauth(oauth.clone())
+        let config_builder = longport::Config::from_oauth(oauth.clone())
             .language(get_api_language())
             .dont_print_quote_packages();
 
-        let http_client_config =
-            longbridge::httpclient::HttpClientConfig::from_oauth(oauth.clone());
+        let http_client_config = longport::httpclient::HttpClientConfig::from_oauth(oauth.clone());
         (config_builder, http_client_config, false)
     };
 
@@ -117,14 +116,14 @@ pub async fn init_contexts() -> Result<(
 
     // Enable the US overnight market so `quote` returns `overnight_quote`.
     // Pre/post-market quotes are returned without this flag, but the overnight
-    // session is gated behind it (matches the longbridge-mcp server).
+    // session is gated behind it (matches the longport-mcp server).
     config_builder = config_builder.enable_overnight();
 
-    // If LONGBRIDGE_ENV=staging, override all endpoints to test environment.
+    // If LONGPORT_ENV=staging, override all endpoints to test environment.
     // This takes highest priority over region detection.
     let effective_http_url;
     if crate::region::is_test_env() {
-        tracing::info!("Using TEST environment endpoints (openapi.longbridge.xyz)");
+        tracing::info!("Using TEST environment endpoints (openapi.longportapp.xyz)");
         config_builder = config_builder
             .http_url(crate::region::HTTP_URL_TEST)
             .quote_ws_url(crate::region::QUOTE_WS_URL_TEST)
@@ -132,10 +131,10 @@ pub async fn init_contexts() -> Result<(
         http_client_config = http_client_config.http_url(crate::region::HTTP_URL_TEST);
         effective_http_url = crate::region::HTTP_URL_TEST;
     } else if crate::region::is_cn_cached()
-        && (cfg!(not(debug_assertions)) || std::env::var("LONGBRIDGE_HTTP_URL").is_err())
+        && (cfg!(not(debug_assertions)) || std::env::var("LONGPORT_HTTP_URL").is_err())
     {
         // If last geotest indicated China Mainland, use CN endpoints directly.
-        // In debug builds, skip if LONGBRIDGE_HTTP_URL is set (allows local mock server testing).
+        // In debug builds, skip if LONGPORT_HTTP_URL is set (allows local mock server testing).
         tracing::debug!("Using CN region endpoints (cached)");
         config_builder = config_builder
             .http_url(crate::region::HTTP_URL_CN)
@@ -164,7 +163,7 @@ pub async fn init_contexts() -> Result<(
         (cmd, args.join(" "))
     };
 
-    let user_agent = concat!("longbridge-cli/", env!("CARGO_PKG_VERSION"));
+    let user_agent = concat!("longport-cli/", env!("CARGO_PKG_VERSION"));
 
     // Inject into Config so headers appear in WebSocket upgrade requests too.
     config_builder = config_builder.header("user-agent", user_agent);
@@ -177,23 +176,23 @@ pub async fn init_contexts() -> Result<(
 
     let config = Arc::new(config_builder);
 
-    let content_ctx = longbridge::ContentContext::new(Arc::clone(&config));
+    let content_ctx = longport::ContentContext::new(Arc::clone(&config));
     CONTENT_CTX
         .set(content_ctx)
         .map_err(|_| anyhow::anyhow!("ContentContext already initialized"))?;
 
-    let statement_ctx = longbridge::AssetContext::new(Arc::clone(&config));
+    let statement_ctx = longport::AssetContext::new(Arc::clone(&config));
     STATEMENT_CTX
         .set(statement_ctx)
         .map_err(|_| anyhow::anyhow!("AssetContext already initialized"))?;
 
-    let fundamental_ctx = longbridge::FundamentalContext::new(Arc::clone(&config));
+    let fundamental_ctx = longport::FundamentalContext::new(Arc::clone(&config));
     FUNDAMENTAL_CTX
         .set(fundamental_ctx)
         .map_err(|_| anyhow::anyhow!("FundamentalContext already initialized"))?;
 
     // Also inject into the standalone HttpClient used for direct REST calls.
-    let mut http_client = longbridge::httpclient::HttpClient::new(http_client_config);
+    let mut http_client = longport::httpclient::HttpClient::new(http_client_config);
     http_client = http_client.header("user-agent", user_agent);
     if !cli_cmd.is_empty() {
         http_client = http_client.header("x-cli-cmd", cli_cmd.as_str());
@@ -209,8 +208,8 @@ pub async fn init_contexts() -> Result<(
     // Create QuoteContext and TradeContext.
     // new() is synchronous and infallible in the new SDK; connection and auth errors
     // will surface naturally on the first real API call made by the caller.
-    let (quote_ctx, quote_receiver) = longbridge::quote::QuoteContext::new(Arc::clone(&config));
-    let (trade_ctx, _trade_receiver) = longbridge::trade::TradeContext::new(Arc::clone(&config));
+    let (quote_ctx, quote_receiver) = longport::quote::QuoteContext::new(Arc::clone(&config));
+    let (trade_ctx, _trade_receiver) = longport::trade::TradeContext::new(Arc::clone(&config));
 
     // Store in global variables
     QUOTE_CTX
@@ -241,14 +240,14 @@ pub async fn init_contexts() -> Result<(
 }
 
 /// Get global `QuoteContext`
-pub fn quote() -> &'static longbridge::quote::QuoteContext {
+pub fn quote() -> &'static longport::quote::QuoteContext {
     QUOTE_CTX
         .get()
         .expect("QuoteContext not initialized, please call init_contexts() first")
 }
 
 /// Get global `TradeContext`
-pub fn trade() -> &'static longbridge::trade::TradeContext {
+pub fn trade() -> &'static longport::trade::TradeContext {
     TRADE_CTX
         .get()
         .expect("TradeContext not initialized, please call init_contexts() first")
@@ -264,7 +263,7 @@ pub(crate) const QUOTE_CMD_PATH: &str = "/v1/quote/cmd";
 /// error are ignored — the server only needs the access-log entry. Extracted as
 /// its own awaitable function so the integration test can drive it against a
 /// local server deterministically.
-pub(crate) async fn send_quote_cmd(client: &longbridge::httpclient::HttpClient) {
+pub(crate) async fn send_quote_cmd(client: &longport::httpclient::HttpClient) {
     let _ = client
         .request(reqwest::Method::GET, QUOTE_CMD_PATH)
         .response::<String>()
@@ -289,7 +288,7 @@ pub fn track_quote_cmd() {
 /// Get the global `QuoteContext` and record the WS quote operation server-side.
 /// Use this at every CLI quote command entry point instead of [`quote`] so the
 /// otherwise-unlogged WebSocket request is counted. See [`track_quote_cmd`].
-pub fn quote_cmd() -> &'static longbridge::quote::QuoteContext {
+pub fn quote_cmd() -> &'static longport::quote::QuoteContext {
     track_quote_cmd();
     quote()
 }
@@ -302,21 +301,21 @@ pub fn quote_limited() -> &'static RateLimitedQuoteContext {
 }
 
 /// Get global `ContentContext` for news and topics
-pub fn content() -> &'static longbridge::ContentContext {
+pub fn content() -> &'static longport::ContentContext {
     CONTENT_CTX
         .get()
         .expect("ContentContext not initialized, please call init_contexts() first")
 }
 
 /// Get global `FundamentalContext` for fundamental data
-pub fn fundamental() -> &'static longbridge::FundamentalContext {
+pub fn fundamental() -> &'static longport::FundamentalContext {
     FUNDAMENTAL_CTX
         .get()
         .expect("FundamentalContext not initialized, please call init_contexts() first")
 }
 
 /// Get the global authenticated `HttpClient` for direct `OpenAPI` requests
-pub fn http_client() -> &'static longbridge::httpclient::HttpClient {
+pub fn http_client() -> &'static longport::httpclient::HttpClient {
     HTTP_CLIENT
         .get()
         .expect("HttpClient not initialized, please call init_contexts() first")
@@ -330,7 +329,7 @@ pub fn trade_limited() -> &'static RateLimitedTradeContext {
 }
 
 /// Get global `AssetContext`
-pub fn statement() -> &'static longbridge::AssetContext {
+pub fn statement() -> &'static longport::AssetContext {
     STATEMENT_CTX
         .get()
         .expect("AssetContext not initialized, please call init_contexts() first")
@@ -381,11 +380,11 @@ mod quote_cmd_tests {
 
         // Build a client the same way production does (token + tracking headers),
         // but pointed at the local capture server.
-        let oauth = longbridge::oauth::OAuth::from_token("test-token");
-        let config = longbridge::httpclient::HttpClientConfig::from_oauth(oauth)
+        let oauth = longport::oauth::OAuth::from_token("test-token");
+        let config = longport::httpclient::HttpClientConfig::from_oauth(oauth)
             .http_url(format!("http://127.0.0.1:{port}"));
-        let client = longbridge::httpclient::HttpClient::new(config)
-            .header("user-agent", "longbridge-cli/test")
+        let client = longport::httpclient::HttpClient::new(config)
+            .header("user-agent", "longport-cli/test")
             .header("x-cli-cmd", "quote");
 
         send_quote_cmd(&client).await;
@@ -403,7 +402,7 @@ mod quote_cmd_tests {
 
         let lower = request.to_lowercase();
         assert!(
-            lower.contains("user-agent: longbridge-cli/test"),
+            lower.contains("user-agent: longport-cli/test"),
             "tracking user-agent header missing; request was:\n{request}"
         );
         assert!(

@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use crate::data::statement::CommonStatementContent;
 use anyhow::Result;
-use longbridge::asset::{GetStatementListOptions, GetStatementOptions, StatementType};
+use longport::asset::{GetStatementListOptions, GetStatementOptions, StatementType};
 use serde_json::Value;
 use time::OffsetDateTime;
 use unicode_width::UnicodeWidthStr;

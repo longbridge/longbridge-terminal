@@ -1,4 +1,3 @@
-use crate::tui::widgets::Terminal;
 use clap::Parser;
 use std::io::Write;
 use std::time::Instant;
@@ -20,6 +19,7 @@ pub mod utils;
 
 #[macro_use]
 extern crate rust_i18n;
+extern crate longbridge as longport;
 i18n!("locales");
 
 /// Command line arguments (kept for TUI compatibility via `crate::Args`)
@@ -29,7 +29,7 @@ pub struct Args {
 }
 
 fn print_cli_error(e: &anyhow::Error, using_api_key: bool) {
-    use longbridge::{httpclient::HttpClientError, wsclient::WsClientError, Error as LbError};
+    use longport::{httpclient::HttpClientError, wsclient::WsClientError, Error as LbError};
 
     if let Some(lb_err) = e.downcast_ref::<LbError>() {
         match lb_err {
@@ -45,7 +45,7 @@ fn print_cli_error(e: &anyhow::Error, using_api_key: bool) {
                 if using_api_key && *code == 401_003 {
                     eprintln!(
                         "\nYou are currently using environment variable authentication.\n\
-                        Please check that LONGBRIDGE_APP_KEY, LONGBRIDGE_APP_SECRET, and LONGBRIDGE_ACCESS_TOKEN are valid.\n\
+                        Please check that LONGPORT_APP_KEY, LONGPORT_APP_SECRET, and LONGPORT_ACCESS_TOKEN are valid.\n\
                         To switch to OAuth instead, unset these environment variables and restart."
                     );
                 }
@@ -114,36 +114,6 @@ async fn main() {
             use clap::CommandFactory;
             cli::Cli::command().print_help().unwrap();
             println!();
-        }
-
-        Some(cli::Commands::Tui) => {
-            tracing::info!("App started");
-            let (quote_receiver, using_api_key, _) = match openapi::init_contexts().await {
-                Ok(r) => r,
-                Err(e) => {
-                    eprintln!("OAuth2 authentication failed: {e}");
-                    return;
-                }
-            };
-            if let Err(e) = openapi::quote().member_id().await {
-                print_cli_error(&anyhow::anyhow!(e), using_api_key);
-                return;
-            }
-            tracing::info!("OpenAPI initialized successfully");
-
-            let hook = std::panic::take_hook();
-            std::panic::set_hook(Box::new(move |info| {
-                Terminal::exit_full_screen();
-                hook(info);
-            }));
-
-            let _ = std::io::stdout().write_all(b"\n");
-            let _ = std::io::stdout().flush();
-
-            Terminal::enter_full_screen();
-            tui::app::run(Args { logout: false }, quote_receiver).await;
-            Terminal::exit_full_screen();
-            return;
         }
 
         Some(cli::Commands::Init { invite_code }) => {

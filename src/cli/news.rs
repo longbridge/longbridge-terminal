@@ -3,7 +3,7 @@ use anyhow::{bail, Result};
 use super::{output::print_table, OutputFormat};
 use crate::utils::datetime::fmt_rfc3339;
 
-const NEWS_DETAIL_HOST: &str = "https://longbridge.com";
+const NEWS_DETAIL_HOST: &str = "https://longportapp.com";
 
 /// Return `s` truncated to `max` chars with a trailing `…`, or the original if it fits.
 fn truncate_display(s: &str, max: usize) -> String {
@@ -150,7 +150,7 @@ pub async fn cmd_filing_detail(
         for (i, url) in filing.file_urls.iter().enumerate() {
             println!("{i}: {url}");
         }
-        println!("\n> Usage: longbridge filing-detail {symbol} {id} --file-index <N>");
+        println!("\n> Usage: longport filing-detail {symbol} {id} --file-index <N>");
         return Ok(());
     }
 
@@ -299,9 +299,9 @@ pub async fn cmd_topics(symbol: String, count: usize, format: &OutputFormat) -> 
     Ok(())
 }
 
-/// Fetch full topic content as Markdown: GET <https://longbridge.com/topics/{id}.md>
+/// Fetch full topic content as Markdown: GET <https://longportapp.com/topics/{id}.md>
 pub async fn cmd_topic_detail(id: String) -> Result<()> {
-    let url = format!("https://longbridge.com/topics/{id}.md");
+    let url = format!("https://longportapp.com/topics/{id}.md");
     let client = reqwest::Client::new();
     let resp = client
         .get(&url)
@@ -320,7 +320,7 @@ pub async fn cmd_topic_detail(id: String) -> Result<()> {
 
 /// Build the news detail URL for the given id.
 ///
-/// Always uses longbridge.com as host.
+/// Always uses longportapp.com as host.
 /// Language prefix is determined by the global content language (`crate::locale::get()`).
 fn news_detail_url(id: &str) -> String {
     match crate::locale::get() {
@@ -333,8 +333,8 @@ fn news_detail_url(id: &str) -> String {
 /// Fetch full news article as Markdown.
 ///
 /// URL pattern:
-/// - English: `https://longbridge.com/news/{id}.md`
-/// - Chinese: `https://longbridge.com/zh-CN/news/{id}.md`
+/// - English: `https://longportapp.com/news/{id}.md`
+/// - Chinese: `https://longportapp.com/zh-CN/news/{id}.md`
 pub async fn cmd_news_detail(id: String) -> Result<()> {
     let url = news_detail_url(&id);
     let client = reqwest::Client::new();

@@ -1,5 +1,5 @@
 use anyhow::{bail, Result};
-use longbridge::trade::{
+use longport::trade::{
     EstimateMaxPurchaseQuantityOptions, GetCashFlowOptions, GetHistoryExecutionsOptions,
     GetHistoryOrdersOptions, GetTodayExecutionsOptions, GetTodayOrdersOptions, OrderSide,
     OrderType, OutsideRTH, ReplaceOrderOptions, SubmitOrderOptions, TimeInForceType,
@@ -77,7 +77,7 @@ pub async fn cmd_orders(
         }
         ctx.history_orders(opts).await?
     } else {
-        let opts = longbridge::trade::GetTodayOrdersOptions::new();
+        let opts = longport::trade::GetTodayOrdersOptions::new();
         let opts = if let Some(s) = symbol {
             opts.symbol(s)
         } else {
@@ -243,8 +243,8 @@ pub async fn cmd_executions(
         let start_dt = start.as_deref().map(parse_datetime_start).transpose()?;
         let end_dt = end.as_deref().map(parse_datetime_end).transpose()?;
 
-        let mut exec_opts = longbridge::trade::GetHistoryExecutionsOptions::new();
-        let mut order_opts = longbridge::trade::GetHistoryOrdersOptions::new();
+        let mut exec_opts = longport::trade::GetHistoryExecutionsOptions::new();
+        let mut order_opts = longport::trade::GetHistoryOrdersOptions::new();
         if let Some(s) = &symbol {
             exec_opts = exec_opts.symbol(s.clone());
             order_opts = order_opts.symbol(s.clone());
@@ -266,8 +266,8 @@ pub async fn cmd_executions(
             orders.into_iter().map(|o| (o.order_id, o.side)).collect();
         (execs, map)
     } else {
-        let mut exec_opts = longbridge::trade::GetTodayExecutionsOptions::new();
-        let mut order_opts = longbridge::trade::GetTodayOrdersOptions::new();
+        let mut exec_opts = longport::trade::GetTodayExecutionsOptions::new();
+        let mut order_opts = longport::trade::GetTodayOrdersOptions::new();
         if let Some(s) = &symbol {
             exec_opts = exec_opts.symbol(s.clone());
             order_opts = order_opts.symbol(s.clone());
@@ -477,7 +477,7 @@ pub async fn cmd_replace_order(
     Ok(())
 }
 
-fn print_assets(balances: &[longbridge::trade::AccountBalance], format: &OutputFormat) {
+fn print_assets(balances: &[longport::trade::AccountBalance], format: &OutputFormat) {
     match format {
         OutputFormat::Json => {
             let records: Vec<serde_json::Value> = balances
@@ -602,7 +602,7 @@ pub async fn cmd_cash_flow(
         .transpose()?
         .unwrap_or(now);
 
-    let opts = longbridge::trade::GetCashFlowOptions::new(start_at, end_at);
+    let opts = longport::trade::GetCashFlowOptions::new(start_at, end_at);
     let flows = ctx.cash_flow(opts).await?;
 
     let headers = &[
@@ -743,7 +743,7 @@ pub async fn cmd_max_qty(
         .transpose()?;
 
     let opts =
-        longbridge::trade::EstimateMaxPurchaseQuantityOptions::new(symbol.clone(), ot, side_val);
+        longport::trade::EstimateMaxPurchaseQuantityOptions::new(symbol.clone(), ot, side_val);
     let opts = if let Some(p) = price_dec {
         opts.price(p)
     } else {
@@ -1636,7 +1636,7 @@ mod tests {
     async fn test_run_submit_order_dispatches() {
         let mut mock = MockTradeApi::new();
         mock.expect_submit_order().times(1).returning(|_| {
-            Ok(longbridge::trade::SubmitOrderResponse {
+            Ok(longport::trade::SubmitOrderResponse {
                 order_id: "order-1".to_string(),
             })
         });
@@ -1679,7 +1679,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_positions_dispatches() {
-        use longbridge::trade::StockPositionsResponse;
+        use longport::trade::StockPositionsResponse;
         let mut mock = MockTradeApi::new();
         mock.expect_stock_positions()
             .times(1)
@@ -1689,7 +1689,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_fund_positions_dispatches() {
-        use longbridge::trade::FundPositionsResponse;
+        use longport::trade::FundPositionsResponse;
         let mut mock = MockTradeApi::new();
         mock.expect_fund_positions()
             .times(1)
@@ -1701,7 +1701,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_margin_ratio_dispatches() {
-        use longbridge::trade::MarginRatio;
+        use longport::trade::MarginRatio;
         let mut mock = MockTradeApi::new();
         mock.expect_margin_ratio()
             .with(mockall::predicate::eq("TSLA.US".to_string()))

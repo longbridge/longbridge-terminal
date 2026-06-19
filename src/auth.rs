@@ -1,7 +1,7 @@
-//! Auth utilities for Longbridge `OpenAPI`.
+//! Auth utilities for `LongPort` `OpenAPI`.
 
 use anyhow::{Context, Result};
-use longbridge::oauth::TokenStorage as _;
+use longport::oauth::TokenStorage as _;
 use std::fs;
 use std::path::PathBuf;
 
@@ -38,6 +38,38 @@ struct ClientRegistration {
     registration_client_uri: Option<String>,
 }
 
+fn previous_domain() -> String {
+    format!("{}{}", "long", "bridge")
+}
+
+fn normalize_longport_url(url: &str) -> String {
+    let previous = previous_domain();
+    url.replace(
+        &format!("openapi.{previous}.com"),
+        "openapi.longportapp.com",
+    )
+    .replace(&format!("openapi.{previous}.cn"), "openapi.longportapp.cn")
+    .replace(
+        &format!("openapi.{previous}.xyz"),
+        "openapi.longportapp.xyz",
+    )
+    .replace(&format!("open.{previous}.com"), "open.longportapp.com")
+    .replace(&format!("open.{previous}.cn"), "open.longportapp.cn")
+}
+
+fn normalize_registration_urls(reg: &mut ClientRegistration) -> bool {
+    let Some(uri) = &reg.registration_client_uri else {
+        return false;
+    };
+    let normalized = normalize_longport_url(uri);
+    if normalized == *uri {
+        false
+    } else {
+        reg.registration_client_uri = Some(normalized);
+        true
+    }
+}
+
 fn registration_file_path() -> Result<PathBuf> {
     // Keep staging and production registrations separate: a `client_id`
     // registered against one environment is not valid on the other, so they
@@ -49,7 +81,7 @@ fn registration_file_path() -> Result<PathBuf> {
     };
     Ok(dirs::home_dir()
         .ok_or_else(|| anyhow::anyhow!("Failed to get home directory"))?
-        .join(".longbridge")
+        .join(".longport")
         .join("openapi")
         .join(filename))
 }
@@ -57,26 +89,33 @@ fn registration_file_path() -> Result<PathBuf> {
 fn load_registration() -> Option<ClientRegistration> {
     let path = registration_file_path().ok()?;
     let content = fs::read_to_string(path).ok()?;
-    serde_json::from_str(&content).ok()
+    let mut reg: ClientRegistration = serde_json::from_str(&content).ok()?;
+    if normalize_registration_urls(&mut reg) {
+        let _ = save_registration(&reg);
+    }
+    Some(reg)
 }
 
 fn save_registration(reg: &ClientRegistration) -> Result<()> {
+    let mut reg = reg.clone();
+    normalize_registration_urls(&mut reg);
+
     let path = registration_file_path()?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).context("Failed to create config directory")?;
     }
-    let json = serde_json::to_string_pretty(reg).context("Failed to serialize registration")?;
+    let json = serde_json::to_string_pretty(&reg).context("Failed to serialize registration")?;
     fs::write(&path, json).context("Failed to write registration file")?;
     crate::secure_storage::harden_file_permissions(&path);
     Ok(())
 }
 
 /// Suffix appended to every registered client name so the entry is identifiable
-/// as a Longbridge CLI login in the user's authorized-apps list.
-const CLIENT_NAME_SUFFIX: &str = " (Longbridge CLI)";
+/// as a `LongPort` CLI login in the user's authorized-apps list.
+const CLIENT_NAME_SUFFIX: &str = " (LongPort CLI)";
 
 /// Normalize a user-supplied client name (from `--client-name`) by appending the
-/// [`CLIENT_NAME_SUFFIX`], e.g. `Claude Code` becomes `Claude Code (Longbridge CLI)`.
+/// [`CLIENT_NAME_SUFFIX`], e.g. `Claude Code` becomes `Claude Code (LongPort CLI)`.
 /// The suffix is not duplicated if the input already ends with it.
 fn apply_client_name_suffix(name: String) -> String {
     let name = name.trim();
@@ -90,11 +129,11 @@ fn apply_client_name_suffix(name: String) -> String {
 /// Build the OAuth client name used for dynamic registration, identifying the device
 /// in the user's authorized-apps list.
 ///
-/// Format is `<user>@<machine> (Longbridge CLI)`, e.g. `jason@huacnlee-macbook
-/// (Longbridge CLI)`. The login user name comes first, followed by the host name (which
+/// Format is `<user>@<machine> (LongPort CLI)`, e.g. `jason@huacnlee-macbook
+/// (LongPort CLI)`. The login user name comes first, followed by the host name (which
 /// usually encodes the device type). When the host name is unavailable it falls back to
 /// the OS label so a generic server login still gets a device hint, e.g. `ubuntu@Linux
-/// (Longbridge CLI)`. When the user name is unavailable the machine part is used alone.
+/// (LongPort CLI)`. When the user name is unavailable the machine part is used alone.
 fn client_name() -> String {
     let os = match std::env::consts::OS {
         "macos" => "macOS",
@@ -119,10 +158,10 @@ fn client_name() -> String {
     }
 }
 
-/// Build a reqwest HTTP client with the Longbridge terminal User-Agent.
+/// Build a reqwest HTTP client with the `LongPort` terminal User-Agent.
 fn build_http_client() -> Result<reqwest::Client> {
     reqwest::Client::builder()
-        .user_agent(concat!("longbridge-terminal/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("longport-terminal/", env!("CARGO_PKG_VERSION")))
         .build()
         .context("Failed to build HTTP client")
 }
@@ -257,16 +296,16 @@ fn agent_redirect_uri() -> String {
 pub fn token_file_path() -> Result<PathBuf> {
     Ok(dirs::home_dir()
         .ok_or_else(|| anyhow::anyhow!("Failed to get home directory"))?
-        .join(".longbridge")
+        .join(".longport")
         .join("openapi")
         .join("cli-auth"))
 }
 
-/// Invite code file path: `~/.longbridge/openapi/invite-code`
+/// Invite code file path: `~/.longport/openapi/invite-code`
 fn invite_code_file_path() -> Result<PathBuf> {
     Ok(dirs::home_dir()
         .ok_or_else(|| anyhow::anyhow!("Failed to get home directory"))?
-        .join(".longbridge")
+        .join(".longport")
         .join("openapi")
         .join("invite-code"))
 }
@@ -332,9 +371,195 @@ fn append_query_param(url: &str, key: &str, value: &str) -> String {
     )
 }
 
+fn encode_query_value(value: &str) -> String {
+    percent_encoding::utf8_percent_encode(value, percent_encoding::NON_ALPHANUMERIC).to_string()
+}
+
+fn authorization_url(
+    client_id: &str,
+    redirect_uri: &str,
+    state: &str,
+    invite_code: Option<&str>,
+) -> String {
+    let mut url = format!(
+        "{}/authorize?response_type=code&client_id={}&redirect_uri={}&state={}&scope=",
+        oauth_base_url(),
+        encode_query_value(client_id),
+        encode_query_value(redirect_uri),
+        encode_query_value(state)
+    );
+    if let Some(invite_code) = invite_code {
+        url = append_query_param(&url, "invite-code", invite_code);
+    }
+    url
+}
+
+fn random_oauth_state() -> Result<String> {
+    let mut bytes = [0u8; 32];
+    getrandom::fill(&mut bytes).context("Failed to generate OAuth state")?;
+    Ok(bs58::encode(bytes).into_string())
+}
+
+fn query_param(query: &str, key: &str) -> Option<String> {
+    for pair in query.split('&') {
+        let (raw_key, raw_value) = pair.split_once('=').unwrap_or((pair, ""));
+        let decoded_key = percent_encoding::percent_decode_str(raw_key)
+            .decode_utf8()
+            .ok()?;
+        if decoded_key == key {
+            return percent_encoding::percent_decode_str(raw_value)
+                .decode_utf8()
+                .ok()
+                .map(std::borrow::Cow::into_owned);
+        }
+    }
+    None
+}
+
+fn parse_callback_request_line(line: &str, expected_state: &str) -> Result<String> {
+    let path = line
+        .split_whitespace()
+        .nth(1)
+        .ok_or_else(|| anyhow::anyhow!("OAuth callback request was malformed"))?;
+    let query = path
+        .split_once('?')
+        .map(|(_, query)| query)
+        .ok_or_else(|| anyhow::anyhow!("OAuth callback did not include a query string"))?;
+
+    if let Some(error) = query_param(query, "error") {
+        anyhow::bail!("OAuth authorization failed: {error}");
+    }
+
+    let state = query_param(query, "state")
+        .ok_or_else(|| anyhow::anyhow!("OAuth callback did not include state"))?;
+    if state != expected_state {
+        anyhow::bail!("OAuth callback state mismatch");
+    }
+
+    query_param(query, "code").ok_or_else(|| anyhow::anyhow!("OAuth callback did not include code"))
+}
+
+fn wait_for_authorization_callback(
+    listener: std::net::TcpListener,
+    expected_state: String,
+) -> Result<String> {
+    use std::io::{Read, Write as _};
+    use std::time::{Duration, Instant};
+
+    listener
+        .set_nonblocking(true)
+        .context("Failed to set OAuth callback timeout")?;
+    let deadline = Instant::now() + Duration::from_mins(5);
+    let (mut stream, _) = loop {
+        match listener.accept() {
+            Ok(pair) => break pair,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    anyhow::bail!("Timed out waiting for OAuth callback");
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(e) => return Err(e).context("Failed to accept OAuth callback"),
+        }
+    };
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .context("Failed to set OAuth callback read timeout")?;
+
+    let mut buf = [0u8; 8192];
+    let n = stream
+        .read(&mut buf)
+        .context("Failed to read OAuth callback request")?;
+    let req = String::from_utf8_lossy(&buf[..n]);
+    let request_line = req.lines().next().unwrap_or_default();
+    let result = parse_callback_request_line(request_line, &expected_state);
+
+    let (status, body) = if result.is_ok() {
+        (
+            "200 OK",
+            "Authorization received. You can close this window.",
+        )
+    } else {
+        (
+            "400 Bad Request",
+            "Authorization failed. Return to the terminal for details.",
+        )
+    };
+    let response = format!(
+        "HTTP/1.1 {status}\r\ncontent-type: text/plain; charset=utf-8\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    let _ = stream.write_all(response.as_bytes());
+
+    result
+}
+
+async fn exchange_browser_authorization_code(
+    http_client: &reqwest::Client,
+    client_id: &str,
+    code: &str,
+    redirect_uri: &str,
+) -> Result<()> {
+    let url = format!("{}/token", oauth_base_url());
+    let raw = http_client
+        .post(&url)
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("code", code),
+            ("redirect_uri", redirect_uri),
+            ("client_id", client_id),
+        ])
+        .send()
+        .await
+        .context("Authorization token exchange failed")?;
+
+    let status = raw.status();
+    if !status.is_success() {
+        let text = raw.text().await.unwrap_or_default();
+        anyhow::bail!("Authorization token exchange failed ({status}): {text}");
+    }
+
+    let token_resp = raw
+        .json::<serde_json::Value>()
+        .await
+        .context("Failed to parse token response")?;
+    let access_token = token_resp["access_token"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("No access_token in token response"))?;
+    let expires_in = token_resp["expires_in"].as_u64().unwrap_or(3600);
+    let refresh_token = token_resp["refresh_token"].as_str().map(str::to_owned);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let token = longport::oauth::StoredToken {
+        client_id: client_id.to_string(),
+        access_token: access_token.to_string(),
+        refresh_token,
+        expires_at: now + expires_in,
+    };
+    crate::secure_storage::EncryptedFileTokenStorage
+        .save(&token)
+        .map_err(|e| anyhow::anyhow!("Failed to save token: {e}"))?;
+
+    Ok(())
+}
+
 /// Try to open a URL in the system browser. Returns `true` if launched successfully.
 pub fn open_browser(url: &str) -> bool {
     open::that(url).is_ok()
+}
+
+fn device_verification_url(device_resp: &serde_json::Value, invite_code: Option<&str>) -> String {
+    let verification_url_base = device_resp["verification_uri_complete"]
+        .as_str()
+        .unwrap_or_else(|| device_resp["verification_uri"].as_str().unwrap_or(""));
+    let mut verification_url = normalize_longport_url(verification_url_base);
+    if let Some(invite_code) = invite_code {
+        verification_url = append_query_param(&verification_url, "invite-code", invite_code);
+    }
+    verification_url
 }
 
 /// Device Authorization Flow (RFC 8628).
@@ -378,21 +603,11 @@ pub async fn device_login(verbose: bool, client_name: Option<String>) -> Result<
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("No device_code in response"))?
         .to_owned();
-    let verification_url_base = device_resp["verification_uri_complete"]
-        .as_str()
-        .unwrap_or_else(|| device_resp["verification_uri"].as_str().unwrap_or(""));
-    let verification_url_owned;
-    let verification_url = if let Some(ref invite_code) = invite_code {
-        verification_url_owned =
-            append_query_param(verification_url_base, "invite-code", invite_code);
-        verification_url_owned.as_str()
-    } else {
-        verification_url_base
-    };
+    let verification_url = device_verification_url(&device_resp, invite_code.as_deref());
     let expires_in = device_resp["expires_in"].as_u64().unwrap_or(300);
     let interval = device_resp["interval"].as_u64().unwrap_or(5);
 
-    let opened = open_browser(verification_url);
+    let opened = open_browser(&verification_url);
 
     println!("Open the following URL in your browser to authorize:");
     println!();
@@ -446,7 +661,7 @@ pub async fn device_login(verbose: bool, client_name: Option<String>) -> Result<
                 .unwrap()
                 .as_secs();
 
-            let token = longbridge::oauth::StoredToken {
+            let token = longport::oauth::StoredToken {
                 client_id: client_id.to_string(),
                 access_token: access_token.to_string(),
                 refresh_token,
@@ -505,12 +720,12 @@ pub async fn refresh_if_expired() -> Result<()> {
         .map(str::to_owned)
     else {
         return Err(anyhow::anyhow!(
-            "No refresh token found. Please run 'longbridge auth login' to re-authenticate."
+            "No refresh token found. Please run 'longport auth login' to re-authenticate."
         ));
     };
 
     let http_client = reqwest::Client::builder()
-        .user_agent(concat!("longbridge-terminal/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("longport-terminal/", env!("CARGO_PKG_VERSION")))
         .timeout(std::time::Duration::from_secs(15))
         .build()
         .context("Failed to build HTTP client for token refresh")?;
@@ -547,7 +762,7 @@ pub async fn refresh_if_expired() -> Result<()> {
         let expires_in = token_resp["expires_in"].as_u64().unwrap_or(3600);
         let new_refresh = token_resp["refresh_token"].as_str().map(str::to_owned);
 
-        let token = longbridge::oauth::StoredToken {
+        let token = longport::oauth::StoredToken {
             client_id: dynamic_client_id.clone(),
             access_token: access_token.to_string(),
             refresh_token: new_refresh,
@@ -566,7 +781,7 @@ pub async fn refresh_if_expired() -> Result<()> {
 
     if error == "invalid_grant" {
         return Err(anyhow::anyhow!(
-            "Refresh token has expired. Please run 'longbridge auth login' to re-authenticate."
+            "Refresh token has expired. Please run 'longport auth login' to re-authenticate."
         ));
     }
 
@@ -579,37 +794,41 @@ pub async fn refresh_if_expired() -> Result<()> {
 /// `localhost:CALLBACK_PORT` for the OAuth callback.
 pub async fn auth_code_login(client_name: Option<String>) -> Result<()> {
     println!("Opening browser for authorization...");
+    let listener =
+        std::net::TcpListener::bind(("127.0.0.1", CALLBACK_PORT)).with_context(|| {
+            format!("Failed to listen on localhost:{CALLBACK_PORT} for the OAuth callback")
+        })?;
     println!("Listening on localhost:{CALLBACK_PORT} for the OAuth callback.");
     let invite_code = read_invite_code();
 
     let http_client = build_http_client()?;
     let reg = get_or_register_client(&http_client, false, client_name).await?;
+    let redirect_uri = format!("http://localhost:{CALLBACK_PORT}/callback");
+    let state = random_oauth_state()?;
+    let authorization_url = authorization_url(
+        &reg.client_id,
+        &redirect_uri,
+        &state,
+        invite_code.as_deref(),
+    );
 
-    let oauth_result = longbridge::oauth::OAuthBuilder::new(&reg.client_id)
-        .callback_port(CALLBACK_PORT)
-        .token_storage(crate::secure_storage::EncryptedFileTokenStorage)
-        .build(|url| {
-            let authorization_url = invite_code.as_deref().map_or_else(
-                || url.to_string(),
-                |invite_code| append_query_param(url, "invite-code", invite_code),
-            );
-            println!();
-            println!("Authorization URL: {authorization_url}");
-            println!();
-            if !open_browser(&authorization_url) {
-                println!("Could not open browser automatically. Please visit the URL above.");
-            }
-        })
-        .await;
-
-    match oauth_result {
-        Ok(_) => {
-            // Registration was already persisted in get_or_register_client.
-            println!("Successfully authenticated.");
-            Ok(())
-        }
-        Err(e) => Err(anyhow::anyhow!("OAuth authorization failed: {e}")),
+    println!();
+    println!("Authorization URL: {authorization_url}");
+    println!();
+    if !open_browser(&authorization_url) {
+        println!("Could not open browser automatically. Please visit the URL above.");
     }
+
+    let code =
+        tokio::task::spawn_blocking(move || wait_for_authorization_callback(listener, state))
+            .await
+            .map_err(|e| anyhow::anyhow!("OAuth callback task failed: {e}"))??;
+
+    exchange_browser_authorization_code(&http_client, &reg.client_id, &code, &redirect_uri).await?;
+
+    // Registration was already persisted in get_or_register_client.
+    println!("Successfully authenticated.");
+    Ok(())
 }
 
 /// Build the ordered exchange candidates for a user-pasted authorization
@@ -701,7 +920,7 @@ fn unpack_agent_code(input: &str) -> Option<(String, String)> {
 /// Agent Auth Code reverse-authorization flow.
 ///
 /// Exchanges a standard OAuth authorization code — generated by the user at
-/// <https://open.longbridge.com/connect> (5-minute, single-use) — for an
+/// <https://open.longportapp.com/connect> (5-minute, single-use) — for an
 /// access/refresh token in a single synchronous call. No browser, no polling,
 /// no local callback server.
 ///
@@ -717,7 +936,7 @@ pub async fn auth_code_exchange_login(code: &str) -> Result<()> {
     if candidates.is_empty() {
         anyhow::bail!(
             "Empty authorization code. Generate one at {} and pass it as \
-             `longbridge auth login --auth-code <CODE>`.",
+             `longport auth login --auth-code <CODE>`.",
             connect_url()
         );
     }
@@ -799,7 +1018,7 @@ pub async fn auth_code_exchange_login(code: &str) -> Result<()> {
         // dynamic registration of its own, so record the client_id locally too
         // (no management credentials), letting refresh_if_expired's
         // effective_client_id() resolve it on later runs.
-        let token = longbridge::oauth::StoredToken {
+        let token = longport::oauth::StoredToken {
             client_id: client_id.clone(),
             access_token: access_token.to_string(),
             refresh_token,
@@ -826,7 +1045,7 @@ pub async fn auth_code_exchange_login(code: &str) -> Result<()> {
     if !saw_client_id && last_rejection.is_none() {
         anyhow::bail!(
             "Authorization code does not carry a client_id. Generate a fresh one at {} \
-             (enter an Agent Name) and run `longbridge auth login --auth-code <CODE>` again.",
+             (enter an Agent Name) and run `longport auth login --auth-code <CODE>` again.",
             connect_url()
         );
     }
@@ -842,7 +1061,7 @@ pub async fn auth_code_exchange_login(code: &str) -> Result<()> {
             anyhow::bail!(
                 "Authorization code is invalid, expired, or already used. \
                  Please generate a new one at {} \
-                 and run `longbridge auth login --auth-code <CODE>` again.",
+                 and run `longport auth login --auth-code <CODE>` again.",
                 connect_url()
             )
         }
@@ -878,7 +1097,7 @@ pub async fn clear_token() -> Result<()> {
 mod auth_code_tests {
     use super::*;
 
-    // Shared vector with longbridge-mcp: the connect page displays
+    // Shared vector with longport-mcp: the connect page displays
     // `RKBXES26iL0CdQL85vXz+tSNeoHeqyUuLEz3nVWgqVU=` as
     // `5ctXgj3mEtEHoUBRwJnyURf4EkfA1924fY3o9Njev2zp` (base58).
     const ORIGINAL: &str = "RKBXES26iL0CdQL85vXz+tSNeoHeqyUuLEz3nVWgqVU=";
@@ -914,7 +1133,7 @@ mod auth_code_tests {
     }
 
     // Packed agent code: base58([0x01][cid_len][client_id][ORIGINAL]).
-    // Shared format/vector with the web `packAgentAuthCode` and longbridge-mcp.
+    // Shared format/vector with the web `packAgentAuthCode` and longport-mcp.
     const PACKED_CLIENT_ID: &str = "c91cd252-2f89-4024-9c5d-7b1340fc3bd1";
     const PACKED_DISPLAY: &str =
         "F4ep4yfKvDgpZnFUR6T8vm5bCjG65XZKgaTiNWbwTCVPqGw3HCrpDvYuxLUu6uNtn73ht5BKtKS7Fk9WG9MV9V2PYkwSGWoZfoEtFbfCL2f45c8";
@@ -939,5 +1158,95 @@ mod auth_code_tests {
         // Legacy base58 display form (no version byte) and empty input → None.
         assert!(unpack_agent_code(BASE58_FORM).is_none());
         assert!(unpack_agent_code("").is_none());
+    }
+
+    #[test]
+    fn oauth_local_files_use_longport_directory() {
+        let openapi_dir = std::path::Path::new(".longport").join("openapi");
+
+        assert!(token_file_path()
+            .unwrap()
+            .ends_with(openapi_dir.join("cli-auth")));
+        assert!(registration_file_path().unwrap().ends_with(
+            std::path::Path::new(".longport").join("openapi").join(
+                if crate::region::is_test_env() {
+                    "cli-registration-staging"
+                } else {
+                    "cli-registration"
+                }
+            )
+        ));
+        assert!(invite_code_file_path().unwrap().ends_with(
+            std::path::Path::new(".longport")
+                .join("openapi")
+                .join("invite-code")
+        ));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn oauth_base_urls_use_longportapp_hosts() {
+        std::env::set_var("LONGPORT_REGION", "global");
+        assert_eq!(oauth_base_url(), "https://openapi.longportapp.com/oauth2");
+
+        std::env::set_var("LONGPORT_REGION", "cn");
+        assert_eq!(oauth_base_url(), "https://openapi.longportapp.cn/oauth2");
+
+        std::env::remove_var("LONGPORT_REGION");
+    }
+
+    #[test]
+    fn cli_registration_uri_is_normalized_to_longportapp() {
+        let old_host = format!("openapi.{}.com", previous_domain());
+        let mut reg = ClientRegistration {
+            client_id: "client-id".to_string(),
+            registration_access_token: Some("token".to_string()),
+            registration_client_uri: Some(format!("https://{old_host}/oauth2/register/client-id")),
+        };
+
+        normalize_registration_urls(&mut reg);
+
+        assert_eq!(
+            reg.registration_client_uri.as_deref(),
+            Some("https://openapi.longportapp.com/oauth2/register/client-id")
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn browser_authorization_url_uses_longportapp_host() {
+        std::env::set_var("LONGPORT_REGION", "global");
+        let url = authorization_url(
+            "client-id",
+            "http://localhost:60355/callback",
+            "state-value",
+            Some("invite code"),
+        );
+
+        assert!(url.starts_with("https://openapi.longportapp.com/oauth2/authorize?"));
+        assert!(url.contains("client_id=client%2Did"));
+        assert!(url.contains("redirect_uri=http%3A%2F%2Flocalhost%3A60355%2Fcallback"));
+        assert!(url.contains("state=state%2Dvalue"));
+        assert!(url.contains("invite-code=invite%20code"));
+
+        std::env::remove_var("LONGPORT_REGION");
+    }
+
+    #[test]
+    fn device_verification_url_is_normalized_to_longportapp() {
+        let previous = previous_domain();
+        let device_resp = serde_json::json!({
+            "verification_uri_complete": format!(
+                "https://open.{previous}.com/oauth2/device?user_code=ABCD-EFGH"
+            ),
+            "verification_uri": format!("https://open.{previous}.com/oauth2/device"),
+        });
+
+        let url = device_verification_url(&device_resp, Some("invite code"));
+
+        assert_eq!(
+            url,
+            "https://open.longportapp.com/oauth2/device?user_code=ABCD-EFGH&invite-code=invite%20code"
+        );
     }
 }

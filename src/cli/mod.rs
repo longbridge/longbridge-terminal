@@ -38,12 +38,12 @@ pub enum OutputFormat {
 }
 
 #[derive(Parser)]
-#[command(name = "longbridge")]
+#[command(name = "longport")]
 #[command(about = "\
-AI-native CLI for the Longbridge trading platform — real-time market data, portfolio, and trading.\n\n\
+AI-native CLI for the LongPort trading platform — real-time market data, portfolio, and trading.\n\n\
 Symbol e.g.: TSLA.US 700.HK D05.SG 600519.SH 000568.SZ .VIX.US BTCUSD.HAS ETHBTC.HAS")]
 #[command(long_about = "\
-AI-native CLI for the Longbridge trading platform — real-time market data, portfolio, and trading.\n\n\
+AI-native CLI for the LongPort trading platform — real-time market data, portfolio, and trading.\n\n\
 Symbol format: <CODE>.<MARKET>\n\
   TSLA.US      United States (US)\n\
   700.HK       Hong Kong (HK)\n\
@@ -51,20 +51,19 @@ Symbol format: <CODE>.<MARKET>\n\
   600519.SH    China A-share Shanghai (SH)\n\
   000568.SZ    China A-share Shenzhen (SZ)\n\
   .VIX.US      Index (US)\n\
-  BTCUSD.HAS   Crypto — Longbridge-specific suffix (.HAS); not available to all accounts\n\
+  BTCUSD.HAS   Crypto — LongPort-specific suffix (.HAS); not available to all accounts\n\
   ETHBTC.HAS   Crypto pair (e.g. ETH priced in BTC)\n\n\
-Note: crypto symbols use the .HAS suffix (Longbridge-specific). If a .HAS symbol returns no\n\
+Note: crypto symbols use the .HAS suffix (LongPort-specific). If a .HAS symbol returns no\n\
 data, crypto market access may not be enabled for this account — the data exists but is\n\
 restricted by account type.\n\n\
-Authentication: run `longbridge auth login` once; the token is stored at \
-~/.longbridge/openapi/tokens/<client_id> and reused automatically by all commands.\n\n\
+Authentication: run `longport auth login` once; the token is stored at \
+~/.longport/openapi/tokens/<client_id> and reused automatically by all commands.\n\n\
 Use --format json on any command for machine-readable output suitable for AI agents:\n\
-  longbridge quote TSLA.US --format json\n\
-  longbridge positions --format json | jq '.[] | {symbol, quantity}'\n\n\
-Use `longbridge tui` to launch the interactive full-screen terminal UI.")]
+  longport quote TSLA.US --format json\n\
+  longport positions --format json | jq '.[] | {symbol, quantity}'")]
 #[command(version)]
 #[command(
-    after_help = "Each command has two help levels:\n  longbridge <command> -h       brief summary (options only)\n  longbridge <command> --help   full detail: constraints, rate limits, return fields, examples"
+    after_help = "Each command has two help levels:\n  longport <command> -h       brief summary (options only)\n  longport <command> --help   full detail: constraints, rate limits, return fields, examples"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -78,7 +77,7 @@ pub struct Cli {
     #[arg(long, short = 'v', global = true)]
     pub verbose: bool,
 
-    /// Language for content fetched from longbridge.com: zh-CN or en.
+    /// Language for content fetched from longportapp.com: zh-CN or en.
     /// Defaults to system LANG env var, then en.
     #[arg(long, global = true)]
     pub lang: Option<String>,
@@ -92,7 +91,7 @@ pub struct Cli {
 pub enum Commands {
     /// Authenticate or clear credentials
     ///
-    /// Token is stored at `~/.longbridge/openapi/tokens/<client_id>` and shared with the TUI.
+    /// Token is stored at `~/.longport/openapi/cli-auth`.
     Auth {
         #[command(subcommand)]
         cmd: AuthCmd,
@@ -103,7 +102,7 @@ pub enum Commands {
     /// Stores the given invite code locally. The code is sent during OAuth authorization
     /// so the server can associate the user with the referral channel (e.g. a KOL campaign).
     /// It is also included as a header in subsequent API requests.
-    /// Example: longbridge init KOL-ABC123
+    /// Example: longport init KOL-ABC123
     Init {
         /// Invite code provided by the referral channel
         invite_code: String,
@@ -113,15 +112,15 @@ pub enum Commands {
     ///
     /// Shows token status, cached region, and latency to both Global and CN API endpoints.
     /// Does not require authentication.
-    /// Example: longbridge check
-    /// Example: longbridge check --format json
+    /// Example: longport check
+    /// Example: longport check --format json
     Check,
 
-    /// Update longbridge to the latest version
+    /// Update longport to the latest version
     ///
     /// Downloads and runs the official install script to replace the current binary.
-    /// Example: longbridge update
-    /// Example: longbridge update --release-notes
+    /// Example: longport update
+    /// Example: longport update --release-notes
     Update {
         /// Show release notes instead of updating
         #[arg(long)]
@@ -131,21 +130,15 @@ pub enum Commands {
         force: bool,
     },
 
-    /// Launch the interactive full-screen TUI (terminal UI)
-    ///
-    /// Real-time watchlist, candlestick charts, portfolio view, stock search, Vim-like keybindings.
-    /// Example: longbridge tui
-    Tui,
-
     /// Generate shell completion script
     ///
     /// Prints a shell completion script to stdout.
     /// Redirect the output to the appropriate file and reload your shell to enable tab-completion.
     ///
-    /// Example (bash):  `longbridge completion bash >> ~/.bash_completion`
-    /// Example (zsh):   `longbridge completion zsh  > ~/.zfunc/_longbridge`
+    /// Example (bash):  `longport completion bash >> ~/.bash_completion`
+    /// Example (zsh):   `longport completion zsh  > ~/.zfunc/_longport`
     ///                  (add `fpath=(~/.zfunc $fpath)` and `autoload -Uz compinit && compinit` to `~/.zshrc`)
-    /// Example (fish):  `longbridge completion fish > ~/.config/fish/completions/longbridge.fish`
+    /// Example (fish):  `longport completion fish > ~/.config/fish/completions/longport.fish`
     Completion {
         /// Target shell: bash, zsh, fish, elvish, or powershell
         shell: clap_complete::Shell,
@@ -157,8 +150,8 @@ pub enum Commands {
     /// Returns: symbol, `last_done`, `prev_close`, open, high, low, volume, turnover, `trade_status`.
     /// Also returns `pre_market_quote`, `post_market_quote`, `overnight_quote` when available (US only).
     /// In table format an "Extended Hours" section is appended; in JSON these are nested objects.
-    /// Example: longbridge quote TSLA.US 700.HK AAPL.US
-    /// Example: longbridge quote TSLA.US NVDA.US --format json
+    /// Example: longport quote TSLA.US 700.HK AAPL.US
+    /// Example: longport quote TSLA.US NVDA.US --format json
     Quote {
         /// Symbols in <CODE>.<MARKET> format, e.g. TSLA.US QQQ.US 700.HK .VIX.US
         symbols: Vec<String>,
@@ -167,7 +160,7 @@ pub enum Commands {
     /// Level 2 order book depth (bid/ask ladder)
     ///
     /// Returns up to 10 price levels of asks and bids with price, volume, `order_num`.
-    /// Example: longbridge depth TSLA.US
+    /// Example: longport depth TSLA.US
     Depth {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -177,7 +170,7 @@ pub enum Commands {
     ///
     /// Returns which broker IDs are present at each ask/bid level.
     /// Useful for understanding institutional order flow.
-    /// Example: longbridge brokers 700.HK
+    /// Example: longport brokers 700.HK
     Brokers {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -186,7 +179,7 @@ pub enum Commands {
     /// Recent tick-by-tick trades
     ///
     /// Returns: timestamp, price, volume, direction (up/down/neutral), `trade_type`.
-    /// Example: longbridge trades TSLA.US --count 50
+    /// Example: longport trades TSLA.US --count 50
     Trades {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -200,9 +193,9 @@ pub enum Commands {
     /// Returns: timestamp, price, volume, turnover, `avg_price`.
     /// Use `--session all` to include pre-market and post-market lines.
     /// Use `--date YYYYMMDD` to fetch a historical day's intraday data.
-    /// Example: longbridge intraday TSLA.US
-    /// Example: longbridge intraday TSLA.US --session all
-    /// Example: longbridge intraday TSLA.US --date 20240115
+    /// Example: longport intraday TSLA.US
+    /// Example: longport intraday TSLA.US --session all
+    /// Example: longport intraday TSLA.US --date 20240115
     Intraday {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -221,10 +214,10 @@ pub enum Commands {
     ///   (aliases: minute=1m, hour=1h, d/1d=day, w=week, m/1mo=month, y=year)
     /// Use --session all to include pre/post-market candles (adds a Session column).
     /// Use the `history` subcommand to fetch a specific date range.
-    /// Example: longbridge kline TSLA.US --period day --count 100
-    /// Example: longbridge kline TSLA.US --period 1h --adjust forward
-    /// Example: longbridge kline TSLA.US --period 1m --session all
-    /// Example: longbridge kline history TSLA.US --start 2024-01-01 --end 2024-12-31
+    /// Example: longport kline TSLA.US --period day --count 100
+    /// Example: longport kline TSLA.US --period 1h --adjust forward
+    /// Example: longport kline TSLA.US --period 1m --session all
+    /// Example: longport kline history TSLA.US --start 2024-01-01 --end 2024-12-31
     Kline {
         /// Symbol in <CODE>.<MARKET> format. Omit when using a subcommand.
         symbol: Option<String>,
@@ -248,7 +241,7 @@ pub enum Commands {
     /// Static reference info for one or more symbols
     ///
     /// Returns: name, exchange, currency, `lot_size`, `total_shares`, `circulating_shares`, EPS, BPS, dividend.
-    /// Example: longbridge static TSLA.US 700.HK
+    /// Example: longport static TSLA.US 700.HK
     Static {
         /// One or more symbols in <CODE>.<MARKET> format
         symbols: Vec<String>,
@@ -272,8 +265,8 @@ pub enum Commands {
     ///     `warrant_delta`  `call_price`  `to_call_price`
     ///     `effective_leverage`  `leverage_ratio`  `conversion_ratio`  `balance_point`
     ///
-    /// Example: `longbridge calc-index TSLA.US AAPL.US --fields pe,pb,turnover_rate`
-    /// Example: `longbridge calc-index SOXL260619C52000.US --fields delta,iv,oi,exp,strike`
+    /// Example: `longport calc-index TSLA.US AAPL.US --fields pe,pb,turnover_rate`
+    /// Example: `longport calc-index SOXL260619C52000.US --fields delta,iv,oi,exp,strike`
     CalcIndex {
         /// One or more symbols in <CODE>.<MARKET> format
         symbols: Vec<String>,
@@ -288,8 +281,8 @@ pub enum Commands {
 
     /// Intraday capital distribution snapshot, or flow time series with --flow
     ///
-    /// Example: longbridge capital TSLA.US
-    /// Example: longbridge capital TSLA.US --flow
+    /// Example: longport capital TSLA.US
+    /// Example: longport capital TSLA.US --flow
     Capital {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -301,8 +294,8 @@ pub enum Commands {
     /// Market sentiment temperature index (0–100, higher = more bullish)
     ///
     /// Use --history to get a time series instead of the current snapshot.
-    /// Example: longbridge market-temp HK
-    /// Example: longbridge market-temp US --history --start 2024-01-01 --end 2024-12-31
+    /// Example: longport market-temp HK
+    /// Example: longport market-temp US --history --start 2024-01-01 --end 2024-12-31
     MarketTemp {
         /// Market: HK | US | CN (aliases: SH SZ) | SG  (case-insensitive, default: HK)
         #[arg(default_value = "HK")]
@@ -324,8 +317,8 @@ pub enum Commands {
     /// Trading session schedule and trading calendar
     ///
     /// Subcommands: session  days
-    /// Example: longbridge trading session
-    /// Example: longbridge trading days HK --start 2024-01-01 --end 2024-03-31
+    /// Example: longport trading session
+    /// Example: longport trading days HK --start 2024-01-01 --end 2024-03-31
     Trading {
         #[command(subcommand)]
         cmd: TradingCmd,
@@ -335,8 +328,8 @@ pub enum Commands {
     ///
     /// Returns securities that can be traded in the overnight session for the given market.
     /// Supported markets: US, HK, CN, SG
-    /// Example: longbridge security-list US
-    /// Example: longbridge security-list HK --page 2 --count 50
+    /// Example: longport security-list US
+    /// Example: longport security-list HK --page 2 --count 50
     SecurityList {
         /// Market: US, HK, CN, SG
         #[arg(default_value = "US")]
@@ -366,10 +359,10 @@ pub enum Commands {
     /// Option quotes, option chain, and option volume statistics
     ///
     /// Subcommands: chain  quote  volume
-    /// Example: longbridge option quote AAPL240119C190000
-    /// Example: longbridge option chain AAPL.US --date 2024-01-19
-    /// Example: longbridge option volume AAPL.US
-    /// Example: longbridge option volume daily AAPL.US
+    /// Example: longport option quote AAPL240119C190000
+    /// Example: longport option chain AAPL.US --date 2024-01-19
+    /// Example: longport option volume AAPL.US
+    /// Example: longport option volume daily AAPL.US
     Option {
         #[command(subcommand)]
         cmd: OptionCmd,
@@ -379,9 +372,9 @@ pub enum Commands {
     ///
     /// Without subcommand: lists warrants for an underlying symbol.
     /// Subcommands: quote  list  issuers
-    /// Example: longbridge warrant 700.HK
-    /// Example: longbridge warrant quote 12345.HK
-    /// Example: longbridge warrant list 700.HK
+    /// Example: longport warrant 700.HK
+    /// Example: longport warrant quote 12345.HK
+    /// Example: longport warrant list 700.HK
     Warrant {
         /// Underlying symbol (e.g. 700.HK). Omit when using a subcommand.
         symbol: Option<String>,
@@ -393,10 +386,10 @@ pub enum Commands {
     /// Financial statements (income, balance sheet, cash flow) for a symbol
     ///
     /// Subcommands: snapshot
-    /// Example: longbridge financial-report TSLA.US --kind IS --report af
-    /// Example: longbridge financial-report TSLA.US --kind BS --format json
-    /// Example: longbridge financial-report snapshot AAPL.US
-    /// Example: longbridge financial-report snapshot AAPL.US --report qf --year 2024 --period 4
+    /// Example: longport financial-report TSLA.US --kind IS --report af
+    /// Example: longport financial-report TSLA.US --kind BS --format json
+    /// Example: longport financial-report snapshot AAPL.US
+    /// Example: longport financial-report snapshot AAPL.US --report qf --year 2024 --period 4
     FinancialReport {
         /// Symbol in <CODE>.<MARKET> format, e.g. TSLA.US 700.HK (omit when using a subcommand)
         symbol: Option<String>,
@@ -418,8 +411,8 @@ pub enum Commands {
     /// Without --history: returns the current-period segment composition.
     /// With --history: returns historical segment trends by period and category.
     ///
-    /// Example: longbridge business-segments AAPL.US
-    /// Example: longbridge business-segments AAPL.US --history --report qf
+    /// Example: longport business-segments AAPL.US
+    /// Example: longport business-segments AAPL.US --history --report qf
     BusinessSegments {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -440,9 +433,9 @@ pub enum Commands {
     /// `counter_ids` (e.g. BK/US/IN00258) that can be passed directly to `industry-peers`
     /// to explore the sub-sector hierarchy for that industry.
     ///
-    /// Example: longbridge industry-rank --market US
-    /// Example: longbridge industry-rank --market HK --indicator market-cap
-    /// Example: longbridge industry-rank --market US --indicator revenue --limit 10
+    /// Example: longport industry-rank --market US
+    /// Example: longport industry-rank --market HK --indicator market-cap
+    /// Example: longport industry-rank --market US --indicator revenue --limit 10
     IndustryRank {
         /// Market: US | HK | SG | CN
         #[arg(long)]
@@ -465,8 +458,8 @@ pub enum Commands {
     ///
     /// Use `industry-rank` to discover industry Counter IDs, then pass one here.
     ///
-    /// Example: longbridge industry-peers BK/US/IN00258
-    /// Example: longbridge industry-peers BK/HK/IN20337
+    /// Example: longport industry-peers BK/US/IN00258
+    /// Example: longport industry-peers BK/HK/IN20337
     IndustryPeers {
         /// BK `counter_id` from `industry-rank`, e.g. BK/US/IN00258
         symbol: String,
@@ -480,10 +473,10 @@ pub enum Commands {
     /// Without a subcommand: returns rating distribution (Strong Buy / Buy / Hold /
     /// Underperform / Sell) and the current average target price.
     /// Subcommands: detail
-    /// Example: longbridge institution-rating TSLA.US
-    /// Example: longbridge institution-rating detail TSLA.US
-    /// Example: longbridge institution-rating TSLA.US --views
-    /// Example: longbridge institution-rating TSLA.US --format json
+    /// Example: longport institution-rating TSLA.US
+    /// Example: longport institution-rating detail TSLA.US
+    /// Example: longport institution-rating TSLA.US --views
+    /// Example: longport institution-rating TSLA.US --format json
     InstitutionRating {
         /// Symbol in <CODE>.<MARKET> format. Omit when using a subcommand.
         symbol: Option<String>,
@@ -508,10 +501,10 @@ pub enum Commands {
 
     /// Dividend history and distribution details for a symbol
     ///
-    /// Example: longbridge dividend AAPL.US
-    /// Example: longbridge dividend AAPL.US --page 2
-    /// Example: longbridge dividend AAPL.US --year 2025
-    /// Example: longbridge dividend detail AAPL.US
+    /// Example: longport dividend AAPL.US
+    /// Example: longport dividend AAPL.US --page 2
+    /// Example: longport dividend AAPL.US --year 2025
+    /// Example: longport dividend detail AAPL.US
     Dividend {
         /// Symbol in <CODE>.<MARKET> format (omit when using a subcommand)
         symbol: Option<String>,
@@ -527,8 +520,8 @@ pub enum Commands {
 
     /// EPS forecasts and analyst consensus estimates for a symbol
     ///
-    /// Example: longbridge forecast-eps TSLA.US
-    /// Example: longbridge forecast-eps TSLA.US --format json
+    /// Example: longport forecast-eps TSLA.US
+    /// Example: longport forecast-eps TSLA.US --format json
     ForecastEps {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -536,8 +529,8 @@ pub enum Commands {
 
     /// Financial consensus detail for a symbol
     ///
-    /// Example: longbridge consensus TSLA.US
-    /// Example: longbridge consensus TSLA.US --format json
+    /// Example: longport consensus TSLA.US
+    /// Example: longport consensus TSLA.US --format json
     Consensus {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -545,10 +538,10 @@ pub enum Commands {
 
     /// Finance calendar: upcoming events by category
     ///
-    /// Example: longbridge finance-calendar report
-    /// Example: longbridge finance-calendar report --filter watchlist --market US
-    /// Example: longbridge finance-calendar dividend --filter positions
-    /// Example: longbridge finance-calendar macrodata --star 3
+    /// Example: longport finance-calendar report
+    /// Example: longport finance-calendar report --filter watchlist --market US
+    /// Example: longport finance-calendar dividend --filter positions
+    /// Example: longport finance-calendar macrodata --star 3
     FinanceCalendar {
         #[command(subcommand)]
         cmd: FinanceCalendarCmd,
@@ -558,10 +551,10 @@ pub enum Commands {
     ///
     /// Default: current metrics + 5-year range + peer comparison.
     /// With --history: returns historical valuation time series (default indicator: pe).
-    /// Example: longbridge valuation TSLA.US
-    /// Example: longbridge valuation TSLA.US --history
-    /// Example: longbridge valuation TSLA.US --history --indicator pb --range 5
-    /// Example: longbridge valuation TSLA.US --format json
+    /// Example: longport valuation TSLA.US
+    /// Example: longport valuation TSLA.US --history
+    /// Example: longport valuation TSLA.US --history --indicator pb --range 5
+    /// Example: longport valuation TSLA.US --format json
     Valuation {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -582,10 +575,10 @@ pub enum Commands {
     /// Without subcommand: lists news articles for a symbol.
     /// Subcommands: detail  search
     /// Returns: id, title, `published_at`, likes, comments.
-    /// Example: longbridge news TSLA.US
-    /// Example: longbridge news TSLA.US --count 5
-    /// Example: longbridge news detail 12345678
-    /// Example: longbridge news search "AI stocks"
+    /// Example: longport news TSLA.US
+    /// Example: longport news TSLA.US --count 5
+    /// Example: longport news detail 12345678
+    /// Example: longport news search "AI stocks"
     News {
         /// Symbol in <CODE>.<MARKET> format (e.g. TSLA.US 700.HK). Omit when using a subcommand.
         symbol: Option<String>,
@@ -600,9 +593,9 @@ pub enum Commands {
     ///
     /// Without subcommand: lists filings for a symbol.
     /// Subcommands: list  detail
-    /// Example: longbridge filing AAPL.US
-    /// Example: longbridge filing list AAPL.US
-    /// Example: longbridge filing detail AAPL.US 580265529766123777
+    /// Example: longport filing AAPL.US
+    /// Example: longport filing list AAPL.US
+    /// Example: longport filing detail AAPL.US 580265529766123777
     Filing {
         /// Symbol in <CODE>.<MARKET> format (e.g. AAPL.US 700.HK). Omit when using a subcommand.
         symbol: Option<String>,
@@ -617,11 +610,11 @@ pub enum Commands {
     ///
     /// Without subcommand: lists topics for a symbol.
     /// Subcommands: list  detail  mine  create  replies  create-reply  search
-    /// Example: longbridge topic TSLA.US
-    /// Example: longbridge topic list TSLA.US
-    /// Example: longbridge topic detail 6993508780031016960
-    /// Example: longbridge topic create --body "Bullish on TSLA today"
-    /// Example: longbridge topic search TSLA
+    /// Example: longport topic TSLA.US
+    /// Example: longport topic list TSLA.US
+    /// Example: longport topic detail 6993508780031016960
+    /// Example: longport topic create --body "Bullish on TSLA today"
+    /// Example: longport topic search TSLA
     Topic {
         /// Symbol in <CODE>.<MARKET> format (e.g. TSLA.US 700.HK). Omit when using a subcommand.
         symbol: Option<String>,
@@ -637,9 +630,9 @@ pub enum Commands {
     ///
     /// Without a subcommand, lists all groups and their securities.
     /// Subcommands: create  update  delete
-    /// Example: longbridge watchlist
-    /// Example: longbridge watchlist create "My Portfolio"
-    /// Example: longbridge watchlist update 123 --add TSLA.US --add AAPL.US
+    /// Example: longport watchlist
+    /// Example: longport watchlist create "My Portfolio"
+    /// Example: longport watchlist update 123 --add TSLA.US --add AAPL.US
     Watchlist {
         #[command(subcommand)]
         cmd: Option<WatchlistCmd>,
@@ -649,9 +642,9 @@ pub enum Commands {
     /// Download and export account statements (daily/monthly)
     ///
     /// Without a subcommand, lists available statements (equivalent to `statement list`).
-    /// Example: longbridge statement
-    /// Example: longbridge statement --type monthly
-    /// Example: longbridge statement export --file-key KEY --section `equity_holdings`
+    /// Example: longport statement
+    /// Example: longport statement --type monthly
+    /// Example: longport statement export --file-key KEY --section `equity_holdings`
     Statement {
         /// Statement type: daily (default) | monthly
         #[arg(long = "type", default_value = "daily")]
@@ -670,14 +663,14 @@ pub enum Commands {
     /// Order management: list, detail, buy, sell, cancel, replace, executions
     ///
     /// Without a subcommand, lists today's orders (or historical with --history).
-    /// Example: longbridge order
-    /// Example: longbridge order --history --start 2024-01-01 --symbol TSLA.US
-    /// Example: longbridge order detail 20240101-123456789
-    /// Example: longbridge order buy TSLA.US 100 --price 250.00
-    /// Example: longbridge order sell TSLA.US 100 --price 260.00
-    /// Example: longbridge order cancel 20240101-123456789
-    /// Example: longbridge order replace 20240101-123456789 --qty 200 --price 255.00
-    /// Example: longbridge order executions --history --start 2024-01-01
+    /// Example: longport order
+    /// Example: longport order --history --start 2024-01-01 --symbol TSLA.US
+    /// Example: longport order detail 20240101-123456789
+    /// Example: longport order buy TSLA.US 100 --price 250.00
+    /// Example: longport order sell TSLA.US 100 --price 260.00
+    /// Example: longport order cancel 20240101-123456789
+    /// Example: longport order replace 20240101-123456789 --qty 200 --price 255.00
+    /// Example: longport order executions --history --start 2024-01-01
     Order {
         /// Return historical orders instead of today's (list mode only)
         #[arg(long)]
@@ -700,8 +693,8 @@ pub enum Commands {
     /// Returns: currency, `net_assets`, `total_cash`, `buy_power`, `max_finance_amount`,
     /// `remaining_finance_amount`, `init_margin`, `maintenance_margin`, `margin_call`, `risk_level`,
     /// and a `cash_infos` array with per-currency available/frozen/settling/withdrawable amounts.
-    /// Example: longbridge assets
-    /// Example: longbridge assets --currency HKD
+    /// Example: longport assets
+    /// Example: longport assets --currency HKD
     Assets {
         /// Filter by currency (e.g. USD HKD CNY SGD)
         #[arg(long, default_value = "USD")]
@@ -712,7 +705,7 @@ pub enum Commands {
     ///
     /// Returns: `flow_name`, symbol, `business_type`, balance, currency, `business_time`, description.
     /// Defaults to last 30 days if no dates provided.
-    /// Example: longbridge cash-flow --start 2024-01-01 --end 2024-03-31
+    /// Example: longport cash-flow --start 2024-01-01 --end 2024-03-31
     CashFlow {
         /// Start date/time (local YYYY-MM-DD, local "YYYY-MM-DD HH:MM", or RFC 3339), defaults to 30 days ago
         #[arg(long)]
@@ -732,8 +725,8 @@ pub enum Commands {
     ///
     /// Without subcommand: shows full portfolio overview.
     /// Subcommands: short-margin
-    /// Example: longbridge portfolio
-    /// Example: longbridge portfolio short-margin
+    /// Example: longport portfolio
+    /// Example: longport portfolio short-margin
     Portfolio {
         #[command(subcommand)]
         cmd: Option<PortfolioCmd>,
@@ -742,7 +735,7 @@ pub enum Commands {
     /// Current stock (equity) positions across all sub-accounts
     ///
     /// Returns: symbol, name, quantity, `available_quantity`, `cost_price`, currency, market.
-    /// Example: longbridge positions --format json
+    /// Example: longport positions --format json
     Positions,
 
     /// Current fund (mutual fund) positions across all sub-accounts
@@ -753,7 +746,7 @@ pub enum Commands {
     /// Margin ratio requirements for a symbol
     ///
     /// Returns: `im_factor` (initial), `mm_factor` (maintenance), `fm_factor` (forced liquidation).
-    /// Example: longbridge margin-ratio TSLA.US
+    /// Example: longport margin-ratio TSLA.US
     MarginRatio {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -762,7 +755,7 @@ pub enum Commands {
     /// Estimate maximum buy or sell quantity given current account balance
     ///
     /// Returns: `cash_max_qty` (cash only), `margin_max_qty` (with margin financing).
-    /// Example: longbridge max-qty TSLA.US --side buy --price 250
+    /// Example: longport max-qty TSLA.US --side buy --price 250
     MaxQty {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -779,8 +772,8 @@ pub enum Commands {
 
     /// Exchange rates for all supported currencies
     ///
-    /// Example: longbridge exchange-rate
-    /// Example: longbridge exchange-rate --format json
+    /// Example: longport exchange-rate
+    /// Example: longport exchange-rate --format json
     ExchangeRate,
 
     /// Institutional shareholders for a symbol
@@ -789,10 +782,10 @@ pub enum Commands {
     /// --top: Top20 major shareholders across multiple periods (includes individuals and insiders).
     /// --object-id: Holding history and trade detail for a specific shareholder (use `object_id` from --top).
     ///
-    /// Example: longbridge shareholder AAPL.US
-    /// Example: longbridge shareholder AAPL.US --top
-    /// Example: longbridge shareholder AAPL.US --object-id 1001
-    /// Example: longbridge shareholder AAPL.US --range inc --sort owned
+    /// Example: longport shareholder AAPL.US
+    /// Example: longport shareholder AAPL.US --top
+    /// Example: longport shareholder AAPL.US --object-id 1001
+    /// Example: longport shareholder AAPL.US --range inc --sort owned
     Shareholder {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -822,7 +815,7 @@ pub enum Commands {
     // ── Pending Commands ──────────────────────────────────────────────────────
     /// Company overview (founding date, employees, IPO price, address, etc.)
     ///
-    /// Example: longbridge company AAPL.US
+    /// Example: longport company AAPL.US
     Company {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -830,7 +823,7 @@ pub enum Commands {
 
     /// Company executives and key personnel
     ///
-    /// Example: longbridge executive AAPL.US
+    /// Example: longport executive AAPL.US
     Executive {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -840,9 +833,9 @@ pub enum Commands {
     ///
     /// Default: comparison table with peers.
     /// Use `dist` subcommand for percentile distribution.
-    /// Example: longbridge industry-valuation AAPL.US
-    /// Example: longbridge industry-valuation dist AAPL.US
-    /// Example: longbridge industry-valuation AAPL.US --currency USD
+    /// Example: longport industry-valuation AAPL.US
+    /// Example: longport industry-valuation dist AAPL.US
+    /// Example: longport industry-valuation AAPL.US --currency USD
     IndustryValuation {
         /// Symbol in <CODE>.<MARKET> format (omit when using subcommand)
         symbol: Option<String>,
@@ -855,8 +848,8 @@ pub enum Commands {
 
     /// Operating reviews and financial indicators by report period (HK stocks only)
     ///
-    /// Example: longbridge operating 700.HK
-    /// Example: longbridge operating 700.HK --report q1
+    /// Example: longport operating 700.HK
+    /// Example: longport operating 700.HK --report q1
     Operating {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -867,8 +860,8 @@ pub enum Commands {
 
     /// Corporate actions (splits, dividends, rights, etc.)
     ///
-    /// Example: longbridge corp-action 700.HK
-    /// Example: longbridge corp-action 700.HK --all
+    /// Example: longport corp-action 700.HK
+    /// Example: longport corp-action 700.HK --all
     CorpAction {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -879,7 +872,7 @@ pub enum Commands {
 
     /// Investment relations (subsidiary/parent companies)
     ///
-    /// Example: longbridge invest-relation 700.HK
+    /// Example: longport invest-relation 700.HK
     InvestRelation {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -895,10 +888,10 @@ pub enum Commands {
     /// non-US ETFs the platform asset-allocation breakdown is used. --sort/--order
     /// are ignored for ETFs since the data is already weight-ranked.
     ///
-    /// Example: longbridge constituent HSI.HK
-    /// Example: longbridge constituent .SPX.US --sort market-cap --order asc
-    /// Example: longbridge constituent HSI.HK --limit 20 --sort change
-    /// Example: longbridge constituent IVV.US --limit 0   (full SEC holdings)
+    /// Example: longport constituent HSI.HK
+    /// Example: longport constituent .SPX.US --sort market-cap --order asc
+    /// Example: longport constituent HSI.HK --limit 20 --sort change
+    /// Example: longport constituent IVV.US --limit 0   (full SEC holdings)
     Constituent {
         /// Index or ETF symbol in <CODE>.<MARKET> format (e.g. HSI.HK, .SPX.US, IVV.US)
         symbol: String,
@@ -915,15 +908,15 @@ pub enum Commands {
 
     /// Market open/close status for each exchange
     ///
-    /// Example: longbridge market-status
+    /// Example: longport market-status
     MarketStatus,
 
     /// Broker holding positions (HK market only)
     ///
     /// Currently only supports HK-listed stocks. US and other markets are not available.
-    /// Example: longbridge broker-holding 700.HK
-    /// Example: longbridge broker-holding detail 700.HK
-    /// Example: longbridge broker-holding daily 700.HK --broker B01224
+    /// Example: longport broker-holding 700.HK
+    /// Example: longport broker-holding detail 700.HK
+    /// Example: longport broker-holding daily 700.HK --broker B01224
     BrokerHolding {
         /// Symbol in <CODE>.<MARKET> format (omit when using subcommand)
         symbol: Option<String>,
@@ -938,9 +931,9 @@ pub enum Commands {
     ///
     /// Only works for HK stocks that are also listed on A-share markets (e.g. 939.HK, 1398.HK).
     /// If the API returns no data, the stock is not dual-listed in A-shares.
-    /// Example: longbridge ah-premium 939.HK
-    /// Example: longbridge ah-premium intraday 939.HK
-    /// Example: longbridge ah-premium 939.HK --kline-type day --count 100
+    /// Example: longport ah-premium 939.HK
+    /// Example: longport ah-premium intraday 939.HK
+    /// Example: longport ah-premium 939.HK --kline-type day --count 100
     AhPremium {
         /// Symbol in <CODE>.<MARKET> format (omit when using subcommand)
         symbol: Option<String>,
@@ -956,7 +949,7 @@ pub enum Commands {
 
     /// Trade statistics (price distribution by volume)
     ///
-    /// Example: longbridge trade-stats 700.HK
+    /// Example: longport trade-stats 700.HK
     TradeStats {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -964,8 +957,8 @@ pub enum Commands {
 
     /// Quote anomalies / unusual market movements
     ///
-    /// Example: longbridge anomaly --market HK
-    /// Example: longbridge anomaly --market US --symbol TSLA.US
+    /// Example: longport anomaly --market HK
+    /// Example: longport anomaly --market US --symbol TSLA.US
     Anomaly {
         /// Market: HK | US | CN | SG
         #[arg(long, default_value = "HK")]
@@ -989,9 +982,9 @@ pub enum Commands {
     ///
     /// Sort: hot (default) | time | change
     ///
-    /// Example: longbridge top-movers
-    /// Example: longbridge top-movers --market HK
-    /// Example: longbridge top-movers --market US --sort time --count 50
+    /// Example: longport top-movers
+    /// Example: longport top-movers --market HK
+    /// Example: longport top-movers --market US --sort time --count 50
     TopMovers {
         /// Market filter: HK | US | CN | SG (omit for all markets)
         #[arg(long)]
@@ -1014,10 +1007,10 @@ pub enum Commands {
     ///   1. `screener indicators` to discover available keys and value ranges
     ///   2. `screener filter KEY:MIN:MAX ... --market HK`
     ///
-    /// Example: longbridge screener strategies
-    /// Example: longbridge screener run 42
-    /// Example: longbridge screener filter pettm:10:50 roe:5: --market HK
-    /// Example: longbridge screener indicators
+    /// Example: longport screener strategies
+    /// Example: longport screener run 42
+    /// Example: longport screener filter pettm:10:50 roe:5: --market HK
+    /// Example: longport screener indicators
     Screener {
         #[command(subcommand)]
         cmd: ScreenerCmd,
@@ -1031,9 +1024,9 @@ pub enum Commands {
     /// Run `rank` without --key to list all available tab keys (e.g. `ib_hot_all-us`).
     /// Then pass a key to `--key` to get the corresponding ranking.
     ///
-    /// Example: longbridge rank
-    /// Example: longbridge rank --key ib_hot_all-us
-    /// Example: longbridge rank --key ib_trade_heat-hk --count 20
+    /// Example: longport rank
+    /// Example: longport rank --key ib_hot_all-us
+    /// Example: longport rank --key ib_trade_heat-hk --count 20
     Rank {
         /// Ranking tab key (from `rank` with no --key). Omit to list available keys.
         #[arg(long)]
@@ -1051,8 +1044,8 @@ pub enum Commands {
     /// Without extra symbols: shows the stock alongside server-selected industry peers.
     /// With extra symbols: compares the specified stocks side by side.
     ///
-    /// Example: longbridge compare AAPL.US
-    /// Example: longbridge compare 9988.HK 700.HK 9999.HK --currency HKD
+    /// Example: longport compare AAPL.US
+    /// Example: longport compare 9988.HK 700.HK 9999.HK --currency HKD
     Compare {
         /// Base symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -1066,10 +1059,10 @@ pub enum Commands {
     /// Price alerts (list, add, delete)
     ///
     /// Without subcommand: lists all alerts.
-    /// Example: longbridge alert
-    /// Example: longbridge alert QQQ.US
-    /// Example: longbridge alert add TSLA.US --price 200 --direction rise
-    /// Example: longbridge alert delete 486469
+    /// Example: longport alert
+    /// Example: longport alert QQQ.US
+    /// Example: longport alert add TSLA.US --price 200 --direction rise
+    /// Example: longport alert delete 486469
     Alert {
         /// Filter by symbol (omit to list all)
         symbol: Option<String>,
@@ -1082,10 +1075,10 @@ pub enum Commands {
     /// Without subcommand: shows full account P&L summary (stocks + funds + MMF)
     /// including simple yield and time-weighted return (TWR).
     /// Subcommands: detail  by-market
-    /// Example: longbridge profit-analysis
-    /// Example: longbridge profit-analysis --start 2026-01-01 --end 2026-04-16
-    /// Example: longbridge profit-analysis detail 700.HK
-    /// Example: longbridge profit-analysis by-market --market HK
+    /// Example: longport profit-analysis
+    /// Example: longport profit-analysis --start 2026-01-01 --end 2026-04-16
+    /// Example: longport profit-analysis detail 700.HK
+    /// Example: longport profit-analysis by-market --market HK
     ProfitAnalysis {
         /// Start date/time (local YYYY-MM-DD, local "YYYY-MM-DD HH:MM", or RFC 3339)
         #[arg(long)]
@@ -1101,9 +1094,9 @@ pub enum Commands {
     ///
     /// Returns: fund name, ticker, currency, weight (position ratio), and report date.
     /// Pass --count -1 to return all holders.
-    /// Example: longbridge fund-holder AAPL.US
-    /// Example: longbridge fund-holder AAPL.US --count 20
-    /// Example: longbridge fund-holder AAPL.US --format json
+    /// Example: longport fund-holder AAPL.US
+    /// Example: longport fund-holder AAPL.US --count 20
+    /// Example: longport fund-holder AAPL.US --format json
     FundHolder {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -1122,9 +1115,9 @@ pub enum Commands {
     /// Transaction types: BUY (P) | SELL (S) | GRANT (A) | DISP (D) |
     ///   TAX (F) | EXERCISE (M/X) | GIFT (G)
     ///
-    /// Example: longbridge insider-trades TSLA.US
-    /// Example: longbridge insider-trades AAPL.US --count 40
-    /// Example: longbridge insider-trades NVDA.US --format json
+    /// Example: longport insider-trades TSLA.US
+    /// Example: longport insider-trades AAPL.US --count 40
+    /// Example: longport insider-trades NVDA.US --format json
     InsiderTrades {
         /// Symbol in <CODE>.<MARKET> format (US market only, e.g. TSLA.US AAPL.US)
         symbol: String,
@@ -1140,13 +1133,13 @@ pub enum Commands {
     /// With a CIK: fetches the latest 13F holdings snapshot.
     /// With subcommand 'changes': shows quarter-over-quarter position changes.
     ///
-    /// Example: longbridge investors
-    /// Example: longbridge investors 0001067983
-    /// Example: longbridge investors 1067983 --top 20
-    /// Example: longbridge investors changes 1067983
+    /// Example: longport investors
+    /// Example: longport investors 0001067983
+    /// Example: longport investors 1067983 --top 20
+    /// Example: longport investors changes 1067983
     Investors {
         /// Numeric CIK from SEC EDGAR (omit to see AUM rankings).
-        /// Run `longbridge investors` to see the rankings table with CIK column.
+        /// Run `longport investors` to see the rankings table with CIK column.
         /// Example: 0001067983 or 1067983
         cik: Option<String>,
         /// Number of top holdings to display, sorted by value (default: 50)
@@ -1164,16 +1157,16 @@ pub enum Commands {
     /// and check upcoming trade dates.
     ///
     /// Without a subcommand, lists all recurring investment plans.
-    /// Example: longbridge dca
-    /// Example: longbridge dca --status Active
-    /// Example: longbridge dca --symbol TSLA.US
-    /// Example: longbridge dca create AAPL.US --amount 500 --frequency monthly --day-of-month 15
-    /// Example: longbridge dca create 700.HK --amount 1000 --frequency weekly --day-of-week mon
-    /// Example: longbridge dca pause `<PLAN_ID>`
-    /// Example: longbridge dca stop `<PLAN_ID>`
-    /// Example: longbridge dca history `<PLAN_ID>`
-    /// Example: longbridge dca stats
-    /// Example: longbridge dca check AAPL.US 700.HK
+    /// Example: longport dca
+    /// Example: longport dca --status Active
+    /// Example: longport dca --symbol TSLA.US
+    /// Example: longport dca create AAPL.US --amount 500 --frequency monthly --day-of-month 15
+    /// Example: longport dca create 700.HK --amount 1000 --frequency weekly --day-of-week mon
+    /// Example: longport dca pause `<PLAN_ID>`
+    /// Example: longport dca stop `<PLAN_ID>`
+    /// Example: longport dca history `<PLAN_ID>`
+    /// Example: longport dca stats
+    /// Example: longport dca check AAPL.US 700.HK
     #[command(name = "dca")]
     Dca {
         #[command(subcommand)]
@@ -1202,8 +1195,8 @@ pub enum Commands {
     ///
     /// For daily short sale volume (shares sold short each day), use `short-trades`.
     ///
-    /// Example: longbridge short-positions AAPL.US
-    /// Example: longbridge short-positions 700.HK
+    /// Example: longport short-positions AAPL.US
+    /// Example: longport short-positions 700.HK
     ShortPositions {
         /// Symbol in <CODE>.<MARKET> format (US or HK, e.g. AAPL.US 700.HK)
         symbol: String,
@@ -1223,8 +1216,8 @@ pub enum Commands {
     ///
     /// For total open short interest (cumulative undisclosed positions), use `short-positions`.
     ///
-    /// Example: longbridge short-trades AAPL.US
-    /// Example: longbridge short-trades 700.HK
+    /// Example: longport short-trades AAPL.US
+    /// Example: longport short-trades 700.HK
     ShortTrades {
         /// Symbol in <CODE>.<MARKET> format (US or HK, e.g. AAPL.US 700.HK)
         symbol: String,
@@ -1238,15 +1231,15 @@ pub enum Commands {
     ///
     /// Without a subcommand, lists the current user's own and subscribed sharelists.
     /// Without a subcommand, lists own and subscribed sharelists.
-    /// Example: longbridge sharelist
-    /// Example: longbridge sharelist --count 50
-    /// Example: longbridge sharelist detail `<ID>`
-    /// Example: longbridge sharelist create --name "My Picks"
-    /// Example: longbridge sharelist delete `<ID>`
-    /// Example: longbridge sharelist add `<ID>` TSLA.US AAPL.US
-    /// Example: longbridge sharelist remove `<ID>` TSLA.US
-    /// Example: longbridge sharelist sort `<ID>` TSLA.US AAPL.US 700.HK
-    /// Example: longbridge sharelist popular --count 10
+    /// Example: longport sharelist
+    /// Example: longport sharelist --count 50
+    /// Example: longport sharelist detail `<ID>`
+    /// Example: longport sharelist create --name "My Picks"
+    /// Example: longport sharelist delete `<ID>`
+    /// Example: longport sharelist add `<ID>` TSLA.US AAPL.US
+    /// Example: longport sharelist remove `<ID>` TSLA.US
+    /// Example: longport sharelist sort `<ID>` TSLA.US AAPL.US 700.HK
+    /// Example: longport sharelist popular --count 10
     Sharelist {
         #[command(subcommand)]
         cmd: Option<SharelistCmd>,
@@ -1259,8 +1252,8 @@ pub enum Commands {
     /// Quantitative analysis: run indicator scripts against K-line data
     ///
     /// Subcommands: run
-    /// Example: longbridge quant run TSLA.US --start 2024-01-01 --end 2024-12-31 --script "..."
-    /// Example: cat script.pine | longbridge quant run TSLA.US --start 2024-01-01 --end 2024-12-31
+    /// Example: longport quant run TSLA.US --start 2024-01-01 --end 2024-12-31 --script "..."
+    /// Example: cat script.pine | longport quant run TSLA.US --start 2024-01-01 --end 2024-12-31
     Quant {
         #[command(subcommand)]
         cmd: QuantCmd,
@@ -1269,8 +1262,8 @@ pub enum Commands {
     // ── Fundamental (new) ────────────────────────────────────────────────────
     /// Financial statement (income / balance sheet / cash flow) for a symbol
     ///
-    /// Example: longbridge financial-statement TSLA.US --kind IS --report af
-    /// Example: longbridge financial-statement 700.HK --kind BS --format json
+    /// Example: longport financial-statement TSLA.US --kind IS --report af
+    /// Example: longport financial-statement 700.HK --kind BS --format json
     FinancialStatement {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -1284,7 +1277,7 @@ pub enum Commands {
 
     /// Valuation rank within the stock's industry for a date range
     ///
-    /// Example: longbridge valuation-rank TSLA.US --start 20240101 --end 20241231
+    /// Example: longport valuation-rank TSLA.US --start 20240101 --end 20241231
     ValuationRank {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -1300,14 +1293,14 @@ pub enum Commands {
     // ── ATM (new) ────────────────────────────────────────────────────────────
     /// List bank cards for the current account
     ///
-    /// Example: longbridge bank-cards
+    /// Example: longport bank-cards
     #[command(name = "bank-cards")]
     BankCards,
 
     /// List withdrawal history for the current account
     ///
-    /// Example: longbridge withdrawals
-    /// Example: longbridge withdrawals --page 2 --limit 50
+    /// Example: longport withdrawals
+    /// Example: longport withdrawals --page 2 --limit 50
     Withdrawals {
         /// Page number (default: 1)
         #[arg(long, default_value = "1")]
@@ -1319,8 +1312,8 @@ pub enum Commands {
 
     /// List deposit history for the current account
     ///
-    /// Example: longbridge deposits
-    /// Example: longbridge deposits --states 1 --currencies HKD,USD
+    /// Example: longport deposits
+    /// Example: longport deposits --states 1 --currencies HKD,USD
     Deposits {
         /// Page number (default: 1)
         #[arg(long, default_value = "1")]
@@ -1340,8 +1333,8 @@ pub enum Commands {
     // ── IPO (new) ────────────────────────────────────────────────────────────
     /// IPO (new listings) commands — subscriptions, calendar, orders, profit/loss
     ///
-    /// Example: longbridge ipo subscriptions
-    /// Example: longbridge ipo calendar
+    /// Example: longport ipo subscriptions
+    /// Example: longport ipo calendar
     Ipo {
         #[command(subcommand)]
         cmd: IpoCmd,
@@ -1359,16 +1352,16 @@ pub enum QuantCmd {
     ///
     /// Script source (--script takes priority over stdin):
     ///   --script TEXT   inline script text
-    ///   stdin           cat script.pine | longbridge quant run TSLA.US ...
+    ///   stdin           cat script.pine | longport quant run TSLA.US ...
     ///
     /// The optional --input flag accepts a JSON array matching the
     /// order of input.*() calls in the script, e.g. --input '[14,2.0]'
     ///
-    /// Example: longbridge quant run TSLA.US --start 2024-01-01 --end 2024-12-31 --script "..."
-    /// Example: cat script.pine | longbridge quant run TSLA.US --start 2024-01-01 --end 2024-12-31
-    /// Example: longbridge quant run 700.HK --period 1h --start 2024-01-01 --end 2024-06-30 --script "..." --input '[14]'
-    /// Example: longbridge quant run TSLA.US --start 2024-01-01 --end 2024-12-31 --script "..." --format json
-    /// Example: longbridge quant run 700.HK --period 1m --start "2024-01-02 09:30" --end "2024-01-02 16:00" --script "..."
+    /// Example: longport quant run TSLA.US --start 2024-01-01 --end 2024-12-31 --script "..."
+    /// Example: cat script.pine | longport quant run TSLA.US --start 2024-01-01 --end 2024-12-31
+    /// Example: longport quant run 700.HK --period 1h --start 2024-01-01 --end 2024-06-30 --script "..." --input '[14]'
+    /// Example: longport quant run TSLA.US --start 2024-01-01 --end 2024-12-31 --script "..." --format json
+    /// Example: longport quant run 700.HK --period 1m --start "2024-01-02 09:30" --end "2024-01-02 16:00" --script "..."
     Run {
         /// Symbol in <CODE>.<MARKET> format, e.g. TSLA.US 700.HK
         symbol: String,
@@ -1381,7 +1374,7 @@ pub enum QuantCmd {
         /// End date/time for the K-line range (local YYYY-MM-DD, local "YYYY-MM-DD HH:MM", or RFC 3339)
         #[arg(long)]
         end: String,
-        /// Script text. Omit to read from stdin (e.g. echo "..." | longbridge quant run ...)
+        /// Script text. Omit to read from stdin (e.g. echo "..." | longport quant run ...)
         #[arg(long)]
         script: Option<String>,
         /// Script input values as a JSON array, e.g. '[14,2.0]'
@@ -1417,40 +1410,40 @@ pub struct FinanceCalendarOpts {
 pub enum FinanceCalendarCmd {
     /// Earnings reports (upcoming and recently announced)
     ///
-    /// Example: longbridge finance-calendar report
-    /// Example: longbridge finance-calendar report --symbol AAPL.US --filter watchlist --market US
+    /// Example: longport finance-calendar report
+    /// Example: longport finance-calendar report --symbol AAPL.US --filter watchlist --market US
     Report {
         #[command(flatten)]
         opts: FinanceCalendarOpts,
     },
     /// Dividend announcements
     ///
-    /// Example: longbridge finance-calendar dividend
-    /// Example: longbridge finance-calendar dividend --filter positions
+    /// Example: longport finance-calendar dividend
+    /// Example: longport finance-calendar dividend --filter positions
     Dividend {
         #[command(flatten)]
         opts: FinanceCalendarOpts,
     },
     /// Stock splits and merges
     ///
-    /// Example: longbridge finance-calendar split
-    /// Example: longbridge finance-calendar split --market HK
+    /// Example: longport finance-calendar split
+    /// Example: longport finance-calendar split --market HK
     Split {
         #[command(flatten)]
         opts: FinanceCalendarOpts,
     },
     /// IPO listings
     ///
-    /// Example: longbridge finance-calendar ipo
-    /// Example: longbridge finance-calendar ipo --market HK
+    /// Example: longport finance-calendar ipo
+    /// Example: longport finance-calendar ipo --market HK
     Ipo {
         #[command(flatten)]
         opts: FinanceCalendarOpts,
     },
     /// Macro economic data releases
     ///
-    /// Example: longbridge finance-calendar macrodata
-    /// Example: longbridge finance-calendar macrodata --star 3
+    /// Example: longport finance-calendar macrodata
+    /// Example: longport finance-calendar macrodata --star 3
     Macrodata {
         #[command(flatten)]
         opts: FinanceCalendarOpts,
@@ -1460,8 +1453,8 @@ pub enum FinanceCalendarCmd {
     },
     /// Market closure days
     ///
-    /// Example: longbridge finance-calendar closed
-    /// Example: longbridge finance-calendar closed --market HK
+    /// Example: longport finance-calendar closed
+    /// Example: longport finance-calendar closed --market HK
     Closed {
         #[command(flatten)]
         opts: FinanceCalendarOpts,
@@ -1475,9 +1468,9 @@ pub enum InvestorsSubCmd {
     /// By default compares the latest filing against the previous one.
     /// Use --from to compare against a specific period (e.g. 2024-12-31).
     ///
-    /// Example: longbridge investors changes 1067983
-    /// Example: longbridge investors changes 1067983 --from 2024-12-31
-    /// Example: longbridge investors changes 1067983 --top 20
+    /// Example: longport investors changes 1067983
+    /// Example: longport investors changes 1067983 --from 2024-12-31
+    /// Example: longport investors changes 1067983 --top 20
     Changes {
         /// Numeric CIK from SEC EDGAR
         cik: String,
@@ -1498,8 +1491,8 @@ pub enum DcaCmd {
     /// Frequency: daily | weekly | fortnightly (every two weeks) | monthly
     /// Day of week (weekly/fortnightly): mon tue wed thu fri
     /// Day of month (monthly): 1–28
-    /// Example: longbridge dca create AAPL.US --amount 500 --frequency monthly --day-of-month 15
-    /// Example: longbridge dca create 700.HK --amount 1000 --frequency weekly --day-of-week mon
+    /// Example: longport dca create AAPL.US --amount 500 --frequency monthly --day-of-month 15
+    /// Example: longport dca create 700.HK --amount 1000 --frequency weekly --day-of-week mon
     Create {
         /// Symbol in <CODE>.<MARKET> format (e.g. AAPL.US 700.HK)
         symbol: String,
@@ -1526,10 +1519,10 @@ pub enum DcaCmd {
     /// Update an existing recurring investment plan
     ///
     /// Only the fields provided will be updated.
-    /// Example: longbridge dca update `<PLAN_ID>` --amount 800
-    /// Example: longbridge dca update `<PLAN_ID>` --frequency weekly --day-of-week fri
+    /// Example: longport dca update `<PLAN_ID>` --amount 800
+    /// Example: longport dca update `<PLAN_ID>` --frequency weekly --day-of-week fri
     Update {
-        /// Plan ID (from `longbridge dca`)
+        /// Plan ID (from `longport dca`)
         plan_id: String,
         /// New amount per investment period
         #[arg(long)]
@@ -1550,7 +1543,7 @@ pub enum DcaCmd {
 
     /// Pause a recurring investment plan
     ///
-    /// Example: longbridge dca pause `<PLAN_ID>`
+    /// Example: longport dca pause `<PLAN_ID>`
     Pause {
         /// Plan ID to suspend
         plan_id: String,
@@ -1558,7 +1551,7 @@ pub enum DcaCmd {
 
     /// Resume a paused recurring investment plan
     ///
-    /// Example: longbridge dca resume `<PLAN_ID>`
+    /// Example: longport dca resume `<PLAN_ID>`
     Resume {
         /// Plan ID to resume
         plan_id: String,
@@ -1566,7 +1559,7 @@ pub enum DcaCmd {
 
     /// Permanently stop a recurring investment plan
     ///
-    /// Example: longbridge dca stop `<PLAN_ID>`
+    /// Example: longport dca stop `<PLAN_ID>`
     Stop {
         /// Plan ID to terminate
         plan_id: String,
@@ -1574,10 +1567,10 @@ pub enum DcaCmd {
 
     /// Show trade history for a recurring investment plan
     ///
-    /// Example: longbridge dca history `<PLAN_ID>`
-    /// Example: longbridge dca history `<PLAN_ID>` --page 2 --limit 50
+    /// Example: longport dca history `<PLAN_ID>`
+    /// Example: longport dca history `<PLAN_ID>` --page 2 --limit 50
     History {
-        /// Plan ID (from `longbridge dca`)
+        /// Plan ID (from `longport dca`)
         plan_id: String,
         /// Page number (default: 1)
         #[arg(long, default_value = "1")]
@@ -1590,8 +1583,8 @@ pub enum DcaCmd {
     /// Show recurring investment statistics summary
     ///
     /// Returns total invested amount, total profit, plan counts, and nearest upcoming plans.
-    /// Example: longbridge dca stats
-    /// Example: longbridge dca stats --symbol AAPL.US
+    /// Example: longport dca stats
+    /// Example: longport dca stats --symbol AAPL.US
     Stats {
         /// Filter statistics by symbol
         #[arg(long)]
@@ -1600,8 +1593,8 @@ pub enum DcaCmd {
 
     /// Calculate the next trade date for given plan parameters
     ///
-    /// Example: longbridge dca calc-date AAPL.US --frequency monthly --day-of-month 15
-    /// Example: longbridge dca calc-date 700.HK --frequency weekly --day-of-week mon
+    /// Example: longport dca calc-date AAPL.US --frequency monthly --day-of-month 15
+    /// Example: longport dca calc-date 700.HK --frequency weekly --day-of-week mon
     #[command(name = "calc-date")]
     CalcDate {
         /// Symbol in <CODE>.<MARKET> format
@@ -1619,7 +1612,7 @@ pub enum DcaCmd {
 
     /// Check whether symbols support recurring investment
     ///
-    /// Example: longbridge dca check AAPL.US 700.HK TSLA.US
+    /// Example: longport dca check AAPL.US 700.HK TSLA.US
     Check {
         /// One or more symbols in <CODE>.<MARKET> format
         symbols: Vec<String>,
@@ -1628,7 +1621,7 @@ pub enum DcaCmd {
     /// Set the pre-trade reminder hours
     ///
     /// Valid values: 1 | 6 | 12
-    /// Example: longbridge dca set-reminder 6
+    /// Example: longport dca set-reminder 6
     #[command(name = "set-reminder")]
     SetReminder {
         /// Hours before trade to send reminder: 1 | 6 | 12
@@ -1722,9 +1715,9 @@ pub enum ScreenerCmd {
     ///
     /// The `id` field in the output is passed to `screener run <ID>`.
     ///
-    /// Example: longbridge screener strategies
-    /// Example: longbridge screener strategies --market HK
-    /// Example: longbridge screener strategies --mine
+    /// Example: longport screener strategies
+    /// Example: longport screener strategies --market HK
+    /// Example: longport screener strategies --mine
     Strategies {
         /// Show user's saved strategies
         #[arg(long)]
@@ -1740,10 +1733,10 @@ pub enum ScreenerCmd {
     /// Output columns: prevclose, prevchg, marketcap, salesgrowthyoy, pettm, pbmrq, industry.
     /// Use --show to add extra columns; run `screener indicators` to discover valid keys.
     ///
-    /// Example: longbridge screener run 42
-    /// Example: longbridge screener run 42 --sort pettm --order desc
-    /// Example: longbridge screener run 42 --page 1 --count 50
-    /// Example: longbridge screener run 42 --show roe --show divyld
+    /// Example: longport screener run 42
+    /// Example: longport screener run 42 --sort pettm --order desc
+    /// Example: longport screener run 42 --page 1 --count 50
+    /// Example: longport screener run 42 --show roe --show divyld
     Run {
         /// Strategy ID from `screener strategies` output
         id: i64,
@@ -1773,10 +1766,10 @@ pub enum ScreenerCmd {
     /// Output columns: prevclose, prevchg, marketcap, salesgrowthyoy, pettm, pbmrq, industry.
     /// Use --show to add extra columns.
     ///
-    /// Example: longbridge screener filter pettm:10:50 roe:5: --market HK
-    /// Example: longbridge screener filter marketcap:100: divyld:3: --market US
-    /// Example: longbridge screener filter `macd_day:::category=goldenfork,period=day` --market HK
-    /// Example: longbridge screener filter `pettm::20` --market HK --page 1 --count 50
+    /// Example: longport screener filter pettm:10:50 roe:5: --market HK
+    /// Example: longport screener filter marketcap:100: divyld:3: --market US
+    /// Example: longport screener filter `macd_day:::category=goldenfork,period=day` --market HK
+    /// Example: longport screener filter `pettm::20` --market HK --page 1 --count 50
     Filter {
         /// Filter conditions in KEY:MIN:MAX format
         #[arg(value_name = "KEY:MIN:MAX")]
@@ -1805,8 +1798,8 @@ pub enum ScreenerCmd {
     ///
     /// Use keys to build conditions for `screener filter` (without the `filter_` prefix).
     ///
-    /// Example: longbridge screener indicators
-    /// Example: longbridge screener indicators --symbol AAPL.US
+    /// Example: longport screener indicators
+    /// Example: longport screener indicators --symbol AAPL.US
     Indicators {
         /// Filter to indicators relevant for this symbol
         #[arg(long)]
@@ -1838,7 +1831,7 @@ impl StockEventSort {
 pub enum IndustryValuationCmd {
     /// Industry valuation distribution (percentile ranking)
     ///
-    /// Example: longbridge industry-valuation dist AAPL.US
+    /// Example: longport industry-valuation dist AAPL.US
     Dist {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -1849,7 +1842,7 @@ pub enum IndustryValuationCmd {
 pub enum BrokerHoldingCmd {
     /// Full broker holding detail list
     ///
-    /// Example: longbridge broker-holding detail 700.HK
+    /// Example: longport broker-holding detail 700.HK
     Detail {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -1857,7 +1850,7 @@ pub enum BrokerHoldingCmd {
     /// Daily holding history for a specific broker
     ///
     /// The --broker value is the `parti_no` shown in the top/detail tables.
-    /// Example: longbridge broker-holding daily 700.HK --broker B01224
+    /// Example: longport broker-holding daily 700.HK --broker B01224
     Daily {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -1871,7 +1864,7 @@ pub enum BrokerHoldingCmd {
 pub enum AhPremiumCmd {
     /// AH premium intraday timeshare data
     ///
-    /// Example: longbridge ah-premium intraday 939.HK
+    /// Example: longport ah-premium intraday 939.HK
     Intraday {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -1882,9 +1875,9 @@ pub enum AhPremiumCmd {
 pub enum ProfitAnalysisCmd {
     /// Individual stock P&L detail with transaction flows
     ///
-    /// Example: longbridge profit-analysis detail 700.HK
-    /// Example: longbridge profit-analysis detail 700.HK --start 2025-01-01 --end 2025-12-31
-    /// Example: longbridge profit-analysis detail 700.HK --derivative
+    /// Example: longport profit-analysis detail 700.HK
+    /// Example: longport profit-analysis detail 700.HK --start 2025-01-01 --end 2025-12-31
+    /// Example: longport profit-analysis detail 700.HK --derivative
     Detail {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -1910,9 +1903,9 @@ pub enum ProfitAnalysisCmd {
 
     /// Stock P&L by market with pagination
     ///
-    /// Example: longbridge profit-analysis by-market
-    /// Example: longbridge profit-analysis by-market HK
-    /// Example: longbridge profit-analysis by-market US --page 1 --size 50
+    /// Example: longport profit-analysis by-market
+    /// Example: longport profit-analysis by-market HK
+    /// Example: longport profit-analysis by-market US --page 1 --size 50
     ByMarket {
         /// Market filter (e.g. HK, US, SH, SZ)
         market: Option<String>,
@@ -1938,7 +1931,7 @@ pub enum ProfitAnalysisCmd {
 pub enum AlertCmd {
     /// Add a price alert
     ///
-    /// Example: longbridge alert add TSLA.US --price 200 --direction rise
+    /// Example: longport alert add TSLA.US --price 200 --direction rise
     Add {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -1958,25 +1951,25 @@ pub enum AlertCmd {
         #[arg(long)]
         note: Option<String>,
     },
-    /// Delete a price alert by id (from `longbridge alert` list)
+    /// Delete a price alert by id (from `longport alert` list)
     ///
-    /// Example: longbridge alert delete 486469
+    /// Example: longport alert delete 486469
     Delete {
-        /// Alert id from the `id` column in `longbridge alert`
+        /// Alert id from the `id` column in `longport alert`
         id: String,
     },
     /// Enable a price alert by id
     ///
-    /// Example: longbridge alert enable 486469
+    /// Example: longport alert enable 486469
     Enable {
-        /// Alert id from the `id` column in `longbridge alert`
+        /// Alert id from the `id` column in `longport alert`
         id: String,
     },
     /// Disable a price alert by id
     ///
-    /// Example: longbridge alert disable 486469
+    /// Example: longport alert disable 486469
     Disable {
-        /// Alert id from the `id` column in `longbridge alert`
+        /// Alert id from the `id` column in `longport alert`
         id: String,
     },
 }
@@ -1985,7 +1978,7 @@ pub enum AlertCmd {
 pub enum DividendCmd {
     /// Dividend distribution scheme details
     ///
-    /// Example: longbridge dividend detail AAPL.US
+    /// Example: longport dividend detail AAPL.US
     Detail {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -1996,7 +1989,7 @@ pub enum DividendCmd {
 pub enum InstitutionRatingCmd {
     /// Historical institution rating and target price detail
     ///
-    /// Example: longbridge institution-rating detail TSLA.US
+    /// Example: longport institution-rating detail TSLA.US
     Detail {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -2011,8 +2004,8 @@ pub enum FinancialReportCmd {
     /// net asset value per share vs consensus, and a list of peer companies
     /// with their upcoming earnings dates.
     ///
-    /// Example: longbridge financial-report snapshot AAPL.US
-    /// Example: longbridge financial-report snapshot AAPL.US --report qf --year 2024 --period 4
+    /// Example: longport financial-report snapshot AAPL.US
+    /// Example: longport financial-report snapshot AAPL.US --report qf --year 2024 --period 4
     Snapshot {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -2032,7 +2025,7 @@ pub enum FinancialReportCmd {
 pub enum PortfolioCmd {
     /// Short-selling margin deposit details for the current account
     ///
-    /// Example: longbridge portfolio short-margin
+    /// Example: longport portfolio short-margin
     #[command(name = "short-margin")]
     ShortMargin,
 }
@@ -2054,8 +2047,8 @@ pub enum IpoCmd {
     Calendar,
     /// Show IPO detail: profile and timeline for a symbol
     ///
-    /// Example: longbridge ipo detail 6810.HK
-    /// Example: longbridge ipo detail SUJA.US
+    /// Example: longport ipo detail 6810.HK
+    /// Example: longport ipo detail SUJA.US
     Detail {
         symbol: String,
         /// Market: HK (default) or US
@@ -2065,9 +2058,9 @@ pub enum IpoCmd {
     /// IPO orders (active + history) for the current account
     ///
     /// Without a subcommand, lists active and historical orders.
-    /// Example: longbridge ipo orders
-    /// Example: longbridge ipo orders --status 4
-    /// Example: longbridge ipo orders detail 2452504
+    /// Example: longport ipo orders
+    /// Example: longport ipo orders --status 4
+    /// Example: longport ipo orders detail 2452504
     Orders {
         #[arg(long)]
         market: Option<String>,
@@ -2112,7 +2105,7 @@ pub enum IpoCmd {
 pub enum IpoOrderCmd {
     /// Full detail for a single IPO order
     ///
-    /// Example: longbridge ipo orders detail 2452504
+    /// Example: longport ipo orders detail 2452504
     Detail {
         /// IPO order ID
         order_id: String,
@@ -2123,8 +2116,8 @@ pub enum IpoOrderCmd {
 pub enum WatchlistCmd {
     /// Show securities in a specific watchlist group (by ID or name)
     ///
-    /// Example: longbridge watchlist show 123
-    /// Example: longbridge watchlist show "Tech Stocks"
+    /// Example: longport watchlist show 123
+    /// Example: longport watchlist show "Tech Stocks"
     Show {
         /// Group ID (numeric) or group name (string)
         group: String,
@@ -2133,7 +2126,7 @@ pub enum WatchlistCmd {
     /// Create a new watchlist group
     ///
     /// Returns the new group ID.
-    /// Example: longbridge watchlist create "Tech Stocks"
+    /// Example: longport watchlist create "Tech Stocks"
     Create {
         /// Display name for the new group
         name: String,
@@ -2141,10 +2134,10 @@ pub enum WatchlistCmd {
 
     /// Delete a watchlist group (prompts for confirmation)
     ///
-    /// Example: longbridge watchlist delete 123
-    /// Example: longbridge watchlist delete 123 --purge
+    /// Example: longport watchlist delete 123
+    /// Example: longport watchlist delete 123 --purge
     Delete {
-        /// Group ID (from `longbridge watchlist`)
+        /// Group ID (from `longport watchlist`)
         id: i64,
         /// Also remove all securities inside the group
         #[arg(long)]
@@ -2156,11 +2149,11 @@ pub enum WatchlistCmd {
 
     /// Add/remove securities in a group, or rename it
     ///
-    /// Example: longbridge watchlist update 123 --add TSLA.US --add AAPL.US
-    /// Example: longbridge watchlist update 123 --remove 700.HK
-    /// Example: longbridge watchlist update 123 --name "New Name"
+    /// Example: longport watchlist update 123 --add TSLA.US --add AAPL.US
+    /// Example: longport watchlist update 123 --remove 700.HK
+    /// Example: longport watchlist update 123 --name "New Name"
     Update {
-        /// Group ID (from `longbridge watchlist`)
+        /// Group ID (from `longport watchlist`)
         id: i64,
         /// New display name (optional)
         #[arg(long)]
@@ -2178,8 +2171,8 @@ pub enum WatchlistCmd {
 
     /// Pin or unpin securities so they appear at the top of a watchlist group
     ///
-    /// Example: longbridge watchlist pin TSLA.US AAPL.US
-    /// Example: longbridge watchlist pin --remove 700.HK
+    /// Example: longport watchlist pin TSLA.US AAPL.US
+    /// Example: longport watchlist pin --remove 700.HK
     Pin {
         /// Symbols to pin (positional; omit to use --remove)
         securities: Vec<String>,
@@ -2314,7 +2307,7 @@ impl DcaReminderHours {
 pub enum SharelistCmd {
     /// Show full details for a sharelist including its constituent stocks
     ///
-    /// Example: longbridge sharelist detail `<ID>`
+    /// Example: longport sharelist detail `<ID>`
     Detail {
         /// Sharelist ID
         id: String,
@@ -2322,7 +2315,7 @@ pub enum SharelistCmd {
 
     /// Create a new sharelist
     ///
-    /// Example: longbridge sharelist create --name "My Tech Picks"
+    /// Example: longport sharelist create --name "My Tech Picks"
     Create {
         /// Sharelist name
         #[arg(long)]
@@ -2334,7 +2327,7 @@ pub enum SharelistCmd {
 
     /// Delete a sharelist
     ///
-    /// Example: longbridge sharelist delete `<ID>`
+    /// Example: longport sharelist delete `<ID>`
     Delete {
         /// Sharelist ID to delete
         id: String,
@@ -2342,7 +2335,7 @@ pub enum SharelistCmd {
 
     /// Add stocks to a sharelist
     ///
-    /// Example: longbridge sharelist add `<ID>` TSLA.US AAPL.US 700.HK
+    /// Example: longport sharelist add `<ID>` TSLA.US AAPL.US 700.HK
     Add {
         /// Sharelist ID
         id: String,
@@ -2352,7 +2345,7 @@ pub enum SharelistCmd {
 
     /// Remove stocks from a sharelist
     ///
-    /// Example: longbridge sharelist remove `<ID>` TSLA.US AAPL.US
+    /// Example: longport sharelist remove `<ID>` TSLA.US AAPL.US
     Remove {
         /// Sharelist ID
         id: String,
@@ -2363,7 +2356,7 @@ pub enum SharelistCmd {
     /// Reorder the stocks in a sharelist
     ///
     /// Pass all symbol in the desired order; the full list replaces the existing order.
-    /// Example: longbridge sharelist sort `<ID>` TSLA.US AAPL.US 700.HK
+    /// Example: longport sharelist sort `<ID>` TSLA.US AAPL.US 700.HK
     Sort {
         /// Sharelist ID
         id: String,
@@ -2373,8 +2366,8 @@ pub enum SharelistCmd {
 
     /// Get popular (trending) sharelists
     ///
-    /// Example: longbridge sharelist popular
-    /// Example: longbridge sharelist popular --count 10
+    /// Example: longport sharelist popular
+    /// Example: longport sharelist popular --count 10
     Popular {
         /// Number of results to return (default: 20)
         #[arg(long, alias = "limit", default_value = "20")]
@@ -2442,8 +2435,8 @@ pub enum StatementCmd {
     /// List available statements for an account
     ///
     /// Returns: date (dt), `file_key` for each statement.
-    /// Example: longbridge statement list --aaid 12345
-    /// Example: longbridge statement list --aaid 12345 --type monthly
+    /// Example: longport statement list --aaid 12345
+    /// Example: longport statement list --aaid 12345 --type monthly
     List {
         /// Statement type: daily (default) | monthly
         #[arg(long = "type", default_value = "daily")]
@@ -2464,10 +2457,10 @@ pub enum StatementCmd {
     /// When `-o` is provided, defaults to CSV format and saves to file(s).
     /// When `-o` is omitted, defaults to markdown format and prints to stdout.
     ///
-    /// Example: longbridge statement export --file-key KEY --section `equity_holdings`
-    /// Example: longbridge statement export --file-key KEY --section `equity_holdings` -o holdings.csv
+    /// Example: longport statement export --file-key KEY --section `equity_holdings`
+    /// Example: longport statement export --file-key KEY --section `equity_holdings` -o holdings.csv
     Export {
-        /// File key from `longbridge statement list`
+        /// File key from `longport statement list`
         #[arg(long)]
         file_key: String,
         /// Sections to export (can specify multiple)
@@ -2494,17 +2487,17 @@ pub enum OrderCmd {
     /// Full detail for a single order including charges and history
     ///
     /// Returns all fields from `order` plus `charge_detail`, `history_details`, msg.
-    /// Example: longbridge order detail 20240101-123456789
+    /// Example: longport order detail 20240101-123456789
     Detail {
-        /// Order ID (from `longbridge order` or returned by `order buy`/`order sell`)
+        /// Order ID (from `longport order` or returned by `order buy`/`order sell`)
         order_id: String,
     },
 
     /// Today's trade executions (fills), or historical with --history
     ///
     /// Returns: `order_id`, `trade_id`, symbol, price, quantity, `trade_done_at`.
-    /// Example: longbridge order executions
-    /// Example: longbridge order executions --history --start 2024-01-01
+    /// Example: longport order executions
+    /// Example: longport order executions --history --start 2024-01-01
     Executions {
         /// Return historical executions instead of today's
         #[arg(long)]
@@ -2527,11 +2520,11 @@ pub enum OrderCmd {
     ///   (case-insensitive)
     /// Trailing orders (TSLPAMT/TSLPPCT) require --trailing-amount/--trailing-percent
     ///   and --limit-offset.
-    /// Example: longbridge order buy TSLA.US 100 --price 250.00
-    /// Example: longbridge order buy 700.HK 1000 --price 300 --order-type ALO
-    /// Example: longbridge order buy NVDA.US 10 --order-type MIT --trigger-price 177.89 --tif Day
-    /// Example: longbridge order buy TSLA.US 10 --order-type TSLPPCT --trailing-percent 3 --limit-offset 1 --tif gtc
-    /// Example: longbridge order buy AAPL.US 10 --price 180 --tif gtd --expire-date 2025-12-31
+    /// Example: longport order buy TSLA.US 100 --price 250.00
+    /// Example: longport order buy 700.HK 1000 --price 300 --order-type ALO
+    /// Example: longport order buy NVDA.US 10 --order-type MIT --trigger-price 177.89 --tif Day
+    /// Example: longport order buy TSLA.US 10 --order-type TSLPPCT --trailing-percent 3 --limit-offset 1 --tif gtc
+    /// Example: longport order buy AAPL.US 10 --price 180 --tif gtd --expire-date 2025-12-31
     Buy {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -2584,17 +2577,17 @@ pub enum OrderCmd {
     ///
     /// Short selling: submitting a sell order for a symbol with no existing position
     /// opens a short. US stocks can be shorted directly with no additional setup.
-    /// HK short selling requires activation: open the Longbridge mobile app, place
+    /// HK short selling requires activation: open the `LongPort` mobile app, place
     /// your first HK short sell order — the app will trigger an SBL (Securities
     /// Borrowing and Lending) agreement signing flow. Complete the signing and wait
     /// for approval. Note: HK short selling is subject to a fee levied by the Hong
     /// Kong Inland Revenue Department; details are described in the in-app agreement.
     /// The API returns error 602301 before the HK SBL agreement is signed.
     ///
-    /// Example: longbridge order sell TSLA.US 100 --price 260.00
-    /// Example: longbridge order sell NVDA.US 10 --order-type MIT --trigger-price 177.89 --tif Day
-    /// Example: longbridge order sell TSLA.US 130 --order-type TSLPPCT --trailing-percent 3 --limit-offset 1 --tif gtc
-    /// Example: longbridge order sell AAPL.US 10 --price 180 --tif gtd --expire-date 2025-12-31
+    /// Example: longport order sell TSLA.US 100 --price 260.00
+    /// Example: longport order sell NVDA.US 10 --order-type MIT --trigger-price 177.89 --tif Day
+    /// Example: longport order sell TSLA.US 130 --order-type TSLPPCT --trailing-percent 3 --limit-offset 1 --tif gtc
+    /// Example: longport order sell AAPL.US 10 --price 180 --tif gtd --expire-date 2025-12-31
     Sell {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -2640,7 +2633,7 @@ pub enum OrderCmd {
     /// Cancel a pending order (prompts for confirmation)
     ///
     /// Only cancellable states (New, `PartialFilled`, etc.) are accepted.
-    /// Example: longbridge order cancel 20240101-123456789
+    /// Example: longport order cancel 20240101-123456789
     Cancel {
         /// Order ID to cancel
         order_id: String,
@@ -2652,7 +2645,7 @@ pub enum OrderCmd {
     /// Modify quantity or price of a pending order (prompts for confirmation)
     ///
     /// --qty is required. --price is optional (omit to keep current price).
-    /// Example: longbridge order replace 20240101-123456789 --qty 200 --price 255.00
+    /// Example: longport order replace 20240101-123456789 --qty 200 --price 255.00
     Replace {
         /// Order ID to modify
         order_id: String,
@@ -2672,19 +2665,19 @@ pub enum OrderCmd {
 pub enum NewsCmd {
     /// Full Markdown content of a news article
     ///
-    /// Fetches the article from longbridge.com (or longbridge.cn for CN region).
+    /// Fetches the article from longportapp.com (or longport.cn for CN region).
     /// Use the global --lang flag to select language (zh-CN or en).
-    /// Example: longbridge news detail 12345678
-    /// Example: longbridge --lang zh-CN news detail 12345678
+    /// Example: longport news detail 12345678
+    /// Example: longport --lang zh-CN news detail 12345678
     Detail {
-        /// News article ID (from `longbridge news <SYMBOL>`)
+        /// News article ID (from `longport news <SYMBOL>`)
         id: String,
     },
 
     /// Search news by keyword
     ///
-    /// Example: longbridge news search "AI stocks"
-    /// Example: longbridge news search TSLA --count 10
+    /// Example: longport news search "AI stocks"
+    /// Example: longport news search TSLA --count 10
     Search {
         /// Search keyword
         keyword: String,
@@ -2698,15 +2691,15 @@ pub enum NewsCmd {
 pub enum FilingCmd {
     /// Full Markdown content of a regulatory filing (HTML and TXT only)
     ///
-    /// Get the symbol and id from `longbridge filing <SYMBOL>`.
+    /// Get the symbol and id from `longport filing <SYMBOL>`.
     /// Some filings contain multiple files. Use --list-files to see all, then --file-index N.
-    /// Example: longbridge filing detail AAPL.US 580265529766123777
-    /// Example: longbridge filing detail AAPL.US 580265529766123777 --list-files
-    /// Example: longbridge filing detail AAPL.US 580265529766123777 --file-index 1
+    /// Example: longport filing detail AAPL.US 580265529766123777
+    /// Example: longport filing detail AAPL.US 580265529766123777 --list-files
+    /// Example: longport filing detail AAPL.US 580265529766123777 --file-index 1
     Detail {
         /// Symbol in <CODE>.<MARKET> format, e.g. AAPL.US 700.HK
         symbol: String,
-        /// Filing ID (from `longbridge filing list`)
+        /// Filing ID (from `longport filing list`)
         id: String,
         /// List all available file URLs without fetching content
         #[arg(long)]
@@ -2724,7 +2717,7 @@ pub enum TopicCmd {
     /// Returns: id, `topic_type`, title, description, body, author, tickers, hashtags,
     /// images, `likes_count`, `comments_count`, `views_count`, `shares_count`, `detail_url`,
     /// `created_at`, `updated_at`.
-    /// Example: longbridge topic detail 6993508780031016960
+    /// Example: longport topic detail 6993508780031016960
     Detail {
         /// Topic ID (e.g. 6993508780031016960)
         id: String,
@@ -2733,8 +2726,8 @@ pub enum TopicCmd {
     /// Topics created by the authenticated user
     ///
     /// Returns: id, title/excerpt, type, `created_at`, likes, comments, views.
-    /// Example: longbridge topic mine
-    /// Example: longbridge topic mine --type article --size 10
+    /// Example: longport topic mine
+    /// Example: longport topic mine --type article --size 10
     Mine {
         /// Page number (default: 1)
         #[arg(long, default_value = "1")]
@@ -2753,8 +2746,8 @@ pub enum TopicCmd {
     ///   --type post (default): plain text only.
     ///   --type article: Markdown body, title required.
     /// Rate limit: max 3 topics per user per minute, 10 per 24 hours.
-    /// Example: longbridge topic create --body "Bullish on 700.HK today"
-    /// Example: longbridge topic create --title "My Analysis" --body "$(cat post.md)" --type article
+    /// Example: longport topic create --body "Bullish on 700.HK today"
+    /// Example: longport topic create --title "My Analysis" --body "$(cat post.md)" --type article
     Create {
         /// Topic title. Required for --type article; optional for --type post.
         #[arg(long)]
@@ -2774,8 +2767,8 @@ pub enum TopicCmd {
     ///
     /// Returns: id, `topic_id`, body, `reply_to_id`, author, `likes_count`, `comments_count`, `created_at`.
     /// Page size is 1-50, default 20.
-    /// Example: longbridge topic replies 6993508780031016960
-    /// Example: longbridge topic replies 6993508780031016960 --page 2 --size 20
+    /// Example: longport topic replies 6993508780031016960
+    /// Example: longport topic replies 6993508780031016960 --page 2 --size 20
     Replies {
         /// Topic ID (e.g. 6993508780031016960)
         topic_id: String,
@@ -2791,8 +2784,8 @@ pub enum TopicCmd {
     ///
     /// Body format: plain text only. Rate limit: first 3 replies per topic free,
     /// then incrementally longer waits (4th=3s, 5th=5s, ..., 10th+=55s). Returns 429 when exceeded.
-    /// Example: longbridge topic create-reply 6993508780031016960 --body "Great post!"
-    /// Example: longbridge topic create-reply 6993508780031016960 --body "Agreed!" --reply-to 7001234567890123456
+    /// Example: longport topic create-reply 6993508780031016960 --body "Great post!"
+    /// Example: longport topic create-reply 6993508780031016960 --body "Agreed!" --reply-to 7001234567890123456
     CreateReply {
         /// Topic ID to reply to (e.g. 6993508780031016960)
         topic_id: String,
@@ -2806,8 +2799,8 @@ pub enum TopicCmd {
 
     /// Search community topics by keyword
     ///
-    /// Example: longbridge topic search TSLA
-    /// Example: longbridge topic search "AI stocks" --count 10
+    /// Example: longport topic search TSLA
+    /// Example: longport topic search "AI stocks" --count 10
     Search {
         /// Search keyword
         keyword: String,
@@ -2823,8 +2816,8 @@ pub enum OptionCmd {
     ///
     /// Without --date: returns all available expiry dates.
     /// With --date: returns strike prices and call/put symbols for that expiry.
-    /// Example: longbridge option chain AAPL.US
-    /// Example: longbridge option chain AAPL.US --date 2024-01-19
+    /// Example: longport option chain AAPL.US
+    /// Example: longport option chain AAPL.US --date 2024-01-19
     Chain {
         /// Underlying symbol in <CODE>.<MARKET> format, e.g. AAPL.US
         symbol: String,
@@ -2838,7 +2831,7 @@ pub enum OptionCmd {
     /// Returns all fields from the option quote API: price, volume, implied/historical
     /// volatility, open interest, strike, expiry, contract type/size/multiplier, direction,
     /// and underlying symbol.
-    /// Example: longbridge option quote AAPL240119C190000
+    /// Example: longport option quote AAPL240119C190000
     Quote {
         /// Option contract symbols (OCC format for US, e.g. AAPL240119C190000)
         symbols: Vec<String>,
@@ -2847,9 +2840,9 @@ pub enum OptionCmd {
     /// Real-time Call/Put volume snapshot; with `daily` subcommand shows historical data
     ///
     /// Without subcommand: returns today's real-time Call/Put volume and Put/Call ratio.
-    /// Example: longbridge option volume AAPL.US
-    /// Example: longbridge option volume daily AAPL.US
-    /// Example: longbridge option volume daily AAPL.US --count 60
+    /// Example: longport option volume AAPL.US
+    /// Example: longport option volume daily AAPL.US
+    /// Example: longport option volume daily AAPL.US --count 60
     Volume {
         /// Symbol in <CODE>.<MARKET> format (US market only). Omit when using a subcommand.
         symbol: Option<String>,
@@ -2862,8 +2855,8 @@ pub enum OptionCmd {
 pub enum VolumeSubCmd {
     /// Daily Call/Put volume and open interest history
     ///
-    /// Example: longbridge option volume daily AAPL.US
-    /// Example: longbridge option volume daily AAPL.US --count 60
+    /// Example: longport option volume daily AAPL.US
+    /// Example: longport option volume daily AAPL.US --count 60
     Daily {
         /// Symbol in <CODE>.<MARKET> format (US market only, e.g. AAPL.US)
         symbol: String,
@@ -2878,7 +2871,7 @@ pub enum WarrantCmd {
     /// Real-time quotes for warrant contracts
     ///
     /// Returns: `last_done`, `prev_close`, `implied_volatility`, `leverage_ratio`, `expiry_date`, category.
-    /// Example: longbridge warrant quote 12345.HK
+    /// Example: longport warrant quote 12345.HK
     Quote {
         /// Warrant symbols (e.g. 12345.HK)
         symbols: Vec<String>,
@@ -2897,8 +2890,8 @@ pub enum KlineCmd {
     /// Both --start and --end must be provided together; if either is omitted the
     /// most recent 100 candles are returned (offset-based, ignores the other flag).
     /// Use --session all to include pre/post-market candles (adds a Session column).
-    /// Example: longbridge kline history TSLA.US --start 2024-01-01 --end 2024-12-31
-    /// Example: longbridge kline history TSLA.US --period 1m --session all --start 2024-01-01 --end 2024-01-02
+    /// Example: longport kline history TSLA.US --start 2024-01-01 --end 2024-12-31
+    /// Example: longport kline history TSLA.US --period 1m --session all --start 2024-01-01 --end 2024-01-02
     History {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -2930,7 +2923,7 @@ pub enum TradingCmd {
     /// Trading days and half-trading days for a market
     ///
     /// Defaults to today + 30 days if no dates are provided.
-    /// Example: longbridge trading days HK --start 2024-01-01 --end 2024-03-31
+    /// Example: longport trading days HK --start 2024-01-01 --end 2024-03-31
     Days {
         /// Market: HK | US | CN (aliases: SH SZ) | SG  (case-insensitive, default: HK)
         #[arg(default_value = "HK")]
@@ -2954,7 +2947,7 @@ pub enum AuthCmd {
     /// SSH sessions and headless servers.
     ///
     /// Pass `--auth-code <CODE>` to exchange an authorization code generated at
-    /// <https://open.longbridge.com/connect> — a single synchronous call with no
+    /// <https://open.longportapp.com/connect> — a single synchronous call with no
     /// browser, polling, or local callback server. Ideal for AI agents.
     ///
     /// Pass `--auth-code` with no value for the browser Authorization Code flow:
@@ -2964,7 +2957,7 @@ pub enum AuthCmd {
         /// Authorize using a code instead of the device flow.
         ///
         /// With a value (`--auth-code <CODE>`): exchange an authorization code
-        /// from <https://open.longbridge.com/connect> in one synchronous call.
+        /// from <https://open.longportapp.com/connect> in one synchronous call.
         /// Without a value (`--auth-code`): run the browser Authorization Code
         /// flow that handles the localhost callback (local use only).
         #[arg(long, value_name = "CODE", num_args = 0..=1, default_missing_value = "")]
@@ -2974,9 +2967,9 @@ pub enum AuthCmd {
         /// Used for dynamic client registration so the device is identifiable in
         /// the authorized-apps list. Only applies the first time this machine
         /// registers; later logins reuse the existing client and ignore this.
-        /// A ` (Longbridge CLI)` suffix is appended automatically, e.g.
-        /// `Claude Code` becomes `Claude Code (Longbridge CLI)`.
-        /// Defaults to `<user>@<machine> (Longbridge CLI)`.
+        /// A ` (LongPort CLI)` suffix is appended automatically, e.g.
+        /// `Claude Code` becomes `Claude Code (LongPort CLI)`.
+        /// Defaults to `<user>@<machine> (LongPort CLI)`.
         #[arg(long, value_name = "NAME")]
         client_name: Option<String>,
         /// Print request/response details for each OAuth step.
@@ -2986,16 +2979,16 @@ pub enum AuthCmd {
 
     /// Clear the locally stored OAuth token
     ///
-    /// Next command or TUI launch will trigger re-authentication.
+    /// The next authenticated command will trigger re-authentication.
     Logout,
 
     /// Show authentication status
     ///
     /// Checks whether a token is stored locally and whether it is still valid.
     /// Also lists the user's quote subscriptions via `/v1/quote/my-quotes`.
-    /// Example: longbridge auth status
-    /// Example: longbridge auth status --market US
-    /// Example: longbridge auth status --format json
+    /// Example: longport auth status
+    /// Example: longport auth status --market US
+    /// Example: longport auth status --format json
     Status {
         /// Market filter for quote subscriptions: `all` (default), `HK`, `US`, `CN`, `SG`.
         #[arg(long, value_name = "MARKET", default_value = "all")]
@@ -3043,7 +3036,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             }
             None => {
                 let sym = symbol.ok_or_else(|| {
-                    anyhow::anyhow!("Symbol required. Usage: longbridge kline <SYMBOL>")
+                    anyhow::anyhow!("Symbol required. Usage: longport kline <SYMBOL>")
                 })?;
                 quote::cmd_kline(sym, &period, count, &adjust, &session, format).await
             }
@@ -3092,7 +3085,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 None => {
                     let sym = symbol.ok_or_else(|| {
                         anyhow::anyhow!(
-                            "Symbol required. Usage: longbridge option volume <SYMBOL>"
+                            "Symbol required. Usage: longport option volume <SYMBOL>"
                         )
                     })?;
                     quote::cmd_option_volume_stats(sym, format, verbose).await
@@ -3104,7 +3097,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             Some(WarrantCmd::Issuers) => quote::cmd_warrant_issuers(format).await,
             None => {
                 let sym = symbol.ok_or_else(|| {
-                    anyhow::anyhow!("Symbol required. Usage: longbridge warrant <SYMBOL>")
+                    anyhow::anyhow!("Symbol required. Usage: longport warrant <SYMBOL>")
                 })?;
                 quote::cmd_warrant_list(sym, format).await
             }
@@ -3128,14 +3121,14 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             } else if latest {
                 let sym = symbol.ok_or_else(|| {
                     anyhow::anyhow!(
-                        "Symbol required. Usage: longbridge financial-report <SYMBOL> --latest"
+                        "Symbol required. Usage: longport financial-report <SYMBOL> --latest"
                     )
                 })?;
                 fundamental::cmd_financial_report_latest(sym, format, verbose).await
             } else {
                 let sym = symbol.ok_or_else(|| {
                     anyhow::anyhow!(
-                        "Symbol required. Usage: longbridge financial-report <SYMBOL>"
+                        "Symbol required. Usage: longport financial-report <SYMBOL>"
                     )
                 })?;
                 fundamental::cmd_financial_report(sym, kind, report, format, verbose).await
@@ -3153,7 +3146,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             if industry_rank {
                 let sym = symbol.ok_or_else(|| {
                     anyhow::anyhow!(
-                        "Symbol required. Usage: longbridge institution-rating <SYMBOL> --industry-rank"
+                        "Symbol required. Usage: longport institution-rating <SYMBOL> --industry-rank"
                     )
                 })?;
                 fundamental::cmd_institution_rating_industry_rank(
@@ -3163,14 +3156,14 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             } else if views {
                 let sym = symbol.ok_or_else(|| {
                     anyhow::anyhow!(
-                        "Symbol required. Usage: longbridge institution-rating <SYMBOL> --views"
+                        "Symbol required. Usage: longport institution-rating <SYMBOL> --views"
                     )
                 })?;
                 fundamental::cmd_institution_rating_views(sym, format, verbose).await
             } else if history {
                 let sym = symbol.ok_or_else(|| {
                     anyhow::anyhow!(
-                        "Symbol required. Usage: longbridge institution-rating <SYMBOL> --history"
+                        "Symbol required. Usage: longport institution-rating <SYMBOL> --history"
                     )
                 })?;
                 fundamental::cmd_institution_rating_history(sym, count as usize, format, verbose).await
@@ -3182,7 +3175,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                     None => {
                         let sym = symbol.ok_or_else(|| {
                             anyhow::anyhow!(
-                                "Symbol required. Usage: longbridge institution-rating <SYMBOL>"
+                                "Symbol required. Usage: longport institution-rating <SYMBOL>"
                             )
                         })?;
                         fundamental::cmd_institution_rating(sym, format, verbose).await
@@ -3196,7 +3189,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             }
             None => {
                 let sym = symbol.ok_or_else(|| {
-                    anyhow::anyhow!("Symbol required. Usage: longbridge dividend <SYMBOL>")
+                    anyhow::anyhow!("Symbol required. Usage: longport dividend <SYMBOL>")
                 })?;
                 fundamental::cmd_dividend(sym, page, year, format, verbose).await
             }
@@ -3260,7 +3253,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             }
             None => {
                 let sym = symbol.ok_or_else(|| {
-                    anyhow::anyhow!("Symbol required. Usage: longbridge news <SYMBOL>")
+                    anyhow::anyhow!("Symbol required. Usage: longport news <SYMBOL>")
                 })?;
                 news::cmd_news(sym, count, format).await
             }
@@ -3274,7 +3267,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             }) => news::cmd_filing_detail(s, id, list_files, file_index).await,
             None => {
                 let sym = symbol.ok_or_else(|| {
-                    anyhow::anyhow!("Symbol required. Usage: longbridge filing <SYMBOL>")
+                    anyhow::anyhow!("Symbol required. Usage: longport filing <SYMBOL>")
                 })?;
                 news::cmd_filings(sym, count, format).await
             }
@@ -3307,7 +3300,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             }
             None => {
                 let sym = symbol.ok_or_else(|| {
-                    anyhow::anyhow!("Symbol required. Usage: longbridge topic <SYMBOL>")
+                    anyhow::anyhow!("Symbol required. Usage: longport topic <SYMBOL>")
                 })?;
                 news::cmd_topics(sym, count, format).await
             }
@@ -3374,7 +3367,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                     remark,
                     order_type,
                     tif,
-                    longbridge::trade::OrderSide::Buy,
+                    longport::trade::OrderSide::Buy,
                     yes,
                     format,
                 )
@@ -3408,7 +3401,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                     remark,
                     order_type,
                     tif,
-                    longbridge::trade::OrderSide::Sell,
+                    longport::trade::OrderSide::Sell,
                     yes,
                     format,
                 )
@@ -3483,7 +3476,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                     investors::cmd_investor_holdings_by_cik(&s, top, format).await
                 }
                 Some(s) => Err(anyhow::anyhow!(
-                    "'{s}' is not a valid CIK — CIK must be numeric.\nRun `longbridge investors` to see rankings with CIK column."
+                    "'{s}' is not a valid CIK — CIK must be numeric.\nRun `longport investors` to see rankings with CIK column."
                 )),
             },
         },
@@ -3505,7 +3498,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             None => {
                 let sym = symbol.ok_or_else(|| {
                     anyhow::anyhow!(
-                        "Symbol required. Usage: longbridge industry-valuation <SYMBOL>"
+                        "Symbol required. Usage: longport industry-valuation <SYMBOL>"
                     )
                 })?;
                 fundamental::cmd_industry_valuation(sym, &currency, format, verbose).await
@@ -3540,7 +3533,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             }
             None => {
                 let sym = symbol.ok_or_else(|| {
-                    anyhow::anyhow!("Symbol required. Usage: longbridge broker-holding <SYMBOL>")
+                    anyhow::anyhow!("Symbol required. Usage: longport broker-holding <SYMBOL>")
                 })?;
                 quote::cmd_broker_holding_top(sym, &period, format, verbose).await
             }
@@ -3556,7 +3549,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             }
             None => {
                 let sym = symbol.ok_or_else(|| {
-                    anyhow::anyhow!("Symbol required. Usage: longbridge ah-premium <SYMBOL>")
+                    anyhow::anyhow!("Symbol required. Usage: longport ah-premium <SYMBOL>")
                 })?;
                 quote::cmd_ah_premium_kline(sym, &kline_type, count, format, verbose).await
             }
@@ -3752,7 +3745,6 @@ IpoCmd::ProfitLoss { period, page, count } => {
         },
 
         Commands::Auth { .. }
-        | Commands::Tui
         | Commands::Check
         | Commands::Update { .. }
         | Commands::Completion { .. }
@@ -3775,13 +3767,13 @@ mod tests {
 
     #[test]
     fn test_format_default_is_table() {
-        let cli = parse(&["longbridge", "quote", "TSLA.US"]).unwrap();
+        let cli = parse(&["longport", "quote", "TSLA.US"]).unwrap();
         assert!(matches!(cli.format, OutputFormat::Pretty));
     }
 
     #[test]
     fn test_format_json_flag() {
-        let cli = parse(&["longbridge", "quote", "TSLA.US", "--format", "json"]).unwrap();
+        let cli = parse(&["longport", "quote", "TSLA.US", "--format", "json"]).unwrap();
         assert!(matches!(cli.format, OutputFormat::Json));
     }
 
@@ -3789,7 +3781,7 @@ mod tests {
 
     #[test]
     fn test_auth_login_subcommand() {
-        let cli = parse(&["longbridge", "auth", "login"]).unwrap();
+        let cli = parse(&["longport", "auth", "login"]).unwrap();
         assert!(matches!(
             cli.command,
             Some(Commands::Auth {
@@ -3800,7 +3792,7 @@ mod tests {
 
     #[test]
     fn test_auth_logout_subcommand() {
-        let cli = parse(&["longbridge", "auth", "logout"]).unwrap();
+        let cli = parse(&["longport", "auth", "logout"]).unwrap();
         assert!(matches!(
             cli.command,
             Some(Commands::Auth {
@@ -3813,7 +3805,7 @@ mod tests {
 
     #[test]
     fn test_quote_single_symbol() {
-        let cli = parse(&["longbridge", "quote", "TSLA.US"]).unwrap();
+        let cli = parse(&["longport", "quote", "TSLA.US"]).unwrap();
         if let Some(Commands::Quote { symbols }) = cli.command {
             assert_eq!(symbols, vec!["TSLA.US"]);
         } else {
@@ -3823,7 +3815,7 @@ mod tests {
 
     #[test]
     fn test_quote_multiple_symbols() {
-        let cli = parse(&["longbridge", "quote", "TSLA.US", "700.HK", "AAPL.US"]).unwrap();
+        let cli = parse(&["longport", "quote", "TSLA.US", "700.HK", "AAPL.US"]).unwrap();
         if let Some(Commands::Quote { symbols }) = cli.command {
             assert_eq!(symbols.len(), 3);
         } else {
@@ -3833,19 +3825,19 @@ mod tests {
 
     #[test]
     fn test_depth_subcommand() {
-        let cli = parse(&["longbridge", "depth", "700.HK"]).unwrap();
+        let cli = parse(&["longport", "depth", "700.HK"]).unwrap();
         assert!(matches!(cli.command, Some(Commands::Depth { symbol }) if symbol == "700.HK"));
     }
 
     #[test]
     fn test_brokers_subcommand() {
-        let cli = parse(&["longbridge", "brokers", "700.HK"]).unwrap();
+        let cli = parse(&["longport", "brokers", "700.HK"]).unwrap();
         assert!(matches!(cli.command, Some(Commands::Brokers { symbol }) if symbol == "700.HK"));
     }
 
     #[test]
     fn test_trades_default_count() {
-        let cli = parse(&["longbridge", "trades", "TSLA.US"]).unwrap();
+        let cli = parse(&["longport", "trades", "TSLA.US"]).unwrap();
         if let Some(Commands::Trades { symbol, count }) = cli.command {
             assert_eq!(symbol, "TSLA.US");
             assert_eq!(count, 20);
@@ -3856,7 +3848,7 @@ mod tests {
 
     #[test]
     fn test_trades_custom_count() {
-        let cli = parse(&["longbridge", "trades", "TSLA.US", "--count", "50"]).unwrap();
+        let cli = parse(&["longport", "trades", "TSLA.US", "--count", "50"]).unwrap();
         if let Some(Commands::Trades { count, .. }) = cli.command {
             assert_eq!(count, 50);
         } else {
@@ -3866,7 +3858,7 @@ mod tests {
 
     #[test]
     fn test_intraday_subcommand() {
-        let cli = parse(&["longbridge", "intraday", "TSLA.US"]).unwrap();
+        let cli = parse(&["longport", "intraday", "TSLA.US"]).unwrap();
         assert!(
             matches!(cli.command, Some(Commands::Intraday { symbol, .. }) if symbol == "TSLA.US")
         );
@@ -3874,7 +3866,7 @@ mod tests {
 
     #[test]
     fn test_kline_defaults() {
-        let cli = parse(&["longbridge", "kline", "TSLA.US"]).unwrap();
+        let cli = parse(&["longport", "kline", "TSLA.US"]).unwrap();
         if let Some(Commands::Kline {
             symbol,
             period,
@@ -3895,13 +3887,7 @@ mod tests {
     #[test]
     fn test_kline_custom_period() {
         let cli = parse(&[
-            "longbridge",
-            "kline",
-            "TSLA.US",
-            "--period",
-            "1h",
-            "--count",
-            "200",
+            "longport", "kline", "TSLA.US", "--period", "1h", "--count", "200",
         ])
         .unwrap();
         if let Some(Commands::Kline { period, count, .. }) = cli.command {
@@ -3915,7 +3901,7 @@ mod tests {
     #[test]
     fn test_kline_history_with_dates() {
         let cli = parse(&[
-            "longbridge",
+            "longport",
             "kline",
             "history",
             "TSLA.US",
@@ -3942,7 +3928,7 @@ mod tests {
 
     #[test]
     fn test_static_subcommand() {
-        let cli = parse(&["longbridge", "static", "TSLA.US", "700.HK"]).unwrap();
+        let cli = parse(&["longport", "static", "TSLA.US", "700.HK"]).unwrap();
         if let Some(Commands::Static { symbols }) = cli.command {
             assert_eq!(symbols.len(), 2);
         } else {
@@ -3952,7 +3938,7 @@ mod tests {
 
     #[test]
     fn test_calc_index_default_fields() {
-        let cli = parse(&["longbridge", "calc-index", "TSLA.US"]).unwrap();
+        let cli = parse(&["longport", "calc-index", "TSLA.US"]).unwrap();
         if let Some(Commands::CalcIndex { symbols, fields }) = cli.command {
             assert_eq!(symbols, vec!["TSLA.US"]);
             assert!(fields.contains(&"pe".to_string()));
@@ -3963,14 +3949,7 @@ mod tests {
 
     #[test]
     fn test_calc_index_custom_fields() {
-        let cli = parse(&[
-            "longbridge",
-            "calc-index",
-            "TSLA.US",
-            "--fields",
-            "pe,pb,eps",
-        ])
-        .unwrap();
+        let cli = parse(&["longport", "calc-index", "TSLA.US", "--fields", "pe,pb,eps"]).unwrap();
         if let Some(Commands::CalcIndex { fields, .. }) = cli.command {
             assert_eq!(fields, vec!["pe", "pb", "eps"]);
         } else {
@@ -3980,7 +3959,7 @@ mod tests {
 
     #[test]
     fn test_capital_default_dist() {
-        let cli = parse(&["longbridge", "capital", "TSLA.US"]).unwrap();
+        let cli = parse(&["longport", "capital", "TSLA.US"]).unwrap();
         assert!(
             matches!(cli.command, Some(Commands::Capital { ref symbol, flow }) if symbol == "TSLA.US" && !flow)
         );
@@ -3988,7 +3967,7 @@ mod tests {
 
     #[test]
     fn test_capital_flow_flag() {
-        let cli = parse(&["longbridge", "capital", "TSLA.US", "--flow"]).unwrap();
+        let cli = parse(&["longport", "capital", "TSLA.US", "--flow"]).unwrap();
         assert!(
             matches!(cli.command, Some(Commands::Capital { ref symbol, flow }) if symbol == "TSLA.US" && flow)
         );
@@ -3996,7 +3975,7 @@ mod tests {
 
     #[test]
     fn test_market_temp_default() {
-        let cli = parse(&["longbridge", "market-temp"]).unwrap();
+        let cli = parse(&["longport", "market-temp"]).unwrap();
         if let Some(Commands::MarketTemp {
             market, history, ..
         }) = cli.command
@@ -4011,7 +3990,7 @@ mod tests {
     #[test]
     fn test_market_temp_history_flag() {
         let cli = parse(&[
-            "longbridge",
+            "longport",
             "market-temp",
             "US",
             "--history",
@@ -4036,7 +4015,7 @@ mod tests {
 
     #[test]
     fn test_trading_session_subcommand() {
-        let cli = parse(&["longbridge", "trading", "session"]).unwrap();
+        let cli = parse(&["longport", "trading", "session"]).unwrap();
         assert!(matches!(
             cli.command,
             Some(Commands::Trading {
@@ -4047,7 +4026,7 @@ mod tests {
 
     #[test]
     fn test_trading_days_default_market() {
-        let cli = parse(&["longbridge", "trading", "days"]).unwrap();
+        let cli = parse(&["longport", "trading", "days"]).unwrap();
         if let Some(Commands::Trading {
             cmd: TradingCmd::Days { market, .. },
         }) = cli.command
@@ -4060,13 +4039,13 @@ mod tests {
 
     #[test]
     fn test_security_list_subcommand() {
-        let cli = parse(&["longbridge", "security-list", "US"]).unwrap();
+        let cli = parse(&["longport", "security-list", "US"]).unwrap();
         if let Some(Commands::SecurityList { market, .. }) = cli.command {
             assert_eq!(market, "US");
         } else {
             panic!("expected SecurityList command");
         }
-        let cli = parse(&["longbridge", "security-list", "HK"]).unwrap();
+        let cli = parse(&["longport", "security-list", "HK"]).unwrap();
         if let Some(Commands::SecurityList { market, .. }) = cli.command {
             assert_eq!(market, "HK");
         } else {
@@ -4076,13 +4055,13 @@ mod tests {
 
     #[test]
     fn test_participants_subcommand() {
-        let cli = parse(&["longbridge", "participants"]).unwrap();
+        let cli = parse(&["longport", "participants"]).unwrap();
         assert!(matches!(cli.command, Some(Commands::Participants)));
     }
 
     #[test]
     fn test_subscriptions_subcommand() {
-        let cli = parse(&["longbridge", "subscriptions"]).unwrap();
+        let cli = parse(&["longport", "subscriptions"]).unwrap();
         assert!(matches!(cli.command, Some(Commands::Subscriptions)));
     }
 
@@ -4090,7 +4069,7 @@ mod tests {
 
     #[test]
     fn test_option_quote_subcommand() {
-        let cli = parse(&["longbridge", "option", "quote", "AAPL240119C190000"]).unwrap();
+        let cli = parse(&["longport", "option", "quote", "AAPL240119C190000"]).unwrap();
         if let Some(Commands::Option {
             cmd: OptionCmd::Quote { symbols },
         }) = cli.command
@@ -4103,7 +4082,7 @@ mod tests {
 
     #[test]
     fn test_option_chain_no_date() {
-        let cli = parse(&["longbridge", "option", "chain", "AAPL.US"]).unwrap();
+        let cli = parse(&["longport", "option", "chain", "AAPL.US"]).unwrap();
         if let Some(Commands::Option {
             cmd: OptionCmd::Chain { symbol, date },
         }) = cli.command
@@ -4118,7 +4097,7 @@ mod tests {
     #[test]
     fn test_option_chain_with_date() {
         let cli = parse(&[
-            "longbridge",
+            "longport",
             "option",
             "chain",
             "AAPL.US",
@@ -4138,7 +4117,7 @@ mod tests {
 
     #[test]
     fn test_warrant_quote_subcommand() {
-        let cli = parse(&["longbridge", "warrant", "quote", "12345.HK"]).unwrap();
+        let cli = parse(&["longport", "warrant", "quote", "12345.HK"]).unwrap();
         if let Some(Commands::Warrant {
             cmd: Some(WarrantCmd::Quote { symbols }),
             ..
@@ -4152,7 +4131,7 @@ mod tests {
 
     #[test]
     fn test_warrant_list_positional() {
-        let cli = parse(&["longbridge", "warrant", "700.HK"]).unwrap();
+        let cli = parse(&["longport", "warrant", "700.HK"]).unwrap();
         if let Some(Commands::Warrant { symbol, cmd: None }) = cli.command {
             assert_eq!(symbol, Some("700.HK".to_string()));
         } else {
@@ -4162,7 +4141,7 @@ mod tests {
 
     #[test]
     fn test_warrant_issuers_subcommand() {
-        let cli = parse(&["longbridge", "warrant", "issuers"]).unwrap();
+        let cli = parse(&["longport", "warrant", "issuers"]).unwrap();
         assert!(matches!(
             cli.command,
             Some(Commands::Warrant {
@@ -4176,7 +4155,7 @@ mod tests {
 
     #[test]
     fn test_watchlist_no_subcommand() {
-        let cli = parse(&["longbridge", "watchlist"]).unwrap();
+        let cli = parse(&["longport", "watchlist"]).unwrap();
         if let Some(Commands::Watchlist { cmd }) = cli.command {
             assert!(cmd.is_none());
         } else {
@@ -4186,7 +4165,7 @@ mod tests {
 
     #[test]
     fn test_watchlist_create() {
-        let cli = parse(&["longbridge", "watchlist", "create", "Tech Stocks"]).unwrap();
+        let cli = parse(&["longport", "watchlist", "create", "Tech Stocks"]).unwrap();
         if let Some(Commands::Watchlist {
             cmd: Some(WatchlistCmd::Create { name }),
         }) = cli.command
@@ -4199,7 +4178,7 @@ mod tests {
 
     #[test]
     fn test_watchlist_delete() {
-        let cli = parse(&["longbridge", "watchlist", "delete", "123"]).unwrap();
+        let cli = parse(&["longport", "watchlist", "delete", "123"]).unwrap();
         if let Some(Commands::Watchlist {
             cmd: Some(WatchlistCmd::Delete { id, purge, .. }),
         }) = cli.command
@@ -4213,7 +4192,7 @@ mod tests {
 
     #[test]
     fn test_watchlist_delete_purge() {
-        let cli = parse(&["longbridge", "watchlist", "delete", "123", "--purge"]).unwrap();
+        let cli = parse(&["longport", "watchlist", "delete", "123", "--purge"]).unwrap();
         if let Some(Commands::Watchlist {
             cmd: Some(WatchlistCmd::Delete { purge, .. }),
         }) = cli.command
@@ -4227,7 +4206,7 @@ mod tests {
     #[test]
     fn test_watchlist_update_add() {
         let cli = parse(&[
-            "longbridge",
+            "longport",
             "watchlist",
             "update",
             "123",
@@ -4251,7 +4230,7 @@ mod tests {
     #[test]
     fn test_watchlist_update_remove() {
         let cli = parse(&[
-            "longbridge",
+            "longport",
             "watchlist",
             "update",
             "456",
@@ -4274,7 +4253,7 @@ mod tests {
 
     #[test]
     fn test_order_list_defaults() {
-        let cli = parse(&["longbridge", "order"]).unwrap();
+        let cli = parse(&["longport", "order"]).unwrap();
         if let Some(Commands::Order {
             history,
             start,
@@ -4295,7 +4274,7 @@ mod tests {
     #[test]
     fn test_order_list_history_with_filters() {
         let cli = parse(&[
-            "longbridge",
+            "longport",
             "order",
             "--history",
             "--start",
@@ -4322,7 +4301,7 @@ mod tests {
 
     #[test]
     fn test_order_detail_subcommand() {
-        let cli = parse(&["longbridge", "order", "detail", "order-123"]).unwrap();
+        let cli = parse(&["longport", "order", "detail", "order-123"]).unwrap();
         assert!(matches!(
             cli.command,
             Some(Commands::Order {
@@ -4334,7 +4313,7 @@ mod tests {
 
     #[test]
     fn test_order_executions_subcommand() {
-        let cli = parse(&["longbridge", "order", "executions"]).unwrap();
+        let cli = parse(&["longport", "order", "executions"]).unwrap();
         if let Some(Commands::Order {
             cmd: Some(OrderCmd::Executions { history, .. }),
             ..
@@ -4349,13 +4328,7 @@ mod tests {
     #[test]
     fn test_order_buy_subcommand() {
         let cli = parse(&[
-            "longbridge",
-            "order",
-            "buy",
-            "TSLA.US",
-            "100",
-            "--price",
-            "250.00",
+            "longport", "order", "buy", "TSLA.US", "100", "--price", "250.00",
         ])
         .unwrap();
         if let Some(Commands::Order {
@@ -4384,13 +4357,7 @@ mod tests {
     #[test]
     fn test_order_sell_subcommand() {
         let cli = parse(&[
-            "longbridge",
-            "order",
-            "sell",
-            "TSLA.US",
-            "50",
-            "--price",
-            "260.00",
+            "longport", "order", "sell", "TSLA.US", "50", "--price", "260.00",
         ])
         .unwrap();
         if let Some(Commands::Order {
@@ -4414,7 +4381,7 @@ mod tests {
 
     #[test]
     fn test_order_cancel_subcommand() {
-        let cli = parse(&["longbridge", "order", "cancel", "order-456"]).unwrap();
+        let cli = parse(&["longport", "order", "cancel", "order-456"]).unwrap();
         assert!(matches!(
             cli.command,
             Some(Commands::Order {
@@ -4427,7 +4394,7 @@ mod tests {
     #[test]
     fn test_order_replace_subcommand() {
         let cli = parse(&[
-            "longbridge",
+            "longport",
             "order",
             "replace",
             "order-789",
@@ -4458,7 +4425,7 @@ mod tests {
 
     #[test]
     fn test_assets_no_currency() {
-        let cli = parse(&["longbridge", "assets"]).unwrap();
+        let cli = parse(&["longport", "assets"]).unwrap();
         if let Some(Commands::Assets { currency }) = cli.command {
             assert_eq!(currency, Some("USD".to_string()));
         } else {
@@ -4468,7 +4435,7 @@ mod tests {
 
     #[test]
     fn test_assets_with_currency() {
-        let cli = parse(&["longbridge", "assets", "--currency", "HKD"]).unwrap();
+        let cli = parse(&["longport", "assets", "--currency", "HKD"]).unwrap();
         if let Some(Commands::Assets { currency }) = cli.command {
             assert_eq!(currency, Some("HKD".to_string()));
         } else {
@@ -4479,7 +4446,7 @@ mod tests {
     #[test]
     fn test_cash_flow_subcommand() {
         let cli = parse(&[
-            "longbridge",
+            "longport",
             "cash-flow",
             "--start",
             "2024-01-01",
@@ -4497,19 +4464,19 @@ mod tests {
 
     #[test]
     fn test_positions_subcommand() {
-        let cli = parse(&["longbridge", "positions"]).unwrap();
+        let cli = parse(&["longport", "positions"]).unwrap();
         assert!(matches!(cli.command, Some(Commands::Positions)));
     }
 
     #[test]
     fn test_fund_positions_subcommand() {
-        let cli = parse(&["longbridge", "fund-positions"]).unwrap();
+        let cli = parse(&["longport", "fund-positions"]).unwrap();
         assert!(matches!(cli.command, Some(Commands::FundPositions)));
     }
 
     #[test]
     fn test_margin_ratio_subcommand() {
-        let cli = parse(&["longbridge", "margin-ratio", "TSLA.US"]).unwrap();
+        let cli = parse(&["longport", "margin-ratio", "TSLA.US"]).unwrap();
         assert!(
             matches!(cli.command, Some(Commands::MarginRatio { symbol }) if symbol == "TSLA.US")
         );
@@ -4518,13 +4485,7 @@ mod tests {
     #[test]
     fn test_max_qty_subcommand() {
         let cli = parse(&[
-            "longbridge",
-            "max-qty",
-            "TSLA.US",
-            "--side",
-            "buy",
-            "--price",
-            "250",
+            "longport", "max-qty", "TSLA.US", "--side", "buy", "--price", "250",
         ])
         .unwrap();
         if let Some(Commands::MaxQty {
@@ -4547,12 +4508,17 @@ mod tests {
 
     #[test]
     fn test_unknown_subcommand_fails() {
-        assert!(parse(&["longbridge", "nonexistent"]).is_err());
+        assert!(parse(&["longport", "nonexistent"]).is_err());
+    }
+
+    #[test]
+    fn test_tui_subcommand_is_disabled() {
+        assert!(parse(&["longport", "tui"]).is_err());
     }
 
     #[test]
     fn test_no_subcommand_is_valid() {
-        let cli = parse(&["longbridge"]).unwrap();
+        let cli = parse(&["longport"]).unwrap();
         assert!(cli.command.is_none());
     }
 }

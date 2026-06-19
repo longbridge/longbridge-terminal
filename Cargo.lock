@@ -2722,7 +2722,26 @@ dependencies = [
 ]
 
 [[package]]
-name = "longbridge-terminal"
+name = "longbridge-wscli"
+version = "4.3.2"
+source = "git+https://github.com/longbridge/openapi.git?branch=main#3c995f576e245c5b3235a88f1aad5d4c2343a6c2"
+dependencies = [
+ "byteorder",
+ "flate2",
+ "futures-util",
+ "leaky-bucket",
+ "longbridge-proto",
+ "num_enum",
+ "prost 0.14.3",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-tungstenite",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "longport-terminal"
 version = "0.23.3"
 dependencies = [
  "aes-gcm",
@@ -2747,6 +2766,7 @@ dependencies = [
  "dirs 5.0.1",
  "flate2",
  "futures",
+ "getrandom 0.3.4",
  "hkdf",
  "hostname",
  "indoc",
@@ -2789,25 +2809,6 @@ dependencies = [
  "unicode-width 0.1.14",
  "whoami",
  "windows-sys 0.48.0",
-]
-
-[[package]]
-name = "longbridge-wscli"
-version = "4.3.2"
-source = "git+https://github.com/longbridge/openapi.git?branch=main#3c995f576e245c5b3235a88f1aad5d4c2343a6c2"
-dependencies = [
- "byteorder",
- "flate2",
- "futures-util",
- "leaky-bucket",
- "longbridge-proto",
- "num_enum",
- "prost 0.14.3",
- "thiserror 2.0.18",
- "tokio",
- "tokio-tungstenite",
- "tracing",
- "url",
 ]
 
 [[package]]

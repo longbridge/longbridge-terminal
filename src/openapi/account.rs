@@ -11,7 +11,7 @@ use std::collections::HashMap;
 pub async fn fetch_account_list() -> Result<AccountList> {
     let ctx = openapi::trade();
 
-    // Longbridge SDK's account_balance returns current account balance info
+    // LongPort SDK's account_balance returns current account balance info
     // For simplicity, we return a default account
     // Note: This call may fail (if Access Token lacks trading permission), but should not block app startup
     match ctx.account_balance(None).await {
@@ -36,7 +36,7 @@ pub async fn fetch_account_list() -> Result<AccountList> {
         account_name: "Default Account".to_string(),
         account_type: "CashAccount".to_string(),
         org: crate::data::OrgInfo {
-            name: "Longbridge".to_string(),
+            name: "LongPort".to_string(),
         },
     };
 
@@ -120,7 +120,7 @@ pub fn currencies(account_channel: &str) -> Result<Vec<CurrencyInfo>> {
     ])
 }
 
-/// Fetch account balance from Longbridge SDK
+/// Fetch account balance from `LongPort` SDK
 pub async fn fetch_account_balance() -> Result<AccountBalance> {
     let ctx = openapi::trade();
     let balances = ctx.account_balance(Some("USD")).await?;
@@ -131,7 +131,7 @@ pub async fn fetch_account_balance() -> Result<AccountBalance> {
         .next()
         .ok_or_else(|| anyhow::anyhow!("No account balance found"))?;
 
-    // Map Longbridge response to our AccountBalance structure
+    // Map LongPort response to our AccountBalance structure
     let mut cash_infos = Vec::new();
     for cash_info in &response.cash_infos {
         cash_infos.push(CashInfo {
@@ -159,7 +159,7 @@ pub async fn fetch_account_balance() -> Result<AccountBalance> {
     })
 }
 
-/// Fetch stock holdings from Longbridge SDK
+/// Fetch stock holdings from `LongPort` SDK
 pub async fn fetch_stock_holdings() -> Result<Vec<Holding>> {
     let ctx = openapi::trade();
     let response = ctx.stock_positions(None).await?;
@@ -245,7 +245,7 @@ pub async fn fetch_stock_holdings() -> Result<Vec<Holding>> {
 ///   base="HKD", other="USD", rate=0.128  →  1 HKD = 0.128 USD
 ///   base="USD", other="HKD", rate=7.82   →  1 HKD = 1/7.82 USD
 async fn fetch_fx_rates() -> HashMap<String, Decimal> {
-    use longbridge::httpclient::Json;
+    use longport::httpclient::Json;
     use reqwest::Method;
 
     let client = openapi::http_client();

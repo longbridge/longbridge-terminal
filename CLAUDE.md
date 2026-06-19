@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A Rust-based CLI (`longbridge`) that wraps every Longbridge OpenAPI endpoint for scripting, AI-agent tool-calling, and daily trading workflows. Also ships a full-screen TUI for interactive market monitoring.
+A Rust-based CLI (`longport`) that wraps every LongPort OpenAPI endpoint for scripting, AI-agent tool-calling, and daily trading workflows. Legacy TUI code remains in `src/tui`, but the CLI command entry is disabled.
 
 ## Core Architecture
 
@@ -13,7 +13,7 @@ A Rust-based CLI (`longbridge`) that wraps every Longbridge OpenAPI endpoint for
 - **UI Framework**: Ratatui (v0.24.0) - TUI rendering
 - **Async Runtime**: Tokio (v1.33.0) - Async I/O
 - **ECS Framework**: Bevy ECS (v0.11) - Entity-Component-System architecture
-- **Market SDK**: longbridge (v4.0.0) - Longbridge OpenAPI Rust SDK (dependency alias: `longbridge-sdk`)
+- **Market SDK**: LongPort OpenAPI Rust SDK (imported in code as `longport`)
 - **State Management**: DashMap, Atomic, RwLock - Thread-safe global state
 
 ### Key Modules
@@ -21,7 +21,7 @@ A Rust-based CLI (`longbridge`) that wraps every Longbridge OpenAPI endpoint for
 #### 1. `src/auth.rs` - Auth utilities
 
 - `clear_token()` - Clear stored OAuth token (logout). Deletes token file used by the SDK.
-- OAuth and token refresh are handled by the longbridge SDK: use `longbridge::oauth::OAuthBuilder` in `openapi::context::init_contexts()`. Token is loaded from `~/.longbridge/openapi/tokens/<client_id>` or browser flow is started; the SDK auto-refreshes the token.
+- OAuth and token refresh are handled by the longport SDK: use `longport::oauth::OAuthBuilder` in `openapi::context::init_contexts()`. Token is loaded from `~/.longport/openapi/tokens/<client_id>` or browser flow is started; the SDK auto-refreshes the token.
 - Local callback server: default port `60355` (configurable via `OAuthBuilder::callback_port()`)
 
 #### 2. `src/openapi/` - OpenAPI Integration Layer
@@ -39,8 +39,8 @@ A Rust-based CLI (`longbridge`) that wraps every Longbridge OpenAPI endpoint for
   - `TradeStatus`, `Currency`, `Market` - Enum types
   - `QuoteData`, `Candlestick`, `Depth` - Market data structures
 - `stock.rs` - Stock data structure
-  - `update_from_quote()` - Update from longbridge quote
-  - `update_from_depth()` - Update from longbridge depth
+  - `update_from_quote()` - Update from longport quote
+  - `update_from_depth()` - Update from longport depth
 - `stocks.rs` - Global stock cache (based on `DashMap`)
   - `STOCKS` - Global singleton, provides `get()`, `mget()`, `insert()`, `modify()` methods
 
@@ -73,9 +73,9 @@ A Rust-based CLI (`longbridge`) that wraps every Longbridge OpenAPI endpoint for
 
 ### Data Flow
 
-1. **Authentication**: `main.rs` → `openapi::init_contexts()` → `longbridge::oauth::OAuthBuilder::build()` (loads token from disk or browser flow) → `Config::from_oauth(oauth)` → SDK handles token refresh automatically
+1. **Authentication**: `main.rs` → `openapi::init_contexts()` → `longport::oauth::OAuthBuilder::build()` (loads token from disk or browser flow) → `Config::from_oauth(oauth)` → SDK handles token refresh automatically
 2. **Initialization**: `main.rs` → `openapi::init_contexts()` → QuoteContext and TradeContext created with config → Get WebSocket receiver
-3. **Subscribe Quotes**: `app.rs` → `openapi::quote().subscribe()` → longbridge SDK
+3. **Subscribe Quotes**: `app.rs` → `openapi::quote().subscribe()` → longport SDK
 4. **Receive Push**: WebSocket receiver → Parse `PushEvent` → Update `STOCKS` cache
 5. **UI Rendering**: Bevy ECS systems → Read `STOCKS` → Ratatui rendering
 
@@ -116,7 +116,7 @@ After any data-layer or CLI output change, verify correctness by comparing the i
 
 ```bash
 # Run both and compare — output should be identical (timestamps may differ for live data)
-longbridge <command> <args> --format json
+longport <command> <args> --format json
 cargo run -- <command> <args> --format json
 ```
 
@@ -124,18 +124,18 @@ Pick commands that exercise the modified code paths. Common ones:
 
 | Changed area             | Verification command                         |
 | ------------------------ | -------------------------------------------- |
-| Trade direction / trades | `longbridge trades 700.HK --format json`     |
-| Kline / AdjustType       | `longbridge kline 700.HK --format json`      |
-| Quote / calc-index       | `longbridge calc-index 700.HK --format json` |
-| Static info              | `longbridge static 700.HK --format json`     |
+| Trade direction / trades | `longport trades 700.HK --format json`     |
+| Kline / AdjustType       | `longport kline 700.HK --format json`      |
+| Quote / calc-index       | `longport calc-index 700.HK --format json` |
+| Static info              | `longport static 700.HK --format json`     |
 
 ### Configuration
 
-**Authentication Method: OAuth 2.0 (longbridge SDK)**
+**Authentication Method: OAuth 2.0 (longport SDK)**
 
-The application uses the longbridge SDK's built-in OAuth. On first run:
+The application uses the longport SDK's built-in OAuth. On first run:
 
-1. `OAuthBuilder::build()` loads token from `~/.longbridge/openapi/tokens/<client_id>` or starts browser authorization
+1. `OAuthBuilder::build()` loads token from `~/.longport/openapi/tokens/<client_id>` or starts browser authorization
 2. Token is persisted by the SDK; refresh is automatic (no manual expiry check)
 
 **No environment variables or manual configuration required!**
@@ -144,9 +144,9 @@ Requirements:
 
 - Internet connection
 - Browser access
-- Longbridge account (register at https://open.longbridge.com)
+- LongPort account (register at https://open.longportapp.com)
 
-**Token storage:** `~/.longbridge/openapi/tokens/<client_id>` (managed by SDK). Use `--logout` to clear.
+**Token storage:** `~/.longport/openapi/tokens/<client_id>` (managed by SDK). Use `--logout` to clear.
 
 **Troubleshooting:**
 
@@ -194,13 +194,13 @@ Project uses strict `clippy::pedantic` rules with the following exceptions:
   // let status = "交易中";  // Never hardcode Chinese strings
   ```
 
-## Longbridge SDK Reference
+## LongPort SDK Reference
 
 ### Documentation
 
-- Rust SDK (crates.io): longbridge 4.0.0
-- OpenAPI Full Docs: https://open.longbridge.com/llms-full.txt
-- Developer Portal: https://open.longbridge.com
+- Rust SDK reference: LongPort OpenAPI Rust SDK
+- OpenAPI Full Docs: https://open.longportapp.com/llms-full.txt
+- Developer Portal: https://open.longportapp.com
 
 ### Common API Patterns
 
@@ -210,26 +210,26 @@ let ctx = crate::openapi::quote();
 let quotes = ctx.quote(vec!["700.HK", "AAPL.US"]).await?;
 
 // Subscribe to real-time quotes
-ctx.subscribe(&symbols, longbridge::quote::SubFlags::QUOTE).await?;
+ctx.subscribe(&symbols, longport::quote::SubFlags::QUOTE).await?;
 
 // Query candlesticks
-let klines = ctx.candlesticks("AAPL.US", longbridge::quote::Period::Day, 100, None).await?;
+let klines = ctx.candlesticks("AAPL.US", longport::quote::Period::Day, 100, None).await?;
 
 // Submit order
 let ctx = crate::openapi::trade();
-let opts = longbridge::trade::SubmitOrderOptions::new(
+let opts = longport::trade::SubmitOrderOptions::new(
  "700.HK",
- longbridge::trade::OrderType::LO,
- longbridge::trade::OrderSide::Buy,
+ longport::trade::OrderType::LO,
+ longport::trade::OrderSide::Buy,
  decimal!(500),
- longbridge::trade::TimeInForceType::Day,
+ longport::trade::TimeInForceType::Day,
 );
 let order = ctx.submit_order(opts).await?;
 ```
 
 ## Important Notes
 
-1. **Rate Limiting**: Longbridge OpenAPI rate limits to "no more than 10 calls per second"
+1. **Rate Limiting**: LongPort OpenAPI rate limits to "no more than 10 calls per second"
 2. **Token Expiration**: The SDK automatically refreshes the access token when needed
 3. **CN / Global token interoperability**: The `.cn` and `.com` OAuth endpoints share the same user data and token validation. A token issued by one endpoint is accepted by the other. The two regions differ only in routing/acceleration, not in auth logic. Do not treat region as a token-refresh issue.
 4. **Market Support**: Supports Hong Kong, US, and China A-share markets
@@ -257,11 +257,11 @@ Example: `cli: Add statement export command`, `tui: Fix quit confirmation dialog
 When adding, removing, or modifying any CLI command (in `src/cli/`), always update all of the following in the same PR:
 
 1. **`README.md`** — the `<!-- COMMANDS_START -->` / `<!-- COMMANDS_END -->` block
-2. **`../developers/skills/longbridge/`** — all skill files are maintained in the `developers` repo; this repo no longer has its own `skills/` directory:
+2. **`../developers/skills/longport/`** — all skill files are maintained in the `developers` repo; this repo no longer has its own `skills/` directory:
    - `SKILL.md` — quick reference, if the command is common enough to mention
    - `references/cli/overview.md` — CLI overview (features, patterns, notable flags)
    - `references/python-sdk/` / `references/rust-sdk/` — corresponding SDK reference
 
 Skill files should stay high-level. Defer to the CLI's built-in `--help` for flag details — do not duplicate help text in skill files.
 
-If `../developers` is not available locally, the repository is https://github.com/longbridge/developers
+If `../developers` is not available locally, the repository is https://github.com/longport/developers

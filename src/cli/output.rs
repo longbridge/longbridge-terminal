@@ -201,7 +201,7 @@ pub fn fmt_date(d: time::Date) -> String {
 
 /// Recursively remove non-public internal fields from a JSON value.
 ///
-/// Longbridge API responses may include fields like `aaid` that are internal
+/// `LongPort` API responses may include fields like `aaid` that are internal
 /// identifiers not intended for external consumers. This function strips them
 /// in-place from any JSON object, at any nesting depth.
 pub fn strip_private_fields(v: &mut serde_json::Value) {

@@ -59,14 +59,14 @@ jobs:
       - name: Test first-run version detection
         run: |
           # Write a fake old version to trigger release notes on next run
-          mkdir -p ~/.longbridge
-          echo "0.0.1" > ~/.longbridge/.terminal-last-run-version
+          mkdir -p ~/.longport
+          echo "0.0.1" > ~/.longport/.terminal-last-run-version
           # Run with no subcommand (prints help, no auth needed) and capture output
           output=$(cargo run 2>&1 || true)
           echo "$output"
           echo "$output" | grep -q "Updated to" || { echo "FAIL: release notes not shown after version change"; exit 1; }
           # Verify marker was updated so it won't show again
-          version=$(cat ~/.longbridge/.terminal-last-run-version)
+          version=$(cat ~/.longport/.terminal-last-run-version)
           [ "$version" = "0.14.0" ] || { echo "FAIL: last-run-version not updated (got: $version)"; exit 1; }
 
       - name: Test release notes not shown on subsequent run
@@ -83,8 +83,8 @@ jobs:
 
       - name: Verify updated binary matches CDN latest
         run: |
-          expected=$(curl -sf https://open.longbridge.com/github/release/longbridge-terminal/latest | tr -d '[:space:]')
-          actual=$(target/debug/longbridge --version | awk '{print $2}')
+          expected=$(curl -sf https://open.longportapp.com/github/release/longport-terminal/latest | tr -d '[:space:]')
+          actual=$(target/debug/longport --version | awk '{print $2}')
           echo "CDN latest: $expected"
           echo "Binary version: $actual"
           [ "v$actual" = "$expected" ] || [ "$actual" = "$expected" ]
@@ -122,12 +122,12 @@ jobs:
 
       - name: Test first-run version detection
         run: |
-          mkdir -p ~/.longbridge
-          echo "0.0.1" > ~/.longbridge/.terminal-last-run-version
+          mkdir -p ~/.longport
+          echo "0.0.1" > ~/.longport/.terminal-last-run-version
           output=$(cargo run 2>&1 || true)
           echo "$output"
           echo "$output" | grep -q "Updated to" || { echo "FAIL: release notes not shown after version change"; exit 1; }
-          version=$(cat ~/.longbridge/.terminal-last-run-version)
+          version=$(cat ~/.longport/.terminal-last-run-version)
           [ "$version" = "0.14.0" ] || { echo "FAIL: last-run-version not updated (got: $version)"; exit 1; }
 
       - name: Test release notes not shown on subsequent run
@@ -144,8 +144,8 @@ jobs:
 
       - name: Verify updated binary matches CDN latest
         run: |
-          expected=$(curl -sf https://open.longbridge.com/github/release/longbridge-terminal/latest | tr -d '[:space:]')
-          actual=$(target/debug/longbridge --version | awk '{print $2}')
+          expected=$(curl -sf https://open.longportapp.com/github/release/longport-terminal/latest | tr -d '[:space:]')
+          actual=$(target/debug/longport --version | awk '{print $2}')
           echo "CDN latest: $expected"
           echo "Binary version: $actual"
           [ "v$actual" = "$expected" ] || [ "$actual" = "$expected" ]
@@ -188,7 +188,7 @@ jobs:
       - name: Test first-run version detection
         shell: pwsh
         run: |
-          $dir = "$env:USERPROFILE\.longbridge"
+          $dir = "$env:USERPROFILE\.longport"
           New-Item -ItemType Directory -Path $dir -Force | Out-Null
           Set-Content -Path "$dir\.terminal-last-run-version" -Value "0.0.1" -NoNewline
           $output = cargo run 2>&1 | Out-String
@@ -217,8 +217,8 @@ jobs:
       - name: Verify updated binary matches CDN latest
         shell: pwsh
         run: |
-          $expected = (Invoke-WebRequest -Uri "https://open.longbridge.com/github/release/longbridge-terminal/latest" -UseBasicParsing).Content.Trim()
-          $actual = (& target\debug\longbridge.exe --version) -replace '^longbridge ', ''
+          $expected = (Invoke-WebRequest -Uri "https://open.longportapp.com/github/release/longport-terminal/latest" -UseBasicParsing).Content.Trim()
+          $actual = (& target\debug\longport.exe --version) -replace '^longport ', ''
           Write-Host "CDN latest: $expected"
           Write-Host "Binary version: $actual"
           if ("v$actual" -ne $expected -and $actual -ne $expected) {
