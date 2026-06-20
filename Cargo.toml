@@ -4,6 +4,7 @@
 edition = "2021"
 name = "longbridge-terminal"
 version = "0.23.3"
+license = "Apache-2.0"
 
 [[bin]]
 name = "longbridge"
