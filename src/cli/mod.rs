@@ -89,6 +89,7 @@ pub struct Cli {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 pub enum Commands {
     /// Authenticate or clear credentials
     ///
@@ -2494,10 +2495,21 @@ pub enum OrderCmd {
     /// Full detail for a single order including charges and history
     ///
     /// Returns all fields from `order` plus `charge_detail`, `history_details`, msg.
+    ///
+    /// By default, `order_id` is treated as a main order ID.
+    /// Pass `--is-attached` when the ID is an attached sub-order ID (stop-loss/take-profit);
+    /// the server returns that sub-order's own detail. Note: `charge_detail` is always
+    /// null for attached orders.
+    /// Attached sub-order IDs are found in `order detail <parent-id>` under `attached_orders`.
     /// Example: longbridge order detail 20240101-123456789
+    /// Example: longbridge order detail <attached-order-id> --is-attached
     Detail {
-        /// Order ID (from `longbridge order` or returned by `order buy`/`order sell`)
+        /// Order ID to query
         order_id: String,
+        /// Treat `order_id` as an attached sub-order ID (stop-loss/take-profit order);
+        /// returns that sub-order's own detail. Note: `charge_detail` is null for attached orders.
+        #[arg(long)]
+        is_attached: bool,
     },
 
     /// Today's trade executions (fills), or historical with --history
@@ -2527,11 +2539,13 @@ pub enum OrderCmd {
     ///   (case-insensitive)
     /// Trailing orders (TSLPAMT/TSLPPCT) require --trailing-amount/--trailing-percent
     ///   and --limit-offset.
+    /// Attached orders: use --attached-type to attach a take-profit/stop-loss/bracket order.
     /// Example: longbridge order buy TSLA.US 100 --price 250.00
     /// Example: longbridge order buy 700.HK 1000 --price 300 --order-type ALO
     /// Example: longbridge order buy NVDA.US 10 --order-type MIT --trigger-price 177.89 --tif Day
     /// Example: longbridge order buy TSLA.US 10 --order-type TSLPPCT --trailing-percent 3 --limit-offset 1 --tif gtc
     /// Example: longbridge order buy AAPL.US 10 --price 180 --tif gtd --expire-date 2025-12-31
+    /// Example: longbridge order buy TSLA.US 100 --price 250 --attached-type bracket --attached-profit-taker-price 270 --attached-stop-loss-price 240
     Buy {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -2561,6 +2575,30 @@ pub enum OrderCmd {
         /// Order remark (max 255 characters)
         #[arg(long)]
         remark: Option<String>,
+        /// Attached order type: profit-taker | stop-loss | bracket
+        #[arg(long)]
+        attached_type: Option<String>,
+        /// Attached order: take-profit trigger price
+        #[arg(long)]
+        attached_profit_taker_price: Option<String>,
+        /// Attached order: stop-loss trigger price
+        #[arg(long)]
+        attached_stop_loss_price: Option<String>,
+        /// Attached order: time in force: day | gtc | gtd
+        #[arg(long)]
+        attached_tif: Option<String>,
+        /// Attached order: take-profit limit price (when activated order type is LO)
+        #[arg(long)]
+        attached_profit_taker_submit_price: Option<String>,
+        /// Attached order: stop-loss limit price
+        #[arg(long)]
+        attached_stop_loss_submit_price: Option<String>,
+        /// Attached order: order type when triggered: LO | MO etc.
+        #[arg(long)]
+        attached_activate_order_type: Option<String>,
+        /// Attached order: RTH setting for activated order: `RTH_ONLY` | `ANY_TIME` | `OVERNIGHT`
+        #[arg(long)]
+        attached_activate_rth: Option<String>,
         /// Order type: LO ELO MO AO ALO ODD SLO LIT MIT TSLPAMT TSLPPCT
         ///   (case-insensitive, default: LO)
         #[arg(long, default_value = "LO")]
@@ -2595,6 +2633,7 @@ pub enum OrderCmd {
     /// Example: longbridge order sell NVDA.US 10 --order-type MIT --trigger-price 177.89 --tif Day
     /// Example: longbridge order sell TSLA.US 130 --order-type TSLPPCT --trailing-percent 3 --limit-offset 1 --tif gtc
     /// Example: longbridge order sell AAPL.US 10 --price 180 --tif gtd --expire-date 2025-12-31
+    /// Example: longbridge order sell TSLA.US 100 --price 260 --attached-type bracket --attached-profit-taker-price 280 --attached-stop-loss-price 250
     Sell {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -2624,6 +2663,30 @@ pub enum OrderCmd {
         /// Order remark (max 255 characters)
         #[arg(long)]
         remark: Option<String>,
+        /// Attached order type: profit-taker | stop-loss | bracket
+        #[arg(long)]
+        attached_type: Option<String>,
+        /// Attached order: take-profit trigger price
+        #[arg(long)]
+        attached_profit_taker_price: Option<String>,
+        /// Attached order: stop-loss trigger price
+        #[arg(long)]
+        attached_stop_loss_price: Option<String>,
+        /// Attached order: time in force: day | gtc | gtd
+        #[arg(long)]
+        attached_tif: Option<String>,
+        /// Attached order: take-profit limit price (when activated order type is LO)
+        #[arg(long)]
+        attached_profit_taker_submit_price: Option<String>,
+        /// Attached order: stop-loss limit price
+        #[arg(long)]
+        attached_stop_loss_submit_price: Option<String>,
+        /// Attached order: order type when triggered: LO | MO etc.
+        #[arg(long)]
+        attached_activate_order_type: Option<String>,
+        /// Attached order: RTH setting for activated order: `RTH_ONLY` | `ANY_TIME` | `OVERNIGHT`
+        #[arg(long)]
+        attached_activate_rth: Option<String>,
         /// Order type: LO ELO MO AO ALO ODD SLO LIT MIT TSLPAMT TSLPPCT
         ///   (case-insensitive, default: LO)
         #[arg(long, default_value = "LO")]
@@ -3339,7 +3402,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             symbol,
             cmd,
         } => match cmd {
-            Some(OrderCmd::Detail { order_id }) => trade::cmd_order_detail(order_id, format).await,
+            Some(OrderCmd::Detail { order_id, is_attached }) => {
+                trade::cmd_order_detail(order_id, is_attached, format).await
+            }
             Some(OrderCmd::Executions {
                 history: h,
                 start: s,
@@ -3357,6 +3422,14 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 expire_date,
                 outside_rth,
                 remark,
+                attached_type,
+                attached_profit_taker_price,
+                attached_stop_loss_price,
+                attached_tif,
+                attached_profit_taker_submit_price,
+                attached_stop_loss_submit_price,
+                attached_activate_order_type,
+                attached_activate_rth,
                 order_type,
                 tif,
                 yes,
@@ -3372,6 +3445,14 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                     expire_date,
                     outside_rth,
                     remark,
+                    attached_type,
+                    attached_profit_taker_price,
+                    attached_stop_loss_price,
+                    attached_tif,
+                    attached_profit_taker_submit_price,
+                    attached_stop_loss_submit_price,
+                    attached_activate_order_type,
+                    attached_activate_rth,
                     order_type,
                     tif,
                     longbridge::trade::OrderSide::Buy,
@@ -3391,6 +3472,14 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 expire_date,
                 outside_rth,
                 remark,
+                attached_type,
+                attached_profit_taker_price,
+                attached_stop_loss_price,
+                attached_tif,
+                attached_profit_taker_submit_price,
+                attached_stop_loss_submit_price,
+                attached_activate_order_type,
+                attached_activate_rth,
                 order_type,
                 tif,
                 yes,
@@ -3406,6 +3495,14 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                     expire_date,
                     outside_rth,
                     remark,
+                    attached_type,
+                    attached_profit_taker_price,
+                    attached_stop_loss_price,
+                    attached_tif,
+                    attached_profit_taker_submit_price,
+                    attached_stop_loss_submit_price,
+                    attached_activate_order_type,
+                    attached_activate_rth,
                     order_type,
                     tif,
                     longbridge::trade::OrderSide::Sell,
@@ -4326,7 +4423,7 @@ mod tests {
         assert!(matches!(
             cli.command,
             Some(Commands::Order {
-                cmd: Some(OrderCmd::Detail { order_id }),
+                cmd: Some(OrderCmd::Detail { ref order_id, .. }),
                 ..
             }) if order_id == "order-123"
         ));
@@ -4361,11 +4458,11 @@ mod tests {
         if let Some(Commands::Order {
             cmd:
                 Some(OrderCmd::Buy {
-                    symbol,
+                    ref symbol,
                     quantity,
-                    price,
-                    order_type,
-                    tif,
+                    ref price,
+                    ref order_type,
+                    ref tif,
                     ..
                 }),
             ..
@@ -4373,7 +4470,7 @@ mod tests {
         {
             assert_eq!(symbol, "TSLA.US");
             assert_eq!(quantity, 100);
-            assert_eq!(price, Some("250.00".to_string()));
+            assert_eq!(price, &Some("250.00".to_string()));
             assert_eq!(order_type, "LO");
             assert_eq!(tif, "day");
         } else {
@@ -4396,9 +4493,9 @@ mod tests {
         if let Some(Commands::Order {
             cmd:
                 Some(OrderCmd::Sell {
-                    symbol,
+                    ref symbol,
                     quantity,
-                    price,
+                    ref price,
                     ..
                 }),
             ..
@@ -4406,7 +4503,7 @@ mod tests {
         {
             assert_eq!(symbol, "TSLA.US");
             assert_eq!(quantity, 50);
-            assert_eq!(price, Some("260.00".to_string()));
+            assert_eq!(price, &Some("260.00".to_string()));
         } else {
             panic!("expected Order Sell command");
         }
@@ -4418,7 +4515,7 @@ mod tests {
         assert!(matches!(
             cli.command,
             Some(Commands::Order {
-                cmd: Some(OrderCmd::Cancel { order_id, .. }),
+                cmd: Some(OrderCmd::Cancel { ref order_id, .. }),
                 ..
             }) if order_id == "order-456"
         ));
@@ -4440,9 +4537,9 @@ mod tests {
         if let Some(Commands::Order {
             cmd:
                 Some(OrderCmd::Replace {
-                    order_id,
+                    ref order_id,
                     qty,
-                    price,
+                    ref price,
                     ..
                 }),
             ..
@@ -4450,7 +4547,7 @@ mod tests {
         {
             assert_eq!(order_id, "order-789");
             assert_eq!(qty, Some(200));
-            assert_eq!(price, Some("255.00".to_string()));
+            assert_eq!(price, &Some("255.00".to_string()));
         } else {
             panic!("expected Order Replace command");
         }

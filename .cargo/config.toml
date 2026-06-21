@@ -1,0 +1,4 @@
+[env]
+# clap generates stack-heavy parsing code for large subcommand structs;
+# raise the default 2MB test thread stack to avoid overflow.
+RUST_MIN_STACK = "8388608"

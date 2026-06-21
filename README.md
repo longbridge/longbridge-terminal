@@ -292,9 +292,11 @@ longbridge sharelist popular [--count 10]                         # Get popular 
 ```bash
 longbridge order                                           # Today's orders, or historical with --history
 longbridge order --history [--start 2024-01-01]            # Historical orders (use --symbol to filter)
-longbridge order detail <order_id>                         # Full detail for a single order including charges and history
+longbridge order detail <order_id>                         # Full detail for a single order including charges, history, and attached orders
+longbridge order detail <attached-order-id> --is-attached  # Query attached sub-order's own detail (charge_detail is null for attached orders)
 longbridge order executions                                # Today's trade executions (fills), or historical with --history
 longbridge order buy TSLA.US 100 --price 250.00            # Submit a buy order (prompts for confirmation)
+longbridge order buy TSLA.US 100 --price 250 --attached-type bracket --attached-profit-taker-price 270 --attached-stop-loss-price 240  # Buy with bracket (take-profit + stop-loss)
 longbridge order sell TSLA.US 100 --price 260.00           # Submit a sell order (prompts for confirmation)
 longbridge order cancel <order_id>                         # Cancel a pending order (prompts for confirmation)
 longbridge order replace <order_id> --qty 200 --price 255.00 # Modify quantity or price of a pending order
