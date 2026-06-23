@@ -2620,7 +2620,7 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 [[package]]
 name = "longbridge"
 version = "4.3.2"
-source = "git+https://github.com/longbridge/openapi.git?branch=main#ff567d0932fc93710222277e65d0bd87276c432e"
+source = "git+https://github.com/longbridge/openapi.git?branch=fix%2Fmacroeconomic-detail-info#101546cbb0d43d1ae07d875f6f3fde0c7e723b8a"
 dependencies = [
  "anyhow",
  "bitflags 2.10.0",
@@ -2639,6 +2639,7 @@ dependencies = [
  "rust_decimal",
  "serde",
  "serde_json",
+ "serde_repr",
  "strum 0.27.2",
  "strum_macros 0.27.2",
  "thiserror 2.0.18",
@@ -2655,7 +2656,7 @@ dependencies = [
 [[package]]
 name = "longbridge-candlesticks"
 version = "4.3.2"
-source = "git+https://github.com/longbridge/openapi.git?branch=main#ff567d0932fc93710222277e65d0bd87276c432e"
+source = "git+https://github.com/longbridge/openapi.git?branch=fix%2Fmacroeconomic-detail-info#101546cbb0d43d1ae07d875f6f3fde0c7e723b8a"
 dependencies = [
  "bitflags 2.10.0",
  "num-traits",
@@ -2667,7 +2668,7 @@ dependencies = [
 [[package]]
 name = "longbridge-geo"
 version = "4.3.2"
-source = "git+https://github.com/longbridge/openapi.git?branch=main#ff567d0932fc93710222277e65d0bd87276c432e"
+source = "git+https://github.com/longbridge/openapi.git?branch=fix%2Fmacroeconomic-detail-info#101546cbb0d43d1ae07d875f6f3fde0c7e723b8a"
 dependencies = [
  "reqwest 0.12.28",
 ]
@@ -2675,7 +2676,7 @@ dependencies = [
 [[package]]
 name = "longbridge-httpcli"
 version = "4.3.2"
-source = "git+https://github.com/longbridge/openapi.git?branch=main#ff567d0932fc93710222277e65d0bd87276c432e"
+source = "git+https://github.com/longbridge/openapi.git?branch=fix%2Fmacroeconomic-detail-info#101546cbb0d43d1ae07d875f6f3fde0c7e723b8a"
 dependencies = [
  "dotenv",
  "futures-util",
@@ -2697,7 +2698,7 @@ dependencies = [
 [[package]]
 name = "longbridge-oauth"
 version = "4.3.2"
-source = "git+https://github.com/longbridge/openapi.git?branch=main#ff567d0932fc93710222277e65d0bd87276c432e"
+source = "git+https://github.com/longbridge/openapi.git?branch=fix%2Fmacroeconomic-detail-info#101546cbb0d43d1ae07d875f6f3fde0c7e723b8a"
 dependencies = [
  "dirs 6.0.0",
  "futures-util",
@@ -2714,7 +2715,7 @@ dependencies = [
 [[package]]
 name = "longbridge-proto"
 version = "4.3.2"
-source = "git+https://github.com/longbridge/openapi.git?branch=main#ff567d0932fc93710222277e65d0bd87276c432e"
+source = "git+https://github.com/longbridge/openapi.git?branch=fix%2Fmacroeconomic-detail-info#101546cbb0d43d1ae07d875f6f3fde0c7e723b8a"
 dependencies = [
  "prost 0.14.3",
  "serde",
@@ -2792,7 +2793,7 @@ dependencies = [
 [[package]]
 name = "longbridge-wscli"
 version = "4.3.2"
-source = "git+https://github.com/longbridge/openapi.git?branch=main#ff567d0932fc93710222277e65d0bd87276c432e"
+source = "git+https://github.com/longbridge/openapi.git?branch=fix%2Fmacroeconomic-detail-info#101546cbb0d43d1ae07d875f6f3fde0c7e723b8a"
 dependencies = [
  "byteorder",
  "flate2",
@@ -4598,6 +4599,17 @@ dependencies = [
  "itoa",
  "serde",
  "serde_core",
+]
+
+[[package]]
+name = "serde_repr"
+version = "0.1.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "175ee3e80ae9982737ca543e96133087cbd9a485eecc3bc4de9c1a37b47ea59c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
 ]
 
 [[package]]
