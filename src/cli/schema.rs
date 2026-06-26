@@ -312,7 +312,8 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<ResponseSchema> {
         | "fund-holder"
         | "financial-statement"
         | "valuation-rank"
-        | "compare" => fundamental::schema_for_path(path),
+        | "compare"
+        | "macrodata" => fundamental::schema_for_path(path),
         "news" | "filing" => news::schema_for_path(path),
         "topic" => topic::schema_for_path(path),
         "watchlist" => watchlist::schema_for_path(path),
@@ -505,7 +506,7 @@ mod tests {
         let paths = real_leaf_paths(&root);
         assert_eq!(
             paths.len(),
-            138,
+            139,
             "real command count changed; review schema coverage"
         );
 

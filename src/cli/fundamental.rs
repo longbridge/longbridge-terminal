@@ -3415,6 +3415,14 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
         ),
         "compare" => object("Multi-stock valuation comparison", &["list"]),
         "fund-holder" => object("Funds and ETFs holding a symbol", &["lists"]),
+        "macrodata" => object(
+            "Macroeconomic indicator list",
+            &["count", "has_more", "page", "limit", "list"],
+        ),
+        "macrodata <code>" => object(
+            "Macroeconomic indicator historical data",
+            &["count", "has_more", "page", "limit", "info", "data"],
+        ),
         _ => return None,
     };
     Some(schema)
