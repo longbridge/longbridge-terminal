@@ -543,6 +543,49 @@ pub enum Commands {
         symbol: String,
     },
 
+    /// Macroeconomic data by indicator: list all supported indicators or query historical data
+    ///
+    /// The indicator-dimension counterpart of `finance-calendar macrodata` (which is
+    /// release-time-dimension): same underlying data, organized by indicator instead of by date.
+    ///
+    /// Without a code, lists all available indicators (name, category, country, periodicity).
+    /// With a code (from the list output), returns historical releases with actual / forecast / previous values.
+    ///
+    /// Results are paginated (20 per page; use --page / --limit). Names and descriptions
+    /// follow the global --lang flag (zh-CN / zh-HK / en).
+    ///
+    /// Example: longbridge macrodata
+    /// Example: longbridge macrodata --keyword CPI
+    /// Example: longbridge macrodata --keyword CPI --country US
+    /// Example: longbridge macrodata --page 2
+    /// Example: longbridge --lang en macrodata US00175
+    /// Example: longbridge macrodata US00175 --start 2024-01-01 --end 2024-12-31
+    /// Example: longbridge macrodata US00175 --limit 12 --format json
+    #[command(name = "macrodata")]
+    Macroeconomic {
+        /// Indicator code (from `longbridge macrodata` list output). Omit to list all indicators.
+        code: Option<String>,
+        /// Filter by country (list only).
+        /// Values: HK, CN, US, EU, JP, SG
+        #[arg(long, value_name = "COUNTRY")]
+        country: Option<String>,
+        /// Search by keyword in indicator name (list only)
+        #[arg(long)]
+        keyword: Option<String>,
+        /// Filter start date for historical data (YYYY-MM-DD)
+        #[arg(long)]
+        start: Option<String>,
+        /// Filter end date for historical data (YYYY-MM-DD)
+        #[arg(long)]
+        end: Option<String>,
+        /// Records per page (default: 20). Applies to both the indicator list and history.
+        #[arg(long, default_value = "20")]
+        limit: u32,
+        /// Page number, 1-based.
+        #[arg(long, default_value = "1")]
+        page: u32,
+    },
+
     /// Finance calendar: upcoming events by category
     ///
     /// Example: longbridge finance-calendar report
@@ -3217,6 +3260,15 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         Commands::IndustryPeers { symbol, market } => {
             fundamental::cmd_industry_peers(symbol, market, format, verbose).await
         }
+        Commands::Macroeconomic {
+            code,
+            country,
+            keyword,
+            start,
+            end,
+            limit,
+            page,
+        } => fundamental::cmd_macroeconomic(code, country, keyword, start, end, limit, page, format, verbose).await,
         Commands::FinanceCalendar { cmd } => {
             let (event_type, opts, star) = match cmd {
                 FinanceCalendarCmd::Report { opts } => ("report", opts, vec![]),
