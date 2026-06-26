@@ -455,3 +455,72 @@ async fn cmd_set_reminder(hours: &DcaReminderHours) -> Result<()> {
     println!("Reminder hours updated to {h}h before trade.");
     Ok(())
 }
+
+pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::ResponseSchema> {
+    use super::schema::{array, object, text};
+
+    let command = path.join(" ");
+    let schema = match command.as_str() {
+        "dca" => array("Recurring investment plans", dca_plan_schema_fields()),
+        "dca create" | "dca update" | "dca pause" | "dca resume" | "dca stop"
+        | "dca set-reminder" => text("Recurring investment mutation status message"),
+        "dca history" => array(
+            "Recurring investment trade history",
+            &[
+                "created_at",
+                "counter_id",
+                "order_id",
+                "status",
+                "action",
+                "executed_qty",
+                "executed_price",
+                "executed_amount",
+                "rejected_reason",
+            ],
+        ),
+        "dca stats" => object(
+            "Recurring investment statistics",
+            &[
+                "total_amount",
+                "total_profit",
+                "active_count",
+                "suspended_count",
+                "finished_count",
+                "rest_days",
+                "nearest_plans",
+            ],
+        ),
+        "dca calc-date" => object("Next recurring investment trade date", &["trade_date"]),
+        "dca check" => array(
+            "Recurring investment support by symbol",
+            &["counter_id", "support_regular_saving"],
+        ),
+        _ => return None,
+    };
+    Some(schema)
+}
+
+fn dca_plan_schema_fields() -> &'static [&'static str] {
+    &[
+        "plan_id",
+        "counter_id",
+        "stock_name",
+        "market",
+        "status",
+        "per_invest_amount",
+        "invest_frequency",
+        "invest_day_of_week",
+        "invest_day_of_month",
+        "next_trd_date",
+        "issue_number",
+        "cum_amount",
+        "cum_profit",
+        "average_cost",
+        "allow_margin_finance",
+        "alter_hours",
+        "display_account",
+        "member_id",
+        "created_at",
+        "updated_at",
+    ]
+}

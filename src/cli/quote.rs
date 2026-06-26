@@ -2377,16 +2377,10 @@ pub async fn cmd_constituent(
 }
 
 fn market_trade_status_label(code: i64) -> &'static str {
-    match code {
-        101 => "Pre-Open",
-        102 | 103 | 105 | 202 | 203 => "Trading",
-        104 => "Lunch Break",
-        106 => "Post-Trading",
-        108 => "Closed",
-        201 => "Pre-Market",
-        204 => "Post-Market",
-        _ => "Unknown",
-    }
+    i32::try_from(code)
+        .map(longbridge::market::TradeStatus::from)
+        .unwrap_or_default()
+        .name()
 }
 
 pub async fn cmd_market_status(format: &OutputFormat, verbose: bool) -> Result<()> {
@@ -3549,10 +3543,266 @@ fn render_etf_asset_allocation(
     }
 }
 
+pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::ResponseSchema> {
+    use super::schema::{array, field, json_schema, object, schema, RootKind};
+
+    let command = path.join(" ");
+    let schema = match command.as_str() {
+        "quote" => schema(
+            "Real-time quotes for one or more symbols",
+            RootKind::Array,
+            vec![
+                field("symbol", "string", "Symbol in <CODE>.<MARKET> format"),
+                field("last", "string", "Last traded price"),
+                field("change_value", "string", "Price change value"),
+                field(
+                    "change_percentage",
+                    "string | null",
+                    "Price change percentage",
+                ),
+                field("prev_close", "string", "Previous close price"),
+                field("open", "string", "Open price"),
+                field("high", "string", "High price"),
+                field("low", "string", "Low price"),
+                field("volume", "number | string", "Traded volume"),
+                field("turnover", "string", "Traded turnover"),
+                field("status", "string", "Trading status"),
+                field(
+                    "post_market",
+                    "object",
+                    "US post-market quote when available",
+                ),
+                field("overnight", "object", "US overnight quote when available"),
+                field("pre_market", "object", "US pre-market quote when available"),
+            ],
+        ),
+        "depth" => schema(
+            "Level 2 order book depth (bid/ask ladder)",
+            RootKind::Object,
+            vec![
+                field("symbol", "string", "Symbol in <CODE>.<MARKET> format"),
+                field(
+                    "asks",
+                    "object[]",
+                    "Ask price levels with position, price, volume, and order_num",
+                ),
+                field(
+                    "bids",
+                    "object[]",
+                    "Bid price levels with position, price, volume, and order_num",
+                ),
+            ],
+        ),
+        "brokers" => object(
+            "Broker queue at each price level",
+            &["symbol", "asks", "bids"],
+        ),
+        "trades" => array(
+            "Recent tick-by-tick trades",
+            &["time", "price", "volume", "direction", "type"],
+        ),
+        "intraday" => array(
+            "Intraday minute-by-minute lines",
+            &["time", "price", "volume", "turnover", "avg_price"],
+        ),
+        "kline" | "kline history" => schema(
+            "Historical OHLCV candlestick data within a date range",
+            RootKind::Array,
+            vec![
+                field("time", "string", "Candle timestamp"),
+                field("open", "string", "Open price"),
+                field("high", "string", "High price"),
+                field("low", "string", "Low price"),
+                field("close", "string", "Close price"),
+                field("volume", "number | string", "Traded volume"),
+                field("turnover", "string", "Traded turnover"),
+                field(
+                    "timestamp",
+                    "string",
+                    "Alias used by schema consumers for candle time",
+                ),
+            ],
+        ),
+        "static" => array(
+            "Static reference info for securities",
+            &[
+                "symbol",
+                "name",
+                "exchange",
+                "currency",
+                "lot_size",
+                "total_shares",
+                "circ._shares",
+                "eps",
+                "eps_ttm",
+                "bps",
+                "dividend",
+            ],
+        ),
+        "calc-index" => array(
+            "Calculated financial indexes",
+            &["symbol", "pe", "pb", "dps_rate", "turnover_rate", "mktcap"],
+        ),
+        "capital" => json_schema(
+            "Intraday capital distribution snapshot or flow records",
+            &[
+                "symbol",
+                "timestamp",
+                "capital_in",
+                "capital_out",
+                "time",
+                "inflow",
+            ],
+        ),
+        "market-temp" => array(
+            "Market sentiment temperature snapshot or history",
+            &[
+                "field",
+                "value",
+                "time",
+                "temperature",
+                "description",
+                "sentiment",
+                "valuation",
+            ],
+        ),
+        "trading session" => array("Trading session schedule", &["market", "sessions"]),
+        "trading days" => object(
+            "Trading and half-trading days",
+            &["trading_days", "half_trading_days"],
+        ),
+        "security-list" => array(
+            "Overnight-eligible securities",
+            &["symbol", "name_en", "name_cn"],
+        ),
+        "participants" => array("Market participants", &["broker_id", "name_en", "name_cn"]),
+        "subscriptions" => array(
+            "Active real-time subscriptions",
+            &["symbol", "sub_types", "candlestick_periods"],
+        ),
+        "option chain" => array(
+            "Option expiry dates or strike rows",
+            &[
+                "expiry_date",
+                "strike",
+                "call_symbol",
+                "put_symbol",
+                "standard",
+            ],
+        ),
+        "option quote" => array("Real-time option quotes", option_quote_schema_fields()),
+        "option volume" => object(
+            "Real-time option call/put volume",
+            &["c", "p", "call_vol", "put_vol", "pc_ratio"],
+        ),
+        "option volume daily" => object("Daily option volume history", &["stats"]),
+        "warrant" => array(
+            "Warrant list for an underlying",
+            &["symbol", "name", "last", "leverage_ratio", "expiry", "type"],
+        ),
+        "warrant quote" => array("Real-time warrant quotes", warrant_quote_schema_fields()),
+        "warrant issuers" => array("Warrant issuer list", &["id", "name_en", "name_cn"]),
+        "constituent" => object(
+            "Index constituents or ETF holdings",
+            &[
+                "stocks",
+                "total",
+                "rise_num",
+                "fall_num",
+                "flat_num",
+                "symbol",
+                "series_name",
+                "report_period",
+                "filed_date",
+                "total_holdings",
+                "holdings",
+            ],
+        ),
+        "market-status" => array("Market open/close status", &["market", "status"]),
+        "broker-holding" => object(
+            "Broker holding top buy/sell",
+            &["buy", "sell", "updated_at"],
+        ),
+        "broker-holding detail" => object("Broker holding detail list", &["list", "updated_at"]),
+        "broker-holding daily" => object("Broker holding daily history", &["list"]),
+        "ah-premium" | "ah-premium intraday" => {
+            object("A/H premium kline or intraday data", &["klines"])
+        }
+        "trade-stats" => object("Trade statistics", &["statistics", "trades"]),
+        "anomaly" => object("Quote anomalies", &["changes", "all_off"]),
+        "top-movers" => object(
+            "Top movers with correlated news",
+            &["events", "next_params", "updated_at"],
+        ),
+        "rank" => json_schema(
+            "Popularity ranking tabs or ranking rows",
+            &["key", "name", "market", "bmp", "lists", "updated_at"],
+        ),
+        "short-positions" => object(
+            "Short selling open interest",
+            &["symbol", "data", "sources", "update_timestamp"],
+        ),
+        "short-trades" => object("Daily short-sale volume", &["symbol", "data", "sources"]),
+        _ => return None,
+    };
+    Some(schema)
+}
+
+fn option_quote_schema_fields() -> &'static [&'static str] {
+    &[
+        "symbol",
+        "last",
+        "strike",
+        "expiry",
+        "type",
+        "volume",
+        "open_interest",
+        "implied_volatility",
+        "delta",
+        "gamma",
+        "theta",
+        "vega",
+        "rho",
+        "underlying_symbol",
+    ]
+}
+
+fn warrant_quote_schema_fields() -> &'static [&'static str] {
+    &[
+        "symbol",
+        "name",
+        "last",
+        "prev_close",
+        "implied_volatility",
+        "leverage_ratio",
+        "expiry",
+        "type",
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::cli::api::MockQuoteApi;
+
+    #[test]
+    fn test_market_trade_status_label_matches_openapi_status() {
+        let cases = [
+            (101, "Closed"),
+            (103, "Morning Break"),
+            (106, "Mid-Day Break"),
+            (123, "Temporary Break"),
+            (202, "Trading"),
+            (204, "Closed"),
+            (206, "Pre-Market"),
+            (210, "Trading"),
+            (456, "Unknown"),
+        ];
+
+        for (code, expected) in cases {
+            assert_eq!(market_trade_status_label(code), expected, "code {code}");
+        }
+    }
 
     #[tokio::test]
     async fn test_run_quote_dispatches() {

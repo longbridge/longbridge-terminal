@@ -19,12 +19,16 @@ pub struct FileGuard {
 
 impl Drop for FileGuard {
     fn drop(&mut self) {
-        unlock(&self.file).unwrap();
+        _ = unlock(&self.file);
     }
 }
 
 pub fn flock(path: &Path) -> Result<FileGuard> {
-    let file = OpenOptions::new().write(true).create(true).open(path)?;
+    let file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)?;
     lock_file(&file, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY)?;
     Ok(FileGuard { file })
 }
@@ -38,7 +42,7 @@ fn lock_file(file: &File, flags: u32) -> Result<()> {
             0,
             !0,
             !0,
-            &mut overlapped,
+            &raw mut overlapped,
         );
         if ret == 0 {
             Err(Error::last_os_error())

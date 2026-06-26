@@ -78,6 +78,16 @@ fn print_cli_error(e: &anyhow::Error, using_api_key: bool) {
 
 #[tokio::main]
 async fn main() {
+    match cli::schema::handle_schema_args(std::env::args_os()) {
+        Ok(cli::schema::SchemaOutcome::NotRequested) => {}
+        Ok(cli::schema::SchemaOutcome::Handled) => return,
+        Ok(cli::schema::SchemaOutcome::Error) => std::process::exit(1),
+        Err(e) => {
+            eprintln!("Error: {e}");
+            std::process::exit(1);
+        }
+    }
+
     let _guard = logger::init();
 
     // Clean up leftover .old binary from a previous Windows update.

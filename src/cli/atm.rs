@@ -309,3 +309,35 @@ pub async fn cmd_deposits(
     }
     Ok(())
 }
+
+pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::ResponseSchema> {
+    use super::schema::{array, object};
+
+    let command = path.join(" ");
+    let schema = match command.as_str() {
+        "bank-cards" => array(
+            "Withdrawal bank cards",
+            &[
+                "id",
+                "bank",
+                "bank_en",
+                "account",
+                "account_type",
+                "currency",
+                "swift_code",
+                "region",
+                "region_name",
+                "country",
+                "address",
+                "name",
+                "name_en",
+                "status",
+                "remark",
+            ],
+        ),
+        "withdrawals" => object("Withdrawal history", &["list", "total"]),
+        "deposits" => object("Deposit history", &["items", "total"]),
+        _ => return None,
+    };
+    Some(schema)
+}

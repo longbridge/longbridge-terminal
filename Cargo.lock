@@ -814,7 +814,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "cli-candlestick-chart"
-version = "0.23.1"
+version = "0.23.3"
 dependencies = [
  "ansi-parser 0.8.0",
  "clap 2.34.0",
@@ -2723,7 +2723,7 @@ dependencies = [
 
 [[package]]
 name = "longbridge-terminal"
-version = "0.23.1"
+version = "0.23.3"
 dependencies = [
  "aes-gcm",
  "ansi-parser 0.9.1",
@@ -2771,6 +2771,7 @@ dependencies = [
  "sec2md",
  "serde",
  "serde_json",
+ "serial_test",
  "sha2",
  "strum 0.26.3",
  "tabled",
@@ -4482,7 +4483,7 @@ checksum = "1c107b6f4780854c8b126e228ea8869f4d7b71260f962fefb57b996b8959ba6b"
 
 [[package]]
 name = "sec2md"
-version = "0.23.1"
+version = "0.23.3"
 dependencies = [
  "scraper",
 ]
@@ -4644,6 +4645,31 @@ dependencies = [
  "ryu",
  "serde",
  "unsafe-libyaml",
+]
+
+[[package]]
+name = "serial_test"
+version = "3.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "699f4197115b8a7e7ff19c9a315a4bd6fffec26cc4626ef45ecaea389e081c6d"
+dependencies = [
+ "futures-executor",
+ "futures-util",
+ "log",
+ "once_cell",
+ "parking_lot",
+ "serial_test_derive",
+]
+
+[[package]]
+name = "serial_test_derive"
+version = "3.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "94e153fc76e1c6a068703d6d29c508a0b15c061c4b7e43da59cc097bc342673c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
 ]
 
 [[package]]

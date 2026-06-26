@@ -75,8 +75,10 @@ jobs:
           SHA256: ${{ steps.checksum.outputs.windows_amd64_sha256 }}
           REPO: ${{ github.repository }}
         run: |
+          set -euo pipefail
           GITHUB_URL="https://github.com/${REPO}/releases/download/${TAG}/longbridge-terminal-windows-amd64.zip"
-          CDN_URL="https://open.longbridge.cn/github/release/longbridge-terminal/v${VERSION}/longbridge-terminal-windows-amd64.zip"
+          CDN_URL="https://assets.lbkrs.com/github/release/longbridge-terminal/v${VERSION}/longbridge-terminal-windows-amd64.zip"
+          CDN_AUTOUPDATE_URL='https://assets.lbkrs.com/github/release/longbridge-terminal/v$version/longbridge-terminal-windows-amd64.zip'
 
           # Update .scoop/longbridge.json (GitHub URL, committed back to repo)
           jq \
@@ -87,12 +89,16 @@ jobs:
             .scoop/longbridge.json > .scoop/longbridge.json.tmp
           mv .scoop/longbridge.json.tmp .scoop/longbridge.json
 
-          # Generate longbridge.json for OSS (CDN URL)
+          # Generate longbridge.json for OSS (CDN URL for both current download and autoupdate template)
           jq \
-            --arg version "$VERSION" \
-            --arg url     "$CDN_URL" \
-            --arg hash    "$SHA256" \
-            '.version = $version | .architecture["64bit"].url = $url | .architecture["64bit"].hash = $hash' \
+            --arg version    "$VERSION" \
+            --arg url        "$CDN_URL" \
+            --arg hash       "$SHA256" \
+            --arg autourl    "$CDN_AUTOUPDATE_URL" \
+            '.version = $version
+             | .architecture["64bit"].url = $url
+             | .architecture["64bit"].hash = $hash
+             | .autoupdate.architecture["64bit"].url = $autourl' \
             .scoop/longbridge.json > longbridge.json
 
           echo "--- Updated manifest (.scoop/longbridge.json) ---"

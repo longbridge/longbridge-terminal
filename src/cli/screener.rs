@@ -466,3 +466,22 @@ pub async fn cmd_screener_indicators(
     }
     Ok(())
 }
+
+pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::ResponseSchema> {
+    use super::schema::{array, object};
+
+    let command = path.join(" ");
+    let schema = match command.as_str() {
+        "screener strategies" => array("Stock-selection strategies", &["id", "name", "type"]),
+        "screener run" | "screener filter" => object(
+            "Screener result page",
+            &["items", "market", "page", "total"],
+        ),
+        "screener indicators" => array(
+            "Screener indicators",
+            &["id", "key", "name", "unit", "min", "max"],
+        ),
+        _ => return None,
+    };
+    Some(schema)
+}

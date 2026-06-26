@@ -2,7 +2,7 @@ use anyhow::Result;
 use serde_json::Value;
 
 use super::api::http_get;
-use super::output::{parse_datetime_end, parse_datetime_start, print_table};
+use super::output::{parse_datetime_end_timestamp, parse_datetime_start_timestamp, print_table};
 use super::OutputFormat;
 use crate::utils::datetime::fmt_rfc3339;
 
@@ -70,12 +70,8 @@ pub async fn cmd_profit_analysis(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let start_ts = start
-        .map(|s| parse_datetime_start(s).map(|d| d.unix_timestamp().to_string()))
-        .transpose()?;
-    let end_ts = end
-        .map(|e| parse_datetime_end(e).map(|d| d.unix_timestamp().to_string()))
-        .transpose()?;
+    let start_ts = start.map(parse_datetime_start_timestamp).transpose()?;
+    let end_ts = end.map(parse_datetime_end_timestamp).transpose()?;
 
     let mut summary_params: Vec<(&str, String)> = Vec::new();
     if let Some(ref ts) = start_ts {
@@ -245,12 +241,8 @@ pub async fn cmd_profit_analysis_detail(
     let cid = crate::utils::counter::symbol_to_counter_id(symbol);
 
     // Build shared start/end timestamps
-    let start_ts = start
-        .map(|s| parse_datetime_start(s).map(|d| d.unix_timestamp().to_string()))
-        .transpose()?;
-    let end_ts = end
-        .map(|e| parse_datetime_end(e).map(|d| d.unix_timestamp().to_string()))
-        .transpose()?;
+    let start_ts = start.map(parse_datetime_start_timestamp).transpose()?;
+    let end_ts = end.map(parse_datetime_end_timestamp).transpose()?;
 
     // Build params
     let mut detail_params: Vec<(&str, String)> = vec![("counter_id", cid.clone())];
@@ -448,12 +440,10 @@ pub async fn cmd_profit_analysis_by_market(
         params.push(("market", m.to_owned()));
     }
     if let Some(s) = start {
-        let ts = parse_datetime_start(s)?.unix_timestamp().to_string();
-        params.push(("start", ts));
+        params.push(("start", parse_datetime_start_timestamp(s)?));
     }
     if let Some(e) = end {
-        let ts = parse_datetime_end(e)?.unix_timestamp().to_string();
-        params.push(("end", ts));
+        params.push(("end", parse_datetime_end_timestamp(e)?));
     }
     if let Some(c) = currency {
         params.push(("currency", c.to_owned()));
@@ -529,4 +519,69 @@ pub async fn cmd_short_margin(format: &OutputFormat, verbose: bool) -> Result<()
         }
     }
     Ok(())
+}
+
+pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::ResponseSchema> {
+    use super::schema::object;
+
+    let command = path.join(" ");
+    let schema = match command.as_str() {
+        "exchange-rate" => object("Exchange rates", &["exchanges"]),
+        "portfolio short-margin" => object("Short-selling margin details", &["short_list"]),
+        "profit-analysis" => object("Account profit analysis", profit_analysis_schema_fields()),
+        "profit-analysis detail" => object(
+            "Stock profit analysis detail",
+            &[
+                "symbol",
+                "currency",
+                "profit",
+                "flows",
+                "position",
+                "updated_at",
+            ],
+        ),
+        "profit-analysis by-market" => object(
+            "Profit analysis by market",
+            &[
+                "currency",
+                "start",
+                "end",
+                "start_date",
+                "end_date",
+                "profit",
+                "stock_items",
+                "has_more",
+                "updated_at",
+                "updated_date",
+            ],
+        ),
+        _ => return None,
+    };
+    Some(schema)
+}
+
+fn profit_analysis_schema_fields() -> &'static [&'static str] {
+    &[
+        "currency",
+        "start_date",
+        "start_time",
+        "end_date",
+        "end_time",
+        "initial_asset_value",
+        "ending_asset_value",
+        "current_total_asset",
+        "invest_amount",
+        "sum_profit",
+        "sum_profit_rate",
+        "total_simple_earning_yield",
+        "total_time_earning_yield",
+        "trade_stock_num",
+        "trade_update_date",
+        "trade_update_time",
+        "updated_at",
+        "updated_date",
+        "is_traded",
+        "profits",
+        "sublist",
+    ]
 }
