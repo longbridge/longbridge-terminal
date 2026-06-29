@@ -490,7 +490,7 @@ mod cli_header_tests {
         let args = ["--format", "json", "--name", "我的组", "--verbose"]
             .map(String::from)
             .to_vec();
-        assert_eq!(ascii_args(args), "--format json --verbose");
+        assert_eq!(ascii_args(args), "--format json --name --verbose");
     }
 
     #[test]
