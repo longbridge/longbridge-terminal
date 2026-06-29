@@ -663,7 +663,7 @@ pub fn handle_replace_order_key(event: KeyEvent) {
                 .read()
                 .expect("poison")
                 .as_ref()
-                .map_or(false, |s| s.confirming);
+                .is_some_and(|s| s.confirming);
             if confirming {
                 replace_order();
             } else if let Some(s) = REPLACE_ORDER_STATE.write().expect("poison").as_mut() {
@@ -679,7 +679,7 @@ pub fn handle_replace_order_key(event: KeyEvent) {
                 .read()
                 .expect("poison")
                 .as_ref()
-                .map_or(false, |s| s.confirming);
+                .is_some_and(|s| s.confirming);
             if confirming {
                 replace_order();
             }
@@ -725,18 +725,7 @@ pub fn handle_date_filter_key(event: KeyEvent) {
             apply_date_filter();
         }
         KeyEvent {
-            code: KeyCode::Tab | KeyCode::Down,
-            modifiers: KeyModifiers::NONE,
-            ..
-        } => {
-            let mut s = DATE_FILTER_STATE.write().expect("poison");
-            s.focused = match s.focused {
-                DateFilterField::Start => DateFilterField::End,
-                DateFilterField::End => DateFilterField::Start,
-            };
-        }
-        KeyEvent {
-            code: KeyCode::BackTab | KeyCode::Up,
+            code: KeyCode::Tab | KeyCode::Down | KeyCode::BackTab | KeyCode::Up,
             modifiers: KeyModifiers::NONE,
             ..
         } => {
@@ -902,10 +891,10 @@ fn render_orders_list(frame: &mut Frame, rect: Rect) {
     let history_guard;
     let orders: &[longbridge::trade::Order] = if is_history {
         history_guard = HISTORY_ORDERS_VIEW.read().expect("poison");
-        &*history_guard
+        &history_guard
     } else {
         orders_guard = ORDERS_VIEW.read().expect("poison");
-        &*orders_guard
+        &orders_guard
     };
 
     let mut table_state = ORDERS_TABLE.lock().expect("poison");
@@ -1022,7 +1011,7 @@ fn render_orders_list(frame: &mut Frame, rect: Rect) {
             let side_label = match order.side {
                 longbridge::trade::OrderSide::Buy => t!("Trade.Buy"),
                 longbridge::trade::OrderSide::Sell => t!("Trade.Sell"),
-                _ => std::borrow::Cow::Borrowed("–"),
+                longbridge::trade::OrderSide::Unknown => std::borrow::Cow::Borrowed("–"),
             };
             let type_label = order_type_label(order.order_type);
             let price_str = order.price.map_or("–".to_string(), |p| format!("{p:.2}"));
@@ -1116,24 +1105,24 @@ fn order_type_label(order_type: longbridge::trade::OrderType) -> &'static str {
 // ─────────────────────────── popup render fns ───────────────────────────────
 
 pub fn render_order_entry_popup(frame: &mut Frame, rect: Rect) {
+    const W: u16 = 52;
+    const H: u16 = 10;
     let state_lock = ORDER_ENTRY_STATE.read().expect("poison");
     let Some(state) = &*state_lock else { return };
 
-    const W: u16 = 52;
-    const H: u16 = 10;
     let popup_rect = crate::tui::ui::rect::centered(W, H, rect);
     frame.render_widget(Clear, popup_rect);
 
     let side_label = match state.side {
         longbridge::trade::OrderSide::Buy => t!("Trade.Buy"),
         longbridge::trade::OrderSide::Sell => t!("Trade.Sell"),
-        _ => std::borrow::Cow::Borrowed("–"),
+        longbridge::trade::OrderSide::Unknown => std::borrow::Cow::Borrowed("–"),
     };
 
     let side_style = match state.side {
         longbridge::trade::OrderSide::Buy => styles::up(std::cmp::Ordering::Greater),
         longbridge::trade::OrderSide::Sell => styles::up(std::cmp::Ordering::Less),
-        _ => styles::text(),
+        longbridge::trade::OrderSide::Unknown => styles::text(),
     };
 
     let block = Block::default()
@@ -1165,7 +1154,6 @@ pub fn render_order_entry_popup(frame: &mut Frame, rect: Rect) {
 
     let type_label = order_type_label(state.order_type);
     let tif_label = match state.tif {
-        longbridge::trade::TimeInForceType::Day => "Day",
         longbridge::trade::TimeInForceType::GoodTilCanceled => "GTC",
         _ => "Day",
     };
@@ -1177,7 +1165,7 @@ pub fn render_order_entry_popup(frame: &mut Frame, rect: Rect) {
         longbridge::trade::OrderSide::Sell => state.max_qty.map_or(String::new(), |q| {
             format!("  {} {q}", t!("Trade.AvailableQty"))
         }),
-        _ => String::new(),
+        longbridge::trade::OrderSide::Unknown => String::new(),
     };
 
     let lbl = styles::label();
@@ -1288,6 +1276,8 @@ pub fn render_order_entry_popup(frame: &mut Frame, rect: Rect) {
         row_buttons,
     ];
 
+    const INPUT_X_OFFSET: u16 = 12;
+
     let constraints: Vec<Constraint> = rows.iter().map(|_| Constraint::Length(1)).collect();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -1297,8 +1287,6 @@ pub fn render_order_entry_popup(frame: &mut Frame, rect: Rect) {
     for (line, chunk) in rows.iter().zip(chunks.iter()) {
         frame.render_widget(Paragraph::new(line.clone()), *chunk);
     }
-
-    const INPUT_X_OFFSET: u16 = 12;
 
     match state.focused_field {
         OrderEntryField::Quantity => {
@@ -1320,11 +1308,11 @@ pub fn render_order_entry_popup(frame: &mut Frame, rect: Rect) {
 }
 
 pub fn render_cancel_order_popup(frame: &mut Frame, rect: Rect) {
+    const W: u16 = 44;
+    const H: u16 = 10;
     let lock = CANCEL_TARGET.read().expect("poison");
     let Some(order) = &*lock else { return };
 
-    const W: u16 = 44;
-    const H: u16 = 10;
     let popup_rect = crate::tui::ui::rect::centered(W, H, rect);
     frame.render_widget(Clear, popup_rect);
 
@@ -1338,7 +1326,7 @@ pub fn render_cancel_order_popup(frame: &mut Frame, rect: Rect) {
 
     let price_str = order.price.map_or("–".to_string(), |p| format!("{p:.2}"));
 
-    let rows = vec![
+    let rows = [
         format!("  {}: {}", t!("CancelOrder.Order"), order.order_id),
         format!("  {}: {}", t!("CancelOrder.Symbol"), order.symbol),
         format!(
@@ -1351,7 +1339,7 @@ pub fn render_cancel_order_popup(frame: &mut Frame, rect: Rect) {
             match order.side {
                 longbridge::trade::OrderSide::Buy => t!("Trade.Buy").to_string(),
                 longbridge::trade::OrderSide::Sell => t!("Trade.Sell").to_string(),
-                _ => "–".to_string(),
+                longbridge::trade::OrderSide::Unknown => "–".to_string(),
             }
         ),
         String::new(),
