@@ -36,6 +36,13 @@ fn get_api_language() -> longbridge::Language {
     }
 }
 
+fn ascii_args(args: Vec<String>) -> String {
+    args.into_iter()
+        .filter(|a| a.is_ascii())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Initialize contexts (should be called once at app startup).
 /// If `LONGBRIDGE_APP_KEY`, `LONGBRIDGE_APP_SECRET`, and `LONGBRIDGE_ACCESS_TOKEN`
 /// are all set, uses API key authentication (no browser needed).
@@ -161,11 +168,7 @@ pub async fn init_contexts() -> Result<(
                 args.push(arg);
             }
         }
-        let cli_args = args
-            .into_iter()
-            .filter(|a| a.is_ascii())
-            .collect::<Vec<_>>()
-            .join(" ");
+        let cli_args = ascii_args(args);
         (if cmd.is_ascii() { cmd } else { String::new() }, cli_args)
     };
 
@@ -460,5 +463,50 @@ mod quote_cmd_tests {
              not raw `openapi::quote()`. Untracked QuoteContext access at:\n{}",
             offenders.join("\n")
         );
+    }
+}
+
+#[cfg(test)]
+mod cli_header_tests {
+    use super::ascii_args;
+
+    #[test]
+    fn all_ascii_pass_through() {
+        let args = ["--format", "json", "--verbose"]
+            .map(String::from)
+            .to_vec();
+        assert_eq!(ascii_args(args), "--format json --verbose");
+    }
+
+    #[test]
+    fn non_ascii_value_is_excluded() {
+        // The flag token itself is ASCII and kept; the CJK value is dropped.
+        let args = ["--name", "我的组"].map(String::from).to_vec();
+        assert_eq!(ascii_args(args), "--name");
+    }
+
+    #[test]
+    fn mixed_args_keep_ascii_only() {
+        let args = ["--format", "json", "--name", "我的组", "--verbose"]
+            .map(String::from)
+            .to_vec();
+        assert_eq!(ascii_args(args), "--format json --verbose");
+    }
+
+    #[test]
+    fn all_non_ascii_yields_empty() {
+        let args = ["你好", "世界"].map(String::from).to_vec();
+        assert_eq!(ascii_args(args), "");
+    }
+
+    #[test]
+    fn empty_input_yields_empty() {
+        assert_eq!(ascii_args(vec![]), "");
+    }
+
+    #[test]
+    fn topic_body_non_ascii_excluded() {
+        let args = ["--body", "这是话题内容"].map(String::from).to_vec();
+        assert_eq!(ascii_args(args), "--body");
     }
 }
