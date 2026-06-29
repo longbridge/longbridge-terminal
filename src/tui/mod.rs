@@ -2,10 +2,12 @@
 mod macros;
 
 pub mod app;
+pub(crate) mod init;
 pub(crate) mod input;
 pub(crate) mod keys;
 pub(crate) mod kline;
 pub(crate) mod mouse;
+pub(crate) mod mouse_input;
 pub(crate) mod nav;
 pub mod popup;
 pub mod render;
