@@ -78,15 +78,11 @@ fn probe_line(label: &str, r: &ProbeStats, url: &str) -> String {
     format!("  {label:<8} {icon}  {status:<10}  {DIM}{url}{RESET}")
 }
 
-/// Returns a colored human-readable expiry string, or an empty string if expiry is unknown.
-fn token_expiry_str(expires_at: u64) -> String {
+/// Inner logic for expiry formatting, takes `now` as a parameter for testability.
+fn format_expiry(expires_at: u64, now: u64) -> String {
     if expires_at == 0 {
         return String::new();
     }
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
     if expires_at <= now {
         format!("{RED}expired{RESET}")
     } else {
@@ -101,13 +97,21 @@ fn token_expiry_str(expires_at: u64) -> String {
     }
 }
 
+/// Returns a colored human-readable expiry string, or an empty string if expiry is unknown.
+fn token_expiry_str(expires_at: u64) -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    format_expiry(expires_at, now)
+}
+
 pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
     // ── Token expiry (from local store, before init) ──────────────────────────
     let client_id = crate::auth::effective_client_id();
-    let expires_at =
-        crate::secure_storage::EncryptedFileTokenStorage::load_full(&client_id)
-            .and_then(|v| v["expires_at"].as_u64())
-            .unwrap_or(0);
+    let expires_at = crate::secure_storage::EncryptedFileTokenStorage::load_full(&client_id)
+        .and_then(|v| v["expires_at"].as_u64())
+        .unwrap_or(0);
 
     // ── Region cache ─────────────────────────────────────────────────────────
     let region_cached = dirs::home_dir()
@@ -253,4 +257,50 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
             ),
         ],
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expiry_zero_returns_empty() {
+        assert!(format_expiry(0, 1_000_000).is_empty());
+    }
+
+    #[test]
+    fn expiry_in_past_returns_expired() {
+        let result = format_expiry(1_000, 2_000);
+        assert!(result.contains("expired"));
+    }
+
+    #[test]
+    fn expiry_at_exactly_now_returns_expired() {
+        let now = 1_000_000_u64;
+        let result = format_expiry(now, now);
+        assert!(result.contains("expired"));
+    }
+
+    #[test]
+    fn expiry_in_hours_shows_hours() {
+        let now = 1_000_000_u64;
+        let expires_at = now + 3 * 3_600; // 3 hours from now
+        let result = format_expiry(expires_at, now);
+        assert!(result.contains("exp in 3h"));
+    }
+
+    #[test]
+    fn expiry_in_days_shows_days() {
+        let now = 1_000_000_u64;
+        let expires_at = now + 42 * 86_400; // 42 days from now
+        let result = format_expiry(expires_at, now);
+        assert!(result.contains("exp in 42d"));
+    }
+
+    #[test]
+    fn expiry_one_second_away_shows_zero_hours() {
+        let now = 1_000_000_u64;
+        let result = format_expiry(now + 1, now);
+        assert!(result.contains("exp in 0h"));
+    }
 }
