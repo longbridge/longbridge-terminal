@@ -678,10 +678,16 @@ pub async fn cmd_fund_positions(format: &OutputFormat) -> Result<()> {
         "Cost Net Asset Value",
         "Currency",
         "Holding Units",
+        "Market Value",
     ];
     let mut rows = vec![];
     for channel in &resp.channels {
         for pos in &channel.positions {
+            let market_value = if pos.holding_units.is_zero() {
+                "N/A".to_string()
+            } else {
+                (pos.current_net_asset_value * pos.holding_units).to_string()
+            };
             rows.push(vec![
                 pos.symbol.clone(),
                 pos.symbol_name.clone(),
@@ -689,6 +695,7 @@ pub async fn cmd_fund_positions(format: &OutputFormat) -> Result<()> {
                 pos.cost_net_asset_value.to_string(),
                 pos.currency.clone(),
                 pos.holding_units.to_string(),
+                market_value,
             ]);
         }
     }
@@ -1209,10 +1216,16 @@ pub async fn run_fund_positions(api: &dyn TradeApi, format: &OutputFormat) -> Re
         "Cost NAV",
         "Currency",
         "Holding Units",
+        "Market Value",
     ];
     let mut rows = vec![];
     for channel in &resp.channels {
         for pos in &channel.positions {
+            let market_value = if pos.holding_units.is_zero() {
+                "N/A".to_string()
+            } else {
+                (pos.current_net_asset_value * pos.holding_units).to_string()
+            };
             rows.push(vec![
                 pos.symbol.clone(),
                 pos.symbol_name.clone(),
@@ -1220,6 +1233,7 @@ pub async fn run_fund_positions(api: &dyn TradeApi, format: &OutputFormat) -> Re
                 pos.cost_net_asset_value.to_string(),
                 pos.currency.clone(),
                 pos.holding_units.to_string(),
+                market_value,
             ]);
         }
     }
@@ -1534,6 +1548,7 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
                 "cost_net_asset_value",
                 "currency",
                 "holding_units",
+                "market_value",
             ],
         ),
         "margin-ratio" | "max-qty" => {
