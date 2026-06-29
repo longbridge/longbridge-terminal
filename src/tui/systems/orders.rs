@@ -1107,6 +1107,7 @@ fn order_type_label(order_type: longbridge::trade::OrderType) -> &'static str {
 pub fn render_order_entry_popup(frame: &mut Frame, rect: Rect) {
     const W: u16 = 52;
     const H: u16 = 10;
+    const INPUT_X_OFFSET: u16 = 12;
     let state_lock = ORDER_ENTRY_STATE.read().expect("poison");
     let Some(state) = &*state_lock else { return };
 
@@ -1276,8 +1277,6 @@ pub fn render_order_entry_popup(frame: &mut Frame, rect: Rect) {
         row_buttons,
     ];
 
-    const INPUT_X_OFFSET: u16 = 12;
-
     let constraints: Vec<Constraint> = rows.iter().map(|_| Constraint::Length(1)).collect();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -1362,11 +1361,11 @@ pub fn render_cancel_order_popup(frame: &mut Frame, rect: Rect) {
 }
 
 pub fn render_replace_order_popup(frame: &mut Frame, rect: Rect) {
+    const W: u16 = 44;
+    const H: u16 = 10;
     let lock = REPLACE_ORDER_STATE.read().expect("poison");
     let Some(state) = &*lock else { return };
 
-    const W: u16 = 44;
-    const H: u16 = 10;
     let popup_rect = crate::tui::ui::rect::centered(W, H, rect);
     frame.render_widget(Clear, popup_rect);
 
@@ -1406,7 +1405,7 @@ pub fn render_replace_order_popup(frame: &mut Frame, rect: Rect) {
         return;
     }
 
-    let rows = vec![
+    let rows = [
         format!("  {}: {}", t!("ReplaceOrder.OrderId"), state.order_id),
         format!(
             "  {}: [{}]",
