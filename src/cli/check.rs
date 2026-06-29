@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use serde_json::json;
@@ -78,7 +78,37 @@ fn probe_line(label: &str, r: &ProbeStats, url: &str) -> String {
     format!("  {label:<8} {icon}  {status:<10}  {DIM}{url}{RESET}")
 }
 
+/// Returns a colored human-readable expiry string, or an empty string if expiry is unknown.
+fn token_expiry_str(expires_at: u64) -> String {
+    if expires_at == 0 {
+        return String::new();
+    }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    if expires_at <= now {
+        format!("{RED}expired{RESET}")
+    } else {
+        let secs = expires_at - now;
+        let days = secs / 86_400;
+        if days > 0 {
+            format!("{DIM}exp in {days}d{RESET}")
+        } else {
+            let hours = secs / 3_600;
+            format!("{YELLOW}exp in {hours}h{RESET}")
+        }
+    }
+}
+
 pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
+    // ── Token expiry (from local store, before init) ──────────────────────────
+    let client_id = crate::auth::effective_client_id();
+    let expires_at =
+        crate::secure_storage::EncryptedFileTokenStorage::load_full(&client_id)
+            .and_then(|v| v["expires_at"].as_u64())
+            .unwrap_or(0);
+
     // ── Region cache ─────────────────────────────────────────────────────────
     let region_cached = dirs::home_dir()
         .map(|h| h.join(".longbridge").join("openapi").join("region-cache"))
@@ -117,10 +147,20 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
 
     match format {
         OutputFormat::Json => {
+            let connectivity_ok = global.ok && cn.ok;
+            let status = if token_ok && connectivity_ok {
+                "ok"
+            } else if token_ok {
+                "warn"
+            } else {
+                "fail"
+            };
             let value = json!({
+                "status": status,
                 "session": {
                     "token": if token_ok { "valid" } else { "invalid" },
                     "detail": token_detail,
+                    "expires_at": expires_at,
                 },
                 "region": {
                     "cached": region_cached,
@@ -145,12 +185,20 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
             } else {
                 format!("{RED}invalid{RESET}")
             };
+            let expiry = token_expiry_str(expires_at);
 
             println!("Session");
-            println!(
-                "  {:<8} {}  {}  {DIM}{}{RESET}",
-                "token", token_icon, token_label, token_detail
-            );
+            if expiry.is_empty() {
+                println!(
+                    "  {:<8} {}  {}  {DIM}{}{RESET}",
+                    "token", token_icon, token_label, token_detail
+                );
+            } else {
+                println!(
+                    "  {:<8} {}  {}  {}  {DIM}{}{RESET}",
+                    "token", token_icon, token_label, expiry, token_detail
+                );
+            }
             println!(
                 "  {:<8} {}  (active: {})",
                 "region",
@@ -162,6 +210,26 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
             println!("Connectivity {DIM}(avg of {PROBE_COUNT}){RESET}");
             println!("{}", probe_line("global", &global, region::HTTP_URL_GLOBAL));
             println!("{}", probe_line("cn", &cn, region::HTTP_URL_CN));
+
+            // Summary line
+            let passed = [token_ok, global.ok, cn.ok]
+                .into_iter()
+                .filter(|&b| b)
+                .count();
+            let total = 3_usize;
+            let summary_color = if passed == total {
+                GREEN
+            } else if passed == 0 {
+                RED
+            } else {
+                YELLOW
+            };
+            println!();
+            if passed == total {
+                println!("{summary_color}All {total} checks passed{RESET}");
+            } else {
+                println!("{summary_color}{passed}/{total} checks passed{RESET}");
+            }
         }
     }
 
@@ -175,14 +243,14 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
         summary: "Check token validity, and API connectivity".to_string(),
         root: RootKind::Object,
         fields: vec![
-            field("session", "object", "Token validity details"),
+            field("status", "string", "Overall status: ok | warn | fail"),
+            field("session", "object", "Token validity and expiry details"),
             field("region", "object", "Cached and active region details"),
             field(
                 "connectivity",
                 "object",
                 "Global/CN connectivity probe results",
             ),
-            field("status", "string", "Compatibility status summary"),
         ],
     })
 }
