@@ -22,27 +22,20 @@ pub fn render(
     watchlist: &mut LocalSearch<crate::data::WatchlistGroup>,
     watchlist_search: &mut LocalSearch<Counter>,
 ) {
-    let popup = crate::tui::app::POPUP.load(std::sync::atomic::Ordering::Relaxed);
-    if popup == crate::tui::app::POPUP_ACCOUNT {
-        switch_account(frame, rect, account);
-    } else if popup == crate::tui::app::POPUP_CURRENCY {
-        switch_currency(frame, rect, currency);
-    } else if popup == crate::tui::app::POPUP_WATCHLIST {
-        switch_watchlist(frame, rect, watchlist);
-    } else if popup == crate::tui::app::POPUP_HELP {
-        crate::tui::views::help::render(frame, rect);
-    } else if popup == crate::tui::app::POPUP_SEARCH {
-        searching(frame, rect, search);
-    } else if popup == crate::tui::app::POPUP_WATCHLIST_SEARCH {
-        search_watchlist(frame, rect, watchlist_search);
-    } else if popup & crate::tui::app::POPUP_ORDER_ENTRY != 0 {
-        crate::tui::systems::render_order_entry_popup(frame, rect);
-    } else if popup & crate::tui::app::POPUP_CANCEL_ORDER != 0 {
-        crate::tui::systems::render_cancel_order_popup(frame, rect);
-    } else if popup & crate::tui::app::POPUP_REPLACE_ORDER != 0 {
-        crate::tui::systems::render_replace_order_popup(frame, rect);
-    } else if popup & crate::tui::app::POPUP_DATE_FILTER != 0 {
-        crate::tui::systems::render_date_filter_popup(frame, rect);
+    use crate::tui::popup::PopupKind;
+    let popup = crate::tui::popup::current();
+    match popup {
+        PopupKind::Account => switch_account(frame, rect, account),
+        PopupKind::Currency => switch_currency(frame, rect, currency),
+        PopupKind::Watchlist => switch_watchlist(frame, rect, watchlist),
+        PopupKind::Help => crate::tui::views::help::render(frame, rect),
+        PopupKind::Search => searching(frame, rect, search),
+        PopupKind::WatchlistSearch => search_watchlist(frame, rect, watchlist_search),
+        PopupKind::OrderEntry => crate::tui::systems::render_order_entry_popup(frame, rect),
+        PopupKind::CancelOrder => crate::tui::systems::render_cancel_order_popup(frame, rect),
+        PopupKind::ReplaceOrder => crate::tui::systems::render_replace_order_popup(frame, rect),
+        PopupKind::DateFilter => crate::tui::systems::render_date_filter_popup(frame, rect),
+        PopupKind::None => {}
     }
 }
 

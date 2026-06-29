@@ -21,7 +21,8 @@ use rust_decimal::Decimal;
 use std::str::FromStr;
 
 use crate::{
-    tui::app::{AppState, POPUP, POPUP_CANCEL_ORDER, POPUP_DATE_FILTER, POPUP_REPLACE_ORDER, RT},
+    tui::app::{AppState, RT},
+    tui::popup::{self, PopupKind},
     tui::ui::styles,
     tui::widgets::{
         toast::{set_toast, ToastKind},
@@ -254,7 +255,7 @@ pub fn open_date_filter() {
         end_input: tui_input::Input::new(range.end.clone()),
         focused: DateFilterField::Start,
     };
-    POPUP.store(POPUP_DATE_FILTER, Ordering::Relaxed);
+    popup::open(PopupKind::DateFilter);
 }
 
 pub fn apply_date_filter() {
@@ -270,7 +271,7 @@ pub fn apply_date_filter() {
         range.start = start;
         range.end = end;
     }
-    POPUP.store(0, Ordering::Relaxed);
+    popup::close();
     refresh_history_orders();
 }
 
@@ -312,7 +313,7 @@ pub fn submit_order() {
                     format!("{}: {}", t!("Trade.OrderSubmitted"), resp.order_id),
                 );
                 *ORDER_ENTRY_STATE.write().expect("poison") = None;
-                POPUP.store(0, Ordering::Relaxed);
+                popup::close();
                 refresh_orders();
             }
             Err(e) => {
@@ -331,13 +332,13 @@ pub fn cancel_order(order_id: String) {
                     ToastKind::Success,
                     format!("{}: {}", t!("Trade.OrderCancelled"), order_id),
                 );
-                POPUP.store(0, Ordering::Relaxed);
+                popup::close();
                 *CANCEL_TARGET.write().expect("poison") = None;
                 refresh_orders();
             }
             Err(e) => {
                 set_toast(ToastKind::Error, e.to_string());
-                POPUP.store(0, Ordering::Relaxed);
+                popup::close();
                 *CANCEL_TARGET.write().expect("poison") = None;
             }
         }
@@ -373,7 +374,7 @@ pub fn replace_order() {
                     ToastKind::Success,
                     format!("{}: {}", t!("Trade.OrderReplaced"), order_id),
                 );
-                POPUP.store(0, Ordering::Relaxed);
+                popup::close();
                 *REPLACE_ORDER_STATE.write().expect("poison") = None;
                 refresh_orders();
             }
@@ -488,7 +489,7 @@ fn cycle_tif(
 
 pub fn handle_order_entry_key(event: KeyEvent) {
     let close = || {
-        POPUP.store(0, Ordering::Relaxed);
+        popup::close();
         *ORDER_ENTRY_STATE.write().expect("poison") = None;
     };
 
@@ -633,7 +634,7 @@ pub fn handle_cancel_order_key(event: KeyEvent) {
         KeyEvent {
             code: KeyCode::Esc, ..
         } => {
-            POPUP.store(0, Ordering::Relaxed);
+            popup::close();
             *CANCEL_TARGET.write().expect("poison") = None;
         }
         _ => {}
@@ -647,7 +648,7 @@ pub fn handle_replace_order_key(event: KeyEvent) {
             modifiers: KeyModifiers::NONE,
             ..
         } => {
-            POPUP.store(0, Ordering::Relaxed);
+            popup::close();
             *REPLACE_ORDER_STATE.write().expect("poison") = None;
         }
         KeyEvent {
@@ -732,7 +733,7 @@ pub fn handle_date_filter_key(event: KeyEvent) {
             modifiers: KeyModifiers::NONE,
             ..
         } => {
-            POPUP.store(0, Ordering::Relaxed);
+            popup::close();
         }
         KeyEvent {
             code: KeyCode::Enter,
@@ -1728,7 +1729,7 @@ pub fn try_open_cancel_for_selected() {
         );
     } else {
         *CANCEL_TARGET.write().expect("poison") = Some(order.clone());
-        POPUP.store(POPUP_CANCEL_ORDER, Ordering::Relaxed);
+        popup::open(PopupKind::CancelOrder);
     }
 }
 
@@ -1764,6 +1765,6 @@ pub fn try_open_replace_for_selected() {
             confirming: false,
         };
         *REPLACE_ORDER_STATE.write().expect("poison") = Some(state);
-        POPUP.store(POPUP_REPLACE_ORDER, Ordering::Relaxed);
+        popup::open(PopupKind::ReplaceOrder);
     }
 }
