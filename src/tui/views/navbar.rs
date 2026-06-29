@@ -5,10 +5,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::{
-    tui::app::{AppState, ACCOUNT_CHANNEL},
-    tui::ui::styles,
-};
+use crate::{tui::app::AppState, tui::ui::styles};
 
 pub fn render(frame: &mut Frame, rect: Rect, state: AppState) {
     let chunks = Layout::default()
@@ -27,27 +24,23 @@ pub fn render(frame: &mut Frame, rect: Rect, state: AppState) {
         .highlight_style(styles::text_selected())
         .divider("|")
         .select(match state {
+            AppState::Watchlist | AppState::WatchlistStock | AppState::Stock => 0,
             AppState::Portfolio => 1,
             AppState::Orders => 2,
             _ => 0,
         });
 
+    // Simplified implementation: use fixed username
+    let nickname = "User".to_string();
     let dark_gray_style = styles::dark_gray();
+    let name = Span::styled(t!("Welcome, %{name}", name = nickname), dark_gray_style);
     let search = Span::styled(t!("Keyboard.Search"), dark_gray_style);
     let help = Span::styled(t!("Keyboard.Help"), dark_gray_style);
     let log = Span::styled(t!("Keyboard.Console"), dark_gray_style);
     let quit = Span::styled(t!("Keyboard.Quit"), dark_gray_style);
-
-    let account_channel = ACCOUNT_CHANNEL.read().expect("poison").clone();
-    let mut spans: Vec<Span> = Vec::new();
-    if account_channel.as_deref() == Some("lb_papertrading") {
-        spans.push(Span::styled(
-            t!("account.type.paper").to_string(),
-            styles::bmp(),
-        ));
-        spans.push(Span::styled(" | ", dark_gray_style));
-    }
-    spans.extend([
+    let user_info = Paragraph::new(Line::from(vec![
+        name,
+        Span::styled(" | ", dark_gray_style),
         search,
         Span::styled(" ", dark_gray_style),
         help,
@@ -55,11 +48,9 @@ pub fn render(frame: &mut Frame, rect: Rect, state: AppState) {
         log,
         Span::styled(" ", dark_gray_style),
         quit,
-    ]);
-    let user_info = Paragraph::new(Line::from(spans)).alignment(Alignment::Right);
+    ]))
+    .alignment(Alignment::Right);
 
     frame.render_widget(tabs, chunks[0]);
     frame.render_widget(user_info, chunks[1]);
-
-    *crate::tui::mouse::NAVBAR_TABS_RECT.lock().expect("poison") = chunks[0];
 }
