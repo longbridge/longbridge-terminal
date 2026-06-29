@@ -36,61 +36,6 @@ fn get_api_language() -> longbridge::Language {
     }
 }
 
-/// Filters raw CLI args to include only known-safe flags for analytics reporting.
-/// Excludes user-provided free-text values (names, content) and non-ASCII values
-/// to prevent gateway rejections from CJK characters in HTTP headers.
-fn filter_cli_args(args: &[String]) -> String {
-    // Flags whose following value is safe to report (enum-like or numeric).
-    const SAFE_VALUE_FLAGS: &[&str] = &[
-        "--format",
-        "--lang",
-        "--period",
-        "--adjust",
-        "--session",
-        "--count",
-        "--limit",
-        "--page",
-        "--date",
-        "--start",
-        "--end",
-        "--fields",
-        "--granularity",
-    ];
-    // Boolean flags that carry no value and are safe to report.
-    const SAFE_BOOL_FLAGS: &[&str] = &[
-        "--verbose",
-        "-v",
-        "--schema",
-        "--flow",
-        "--history",
-        "--release-notes",
-        "--force",
-    ];
-
-    let mut out: Vec<&str> = Vec::new();
-    let mut iter = args.iter();
-    while let Some(arg) = iter.next() {
-        if SAFE_BOOL_FLAGS.contains(&arg.as_str()) {
-            out.push(arg.as_str());
-        } else if let Some((flag, val)) = arg.split_once('=') {
-            // Handle --flag=value style; only include if flag is safe and value is ASCII.
-            if SAFE_VALUE_FLAGS.contains(&flag) && val.is_ascii() {
-                out.push(arg.as_str());
-            }
-        } else if SAFE_VALUE_FLAGS.contains(&arg.as_str()) {
-            if let Some(val) = iter.next() {
-                if val.is_ascii() {
-                    out.push(arg.as_str());
-                    out.push(val.as_str());
-                }
-                // Non-ASCII value: consume and discard both flag and value.
-            }
-        }
-        // Positional args and unknown flags are silently dropped.
-    }
-    out.join(" ")
-}
-
 /// Initialize contexts (should be called once at app startup).
 /// If `LONGBRIDGE_APP_KEY`, `LONGBRIDGE_APP_SECRET`, and `LONGBRIDGE_ACCESS_TOKEN`
 /// are all set, uses API key authentication (no browser needed).
@@ -204,7 +149,7 @@ pub async fn init_contexts() -> Result<(
 
     // Extract x-cli-cmd and x-cli-args from process arguments.
     // x-cli-cmd: the first positional (subcommand) arg.
-    // x-cli-args: all remaining args after the subcommand.
+    // x-cli-args: remaining args after the subcommand, non-ASCII tokens excluded.
     let (cli_cmd, cli_args) = {
         let mut iter = std::env::args().skip(1);
         let mut cmd = String::new();
@@ -216,7 +161,12 @@ pub async fn init_contexts() -> Result<(
                 args.push(arg);
             }
         }
-        (cmd, filter_cli_args(&args))
+        let cli_args = args
+            .into_iter()
+            .filter(|a| a.is_ascii())
+            .collect::<Vec<_>>()
+            .join(" ");
+        (if cmd.is_ascii() { cmd } else { String::new() }, cli_args)
     };
 
     let user_agent = concat!("longbridge-cli/", env!("CARGO_PKG_VERSION"));
