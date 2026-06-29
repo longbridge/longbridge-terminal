@@ -808,7 +808,7 @@ pub async fn cmd_calc_index(
         index
             .iter()
             .filter_map(|key| {
-                calc_index_column(key).map(|(header, extract)| (key.as_str(), header, extract))
+                calc_index_column(key).map(|(header, extract)| (key.as_ref(), header, extract))
             })
             .filter(|(_, header, _)| seen.insert(*header))
             .collect()

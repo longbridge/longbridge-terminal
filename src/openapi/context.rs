@@ -24,6 +24,9 @@ pub static RATE_LIMITED_QUOTE_CTX: OnceLock<RateLimitedQuoteContext> = OnceLock:
 /// Global rate-limited `TradeContext` wrapper
 pub static RATE_LIMITED_TRADE_CTX: OnceLock<RateLimitedTradeContext> = OnceLock::new();
 
+/// Global `FundamentalContext` for financial data
+pub static FUNDAMENTAL_CTX: OnceLock<longbridge::FundamentalContext> = OnceLock::new();
+
 /// Map the effective content language to the SDK Language enum.
 fn get_api_language() -> longbridge::Language {
     match crate::locale::get() {
@@ -74,7 +77,7 @@ pub async fn init_contexts() -> Result<(
         // Token file exists and is fresh: load it via OAuthBuilder.
         // The browser-flow callback below should never fire because we handled
         // expiry above; it is kept as a last-resort safety net.
-        let oauth_result = longbridge::oauth::OAuthBuilder::new(crate::auth::client_id())
+        let oauth_result = longbridge::oauth::OAuthBuilder::new(crate::auth::effective_client_id())
             .callback_port(crate::auth::CALLBACK_PORT)
             .build(|_url| {
                 tracing::warn!("OAuth browser flow triggered unexpectedly");
@@ -103,7 +106,7 @@ pub async fn init_contexts() -> Result<(
     // If LONGBRIDGE_ENV=staging, override all endpoints to test environment.
     // This takes highest priority over region detection.
     let effective_http_url;
-    if crate::auth::is_test_env() {
+    if crate::region::is_test_env() {
         tracing::info!("Using TEST environment endpoints (openapi.longbridge.xyz)");
         config_builder = config_builder
             .http_url(crate::region::HTTP_URL_TEST)
@@ -163,6 +166,11 @@ pub async fn init_contexts() -> Result<(
     CONTENT_CTX
         .set(content_ctx)
         .map_err(|_| anyhow::anyhow!("ContentContext already initialized"))?;
+
+    let fundamental_ctx = longbridge::FundamentalContext::new(Arc::clone(&config));
+    FUNDAMENTAL_CTX
+        .set(fundamental_ctx)
+        .map_err(|_| anyhow::anyhow!("FundamentalContext already initialized"))?;
 
     let statement_ctx = longbridge::AssetContext::new(Arc::clone(&config));
     STATEMENT_CTX
@@ -264,4 +272,23 @@ pub fn statement() -> &'static longbridge::AssetContext {
     STATEMENT_CTX
         .get()
         .expect("AssetContext not initialized, please call init_contexts() first")
+}
+
+/// Get global `FundamentalContext` for financial data
+pub fn fundamental() -> &'static longbridge::FundamentalContext {
+    FUNDAMENTAL_CTX
+        .get()
+        .expect("FundamentalContext not initialized, please call init_contexts() first")
+}
+
+/// Get global `QuoteContext` for CLI command usage
+pub fn quote_cmd() -> &'static longbridge::quote::QuoteContext {
+    QUOTE_CTX
+        .get()
+        .expect("QuoteContext not initialized, please call init_contexts() first")
+}
+
+/// Record that a quote WebSocket operation is being made via a CLI command.
+pub fn track_quote_cmd() {
+    let _ = QUOTE_CTX.get();
 }
