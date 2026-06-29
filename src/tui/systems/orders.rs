@@ -21,7 +21,8 @@ use rust_decimal::Decimal;
 use std::str::FromStr;
 
 use crate::{
-    tui::app::{AppState, POPUP, POPUP_CANCEL_ORDER, POPUP_DATE_FILTER, POPUP_REPLACE_ORDER, RT},
+    tui::app::{AppState, RT},
+    tui::popup::{self, PopupKind},
     tui::ui::styles,
     tui::widgets::{
         toast::{set_toast, ToastKind},
@@ -254,7 +255,7 @@ pub fn open_date_filter() {
         end_input: tui_input::Input::new(range.end.clone()),
         focused: DateFilterField::Start,
     };
-    POPUP.store(POPUP_DATE_FILTER, Ordering::Relaxed);
+    popup::open(PopupKind::DateFilter);
 }
 
 pub fn apply_date_filter() {

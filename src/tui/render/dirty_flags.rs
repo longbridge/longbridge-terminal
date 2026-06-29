@@ -80,24 +80,19 @@ impl DirtyFlags {
     /// Mark components for a popup change
     #[inline]
     #[must_use]
-    pub fn mark_popup_change(mut self, popup: u16) -> Self {
-        if popup & crate::tui::app::POPUP_HELP != 0 {
-            self.insert(Self::POPUP_HELP);
-        }
-        if popup & crate::tui::app::POPUP_SEARCH != 0 {
-            self.insert(Self::POPUP_SEARCH);
-        }
-        if popup & crate::tui::app::POPUP_ACCOUNT != 0 {
-            self.insert(Self::POPUP_ACCOUNT);
-        }
-        if popup & crate::tui::app::POPUP_CURRENCY != 0 {
-            self.insert(Self::POPUP_CURRENCY);
-        }
-        if popup & crate::tui::app::POPUP_WATCHLIST != 0 {
-            self.insert(Self::POPUP_WATCHLIST);
-        }
-        if popup & crate::tui::app::POPUP_WATCHLIST_SEARCH != 0 {
-            self.insert(Self::POPUP_WATCHLIST);
+    pub fn mark_popup_change(mut self, popup: crate::tui::popup::PopupKind) -> Self {
+        use crate::tui::popup::PopupKind;
+        match popup {
+            PopupKind::Help => self.insert(Self::POPUP_HELP),
+            PopupKind::Search => self.insert(Self::POPUP_SEARCH),
+            PopupKind::Account => self.insert(Self::POPUP_ACCOUNT),
+            PopupKind::Currency => self.insert(Self::POPUP_CURRENCY),
+            PopupKind::Watchlist | PopupKind::WatchlistSearch => self.insert(Self::POPUP_WATCHLIST),
+            PopupKind::OrderEntry
+            | PopupKind::CancelOrder
+            | PopupKind::ReplaceOrder
+            | PopupKind::DateFilter => self.insert(Self::ALL),
+            PopupKind::None => {}
         }
         self
     }
