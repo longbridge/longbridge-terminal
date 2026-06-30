@@ -3616,9 +3616,14 @@ fn print_macroeconomic_history(resp: &MacroeconomicResponse) {
         .data
         .iter()
         .map(|r| {
+            let actual = if is_actual_unreleased(&r.actual_value, r.release_at, &r.period) {
+                String::new()
+            } else {
+                r.actual_value.clone()
+            };
             let mut row = vec![
                 r.period.clone(),
-                r.actual_value.clone(),
+                actual,
                 r.forecast_value.clone(),
                 r.previous_value.clone(),
             ];
@@ -3647,6 +3652,33 @@ fn opt_ts(dt: Option<time::OffsetDateTime>) -> Value {
     }
 }
 
+// Returns true when actual_value="0" should be treated as unreleased (empty).
+// A release_at that predates the period's first day is an impossible past date
+// produced by a data-quality bug in the upstream API.
+fn is_actual_unreleased(
+    actual: &str,
+    release_at: Option<time::OffsetDateTime>,
+    period: &str,
+) -> bool {
+    if actual != "0" {
+        return false;
+    }
+    let Some(released) = release_at else {
+        return true;
+    };
+    if let Some((year_str, month_str)) = period.split_once('-') {
+        if let (Ok(year), Ok(month_u8)) = (year_str.parse::<i32>(), month_str.parse::<u8>()) {
+            if let Ok(month) = time::Month::try_from(month_u8) {
+                if let Ok(period_start) = time::Date::from_calendar_date(year, month, 1) {
+                    let period_start_dt = period_start.midnight().assume_utc();
+                    return released < period_start_dt;
+                }
+            }
+        }
+    }
+    false
+}
+
 fn macroeconomic_indicator_to_json(i: &MacroeconomicIndicator) -> Value {
     serde_json::json!({
         "indicator_code": i.indicator_code,
@@ -3659,10 +3691,15 @@ fn macroeconomic_indicator_to_json(i: &MacroeconomicIndicator) -> Value {
 }
 
 fn macroeconomic_record_to_json(r: &Macroeconomic) -> Value {
+    let actual = if is_actual_unreleased(&r.actual_value, r.release_at, &r.period) {
+        Value::Null
+    } else {
+        Value::String(r.actual_value.clone())
+    };
     let mut obj = serde_json::json!({
         "period":         r.period,
         "release_at":     opt_ts(r.release_at),
-        "actual_value":   r.actual_value,
+        "actual_value":   actual,
         "previous_value": r.previous_value,
         "forecast_value": r.forecast_value,
     });
@@ -3764,7 +3801,7 @@ pub async fn cmd_macroeconomic(
                     end.as_deref().unwrap_or("-"),
                 );
             }
-            let resp = ctx
+            let mut resp = ctx
                 .macroeconomic(
                     indicator_code.clone(),
                     start,
@@ -3791,6 +3828,7 @@ pub async fn cmd_macroeconomic(
             if resp.info.indicator_code.is_empty() {
                 anyhow::bail!("Indicator code '{indicator_code}' not found");
             }
+            resp.data.sort_unstable_by(|a, b| b.period.cmp(&a.period));
             let total = u64::try_from(resp.count).unwrap_or(0);
             let has_more = u64::from(offset) + (resp.data.len() as u64) < total;
             match format {
