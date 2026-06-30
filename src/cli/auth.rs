@@ -54,6 +54,9 @@ struct TokenState {
     refresh_token_exp: Option<u64>,
     /// Unix timestamp of when the token file was last written (login time).
     logged_in_at: Option<u64>,
+    /// Data-center region (`us`/`ap`) derived from the access token prefix.
+    /// `None` when no token is stored or it cannot be decrypted.
+    dc_region: Option<&'static str>,
 }
 
 /// Decode a numeric field from a JWT payload without verifying the signature.
@@ -85,6 +88,7 @@ fn read_token_state() -> Result<TokenState> {
             access_token_exp: None,
             refresh_token_exp: None,
             logged_in_at: None,
+            dc_region: None,
         });
     }
 
@@ -99,8 +103,14 @@ fn read_token_state() -> Result<TokenState> {
             access_token_exp: None,
             refresh_token_exp: None,
             logged_in_at: None,
+            dc_region: None,
         });
     };
+
+    // Data-center region from the access token's `us_`/`ap_` prefix.
+    let dc_region = full["access_token"]
+        .as_str()
+        .map(|token| longbridge::DcRegion::from_credential(token).as_str());
 
     let expires_at = full["expires_at"].as_u64().unwrap_or(0);
     let refresh_token = full["refresh_token"].as_str().unwrap_or("");
@@ -129,6 +139,7 @@ fn read_token_state() -> Result<TokenState> {
             access_token_exp,
             refresh_token_exp,
             logged_in_at,
+            dc_region,
         });
     }
 
@@ -139,6 +150,7 @@ fn read_token_state() -> Result<TokenState> {
             access_token_exp,
             refresh_token_exp,
             logged_in_at,
+            dc_region,
         });
     }
 
@@ -155,6 +167,7 @@ fn read_token_state() -> Result<TokenState> {
             access_token_exp,
             refresh_token_exp,
             logged_in_at,
+            dc_region,
         })
     } else {
         Ok(TokenState {
@@ -166,6 +179,7 @@ fn read_token_state() -> Result<TokenState> {
             access_token_exp,
             refresh_token_exp,
             logged_in_at,
+            dc_region,
         })
     }
 }
@@ -349,6 +363,7 @@ pub async fn cmd_auth_status(format: &OutputFormat, market: &str) -> Result<()> 
                 "token": {
                     "status": token.status,
                     "logged_in_at": token.logged_in_at,
+                    "dc_region": token.dc_region,
                     "path": token_path.display().to_string(),
                 },
             });
@@ -416,6 +431,9 @@ pub async fn cmd_auth_status(format: &OutputFormat, market: &str) -> Result<()> 
                     W = W,
                     color = status_color,
                 );
+            }
+            if let Some(region) = token.dc_region {
+                println!("{:<W$} {}", "DC Region", region.to_uppercase(), W = W);
             }
             let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
             let fmt_exp = |ts: u64| -> String {

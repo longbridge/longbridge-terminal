@@ -338,27 +338,44 @@ pub fn open_browser(url: &str) -> bool {
 }
 
 /// Device Authorization Flow (RFC 8628).
-pub async fn device_login(verbose: bool, client_name: Option<String>) -> Result<()> {
-    use std::time::{Duration, Instant};
+/// Data centers polled for the device-login token. The `user_code` /
+/// `device_code` are created once on the default (AP) server, which syncs the
+/// device info to US, so the same `user_code` can be authorized on either DC's
+/// web page (the region is chosen during web login). We poll both DCs for the
+/// token; the one the user authorized on returns it, and the access token's
+/// `us_`/`ap_` prefix identifies the region.
+const DEVICE_LOGIN_REGIONS: [&str; 2] = ["ap", "us"];
 
-    let oauth_base = oauth_base_url();
-    let http_client = build_http_client()?;
-    let invite_code = read_invite_code();
+/// A pending device-authorization request. Created once on AP and synced to US
+/// server-side, so the single `device_code` is valid on both data centers.
+struct DeviceAuthorization {
+    device_code: String,
+    verification_uri_complete: String,
+    interval: u64,
+    expires_in: u64,
+}
 
-    let reg = get_or_register_client(&http_client, verbose, client_name).await?;
-    let client_id = reg.client_id.as_str();
-
+/// Create the device authorization by calling the default (AP) server. The
+/// server syncs the `device_code` / `user_code` to US so the same code can be
+/// authorized on either DC. No `x-dc-region` header — the default routes to AP.
+async fn request_device_authorize(
+    http_client: &reqwest::Client,
+    oauth_base: &str,
+    client_id: &str,
+    invite_code: Option<&str>,
+    verbose: bool,
+) -> Result<DeviceAuthorization> {
     let url = format!("{oauth_base}/device/authorize");
     if verbose {
         eprintln!("POST {url}");
     }
-    let mut device_auth_form: Vec<(&str, &str)> = vec![("client_id", client_id)];
-    if let Some(ref invite_code) = invite_code {
-        device_auth_form.push(("invite-code", invite_code.as_str()));
+    let mut form: Vec<(&str, &str)> = vec![("client_id", client_id)];
+    if let Some(invite_code) = invite_code {
+        form.push(("invite-code", invite_code));
     }
     let raw = http_client
         .post(&url)
-        .form(&device_auth_form)
+        .form(&form)
         .send()
         .await
         .context("Device authorization request failed")?;
@@ -369,31 +386,133 @@ pub async fn device_login(verbose: bool, client_name: Option<String>) -> Result<
         anyhow::bail!("Device authorization failed ({status}): {body}");
     }
 
-    let device_resp = raw
+    let resp = raw
         .json::<serde_json::Value>()
         .await
         .context("Failed to parse device authorization response")?;
-
-    let device_code = device_resp["device_code"]
+    let device_code = resp["device_code"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("No device_code in response"))?
         .to_owned();
-    let verification_url_base = device_resp["verification_uri_complete"]
+    let verification_uri_complete = resp["verification_uri_complete"]
         .as_str()
-        .unwrap_or_else(|| device_resp["verification_uri"].as_str().unwrap_or(""));
+        .or_else(|| resp["verification_uri"].as_str())
+        .unwrap_or_default()
+        .to_owned();
+    Ok(DeviceAuthorization {
+        device_code,
+        verification_uri_complete,
+        expires_in: resp["expires_in"].as_u64().unwrap_or(300),
+        interval: resp["interval"].as_u64().unwrap_or(5),
+    })
+}
+
+/// Poll `POST /token` on a single data center (selected via the `x-dc-region`
+/// header) for the shared `device_code` until it is authorized (returns the
+/// token), is rejected, or expires.
+async fn poll_device_token(
+    http_client: &reqwest::Client,
+    oauth_base: &str,
+    client_id: &str,
+    device_code: &str,
+    region: &'static str,
+    interval: u64,
+    expires_in: u64,
+    verbose: bool,
+) -> Result<longbridge::oauth::StoredToken> {
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+    let url = format!("{oauth_base}/token");
+    let deadline = Instant::now() + Duration::from_secs(expires_in);
+    let poll_interval = Duration::from_secs(interval.max(1));
+
+    loop {
+        tokio::time::sleep(poll_interval).await;
+
+        if Instant::now() >= deadline {
+            anyhow::bail!("Device authorization timed out ({region})");
+        }
+
+        if verbose {
+            eprintln!("POST {url}  grant_type=device_code  x-dc-region={region}");
+        }
+        let raw = http_client
+            .post(&url)
+            .header(longbridge::DC_REGION_HEADER, region)
+            .form(&[
+                ("client_id", client_id),
+                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+                ("device_code", device_code),
+            ])
+            .send()
+            .await
+            .with_context(|| format!("Token poll request failed ({region})"))?;
+
+        let status = raw.status();
+        if status.is_success() {
+            let token_resp = raw
+                .json::<serde_json::Value>()
+                .await
+                .with_context(|| format!("Failed to parse token response ({region})"))?;
+
+            let access_token = token_resp["access_token"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("No access_token in token response ({region})"))?;
+            let expires_in = token_resp["expires_in"].as_u64().unwrap_or(3600);
+            let refresh_token = token_resp["refresh_token"].as_str().map(str::to_owned);
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+
+            return Ok(longbridge::oauth::StoredToken {
+                client_id: client_id.to_string(),
+                access_token: access_token.to_string(),
+                refresh_token,
+                expires_at: now + expires_in,
+            });
+        }
+
+        let err_resp = raw.json::<serde_json::Value>().await.unwrap_or_default();
+        match err_resp["error"].as_str() {
+            Some("authorization_pending" | "slow_down") => {}
+            Some(other) => anyhow::bail!("Authorization failed ({region}): {other}"),
+            None => anyhow::bail!("Unexpected token poll response ({region})"),
+        }
+    }
+}
+
+pub async fn device_login(verbose: bool, client_name: Option<String>) -> Result<()> {
+    let oauth_base = oauth_base_url();
+    let http_client = build_http_client()?;
+    let invite_code = read_invite_code();
+
+    let reg = get_or_register_client(&http_client, verbose, client_name).await?;
+    let client_id = reg.client_id;
+
+    // Create the device authorization on the default (AP) server; it syncs the
+    // device info to US, so the same `user_code` can be authorized on either DC.
+    let auth = request_device_authorize(
+        &http_client,
+        &oauth_base,
+        &client_id,
+        invite_code.as_deref(),
+        verbose,
+    )
+    .await?;
+
+    // A single, region-neutral verification URL: the user picks their region by
+    // logging in on the web, and the synced `user_code` is valid there.
     let verification_url_owned;
     let verification_url = if let Some(ref invite_code) = invite_code {
         verification_url_owned =
-            append_query_param(verification_url_base, "invite-code", invite_code);
+            append_query_param(&auth.verification_uri_complete, "invite-code", invite_code);
         verification_url_owned.as_str()
     } else {
-        verification_url_base
+        auth.verification_uri_complete.as_str()
     };
-    let expires_in = device_resp["expires_in"].as_u64().unwrap_or(300);
-    let interval = device_resp["interval"].as_u64().unwrap_or(5);
 
     let opened = open_browser(verification_url);
-
     println!("Open the following URL in your browser to authorize:");
     println!();
     println!("{verification_url}");
@@ -404,71 +523,34 @@ pub async fn device_login(verbose: bool, client_name: Option<String>) -> Result<
         println!("Waiting for authorization...");
     }
 
-    let deadline = Instant::now() + Duration::from_secs(expires_in);
-    let poll_interval = Duration::from_secs(interval);
+    // The authorization lands on whichever data center the user logged in to, so
+    // poll both DCs in parallel for the shared `device_code`; the first to be
+    // authorized wins. The access token carries that DC's `us_`/`ap_` prefix, so
+    // subsequent API calls route back to the same data center automatically.
+    let polls = DEVICE_LOGIN_REGIONS.iter().map(|&region| {
+        Box::pin(poll_device_token(
+            &http_client,
+            &oauth_base,
+            &client_id,
+            &auth.device_code,
+            region,
+            auth.interval,
+            auth.expires_in,
+            verbose,
+        ))
+    });
+    let (token, _) = futures::future::select_ok(polls)
+        .await
+        .map_err(|e| anyhow::anyhow!("Device authorization failed: {e:#}"))?;
 
-    loop {
-        tokio::time::sleep(poll_interval).await;
+    crate::secure_storage::EncryptedFileTokenStorage
+        .save(&token)
+        .map_err(|e| anyhow::anyhow!("Failed to save token: {e}"))?;
 
-        if Instant::now() >= deadline {
-            anyhow::bail!("Device authorization timed out — please try again.");
-        }
-
-        let url = format!("{oauth_base}/token");
-        if verbose {
-            eprintln!("POST {url}  grant_type=device_code");
-        }
-        let raw = http_client
-            .post(&url)
-            .form(&[
-                ("client_id", client_id),
-                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
-                ("device_code", device_code.as_str()),
-            ])
-            .send()
-            .await
-            .context("Token poll request failed")?;
-
-        let status = raw.status();
-        if status.is_success() {
-            let token_resp = raw
-                .json::<serde_json::Value>()
-                .await
-                .context("Failed to parse token response")?;
-
-            let access_token = token_resp["access_token"]
-                .as_str()
-                .ok_or_else(|| anyhow::anyhow!("No access_token in token response"))?;
-            let expires_in = token_resp["expires_in"].as_u64().unwrap_or(3600);
-            let refresh_token = token_resp["refresh_token"].as_str().map(str::to_owned);
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
-
-            let token = longbridge::oauth::StoredToken {
-                client_id: client_id.to_string(),
-                access_token: access_token.to_string(),
-                refresh_token,
-                expires_at: now + expires_in,
-            };
-            crate::secure_storage::EncryptedFileTokenStorage
-                .save(&token)
-                .map_err(|e| anyhow::anyhow!("Failed to save token: {e}"))?;
-
-            // Registration was already persisted in get_or_register_client, so
-            // there is nothing more to store here.
-            println!("Successfully authenticated.");
-            return Ok(());
-        }
-
-        let err_resp = raw.json::<serde_json::Value>().await.unwrap_or_default();
-        match err_resp["error"].as_str() {
-            Some("authorization_pending" | "slow_down") => {}
-            Some(other) => anyhow::bail!("Authorization failed: {other}"),
-            None => anyhow::bail!("Unexpected token poll response"),
-        }
-    }
+    // Registration was already persisted in get_or_register_client, so there is
+    // nothing more to store here.
+    println!("Successfully authenticated.");
+    Ok(())
 }
 
 /// Refresh the access token in-place if it has expired.
@@ -749,9 +831,14 @@ pub async fn auth_code_exchange_login(code: &str) -> Result<()> {
     let mut last_rejection: Option<(reqwest::StatusCode, serde_json::Value)> = None;
     let saw_client_id = !attempts.is_empty();
     for (exchange_code, client_id) in &attempts {
-        tracing::debug!("Exchanging authorization code via {url}");
+        // The authorization code carries its data-center region as a prefix
+        // (`us_…` / `ap_…`); route the exchange to that DC via `x-dc-region` so
+        // a US-issued code is validated against the US server (default is AP).
+        let dc_region = longbridge::DcRegion::from_credential(exchange_code).as_str();
+        tracing::debug!("Exchanging authorization code via {url} (x-dc-region={dc_region})");
         let send_result = http_client
             .post(&url)
+            .header(longbridge::DC_REGION_HEADER, dc_region)
             .form(&[
                 ("grant_type", "authorization_code"),
                 ("code", exchange_code.as_str()),
