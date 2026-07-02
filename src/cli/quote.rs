@@ -8,7 +8,7 @@ use time::Date;
 use serde_json::Value;
 
 use super::{
-    api::{http_get, http_post, LbQuoteApi, QuoteApi},
+    api::{http_get, http_get_dc, http_post, LbQuoteApi, QuoteApi},
     output::{
         fmt_date, fmt_dec, fmt_decimal, fmt_decimal_div100, fmt_decimal_div252, parse_date,
         print_table,
@@ -2435,9 +2435,10 @@ pub async fn cmd_broker_holding_top(
     verbose: bool,
 ) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
-    let data = http_get(
+    let data = http_get_dc(
         "/v1/quote/broker-holding",
         &[("counter_id", cid.as_str()), ("type", period)],
+        Some(longbridge::DcRegion::Ap),
         verbose,
     )
     .await?;
@@ -2480,9 +2481,10 @@ pub async fn cmd_broker_holding_detail(
     verbose: bool,
 ) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
-    let data = http_get(
+    let data = http_get_dc(
         "/v1/quote/broker-holding/detail",
         &[("counter_id", cid.as_str())],
+        Some(longbridge::DcRegion::Ap),
         verbose,
     )
     .await?;
@@ -2534,9 +2536,10 @@ pub async fn cmd_broker_holding_daily(
     verbose: bool,
 ) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
-    let data = http_get(
+    let data = http_get_dc(
         "/v1/quote/broker-holding/daily",
         &[("counter_id", cid.as_str()), ("parti_number", broker)],
+        Some(longbridge::DcRegion::Ap),
         verbose,
     )
     .await?;

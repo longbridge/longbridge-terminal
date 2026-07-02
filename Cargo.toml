@@ -114,5 +114,3 @@ needless_pass_by_value = "allow"
 pedantic = { level = "deny", priority = -1 }
 too_many_arguments = "allow"
 too_many_lines = "allow"
-
-
