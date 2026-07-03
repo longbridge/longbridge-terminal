@@ -3672,7 +3672,7 @@ pub async fn cmd_etf_docs(
     symbol: String,
     limit: u32,
     format: &OutputFormat,
-    verbose: bool,
+    _verbose: bool,
 ) -> Result<()> {
     let data = to_value(
         crate::openapi::fundamental()

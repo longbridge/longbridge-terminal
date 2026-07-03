@@ -67,7 +67,7 @@ pub async fn cmd_orders(
     us_page: u32,
     us_limit: u32,
     format: &OutputFormat,
-    verbose: bool,
+    _verbose: bool,
 ) -> Result<()> {
     // US accounts: SDK us_query_orders (interface 14)
     if crate::openapi::is_us_account().await {
