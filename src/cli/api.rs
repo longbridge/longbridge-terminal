@@ -497,6 +497,78 @@ pub async fn http_post_dc(
     Ok(v)
 }
 
+/// GET with an explicit data-center restriction.
+///
+/// Behaves like [`http_get`] but calls `.dc_restrict(region)` on the request
+/// so the SDK returns [`HttpClientError::DcRegionRestricted`] (surfaced as an
+/// anyhow error) when the current session's DC does not match `region`.
+///
+/// Use this for US-only endpoints: `http_get_dc(DcRegion::Us, path, params, verbose)`.
+pub async fn http_get_dc(
+    region: longbridge::DcRegion,
+    path: &str,
+    params: &[(&str, &str)],
+    verbose: bool,
+) -> Result<serde_json::Value> {
+    use longbridge::httpclient::Json;
+    use reqwest::Method;
+
+    if verbose {
+        let qs = params
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join("&");
+        eprintln!("* GET {path}?{qs}  (dc={})", region.as_str());
+    }
+    let client = crate::openapi::http_client();
+    let params: Vec<(&str, &str)> = params.to_vec();
+    let resp = client
+        .request(Method::GET, path)
+        .query_params(params)
+        .dc_restrict(region)
+        .response::<Json<serde_json::Value>>()
+        .send()
+        .await
+        .map_err(anyhow::Error::from)?;
+    let mut v = resp.0;
+    super::output::strip_private_fields(&mut v);
+    Ok(v)
+}
+
+/// POST with an explicit data-center restriction.
+///
+/// Behaves like [`http_post`] but calls `.dc_restrict(region)`.
+pub async fn http_post_dc(
+    region: longbridge::DcRegion,
+    path: &str,
+    body: serde_json::Value,
+    verbose: bool,
+) -> Result<serde_json::Value> {
+    use longbridge::httpclient::Json;
+    use reqwest::Method;
+
+    if verbose {
+        eprintln!("* POST {path}  (dc={})", region.as_str());
+        eprintln!(
+            "* Body: {}",
+            serde_json::to_string_pretty(&body).unwrap_or_default()
+        );
+    }
+    let client = crate::openapi::http_client();
+    let resp = client
+        .request(Method::POST, path)
+        .body(Json(body))
+        .dc_restrict(region)
+        .response::<Json<serde_json::Value>>()
+        .send()
+        .await
+        .map_err(anyhow::Error::from)?;
+    let mut v = resp.0;
+    super::output::strip_private_fields(&mut v);
+    Ok(v)
+}
+
 pub async fn http_delete(
     path: &str,
     body: serde_json::Value,
