@@ -1812,10 +1812,13 @@ pub async fn cmd_us_realized_pl(
     format: &OutputFormat,
     _verbose: bool,
 ) -> Result<()> {
-    let cat = if category.eq_ignore_ascii_case("all") {
-        None
-    } else {
-        Some(category.to_uppercase())
+    // API expects numeric category: 0=all, 1=stock, 2=option, 3=crypto
+    let cat: Option<String> = match category.to_lowercase().as_str() {
+        "all" | "0" => None,
+        "stock" | "1" => Some("1".to_string()),
+        "option" | "2" => Some("2".to_string()),
+        "crypto" | "3" => Some("3".to_string()),
+        other => Some(other.to_string()),
     };
     let resp = crate::openapi::trade()
         .us_realized_pl(currency.to_string(), cat)
