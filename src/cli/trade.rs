@@ -62,7 +62,7 @@ pub async fn cmd_orders(
     symbol: Option<String>,
     // US-only filters (interface 14); ignored for HK/CN accounts
     us_status: Option<String>,
-    us_type: Option<String>,
+    _us_type: Option<String>,
     us_action: Option<String>,
     us_page: u32,
     us_limit: u32,
@@ -71,50 +71,39 @@ pub async fn cmd_orders(
 ) -> Result<()> {
     // US accounts: SDK us_query_orders (interface 14)
     if crate::openapi::is_us_account().await {
-        use longbridge::trade::QueryUSOrdersOptions;
+        use longbridge::trade::{GetUSHistoryOrders, OrderSide};
         let query_type = match us_status.as_deref().unwrap_or("all") {
             "pending" => 1,
             "history" => 2,
             _ => 0,
         };
-        let action = match us_action.as_deref().unwrap_or("") {
-            "buy" => 1,
-            "sell" => 2,
-            _ => 0,
+        let side = match us_action.as_deref().unwrap_or("") {
+            "buy" => OrderSide::Buy,
+            "sell" => OrderSide::Sell,
+            _ => OrderSide::Unknown,
         };
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
-            .as_secs_f64();
+            .as_secs();
         let start_ts = start
             .as_deref()
             .and_then(|s| parse_datetime_start(s).ok())
-            .map(|dt| dt.unix_timestamp() as f64)
-            .unwrap_or(now - 86400.0 * 90.0);
+            .map(|dt| dt.unix_timestamp())
+            .unwrap_or(now as i64 - 86400 * 90);
         let end_ts = end
             .as_deref()
             .and_then(|s| parse_datetime_end(s).ok())
-            .map(|dt| dt.unix_timestamp() as f64)
-            .unwrap_or(now);
-        let security_types = us_type
-            .as_deref()
-            .map(|t| vec![t.to_uppercase()])
-            .unwrap_or_default();
-        let counter_ids = symbol
-            .as_deref()
-            .map(|s| vec![crate::utils::counter::symbol_to_counter_id(s)])
-            .unwrap_or_default();
-        let opts = QueryUSOrdersOptions {
-            account_channel: String::new(),
-            action,
+            .map(|dt| dt.unix_timestamp())
+            .unwrap_or(now as i64);
+        let opts = GetUSHistoryOrders {
+            symbol: symbol.clone(),
+            side,
             start_at: start_ts,
             end_at: end_ts,
-            counter_ids,
-            security_types,
             query_type,
             page: us_page as i32,
             limit: us_limit as i32,
-            query_version: now,
         };
         let resp = crate::openapi::trade().us_query_orders(opts).await?;
         let data = serde_json::to_value(&resp)?;
