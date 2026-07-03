@@ -3541,6 +3541,8 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
             "Macroeconomic indicator historical data",
             &["count", "has_more", "page", "limit", "info", "data"],
         ),
+        "etf-docs" => object("ETF document list", &["list"]),
+        "financial-report key-metrics" => object("US key financial ratios per period", &["list"]),
         _ => return None,
     };
     Some(schema)
@@ -3674,7 +3676,7 @@ pub async fn cmd_etf_docs(
 ) -> Result<()> {
     let data = to_value(
         crate::openapi::fundamental()
-            .us_etf_files(symbol.clone(), limit)
+            .us_etf_files(symbol.clone(), Some(limit))
             .await?,
     )?;
     match format {

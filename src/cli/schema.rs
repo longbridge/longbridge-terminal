@@ -313,7 +313,8 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<ResponseSchema> {
         | "financial-statement"
         | "valuation-rank"
         | "compare"
-        | "macrodata" => fundamental::schema_for_path(path),
+        | "macrodata"
+        | "etf-docs" => fundamental::schema_for_path(path),
         "news" | "filing" => news::schema_for_path(path),
         "topic" => topic::schema_for_path(path),
         "watchlist" => watchlist::schema_for_path(path),
@@ -323,7 +324,9 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<ResponseSchema> {
         }
         "order" | "assets" | "cash-flow" | "portfolio" | "positions" | "fund-positions"
         | "margin-ratio" | "max-qty" | "alert" => trade::schema_for_path(path),
-        "exchange-rate" | "profit-analysis" => asset::schema_for_path(path),
+        "exchange-rate" | "profit-analysis" | "profit-analysis realized" => {
+            asset::schema_for_path(path)
+        }
         "insider-trades" => insider_trades::schema_for_path(path),
         "investors" => investors::schema_for_path(path),
         "dca" => dca::schema_for_path(path),
@@ -506,7 +509,7 @@ mod tests {
         let paths = real_leaf_paths(&root);
         assert_eq!(
             paths.len(),
-            139,
+            142,
             "real command count changed; review schema coverage"
         );
 

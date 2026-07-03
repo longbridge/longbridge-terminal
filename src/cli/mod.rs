@@ -4405,6 +4405,7 @@ mod tests {
             end,
             symbol,
             cmd: None,
+            ..
         }) = cli.command
         {
             assert!(!history);

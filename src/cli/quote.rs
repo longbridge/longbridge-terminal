@@ -743,15 +743,15 @@ pub async fn cmd_static(symbols: Vec<String>, format: &OutputFormat) -> Result<(
         }
     }
     let ctx = crate::openapi::quote_cmd();
-    let input = symbols
+    let input: Vec<String> = symbols
         .iter()
         .filter(|s| !s.ends_with(".HAS"))
         .cloned()
-        .collect::<Vec<_>>();
+        .collect();
     let symbols_for_sdk = if input.is_empty() {
         symbols.clone()
     } else {
-        input
+        input.clone()
     };
     let infos = ctx.static_info(symbols_for_sdk).await?;
 

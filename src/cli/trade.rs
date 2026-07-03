@@ -1743,7 +1743,7 @@ fn print_us_positions_pretty(data: &serde_json::Value) {
                     ]
                 })
                 .collect(),
-            format,
+            &OutputFormat::Pretty,
         );
     }
 
@@ -1774,7 +1774,7 @@ fn print_us_positions_pretty(data: &serde_json::Value) {
                     ]
                 })
                 .collect(),
-            format,
+            &OutputFormat::Pretty,
         );
     }
 
@@ -1796,7 +1796,7 @@ fn print_us_positions_pretty(data: &serde_json::Value) {
                     ]
                 })
                 .collect(),
-            format,
+            &OutputFormat::Pretty,
         );
     }
 
