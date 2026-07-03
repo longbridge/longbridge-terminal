@@ -751,9 +751,6 @@ pub enum Commands {
         /// US accounts only: filter by status (pending | history | all)
         #[arg(long, value_name = "STATUS")]
         status: Option<String>,
-        /// US accounts only: filter by asset type (stock | option | crypto)
-        #[arg(long, value_name = "TYPE")]
-        r#type: Option<String>,
         /// US accounts only: filter by direction (buy | sell)
         #[arg(long, value_name = "DIRECTION")]
         action: Option<String>,
@@ -3452,7 +3449,6 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             end,
             symbol,
             status,
-            r#type,
             action,
             page,
             limit,
@@ -3544,7 +3540,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 price,
                 yes,
             }) => trade::cmd_replace_order(order_id, qty, price, yes).await,
-            None => trade::cmd_orders(history, start, end, symbol, status, r#type, action, page, limit, format, verbose).await,
+            None => trade::cmd_orders(history, start, end, symbol, status, action, page, limit, format, verbose).await,
         },
         Commands::Assets { currency } => trade::cmd_assets(currency, format).await,
         Commands::CashFlow { start, end } => trade::cmd_cash_flow(start, end, format).await,

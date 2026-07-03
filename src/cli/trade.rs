@@ -62,7 +62,6 @@ pub async fn cmd_orders(
     symbol: Option<String>,
     // US-only filters (interface 14); ignored for HK/CN accounts
     us_status: Option<String>,
-    _us_type: Option<String>,
     us_action: Option<String>,
     us_page: u32,
     us_limit: u32,
@@ -120,15 +119,22 @@ pub async fn cmd_orders(
                     orders
                         .iter()
                         .map(|o| {
+                            // US order fields differ from HK/CN: id (not order_id),
+                            // counter_id (not symbol), action int (1=buy,2=sell)
+                            let side = match o["action"].as_i64().unwrap_or(0) {
+                                1 => "Buy".to_string(),
+                                2 => "Sell".to_string(),
+                                _ => val(&o["action"]),
+                            };
                             vec![
-                                val(&o["order_id"]),
-                                val(&o["symbol"]),
-                                val(&o["side"]),
+                                val(&o["id"]),
+                                val(&o["counter_id"]),
+                                side,
                                 val(&o["order_type"]),
                                 val(&o["status"]),
                                 val(&o["quantity"]),
                                 val(&o["price"]),
-                                val(&o["created_at"]),
+                                val(&o["create_time"]),
                             ]
                         })
                         .collect(),
@@ -1822,44 +1828,52 @@ pub async fn cmd_us_realized_pl(
     };
     let resp = crate::openapi::trade()
         .us_realized_pl(currency.to_string(), cat)
-        .await?;
+        .await
+        .map_err(|e| {
+            let msg = e.to_string();
+            if msg.contains("DcRegionRestricted") {
+                anyhow::anyhow!(
+                    "This command requires a US account (current account is AP/HK region)"
+                )
+            } else {
+                anyhow::Error::from(e)
+            }
+        })?;
     let data = serde_json::to_value(&resp)?;
     match format {
         OutputFormat::Json => print_json_us(&data),
         OutputFormat::Pretty => {
-            let val = |v: &serde_json::Value| v.as_str().unwrap_or("-").to_string();
-            println!(
-                "Total Realized P&L: {}  ({})",
-                val(&data["total_realized_pl"]),
-                val(&data["currency"])
-            );
             let empty = vec![];
-            let items = data["items"].as_array().unwrap_or(&empty);
-            if items.is_empty() {
+            let list = data["realized_pl_list"].as_array().unwrap_or(&empty);
+            if list.is_empty() {
                 println!("No realized P&L data.");
             } else {
+                let cat_name = |c: i64| match c {
+                    0 => "All",
+                    1 => "Stock",
+                    2 => "Option",
+                    3 => "Crypto",
+                    _ => "Unknown",
+                };
                 print_table(
-                    &[
-                        "Symbol",
-                        "Name",
-                        "Category",
-                        "Realized P&L",
-                        "Qty Sold",
-                        "Avg Cost",
-                        "Avg Sell",
-                    ],
-                    items
-                        .iter()
-                        .map(|i| {
-                            vec![
-                                val(&i["symbol"]),
-                                val(&i["name"]),
-                                val(&i["category"]),
-                                val(&i["realized_pl"]),
-                                val(&i["quantity_sold"]),
-                                val(&i["avg_cost"]),
-                                val(&i["avg_sell_price"]),
-                            ]
+                    &["Category", "Currency", "Amount", "Return Rate"],
+                    list.iter()
+                        .flat_map(|entry| {
+                            let cat = entry["category"].as_i64().unwrap_or(0);
+                            let currency = entry["currency"].as_str().unwrap_or("-");
+                            entry["metrics"]
+                                .as_array()
+                                .unwrap_or(&empty)
+                                .iter()
+                                .map(move |m| {
+                                    vec![
+                                        cat_name(cat).to_string(),
+                                        currency.to_string(),
+                                        m["amount"].as_str().unwrap_or("-").to_string(),
+                                        m["rate"].as_str().unwrap_or("-").to_string(),
+                                    ]
+                                })
+                                .collect::<Vec<_>>()
                         })
                         .collect(),
                     format,
