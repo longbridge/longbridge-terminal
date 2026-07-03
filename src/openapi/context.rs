@@ -330,6 +330,13 @@ pub fn http_client() -> &'static longbridge::httpclient::HttpClient {
         .expect("HttpClient not initialized, please call init_contexts() first")
 }
 
+/// Returns `true` when the current session is a US data-center account
+/// (`token.ac` starts with `us_lb`). Used to route commands to US-specific
+/// endpoints transparently without requiring a `--market` flag from the user.
+pub async fn is_us_account() -> bool {
+    http_client().dc_region().await == longbridge::DcRegion::Us
+}
+
 /// Get rate-limited `TradeContext` (recommended for all API calls)
 pub fn trade_limited() -> &'static RateLimitedTradeContext {
     RATE_LIMITED_TRADE_CTX
