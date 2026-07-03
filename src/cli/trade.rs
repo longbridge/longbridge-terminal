@@ -213,13 +213,18 @@ pub async fn cmd_order_detail(
     attached: bool,
     format: &OutputFormat,
 ) -> Result<()> {
-    // US accounts: --attached queries the take-profit/stop-loss child order via
-    // GET /v1/orders/{order_id}?is_attached=true (interface 16).
+    // US accounts: us_order_detail returns current_attached_order for stop-loss/take-profit (interface 16).
     if attached && crate::openapi::is_us_account().await {
         let resp = crate::openapi::trade()
-            .us_order_detail(order_id.clone(), true)
+            .us_order_detail(order_id.clone())
             .await?;
-        let data = serde_json::to_value(&resp)?;
+        let full = serde_json::to_value(&resp)?;
+        // --attached: show the attached child order if present, otherwise full detail
+        let data = if !full["current_attached_order"].is_null() {
+            full["current_attached_order"].clone()
+        } else {
+            full
+        };
         match format {
             OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&data)?),
             OutputFormat::Pretty => {
