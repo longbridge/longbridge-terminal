@@ -479,9 +479,7 @@ mod cli_header_tests {
 
     #[test]
     fn all_ascii_pass_through() {
-        let args = ["--format", "json", "--verbose"]
-            .map(String::from)
-            .to_vec();
+        let args = ["--format", "json", "--verbose"].map(String::from).to_vec();
         assert_eq!(ascii_args(args), "--format json --verbose");
     }
 
