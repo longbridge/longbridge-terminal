@@ -397,11 +397,13 @@ pub enum Commands {
     /// Example: longbridge financial-report TSLA.US --kind BS --format json
     /// Example: longbridge financial-report snapshot AAPL.US
     /// Example: longbridge financial-report snapshot AAPL.US --report qf --year 2024 --period 4
+    /// Example: longbridge financial-report key-metrics AAPL.US
     FinancialReport {
         /// Symbol in <CODE>.<MARKET> format, e.g. TSLA.US 700.HK (omit when using a subcommand)
         symbol: Option<String>,
-        /// Statement type: IS (income), BS (balance sheet), CF (cash flow), ALL
-        #[arg(long, value_name = "TYPE", default_value = "ALL")]
+        /// Statement type: IS (income), BS (balance sheet), CF (cash flow), ALL.
+        /// US accounts: omit to get financial summary (finn-overview).
+        #[arg(long, value_name = "TYPE", default_value = "")]
         kind: String,
         /// Report period: af (annual), saf (semi-annual), q1 (Q1), 3q (3 quarters), qf (quarterly)
         #[arg(long)]
@@ -2098,6 +2100,18 @@ pub enum FinancialReportCmd {
         #[arg(long)]
         period: Option<String>,
     },
+
+    /// US accounts only: key financial ratios (ROE, gross margin, net margin, debt-to-assets).
+    ///
+    /// Example: longbridge financial-report key-metrics AAPL.US
+    /// Example: longbridge financial-report key-metrics AAPL.US --report annual
+    KeyMetrics {
+        /// Symbol in <CODE>.<MARKET> format (US only)
+        symbol: String,
+        /// Report period: annual (default) | quarterly
+        #[arg(long)]
+        report: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -3192,7 +3206,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             latest,
             cmd,
         } => {
-            if let Some(FinancialReportCmd::Snapshot {
+            if let Some(FinancialReportCmd::KeyMetrics { symbol: s, report: r }) = cmd {
+                fundamental::cmd_financial_report_key_metrics(s, r, format, verbose).await
+            } else if let Some(FinancialReportCmd::Snapshot {
                 symbol: s,
                 report: r,
                 year,

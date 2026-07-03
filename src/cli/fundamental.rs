@@ -11,6 +11,18 @@ use crate::utils::datetime::format_date;
 use crate::utils::number::format_financial_value;
 use crate::utils::text::strip_html;
 
+/// Returns true when symbol is a US stock/ETF (ends with `.US`) and the
+/// current session is a US account — used to route P1 fundamental commands.
+async fn is_us_fundamental(symbol: &str) -> bool {
+    symbol.ends_with(".US") && crate::openapi::is_us_account().await
+}
+
+/// GET a US-restricted endpoint with dc_restrict(Us).
+async fn http_get_us(path: &str, params: &[(&str, &str)], verbose: bool) -> Result<Value> {
+    use longbridge::DcRegion;
+    super::api::http_get_dc(DcRegion::Us, path, params, verbose).await
+}
+
 async fn http_get(path: &str, params: &[(&str, &str)], verbose: bool) -> Result<Value> {
     http_get_dc(path, params, None, verbose).await
 }
@@ -227,6 +239,7 @@ fn print_financials(value: &Value) {
 }
 
 /// Fetch financial statements for a symbol.
+/// US accounts without `--kind` → finn-overview (`/v1/stock-info/finn-overview`).
 pub async fn cmd_financial_report(
     symbol: String,
     kind: String,
@@ -235,6 +248,20 @@ pub async fn cmd_financial_report(
     verbose: bool,
 ) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
+    // US: when no --kind provided (kind == "IS" default but user didn't set it explicitly),
+    // route to finn-overview for the financial summary view.
+    if is_us_fundamental(&symbol).await && kind.is_empty() {
+        let mut params: Vec<(&str, &str)> = vec![("counter_id", cid.as_str())];
+        if let Some(ref r) = report {
+            params.push(("report", r.as_str()));
+        }
+        let data = http_get_us("/v1/stock-info/finn-overview", &params, verbose).await?;
+        match format {
+            OutputFormat::Json => print_json(&data),
+            OutputFormat::Pretty => print_json(&data),
+        }
+        return Ok(());
+    }
     let mut params: Vec<(&str, &str)> = vec![("counter_id", cid.as_str()), ("kind", kind.as_str())];
     if let Some(ref r) = report {
         params.push(("report", r.as_str()));
@@ -243,6 +270,27 @@ pub async fn cmd_financial_report(
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => print_financials(&data),
+    }
+    Ok(())
+}
+
+/// `financial-report key-metrics <SYMBOL>` — US accounts only (interface 23).
+/// Returns ROE, gross_margin, net_margin, debt_assets_ratio per report period.
+pub async fn cmd_financial_report_key_metrics(
+    symbol: String,
+    report: Option<String>,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let mut params: Vec<(&str, &str)> = vec![("counter_id", cid.as_str())];
+    if let Some(ref r) = report {
+        params.push(("report", r.as_str()));
+    }
+    let data = http_get_us("/v1/stock-info/fin-keyfactor", &params, verbose).await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => print_json(&data),
     }
     Ok(())
 }
@@ -490,6 +538,20 @@ pub async fn cmd_dividend(
     verbose: bool,
 ) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
+    // US: route to ETF or stock-specific dividend endpoint
+    if is_us_fundamental(&symbol).await {
+        let path = if crate::utils::counter::is_etf(&symbol) {
+            "/v1/stock-info/etf-dividend-info" // interface 33
+        } else {
+            "/v1/stock-info/company-dividends" // interface 36
+        };
+        let data = http_get_us(path, &[("counter_id", cid.as_str())], verbose).await?;
+        match format {
+            OutputFormat::Json => print_json(&data),
+            OutputFormat::Pretty => print_json(&data),
+        }
+        return Ok(());
+    }
     let page_str = page.to_string();
     let year_str = year.map(|y| y.to_string());
     let mut params = vec![
@@ -657,12 +719,21 @@ pub async fn cmd_forecast_eps(symbol: String, format: &OutputFormat, verbose: bo
 /// Fetch financial consensus detail.
 pub async fn cmd_consensus(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
-    let data = http_get(
-        "/v1/quote/financial-consensus-detail",
-        &[("counter_id", cid.as_str())],
-        verbose,
-    )
-    .await?;
+    let data = if is_us_fundamental(&symbol).await {
+        http_get_us(
+            "/v1/stock-info/fin-consensus",
+            &[("counter_id", cid.as_str())],
+            verbose,
+        )
+        .await?
+    } else {
+        http_get(
+            "/v1/quote/financial-consensus-detail",
+            &[("counter_id", cid.as_str())],
+            verbose,
+        )
+        .await?
+    };
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => print_consensus(&data),
@@ -799,7 +870,16 @@ pub async fn cmd_valuation(
         ("indicator", ind),
         ("range", range_val),
     ];
-    let data = http_get("/v1/quote/valuation", &params, verbose).await?;
+    let data = if is_us_fundamental(&symbol).await {
+        http_get_us(
+            "/v1/stock-info/valuation-overview",
+            &[("counter_id", cid.as_str())],
+            verbose,
+        )
+        .await?
+    } else {
+        http_get("/v1/quote/valuation", &params, verbose).await?
+    };
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => {
@@ -1596,12 +1676,21 @@ pub async fn cmd_finance_calendar(
 
 pub async fn cmd_company(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
-    let data = http_get(
-        "/v1/quote/comp-overview",
-        &[("counter_id", cid.as_str())],
-        verbose,
-    )
-    .await?;
+    let data = if is_us_fundamental(&symbol).await {
+        http_get_us(
+            "/v1/stock-info/company-overview",
+            &[("counter_id", cid.as_str())],
+            verbose,
+        )
+        .await?
+    } else {
+        http_get(
+            "/v1/quote/comp-overview",
+            &[("counter_id", cid.as_str())],
+            verbose,
+        )
+        .await?
+    };
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => print_company(&data),
@@ -2332,16 +2421,29 @@ pub async fn cmd_financial_statement(
     let cid = symbol_to_counter_id(&symbol);
     let kind_upper = kind.to_uppercase();
     let report_lower = report.to_lowercase();
-    let data = http_get(
-        "/v1/quote/financials/statements",
-        &[
-            ("counter_id", cid.as_str()),
-            ("kind", kind_upper.as_str()),
-            ("report", report_lower.as_str()),
-        ],
-        verbose,
-    )
-    .await?;
+    let data = if is_us_fundamental(&symbol).await {
+        http_get_us(
+            "/v1/us/quote/financials/statements",
+            &[
+                ("counter_id", cid.as_str()),
+                ("kind", kind_upper.as_str()),
+                ("report", report_lower.as_str()),
+            ],
+            verbose,
+        )
+        .await?
+    } else {
+        http_get(
+            "/v1/quote/financials/statements",
+            &[
+                ("counter_id", cid.as_str()),
+                ("kind", kind_upper.as_str()),
+                ("report", report_lower.as_str()),
+            ],
+            verbose,
+        )
+        .await?
+    };
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => {
