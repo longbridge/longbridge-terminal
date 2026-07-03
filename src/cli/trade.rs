@@ -633,39 +633,6 @@ pub async fn cmd_cash_flow(
     Ok(())
 }
 
-pub async fn cmd_positions(format: &OutputFormat) -> Result<()> {
-    let ctx = crate::openapi::trade();
-    let resp = ctx.stock_positions(None).await?;
-
-    print_account_banner(format);
-    let headers = &[
-        "Symbol",
-        "Name",
-        "Quantity",
-        "Available",
-        "Cost Price",
-        "Currency",
-        "Market",
-    ];
-    let mut rows = vec![];
-    for channel in &resp.channels {
-        for pos in &channel.positions {
-            rows.push(vec![
-                pos.symbol.clone(),
-                pos.symbol_name.clone(),
-                pos.quantity.to_string(),
-                pos.available_quantity.to_string(),
-                pos.cost_price.to_string(),
-                pos.currency.clone(),
-                format!("{:?}", pos.market),
-            ]);
-        }
-    }
-
-    print_table(headers, rows, format);
-    Ok(())
-}
-
 pub async fn cmd_fund_positions(format: &OutputFormat) -> Result<()> {
     let ctx = crate::openapi::trade();
     let resp = ctx.fund_positions(None).await?;
@@ -1563,6 +1530,234 @@ fn order_schema_fields() -> &'static [&'static str] {
         "submitted_at",
         "updated_at",
     ]
+}
+
+// ── US-specific commands ─────────────────────────────────────────────────────
+
+/// `longbridge positions` — US account full overview.
+///
+/// When the session is a US account (`token.ac` starts with `us_lb`), calls
+/// `GET /v1/us/asset/overview` and renders stock / option / crypto positions
+/// plus buy-power. Falls back to the standard HK/CN SDK path otherwise.
+pub async fn cmd_positions(format: &OutputFormat) -> Result<()> {
+    if crate::openapi::is_us_account().await {
+        cmd_us_positions(format).await
+    } else {
+        let ctx = crate::openapi::trade();
+        let resp = ctx.stock_positions(None).await?;
+        print_account_banner(format);
+        let headers = &[
+            "Symbol",
+            "Name",
+            "Quantity",
+            "Available",
+            "Cost Price",
+            "Currency",
+            "Market",
+        ];
+        let mut rows = vec![];
+        for channel in &resp.channels {
+            for pos in &channel.positions {
+                rows.push(vec![
+                    pos.symbol.clone(),
+                    pos.symbol_name.clone(),
+                    pos.quantity.to_string(),
+                    pos.available_quantity.to_string(),
+                    pos.cost_price.to_string(),
+                    pos.currency.clone(),
+                    format!("{:?}", pos.market),
+                ]);
+            }
+        }
+        print_table(headers, rows, format);
+        Ok(())
+    }
+}
+
+fn print_json_us(data: &serde_json::Value) {
+    println!("{}", serde_json::to_string_pretty(data).unwrap_or_default());
+}
+
+async fn cmd_us_positions(format: &OutputFormat) -> Result<()> {
+    use super::api::http_get_dc;
+    let data = http_get_dc(
+        longbridge::DcRegion::Us,
+        "/v1/us/asset/overview",
+        &[],
+        false,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json_us(&data),
+        OutputFormat::Pretty => print_us_positions_pretty(&data),
+    }
+    Ok(())
+}
+
+fn print_us_positions_pretty(data: &serde_json::Value) {
+    let val = |v: &serde_json::Value| v.as_str().unwrap_or("-").to_string();
+    println!("Account Type:   {}", val(&data["account_type"]));
+    println!("Net Assets:     {}", val(&data["net_assets"]));
+    println!("Total Cash:     {}", val(&data["total_cash"]));
+    println!("Unrealized P&L: {}", val(&data["unrealized_pl"]));
+    println!();
+
+    let empty = vec![];
+    let positions = data["positions"].as_array().unwrap_or(&empty);
+    if !positions.is_empty() {
+        println!("── Stocks ──────────────────────────────────────────────────────");
+        print_table(
+            &[
+                "Symbol",
+                "Qty",
+                "Cost",
+                "Price",
+                "Mkt Value",
+                "P&L",
+                "Status",
+            ],
+            positions
+                .iter()
+                .map(|p| {
+                    vec![
+                        val(&p["symbol"]),
+                        val(&p["quantity"]),
+                        val(&p["cost_price"]),
+                        val(&p["current_price"]),
+                        val(&p["market_value"]),
+                        val(&p["unrealized_pl"]),
+                        val(&p["trade_status"]),
+                    ]
+                })
+                .collect(),
+            format,
+        );
+    }
+
+    let options = data["option_positions"].as_array().unwrap_or(&empty);
+    if !options.is_empty() {
+        println!("── Options ─────────────────────────────────────────────────────");
+        print_table(
+            &[
+                "Symbol",
+                "Underlying",
+                "Type",
+                "Strike",
+                "Expiry",
+                "Qty",
+                "P&L",
+            ],
+            options
+                .iter()
+                .map(|p| {
+                    vec![
+                        val(&p["symbol"]),
+                        val(&p["underlying_code"]),
+                        val(&p["type"]),
+                        val(&p["strike_price"]),
+                        val(&p["due_date"]),
+                        val(&p["quantity"]),
+                        val(&p["unrealized_pl"]),
+                    ]
+                })
+                .collect(),
+            format,
+        );
+    }
+
+    let cryptos = data["crypto_positions"].as_array().unwrap_or(&empty);
+    if !cryptos.is_empty() {
+        println!("── Crypto ──────────────────────────────────────────────────────");
+        print_table(
+            &["Symbol", "Qty", "Cost", "Price", "Mkt Value", "P&L"],
+            cryptos
+                .iter()
+                .map(|p| {
+                    vec![
+                        val(&p["symbol"]),
+                        val(&p["quantity"]),
+                        val(&p["cost_price"]),
+                        val(&p["current_price"]),
+                        val(&p["market_value"]),
+                        val(&p["unrealized_pl"]),
+                    ]
+                })
+                .collect(),
+            format,
+        );
+    }
+
+    if let Some(bp) = data["buy_power"].as_object() {
+        println!("── Buy Power ───────────────────────────────────────────────────");
+        for (k, v) in bp {
+            println!("  {:<28} {}", k, v.as_str().unwrap_or("-"));
+        }
+    }
+}
+
+/// `longbridge profit-analysis realized` — US accounts only.
+///
+/// Calls `GET /v1/us/asset/pl/realized`.
+/// HK/CN token → `DcRegionRestricted` error from the SDK.
+pub async fn cmd_us_realized_pl(
+    category: &str,
+    currency: &str,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    use super::api::http_get_dc;
+    let cat = category.to_uppercase();
+    let data = http_get_dc(
+        longbridge::DcRegion::Us,
+        "/v1/us/asset/pl/realized",
+        &[("currency", currency), ("category", &cat)],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json_us(&data),
+        OutputFormat::Pretty => {
+            let val = |v: &serde_json::Value| v.as_str().unwrap_or("-").to_string();
+            println!(
+                "Total Realized P&L: {}  ({})",
+                val(&data["total_realized_pl"]),
+                val(&data["currency"])
+            );
+            let empty = vec![];
+            let items = data["items"].as_array().unwrap_or(&empty);
+            if items.is_empty() {
+                println!("No realized P&L data.");
+            } else {
+                print_table(
+                    &[
+                        "Symbol",
+                        "Name",
+                        "Category",
+                        "Realized P&L",
+                        "Qty Sold",
+                        "Avg Cost",
+                        "Avg Sell",
+                    ],
+                    items
+                        .iter()
+                        .map(|i| {
+                            vec![
+                                val(&i["symbol"]),
+                                val(&i["name"]),
+                                val(&i["category"]),
+                                val(&i["realized_pl"]),
+                                val(&i["quantity_sold"]),
+                                val(&i["avg_cost"]),
+                                val(&i["avg_sell_price"]),
+                            ]
+                        })
+                        .collect(),
+                    format,
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

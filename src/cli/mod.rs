@@ -1951,6 +1951,20 @@ pub enum ProfitAnalysisCmd {
         size: u32,
     },
 
+    /// US accounts only: realized (closed-position) P&L by asset category.
+    ///
+    /// Example: longbridge profit-analysis realized
+    /// Example: longbridge profit-analysis realized --category stock
+    /// Example: longbridge profit-analysis realized --currency USD --format json
+    Realized {
+        /// Asset category filter: all (default) | stock | option | crypto
+        #[arg(long, default_value = "all")]
+        category: String,
+        /// Currency (default: USD)
+        #[arg(long, default_value = "USD")]
+        currency: String,
+    },
+
     /// Stock P&L by market with pagination
     ///
     /// Example: longbridge profit-analysis by-market
@@ -3667,6 +3681,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             None => trade::cmd_alert_list(symbol, format, verbose).await,
         },
         Commands::ProfitAnalysis { start, end, cmd } => match cmd {
+            Some(ProfitAnalysisCmd::Realized { category, currency }) => {
+                trade::cmd_us_realized_pl(&category, &currency, format, verbose).await
+            }
             None => asset::cmd_profit_analysis(start.as_deref(), end.as_deref(), format, verbose).await,
             Some(ProfitAnalysisCmd::Detail {
                 symbol,
