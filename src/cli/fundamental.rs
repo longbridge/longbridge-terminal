@@ -17,10 +17,10 @@ async fn is_us_fundamental(symbol: &str) -> bool {
     symbol.ends_with(".US") && crate::openapi::is_us_account().await
 }
 
-/// GET a US-restricted endpoint with dc_restrict(Us).
-async fn http_get_us(path: &str, params: &[(&str, &str)], verbose: bool) -> Result<Value> {
-    use longbridge::DcRegion;
-    super::api::http_get_dc(DcRegion::Us, path, params, verbose).await
+/// Serialize any serde-serializable SDK response to a JSON Value for
+/// print_json / pretty rendering.
+fn to_value<T: serde::Serialize>(v: T) -> Result<Value> {
+    Ok(serde_json::to_value(v)?)
 }
 
 async fn http_get(path: &str, params: &[(&str, &str)], verbose: bool) -> Result<Value> {
@@ -251,11 +251,11 @@ pub async fn cmd_financial_report(
     // US: when no --kind provided (kind == "IS" default but user didn't set it explicitly),
     // route to finn-overview for the financial summary view.
     if is_us_fundamental(&symbol).await && kind.is_empty() {
-        let mut params: Vec<(&str, &str)> = vec![("counter_id", cid.as_str())];
-        if let Some(ref r) = report {
-            params.push(("report", r.as_str()));
-        }
-        let data = http_get_us("/v1/stock-info/finn-overview", &params, verbose).await?;
+        let ctx = crate::openapi::fundamental();
+        let data = to_value(
+            ctx.us_financial_overview(symbol.clone(), report.as_deref().unwrap_or("annual"))
+                .await?,
+        )?;
         match format {
             OutputFormat::Json => print_json(&data),
             OutputFormat::Pretty => print_json(&data),
@@ -280,14 +280,13 @@ pub async fn cmd_financial_report_key_metrics(
     symbol: String,
     report: Option<String>,
     format: &OutputFormat,
-    verbose: bool,
+    _verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
-    let mut params: Vec<(&str, &str)> = vec![("counter_id", cid.as_str())];
-    if let Some(ref r) = report {
-        params.push(("report", r.as_str()));
-    }
-    let data = http_get_us("/v1/stock-info/fin-keyfactor", &params, verbose).await?;
+    let ctx = crate::openapi::fundamental();
+    let data = to_value(
+        ctx.us_key_financial_metrics(symbol.clone(), report.as_deref().unwrap_or("annual"))
+            .await?,
+    )?;
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => print_json(&data),
@@ -540,12 +539,12 @@ pub async fn cmd_dividend(
     let cid = symbol_to_counter_id(&symbol);
     // US: route to ETF or stock-specific dividend endpoint
     if is_us_fundamental(&symbol).await {
-        let path = if crate::utils::counter::is_etf(&symbol) {
-            "/v1/stock-info/etf-dividend-info" // interface 33
+        let ctx = crate::openapi::fundamental();
+        let data = if crate::utils::counter::is_etf(&symbol) {
+            to_value(ctx.us_etf_dividend_info(symbol.clone()).await?)? // interface 33
         } else {
-            "/v1/stock-info/company-dividends" // interface 36
+            to_value(ctx.us_company_dividends(symbol.clone()).await?)? // interface 36
         };
-        let data = http_get_us(path, &[("counter_id", cid.as_str())], verbose).await?;
         match format {
             OutputFormat::Json => print_json(&data),
             OutputFormat::Pretty => print_json(&data),
@@ -720,12 +719,11 @@ pub async fn cmd_forecast_eps(symbol: String, format: &OutputFormat, verbose: bo
 pub async fn cmd_consensus(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
     let data = if is_us_fundamental(&symbol).await {
-        http_get_us(
-            "/v1/stock-info/fin-consensus",
-            &[("counter_id", cid.as_str())],
-            verbose,
-        )
-        .await?
+        to_value(
+            crate::openapi::fundamental()
+                .us_analyst_consensus(symbol.clone(), "annual")
+                .await?,
+        )?
     } else {
         http_get(
             "/v1/quote/financial-consensus-detail",
@@ -871,12 +869,11 @@ pub async fn cmd_valuation(
         ("range", range_val),
     ];
     let data = if is_us_fundamental(&symbol).await {
-        http_get_us(
-            "/v1/stock-info/valuation-overview",
-            &[("counter_id", cid.as_str())],
-            verbose,
-        )
-        .await?
+        to_value(
+            crate::openapi::fundamental()
+                .us_valuation_overview(symbol.clone())
+                .await?,
+        )?
     } else {
         http_get("/v1/quote/valuation", &params, verbose).await?
     };
@@ -1677,12 +1674,11 @@ pub async fn cmd_finance_calendar(
 pub async fn cmd_company(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
     let data = if is_us_fundamental(&symbol).await {
-        http_get_us(
-            "/v1/stock-info/company-overview",
-            &[("counter_id", cid.as_str())],
-            verbose,
-        )
-        .await?
+        to_value(
+            crate::openapi::fundamental()
+                .us_company_overview(symbol.clone())
+                .await?,
+        )?
     } else {
         http_get(
             "/v1/quote/comp-overview",
@@ -2422,16 +2418,15 @@ pub async fn cmd_financial_statement(
     let kind_upper = kind.to_uppercase();
     let report_lower = report.to_lowercase();
     let data = if is_us_fundamental(&symbol).await {
-        http_get_us(
-            "/v1/us/quote/financials/statements",
-            &[
-                ("counter_id", cid.as_str()),
-                ("kind", kind_upper.as_str()),
-                ("report", report_lower.as_str()),
-            ],
-            verbose,
-        )
-        .await?
+        to_value(
+            crate::openapi::fundamental()
+                .us_financial_statement_v3(
+                    symbol.clone(),
+                    kind_upper.as_str(),
+                    report_lower.as_str(),
+                )
+                .await?,
+        )?
     } else {
         http_get(
             "/v1/quote/financials/statements",
@@ -3677,14 +3672,11 @@ pub async fn cmd_etf_docs(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
-    let limit_str = limit.to_string();
-    let data = http_get_us(
-        "/v1/stock-info/etf-files",
-        &[("counter_id", cid.as_str()), ("size", &limit_str)],
-        verbose,
-    )
-    .await?;
+    let data = to_value(
+        crate::openapi::fundamental()
+            .us_etf_files(symbol.clone(), limit)
+            .await?,
+    )?;
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => print_json(&data),

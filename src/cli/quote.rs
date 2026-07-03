@@ -709,17 +709,9 @@ pub async fn cmd_static(symbols: Vec<String>, format: &OutputFormat) -> Result<(
     if crate::openapi::is_us_account().await {
         let crypto: Vec<_> = symbols.iter().filter(|s| s.ends_with(".HAS")).collect();
         if !crypto.is_empty() {
-            use super::api::http_get_dc;
-            use crate::utils::counter::symbol_to_counter_id;
+            let ctx = crate::openapi::quote_cmd();
             for sym in crypto {
-                let cid = symbol_to_counter_id(sym);
-                let data = http_get_dc(
-                    longbridge::DcRegion::Us,
-                    "/v1/gemini/crypto-overview",
-                    &[("counter_id", &cid)],
-                    false,
-                )
-                .await?;
+                let data = serde_json::to_value(ctx.us_crypto_overview(sym.clone()).await?)?;
                 match format {
                     OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&data)?),
                     OutputFormat::Pretty => {

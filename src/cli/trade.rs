@@ -69,15 +69,15 @@ pub async fn cmd_orders(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    // US accounts: POST /v1/orders/query with richer filters
+    // US accounts: SDK us_query_orders (interface 14)
     if crate::openapi::is_us_account().await {
-        use super::api::http_post_dc;
-        let query_type: i64 = match us_status.as_deref().unwrap_or("all") {
+        use longbridge::trade::QueryUSOrdersOptions;
+        let query_type = match us_status.as_deref().unwrap_or("all") {
             "pending" => 1,
             "history" => 2,
             _ => 0,
         };
-        let action: i64 = match us_action.as_deref().unwrap_or("") {
+        let action = match us_action.as_deref().unwrap_or("") {
             "buy" => 1,
             "sell" => 2,
             _ => 0,
@@ -96,31 +96,28 @@ pub async fn cmd_orders(
             .and_then(|s| parse_datetime_end(s).ok())
             .map(|dt| dt.unix_timestamp() as f64)
             .unwrap_or(now);
-        let mut security_types: Vec<serde_json::Value> = vec![];
-        if let Some(ref t) = us_type {
-            security_types.push(serde_json::Value::String(t.to_uppercase()));
-        }
-        let counter_ids: Vec<serde_json::Value> = symbol
+        let security_types = us_type
             .as_deref()
-            .map(|s| {
-                vec![serde_json::Value::String(
-                    crate::utils::counter::symbol_to_counter_id(s),
-                )]
-            })
+            .map(|t| vec![t.to_uppercase()])
             .unwrap_or_default();
-        let body = serde_json::json!({
-            "action": action,
-            "start_at": start_ts,
-            "end_at": end_ts,
-            "counter_ids": counter_ids,
-            "security_types": security_types,
-            "query_type": query_type,
-            "page": us_page,
-            "limit": us_limit,
-            "query_version": now,
-        });
-        let data =
-            http_post_dc(longbridge::DcRegion::Us, "/v1/orders/query", body, verbose).await?;
+        let counter_ids = symbol
+            .as_deref()
+            .map(|s| vec![crate::utils::counter::symbol_to_counter_id(s)])
+            .unwrap_or_default();
+        let opts = QueryUSOrdersOptions {
+            account_channel: String::new(),
+            action,
+            start_at: start_ts,
+            end_at: end_ts,
+            counter_ids,
+            security_types,
+            query_type,
+            page: us_page as i32,
+            limit: us_limit as i32,
+            query_version: now,
+        };
+        let resp = crate::openapi::trade().us_query_orders(opts).await?;
+        let data = serde_json::to_value(&resp)?;
         match format {
             OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&data)?),
             OutputFormat::Pretty => {
@@ -219,18 +216,10 @@ pub async fn cmd_order_detail(
     // US accounts: --attached queries the take-profit/stop-loss child order via
     // GET /v1/orders/{order_id}?is_attached=true (interface 16).
     if attached && crate::openapi::is_us_account().await {
-        use super::api::http_get_dc;
-        let data = http_get_dc(
-            longbridge::DcRegion::Us,
-            &format!("/v1/orders/{order_id}"),
-            &[
-                ("order_id", &order_id),
-                ("order_id_str", &order_id),
-                ("is_attached", "true"),
-            ],
-            false,
-        )
-        .await?;
+        let resp = crate::openapi::trade()
+            .us_order_detail(order_id.clone(), true)
+            .await?;
+        let data = serde_json::to_value(&resp)?;
         match format {
             OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&data)?),
             OutputFormat::Pretty => {
@@ -1709,14 +1698,8 @@ fn print_json_us(data: &serde_json::Value) {
 }
 
 async fn cmd_us_positions(format: &OutputFormat) -> Result<()> {
-    use super::api::http_get_dc;
-    let data = http_get_dc(
-        longbridge::DcRegion::Us,
-        "/v1/us/asset/overview",
-        &[],
-        false,
-    )
-    .await?;
+    let resp = crate::openapi::trade().us_asset_overview().await?;
+    let data = serde_json::to_value(&resp)?;
     match format {
         OutputFormat::Json => print_json_us(&data),
         OutputFormat::Pretty => print_us_positions_pretty(&data),
@@ -1833,17 +1816,17 @@ pub async fn cmd_us_realized_pl(
     category: &str,
     currency: &str,
     format: &OutputFormat,
-    verbose: bool,
+    _verbose: bool,
 ) -> Result<()> {
-    use super::api::http_get_dc;
-    let cat = category.to_uppercase();
-    let data = http_get_dc(
-        longbridge::DcRegion::Us,
-        "/v1/us/asset/pl/realized",
-        &[("currency", currency), ("category", &cat)],
-        verbose,
-    )
-    .await?;
+    let cat = if category.eq_ignore_ascii_case("all") {
+        None
+    } else {
+        Some(category.to_uppercase())
+    };
+    let resp = crate::openapi::trade()
+        .us_realized_pl(currency.to_string(), cat)
+        .await?;
+    let data = serde_json::to_value(&resp)?;
     match format {
         OutputFormat::Json => print_json_us(&data),
         OutputFormat::Pretty => {
