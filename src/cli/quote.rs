@@ -705,9 +705,63 @@ pub async fn cmd_static(symbols: Vec<String>, format: &OutputFormat) -> Result<(
     if symbols.is_empty() {
         bail!("At least one symbol is required");
     }
+    // US accounts: route .HAS crypto symbols to Gemini endpoint (interface 3)
+    if crate::openapi::is_us_account().await {
+        let crypto: Vec<_> = symbols.iter().filter(|s| s.ends_with(".HAS")).collect();
+        if !crypto.is_empty() {
+            use super::api::http_get_dc;
+            use crate::utils::counter::symbol_to_counter_id;
+            for sym in crypto {
+                let cid = symbol_to_counter_id(sym);
+                let data = http_get_dc(
+                    longbridge::DcRegion::Us,
+                    "/v1/gemini/crypto-overview",
+                    &[("counter_id", &cid)],
+                    false,
+                )
+                .await?;
+                match format {
+                    OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&data)?),
+                    OutputFormat::Pretty => {
+                        let val = |k: &str| data[k].as_str().unwrap_or("-").to_string();
+                        println!(
+                            "── {} ─────────────────────────────────────────────────────",
+                            sym
+                        );
+                        for key in &[
+                            "name",
+                            "ticker",
+                            "currency",
+                            "all_time_high",
+                            "all_time_high_date",
+                            "all_time_low",
+                            "ipo_date",
+                            "shares",
+                            "official_web_address",
+                        ] {
+                            println!("  {key:<25} {}", val(key));
+                        }
+                    }
+                }
+            }
+            // Return early if all symbols were crypto; otherwise fall through for non-.HAS symbols
+            if symbols.iter().all(|s| s.ends_with(".HAS")) {
+                return Ok(());
+            }
+        }
+    }
     let ctx = crate::openapi::quote_cmd();
-    let input = symbols.clone();
-    let infos = ctx.static_info(symbols).await?;
+    let input = symbols
+        .iter()
+        .filter(|s| !s.ends_with(".HAS"))
+        .cloned()
+        .collect::<Vec<_>>();
+    let symbols_for_sdk = if input.is_empty() {
+        symbols.clone()
+    } else {
+        input
+    };
+    let infos = ctx.static_info(symbols_for_sdk).await?;
 
     let headers = &[
         "Symbol",

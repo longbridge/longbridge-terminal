@@ -734,6 +734,21 @@ pub enum Commands {
         /// Filter by symbol (e.g. TSLA.US)
         #[arg(long)]
         symbol: Option<String>,
+        /// US accounts only: filter by status (pending | history | all)
+        #[arg(long, value_name = "STATUS")]
+        status: Option<String>,
+        /// US accounts only: filter by asset type (stock | option | crypto)
+        #[arg(long, value_name = "TYPE")]
+        r#type: Option<String>,
+        /// US accounts only: filter by direction (buy | sell)
+        #[arg(long, value_name = "DIRECTION")]
+        action: Option<String>,
+        /// US accounts only: page number (default: 1)
+        #[arg(long, default_value = "1")]
+        page: u32,
+        /// US accounts only: page size (default: 20)
+        #[arg(long, default_value = "20")]
+        limit: u32,
         #[command(subcommand)]
         cmd: Option<OrderCmd>,
     },
@@ -2552,9 +2567,13 @@ pub enum OrderCmd {
     ///
     /// Returns all fields from `order` plus `charge_detail`, `history_details`, msg.
     /// Example: longbridge order detail 20240101-123456789
+    /// Example: longbridge order detail 20240101-123456789 --attached
     Detail {
         /// Order ID (from `longbridge order` or returned by `order buy`/`order sell`)
         order_id: String,
+        /// US accounts only: query the attached child order (take-profit/stop-loss)
+        #[arg(long)]
+        attached: bool,
     },
 
     /// Today's trade executions (fills), or historical with --history
@@ -3403,9 +3422,16 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             start,
             end,
             symbol,
+            status,
+            r#type,
+            action,
+            page,
+            limit,
             cmd,
         } => match cmd {
-            Some(OrderCmd::Detail { order_id }) => trade::cmd_order_detail(order_id, format).await,
+            Some(OrderCmd::Detail { order_id, attached }) => {
+                trade::cmd_order_detail(order_id, attached, format).await
+            }
             Some(OrderCmd::Executions {
                 history: h,
                 start: s,
@@ -3489,7 +3515,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 price,
                 yes,
             }) => trade::cmd_replace_order(order_id, qty, price, yes).await,
-            None => trade::cmd_orders(history, start, end, symbol, format).await,
+            None => trade::cmd_orders(history, start, end, symbol, status, r#type, action, page, limit, format, verbose).await,
         },
         Commands::Assets { currency } => trade::cmd_assets(currency, format).await,
         Commands::CashFlow { start, end } => trade::cmd_cash_flow(start, end, format).await,
@@ -4395,7 +4421,7 @@ mod tests {
         assert!(matches!(
             cli.command,
             Some(Commands::Order {
-                cmd: Some(OrderCmd::Detail { order_id }),
+                cmd: Some(OrderCmd::Detail { order_id, .. }),
                 ..
             }) if order_id == "order-123"
         ));
