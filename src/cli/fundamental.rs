@@ -3667,6 +3667,31 @@ fn print_financial_report_snapshot(data: &Value) {
     }
 }
 
+// ── US-only commands ─────────────────────────────────────────────────────────
+
+/// `longbridge etf-docs <SYMBOL>` — US accounts only (interface 34).
+/// Returns the ETF's document list (prospectus, annual reports, etc.).
+pub async fn cmd_etf_docs(
+    symbol: String,
+    limit: u32,
+    format: &OutputFormat,
+    verbose: bool,
+) -> Result<()> {
+    let cid = symbol_to_counter_id(&symbol);
+    let limit_str = limit.to_string();
+    let data = http_get_us(
+        "/v1/stock-info/etf-files",
+        &[("counter_id", cid.as_str()), ("size", &limit_str)],
+        verbose,
+    )
+    .await?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => print_json(&data),
+    }
+    Ok(())
+}
+
 // ── macrodata ────────────────────────────────────────────────────────────────
 
 use longbridge::fundamental::{

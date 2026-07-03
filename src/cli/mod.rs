@@ -545,6 +545,18 @@ pub enum Commands {
         symbol: String,
     },
 
+    /// US accounts only: ETF document list (prospectus, annual report, etc.)
+    ///
+    /// Example: longbridge etf-docs SPY.US
+    /// Example: longbridge etf-docs QQQ.US --limit 5 --format json
+    EtfDocs {
+        /// ETF symbol in <CODE>.US format
+        symbol: String,
+        /// Maximum number of documents to return (default: 10)
+        #[arg(long, default_value = "10")]
+        limit: u32,
+    },
+
     /// Macroeconomic data by indicator: list all supported indicators or query historical data
     ///
     /// The indicator-dimension counterpart of `finance-calendar macrodata` (which is
@@ -3297,6 +3309,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             fundamental::cmd_forecast_eps(symbol, format, verbose).await
         }
         Commands::Consensus { symbol } => fundamental::cmd_consensus(symbol, format, verbose).await,
+        Commands::EtfDocs { symbol, limit } => fundamental::cmd_etf_docs(symbol, limit, format, verbose).await,
         Commands::BusinessSegments {
             symbol,
             history,
