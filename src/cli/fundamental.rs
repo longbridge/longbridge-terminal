@@ -336,7 +336,7 @@ pub async fn cmd_financial_report(
     // route to finn-overview for the financial summary view.
     if is_us_fundamental(&symbol).await && kind.is_empty() {
         let ctx = crate::openapi::fundamental();
-        let mut data = to_value(
+        let data = to_value(
             ctx.us_financial_overview(symbol.clone(), report.as_deref().unwrap_or("annual"))
                 .await?,
         )?;
@@ -635,12 +635,17 @@ pub async fn cmd_dividend(
                     .as_array()
                     .unwrap_or(&empty)
                     .iter()
+                    .filter(|r| !val_str(&r["dividend"]).is_empty())
                     .map(|r| {
+                        let yield_str = match r["dividend_yield"].as_f64() {
+                            Some(f) => format!("{f}%"),
+                            None => val_str(&r["dividend_yield"]),
+                        };
                         vec![
                             val_str(&r["fiscal_year"]),
                             val_str(&r["fiscal_year_range"]),
                             format!("{} {}", currency, val_str(&r["dividend"])),
-                            format!("{}%", val_str(&r["dividend_yield"])),
+                            yield_str,
                         ]
                     })
                     .collect();
