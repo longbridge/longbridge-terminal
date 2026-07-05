@@ -59,7 +59,7 @@ const INTERNAL_ORDER_FIELDS: &[&str] = &[
     "aaid", "org_id", "ploy_id", "ploy_type", "card_ids", "bid_size_list",
     "button_control", "current_millisecond", "deductions_status", "free_status",
     "platform_deductions_status", "force_only_rth", "limit_depth_level", "tag",
-    "trend", "trigger_count", "trigger_status",
+    "trend", "trigger_count", "trigger_status", "trigger_at", "account_channel",
 ];
 
 pub async fn cmd_orders(

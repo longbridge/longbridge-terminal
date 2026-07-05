@@ -34,7 +34,7 @@ fn to_value<T: serde::Serialize>(v: T) -> Result<Value> {
 fn fix_valuation_value(v: &mut Value) {
     match v {
         Value::Object(map) => {
-            for key in &["aichat_data", "h5_data", "layouts", "stocks", "peers"] {
+            for key in &["aichat_data", "h5_data", "layouts", "stocks", "peers", "circle", "part"] {
                 map.remove(*key);
             }
             for val in map.values_mut() {
