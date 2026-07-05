@@ -58,7 +58,7 @@ fn parse_tif(s: &str) -> Result<TimeInForceType> {
 const INTERNAL_ORDER_FIELDS: &[&str] = &[
     "aaid", "org_id", "ploy_id", "ploy_type", "card_ids", "bid_size_list",
     "button_control", "current_millisecond", "deductions_status", "free_status",
-    "platform_deductions_status",
+    "platform_deductions_status", "force_only_rth", "limit_depth_level", "tag",
 ];
 
 pub async fn cmd_orders(
@@ -172,6 +172,14 @@ pub async fn cmd_orders(
                     for key in INTERNAL_ORDER_FIELDS {
                         map.remove(*key);
                     }
+                    // Drop fields whose value is null, empty string, or empty array —
+                    // these are option/conditional-order fields absent on regular orders
+                    map.retain(|_, v| match v {
+                        serde_json::Value::Null => false,
+                        serde_json::Value::String(s) => !s.is_empty(),
+                        serde_json::Value::Array(a) => !a.is_empty(),
+                        _ => true,
+                    });
                 }
             }
         }
