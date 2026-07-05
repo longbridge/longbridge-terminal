@@ -55,6 +55,12 @@ fn parse_tif(s: &str) -> Result<TimeInForceType> {
     }
 }
 
+const INTERNAL_ORDER_FIELDS: &[&str] = &[
+    "aaid", "org_id", "ploy_id", "ploy_type", "card_ids", "bid_size_list",
+    "button_control", "current_millisecond", "deductions_status", "free_status",
+    "platform_deductions_status",
+];
+
 pub async fn cmd_orders(
     history: bool,
     start: Option<String>,
@@ -105,11 +111,11 @@ pub async fn cmd_orders(
         };
         let resp = crate::openapi::trade().us_query_orders(opts).await?;
         let mut data = serde_json::to_value(&resp)?;
-        // Normalize US order fields for AI agent consumption:
-        // action int (1=Buy, 2=Sell) → string; string timestamps → integers
+        // Normalize US order fields for AI agent consumption
         if let Some(orders) = data["orders"].as_array_mut() {
             for o in orders {
                 if let Some(map) = o.as_object_mut() {
+                    // action int (1=Buy, 2=Sell) → string
                     if let Some(action) = map.get("action").and_then(serde_json::Value::as_i64) {
                         let label = match action {
                             1 => "Buy",
@@ -118,12 +124,23 @@ pub async fn cmd_orders(
                         };
                         map.insert("action".to_string(), serde_json::Value::String(label.to_string()));
                     }
+                    // string timestamps → integers
                     for ts_key in &["submitted_at", "updated_at", "create_time"] {
                         if let Some(s) = map.get(*ts_key).and_then(|v| v.as_str()) {
                             if let Ok(n) = s.parse::<i64>() {
                                 map.insert((*ts_key).to_string(), serde_json::Value::Number(serde_json::Number::from(n)));
                             }
                         }
+                    }
+                    // "RejectedStatus" → "Rejected" (strip redundant "Status" suffix)
+                    if let Some(s) = map.get("status").and_then(|v| v.as_str()) {
+                        if let Some(clean) = s.strip_suffix("Status") {
+                            map.insert("status".to_string(), serde_json::Value::String(clean.to_string()));
+                        }
+                    }
+                    // Remove internal fields irrelevant to AI agents
+                    for key in INTERNAL_ORDER_FIELDS {
+                        map.remove(*key);
                     }
                 }
             }
@@ -1740,6 +1757,12 @@ async fn cmd_us_positions(format: &OutputFormat) -> Result<()> {
         if let Some(s) = map.get("asset_timestamp").and_then(|v| v.as_str()) {
             if let Ok(n) = s.parse::<i64>() {
                 map.insert("asset_timestamp".to_string(), serde_json::Value::Number(serde_json::Number::from(n)));
+            }
+        }
+        // Ensure list fields are always [] rather than null/absent
+        for list_key in &["stock_list", "option_list", "crypto_list", "cash_list"] {
+            if map.get(*list_key).is_none_or(serde_json::Value::is_null) {
+                map.insert((*list_key).to_string(), serde_json::Value::Array(vec![]));
             }
         }
     }

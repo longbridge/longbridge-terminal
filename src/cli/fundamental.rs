@@ -28,12 +28,15 @@ fn to_value<T: serde::Serialize>(v: T) -> Result<Value> {
 
 /// Walk a JSON value and normalize it for AI agent consumption:
 /// - cast `"timestamp"` string values to integers
+/// - cast `"value"` string values to floats (within list items, e.g. historical PE values)
 /// - strip HTML from text fields (`desc`, `tooltip`, `description`, `ai_summary`)
-/// - remove internal chatbot config (`aichat_data`)
+/// - remove internal fields: `aichat_data`, `h5_data`, `layouts`, `stocks`, `peers`
 fn fix_valuation_value(v: &mut Value) {
     match v {
         Value::Object(map) => {
-            map.remove("aichat_data");
+            for key in &["aichat_data", "h5_data", "layouts", "stocks", "peers"] {
+                map.remove(*key);
+            }
             for val in map.values_mut() {
                 fix_valuation_value(val);
             }
@@ -43,6 +46,14 @@ fn fix_valuation_value(v: &mut Value) {
                         "timestamp".to_string(),
                         Value::Number(serde_json::Number::from(n)),
                     );
+                }
+            }
+            // Convert numeric string "value" fields to floats (e.g. history list items)
+            if let Some(s) = map.get("value").and_then(|v| v.as_str()) {
+                if let Ok(f) = s.parse::<f64>() {
+                    if let Some(n) = serde_json::Number::from_f64(f) {
+                        map.insert("value".to_string(), Value::Number(n));
+                    }
                 }
             }
             for key in &["desc", "tooltip", "description", "ai_summary"] {
