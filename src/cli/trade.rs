@@ -289,23 +289,71 @@ pub async fn cmd_order_detail(
     attached: bool,
     format: &OutputFormat,
 ) -> Result<()> {
-    // US accounts: us_order_detail returns current_attached_order for stop-loss/take-profit (interface 16).
-    if attached && crate::openapi::is_us_account().await {
+    // US accounts always use us_order_detail (interface 16).
+    // --attached: show the attached child order instead of the main order.
+    if crate::openapi::is_us_account().await {
         let resp = crate::openapi::trade()
             .us_order_detail(order_id.clone())
             .await?;
         let full = serde_json::to_value(&resp)?;
-        // --attached: show the attached child order if present, otherwise full detail
-        let data = if full["current_attached_order"].is_null() {
-            full
+        // Normalize the inner order object same as order list
+        let mut order_obj = if let Some(o) = full["order"].as_object() {
+            let mut m = o.clone();
+            if let Some(action) = m.get("action").and_then(serde_json::Value::as_i64) {
+                let label = match action { 1 => "Buy", 2 => "Sell", _ => "Unknown" };
+                m.insert("action".to_string(), serde_json::Value::String(label.to_string()));
+            }
+            for ts_key in &["submitted_at", "updated_at", "done_at"] {
+                if let Some(s) = m.get(*ts_key).and_then(|v| v.as_str()) {
+                    if let Ok(n) = s.parse::<i64>() {
+                        m.insert((*ts_key).to_string(), serde_json::Value::Number(serde_json::Number::from(n)));
+                    }
+                }
+            }
+            if let Some(s) = m.get("status").and_then(|v| v.as_str()) {
+                if let Some(clean) = s.strip_suffix("Status") {
+                    m.insert("status".to_string(), serde_json::Value::String(clean.to_string()));
+                }
+            }
+            if let Some(tif) = m.get("time_in_force").and_then(serde_json::Value::as_i64) {
+                let label = match tif { 1 => "Day", 3 => "GTC", 4 => "GTD", 5 => "IOC", 6 => "FOK", _ => "Unknown" };
+                m.insert("time_in_force".to_string(), serde_json::Value::String(label.to_string()));
+            }
+            if let Some(st) = m.get("security_type").and_then(|v| v.as_str()) {
+                let label = match st { "CS" => "Stock", "VA" => "Crypto", "OPT" => "Option", "WAR" => "Warrant", "IOPT" => "Inline-Warrant", "ETF" => "ETF", "ADR" => "ADR", _ => "" };
+                if !label.is_empty() { m.insert("security_type".to_string(), serde_json::Value::String(label.to_string())); }
+            }
+            for key in INTERNAL_ORDER_FIELDS { m.remove(*key); }
+            m.retain(|_, v| match v {
+                serde_json::Value::Null => false,
+                serde_json::Value::String(s) => !s.is_empty(),
+                serde_json::Value::Array(a) => !a.is_empty(),
+                _ => true,
+            });
+            serde_json::Value::Object(m)
         } else {
+            full.clone()
+        };
+        // For --attached: replace with child order if present
+        let data = if attached && !full["current_attached_order"].is_null() {
             full["current_attached_order"].clone()
+        } else {
+            // Flatten: expose order fields at top level + order_histories
+            if let Some(m) = order_obj.as_object_mut() {
+                if let Some(hist) = full["order_histories"].clone().as_array() {
+                    if !hist.is_empty() {
+                        m.insert("order_histories".to_string(), serde_json::Value::Array(hist.clone()));
+                    }
+                }
+            }
+            order_obj
         };
         match format {
             OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&data)?),
             OutputFormat::Pretty => {
                 let val = |k: &str| data[k].as_str().unwrap_or("-").to_string();
-                println!("Attached order detail for {order_id}:");
+                let label = if attached { "Attached order" } else { "Order" };
+                println!("{label} detail for {order_id}:");
                 for key in &[
                     "order_id",
                     "symbol",
