@@ -48,11 +48,24 @@ fn fix_valuation_value(v: &mut Value) {
                     );
                 }
             }
-            // Convert numeric string "value" fields to floats (e.g. history list items)
-            if let Some(s) = map.get("value").and_then(|v| v.as_str()) {
-                if let Ok(f) = s.parse::<f64>() {
+            // Convert numeric string fields to floats
+            // "value": "27.78" → 27.78 (history list items)
+            // "industry_median": "7.89" → 7.89
+            for num_key in &["value", "industry_median", "median", "high", "low"] {
+                if let Some(s) = map.get(*num_key).and_then(|v| v.as_str()) {
+                    if let Ok(f) = s.parse::<f64>() {
+                        if let Some(n) = serde_json::Number::from_f64(f) {
+                            map.insert((*num_key).to_string(), Value::Number(n));
+                        }
+                    }
+                }
+            }
+            // "metric": "35.3x" → 35.3 (strip trailing non-numeric suffix)
+            if let Some(s) = map.get("metric").and_then(|v| v.as_str()) {
+                let stripped = s.trim_end_matches(|c: char| !c.is_ascii_digit() && c != '.');
+                if let Ok(f) = stripped.parse::<f64>() {
                     if let Some(n) = serde_json::Number::from_f64(f) {
-                        map.insert("value".to_string(), Value::Number(n));
+                        map.insert("metric".to_string(), Value::Number(n));
                     }
                 }
             }

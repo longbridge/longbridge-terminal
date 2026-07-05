@@ -138,6 +138,36 @@ pub async fn cmd_orders(
                             map.insert("status".to_string(), serde_json::Value::String(clean.to_string()));
                         }
                     }
+                    // time_in_force int → readable string
+                    if let Some(tif) = map.get("time_in_force").and_then(serde_json::Value::as_i64) {
+                        let label = match tif {
+                            1 => "Day",
+                            3 => "GTC",
+                            4 => "GTD",
+                            5 => "IOC",
+                            6 => "FOK",
+                            _ => "",
+                        };
+                        if !label.is_empty() {
+                            map.insert("time_in_force".to_string(), serde_json::Value::String(label.to_string()));
+                        }
+                    }
+                    // security_type abbreviation → readable
+                    if let Some(st) = map.get("security_type").and_then(|v| v.as_str()) {
+                        let label = match st {
+                            "CS" => "Stock",
+                            "VA" => "Crypto",
+                            "OPT" => "Option",
+                            "WAR" => "Warrant",
+                            "IOPT" => "Inline-Warrant",
+                            "ETF" => "ETF",
+                            "ADR" => "ADR",
+                            _ => "",
+                        };
+                        if !label.is_empty() {
+                            map.insert("security_type".to_string(), serde_json::Value::String(label.to_string()));
+                        }
+                    }
                     // Remove internal fields irrelevant to AI agents
                     for key in INTERNAL_ORDER_FIELDS {
                         map.remove(*key);
@@ -1928,6 +1958,8 @@ pub async fn cmd_us_realized_pl(
                         2 => "Since Inception",
                         _ => "Unknown",
                     });
+                    // rate is a decimal fraction: -0.9303 means -93.03%
+                    m["rate_unit"] = serde_json::json!("decimal_fraction");
                 }
             }
         }
