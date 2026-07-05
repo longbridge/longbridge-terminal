@@ -59,6 +59,7 @@ const INTERNAL_ORDER_FIELDS: &[&str] = &[
     "aaid", "org_id", "ploy_id", "ploy_type", "card_ids", "bid_size_list",
     "button_control", "current_millisecond", "deductions_status", "free_status",
     "platform_deductions_status", "force_only_rth", "limit_depth_level", "tag",
+    "trend", "trigger_count", "trigger_status",
 ];
 
 pub async fn cmd_orders(
@@ -146,11 +147,9 @@ pub async fn cmd_orders(
                             4 => "GTD",
                             5 => "IOC",
                             6 => "FOK",
-                            _ => "",
+                            _ => "Unknown",
                         };
-                        if !label.is_empty() {
-                            map.insert("time_in_force".to_string(), serde_json::Value::String(label.to_string()));
-                        }
+                        map.insert("time_in_force".to_string(), serde_json::Value::String(label.to_string()));
                     }
                     // security_type abbreviation → readable
                     if let Some(st) = map.get("security_type").and_then(|v| v.as_str()) {
