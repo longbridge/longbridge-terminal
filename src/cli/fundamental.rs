@@ -26,12 +26,14 @@ fn to_value<T: serde::Serialize>(v: T) -> Result<Value> {
     Ok(serde_json::to_value(v)?)
 }
 
-/// Walk a JSON value and fix up valuation API quirks:
+/// Walk a JSON value and normalize it for AI agent consumption:
 /// - cast `"timestamp"` string values to integers
-/// - strip HTML from `desc` / `tooltip` / `description` string fields
+/// - strip HTML from text fields (`desc`, `tooltip`, `description`, `ai_summary`)
+/// - remove internal chatbot config (`aichat_data`)
 fn fix_valuation_value(v: &mut Value) {
     match v {
         Value::Object(map) => {
+            map.remove("aichat_data");
             for val in map.values_mut() {
                 fix_valuation_value(val);
             }
@@ -43,7 +45,7 @@ fn fix_valuation_value(v: &mut Value) {
                     );
                 }
             }
-            for key in &["desc", "tooltip", "description"] {
+            for key in &["desc", "tooltip", "description", "ai_summary"] {
                 if let Some(s) = map.get(*key).and_then(|v| v.as_str()) {
                     let clean = strip_html(s);
                     if clean != s {
@@ -53,6 +55,30 @@ fn fix_valuation_value(v: &mut Value) {
             }
         }
         Value::Array(arr) => arr.iter_mut().for_each(fix_valuation_value),
+        _ => {}
+    }
+}
+
+/// Recursively strip trailing `%` from the named fields and convert to a JSON number.
+/// e.g. `"dividend_yield": "1.85%"` → `"dividend_yield": 1.85`
+fn normalize_pct_fields(v: &mut Value, keys: &[&str]) {
+    match v {
+        Value::Object(map) => {
+            for key in keys {
+                if let Some(s) = map.get(*key).and_then(|v| v.as_str()) {
+                    let trimmed = s.trim_end_matches('%');
+                    if let Ok(f) = trimmed.parse::<f64>() {
+                        if let Some(n) = serde_json::Number::from_f64(f) {
+                            map.insert((*key).to_string(), Value::Number(n));
+                        }
+                    }
+                }
+            }
+            for val in map.values_mut() {
+                normalize_pct_fields(val, keys);
+            }
+        }
+        Value::Array(arr) => arr.iter_mut().for_each(|item| normalize_pct_fields(item, keys)),
         _ => {}
     }
 }
@@ -291,12 +317,6 @@ pub async fn cmd_financial_report(
                 .await?,
         )?;
         // Discriminator: AI agents can detect US finn-overview vs HK full statement
-        if let Some(obj) = data.as_object_mut() {
-            obj.insert(
-                "_us_finn_overview".to_string(),
-                serde_json::Value::Bool(true),
-            );
-        }
         print_json(&data);
         return Ok(());
     }
@@ -575,11 +595,13 @@ pub async fn cmd_dividend(
     // US: route to ETF or stock-specific dividend endpoint
     if is_us_fundamental(&symbol).await {
         let ctx = crate::openapi::fundamental();
-        let data = if crate::utils::counter::is_etf(&symbol) {
+        let mut data = if crate::utils::counter::is_etf(&symbol) {
             to_value(ctx.us_etf_dividend_info(symbol.clone()).await?)? // interface 33
         } else {
             to_value(ctx.us_company_dividends(symbol.clone()).await?)? // interface 36
         };
+        // Normalize: "1.85%" → 1.85 (float) for dividend_yield fields
+        normalize_pct_fields(&mut data, &["dividend_yield", "dividend_yield_ttm"]);
         print_json(&data);
         return Ok(());
     }
@@ -750,7 +772,7 @@ pub async fn cmd_forecast_eps(symbol: String, format: &OutputFormat, verbose: bo
 /// Fetch financial consensus detail.
 pub async fn cmd_consensus(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
-    let data = if is_us_fundamental(&symbol).await {
+    let mut data = if is_us_fundamental(&symbol).await {
         to_value(
             crate::openapi::fundamental()
                 .us_analyst_consensus(symbol.clone(), "annual")
@@ -764,6 +786,7 @@ pub async fn cmd_consensus(symbol: String, format: &OutputFormat, verbose: bool)
         )
         .await?
     };
+    fix_valuation_value(&mut data);
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => print_consensus(&data),

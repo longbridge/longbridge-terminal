@@ -104,7 +104,30 @@ pub async fn cmd_orders(
             limit: i32::try_from(us_limit).unwrap_or(20),
         };
         let resp = crate::openapi::trade().us_query_orders(opts).await?;
-        let data = serde_json::to_value(&resp)?;
+        let mut data = serde_json::to_value(&resp)?;
+        // Normalize US order fields for AI agent consumption:
+        // action int (1=Buy, 2=Sell) → string; string timestamps → integers
+        if let Some(orders) = data["orders"].as_array_mut() {
+            for o in orders {
+                if let Some(map) = o.as_object_mut() {
+                    if let Some(action) = map.get("action").and_then(serde_json::Value::as_i64) {
+                        let label = match action {
+                            1 => "Buy",
+                            2 => "Sell",
+                            _ => "Unknown",
+                        };
+                        map.insert("action".to_string(), serde_json::Value::String(label.to_string()));
+                    }
+                    for ts_key in &["submitted_at", "updated_at", "create_time"] {
+                        if let Some(s) = map.get(*ts_key).and_then(|v| v.as_str()) {
+                            if let Ok(n) = s.parse::<i64>() {
+                                map.insert((*ts_key).to_string(), serde_json::Value::Number(serde_json::Number::from(n)));
+                            }
+                        }
+                    }
+                }
+            }
+        }
         match format {
             OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&data)?),
             OutputFormat::Pretty => {
@@ -1703,7 +1726,23 @@ fn print_json_us(data: &serde_json::Value) {
 
 async fn cmd_us_positions(format: &OutputFormat) -> Result<()> {
     let resp = crate::openapi::trade().us_asset_overview().await?;
-    let data = serde_json::to_value(&resp)?;
+    let mut data = serde_json::to_value(&resp)?;
+    // Normalize for AI agent: account_type code → readable string, timestamp string → int
+    if let Some(map) = data.as_object_mut() {
+        if let Some(s) = map.get("account_type").and_then(|v| v.as_str()) {
+            let label = match s {
+                "0" => "Standard (Margin)",
+                "1" => "Cash",
+                other => other,
+            };
+            map.insert("account_type".to_string(), serde_json::Value::String(label.to_string()));
+        }
+        if let Some(s) = map.get("asset_timestamp").and_then(|v| v.as_str()) {
+            if let Ok(n) = s.parse::<i64>() {
+                map.insert("asset_timestamp".to_string(), serde_json::Value::Number(serde_json::Number::from(n)));
+            }
+        }
+    }
     match format {
         OutputFormat::Json => print_json_us(&data),
         OutputFormat::Pretty => print_us_positions_pretty(&data),
