@@ -705,14 +705,13 @@ pub async fn cmd_static(symbols: Vec<String>, format: &OutputFormat) -> Result<(
     if symbols.is_empty() {
         bail!("At least one symbol is required");
     }
-    // US accounts: route .HAS / .BKKT crypto symbols to us_crypto_overview (interface 3)
+    // US accounts: route .BKKT crypto symbols to us_crypto_overview (interface 3).
+    // .HAS and .OSL remain on the HK path.
     if crate::openapi::is_us_account().await {
-        let is_crypto = |s: &&String| {
-            s.rsplit_once('.').is_some_and(|(_, ext)| {
-                ext.eq_ignore_ascii_case("HAS") || ext.eq_ignore_ascii_case("BKKT")
-            })
-        };
-        let crypto: Vec<_> = symbols.iter().filter(is_crypto).collect();
+        let crypto: Vec<_> = symbols
+            .iter()
+            .filter(|s| s.rsplit_once('.').is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("BKKT")))
+            .collect();
         if !crypto.is_empty() {
             let ctx = crate::openapi::quote_cmd();
             for sym in crypto {
@@ -740,11 +739,9 @@ pub async fn cmd_static(symbols: Vec<String>, format: &OutputFormat) -> Result<(
                     }
                 }
             }
-            // Return early if all symbols were crypto; otherwise fall through for non-crypto symbols
+            // Return early if all symbols were .BKKT; otherwise fall through for non-BKKT symbols
             if symbols.iter().all(|s| {
-                s.rsplit_once('.').is_some_and(|(_, ext)| {
-                    ext.eq_ignore_ascii_case("HAS") || ext.eq_ignore_ascii_case("BKKT")
-                })
+                s.rsplit_once('.').is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("BKKT"))
             }) {
                 return Ok(());
             }
