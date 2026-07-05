@@ -626,7 +626,35 @@ pub async fn cmd_dividend(
         };
         // Normalize: "1.85%" → 1.85 (float) for dividend_yield fields
         normalize_pct_fields(&mut data, &["dividend_yield", "dividend_yield_ttm"]);
-        print_json(&data);
+        match format {
+            OutputFormat::Json => print_json(&data),
+            OutputFormat::Pretty => {
+                let currency = data["currency"].as_str().unwrap_or("USD");
+                let empty = vec![];
+                let rows: Vec<Vec<String>> = data["fiscal_year_info"]
+                    .as_array()
+                    .unwrap_or(&empty)
+                    .iter()
+                    .map(|r| {
+                        vec![
+                            val_str(&r["fiscal_year"]),
+                            val_str(&r["fiscal_year_range"]),
+                            format!("{} {}", currency, val_str(&r["dividend"])),
+                            format!("{}%", val_str(&r["dividend_yield"])),
+                        ]
+                    })
+                    .collect();
+                if rows.is_empty() {
+                    println!("No dividend data.");
+                } else {
+                    super::output::print_table(
+                        &["Fiscal Year", "Period", "Dividend", "Yield"],
+                        rows,
+                        format,
+                    );
+                }
+            }
+        }
         return Ok(());
     }
     let page_str = page.to_string();
@@ -3554,9 +3582,7 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
         ),
         "valuation" => object(
             "Valuation detail or history",
-            &[
-                "overview", "history", "layouts", "peers", "stocks", "metrics", "range",
-            ],
+            &["overview", "history", "metrics", "range"],
         ),
         "shareholder" => object(
             "Shareholder list, top holders, or detail",
