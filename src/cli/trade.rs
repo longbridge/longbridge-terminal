@@ -85,24 +85,23 @@ pub async fn cmd_orders(
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
+        let now_i64 = i64::try_from(now).unwrap_or(i64::MAX);
         let start_ts = start
             .as_deref()
             .and_then(|s| parse_datetime_start(s).ok())
-            .map(|dt| dt.unix_timestamp())
-            .unwrap_or(now as i64 - 86400 * 90);
+            .map_or(now_i64 - 86400 * 90, time::OffsetDateTime::unix_timestamp);
         let end_ts = end
             .as_deref()
             .and_then(|s| parse_datetime_end(s).ok())
-            .map(|dt| dt.unix_timestamp())
-            .unwrap_or(now as i64);
+            .map_or(now_i64, time::OffsetDateTime::unix_timestamp);
         let opts = GetUSHistoryOrders {
             symbol: symbol.clone(),
             side,
             start_at: start_ts,
             end_at: end_ts,
             query_type,
-            page: us_page as i32,
-            limit: us_limit as i32,
+            page: i32::try_from(us_page).unwrap_or(1),
+            limit: i32::try_from(us_limit).unwrap_or(20),
         };
         let resp = crate::openapi::trade().us_query_orders(opts).await?;
         let data = serde_json::to_value(&resp)?;
@@ -134,7 +133,12 @@ pub async fn cmd_orders(
                                 val(&o["status"]),
                                 val(&o["quantity"]),
                                 val(&o["price"]),
-                                val(&o["create_time"]),
+                                // create_time is often null; fall back to submitted_at
+                                if o["create_time"].is_null() {
+                                    val(&o["submitted_at"])
+                                } else {
+                                    val(&o["create_time"])
+                                },
                             ]
                         })
                         .collect(),
@@ -215,10 +219,10 @@ pub async fn cmd_order_detail(
             .await?;
         let full = serde_json::to_value(&resp)?;
         // --attached: show the attached child order if present, otherwise full detail
-        let data = if !full["current_attached_order"].is_null() {
-            full["current_attached_order"].clone()
-        } else {
+        let data = if full["current_attached_order"].is_null() {
             full
+        } else {
+            full["current_attached_order"].clone()
         };
         match format {
             OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&data)?),

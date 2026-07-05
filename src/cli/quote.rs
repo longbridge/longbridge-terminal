@@ -707,7 +707,10 @@ pub async fn cmd_static(symbols: Vec<String>, format: &OutputFormat) -> Result<(
     }
     // US accounts: route .HAS crypto symbols to Gemini endpoint (interface 3)
     if crate::openapi::is_us_account().await {
-        let crypto: Vec<_> = symbols.iter().filter(|s| s.ends_with(".HAS")).collect();
+        let crypto: Vec<_> = symbols
+            .iter()
+            .filter(|s| s.rsplit_once('.').is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("HAS")))
+            .collect();
         if !crypto.is_empty() {
             let ctx = crate::openapi::quote_cmd();
             for sym in crypto {
@@ -717,8 +720,7 @@ pub async fn cmd_static(symbols: Vec<String>, format: &OutputFormat) -> Result<(
                     OutputFormat::Pretty => {
                         let val = |k: &str| data[k].as_str().unwrap_or("-").to_string();
                         println!(
-                            "── {} ─────────────────────────────────────────────────────",
-                            sym
+                            "── {sym} ─────────────────────────────────────────────────────"
                         );
                         for key in &[
                             "name",
@@ -737,7 +739,9 @@ pub async fn cmd_static(symbols: Vec<String>, format: &OutputFormat) -> Result<(
                 }
             }
             // Return early if all symbols were crypto; otherwise fall through for non-.HAS symbols
-            if symbols.iter().all(|s| s.ends_with(".HAS")) {
+            if symbols.iter().all(|s| {
+                s.rsplit_once('.').is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("HAS"))
+            }) {
                 return Ok(());
             }
         }
@@ -745,7 +749,9 @@ pub async fn cmd_static(symbols: Vec<String>, format: &OutputFormat) -> Result<(
     let ctx = crate::openapi::quote_cmd();
     let input: Vec<String> = symbols
         .iter()
-        .filter(|s| !s.ends_with(".HAS"))
+        .filter(|s| {
+            !s.rsplit_once('.').is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("HAS"))
+        })
         .cloned()
         .collect();
     let symbols_for_sdk = if input.is_empty() {

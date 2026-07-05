@@ -14,13 +14,47 @@ use crate::utils::text::strip_html;
 /// Returns true when symbol is a US stock/ETF (ends with `.US`) and the
 /// current session is a US account — used to route P1 fundamental commands.
 async fn is_us_fundamental(symbol: &str) -> bool {
-    symbol.ends_with(".US") && crate::openapi::is_us_account().await
+    symbol
+        .rsplit_once('.')
+        .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("US"))
+        && crate::openapi::is_us_account().await
 }
 
 /// Serialize any serde-serializable SDK response to a JSON Value for
-/// print_json / pretty rendering.
+/// `print_json` / pretty rendering.
 fn to_value<T: serde::Serialize>(v: T) -> Result<Value> {
     Ok(serde_json::to_value(v)?)
+}
+
+/// Walk a JSON value and fix up valuation API quirks:
+/// - cast `"timestamp"` string values to integers
+/// - strip HTML from `desc` / `tooltip` / `description` string fields
+fn fix_valuation_value(v: &mut Value) {
+    match v {
+        Value::Object(map) => {
+            for val in map.values_mut() {
+                fix_valuation_value(val);
+            }
+            if let Some(ts) = map.get("timestamp").and_then(|v| v.as_str()) {
+                if let Ok(n) = ts.parse::<i64>() {
+                    map.insert(
+                        "timestamp".to_string(),
+                        Value::Number(serde_json::Number::from(n)),
+                    );
+                }
+            }
+            for key in &["desc", "tooltip", "description"] {
+                if let Some(s) = map.get(*key).and_then(|v| v.as_str()) {
+                    let clean = strip_html(s);
+                    if clean != s {
+                        map.insert((*key).to_string(), Value::String(clean));
+                    }
+                }
+            }
+        }
+        Value::Array(arr) => arr.iter_mut().for_each(fix_valuation_value),
+        _ => {}
+    }
 }
 
 async fn http_get(path: &str, params: &[(&str, &str)], verbose: bool) -> Result<Value> {
@@ -263,10 +297,7 @@ pub async fn cmd_financial_report(
                 serde_json::Value::Bool(true),
             );
         }
-        match format {
-            OutputFormat::Json => print_json(&data),
-            OutputFormat::Pretty => print_json(&data),
-        }
+        print_json(&data);
         return Ok(());
     }
     let mut params: Vec<(&str, &str)> = vec![("counter_id", cid.as_str()), ("kind", kind.as_str())];
@@ -282,11 +313,11 @@ pub async fn cmd_financial_report(
 }
 
 /// `financial-report key-metrics <SYMBOL>` — US accounts only (interface 23).
-/// Returns ROE, gross_margin, net_margin, debt_assets_ratio per report period.
+/// Returns ROE, `gross_margin`, `net_margin`, `debt_assets_ratio` per report period.
 pub async fn cmd_financial_report_key_metrics(
     symbol: String,
     report: Option<String>,
-    format: &OutputFormat,
+    _format: &OutputFormat,
     _verbose: bool,
 ) -> Result<()> {
     let ctx = crate::openapi::fundamental();
@@ -294,10 +325,7 @@ pub async fn cmd_financial_report_key_metrics(
         ctx.us_key_financial_metrics(symbol.clone(), report.as_deref().unwrap_or("annual"))
             .await?,
     )?;
-    match format {
-        OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_json(&data),
-    }
+    print_json(&data);
     Ok(())
 }
 
@@ -552,10 +580,7 @@ pub async fn cmd_dividend(
         } else {
             to_value(ctx.us_company_dividends(symbol.clone()).await?)? // interface 36
         };
-        match format {
-            OutputFormat::Json => print_json(&data),
-            OutputFormat::Pretty => print_json(&data),
-        }
+        print_json(&data);
         return Ok(());
     }
     let page_str = page.to_string();
@@ -875,7 +900,7 @@ pub async fn cmd_valuation(
         ("indicator", ind),
         ("range", range_val),
     ];
-    let data = if is_us_fundamental(&symbol).await {
+    let mut data = if is_us_fundamental(&symbol).await {
         to_value(
             crate::openapi::fundamental()
                 .us_valuation_overview(symbol.clone())
@@ -884,6 +909,7 @@ pub async fn cmd_valuation(
     } else {
         http_get("/v1/quote/valuation", &params, verbose).await?
     };
+    fix_valuation_value(&mut data);
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => {
@@ -913,7 +939,8 @@ pub async fn cmd_valuation_detail(
     if let Some(ref ind) = indicator {
         params.push(("indicator", ind.as_str()));
     }
-    let data = http_get("/v1/quote/valuation/detail", &params, verbose).await?;
+    let mut data = http_get("/v1/quote/valuation/detail", &params, verbose).await?;
+    fix_valuation_value(&mut data);
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => print_valuation_detail(&data),
@@ -2424,7 +2451,7 @@ pub async fn cmd_financial_statement(
     let cid = symbol_to_counter_id(&symbol);
     let kind_upper = kind.to_uppercase();
     let report_lower = report.to_lowercase();
-    let data = if is_us_fundamental(&symbol).await {
+    let mut data = if is_us_fundamental(&symbol).await {
         to_value(
             crate::openapi::fundamental()
                 .us_financial_statement_v3(
@@ -2446,6 +2473,10 @@ pub async fn cmd_financial_statement(
         )
         .await?
     };
+    // Normalise: if list is an empty object {} (API quirk), replace with []
+    if data["list"].is_object() && data["list"].as_object().is_some_and(serde_json::Map::is_empty) {
+        data["list"] = Value::Array(vec![]);
+    }
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => {
@@ -3678,7 +3709,7 @@ fn print_financial_report_snapshot(data: &Value) {
 pub async fn cmd_etf_docs(
     symbol: String,
     limit: u32,
-    format: &OutputFormat,
+    _format: &OutputFormat,
     _verbose: bool,
 ) -> Result<()> {
     let data = to_value(
@@ -3686,10 +3717,7 @@ pub async fn cmd_etf_docs(
             .us_etf_files(symbol.clone(), Some(limit))
             .await?,
     )?;
-    match format {
-        OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_json(&data),
-    }
+    print_json(&data);
     Ok(())
 }
 
