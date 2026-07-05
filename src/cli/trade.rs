@@ -1709,37 +1709,54 @@ async fn cmd_us_positions(format: &OutputFormat) -> Result<()> {
 
 fn print_us_positions_pretty(data: &serde_json::Value) {
     let val = |v: &serde_json::Value| v.as_str().unwrap_or("-").to_string();
-    println!("Account Type:   {}", val(&data["account_type"]));
-    println!("Net Assets:     {}", val(&data["net_assets"]));
-    println!("Total Cash:     {}", val(&data["total_cash"]));
-    println!("Unrealized P&L: {}", val(&data["unrealized_pl"]));
+    let acct_type = match data["account_type"].as_str().unwrap_or("") {
+        "0" => "Standard (Margin)",
+        "1" => "Cash",
+        other => other,
+    };
+    println!("Account Type:   {acct_type}");
+    println!("Cash Buy Power: {}", val(&data["cash_buy_power"]));
     println!();
 
     let empty = vec![];
-    let positions = data["positions"].as_array().unwrap_or(&empty);
-    if !positions.is_empty() {
+
+    // Cash balances
+    let cash_list = data["cash_list"].as_array().unwrap_or(&empty);
+    if !cash_list.is_empty() {
+        println!("── Cash ────────────────────────────────────────────────────────");
+        print_table(
+            &["Currency", "Total Cash", "Settled Cash", "Frozen"],
+            cash_list
+                .iter()
+                .map(|c| {
+                    vec![
+                        val(&c["currency"]),
+                        val(&c["total_cash"]),
+                        val(&c["settled_cash"]),
+                        val(&c["frozen_buy_cash"]),
+                    ]
+                })
+                .collect(),
+            &OutputFormat::Pretty,
+        );
+    }
+
+    // Stock positions
+    let stock_list = data["stock_list"].as_array().unwrap_or(&empty);
+    if !stock_list.is_empty() {
         println!("── Stocks ──────────────────────────────────────────────────────");
         print_table(
-            &[
-                "Symbol",
-                "Qty",
-                "Cost",
-                "Price",
-                "Mkt Value",
-                "P&L",
-                "Status",
-            ],
-            positions
+            &["Symbol", "Qty", "Cost", "Price", "Mkt Value", "P&L"],
+            stock_list
                 .iter()
                 .map(|p| {
                     vec![
-                        val(&p["symbol"]),
+                        val(&p["counter_id"]),
                         val(&p["quantity"]),
-                        val(&p["cost_price"]),
-                        val(&p["current_price"]),
+                        val(&p["average_cost"]),
+                        val(&p["last_done"]),
                         val(&p["market_value"]),
                         val(&p["unrealized_pl"]),
-                        val(&p["trade_status"]),
                     ]
                 })
                 .collect(),
@@ -1747,30 +1764,21 @@ fn print_us_positions_pretty(data: &serde_json::Value) {
         );
     }
 
-    let options = data["option_positions"].as_array().unwrap_or(&empty);
-    if !options.is_empty() {
+    // Option positions
+    let option_list = data["option_list"].as_array().unwrap_or(&empty);
+    if !option_list.is_empty() {
         println!("── Options ─────────────────────────────────────────────────────");
         print_table(
-            &[
-                "Symbol",
-                "Underlying",
-                "Type",
-                "Strike",
-                "Expiry",
-                "Qty",
-                "P&L",
-            ],
-            options
+            &["Symbol", "Underlying", "Qty", "Cost", "Mkt Value"],
+            option_list
                 .iter()
                 .map(|p| {
                     vec![
-                        val(&p["symbol"]),
-                        val(&p["underlying_code"]),
-                        val(&p["type"]),
-                        val(&p["strike_price"]),
-                        val(&p["due_date"]),
+                        val(&p["counter_id"]),
+                        val(&p["underlying_counter_id"]),
                         val(&p["quantity"]),
-                        val(&p["unrealized_pl"]),
+                        val(&p["average_cost"]),
+                        val(&p["market_value"]),
                     ]
                 })
                 .collect(),
@@ -1778,7 +1786,7 @@ fn print_us_positions_pretty(data: &serde_json::Value) {
         );
     }
 
-    let cryptos = data["crypto_positions"].as_array().unwrap_or(&empty);
+    let cryptos = data["crypto_list"].as_array().unwrap_or(&empty);
     if !cryptos.is_empty() {
         println!("── Crypto ──────────────────────────────────────────────────────");
         print_table(
@@ -1787,10 +1795,10 @@ fn print_us_positions_pretty(data: &serde_json::Value) {
                 .iter()
                 .map(|p| {
                     vec![
-                        val(&p["symbol"]),
+                        val(&p["counter_id"]),
                         val(&p["quantity"]),
-                        val(&p["cost_price"]),
-                        val(&p["current_price"]),
+                        val(&p["average_cost"]),
+                        val(&p["last_done"]),
                         val(&p["market_value"]),
                         val(&p["unrealized_pl"]),
                     ]
@@ -1798,13 +1806,6 @@ fn print_us_positions_pretty(data: &serde_json::Value) {
                 .collect(),
             &OutputFormat::Pretty,
         );
-    }
-
-    if let Some(bp) = data["buy_power"].as_object() {
-        println!("── Buy Power ───────────────────────────────────────────────────");
-        for (k, v) in bp {
-            println!("  {:<28} {}", k, v.as_str().unwrap_or("-"));
-        }
     }
 }
 
@@ -1824,7 +1825,9 @@ pub async fn cmd_us_realized_pl(
         "stock" | "1" => Some("1".to_string()),
         "option" | "2" => Some("2".to_string()),
         "crypto" | "3" => Some("3".to_string()),
-        other => Some(other.to_string()),
+        other => {
+            anyhow::bail!("Invalid category '{other}'. Valid values: all | stock | option | crypto")
+        }
     };
     let resp = crate::openapi::trade()
         .us_realized_pl(currency.to_string(), cat)
@@ -1839,7 +1842,30 @@ pub async fn cmd_us_realized_pl(
                 anyhow::Error::from(e)
             }
         })?;
-    let data = serde_json::to_value(&resp)?;
+    let mut data = serde_json::to_value(&resp)?;
+    // Annotate category/period integers with labels for AI agents
+    if let Some(list) = data["realized_pl_list"].as_array_mut() {
+        for entry in list.iter_mut() {
+            let cat = entry["category"].as_i64().unwrap_or(0);
+            entry["category_name"] = serde_json::json!(match cat {
+                0 => "All",
+                1 => "Stock",
+                2 => "Option",
+                3 => "Crypto",
+                _ => "Unknown",
+            });
+            if let Some(metrics) = entry["metrics"].as_array_mut() {
+                for m in metrics.iter_mut() {
+                    let period = m["period"].as_i64().unwrap_or(0);
+                    m["period_name"] = serde_json::json!(match period {
+                        1 => "YTD",
+                        2 => "Since Inception",
+                        _ => "Unknown",
+                    });
+                }
+            }
+        }
+    }
     match format {
         OutputFormat::Json => print_json_us(&data),
         OutputFormat::Pretty => {

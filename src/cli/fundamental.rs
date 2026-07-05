@@ -252,10 +252,17 @@ pub async fn cmd_financial_report(
     // route to finn-overview for the financial summary view.
     if is_us_fundamental(&symbol).await && kind.is_empty() {
         let ctx = crate::openapi::fundamental();
-        let data = to_value(
+        let mut data = to_value(
             ctx.us_financial_overview(symbol.clone(), report.as_deref().unwrap_or("annual"))
                 .await?,
         )?;
+        // Discriminator: AI agents can detect US finn-overview vs HK full statement
+        if let Some(obj) = data.as_object_mut() {
+            obj.insert(
+                "_us_finn_overview".to_string(),
+                serde_json::Value::Bool(true),
+            );
+        }
         match format {
             OutputFormat::Json => print_json(&data),
             OutputFormat::Pretty => print_json(&data),
