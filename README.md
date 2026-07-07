@@ -1,7 +1,7 @@
 # Longbridge Terminal
 
 <p align="center">
-  <strong>English</strong> | <a href="./README.zh-CN.md">中文</a>
+  <strong>English</strong> | <a href="./README.zh-CN.md">简体中文</a>
 </p>
 
 AI-native CLI for the [Longbridge](https://longbridge.com) trading platform — real-time market data, portfolio, and trading. Also ships a full-screen TUI for interactive monitoring.
