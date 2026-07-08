@@ -1,5 +1,5 @@
 test:
-	cargo test --all
+	RUST_MIN_STACK=8388608 cargo test --all
 
 build:
 	cargo build

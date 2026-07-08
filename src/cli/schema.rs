@@ -463,26 +463,24 @@ mod tests {
     use super::*;
 
     fn real_leaf_paths(command: &Command) -> Vec<Vec<String>> {
-        fn walk(command: &Command, prefix: &mut Vec<String>, out: &mut Vec<Vec<String>>) {
-            let real_subcommands = command
+        let mut out = Vec::new();
+        // Iterative DFS: stack holds (command_ref, current_prefix)
+        let mut stack: Vec<(&Command, Vec<String>)> = vec![(command, Vec::new())];
+        while let Some((cmd, prefix)) = stack.pop() {
+            let real_subcommands: Vec<_> = cmd
                 .get_subcommands()
-                .filter(|subcommand| subcommand.get_name() != "help")
-                .collect::<Vec<_>>();
-
+                .filter(|s| s.get_name() != "help")
+                .collect();
             if !prefix.is_empty() && real_subcommands.is_empty() {
-                out.push(prefix.clone());
-                return;
-            }
-
-            for subcommand in real_subcommands {
-                prefix.push(subcommand.get_name().to_string());
-                walk(subcommand, prefix, out);
-                prefix.pop();
+                out.push(prefix);
+            } else {
+                for sub in real_subcommands {
+                    let mut child_prefix = prefix.clone();
+                    child_prefix.push(sub.get_name().to_string());
+                    stack.push((sub, child_prefix));
+                }
             }
         }
-
-        let mut out = Vec::new();
-        walk(command, &mut Vec::new(), &mut out);
         out
     }
 
