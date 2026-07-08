@@ -889,6 +889,7 @@ fn print_forecast_eps(data: &Value) {
             let ts = item["forecast_end_date"]
                 .as_str()
                 .and_then(|s| s.parse::<i64>().ok())
+                .or_else(|| item["forecast_end_date"].as_i64())
                 .unwrap_or(0);
             if ts == 0 {
                 return None;
@@ -899,9 +900,9 @@ fn print_forecast_eps(data: &Value) {
                 val_str(&item["forecast_eps_median"]),
                 val_str(&item["forecast_eps_highest"]),
                 val_str(&item["forecast_eps_lowest"]),
-                item["institution_up"].to_string(),
-                item["institution_down"].to_string(),
-                item["institution_total"].to_string(),
+                val_str(&item["institution_up"]),
+                val_str(&item["institution_down"]),
+                val_str(&item["institution_total"]),
             ])
         })
         .collect();
@@ -1310,6 +1311,9 @@ pub async fn cmd_valuation_detail(
     verbose: bool,
 ) -> Result<()> {
     if is_us_fundamental(&symbol).await {
+        if indicator.is_some() {
+            anyhow::bail!("US valuation does not support --indicator; omit it and retry");
+        }
         let mut d = to_value(
             crate::openapi::fundamental()
                 .us_valuation_overview(symbol.clone())
@@ -2245,7 +2249,9 @@ pub async fn cmd_buyback(symbol: String, format: &OutputFormat, verbose: bool) -
 }
 
 fn fmt_amount(raw: &str, currency: &str) -> String {
-    let v: f64 = raw.parse().unwrap_or(0.0);
+    let Ok(v) = raw.parse::<f64>() else {
+        return raw.to_string();
+    };
     if v == 0.0 {
         return "-".to_string();
     }
@@ -3487,12 +3493,10 @@ fn print_institution_rating_views(data: &Value) {
         .iter()
         .rev()
         .map(|item| {
-            let row_date = format_date(
-                item["date"]
-                    .as_i64()
-                    .or_else(|| item["date"].as_str().and_then(|s| s.parse::<i64>().ok()))
-                    .unwrap_or(0),
-            );
+            let row_date = item["date"]
+                .as_i64()
+                .or_else(|| item["date"].as_str().and_then(|s| s.parse::<i64>().ok()))
+                .map_or_else(|| "-".to_string(), format_date);
             vec![
                 row_date,
                 val_str(&item["buy"]),

@@ -71,7 +71,12 @@ pub fn get_active_symbol(app: &bevy_app::App, state: AppState) -> Option<String>
 }
 
 pub fn show_index(world: &mut World, index: usize) {
-    let indexes = world.resource::<Carousel<[Counter; 3]>>().current();
+    let Some(indexes) = world
+        .get_resource::<Carousel<[Counter; 3]>>()
+        .map(Carousel::current)
+    else {
+        return;
+    };
     world.insert_resource(systems::StockDetail(indexes[index].clone()));
     world.insert_resource(NextState(Some(AppState::WatchlistStock)));
 }

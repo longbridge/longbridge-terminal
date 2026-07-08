@@ -158,9 +158,13 @@ fn normalize_us_order_map(m: &mut serde_json::Map<String, serde_json::Value>) {
     for key in INTERNAL_ORDER_FIELDS {
         m.remove(*key);
     }
+    // Normalize empty price to explicit null so callers can use is_null() to detect market orders.
+    if matches!(m.get("price"), Some(serde_json::Value::String(s)) if s.is_empty()) {
+        m.insert("price".to_string(), serde_json::Value::Null);
+    }
     m.retain(|k, v| match v {
-        serde_json::Value::Null => false,
-        serde_json::Value::String(s) => k == "price" || !s.is_empty(),
+        serde_json::Value::Null => k == "price",
+        serde_json::Value::String(s) => !s.is_empty(),
         _ => true,
     });
 }
@@ -543,6 +547,12 @@ pub async fn cmd_executions(
     format: &OutputFormat,
 ) -> Result<()> {
     use std::collections::HashMap;
+
+    if crate::openapi::is_us_account().await {
+        anyhow::bail!(
+            "Execution history is not supported for US accounts; use 'order --history' to view filled orders"
+        );
+    }
 
     let ctx = crate::openapi::trade();
 
@@ -1673,7 +1683,9 @@ pub async fn cmd_alert_add(
 }
 
 pub async fn cmd_alert_delete(id: String, format: &OutputFormat, verbose: bool) -> Result<()> {
-    let id_num: i64 = id.parse().unwrap_or(0);
+    let id_num: i64 = id
+        .parse()
+        .map_err(|_| anyhow::anyhow!("Invalid alert id '{id}': must be a numeric id"))?;
     let body = serde_json::json!({ "ids": [id_num] });
     let data = super::api::http_delete("/v1/notify/reminders", body, verbose).await?;
     match format {
@@ -1691,19 +1703,25 @@ pub async fn cmd_alert_set_enabled(
 ) -> Result<()> {
     // Fetch the existing alert to get all required fields
     let list_data = super::api::http_get("/v1/notify/reminders", &[], verbose).await?;
-    let stocks = list_data["lists"].as_array().unwrap_or(&Vec::new()).clone();
+    let stocks = list_data
+        .get("lists")
+        .or_else(|| list_data.get("list"))
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
 
-    let id_num: i64 = id.parse().unwrap_or(0);
+    let id_num: i64 = id
+        .parse()
+        .map_err(|_| anyhow::anyhow!("Invalid alert id '{id}': must be a numeric id"))?;
     let mut found = false;
 
     for stock in &stocks {
         let counter_id = stock["counter_id"].as_str().unwrap_or("");
         if let Some(indicators) = stock["indicators"].as_array() {
             for ind in indicators {
-                let ind_id = ind["id"]
-                    .as_str()
-                    .and_then(|s| s.parse::<i64>().ok())
-                    .unwrap_or(0);
+                let Some(ind_id) = ind["id"].as_str().and_then(|s| s.parse::<i64>().ok()) else {
+                    continue;
+                };
                 if ind_id == id_num {
                     let body = serde_json::json!({
                         "id": ind_id,

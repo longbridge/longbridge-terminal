@@ -5,6 +5,8 @@ use futures::StreamExt as _;
 use longbridge::oauth::TokenStorage as _;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 pub const CALLBACK_PORT: u16 = 60355;
 
@@ -411,21 +413,38 @@ async fn request_device_authorize(
 /// Poll `POST /token` on a single data center (selected via the `x-dc-region`
 /// header) for the shared `device_code` until it is authorized (returns the
 /// token), is rejected, or expires.
+/// Poll `POST /token` for a single DC.
+///
+/// `shared_interval_ms` is shared between both DC pollers so that a `slow_down`
+/// response received by either poller increases the rate for both, as required
+/// by RFC 8628 §3.5.
+///
+/// `initial_delay`: when `true`, sleep one interval before the first poll.
+/// Used for the secondary (US) poller to give the AP→US device-code replication
+/// a moment to complete before the first request.
 async fn poll_device_token(
     http_client: &reqwest::Client,
     oauth_base: &str,
     client_id: &str,
     device_code: &str,
     region: &'static str,
-    interval: u64,
+    shared_interval_ms: Arc<AtomicU64>,
     expires_in: u64,
+    initial_delay: bool,
     verbose: bool,
 ) -> Result<longbridge::oauth::StoredToken> {
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     let url = format!("{oauth_base}/token");
     let deadline = Instant::now() + Duration::from_secs(expires_in);
-    let mut poll_interval = Duration::from_secs(interval.max(1));
+
+    if initial_delay {
+        let ms = shared_interval_ms.load(Ordering::Relaxed);
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if !remaining.is_zero() {
+            tokio::time::sleep(Duration::from_millis(ms).min(remaining)).await;
+        }
+    }
 
     loop {
         // Sleep for at most the remaining time so we don't overshoot the deadline.
@@ -433,11 +452,8 @@ async fn poll_device_token(
         if remaining.is_zero() {
             anyhow::bail!("Device authorization timed out ({region})");
         }
+        let poll_interval = Duration::from_millis(shared_interval_ms.load(Ordering::Relaxed));
         tokio::time::sleep(poll_interval.min(remaining)).await;
-
-        if Instant::now() >= deadline {
-            anyhow::bail!("Device authorization timed out ({region})");
-        }
 
         if verbose {
             eprintln!("POST {url}  grant_type=device_code  x-dc-region={region}");
@@ -483,8 +499,9 @@ async fn poll_device_token(
         match err_resp["error"].as_str() {
             Some("authorization_pending") => {}
             Some("slow_down") => {
-                // RFC 8628 §3.5: increase interval by at least 5 seconds and keep it increased.
-                poll_interval += Duration::from_secs(5);
+                // RFC 8628 §3.5: increase interval by at least 5 seconds. Update the shared
+                // value so both DC pollers back off together.
+                shared_interval_ms.fetch_add(5000, Ordering::Relaxed);
             }
             Some(other) => anyhow::bail!("Authorization failed ({region}): {other}"),
             None => anyhow::bail!("Unexpected token poll response ({region})"),
@@ -537,17 +554,26 @@ pub async fn device_login(verbose: bool, client_name: Option<String>) -> Result<
     // poll both DCs in parallel for the shared `device_code`; the first to be
     // authorized wins. The access token carries that DC's `us_`/`ap_` prefix, so
     // subsequent API calls route back to the same data center automatically.
+    //
+    // `shared_interval_ms`: both pollers read and write the same atomic so that a
+    // `slow_down` from either DC increases the rate for both (RFC 8628 §3.5).
+    //
+    // The AP poller starts immediately; the US poller waits one interval before its
+    // first poll to give the AP→US device-code replication time to complete.
+    let shared_interval_ms = Arc::new(AtomicU64::new(auth.interval.max(1) * 1000));
     let mut polls: futures::stream::FuturesUnordered<_> = DEVICE_LOGIN_REGIONS
         .iter()
-        .map(|&region| {
+        .enumerate()
+        .map(|(i, &region)| {
             Box::pin(poll_device_token(
                 &http_client,
                 &oauth_base,
                 &client_id,
                 &auth.device_code,
                 region,
-                auth.interval,
+                Arc::clone(&shared_interval_ms),
                 auth.expires_in,
+                i > 0, // US poller (index 1) waits one interval before first poll
                 verbose,
             ))
         })
