@@ -720,19 +720,13 @@ pub async fn cmd_dividend(
                         .unwrap_or(&empty)
                         .iter()
                         .filter(|r| {
-                            let d = val_str(&r["dividend"]);
+                            let d = val_str(&r["total_dividend"]);
                             !d.is_empty() && d != "-"
                         })
                         .map(|r| {
-                            let yield_str = match r["dividend_yield"].as_f64() {
-                                Some(f) => format!("{f}%"),
-                                None => val_str(&r["dividend_yield"]),
-                            };
                             vec![
-                                val_str(&r["fiscal_year"]),
-                                val_str(&r["fiscal_year_range"]),
-                                format!("{} {}", currency, val_str(&r["dividend"])),
-                                yield_str,
+                                val_str(&r["year"]),
+                                format!("{} {}", currency, val_str(&r["total_dividend"])),
                             ]
                         })
                         .collect();
@@ -740,7 +734,7 @@ pub async fn cmd_dividend(
                         println!("No dividend data.");
                     } else {
                         super::output::print_table(
-                            &["Fiscal Year", "Period", "Dividend", "Yield"],
+                            &["Fiscal Year", "Dividend"],
                             rows,
                             format,
                         );
@@ -2776,7 +2770,7 @@ pub async fn cmd_financial_statement(
     let mut data = if is_us_fundamental(&symbol).await {
         to_value(
             crate::openapi::fundamental()
-                .us_financial_statement_v3(
+                .us_financial_statement(
                     symbol.clone(),
                     kind_upper.as_str(),
                     report_lower.as_str(),
