@@ -1198,7 +1198,8 @@ pub async fn cmd_valuation(
         ("indicator", ind),
         ("range", range_val),
     ];
-    let data = if is_us_fundamental(&symbol).await {
+    let is_us = is_us_fundamental(&symbol).await;
+    let data = if is_us {
         let mut d = to_value(
             crate::openapi::fundamental()
                 .us_valuation_overview(symbol.clone())
@@ -1212,14 +1213,18 @@ pub async fn cmd_valuation(
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => {
-            let has_data = data["metrics"].as_object().is_some_and(|m| {
-                m.values()
-                    .any(|v| !val_str(&v["median"]).is_empty() && val_str(&v["median"]) != "-")
-            });
-            if has_data {
-                print_valuation_history(&data);
+            if is_us {
+                print_us_valuation_detail(&data);
             } else {
-                println!("No valuation data.");
+                let has_data = data["metrics"].as_object().is_some_and(|m| {
+                    m.values()
+                        .any(|v| !val_str(&v["median"]).is_empty() && val_str(&v["median"]) != "-")
+                });
+                if has_data {
+                    print_valuation_history(&data);
+                } else {
+                    println!("No valuation data.");
+                }
             }
         }
     }
@@ -1253,12 +1258,9 @@ pub async fn cmd_valuation_detail(
     if let Some(ref ind) = indicator {
         params.push(("indicator", ind.as_str()));
     }
-    let mut data = http_get("/v1/quote/valuation/detail", &params, verbose).await?;
+    let data = http_get("/v1/quote/valuation/detail", &params, verbose).await?;
     match format {
-        OutputFormat::Json => {
-            fix_valuation_value(&mut data);
-            print_json(&data);
-        }
+        OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => print_valuation_detail(&data),
     }
     Ok(())

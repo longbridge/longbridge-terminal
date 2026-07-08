@@ -161,12 +161,14 @@ pub async fn init_contexts() -> Result<(
         let mut iter = std::env::args().skip(1);
         let mut cmd = String::new();
         let mut args: Vec<String> = Vec::new();
+        let mut prev_was_flag = false;
         for arg in iter.by_ref() {
-            if cmd.is_empty() && !arg.starts_with('-') {
-                cmd = arg;
+            if cmd.is_empty() && !arg.starts_with('-') && !prev_was_flag {
+                cmd.clone_from(&arg);
             } else if !arg.is_empty() {
-                args.push(arg);
+                args.push(arg.clone());
             }
+            prev_was_flag = arg.starts_with('-');
         }
         let cli_args = ascii_args(args);
         (if cmd.is_ascii() { cmd } else { String::new() }, cli_args)
@@ -485,14 +487,14 @@ mod cli_header_tests {
 
     #[test]
     fn non_ascii_value_is_excluded() {
-        // The flag token itself is ASCII and kept; the CJK value is dropped.
-        let args = ["--name", "我的组"].map(String::from).to_vec();
+        // The flag token itself is ASCII and kept; the non-ASCII value is dropped.
+        let args = ["--name", "caf\u{00e9}"].map(String::from).to_vec();
         assert_eq!(ascii_args(args), "--name");
     }
 
     #[test]
     fn mixed_args_keep_ascii_only() {
-        let args = ["--format", "json", "--name", "我的组", "--verbose"]
+        let args = ["--format", "json", "--name", "na\u{00ef}ve", "--verbose"]
             .map(String::from)
             .to_vec();
         assert_eq!(ascii_args(args), "--format json --name --verbose");
@@ -500,7 +502,7 @@ mod cli_header_tests {
 
     #[test]
     fn all_non_ascii_yields_empty() {
-        let args = ["你好", "世界"].map(String::from).to_vec();
+        let args = ["r\u{00e9}sum\u{00e9}", "na\u{00ef}ve"].map(String::from).to_vec();
         assert_eq!(ascii_args(args), "");
     }
 

@@ -425,10 +425,15 @@ async fn poll_device_token(
 
     let url = format!("{oauth_base}/token");
     let deadline = Instant::now() + Duration::from_secs(expires_in);
-    let poll_interval = Duration::from_secs(interval.max(1));
+    let mut poll_interval = Duration::from_secs(interval.max(1));
 
     loop {
-        tokio::time::sleep(poll_interval).await;
+        // Sleep for at most the remaining time so we don't overshoot the deadline.
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            anyhow::bail!("Device authorization timed out ({region})");
+        }
+        tokio::time::sleep(poll_interval.min(remaining)).await;
 
         if Instant::now() >= deadline {
             anyhow::bail!("Device authorization timed out ({region})");
@@ -476,7 +481,11 @@ async fn poll_device_token(
 
         let err_resp = raw.json::<serde_json::Value>().await.unwrap_or_default();
         match err_resp["error"].as_str() {
-            Some("authorization_pending" | "slow_down") => {}
+            Some("authorization_pending") => {}
+            Some("slow_down") => {
+                // RFC 8628 §3.5: increase interval by at least 5 seconds and keep it increased.
+                poll_interval += Duration::from_secs(5);
+            }
             Some(other) => anyhow::bail!("Authorization failed ({region}): {other}"),
             None => anyhow::bail!("Unexpected token poll response ({region})"),
         }

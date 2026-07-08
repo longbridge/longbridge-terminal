@@ -340,6 +340,10 @@ pub async fn cmd_order_detail(
             let mut m = o.clone();
             normalize_us_order_map(&mut m);
             serde_json::Value::Object(m)
+        } else if let Some(m) = full.as_object() {
+            let mut nm = m.clone();
+            normalize_us_order_map(&mut nm);
+            serde_json::Value::Object(nm)
         } else {
             full.clone()
         };
@@ -1735,7 +1739,7 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
 
     let command = path.join(" ");
     let schema = match command.as_str() {
-        "order" => text("US accounts: array of {id, symbol, action, order_type, status, price, quantity, submitted_at, updated_at}; HK/CN accounts: array of {order_id, symbol, side, type, status, price, quantity, created_at, updated_at}"),
+        "order" => text("US accounts: object {orders: array of {id, symbol, action, order_type, status, price, quantity, submitted_at, updated_at}, has_more}; HK/CN accounts: array of {order_id, symbol, side, type, status, price, quantity, created_at, updated_at}"),
         "order detail" => text(
             "US accounts: object {id, symbol, action, status, order_type, quantity, price, submitted_at, updated_at, order_histories}; HK/CN accounts: object {order_id, symbol, side, order_type, status, quantity, price, submitted_at, updated_at, history}",
         ),
