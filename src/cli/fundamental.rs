@@ -884,7 +884,7 @@ fn print_us_consensus(data: &Value) {
                     r["date"].as_str().unwrap_or("-").to_owned(),
                     r["institution"].as_str().unwrap_or("-").to_owned(),
                     r["rating"].as_str().unwrap_or("-").to_owned(),
-                    r["target"].as_str().unwrap_or("-").to_owned(),
+                    val_str(&r["target"]),
                 ]
             })
             .collect();
@@ -1049,19 +1049,20 @@ fn print_us_valuation_detail(data: &Value) {
     let desc = strip_html(&val_str(&ci["desc"]));
     let ccy = val_str(&ci["ccy_symbol"]);
 
-    let has_ci = !metric.is_empty() || !desc.is_empty();
+    let sentinel = |s: &str| s.is_empty() || s == "-";
+    let has_ci = !sentinel(&metric) || !sentinel(&desc);
     if has_ci {
         println!("\nCurrent {indicator}:");
         let mut rows: Vec<Vec<String>> = vec![];
-        if !metric.is_empty() {
-            let label = if metric_type.is_empty() {
+        if !sentinel(&metric) {
+            let label = if sentinel(&metric_type) {
                 format!("{ccy}{metric}")
             } else {
                 format!("{ccy}{metric} ({metric_type})")
             };
             rows.push(vec!["value".to_string(), label]);
         }
-        if !desc.is_empty() {
+        if !sentinel(&desc) {
             rows.push(vec!["desc".to_string(), desc]);
         }
         super::output::print_table(&["field", "value"], rows, &OutputFormat::Pretty);
@@ -2799,6 +2800,7 @@ pub async fn cmd_financial_statement(
         || data["list"]
             .as_object()
             .is_some_and(serde_json::Map::is_empty)
+        || data["list"].as_array().is_some_and(Vec::is_empty)
     {
         if let Some(periods) = data["periods"].as_array().cloned() {
             data["list"] = Value::Array(periods);

@@ -78,6 +78,86 @@ const INTERNAL_ORDER_FIELDS: &[&str] = &[
     "account_channel",
 ];
 
+fn normalize_us_order_map(m: &mut serde_json::Map<String, serde_json::Value>) {
+    if let Some(action) = m.get("action").and_then(serde_json::Value::as_i64) {
+        let label = match action {
+            1 => "Buy",
+            2 => "Sell",
+            _ => "Unknown",
+        };
+        m.insert(
+            "action".to_string(),
+            serde_json::Value::String(label.to_string()),
+        );
+    }
+    for ts_key in &["submitted_at", "updated_at", "create_time", "done_at"] {
+        if let Some(s) = m.get(*ts_key).and_then(|v| v.as_str()) {
+            if let Ok(n) = s.parse::<i64>() {
+                m.insert(
+                    (*ts_key).to_string(),
+                    serde_json::Value::Number(serde_json::Number::from(n)),
+                );
+            }
+        }
+    }
+    if let Some(s) = m.get("status").and_then(|v| v.as_str()) {
+        if let Some(clean) = s.strip_suffix("Status") {
+            m.insert(
+                "status".to_string(),
+                serde_json::Value::String(clean.to_string()),
+            );
+        }
+    }
+    if let Some(tif) = m.get("time_in_force").and_then(serde_json::Value::as_i64) {
+        let label = match tif {
+            1 => "Day",
+            3 => "GTC",
+            4 => "GTD",
+            5 => "IOC",
+            6 => "FOK",
+            _ => "Unknown",
+        };
+        m.insert(
+            "time_in_force".to_string(),
+            serde_json::Value::String(label.to_string()),
+        );
+    }
+    if let Some(st) = m.get("security_type").and_then(|v| v.as_str()) {
+        let label = match st {
+            "CS" => "Stock",
+            "VA" => "Crypto",
+            "OPT" => "Option",
+            "WAR" => "Warrant",
+            "IOPT" => "Inline-Warrant",
+            "ETF" => "ETF",
+            "ADR" => "ADR",
+            _ => "",
+        };
+        if !label.is_empty() {
+            m.insert(
+                "security_type".to_string(),
+                serde_json::Value::String(label.to_string()),
+            );
+        }
+    }
+    if let Some(cid) = m.remove("counter_id") {
+        let sym = cid.as_str().map_or_else(
+            || cid.clone(),
+            |s| serde_json::Value::String(crate::utils::counter::counter_id_to_symbol(s)),
+        );
+        m.insert("symbol".to_string(), sym);
+    }
+    for key in INTERNAL_ORDER_FIELDS {
+        m.remove(*key);
+    }
+    m.retain(|_, v| match v {
+        serde_json::Value::Null => false,
+        serde_json::Value::String(s) => !s.is_empty(),
+        serde_json::Value::Array(a) => !a.is_empty(),
+        _ => true,
+    });
+}
+
 pub async fn cmd_orders(
     history: bool,
     start: Option<String>,
@@ -93,7 +173,8 @@ pub async fn cmd_orders(
     // US accounts: SDK us_query_orders (interface 14)
     if crate::openapi::is_us_account().await {
         use longbridge::trade::{GetUSHistoryOrders, OrderSide};
-        let side = match us_action.as_deref().unwrap_or("") {
+        let side_str = us_action.as_deref().unwrap_or("").to_lowercase();
+        let side = match side_str.as_str() {
             "buy" => OrderSide::Buy,
             "sell" => OrderSide::Sell,
             _ => OrderSide::Unknown,
@@ -109,14 +190,14 @@ pub async fn cmd_orders(
         } else {
             now_i64 - (now_i64 % 86400)
         };
-        let start_ts = start
-            .as_deref()
-            .and_then(|s| parse_datetime_start(s).ok())
-            .map_or(default_start, time::OffsetDateTime::unix_timestamp);
-        let end_ts = end
-            .as_deref()
-            .and_then(|s| parse_datetime_end(s).ok())
-            .map_or(now_i64, time::OffsetDateTime::unix_timestamp);
+        let start_ts = match start.as_deref() {
+            Some(s) => parse_datetime_start(s)?.unix_timestamp(),
+            None => default_start,
+        };
+        let end_ts = match end.as_deref() {
+            Some(s) => parse_datetime_end(s)?.unix_timestamp(),
+            None => now_i64,
+        };
         let opts = GetUSHistoryOrders {
             symbol: symbol.clone(),
             side,
@@ -128,101 +209,10 @@ pub async fn cmd_orders(
         };
         let resp = crate::openapi::trade().us_query_orders(opts).await?;
         let mut data = serde_json::to_value(&resp)?;
-        // Normalize US order fields for AI agent consumption
         if let Some(orders) = data["orders"].as_array_mut() {
             for o in orders {
                 if let Some(map) = o.as_object_mut() {
-                    // action int (1=Buy, 2=Sell) → string
-                    if let Some(action) = map.get("action").and_then(serde_json::Value::as_i64) {
-                        let label = match action {
-                            1 => "Buy",
-                            2 => "Sell",
-                            _ => "Unknown",
-                        };
-                        map.insert(
-                            "action".to_string(),
-                            serde_json::Value::String(label.to_string()),
-                        );
-                    }
-                    // string timestamps → integers
-                    for ts_key in &["submitted_at", "updated_at", "create_time"] {
-                        if let Some(s) = map.get(*ts_key).and_then(|v| v.as_str()) {
-                            if let Ok(n) = s.parse::<i64>() {
-                                map.insert(
-                                    (*ts_key).to_string(),
-                                    serde_json::Value::Number(serde_json::Number::from(n)),
-                                );
-                            }
-                        }
-                    }
-                    // "RejectedStatus" → "Rejected" (strip redundant "Status" suffix)
-                    if let Some(s) = map.get("status").and_then(|v| v.as_str()) {
-                        if let Some(clean) = s.strip_suffix("Status") {
-                            map.insert(
-                                "status".to_string(),
-                                serde_json::Value::String(clean.to_string()),
-                            );
-                        }
-                    }
-                    // time_in_force int → readable string
-                    if let Some(tif) = map.get("time_in_force").and_then(serde_json::Value::as_i64)
-                    {
-                        let label = match tif {
-                            1 => "Day",
-                            3 => "GTC",
-                            4 => "GTD",
-                            5 => "IOC",
-                            6 => "FOK",
-                            _ => "Unknown",
-                        };
-                        map.insert(
-                            "time_in_force".to_string(),
-                            serde_json::Value::String(label.to_string()),
-                        );
-                    }
-                    // security_type abbreviation → readable
-                    if let Some(st) = map.get("security_type").and_then(|v| v.as_str()) {
-                        let label = match st {
-                            "CS" => "Stock",
-                            "VA" => "Crypto",
-                            "OPT" => "Option",
-                            "WAR" => "Warrant",
-                            "IOPT" => "Inline-Warrant",
-                            "ETF" => "ETF",
-                            "ADR" => "ADR",
-                            _ => "",
-                        };
-                        if !label.is_empty() {
-                            map.insert(
-                                "security_type".to_string(),
-                                serde_json::Value::String(label.to_string()),
-                            );
-                        }
-                    }
-                    // Rename counter_id → display symbol (e.g. "ST/US/NKE" → "NKE.US")
-                    if let Some(cid) = map.remove("counter_id") {
-                        let sym = cid.as_str().map_or_else(
-                            || cid.clone(),
-                            |s| {
-                                serde_json::Value::String(
-                                    crate::utils::counter::counter_id_to_symbol(s),
-                                )
-                            },
-                        );
-                        map.insert("symbol".to_string(), sym);
-                    }
-                    // Remove internal fields irrelevant to AI agents
-                    for key in INTERNAL_ORDER_FIELDS {
-                        map.remove(*key);
-                    }
-                    // Drop fields whose value is null, empty string, or empty array —
-                    // these are option/conditional-order fields absent on regular orders
-                    map.retain(|_, v| match v {
-                        serde_json::Value::Null => false,
-                        serde_json::Value::String(s) => !s.is_empty(),
-                        serde_json::Value::Array(a) => !a.is_empty(),
-                        _ => true,
-                    });
+                    normalize_us_order_map(map);
                 }
             }
         }
@@ -346,79 +336,7 @@ pub async fn cmd_order_detail(
         // Normalize the inner order object same as order list
         let mut order_obj = if let Some(o) = full["order"].as_object() {
             let mut m = o.clone();
-            if let Some(action) = m.get("action").and_then(serde_json::Value::as_i64) {
-                let label = match action {
-                    1 => "Buy",
-                    2 => "Sell",
-                    _ => "Unknown",
-                };
-                m.insert(
-                    "action".to_string(),
-                    serde_json::Value::String(label.to_string()),
-                );
-            }
-            for ts_key in &["submitted_at", "updated_at", "done_at"] {
-                if let Some(s) = m.get(*ts_key).and_then(|v| v.as_str()) {
-                    if let Ok(n) = s.parse::<i64>() {
-                        m.insert(
-                            (*ts_key).to_string(),
-                            serde_json::Value::Number(serde_json::Number::from(n)),
-                        );
-                    }
-                }
-            }
-            if let Some(s) = m.get("status").and_then(|v| v.as_str()) {
-                if let Some(clean) = s.strip_suffix("Status") {
-                    m.insert(
-                        "status".to_string(),
-                        serde_json::Value::String(clean.to_string()),
-                    );
-                }
-            }
-            if let Some(tif) = m.get("time_in_force").and_then(serde_json::Value::as_i64) {
-                let label = match tif {
-                    1 => "Day",
-                    3 => "GTC",
-                    4 => "GTD",
-                    5 => "IOC",
-                    6 => "FOK",
-                    _ => "Unknown",
-                };
-                m.insert(
-                    "time_in_force".to_string(),
-                    serde_json::Value::String(label.to_string()),
-                );
-            }
-            if let Some(st) = m.get("security_type").and_then(|v| v.as_str()) {
-                let label = match st {
-                    "CS" => "Stock",
-                    "VA" => "Crypto",
-                    "OPT" => "Option",
-                    "WAR" => "Warrant",
-                    "IOPT" => "Inline-Warrant",
-                    "ETF" => "ETF",
-                    "ADR" => "ADR",
-                    _ => "",
-                };
-                if !label.is_empty() {
-                    m.insert(
-                        "security_type".to_string(),
-                        serde_json::Value::String(label.to_string()),
-                    );
-                }
-            }
-            if let Some(cid) = m.remove("counter_id") {
-                m.insert("symbol".to_string(), cid);
-            }
-            for key in INTERNAL_ORDER_FIELDS {
-                m.remove(*key);
-            }
-            m.retain(|_, v| match v {
-                serde_json::Value::Null => false,
-                serde_json::Value::String(s) => !s.is_empty(),
-                serde_json::Value::Array(a) => !a.is_empty(),
-                _ => true,
-            });
+            normalize_us_order_map(&mut m);
             serde_json::Value::Object(m)
         } else {
             full.clone()
@@ -428,79 +346,7 @@ pub async fn cmd_order_detail(
         let data = if using_attached {
             if let Some(o) = full["current_attached_order"].as_object() {
                 let mut m = o.clone();
-                if let Some(action) = m.get("action").and_then(serde_json::Value::as_i64) {
-                    let label = match action {
-                        1 => "Buy",
-                        2 => "Sell",
-                        _ => "Unknown",
-                    };
-                    m.insert(
-                        "action".to_string(),
-                        serde_json::Value::String(label.to_string()),
-                    );
-                }
-                for ts_key in &["submitted_at", "updated_at", "done_at"] {
-                    if let Some(s) = m.get(*ts_key).and_then(|v| v.as_str()) {
-                        if let Ok(n) = s.parse::<i64>() {
-                            m.insert(
-                                (*ts_key).to_string(),
-                                serde_json::Value::Number(serde_json::Number::from(n)),
-                            );
-                        }
-                    }
-                }
-                if let Some(s) = m.get("status").and_then(|v| v.as_str()) {
-                    if let Some(clean) = s.strip_suffix("Status") {
-                        m.insert(
-                            "status".to_string(),
-                            serde_json::Value::String(clean.to_string()),
-                        );
-                    }
-                }
-                if let Some(tif) = m.get("time_in_force").and_then(serde_json::Value::as_i64) {
-                    let label = match tif {
-                        1 => "Day",
-                        3 => "GTC",
-                        4 => "GTD",
-                        5 => "IOC",
-                        6 => "FOK",
-                        _ => "Unknown",
-                    };
-                    m.insert(
-                        "time_in_force".to_string(),
-                        serde_json::Value::String(label.to_string()),
-                    );
-                }
-                if let Some(st) = m.get("security_type").and_then(|v| v.as_str()) {
-                    let label = match st {
-                        "CS" => "Stock",
-                        "VA" => "Crypto",
-                        "OPT" => "Option",
-                        "WAR" => "Warrant",
-                        "IOPT" => "Inline-Warrant",
-                        "ETF" => "ETF",
-                        "ADR" => "ADR",
-                        _ => "",
-                    };
-                    if !label.is_empty() {
-                        m.insert(
-                            "security_type".to_string(),
-                            serde_json::Value::String(label.to_string()),
-                        );
-                    }
-                }
-                if let Some(cid) = m.remove("counter_id") {
-                    m.insert("symbol".to_string(), cid);
-                }
-                for key in INTERNAL_ORDER_FIELDS {
-                    m.remove(*key);
-                }
-                m.retain(|_, v| match v {
-                    serde_json::Value::Null => false,
-                    serde_json::Value::String(s) => !s.is_empty(),
-                    serde_json::Value::Array(a) => !a.is_empty(),
-                    _ => true,
-                });
+                normalize_us_order_map(&mut m);
                 serde_json::Value::Object(m)
             } else {
                 full["current_attached_order"].clone()
@@ -508,11 +354,23 @@ pub async fn cmd_order_detail(
         } else {
             // Flatten: expose order fields at top level + order_histories
             if let Some(m) = order_obj.as_object_mut() {
-                if let Some(hist) = full["order_histories"].clone().as_array() {
+                if let Some(hist) = full["order_histories"].as_array() {
                     if !hist.is_empty() {
+                        let normalized: Vec<serde_json::Value> = hist
+                            .iter()
+                            .map(|entry| {
+                                if let Some(hm) = entry.as_object() {
+                                    let mut nm = hm.clone();
+                                    normalize_us_order_map(&mut nm);
+                                    serde_json::Value::Object(nm)
+                                } else {
+                                    entry.clone()
+                                }
+                            })
+                            .collect();
                         m.insert(
                             "order_histories".to_string(),
-                            serde_json::Value::Array(hist.clone()),
+                            serde_json::Value::Array(normalized),
                         );
                     }
                 }
@@ -2040,7 +1898,11 @@ async fn cmd_us_positions(format: &OutputFormat) -> Result<()> {
 }
 
 fn print_us_positions_pretty(data: &serde_json::Value) {
-    let val = |v: &serde_json::Value| v.as_str().unwrap_or("-").to_string();
+    let val = |v: &serde_json::Value| match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Number(n) => n.to_string(),
+        _ => "-".to_string(),
+    };
     let acct_type = match data["account_type"].as_str().unwrap_or("") {
         "0" => "Standard (Margin)",
         "1" => "Cash",
