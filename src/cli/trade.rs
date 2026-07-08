@@ -364,9 +364,10 @@ pub async fn cmd_order_detail(
                 full["current_attached_order"].clone()
             }
         } else {
-            // Flatten: expose order fields at top level + order_histories
+            // Flatten: expose order fields at top level + order_histories.
+            // order_histories is now embedded inside USOrderDetail (order_obj), not at root.
             if let Some(m) = order_obj.as_object_mut() {
-                if let Some(hist) = full["order_histories"].as_array() {
+                if let Some(hist) = m.get("order_histories").and_then(|v| v.as_array()).cloned() {
                     if !hist.is_empty() {
                         let normalized: Vec<serde_json::Value> = hist
                             .iter()
@@ -1790,7 +1791,7 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
             &["overview", "holdings", "cash_balances", "market_accounts"],
         ),
         "positions" => text(
-            "US accounts: object {account_type, cash_buy_power, crypto_list, cash_list}; HK/CN accounts: array of {symbol, name, quantity, available, cost_price, currency, market}",
+            "US accounts: object {account_type, cash_buy_power, stock_list, option_list, crypto_list, cash_list}; HK/CN accounts: array of {symbol, name, quantity, available, cost_price, currency, market}",
         ),
         "fund-positions" => array(
             "Current fund positions",
@@ -1887,7 +1888,7 @@ async fn cmd_us_positions(format: &OutputFormat) -> Result<()> {
             }
         }
         // Ensure list fields are always [] rather than null/absent
-        for list_key in &["crypto_list", "cash_list"] {
+        for list_key in &["stock_list", "option_list", "crypto_list", "cash_list"] {
             if map.get(*list_key).is_none_or(serde_json::Value::is_null) {
                 map.insert((*list_key).to_string(), serde_json::Value::Array(vec![]));
             }
@@ -1927,6 +1928,49 @@ fn print_us_positions_pretty(data: &serde_json::Value) {
                         val(&c["total_cash"]),
                         val(&c["settled_cash"]),
                         val(&c["frozen_buy_cash"]),
+                    ]
+                })
+                .collect(),
+            &OutputFormat::Pretty,
+        );
+    }
+
+    // Stock positions — counter_id field contains the already-converted symbol (USStockEntry.full_symbol)
+    let stock_list = data["stock_list"].as_array().unwrap_or(&empty);
+    if !stock_list.is_empty() {
+        println!("── Stocks ──────────────────────────────────────────────────────");
+        print_table(
+            &["Symbol", "Qty", "Cost", "Last", "Today P&L"],
+            stock_list
+                .iter()
+                .map(|p| {
+                    vec![
+                        val(&p["counter_id"]),
+                        val(&p["quantity"]),
+                        val(&p["average_cost"]),
+                        val(&p["last_done"]),
+                        val(&p["today_pl"]),
+                    ]
+                })
+                .collect(),
+            &OutputFormat::Pretty,
+        );
+    }
+
+    // Option positions (raw serde_json::Value entries — field names follow API response)
+    let option_list = data["option_list"].as_array().unwrap_or(&empty);
+    if !option_list.is_empty() {
+        println!("── Options ─────────────────────────────────────────────────────");
+        print_table(
+            &["Symbol", "Underlying", "Qty", "Cost"],
+            option_list
+                .iter()
+                .map(|p| {
+                    vec![
+                        val(&p["counter_id"]),
+                        val(&p["underlying_counter_id"]),
+                        val(&p["quantity"]),
+                        val(&p["average_cost"]),
                     ]
                 })
                 .collect(),

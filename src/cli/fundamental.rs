@@ -720,13 +720,19 @@ pub async fn cmd_dividend(
                         .unwrap_or(&empty)
                         .iter()
                         .filter(|r| {
-                            let d = val_str(&r["total_dividend"]);
+                            let d = val_str(&r["dividend"]);
                             !d.is_empty() && d != "-"
                         })
                         .map(|r| {
+                            let yield_str = match r["dividend_yield"].as_f64() {
+                                Some(f) => format!("{f}%"),
+                                None => val_str(&r["dividend_yield"]),
+                            };
                             vec![
-                                val_str(&r["year"]),
-                                format!("{} {}", currency, val_str(&r["total_dividend"])),
+                                val_str(&r["fiscal_year"]),
+                                val_str(&r["fiscal_year_range"]),
+                                format!("{} {}", currency, val_str(&r["dividend"])),
+                                yield_str,
                             ]
                         })
                         .collect();
@@ -734,13 +740,17 @@ pub async fn cmd_dividend(
                         println!("No dividend data.");
                     } else {
                         super::output::print_table(
-                            &["Fiscal Year", "Dividend"],
+                            &["Fiscal Year", "Period", "Dividend", "Yield"],
                             rows,
                             format,
                         );
                     }
                 } else {
-                    let rows: Vec<Vec<String>> = data["items"]
+                    // USCompanyDividends.dividend_payout_history has individual payment records
+                    let payout_currency = data["recent_dividends"]["currency"]
+                        .as_str()
+                        .unwrap_or(currency);
+                    let rows: Vec<Vec<String>> = data["dividend_payout_history"]
                         .as_array()
                         .unwrap_or(&empty)
                         .iter()
@@ -752,7 +762,7 @@ pub async fn cmd_dividend(
                             vec![
                                 val_str(&r["ex_date"]),
                                 val_str(&r["payment_date"]),
-                                format!("{} {}", currency, val_str(&r["dividend"])),
+                                format!("{} {}", payout_currency, val_str(&r["dividend"])),
                                 val_str(&r["dividend_type"]),
                             ]
                         })
