@@ -161,7 +161,6 @@ fn normalize_us_order_map(m: &mut serde_json::Map<String, serde_json::Value>) {
     m.retain(|k, v| match v {
         serde_json::Value::Null => false,
         serde_json::Value::String(s) => k == "price" || !s.is_empty(),
-        serde_json::Value::Array(a) => !a.is_empty(),
         _ => true,
     });
 }

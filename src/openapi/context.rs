@@ -168,7 +168,10 @@ pub async fn init_contexts() -> Result<(
             } else if !arg.is_empty() {
                 args.push(arg.clone());
             }
-            prev_was_flag = arg.starts_with('-');
+            // Only value-taking flags (e.g. --format, --lang) consume the next arg as
+            // their value; boolean flags (--verbose/-v/--schema) do not.
+            prev_was_flag = arg.starts_with('-') && !arg.contains('=')
+                && !matches!(arg.as_str(), "--verbose" | "-v" | "--schema");
         }
         let cli_args = ascii_args(args);
         (if cmd.is_ascii() { cmd } else { String::new() }, cli_args)
@@ -513,7 +516,7 @@ mod cli_header_tests {
 
     #[test]
     fn topic_body_non_ascii_excluded() {
-        let args = ["--body", "这是话题内容"].map(String::from).to_vec();
+        let args = ["--body", "\u{8fd9}\u{662f}\u{8bdd}\u{9898}\u{5185}\u{5bb9}"].map(String::from).to_vec();
         assert_eq!(ascii_args(args), "--body");
     }
 }

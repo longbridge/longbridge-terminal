@@ -441,7 +441,7 @@ pub async fn cmd_financial_report(
 pub async fn cmd_financial_report_key_metrics(
     symbol: String,
     report: Option<String>,
-    _format: &OutputFormat,
+    format: &OutputFormat,
     _verbose: bool,
 ) -> Result<()> {
     if !is_us_fundamental(&symbol).await {
@@ -452,7 +452,26 @@ pub async fn cmd_financial_report_key_metrics(
         ctx.us_key_financial_metrics(symbol.clone(), report.as_deref().unwrap_or("annual"))
             .await?,
     )?;
-    print_json(&data);
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            let list = data["list"].as_array();
+            if list.is_none_or(Vec::is_empty) {
+                println!("No key metrics data.");
+                return Ok(());
+            }
+            let headers = ["Period", "Year", "End Date", "Report"];
+            let rows: Vec<Vec<String>> = list.unwrap().iter().map(|item| {
+                vec![
+                    val_str(&item["ff_period"]),
+                    val_str(&item["ff_year"]),
+                    val_str(&item["fp_end"]),
+                    val_str(&item["report_txt"]),
+                ]
+            }).collect();
+            super::output::print_table(&headers, rows, format);
+        }
+    }
     Ok(())
 }
 
@@ -1209,6 +1228,11 @@ pub async fn cmd_valuation(
         ("range", range_val),
     ];
     let is_us = is_us_fundamental(&symbol).await;
+    if is_us && (indicator.is_some() || range.is_some()) {
+        anyhow::bail!(
+            "US valuation does not support --indicator or --range; omit them and retry"
+        );
+    }
     let data = if is_us {
         let mut d = to_value(
             crate::openapi::fundamental()
@@ -4084,7 +4108,7 @@ fn print_financial_report_snapshot(data: &Value) {
 pub async fn cmd_etf_docs(
     symbol: String,
     limit: u32,
-    _format: &OutputFormat,
+    format: &OutputFormat,
     _verbose: bool,
 ) -> Result<()> {
     if !is_us_fundamental(&symbol).await {
@@ -4095,7 +4119,26 @@ pub async fn cmd_etf_docs(
             .us_etf_files(symbol.clone(), Some(limit))
             .await?,
     )?;
-    print_json(&data);
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            let files = data["files"].as_array();
+            if files.is_none_or(Vec::is_empty) {
+                println!("No documents found.");
+                return Ok(());
+            }
+            let headers = ["Name", "Type", "Date", "URL"];
+            let rows: Vec<Vec<String>> = files.unwrap().iter().map(|f| {
+                vec![
+                    val_str(&f["file_name"]),
+                    val_str(&f["format"]),
+                    val_str(&f["update_date"]),
+                    val_str(&f["file_path"]),
+                ]
+            }).collect();
+            super::output::print_table(&headers, rows, format);
+        }
+    }
     Ok(())
 }
 
