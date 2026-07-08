@@ -1097,7 +1097,13 @@ fn print_us_valuation_detail(data: &Value) {
     let metric = val_str(&ci["metric"]);
     let metric_type = val_str(&ci["metric_type"]);
     let desc = strip_html(&val_str(&ci["desc"]));
-    let ccy = val_str(&ci["ccy_symbol"]);
+    // ccy_symbol is a top-level field on USValuationOverview, not inside the metrics object
+    let ccy_raw = val_str(&data["ccy_symbol"]);
+    let ccy = if ccy_raw == "-" {
+        String::new()
+    } else {
+        ccy_raw
+    };
 
     let sentinel = |s: &str| s.is_empty() || s == "-";
     let has_ci = !sentinel(&metric) || !sentinel(&desc);
@@ -2130,15 +2136,15 @@ fn print_us_company(data: &Value) {
     }
     if let Some(tags) = data["top_rank_tags"].as_array() {
         for tag in tags {
-            let title = val_str(&tag["title"]);
-            if title.is_empty() || title == "-" {
+            let text = val_str(&tag["text"]);
+            if text.is_empty() || text == "-" {
                 continue;
             }
             let highlight = val_str(&tag["highlight_text"]);
             if highlight.is_empty() || highlight == "-" {
-                println!("{:15} {title}", "Rank");
+                println!("{:15} {text}", "Rank");
             } else {
-                println!("{:15} {title} ({highlight})", "Rank");
+                println!("{:15} {text} ({highlight})", "Rank");
             }
         }
     }
