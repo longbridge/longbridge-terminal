@@ -2025,7 +2025,8 @@ pub async fn cmd_finance_calendar(
 
 pub async fn cmd_company(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
-    let data = if is_us_fundamental(&symbol).await {
+    let is_us = is_us_fundamental(&symbol).await;
+    let data = if is_us {
         to_value(
             crate::openapi::fundamental()
                 .us_company_overview(symbol.clone())
@@ -2041,9 +2042,48 @@ pub async fn cmd_company(symbol: String, format: &OutputFormat, verbose: bool) -
     };
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty if is_us => print_us_company(&data),
         OutputFormat::Pretty => print_company(&data),
     }
     Ok(())
+}
+
+/// Pretty-print the US company overview (`us_company_overview`), whose shape
+/// differs entirely from the HK company profile handled by [`print_company`].
+fn print_us_company(data: &Value) {
+    let market_cap = val_str(&data["market_cap"]);
+    if !market_cap.is_empty() && market_cap != "-" {
+        let ccy = val_str(&data["ccy_symbol"]);
+        println!(
+            "{:15} {ccy}{}",
+            "Market Cap",
+            format_financial_value(&market_cap, false)
+        );
+    }
+    if let Some(tags) = data["top_rank_tags"].as_array() {
+        for tag in tags {
+            let name = val_str(&tag["name"]);
+            if name.is_empty() || name == "-" {
+                continue;
+            }
+            let chg = val_str(&tag["chg"]);
+            if chg.is_empty() || chg == "-" {
+                println!("{:15} {name}", "Rank");
+            } else {
+                println!("{:15} {name} ({chg})", "Rank");
+            }
+        }
+    }
+    let intro = val_str(&data["intro"]);
+    if !intro.is_empty() && intro != "-" {
+        println!();
+        println!("{intro}");
+    }
+    let url = val_str(&data["detail_url"]);
+    if !url.is_empty() && url != "-" {
+        println!();
+        println!("{:15} {url}", "Detail");
+    }
 }
 
 fn print_company(data: &Value) {

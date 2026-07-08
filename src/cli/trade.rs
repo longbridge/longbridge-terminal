@@ -90,7 +90,13 @@ fn normalize_us_order_map(m: &mut serde_json::Map<String, serde_json::Value>) {
             serde_json::Value::String(label.to_string()),
         );
     }
-    for ts_key in &["submitted_at", "updated_at", "create_time", "done_at", "time"] {
+    for ts_key in &[
+        "submitted_at",
+        "updated_at",
+        "create_time",
+        "done_at",
+        "time",
+    ] {
         if let Some(s) = m.get(*ts_key).and_then(|v| v.as_str()) {
             if let Ok(n) = s.parse::<i64>() {
                 m.insert(
