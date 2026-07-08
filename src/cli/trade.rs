@@ -1,8 +1,9 @@
 use anyhow::{bail, Result};
 use longbridge::trade::{
     EstimateMaxPurchaseQuantityOptions, GetCashFlowOptions, GetHistoryExecutionsOptions,
-    GetHistoryOrdersOptions, GetTodayExecutionsOptions, GetTodayOrdersOptions, OrderSide,
-    OrderType, OutsideRTH, ReplaceOrderOptions, SubmitOrderOptions, TimeInForceType,
+    GetHistoryOrdersOptions, GetTodayExecutionsOptions, GetTodayOrdersOptions,
+    GetUSRealizedPLOptions, OrderSide, OrderType, OutsideRTH, ReplaceOrderOptions,
+    SubmitOrderOptions, TimeInForceType,
 };
 use rust_decimal::Decimal;
 use std::fmt::Write as _;
@@ -15,7 +16,7 @@ use super::{
     },
     OutputFormat,
 };
-use crate::utils::datetime::fmt_rfc3339;
+use crate::utils::datetime::{fmt_rfc3339, format_date};
 
 fn risk_level_name(level: i32) -> &'static str {
     match level {
@@ -56,10 +57,25 @@ fn parse_tif(s: &str) -> Result<TimeInForceType> {
 }
 
 const INTERNAL_ORDER_FIELDS: &[&str] = &[
-    "aaid", "org_id", "ploy_id", "ploy_type", "card_ids", "bid_size_list",
-    "button_control", "current_millisecond", "deductions_status", "free_status",
-    "platform_deductions_status", "force_only_rth", "limit_depth_level", "tag",
-    "trend", "trigger_count", "trigger_status", "trigger_at", "account_channel",
+    "aaid",
+    "org_id",
+    "ploy_id",
+    "ploy_type",
+    "card_ids",
+    "bid_size_list",
+    "button_control",
+    "current_millisecond",
+    "deductions_status",
+    "free_status",
+    "platform_deductions_status",
+    "force_only_rth",
+    "limit_depth_level",
+    "tag",
+    "trend",
+    "trigger_count",
+    "trigger_status",
+    "trigger_at",
+    "account_channel",
 ];
 
 pub async fn cmd_orders(
@@ -68,7 +84,6 @@ pub async fn cmd_orders(
     end: Option<String>,
     symbol: Option<String>,
     // US-only filters (interface 14); ignored for HK/CN accounts
-    us_status: Option<String>,
     us_action: Option<String>,
     us_page: u32,
     us_limit: u32,
@@ -78,11 +93,6 @@ pub async fn cmd_orders(
     // US accounts: SDK us_query_orders (interface 14)
     if crate::openapi::is_us_account().await {
         use longbridge::trade::{GetUSHistoryOrders, OrderSide};
-        let query_type = match us_status.as_deref().unwrap_or("all") {
-            "pending" => 1,
-            "history" => 2,
-            _ => 0,
-        };
         let side = match us_action.as_deref().unwrap_or("") {
             "buy" => OrderSide::Buy,
             "sell" => OrderSide::Sell,
@@ -93,10 +103,16 @@ pub async fn cmd_orders(
             .unwrap_or_default()
             .as_secs();
         let now_i64 = i64::try_from(now).unwrap_or(i64::MAX);
+        // history=false: default start is today midnight UTC; history=true: 90 days
+        let default_start = if history {
+            now_i64 - 86400 * 90
+        } else {
+            now_i64 - (now_i64 % 86400)
+        };
         let start_ts = start
             .as_deref()
             .and_then(|s| parse_datetime_start(s).ok())
-            .map_or(now_i64 - 86400 * 90, time::OffsetDateTime::unix_timestamp);
+            .map_or(default_start, time::OffsetDateTime::unix_timestamp);
         let end_ts = end
             .as_deref()
             .and_then(|s| parse_datetime_end(s).ok())
@@ -106,7 +122,7 @@ pub async fn cmd_orders(
             side,
             start_at: start_ts,
             end_at: end_ts,
-            query_type,
+            query_type: 0,
             page: i32::try_from(us_page).unwrap_or(1),
             limit: i32::try_from(us_limit).unwrap_or(20),
         };
@@ -123,24 +139,34 @@ pub async fn cmd_orders(
                             2 => "Sell",
                             _ => "Unknown",
                         };
-                        map.insert("action".to_string(), serde_json::Value::String(label.to_string()));
+                        map.insert(
+                            "action".to_string(),
+                            serde_json::Value::String(label.to_string()),
+                        );
                     }
                     // string timestamps → integers
                     for ts_key in &["submitted_at", "updated_at", "create_time"] {
                         if let Some(s) = map.get(*ts_key).and_then(|v| v.as_str()) {
                             if let Ok(n) = s.parse::<i64>() {
-                                map.insert((*ts_key).to_string(), serde_json::Value::Number(serde_json::Number::from(n)));
+                                map.insert(
+                                    (*ts_key).to_string(),
+                                    serde_json::Value::Number(serde_json::Number::from(n)),
+                                );
                             }
                         }
                     }
                     // "RejectedStatus" → "Rejected" (strip redundant "Status" suffix)
                     if let Some(s) = map.get("status").and_then(|v| v.as_str()) {
                         if let Some(clean) = s.strip_suffix("Status") {
-                            map.insert("status".to_string(), serde_json::Value::String(clean.to_string()));
+                            map.insert(
+                                "status".to_string(),
+                                serde_json::Value::String(clean.to_string()),
+                            );
                         }
                     }
                     // time_in_force int → readable string
-                    if let Some(tif) = map.get("time_in_force").and_then(serde_json::Value::as_i64) {
+                    if let Some(tif) = map.get("time_in_force").and_then(serde_json::Value::as_i64)
+                    {
                         let label = match tif {
                             1 => "Day",
                             3 => "GTC",
@@ -149,7 +175,10 @@ pub async fn cmd_orders(
                             6 => "FOK",
                             _ => "Unknown",
                         };
-                        map.insert("time_in_force".to_string(), serde_json::Value::String(label.to_string()));
+                        map.insert(
+                            "time_in_force".to_string(),
+                            serde_json::Value::String(label.to_string()),
+                        );
                     }
                     // security_type abbreviation → readable
                     if let Some(st) = map.get("security_type").and_then(|v| v.as_str()) {
@@ -164,8 +193,23 @@ pub async fn cmd_orders(
                             _ => "",
                         };
                         if !label.is_empty() {
-                            map.insert("security_type".to_string(), serde_json::Value::String(label.to_string()));
+                            map.insert(
+                                "security_type".to_string(),
+                                serde_json::Value::String(label.to_string()),
+                            );
                         }
+                    }
+                    // Rename counter_id → display symbol (e.g. "ST/US/NKE" → "NKE.US")
+                    if let Some(cid) = map.remove("counter_id") {
+                        let sym = cid.as_str().map_or_else(
+                            || cid.clone(),
+                            |s| {
+                                serde_json::Value::String(
+                                    crate::utils::counter::counter_id_to_symbol(s),
+                                )
+                            },
+                        );
+                        map.insert("symbol".to_string(), sym);
                     }
                     // Remove internal fields irrelevant to AI agents
                     for key in INTERNAL_ORDER_FIELDS {
@@ -187,7 +231,13 @@ pub async fn cmd_orders(
             OutputFormat::Pretty => {
                 let empty = vec![];
                 let orders = data["orders"].as_array().unwrap_or(&empty);
-                let val = |v: &serde_json::Value| v.as_str().unwrap_or("-").to_string();
+                let val = |v: &serde_json::Value| -> String {
+                    match v {
+                        serde_json::Value::String(s) => s.clone(),
+                        serde_json::Value::Number(n) => n.to_string(),
+                        _ => "-".to_string(),
+                    }
+                };
                 print_table(
                     &[
                         "Order ID", "Symbol", "Side", "Type", "Status", "Qty", "Price", "Created",
@@ -195,26 +245,23 @@ pub async fn cmd_orders(
                     orders
                         .iter()
                         .map(|o| {
-                            // US order fields differ from HK/CN: id (not order_id),
-                            // counter_id (not symbol), action int (1=buy,2=sell)
-                            let side = match o["action"].as_i64().unwrap_or(0) {
-                                1 => "Buy".to_string(),
-                                2 => "Sell".to_string(),
-                                _ => val(&o["action"]),
-                            };
+                            let side = val(&o["action"]);
                             vec![
                                 val(&o["id"]),
-                                val(&o["counter_id"]),
+                                val(&o["symbol"]),
                                 side,
                                 val(&o["order_type"]),
                                 val(&o["status"]),
                                 val(&o["quantity"]),
                                 val(&o["price"]),
                                 // create_time is often null; fall back to submitted_at
-                                if o["create_time"].is_null() {
-                                    val(&o["submitted_at"])
-                                } else {
-                                    val(&o["create_time"])
+                                {
+                                    let ts_val = if o["create_time"].is_null() {
+                                        &o["submitted_at"]
+                                    } else {
+                                        &o["create_time"]
+                                    };
+                                    ts_val.as_i64().map_or_else(|| val(ts_val), format_date)
                                 },
                             ]
                         })
@@ -300,30 +347,72 @@ pub async fn cmd_order_detail(
         let mut order_obj = if let Some(o) = full["order"].as_object() {
             let mut m = o.clone();
             if let Some(action) = m.get("action").and_then(serde_json::Value::as_i64) {
-                let label = match action { 1 => "Buy", 2 => "Sell", _ => "Unknown" };
-                m.insert("action".to_string(), serde_json::Value::String(label.to_string()));
+                let label = match action {
+                    1 => "Buy",
+                    2 => "Sell",
+                    _ => "Unknown",
+                };
+                m.insert(
+                    "action".to_string(),
+                    serde_json::Value::String(label.to_string()),
+                );
             }
             for ts_key in &["submitted_at", "updated_at", "done_at"] {
                 if let Some(s) = m.get(*ts_key).and_then(|v| v.as_str()) {
                     if let Ok(n) = s.parse::<i64>() {
-                        m.insert((*ts_key).to_string(), serde_json::Value::Number(serde_json::Number::from(n)));
+                        m.insert(
+                            (*ts_key).to_string(),
+                            serde_json::Value::Number(serde_json::Number::from(n)),
+                        );
                     }
                 }
             }
             if let Some(s) = m.get("status").and_then(|v| v.as_str()) {
                 if let Some(clean) = s.strip_suffix("Status") {
-                    m.insert("status".to_string(), serde_json::Value::String(clean.to_string()));
+                    m.insert(
+                        "status".to_string(),
+                        serde_json::Value::String(clean.to_string()),
+                    );
                 }
             }
             if let Some(tif) = m.get("time_in_force").and_then(serde_json::Value::as_i64) {
-                let label = match tif { 1 => "Day", 3 => "GTC", 4 => "GTD", 5 => "IOC", 6 => "FOK", _ => "Unknown" };
-                m.insert("time_in_force".to_string(), serde_json::Value::String(label.to_string()));
+                let label = match tif {
+                    1 => "Day",
+                    3 => "GTC",
+                    4 => "GTD",
+                    5 => "IOC",
+                    6 => "FOK",
+                    _ => "Unknown",
+                };
+                m.insert(
+                    "time_in_force".to_string(),
+                    serde_json::Value::String(label.to_string()),
+                );
             }
             if let Some(st) = m.get("security_type").and_then(|v| v.as_str()) {
-                let label = match st { "CS" => "Stock", "VA" => "Crypto", "OPT" => "Option", "WAR" => "Warrant", "IOPT" => "Inline-Warrant", "ETF" => "ETF", "ADR" => "ADR", _ => "" };
-                if !label.is_empty() { m.insert("security_type".to_string(), serde_json::Value::String(label.to_string())); }
+                let label = match st {
+                    "CS" => "Stock",
+                    "VA" => "Crypto",
+                    "OPT" => "Option",
+                    "WAR" => "Warrant",
+                    "IOPT" => "Inline-Warrant",
+                    "ETF" => "ETF",
+                    "ADR" => "ADR",
+                    _ => "",
+                };
+                if !label.is_empty() {
+                    m.insert(
+                        "security_type".to_string(),
+                        serde_json::Value::String(label.to_string()),
+                    );
+                }
             }
-            for key in INTERNAL_ORDER_FIELDS { m.remove(*key); }
+            if let Some(cid) = m.remove("counter_id") {
+                m.insert("symbol".to_string(), cid);
+            }
+            for key in INTERNAL_ORDER_FIELDS {
+                m.remove(*key);
+            }
             m.retain(|_, v| match v {
                 serde_json::Value::Null => false,
                 serde_json::Value::String(s) => !s.is_empty(),
@@ -334,15 +423,97 @@ pub async fn cmd_order_detail(
         } else {
             full.clone()
         };
-        // For --attached: replace with child order if present
-        let data = if attached && !full["current_attached_order"].is_null() {
-            full["current_attached_order"].clone()
+        // For --attached: replace with child order if present, applying the same normalization
+        let using_attached = attached && !full["current_attached_order"].is_null();
+        let data = if using_attached {
+            if let Some(o) = full["current_attached_order"].as_object() {
+                let mut m = o.clone();
+                if let Some(action) = m.get("action").and_then(serde_json::Value::as_i64) {
+                    let label = match action {
+                        1 => "Buy",
+                        2 => "Sell",
+                        _ => "Unknown",
+                    };
+                    m.insert(
+                        "action".to_string(),
+                        serde_json::Value::String(label.to_string()),
+                    );
+                }
+                for ts_key in &["submitted_at", "updated_at", "done_at"] {
+                    if let Some(s) = m.get(*ts_key).and_then(|v| v.as_str()) {
+                        if let Ok(n) = s.parse::<i64>() {
+                            m.insert(
+                                (*ts_key).to_string(),
+                                serde_json::Value::Number(serde_json::Number::from(n)),
+                            );
+                        }
+                    }
+                }
+                if let Some(s) = m.get("status").and_then(|v| v.as_str()) {
+                    if let Some(clean) = s.strip_suffix("Status") {
+                        m.insert(
+                            "status".to_string(),
+                            serde_json::Value::String(clean.to_string()),
+                        );
+                    }
+                }
+                if let Some(tif) = m.get("time_in_force").and_then(serde_json::Value::as_i64) {
+                    let label = match tif {
+                        1 => "Day",
+                        3 => "GTC",
+                        4 => "GTD",
+                        5 => "IOC",
+                        6 => "FOK",
+                        _ => "Unknown",
+                    };
+                    m.insert(
+                        "time_in_force".to_string(),
+                        serde_json::Value::String(label.to_string()),
+                    );
+                }
+                if let Some(st) = m.get("security_type").and_then(|v| v.as_str()) {
+                    let label = match st {
+                        "CS" => "Stock",
+                        "VA" => "Crypto",
+                        "OPT" => "Option",
+                        "WAR" => "Warrant",
+                        "IOPT" => "Inline-Warrant",
+                        "ETF" => "ETF",
+                        "ADR" => "ADR",
+                        _ => "",
+                    };
+                    if !label.is_empty() {
+                        m.insert(
+                            "security_type".to_string(),
+                            serde_json::Value::String(label.to_string()),
+                        );
+                    }
+                }
+                if let Some(cid) = m.remove("counter_id") {
+                    m.insert("symbol".to_string(), cid);
+                }
+                for key in INTERNAL_ORDER_FIELDS {
+                    m.remove(*key);
+                }
+                m.retain(|_, v| match v {
+                    serde_json::Value::Null => false,
+                    serde_json::Value::String(s) => !s.is_empty(),
+                    serde_json::Value::Array(a) => !a.is_empty(),
+                    _ => true,
+                });
+                serde_json::Value::Object(m)
+            } else {
+                full["current_attached_order"].clone()
+            }
         } else {
             // Flatten: expose order fields at top level + order_histories
             if let Some(m) = order_obj.as_object_mut() {
                 if let Some(hist) = full["order_histories"].clone().as_array() {
                     if !hist.is_empty() {
-                        m.insert("order_histories".to_string(), serde_json::Value::Array(hist.clone()));
+                        m.insert(
+                            "order_histories".to_string(),
+                            serde_json::Value::Array(hist.clone()),
+                        );
                     }
                 }
             }
@@ -351,18 +522,36 @@ pub async fn cmd_order_detail(
         match format {
             OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&data)?),
             OutputFormat::Pretty => {
-                let val = |k: &str| data[k].as_str().unwrap_or("-").to_string();
-                let label = if attached { "Attached order" } else { "Order" };
+                let val = |k: &str| -> String {
+                    match &data[k] {
+                        serde_json::Value::String(s) => s.clone(),
+                        serde_json::Value::Number(n) => n.to_string(),
+                        serde_json::Value::Null | serde_json::Value::Bool(_) => "-".to_string(),
+                        other => other.to_string(),
+                    }
+                };
+                let label = if using_attached {
+                    "Attached order"
+                } else {
+                    "Order"
+                };
                 println!("{label} detail for {order_id}:");
-                for key in &[
-                    "order_id",
-                    "symbol",
-                    "status",
-                    "side",
-                    "order_type",
-                    "quantity",
-                    "price",
-                ] {
+                // US orders use id/symbol/action; HK/CN use order_id/symbol/side
+                let id_val = if data["id"].is_null() {
+                    val("order_id")
+                } else {
+                    val("id")
+                };
+                let sym_val = val("symbol");
+                let side_val = if data["action"].is_null() {
+                    val("side")
+                } else {
+                    val("action")
+                };
+                println!("  {:<20} {}", "order_id", id_val);
+                println!("  {:<20} {}", "symbol", sym_val);
+                println!("  {:<20} {}", "side", side_val);
+                for key in &["status", "order_type", "quantity", "price"] {
                     println!("  {key:<20} {}", val(key));
                 }
             }
@@ -1686,8 +1875,19 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
 
     let command = path.join(" ");
     let schema = match command.as_str() {
-        "order" => array("Order list", order_schema_fields()),
-        "order detail" => object("Order detail", &["order_id", "symbol", "side", "status"]),
+        "order" => text("US accounts: array of {id, symbol, action, order_type, status, price, quantity, submitted_at, updated_at}; HK/CN accounts: array of {order_id, symbol, side, type, status, price, quantity, created_at, updated_at}"),
+        "order detail" => object(
+            "Order detail",
+            &[
+                "id",
+                "symbol",
+                "action",
+                "status",
+                "order_type",
+                "quantity",
+                "price",
+            ],
+        ),
         "order executions" => array(
             "Order executions",
             &[
@@ -1728,17 +1928,8 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
             "Portfolio overview",
             &["overview", "holdings", "cash_balances", "market_accounts"],
         ),
-        "positions" => array(
-            "Current stock positions",
-            &[
-                "symbol",
-                "name",
-                "quantity",
-                "available",
-                "cost_price",
-                "currency",
-                "market",
-            ],
+        "positions" => text(
+            "US accounts: object {account_type, cash_buy_power, stock_list, option_list, crypto_list, cash_list}; HK/CN accounts: array of {symbol, name, quantity, available, cost_price, currency, market}",
         ),
         "fund-positions" => array(
             "Current fund positions",
@@ -1762,22 +1953,6 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
         _ => return None,
     };
     Some(schema)
-}
-
-fn order_schema_fields() -> &'static [&'static str] {
-    &[
-        "order_id",
-        "symbol",
-        "name",
-        "side",
-        "type",
-        "status",
-        "price",
-        "quantity",
-        "filled",
-        "submitted_at",
-        "updated_at",
-    ]
 }
 
 // ── US-specific commands ─────────────────────────────────────────────────────
@@ -1837,11 +2012,17 @@ async fn cmd_us_positions(format: &OutputFormat) -> Result<()> {
                 "1" => "Cash",
                 other => other,
             };
-            map.insert("account_type".to_string(), serde_json::Value::String(label.to_string()));
+            map.insert(
+                "account_type".to_string(),
+                serde_json::Value::String(label.to_string()),
+            );
         }
         if let Some(s) = map.get("asset_timestamp").and_then(|v| v.as_str()) {
             if let Ok(n) = s.parse::<i64>() {
-                map.insert("asset_timestamp".to_string(), serde_json::Value::Number(serde_json::Number::from(n)));
+                map.insert(
+                    "asset_timestamp".to_string(),
+                    serde_json::Value::Number(serde_json::Number::from(n)),
+                );
             }
         }
         // Ensure list fields are always [] rather than null/absent
@@ -1970,22 +2151,25 @@ pub async fn cmd_us_realized_pl(
     format: &OutputFormat,
     _verbose: bool,
 ) -> Result<()> {
-    // API expects numeric category: 0=all, 1=stock, 2=option, 3=crypto
-    let cat: Option<String> = match category.to_lowercase().as_str() {
-        "all" | "0" => None,
-        "stock" | "1" => Some("1".to_string()),
-        "option" | "2" => Some("2".to_string()),
-        "crypto" | "3" => Some("3".to_string()),
+    // GetUSRealizedPLOptions.category: "" = all, "STOCK", "OPTION", "CRYPTO"
+    let cat = match category.to_lowercase().as_str() {
+        "all" | "0" => "",
+        "stock" | "1" => "STOCK",
+        "option" | "2" => "OPTION",
+        "crypto" | "3" => "CRYPTO",
         other => {
             anyhow::bail!("Invalid category '{other}'. Valid values: all | stock | option | crypto")
         }
     };
     let resp = crate::openapi::trade()
-        .us_realized_pl(currency.to_string(), cat)
+        .us_realized_pl(GetUSRealizedPLOptions {
+            currency: currency.to_string(),
+            category: cat.to_string(),
+        })
         .await
         .map_err(|e| {
             let msg = e.to_string();
-            if msg.contains("DcRegionRestricted") {
+            if msg.contains("data center") {
                 anyhow::anyhow!(
                     "This command requires a US account (current account is AP/HK region)"
                 )
@@ -2048,8 +2232,16 @@ pub async fn cmd_us_realized_pl(
                                     vec![
                                         cat_name(cat).to_string(),
                                         currency.to_string(),
-                                        m["amount"].as_str().unwrap_or("-").to_string(),
-                                        m["rate"].as_str().unwrap_or("-").to_string(),
+                                        match &m["amount"] {
+                                            serde_json::Value::String(s) => s.clone(),
+                                            serde_json::Value::Number(n) => n.to_string(),
+                                            _ => "-".to_owned(),
+                                        },
+                                        match &m["rate"] {
+                                            serde_json::Value::String(s) => s.clone(),
+                                            serde_json::Value::Number(n) => n.to_string(),
+                                            _ => "-".to_owned(),
+                                        },
                                     ]
                                 })
                                 .collect::<Vec<_>>()

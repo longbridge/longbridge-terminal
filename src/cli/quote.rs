@@ -707,22 +707,27 @@ pub async fn cmd_static(symbols: Vec<String>, format: &OutputFormat) -> Result<(
     }
     // US accounts: route .BKKT crypto symbols to us_crypto_overview (interface 3).
     // .HAS and .OSL remain on the HK path.
-    if crate::openapi::is_us_account().await {
+    let is_us = crate::openapi::is_us_account().await;
+    // BKKT JSON entries collected here so mixed-mode JSON stays a single array
+    let mut bkkt_json: Vec<serde_json::Value> = Vec::new();
+    if is_us {
         let crypto: Vec<_> = symbols
             .iter()
-            .filter(|s| s.rsplit_once('.').is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("BKKT")))
+            .filter(|s| {
+                s.rsplit_once('.')
+                    .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("BKKT"))
+            })
             .collect();
         if !crypto.is_empty() {
             let ctx = crate::openapi::quote_cmd();
+            let all_bkkt = crypto.len() == symbols.len();
             for sym in crypto {
                 let data = serde_json::to_value(ctx.us_crypto_overview(sym.clone()).await?)?;
                 match format {
-                    OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&data)?),
+                    OutputFormat::Json => bkkt_json.push(data),
                     OutputFormat::Pretty => {
                         let val = |k: &str| data[k].as_str().unwrap_or("-").to_string();
-                        println!(
-                            "── {sym} ─────────────────────────────────────────────────────"
-                        );
+                        println!("── {sym} ─────────────────────────────────────────────────────");
                         for key in &[
                             "name",
                             "ticker",
@@ -739,28 +744,42 @@ pub async fn cmd_static(symbols: Vec<String>, format: &OutputFormat) -> Result<(
                     }
                 }
             }
-            // Return early if all symbols were .BKKT; otherwise fall through for non-BKKT symbols
-            if symbols.iter().all(|s| {
-                s.rsplit_once('.').is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("BKKT"))
-            }) {
+            if all_bkkt {
+                // Only BKKT symbols — print collected JSON and return
+                if !bkkt_json.is_empty() {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&bkkt_json).unwrap_or_default()
+                    );
+                }
                 return Ok(());
             }
+            // Mixed: fall through; bkkt_json merged with static_info output below
         }
     }
     let ctx = crate::openapi::quote_cmd();
     let input: Vec<String> = symbols
         .iter()
         .filter(|s| {
-            !s.rsplit_once('.').is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("HAS"))
+            if !is_us {
+                return true;
+            }
+            let ext = s.rsplit_once('.').map(|(_, e)| e);
+            !ext.is_some_and(|e| e.eq_ignore_ascii_case("HAS") || e.eq_ignore_ascii_case("BKKT"))
         })
         .cloned()
         .collect();
-    let symbols_for_sdk = if input.is_empty() {
-        symbols.clone()
-    } else {
-        input.clone()
-    };
-    let infos = ctx.static_info(symbols_for_sdk).await?;
+    if input.is_empty() {
+        // Only BKKT or .HAS symbols were given; flush any collected BKKT JSON and return
+        if matches!(format, OutputFormat::Json) && !bkkt_json.is_empty() {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&bkkt_json).unwrap_or_default()
+            );
+        }
+        return Ok(());
+    }
+    let infos = ctx.static_info(input.clone()).await?;
 
     let headers = &[
         "Symbol",
@@ -775,7 +794,7 @@ pub async fn cmd_static(symbols: Vec<String>, format: &OutputFormat) -> Result<(
         "BPS",
         "Dividend",
     ];
-    let rows = infos
+    let rows: Vec<Vec<String>> = infos
         .iter()
         .map(|i| {
             vec![
@@ -794,7 +813,29 @@ pub async fn cmd_static(symbols: Vec<String>, format: &OutputFormat) -> Result<(
         })
         .collect();
 
-    print_table(headers, rows, format);
+    // For JSON with pending BKKT entries, merge into a single array
+    if matches!(format, OutputFormat::Json) && !bkkt_json.is_empty() {
+        let header_keys: Vec<String> = headers
+            .iter()
+            .map(|h| h.to_lowercase().replace(' ', "_").replace('.', ""))
+            .collect();
+        let mut combined = bkkt_json;
+        for row in rows {
+            let mut map = serde_json::Map::new();
+            for (i, val) in row.into_iter().enumerate() {
+                if let Some(key) = header_keys.get(i) {
+                    map.insert(key.clone(), serde_json::Value::String(val));
+                }
+            }
+            combined.push(serde_json::Value::Object(map));
+        }
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&combined).unwrap_or_default()
+        );
+    } else {
+        print_table(headers, rows, format);
+    }
     let found: Vec<&str> = infos.iter().map(|i| i.symbol.as_str()).collect();
     hint_symbols_do_you_mean(&input, &found);
     Ok(())

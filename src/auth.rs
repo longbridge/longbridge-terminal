@@ -1,6 +1,7 @@
 //! Auth utilities for Longbridge `OpenAPI`.
 
 use anyhow::{Context, Result};
+use futures::StreamExt as _;
 use longbridge::oauth::TokenStorage as _;
 use std::fs;
 use std::path::PathBuf;
@@ -527,21 +528,37 @@ pub async fn device_login(verbose: bool, client_name: Option<String>) -> Result<
     // poll both DCs in parallel for the shared `device_code`; the first to be
     // authorized wins. The access token carries that DC's `us_`/`ap_` prefix, so
     // subsequent API calls route back to the same data center automatically.
-    let polls = DEVICE_LOGIN_REGIONS.iter().map(|&region| {
-        Box::pin(poll_device_token(
-            &http_client,
-            &oauth_base,
-            &client_id,
-            &auth.device_code,
-            region,
-            auth.interval,
-            auth.expires_in,
-            verbose,
-        ))
-    });
-    let (token, _) = futures::future::select_ok(polls)
-        .await
-        .map_err(|e| anyhow::anyhow!("Device authorization failed: {e:#}"))?;
+    let mut polls: futures::stream::FuturesUnordered<_> = DEVICE_LOGIN_REGIONS
+        .iter()
+        .map(|&region| {
+            Box::pin(poll_device_token(
+                &http_client,
+                &oauth_base,
+                &client_id,
+                &auth.device_code,
+                region,
+                auth.interval,
+                auth.expires_in,
+                verbose,
+            ))
+        })
+        .collect();
+    // Drain futures one at a time so access_denied surfaces immediately rather
+    // than being swallowed by select_ok keeping the other DC alive.
+    let mut last_err = anyhow::anyhow!("Device authorization failed: no response");
+    let token = loop {
+        match polls.next().await {
+            None => return Err(last_err),
+            Some(Ok(t)) => break t,
+            Some(Err(e)) => {
+                let msg = e.to_string();
+                if msg.contains("access_denied") {
+                    return Err(anyhow::anyhow!("Authorization was denied."));
+                }
+                last_err = anyhow::anyhow!("Device authorization failed: {e:#}");
+            }
+        }
+    };
 
     crate::secure_storage::EncryptedFileTokenStorage
         .save(&token)
