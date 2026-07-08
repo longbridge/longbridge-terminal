@@ -564,11 +564,13 @@ pub async fn device_login(verbose: bool, client_name: Option<String>) -> Result<
                 if msg.contains("access_denied") {
                     return Err(anyhow::anyhow!("Authorization was denied."));
                 }
-                // OAuth error codes (formatted as "Authorization failed (<dc>): <code>")
-                // indicate the device code was rejected by the server. The device code
-                // state is shared between DCs, so one DC's rejection means both will
-                // reject — bail immediately instead of waiting out the full expires_in.
-                if msg.contains("Authorization failed") {
+                // Terminal OAuth rejection codes that affect both DCs (device code state
+                // is shared). Transient codes (server_error, temporarily_unavailable)
+                // should not abort the sibling poller — only bail on permanent rejections.
+                let is_terminal_oauth = msg.contains("expired_token")
+                    || msg.contains("invalid_client")
+                    || msg.contains("invalid_grant");
+                if is_terminal_oauth {
                     return Err(anyhow::anyhow!("Device authorization failed: {e:#}"));
                 }
                 last_err = anyhow::anyhow!("Device authorization failed: {e:#}");

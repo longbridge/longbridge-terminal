@@ -3356,7 +3356,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             range,
         } => {
             if history {
-                fundamental::cmd_valuation(symbol, indicator, range, format, verbose).await
+                fundamental::cmd_valuation(symbol, history, indicator, range, format, verbose).await
             } else {
                 fundamental::cmd_valuation_detail(symbol, indicator, format, verbose).await
             }

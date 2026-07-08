@@ -170,7 +170,7 @@ pub async fn init_contexts() -> Result<(
             }
             // Only value-taking flags (e.g. --format, --lang) consume the next arg as
             // their value; boolean flags (--verbose/-v/--schema) do not.
-            prev_was_flag = arg.starts_with('-') && !arg.contains('=')
+            prev_was_flag = arg.starts_with('-') && arg != "--" && !arg.contains('=')
                 && !matches!(arg.as_str(), "--verbose" | "-v" | "--schema");
         }
         let cli_args = ascii_args(args);

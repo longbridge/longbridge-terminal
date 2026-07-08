@@ -460,13 +460,37 @@ pub async fn cmd_financial_report_key_metrics(
                 println!("No key metrics data.");
                 return Ok(());
             }
-            let headers = ["Period", "Year", "End Date", "Report"];
+            let headers = ["Period", "Year", "End Date", "Report", "Metrics"];
             let rows: Vec<Vec<String>> = list.unwrap().iter().map(|item| {
+                let metrics = item["fields"].as_array().map_or_else(
+                    || "-".to_string(),
+                    |fs| {
+                        fs.iter()
+                            .map(|f| {
+                                if let Some(obj) = f.as_object() {
+                                    let name = obj
+                                        .get("field_name")
+                                        .or_else(|| obj.get("name"))
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("?");
+                                    let val = obj
+                                        .get("value")
+                                        .map_or_else(|| "-".to_string(), val_str);
+                                    format!("{name}: {val}")
+                                } else {
+                                    val_str(f)
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join("  ")
+                    },
+                );
                 vec![
                     val_str(&item["ff_period"]),
                     val_str(&item["ff_year"]),
                     val_str(&item["fp_end"]),
                     val_str(&item["report_txt"]),
+                    metrics,
                 ]
             }).collect();
             super::output::print_table(&headers, rows, format);
@@ -1214,6 +1238,7 @@ fn print_valuation_history(data: &Value) {
 /// Fetch valuation overview: P/E, P/B, P/S, dividend yield + peer comparison.
 pub async fn cmd_valuation(
     symbol: String,
+    history: bool,
     indicator: Option<String>,
     range: Option<String>,
     format: &OutputFormat,
@@ -1228,6 +1253,11 @@ pub async fn cmd_valuation(
         ("range", range_val),
     ];
     let is_us = is_us_fundamental(&symbol).await;
+    if is_us && history {
+        anyhow::bail!(
+            "US accounts do not support historical valuation; omit --history and use the current snapshot"
+        );
+    }
     if is_us && (indicator.is_some() || range.is_some()) {
         anyhow::bail!(
             "US valuation does not support --indicator or --range; omit them and retry"
@@ -1283,7 +1313,10 @@ pub async fn cmd_valuation_detail(
                 fix_valuation_value(&mut d);
                 print_json(&d);
             }
-            OutputFormat::Pretty => print_us_valuation_detail(&d),
+            OutputFormat::Pretty => {
+                fix_valuation_value(&mut d);
+                print_us_valuation_detail(&d);
+            }
         }
         return Ok(());
     }

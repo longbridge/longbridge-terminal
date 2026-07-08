@@ -22,7 +22,7 @@ pub const OPEN_URL_CN: &str = "https://open.longbridge.cn";
 // `-global` gateway, which performs `x-dc-region` data-center routing.
 pub const HTTP_URL_TEST: &str = "https://openapi-global.longbridge.xyz";
 pub const QUOTE_WS_URL_TEST: &str = "wss://openapi-global-quote.longbridge.xyz/v2";
-pub const TRADE_WS_URL_TEST: &str = "wss://openapi-trade.longbridge.xyz/v2";
+pub const TRADE_WS_URL_TEST: &str = "wss://openapi-global-trade.longbridge.xyz/v2";
 
 /// Whether the staging environment is active (`LONGBRIDGE_ENV=staging`).
 pub fn is_test_env() -> bool {
