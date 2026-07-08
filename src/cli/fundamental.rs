@@ -461,38 +461,42 @@ pub async fn cmd_financial_report_key_metrics(
                 return Ok(());
             }
             let headers = ["Period", "Year", "End Date", "Report", "Metrics"];
-            let rows: Vec<Vec<String>> = list.unwrap().iter().map(|item| {
-                let metrics = item["fields"].as_array().map_or_else(
-                    || "-".to_string(),
-                    |fs| {
-                        fs.iter()
-                            .map(|f| {
-                                if let Some(obj) = f.as_object() {
-                                    let name = obj
-                                        .get("field_name")
-                                        .or_else(|| obj.get("name"))
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("?");
-                                    let val = obj
-                                        .get("value")
-                                        .map_or_else(|| "-".to_string(), val_str);
-                                    format!("{name}: {val}")
-                                } else {
-                                    val_str(f)
-                                }
-                            })
-                            .collect::<Vec<_>>()
-                            .join("  ")
-                    },
-                );
-                vec![
-                    val_str(&item["ff_period"]),
-                    val_str(&item["ff_year"]),
-                    val_str(&item["fp_end"]),
-                    val_str(&item["report_txt"]),
-                    metrics,
-                ]
-            }).collect();
+            let rows: Vec<Vec<String>> = list
+                .unwrap()
+                .iter()
+                .map(|item| {
+                    let metrics = item["fields"].as_array().map_or_else(
+                        || "-".to_string(),
+                        |fs| {
+                            fs.iter()
+                                .map(|f| {
+                                    if let Some(obj) = f.as_object() {
+                                        let name = obj
+                                            .get("field_name")
+                                            .or_else(|| obj.get("name"))
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("?");
+                                        let val = obj
+                                            .get("value")
+                                            .map_or_else(|| "-".to_string(), val_str);
+                                        format!("{name}: {val}")
+                                    } else {
+                                        val_str(f)
+                                    }
+                                })
+                                .collect::<Vec<_>>()
+                                .join("  ")
+                        },
+                    );
+                    vec![
+                        val_str(&item["ff_period"]),
+                        val_str(&item["ff_year"]),
+                        val_str(&item["fp_end"]),
+                        val_str(&item["report_txt"]),
+                        metrics,
+                    ]
+                })
+                .collect();
             super::output::print_table(&headers, rows, format);
         }
     }
@@ -910,32 +914,30 @@ fn print_us_consensus(data: &Value) {
     if !summary.is_empty() {
         println!("{summary}");
     }
-    // opt_reports may be a JSON-encoded string of an array, or a native array
-    let opt_reports: Option<Vec<Value>> = data["opt_reports"].as_array().cloned().or_else(|| {
-        data["opt_reports"]
-            .as_str()
-            .and_then(|s| serde_json::from_str::<Value>(s).ok())
-            .and_then(|v| v.as_array().cloned())
-    });
-    let has_reports = opt_reports.as_ref().is_some_and(|r| !r.is_empty());
+    // opt_reports is Vec<String> — items are report title strings, not objects
+    let opt_reports: Option<Vec<String>> = data["opt_reports"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_owned))
+                .collect::<Vec<_>>()
+        })
+        .filter(|v| !v.is_empty())
+        .or_else(|| {
+            data["opt_reports"]
+                .as_str()
+                .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+                .filter(|v| !v.is_empty())
+        });
+    let has_reports = opt_reports.is_some();
     if has_reports {
         if !summary.is_empty() {
             println!();
         }
-        let headers = ["date", "institution", "rating", "target"];
-        let rows: Vec<Vec<String>> = opt_reports
-            .unwrap()
-            .iter()
-            .map(|r| {
-                vec![
-                    r["date"].as_str().unwrap_or("-").to_owned(),
-                    r["institution"].as_str().unwrap_or("-").to_owned(),
-                    r["rating"].as_str().unwrap_or("-").to_owned(),
-                    val_str(&r["target"]),
-                ]
-            })
-            .collect();
-        super::output::print_table(&headers, rows, &OutputFormat::Pretty);
+        println!("Reports:");
+        for r in opt_reports.unwrap() {
+            println!("  {r}");
+        }
     }
     if summary.is_empty() && !has_reports {
         println!("No consensus data.");
@@ -1090,7 +1092,8 @@ fn print_us_valuation_detail(data: &Value) {
         &OutputFormat::Pretty,
     );
 
-    let ci = &data["current_indicator"];
+    let ind_key = indicator.to_lowercase();
+    let ci = &data["metrics"][ind_key.as_str()];
     let metric = val_str(&ci["metric"]);
     let metric_type = val_str(&ci["metric_type"]);
     let desc = strip_html(&val_str(&ci["desc"]));
@@ -1259,9 +1262,7 @@ pub async fn cmd_valuation(
         );
     }
     if is_us && (indicator.is_some() || range.is_some()) {
-        anyhow::bail!(
-            "US valuation does not support --indicator or --range; omit them and retry"
-        );
+        anyhow::bail!("US valuation does not support --indicator or --range; omit them and retry");
     }
     let data = if is_us {
         let mut d = to_value(
@@ -2129,15 +2130,15 @@ fn print_us_company(data: &Value) {
     }
     if let Some(tags) = data["top_rank_tags"].as_array() {
         for tag in tags {
-            let name = val_str(&tag["name"]);
-            if name.is_empty() || name == "-" {
+            let title = val_str(&tag["title"]);
+            if title.is_empty() || title == "-" {
                 continue;
             }
-            let chg = val_str(&tag["chg"]);
-            if chg.is_empty() || chg == "-" {
-                println!("{:15} {name}", "Rank");
+            let highlight = val_str(&tag["highlight_text"]);
+            if highlight.is_empty() || highlight == "-" {
+                println!("{:15} {title}", "Rank");
             } else {
-                println!("{:15} {name} ({chg})", "Rank");
+                println!("{:15} {title} ({highlight})", "Rank");
             }
         }
     }
@@ -2859,7 +2860,7 @@ fn fmt_yoy(s: &str) -> String {
 }
 
 fn period_label(ff_period: &str, ff_year: i64, report: &str) -> String {
-    if report == "af" {
+    if report == "annual" {
         format!("FY{ff_year}")
     } else {
         format!("Q{ff_period} {ff_year}")
@@ -2879,11 +2880,7 @@ pub async fn cmd_financial_statement(
     let mut data = if is_us_fundamental(&symbol).await {
         to_value(
             crate::openapi::fundamental()
-                .us_financial_statement(
-                    symbol.clone(),
-                    kind_upper.as_str(),
-                    report_lower.as_str(),
-                )
+                .us_financial_statement(symbol.clone(), kind_upper.as_str(), report_lower.as_str())
                 .await?,
         )?
     } else {
@@ -4161,14 +4158,18 @@ pub async fn cmd_etf_docs(
                 return Ok(());
             }
             let headers = ["Name", "Type", "Date", "URL"];
-            let rows: Vec<Vec<String>> = files.unwrap().iter().map(|f| {
-                vec![
-                    val_str(&f["file_name"]),
-                    val_str(&f["format"]),
-                    val_str(&f["update_date"]),
-                    val_str(&f["file_path"]),
-                ]
-            }).collect();
+            let rows: Vec<Vec<String>> = files
+                .unwrap()
+                .iter()
+                .map(|f| {
+                    vec![
+                        val_str(&f["file_name"]),
+                        val_str(&f["format"]),
+                        val_str(&f["update_date"]),
+                        val_str(&f["file_path"]),
+                    ]
+                })
+                .collect();
             super::output::print_table(&headers, rows, format);
         }
     }

@@ -1981,17 +1981,16 @@ fn print_us_positions_pretty(data: &serde_json::Value) {
     if !cryptos.is_empty() {
         println!("── Crypto ──────────────────────────────────────────────────────");
         print_table(
-            &["Symbol", "Qty", "Cost", "Price", "Mkt Value", "P&L"],
+            &["Symbol", "Type", "Avg Cost", "Currency", "Industry"],
             cryptos
                 .iter()
                 .map(|p| {
                     vec![
                         val(&p["counter_id"]),
-                        val(&p["quantity"]),
+                        val(&p["asset_type"]),
                         val(&p["average_cost"]),
-                        val(&p["last_done"]),
-                        val(&p["market_value"]),
-                        val(&p["unrealized_pl"]),
+                        val(&p["currency"]),
+                        val(&p["industry_name"]),
                     ]
                 })
                 .collect(),
