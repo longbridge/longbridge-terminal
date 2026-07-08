@@ -765,12 +765,12 @@ pub async fn cmd_static(symbols: Vec<String>, format: &OutputFormat) -> Result<(
                 return true;
             }
             let ext = s.rsplit_once('.').map(|(_, e)| e);
-            !ext.is_some_and(|e| e.eq_ignore_ascii_case("HAS") || e.eq_ignore_ascii_case("BKKT"))
+            !ext.is_some_and(|e| e.eq_ignore_ascii_case("BKKT"))
         })
         .cloned()
         .collect();
     if input.is_empty() {
-        // Only BKKT or .HAS symbols were given; flush any collected BKKT JSON and return
+        // Only BKKT symbols were given; flush any collected BKKT JSON and return
         if matches!(format, OutputFormat::Json) && !bkkt_json.is_empty() {
             println!(
                 "{}",

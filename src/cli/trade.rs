@@ -90,7 +90,7 @@ fn normalize_us_order_map(m: &mut serde_json::Map<String, serde_json::Value>) {
             serde_json::Value::String(label.to_string()),
         );
     }
-    for ts_key in &["submitted_at", "updated_at", "create_time", "done_at"] {
+    for ts_key in &["submitted_at", "updated_at", "create_time", "done_at", "time"] {
         if let Some(s) = m.get(*ts_key).and_then(|v| v.as_str()) {
             if let Ok(n) = s.parse::<i64>() {
                 m.insert(
@@ -101,7 +101,7 @@ fn normalize_us_order_map(m: &mut serde_json::Map<String, serde_json::Value>) {
         }
     }
     if let Some(s) = m.get("status").and_then(|v| v.as_str()) {
-        if let Some(clean) = s.strip_suffix("Status") {
+        if let Some(clean) = s.strip_suffix("Status").filter(|s| !s.is_empty()) {
             m.insert(
                 "status".to_string(),
                 serde_json::Value::String(clean.to_string()),
@@ -141,18 +141,20 @@ fn normalize_us_order_map(m: &mut serde_json::Map<String, serde_json::Value>) {
         }
     }
     if let Some(cid) = m.remove("counter_id") {
-        let sym = cid.as_str().map_or_else(
-            || cid.clone(),
-            |s| serde_json::Value::String(crate::utils::counter::counter_id_to_symbol(s)),
-        );
-        m.insert("symbol".to_string(), sym);
+        if !m.contains_key("symbol") {
+            let sym = cid.as_str().map_or_else(
+                || cid.clone(),
+                |s| serde_json::Value::String(crate::utils::counter::counter_id_to_symbol(s)),
+            );
+            m.insert("symbol".to_string(), sym);
+        }
     }
     for key in INTERNAL_ORDER_FIELDS {
         m.remove(*key);
     }
-    m.retain(|_, v| match v {
+    m.retain(|k, v| match v {
         serde_json::Value::Null => false,
-        serde_json::Value::String(s) => !s.is_empty(),
+        serde_json::Value::String(s) => k == "price" || !s.is_empty(),
         serde_json::Value::Array(a) => !a.is_empty(),
         _ => true,
     });
@@ -1734,17 +1736,8 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
     let command = path.join(" ");
     let schema = match command.as_str() {
         "order" => text("US accounts: array of {id, symbol, action, order_type, status, price, quantity, submitted_at, updated_at}; HK/CN accounts: array of {order_id, symbol, side, type, status, price, quantity, created_at, updated_at}"),
-        "order detail" => object(
-            "Order detail",
-            &[
-                "id",
-                "symbol",
-                "action",
-                "status",
-                "order_type",
-                "quantity",
-                "price",
-            ],
+        "order detail" => text(
+            "US accounts: object {id, symbol, action, status, order_type, quantity, price, submitted_at, updated_at, order_histories}; HK/CN accounts: object {order_id, symbol, side, order_type, status, quantity, price, submitted_at, updated_at, history}",
         ),
         "order executions" => array(
             "Order executions",
@@ -1787,7 +1780,7 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
             &["overview", "holdings", "cash_balances", "market_accounts"],
         ),
         "positions" => text(
-            "US accounts: object {account_type, cash_buy_power, stock_list, option_list, crypto_list, cash_list}; HK/CN accounts: array of {symbol, name, quantity, available, cost_price, currency, market}",
+            "US accounts: object {account_type, cash_buy_power, crypto_list, cash_list}; HK/CN accounts: array of {symbol, name, quantity, available, cost_price, currency, market}",
         ),
         "fund-positions" => array(
             "Current fund positions",
@@ -1884,7 +1877,7 @@ async fn cmd_us_positions(format: &OutputFormat) -> Result<()> {
             }
         }
         // Ensure list fields are always [] rather than null/absent
-        for list_key in &["stock_list", "option_list", "crypto_list", "cash_list"] {
+        for list_key in &["crypto_list", "cash_list"] {
             if map.get(*list_key).is_none_or(serde_json::Value::is_null) {
                 map.insert((*list_key).to_string(), serde_json::Value::Array(vec![]));
             }
@@ -1903,11 +1896,7 @@ fn print_us_positions_pretty(data: &serde_json::Value) {
         serde_json::Value::Number(n) => n.to_string(),
         _ => "-".to_string(),
     };
-    let acct_type = match data["account_type"].as_str().unwrap_or("") {
-        "0" => "Standard (Margin)",
-        "1" => "Cash",
-        other => other,
-    };
+    let acct_type = data["account_type"].as_str().unwrap_or("-");
     println!("Account Type:   {acct_type}");
     println!("Cash Buy Power: {}", val(&data["cash_buy_power"]));
     println!();
@@ -1928,51 +1917,6 @@ fn print_us_positions_pretty(data: &serde_json::Value) {
                         val(&c["total_cash"]),
                         val(&c["settled_cash"]),
                         val(&c["frozen_buy_cash"]),
-                    ]
-                })
-                .collect(),
-            &OutputFormat::Pretty,
-        );
-    }
-
-    // Stock positions
-    let stock_list = data["stock_list"].as_array().unwrap_or(&empty);
-    if !stock_list.is_empty() {
-        println!("── Stocks ──────────────────────────────────────────────────────");
-        print_table(
-            &["Symbol", "Qty", "Cost", "Price", "Mkt Value", "P&L"],
-            stock_list
-                .iter()
-                .map(|p| {
-                    vec![
-                        val(&p["counter_id"]),
-                        val(&p["quantity"]),
-                        val(&p["average_cost"]),
-                        val(&p["last_done"]),
-                        val(&p["market_value"]),
-                        val(&p["unrealized_pl"]),
-                    ]
-                })
-                .collect(),
-            &OutputFormat::Pretty,
-        );
-    }
-
-    // Option positions
-    let option_list = data["option_list"].as_array().unwrap_or(&empty);
-    if !option_list.is_empty() {
-        println!("── Options ─────────────────────────────────────────────────────");
-        print_table(
-            &["Symbol", "Underlying", "Qty", "Cost", "Mkt Value"],
-            option_list
-                .iter()
-                .map(|p| {
-                    vec![
-                        val(&p["counter_id"]),
-                        val(&p["underlying_counter_id"]),
-                        val(&p["quantity"]),
-                        val(&p["average_cost"]),
-                        val(&p["market_value"]),
                     ]
                 })
                 .collect(),
