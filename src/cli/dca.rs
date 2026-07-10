@@ -1,13 +1,28 @@
 use anyhow::Result;
 
 use super::{
-    api::{http_get, http_post},
+    api::{http_get_dc, http_post_dc},
     output::{print_json_value, print_table},
     DcaCmd, DcaDayOfWeek, DcaFrequency, DcaReminderHours, OutputFormat,
 };
 
 use crate::utils::counter::{counter_id_to_symbol, symbol_to_counter_id};
 use crate::utils::datetime::format_timestamp;
+
+// Recurring investment (DCA) is served only by the AP data center. These
+// thin wrappers tag every request via the SDK's `dc_restrict` API so a US-region
+// session gets the SDK's unified error instead of a raw backend failure.
+async fn http_get(path: &str, params: &[(&str, &str)], verbose: bool) -> Result<serde_json::Value> {
+    http_get_dc(path, params, Some(longbridge::DcRegion::Ap), verbose).await
+}
+
+async fn http_post(
+    path: &str,
+    body: serde_json::Value,
+    verbose: bool,
+) -> Result<serde_json::Value> {
+    http_post_dc(path, body, Some(longbridge::DcRegion::Ap), verbose).await
+}
 
 pub async fn cmd_dca(
     cmd: Option<DcaCmd>,

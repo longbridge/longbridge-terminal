@@ -417,6 +417,18 @@ pub async fn http_get(
     params: &[(&str, &str)],
     verbose: bool,
 ) -> Result<serde_json::Value> {
+    http_get_dc(path, params, None, verbose).await
+}
+
+/// [`http_get`], but restricting the request to a single data center via the
+/// SDK's `dc_restrict` API. Region-limited commands declare their region here; the
+/// SDK short-circuits a mismatched session with a unified error.
+pub async fn http_get_dc(
+    path: &str,
+    params: &[(&str, &str)],
+    dc_restrict: Option<longbridge::DcRegion>,
+    verbose: bool,
+) -> Result<serde_json::Value> {
     use longbridge::httpclient::Json;
     use reqwest::Method;
 
@@ -430,9 +442,11 @@ pub async fn http_get(
     }
     let client = crate::openapi::http_client();
     let params: Vec<(&str, &str)> = params.to_vec();
-    let resp = client
-        .request(Method::GET, path)
-        .query_params(params)
+    let mut builder = client.request(Method::GET, path).query_params(params);
+    if let Some(region) = dc_restrict {
+        builder = builder.dc_restrict(region);
+    }
+    let resp = builder
         .response::<Json<serde_json::Value>>()
         .send()
         .await
@@ -447,6 +461,17 @@ pub async fn http_post(
     body: serde_json::Value,
     verbose: bool,
 ) -> Result<serde_json::Value> {
+    http_post_dc(path, body, None, verbose).await
+}
+
+/// [`http_post`], but restricting the request to a single data center via the
+/// SDK's `dc_restrict` API.
+pub async fn http_post_dc(
+    path: &str,
+    body: serde_json::Value,
+    dc_restrict: Option<longbridge::DcRegion>,
+    verbose: bool,
+) -> Result<serde_json::Value> {
     use longbridge::httpclient::Json;
     use reqwest::Method;
 
@@ -458,9 +483,11 @@ pub async fn http_post(
         );
     }
     let client = crate::openapi::http_client();
-    let resp = client
-        .request(Method::POST, path)
-        .body(Json(body))
+    let mut builder = client.request(Method::POST, path).body(Json(body));
+    if let Some(region) = dc_restrict {
+        builder = builder.dc_restrict(region);
+    }
+    let resp = builder
         .response::<Json<serde_json::Value>>()
         .send()
         .await

@@ -12,6 +12,19 @@ use crate::utils::number::format_financial_value;
 use crate::utils::text::strip_html;
 
 async fn http_get(path: &str, params: &[(&str, &str)], verbose: bool) -> Result<Value> {
+    http_get_dc(path, params, None, verbose).await
+}
+
+/// [`http_get`], but restricting the request to a single data center via the
+/// SDK's `dc_restrict` API. Region-limited fundamentals (e.g. AP-only operating
+/// reviews) declare their region here; the SDK returns a unified error when the
+/// session's region differs.
+async fn http_get_dc(
+    path: &str,
+    params: &[(&str, &str)],
+    dc_restrict: Option<longbridge::DcRegion>,
+    verbose: bool,
+) -> Result<Value> {
     if verbose {
         let qs = params
             .iter()
@@ -22,9 +35,11 @@ async fn http_get(path: &str, params: &[(&str, &str)], verbose: bool) -> Result<
     }
     let client = crate::openapi::http_client();
     let params: Vec<(&str, &str)> = params.to_vec();
-    let resp = client
-        .request(Method::GET, path)
-        .query_params(params)
+    let mut builder = client.request(Method::GET, path).query_params(params);
+    if let Some(region) = dc_restrict {
+        builder = builder.dc_restrict(region);
+    }
+    let resp = builder
         .response::<Json<Value>>()
         .send()
         .await
@@ -1922,7 +1937,13 @@ pub async fn cmd_operating(
         report_val = r.clone();
         params.push(("report", report_val.as_str()));
     }
-    let data = http_get("/v1/quote/operatings", &params, verbose).await?;
+    let data = http_get_dc(
+        "/v1/quote/operatings",
+        &params,
+        Some(longbridge::DcRegion::Ap),
+        verbose,
+    )
+    .await?;
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => print_operating(&data),
