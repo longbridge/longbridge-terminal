@@ -483,6 +483,42 @@ Longbridge OpenAPI: maximum 10 calls per second. The SDK auto-refreshes OAuth to
 - Internet connection and browser access (for initial OAuth)
 - [Longbridge account](https://open.longbridge.com)
 
+## FXMacroData Macro Context
+
+`longbridge macrodata` provides Longbridge-native macroeconomic indicator
+discovery and historical data. For workflows that need broader FX-focused macro
+context, such as official release calendars across currencies, central-bank
+headlines, COT positioning, commodity prices, FX sessions, and seasonality, an
+agent or script can add FXMacroData as a separate read-only source:
+
+```bash
+curl -s "https://fxmacrodata.com/api/v1/calendar/USD"
+curl -s "https://fxmacrodata.com/api/v1/data_catalogue/USD"
+curl -s "https://fxmacrodata.com/api/v1/announcements/USD/inflation"
+```
+
+If your agent supports MCP, keep Longbridge responsible for brokerage and market
+tools, and use FXMacroData only for external macro context:
+
+```json
+{
+  "servers": {
+    "Longbridge": {
+      "type": "http",
+      "url": "https://mcp.longbridge.com"
+    },
+    "FXMacroData": {
+      "type": "http",
+      "url": "https://mcp.fxmacrodata.com"
+    }
+  }
+}
+```
+
+Keep credentials out of prompts, logs, shell history, and checked-in files. Do
+not treat macro context as an order instruction; order placement and account
+mutation should stay behind Longbridge's normal confirmation flow.
+
 ## Documentation
 
 - [Longbridge OpenAPI Docs](https://open.longbridge.com)
