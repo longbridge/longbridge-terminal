@@ -2249,6 +2249,9 @@ pub async fn cmd_buyback(symbol: String, format: &OutputFormat, verbose: bool) -
 }
 
 fn fmt_amount(raw: &str, currency: &str) -> String {
+    if raw.is_empty() {
+        return "-".to_string();
+    }
     let Ok(v) = raw.parse::<f64>() else {
         return raw.to_string();
     };
@@ -2269,11 +2272,17 @@ fn fmt_amount(raw: &str, currency: &str) -> String {
 }
 
 fn fmt_ratio(raw: &str) -> String {
+    if raw.is_empty() {
+        return "-".to_string();
+    }
     raw.parse::<f64>()
         .map_or_else(|_| raw.to_string(), |v| format!("{v:.2}"))
 }
 
 fn fmt_pct(raw: &str) -> String {
+    if raw.is_empty() {
+        return "-".to_string();
+    }
     raw.parse::<f64>()
         .map_or_else(|_| raw.to_string(), |v| format!("{v:.2}%"))
 }
@@ -2874,6 +2883,10 @@ fn fmt_yoy(s: &str) -> String {
 fn period_label(ff_period: &str, ff_year: i64, report: &str) -> String {
     if report == "annual" || report == "af" {
         format!("FY{ff_year}")
+    } else if report == "saf" {
+        format!("H{ff_period} {ff_year}")
+    } else if report == "cumul" {
+        format!("Acc{ff_period} {ff_year}")
     } else {
         format!("Q{ff_period} {ff_year}")
     }
@@ -2942,7 +2955,7 @@ pub async fn cmd_financial_statement(
                         .map(|n| n.to_string())
                         .or_else(|| p["ff_period"].as_str().map(str::to_string))
                         .unwrap_or_default();
-                    period_label(&per_val, yr, report)
+                    period_label(&per_val, yr, &report_lower)
                 })
                 .collect();
             let n_cols = cols.len();

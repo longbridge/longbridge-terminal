@@ -158,19 +158,13 @@ fn normalize_us_order_map(m: &mut serde_json::Map<String, serde_json::Value>) {
     for key in INTERNAL_ORDER_FIELDS {
         m.remove(*key);
     }
-    // Normalize empty price to explicit null so callers can use is_null() to detect market orders.
-    if matches!(m.get("price"), Some(serde_json::Value::String(s)) if s.is_empty()) {
-        m.insert("price".to_string(), serde_json::Value::Null);
-    }
-    // Keep all null fields: null means "field present but has no value", which is semantically
-    // distinct from a missing key. AI agents rely on this to detect pending-order state.
-    m.retain(|_k, v| {
-        if let serde_json::Value::String(s) = v {
-            !s.is_empty()
-        } else {
-            true
+    // Normalize empty strings to explicit null. Null = field returned with no value;
+    // AI agents use is_null() to detect this (e.g. price is null for market orders).
+    for v in m.values_mut() {
+        if matches!(v, serde_json::Value::String(s) if s.is_empty()) {
+            *v = serde_json::Value::Null;
         }
-    });
+    }
 }
 
 pub async fn cmd_orders(
