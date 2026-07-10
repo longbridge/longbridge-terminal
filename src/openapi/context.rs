@@ -174,12 +174,10 @@ pub async fn init_contexts() -> Result<(
             } else if !arg.is_empty() {
                 args.push(arg.clone());
             }
-            // Only value-taking flags (e.g. --format, --lang) consume the next arg as
-            // their value; boolean flags (--verbose/-v/--schema) do not.
-            prev_was_flag = arg.starts_with('-')
-                && arg != "--"
-                && !arg.contains('=')
-                && !matches!(arg.as_str(), "--verbose" | "-v" | "--schema");
+            // Only global value-taking flags (--format, --lang) consume the next arg as
+            // their value. Boolean global flags do not, and subcommand-specific flags always
+            // appear after cmd is already captured, so they cannot affect cmd extraction.
+            prev_was_flag = matches!(arg.as_str(), "--format" | "--lang") && !arg.contains('=');
         }
         let cli_args = ascii_args(args);
         (if cmd.is_ascii() { cmd } else { String::new() }, cli_args)

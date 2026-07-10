@@ -438,13 +438,17 @@ async fn poll_device_token(
     let url = format!("{oauth_base}/token");
     let deadline = Instant::now() + Duration::from_secs(expires_in);
 
-    if initial_delay {
+    // initial_delay counts as the first iteration's sleep so the US poller doesn't double-sleep.
+    let mut skip_loop_sleep = if initial_delay {
         let ms = shared_interval_ms.load(Ordering::Relaxed);
         let remaining = deadline.saturating_duration_since(Instant::now());
         if !remaining.is_zero() {
             tokio::time::sleep(Duration::from_millis(ms).min(remaining)).await;
         }
-    }
+        true
+    } else {
+        false
+    };
 
     loop {
         // Sleep for at most the remaining time so we don't overshoot the deadline.
@@ -452,8 +456,12 @@ async fn poll_device_token(
         if remaining.is_zero() {
             anyhow::bail!("Device authorization timed out ({region})");
         }
-        let poll_interval = Duration::from_millis(shared_interval_ms.load(Ordering::Relaxed));
-        tokio::time::sleep(poll_interval.min(remaining)).await;
+        if skip_loop_sleep {
+            skip_loop_sleep = false;
+        } else {
+            let poll_interval = Duration::from_millis(shared_interval_ms.load(Ordering::Relaxed));
+            tokio::time::sleep(poll_interval.min(remaining)).await;
+        }
 
         if verbose {
             eprintln!("POST {url}  grant_type=device_code  x-dc-region={region}");
@@ -499,9 +507,12 @@ async fn poll_device_token(
         match err_resp["error"].as_str() {
             Some("authorization_pending") => {}
             Some("slow_down") => {
-                // RFC 8628 §3.5: increase interval by at least 5 seconds. Update the shared
-                // value so both DC pollers back off together.
-                shared_interval_ms.fetch_add(5000, Ordering::Relaxed);
+                // RFC 8628 §3.5: increase interval by at least 5 seconds. Use fetch_max so
+                // that if both DC pollers receive slow_down simultaneously each computes
+                // current+5000 and fetch_max ensures the final value is current+5000, not
+                // current+10000 (which fetch_add would produce from two concurrent callers).
+                let current = shared_interval_ms.load(Ordering::Relaxed);
+                shared_interval_ms.fetch_max(current + 5000, Ordering::Relaxed);
             }
             Some(other) => anyhow::bail!("Authorization failed ({region}): {other}"),
             None => anyhow::bail!("Unexpected token poll response ({region})"),

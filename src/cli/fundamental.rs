@@ -2872,7 +2872,7 @@ fn fmt_yoy(s: &str) -> String {
 }
 
 fn period_label(ff_period: &str, ff_year: i64, report: &str) -> String {
-    if report == "annual" {
+    if report == "annual" || report == "af" {
         format!("FY{ff_year}")
     } else {
         format!("Q{ff_period} {ff_year}")

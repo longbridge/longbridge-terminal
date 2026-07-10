@@ -162,10 +162,14 @@ fn normalize_us_order_map(m: &mut serde_json::Map<String, serde_json::Value>) {
     if matches!(m.get("price"), Some(serde_json::Value::String(s)) if s.is_empty()) {
         m.insert("price".to_string(), serde_json::Value::Null);
     }
-    m.retain(|k, v| match v {
-        serde_json::Value::Null => k == "price",
-        serde_json::Value::String(s) => !s.is_empty(),
-        _ => true,
+    // Keep all null fields: null means "field present but has no value", which is semantically
+    // distinct from a missing key. AI agents rely on this to detect pending-order state.
+    m.retain(|_k, v| {
+        if let serde_json::Value::String(s) = v {
+            !s.is_empty()
+        } else {
+            true
+        }
     });
 }
 
@@ -356,15 +360,22 @@ pub async fn cmd_order_detail(
         } else {
             full.clone()
         };
-        // For --attached: replace with child order if present, applying the same normalization
-        let using_attached = attached && !full["current_attached_order"].is_null();
+        // For --attached: replace with child order if present, applying the same normalization.
+        // current_attached_order may be nested inside full["order"] (same level as order_histories)
+        // or at the response root depending on SDK version — check both.
+        let attached_val = if full["order"]["current_attached_order"].is_null() {
+            full["current_attached_order"].clone()
+        } else {
+            full["order"]["current_attached_order"].clone()
+        };
+        let using_attached = attached && !attached_val.is_null();
         let data = if using_attached {
-            if let Some(o) = full["current_attached_order"].as_object() {
+            if let Some(o) = attached_val.as_object() {
                 let mut m = o.clone();
                 normalize_us_order_map(&mut m);
                 serde_json::Value::Object(m)
             } else {
-                full["current_attached_order"].clone()
+                attached_val
             }
         } else {
             // Flatten: expose order fields at top level + order_histories.
