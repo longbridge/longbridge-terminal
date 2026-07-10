@@ -165,6 +165,12 @@ fn normalize_us_order_map(m: &mut serde_json::Map<String, serde_json::Value>) {
             *v = serde_json::Value::Null;
         }
     }
+    // create_time is often absent; promote submitted_at so all output paths see a timestamp.
+    if m.get("create_time").is_none_or(serde_json::Value::is_null) {
+        if let Some(sa) = m.get("submitted_at").cloned() {
+            m.insert("create_time".to_string(), sa);
+        }
+    }
 }
 
 pub async fn cmd_orders(
@@ -253,15 +259,7 @@ pub async fn cmd_orders(
                                 val(&o["status"]),
                                 val(&o["quantity"]),
                                 val(&o["price"]),
-                                // create_time is often null; fall back to submitted_at
-                                {
-                                    let ts_val = if o["create_time"].is_null() {
-                                        &o["submitted_at"]
-                                    } else {
-                                        &o["create_time"]
-                                    };
-                                    ts_val.as_i64().map_or_else(|| val(ts_val), format_date)
-                                },
+                                o["create_time"].as_i64().map_or_else(|| val(&o["create_time"]), format_date),
                             ]
                         })
                         .collect(),

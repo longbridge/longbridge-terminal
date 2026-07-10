@@ -2279,6 +2279,11 @@ fn fmt_ratio(raw: &str) -> String {
         .map_or_else(|_| raw.to_string(), |v| format!("{v:.2}"))
 }
 
+fn fmt_ratio_x(raw: &str) -> String {
+    let r = fmt_ratio(raw);
+    if r == "-" { r } else { format!("{r}x") }
+}
+
 fn fmt_pct(raw: &str) -> String {
     if raw.is_empty() {
         return "-".to_string();
@@ -2413,9 +2418,9 @@ pub async fn cmd_industry_valuation(
                         val_str(&item["name"]),
                         fmt_amount(&val_str(&item["market_value"]), c),
                         format!("{c}{}", val_str(&item["price_close"])),
-                        format!("{}x", fmt_ratio(&val_str(&item["pe"]))),
-                        format!("{}x", fmt_ratio(&val_str(&item["pb"]))),
-                        format!("{c}{}", fmt_ratio(&val_str(&item["eps"]))),
+                        fmt_ratio_x(&val_str(&item["pe"])),
+                        fmt_ratio_x(&val_str(&item["pb"])),
+                        { let r = fmt_ratio(&val_str(&item["eps"])); if r == "-" { r } else { format!("{c}{r}") } },
                         fmt_pct(&val_str(&item["div_yld"])),
                     ]
                 })
@@ -2468,13 +2473,12 @@ pub async fn cmd_industry_valuation_dist(
                         .parse::<f64>()
                         .map(|v| format!("{:.1}%", v * 100.0))
                         .unwrap_or(ranking);
-                    let suffix = "x";
                     rows.push(vec![
                         label.to_string(),
-                        format!("{}{suffix}", fmt_ratio(&val_str(&m["value"]))),
-                        format!("{}{suffix}", fmt_ratio(&val_str(&m["low"]))),
-                        format!("{}{suffix}", fmt_ratio(&val_str(&m["median"]))),
-                        format!("{}{suffix}", fmt_ratio(&val_str(&m["high"]))),
+                        fmt_ratio_x(&val_str(&m["value"])),
+                        fmt_ratio_x(&val_str(&m["low"])),
+                        fmt_ratio_x(&val_str(&m["median"])),
+                        fmt_ratio_x(&val_str(&m["high"])),
                         rank,
                         pct,
                     ]);
@@ -3039,6 +3043,9 @@ pub async fn cmd_financial_report_latest(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
+    if is_us_fundamental(&symbol).await {
+        anyhow::bail!("financial-report --latest is not supported for US accounts");
+    }
     let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
         "/v1/quote/financials/latest-report",

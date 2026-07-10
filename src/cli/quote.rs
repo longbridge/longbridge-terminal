@@ -726,7 +726,7 @@ pub async fn cmd_static(symbols: Vec<String>, format: &OutputFormat) -> Result<(
                 match format {
                     OutputFormat::Json => bkkt_json.push(data),
                     OutputFormat::Pretty => {
-                        let val = |k: &str| data[k].as_str().unwrap_or("-").to_string();
+                        let val = |k: &str| val_str(&data[k]);
                         println!("── {sym} ─────────────────────────────────────────────────────");
                         for key in &[
                             "name",
