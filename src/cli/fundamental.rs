@@ -4161,29 +4161,35 @@ pub async fn cmd_etf_docs(
     )?;
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => {
-            let files = data["files"].as_array();
-            if files.is_none_or(Vec::is_empty) {
-                println!("No documents found.");
-                return Ok(());
-            }
-            let headers = ["Name", "Type", "Date", "URL"];
-            let rows: Vec<Vec<String>> = files
-                .unwrap()
-                .iter()
-                .map(|f| {
-                    vec![
-                        val_str(&f["file_name"]),
-                        val_str(&f["format"]),
-                        val_str(&f["update_date"]),
-                        val_str(&f["file_path"]),
-                    ]
-                })
-                .collect();
-            super::output::print_table(&headers, rows, format);
-        }
+        OutputFormat::Pretty => print_us_etf_docs(&data),
     }
     Ok(())
+}
+
+fn is_blank(v: &Value) -> bool {
+    let s = val_str(v);
+    s.is_empty() || s == "-"
+}
+
+fn print_us_etf_docs(data: &Value) {
+    let empty = vec![];
+    let files = data["files"].as_array().unwrap_or(&empty);
+    let rows: Vec<Vec<String>> = files
+        .iter()
+        .filter(|f| !(is_blank(&f["file_type"]) && is_blank(&f["name"]) && is_blank(&f["url"])))
+        .map(|f| {
+            vec![
+                val_str(&f["file_type"]),
+                val_str(&f["name"]),
+                val_str(&f["url"]),
+            ]
+        })
+        .collect();
+    if rows.is_empty() {
+        println!("No ETF documents.");
+        return;
+    }
+    super::output::print_table(&["Type", "Name", "URL"], rows, &OutputFormat::Pretty);
 }
 
 // ── macrodata ────────────────────────────────────────────────────────────────
