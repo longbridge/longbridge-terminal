@@ -155,7 +155,10 @@ pub async fn init_contexts() -> Result<(
     } else {
         // Explicitly pin to the global host so the SDK does not re-run geotest
         // at request time (which would still resolve to CN on a China Mainland network).
-        config_builder = config_builder.http_url(crate::region::HTTP_URL_GLOBAL);
+        config_builder = config_builder
+            .http_url(crate::region::HTTP_URL_GLOBAL)
+            .quote_ws_url(crate::region::QUOTE_WS_URL_GLOBAL)
+            .trade_ws_url(crate::region::TRADE_WS_URL_GLOBAL);
         http_client_config = http_client_config.http_url(crate::region::HTTP_URL_GLOBAL);
         effective_http_url = crate::region::HTTP_URL_GLOBAL;
     }
