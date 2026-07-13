@@ -268,7 +268,7 @@ pub async fn cmd_ipo_subscriptions(format: &OutputFormat, verbose: bool) -> Resu
     let hk_params = [("memebr_id", mid_str.as_str())];
     let (hk_data, us_data) = tokio::join!(
         http_get("/v1/ipo/subscriptions", &hk_params, verbose),
-        http_get("/v1/ipo/us/subscriptions", &[], verbose),
+        http_get("/v1/us/ipo/subscriptions", &[], verbose),
     );
     let hk_data = hk_data?;
     let us_data = us_data?;
@@ -384,7 +384,7 @@ pub async fn cmd_ipo_wait_listing(format: &OutputFormat, verbose: bool) -> Resul
     ];
     let (hk_data, us_data) = tokio::join!(
         http_get("/v1/ipo/wait-listing", &hk_params, verbose),
-        http_get("/v1/ipo/us/wait-listing", &[], verbose),
+        http_get("/v1/us/ipo/wait-listing", &[], verbose),
     );
     let hk_data = hk_data?;
     let us_data = us_data?;
@@ -495,7 +495,7 @@ pub async fn cmd_ipo_listed(
     let us_params = [("page", page_str.as_str()), ("size", size_str.as_str())];
     let (hk_data, us_data) = tokio::join!(
         http_get("/v1/ipo/listed", &hk_params, verbose),
-        http_get("/v1/ipo/us/listed", &us_params, verbose),
+        http_get("/v1/us/ipo/listed", &us_params, verbose),
     );
     let hk_data = hk_data?;
     let us_data = us_data?;
@@ -1184,7 +1184,7 @@ pub async fn cmd_ipo_profit_loss(
 
 /// List US IPO stocks currently in subscription stage.
 pub async fn cmd_ipo_us_subscriptions(format: &OutputFormat, verbose: bool) -> Result<()> {
-    let data = http_get("/v1/ipo/us/subscriptions", &[], verbose).await?;
+    let data = http_get("/v1/us/ipo/subscriptions", &[], verbose).await?;
     match format {
         OutputFormat::Json => {
             if let Some(list) = data["list"].as_array() {
@@ -1233,7 +1233,7 @@ pub async fn cmd_ipo_us_subscriptions(format: &OutputFormat, verbose: bool) -> R
 
 /// List US IPO stocks in wait-listing stage.
 pub async fn cmd_ipo_us_wait_listing(format: &OutputFormat, verbose: bool) -> Result<()> {
-    let data = http_get("/v1/ipo/us/wait-listing", &[], verbose).await?;
+    let data = http_get("/v1/us/ipo/wait-listing", &[], verbose).await?;
     match format {
         OutputFormat::Json => {
             if let Some(list) = data["ipos"].as_array() {
@@ -1281,7 +1281,7 @@ pub async fn cmd_ipo_us_listed(
     let page_str = page.to_string();
     let size_str = limit.to_string();
     let data = http_get(
-        "/v1/ipo/us/listed",
+        "/v1/us/ipo/listed",
         &[("page", page_str.as_str()), ("size", size_str.as_str())],
         verbose,
     )
