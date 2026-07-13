@@ -2620,7 +2620,7 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 [[package]]
 name = "longbridge"
 version = "4.3.3"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fus-market-apis#8b2c1b4e3eae16397fe85c832c5dc9235ff63f8a"
+source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fus-market-apis#3a9bca479a2855cc6da1fd8ab62d703e1a2ef14d"
 dependencies = [
  "anyhow",
  "bitflags 2.10.0",
@@ -2656,7 +2656,7 @@ dependencies = [
 [[package]]
 name = "longbridge-candlesticks"
 version = "4.3.3"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fus-market-apis#8b2c1b4e3eae16397fe85c832c5dc9235ff63f8a"
+source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fus-market-apis#3a9bca479a2855cc6da1fd8ab62d703e1a2ef14d"
 dependencies = [
  "bitflags 2.10.0",
  "num-traits",
@@ -2668,7 +2668,7 @@ dependencies = [
 [[package]]
 name = "longbridge-geo"
 version = "4.3.3"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fus-market-apis#8b2c1b4e3eae16397fe85c832c5dc9235ff63f8a"
+source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fus-market-apis#3a9bca479a2855cc6da1fd8ab62d703e1a2ef14d"
 dependencies = [
  "reqwest 0.12.28",
 ]
@@ -2676,7 +2676,7 @@ dependencies = [
 [[package]]
 name = "longbridge-httpcli"
 version = "4.3.3"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fus-market-apis#8b2c1b4e3eae16397fe85c832c5dc9235ff63f8a"
+source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fus-market-apis#3a9bca479a2855cc6da1fd8ab62d703e1a2ef14d"
 dependencies = [
  "dotenv",
  "futures-util",
@@ -2698,7 +2698,7 @@ dependencies = [
 [[package]]
 name = "longbridge-oauth"
 version = "4.3.3"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fus-market-apis#8b2c1b4e3eae16397fe85c832c5dc9235ff63f8a"
+source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fus-market-apis#3a9bca479a2855cc6da1fd8ab62d703e1a2ef14d"
 dependencies = [
  "dirs 6.0.0",
  "futures-util",
@@ -2715,7 +2715,7 @@ dependencies = [
 [[package]]
 name = "longbridge-proto"
 version = "4.3.3"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fus-market-apis#8b2c1b4e3eae16397fe85c832c5dc9235ff63f8a"
+source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fus-market-apis#3a9bca479a2855cc6da1fd8ab62d703e1a2ef14d"
 dependencies = [
  "prost 0.14.3",
  "serde",
@@ -2794,7 +2794,7 @@ dependencies = [
 [[package]]
 name = "longbridge-wscli"
 version = "4.3.3"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fus-market-apis#8b2c1b4e3eae16397fe85c832c5dc9235ff63f8a"
+source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fus-market-apis#3a9bca479a2855cc6da1fd8ab62d703e1a2ef14d"
 dependencies = [
  "byteorder",
  "flate2",

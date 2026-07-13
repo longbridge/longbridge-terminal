@@ -2097,8 +2097,13 @@ pub async fn cmd_us_realized_pl(
                     3 => "Crypto",
                     _ => "Unknown",
                 };
+                let num = |v: &serde_json::Value| match v {
+                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Number(n) => n.to_string(),
+                    _ => "-".to_owned(),
+                };
                 print_table(
-                    &["Category", "Currency", "Amount", "Return Rate"],
+                    &["Category", "Period", "Currency", "Amount", "Return Rate"],
                     list.iter()
                         .flat_map(|entry| {
                             let cat = entry["category"].as_i64().unwrap_or(0);
@@ -2110,17 +2115,10 @@ pub async fn cmd_us_realized_pl(
                                 .map(move |m| {
                                     vec![
                                         cat_name(cat).to_string(),
+                                        m["period_name"].as_str().unwrap_or("-").to_string(),
                                         currency.to_string(),
-                                        match &m["amount"] {
-                                            serde_json::Value::String(s) => s.clone(),
-                                            serde_json::Value::Number(n) => n.to_string(),
-                                            _ => "-".to_owned(),
-                                        },
-                                        match &m["rate"] {
-                                            serde_json::Value::String(s) => s.clone(),
-                                            serde_json::Value::Number(n) => n.to_string(),
-                                            _ => "-".to_owned(),
-                                        },
+                                        num(&m["amount"]),
+                                        num(&m["rate"]),
                                     ]
                                 })
                                 .collect::<Vec<_>>()

@@ -50,6 +50,9 @@ pub trait QuoteApi: Send + Sync {
         count: usize,
     ) -> Result<Vec<Candlestick>>;
     async fn static_info(&self, symbols: Vec<String>) -> Result<Vec<SecurityStaticInfo>>;
+    /// US crypto overview (`.BKKT` symbols); returns raw JSON since its shape
+    /// differs entirely from `static_info`.
+    async fn us_crypto_overview(&self, symbol: String) -> Result<serde_json::Value>;
     async fn calc_indexes(
         &self,
         symbols: Vec<String>,
@@ -210,6 +213,10 @@ impl QuoteApi for LbQuoteApi {
 
     async fn static_info(&self, symbols: Vec<String>) -> Result<Vec<SecurityStaticInfo>> {
         Ok(self.ctx.static_info(symbols).await?)
+    }
+
+    async fn us_crypto_overview(&self, symbol: String) -> Result<serde_json::Value> {
+        Ok(serde_json::to_value(self.ctx.us_crypto_overview(symbol).await?)?)
     }
 
     async fn calc_indexes(

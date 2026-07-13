@@ -702,143 +702,46 @@ pub async fn cmd_kline_history(
 }
 
 pub async fn cmd_static(symbols: Vec<String>, format: &OutputFormat) -> Result<()> {
-    if symbols.is_empty() {
-        bail!("At least one symbol is required");
-    }
-    // US accounts: route .BKKT crypto symbols to us_crypto_overview (interface 3).
-    // .HAS and .OSL remain on the HK path.
     let is_us = crate::openapi::is_us_account().await;
-    // BKKT JSON entries collected here so mixed-mode JSON stays a single array
-    let mut bkkt_json: Vec<serde_json::Value> = Vec::new();
-    if is_us {
-        let crypto: Vec<_> = symbols
-            .iter()
-            .filter(|s| {
-                s.rsplit_once('.')
-                    .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("BKKT"))
-            })
-            .collect();
-        if !crypto.is_empty() {
-            let ctx = crate::openapi::quote_cmd();
-            let all_bkkt = crypto.len() == symbols.len();
-            for sym in crypto {
-                let data = serde_json::to_value(ctx.us_crypto_overview(sym.clone()).await?)?;
-                match format {
-                    OutputFormat::Json => bkkt_json.push(data),
-                    OutputFormat::Pretty => {
-                        let val = |k: &str| val_str(&data[k]);
-                        println!("── {sym} ─────────────────────────────────────────────────────");
-                        for key in &[
-                            "name",
-                            "ticker",
-                            "currency",
-                            "all_time_high",
-                            "all_time_high_date",
-                            "all_time_low",
-                            "ipo_date",
-                            "shares",
-                            "official_web_address",
-                        ] {
-                            println!("  {key:<25} {}", val(key));
-                        }
-                    }
-                }
-            }
-            if all_bkkt {
-                // Only BKKT symbols — print collected JSON and return
-                if !bkkt_json.is_empty() {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&bkkt_json).unwrap_or_default()
-                    );
-                }
-                return Ok(());
-            }
-            // Mixed: fall through; bkkt_json merged with static_info output below
-        }
-    }
-    let ctx = crate::openapi::quote_cmd();
-    let input: Vec<String> = symbols
-        .iter()
-        .filter(|s| {
-            if !is_us {
-                return true;
-            }
-            let ext = s.rsplit_once('.').map(|(_, e)| e);
-            !ext.is_some_and(|e| e.eq_ignore_ascii_case("BKKT"))
-        })
-        .cloned()
-        .collect();
-    if input.is_empty() {
-        // Only BKKT symbols were given; flush any collected BKKT JSON and return
-        if matches!(format, OutputFormat::Json) && !bkkt_json.is_empty() {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&bkkt_json).unwrap_or_default()
-            );
-        }
-        return Ok(());
-    }
-    let infos = ctx.static_info(input.clone()).await?;
+    let api = LbQuoteApi::new(crate::openapi::quote_cmd());
+    run_static(&api, symbols, is_us, format).await
+}
 
-    let headers = &[
-        "Symbol",
-        "Name",
-        "Exchange",
-        "Currency",
-        "Lot Size",
-        "Total Shares",
-        "Circ. Shares",
-        "EPS",
-        "EPS TTM",
-        "BPS",
-        "Dividend",
-    ];
-    let rows: Vec<Vec<String>> = infos
-        .iter()
-        .map(|i| {
-            vec![
-                i.symbol.clone(),
-                locale_name(&i.name_en, &i.name_cn).to_owned(),
-                i.exchange.clone(),
-                i.currency.clone(),
-                i.lot_size.to_string(),
-                i.total_shares.to_string(),
-                i.circulating_shares.to_string(),
-                fmt_dec(i.eps),
-                fmt_dec(i.eps_ttm),
-                fmt_dec(i.bps),
-                fmt_dec(i.dividend_yield),
-            ]
-        })
-        .collect();
+/// True when `symbol` is a `.BKKT` crypto pair.
+fn is_bkkt(symbol: &str) -> bool {
+    symbol
+        .rsplit_once('.')
+        .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("BKKT"))
+}
 
-    // For JSON with pending BKKT entries, merge into a single array
-    if matches!(format, OutputFormat::Json) && !bkkt_json.is_empty() {
-        let header_keys: Vec<String> = headers
-            .iter()
-            .map(|h| h.to_lowercase().replace(' ', "_").replace('.', ""))
-            .collect();
-        let mut combined = bkkt_json;
-        for row in rows {
-            let mut map = serde_json::Map::new();
-            for (i, val) in row.into_iter().enumerate() {
-                if let Some(key) = header_keys.get(i) {
-                    map.insert(key.clone(), serde_json::Value::String(val));
-                }
-            }
-            combined.push(serde_json::Value::Object(map));
-        }
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&combined).unwrap_or_default()
-        );
-    } else {
-        print_table(headers, rows, format);
+/// Partition symbols into `(crypto, rest)`. `.BKKT` crypto routes to
+/// `us_crypto_overview`, but only on US accounts; otherwise every symbol is
+/// treated as a regular security. `.HAS` / `.OSL` crypto always stay on `rest`.
+fn partition_bkkt(symbols: &[String], is_us: bool) -> (Vec<String>, Vec<String>) {
+    if !is_us {
+        return (Vec::new(), symbols.to_vec());
     }
-    let found: Vec<&str> = infos.iter().map(|i| i.symbol.as_str()).collect();
-    hint_symbols_do_you_mean(&input, &found);
-    Ok(())
+    symbols.iter().cloned().partition(|s| is_bkkt(s))
+}
+
+/// Pretty-print a US crypto overview block. Its shape differs entirely from
+/// `static_info`, so it cannot share the stock table.
+fn print_crypto_overview(symbol: &str, data: &serde_json::Value) {
+    let val = |k: &str| val_str(&data[k]);
+    println!("── {symbol} ─────────────────────────────────────────────────────");
+    for key in &[
+        "name",
+        "ticker",
+        "currency",
+        "all_time_high",
+        "all_time_high_date",
+        "all_time_low",
+        "ipo_date",
+        "shares",
+        "official_web_address",
+    ] {
+        println!("  {key:<25} {}", val(key));
+    }
 }
 
 const STOCK_DEFAULT_FIELDS: &[&str] = &[
@@ -1753,29 +1656,84 @@ pub async fn run_kline_history(
 pub async fn run_static(
     api: &dyn QuoteApi,
     symbols: Vec<String>,
+    is_us: bool,
     format: &OutputFormat,
 ) -> Result<()> {
     if symbols.is_empty() {
         bail!("At least one symbol is required");
     }
-    let input = symbols.clone();
-    let infos = api.static_info(symbols).await?;
-    let headers = &["Symbol", "Name", "Exchange", "Currency", "Lot Size"];
-    let rows = infos
-        .iter()
-        .map(|i| {
-            vec![
-                i.symbol.clone(),
-                locale_name(&i.name_en, &i.name_cn).to_owned(),
-                i.exchange.clone(),
-                i.currency.clone(),
-                i.lot_size.to_string(),
-            ]
-        })
-        .collect();
-    print_table(headers, rows, format);
-    let found: Vec<&str> = infos.iter().map(|i| i.symbol.as_str()).collect();
-    hint_symbols_do_you_mean(&input, &found);
+    let (crypto, stocks) = partition_bkkt(&symbols, is_us);
+
+    // Crypto (.BKKT): pretty prints a key-value block; JSON is collected and
+    // merged with the stock array below so mixed batches stay one array.
+    let mut crypto_json: Vec<serde_json::Value> = Vec::new();
+    for sym in &crypto {
+        let data = api.us_crypto_overview(sym.clone()).await?;
+        match format {
+            OutputFormat::Json => crypto_json.push(data),
+            OutputFormat::Pretty => print_crypto_overview(sym, &data),
+        }
+    }
+
+    // Stocks: static_info table.
+    let headers = &[
+        "Symbol",
+        "Name",
+        "Exchange",
+        "Currency",
+        "Lot Size",
+        "Total Shares",
+        "Circ. Shares",
+        "EPS",
+        "EPS TTM",
+        "BPS",
+        "Dividend",
+    ];
+    let mut stock_rows: Vec<Vec<String>> = Vec::new();
+    let mut found: Vec<String> = Vec::new();
+    if !stocks.is_empty() {
+        let infos = api.static_info(stocks.clone()).await?;
+        found = infos.iter().map(|i| i.symbol.clone()).collect();
+        stock_rows = infos
+            .iter()
+            .map(|i| {
+                vec![
+                    i.symbol.clone(),
+                    locale_name(&i.name_en, &i.name_cn).to_owned(),
+                    i.exchange.clone(),
+                    i.currency.clone(),
+                    i.lot_size.to_string(),
+                    i.total_shares.to_string(),
+                    i.circulating_shares.to_string(),
+                    fmt_dec(i.eps),
+                    fmt_dec(i.eps_ttm),
+                    fmt_dec(i.bps),
+                    fmt_dec(i.dividend_yield),
+                ]
+            })
+            .collect();
+    }
+
+    match format {
+        OutputFormat::Json => {
+            let mut combined = crypto_json;
+            combined.extend(crate::cli::output::table_rows_to_json(headers, &stock_rows));
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&combined).unwrap_or_default()
+            );
+        }
+        OutputFormat::Pretty => {
+            if !stock_rows.is_empty() {
+                print_table(headers, stock_rows, format);
+            }
+        }
+    }
+
+    if !stocks.is_empty() {
+        let found_refs: Vec<&str> = found.iter().map(String::as_str).collect();
+        hint_symbols_do_you_mean(&stocks, &found_refs);
+    }
     Ok(())
 }
 
@@ -4046,15 +4004,115 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_run_static_dispatches() {
+    async fn test_run_static_pure_stock_uses_static_info_only() {
         let mut mock = MockQuoteApi::new();
         mock.expect_static_info()
             .with(mockall::predicate::eq(vec!["TSLA.US".to_string()]))
             .times(1)
             .returning(|_| Ok(vec![]));
-        run_static(&mock, vec!["TSLA.US".to_string()], &OutputFormat::Pretty)
-            .await
-            .unwrap();
+        mock.expect_us_crypto_overview().times(0);
+        run_static(
+            &mock,
+            vec!["TSLA.US".to_string()],
+            true,
+            &OutputFormat::Pretty,
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_run_static_pure_crypto_uses_crypto_only() {
+        let mut mock = MockQuoteApi::new();
+        mock.expect_static_info().times(0);
+        mock.expect_us_crypto_overview()
+            .with(mockall::predicate::eq("BTCUSD.BKKT".to_string()))
+            .times(1)
+            .returning(|_| Ok(serde_json::json!({"name": "Bitcoin"})));
+        run_static(
+            &mock,
+            vec!["BTCUSD.BKKT".to_string()],
+            true,
+            &OutputFormat::Json,
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_run_static_mixed_routes_each_side() {
+        let mut mock = MockQuoteApi::new();
+        mock.expect_static_info()
+            .with(mockall::predicate::eq(vec!["AAPL.US".to_string()]))
+            .times(1)
+            .returning(|_| Ok(vec![]));
+        mock.expect_us_crypto_overview()
+            .with(mockall::predicate::eq("BTCUSD.BKKT".to_string()))
+            .times(1)
+            .returning(|_| Ok(serde_json::json!({"name": "Bitcoin"})));
+        run_static(
+            &mock,
+            vec!["AAPL.US".to_string(), "BTCUSD.BKKT".to_string()],
+            true,
+            &OutputFormat::Json,
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_run_static_non_us_treats_bkkt_as_stock() {
+        let mut mock = MockQuoteApi::new();
+        // Non-US: `.BKKT` goes through static_info, crypto endpoint untouched.
+        mock.expect_static_info()
+            .with(mockall::predicate::eq(vec!["BTCUSD.BKKT".to_string()]))
+            .times(1)
+            .returning(|_| Ok(vec![]));
+        mock.expect_us_crypto_overview().times(0);
+        run_static(
+            &mock,
+            vec!["BTCUSD.BKKT".to_string()],
+            false,
+            &OutputFormat::Pretty,
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_run_static_empty_symbols_errors() {
+        let mock = MockQuoteApi::new();
+        let r = run_static(&mock, vec![], true, &OutputFormat::Pretty).await;
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn test_partition_bkkt_non_us_all_rest() {
+        let syms = vec!["AAPL.US".to_string(), "BTCUSD.BKKT".to_string()];
+        let (crypto, rest) = partition_bkkt(&syms, false);
+        assert!(crypto.is_empty());
+        assert_eq!(rest, syms);
+    }
+
+    #[test]
+    fn test_partition_bkkt_us_splits_crypto_and_rest() {
+        let syms = vec![
+            "AAPL.US".to_string(),
+            "BTCUSD.BKKT".to_string(),
+            "700.HK".to_string(),
+        ];
+        let (crypto, rest) = partition_bkkt(&syms, true);
+        assert_eq!(crypto, vec!["BTCUSD.BKKT".to_string()]);
+        assert_eq!(rest, vec!["AAPL.US".to_string(), "700.HK".to_string()]);
+    }
+
+    #[test]
+    fn test_partition_bkkt_has_osl_stay_on_rest() {
+        // Only `.BKKT` is US crypto; `.HAS` / `.OSL` remain regular securities.
+        let syms = vec!["BTCUSD.HAS".to_string(), "ETHUSD.OSL".to_string()];
+        let (crypto, rest) = partition_bkkt(&syms, true);
+        assert!(crypto.is_empty());
+        assert_eq!(rest, syms);
     }
 
     #[tokio::test]

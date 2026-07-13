@@ -11,14 +11,6 @@ use crate::utils::datetime::format_date;
 use crate::utils::number::format_financial_value;
 use crate::utils::text::strip_html;
 
-/// Returns true when symbol is a US stock/ETF (ends with `.US`) and the
-/// current session is a US account — used to route P1 fundamental commands.
-async fn is_us_fundamental(symbol: &str) -> bool {
-    symbol
-        .rsplit_once('.')
-        .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("US"))
-        && crate::openapi::is_us_account().await
-}
 
 /// Serialize any serde-serializable SDK response to a JSON Value for
 /// `print_json` / pretty rendering.
@@ -402,7 +394,7 @@ pub async fn cmd_financial_report(
 ) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
     // US accounts always use finn-overview; --kind is only valid for HK/CN.
-    if is_us_fundamental(&symbol).await {
+    if crate::openapi::is_us_account().await {
         if !kind.is_empty() {
             eprintln!(
                 "Note: --kind is not supported for US accounts; returning all financial sections."
@@ -444,8 +436,8 @@ pub async fn cmd_financial_report_key_metrics(
     format: &OutputFormat,
     _verbose: bool,
 ) -> Result<()> {
-    if !is_us_fundamental(&symbol).await {
-        anyhow::bail!("financial-report key-metrics requires a US account and a .US symbol");
+    if !crate::openapi::is_us_account().await {
+        anyhow::bail!("financial-report key-metrics requires a US account");
     }
     let ctx = crate::openapi::fundamental();
     let data = to_value(
@@ -747,7 +739,7 @@ pub async fn cmd_dividend(
 ) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
     // US: route to ETF or stock-specific dividend endpoint
-    if is_us_fundamental(&symbol).await {
+    if crate::openapi::is_us_account().await {
         let ctx = crate::openapi::fundamental();
         let mut data = if crate::utils::counter::is_etf(&symbol) {
             to_value(ctx.us_etf_dividend_info(symbol.clone()).await?)? // interface 33
@@ -1031,7 +1023,7 @@ pub async fn cmd_forecast_eps(symbol: String, format: &OutputFormat, verbose: bo
 /// Fetch financial consensus detail.
 pub async fn cmd_consensus(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
-    let is_us = is_us_fundamental(&symbol).await;
+    let is_us = crate::openapi::is_us_account().await;
     let data = if is_us {
         let mut d = to_value(
             crate::openapi::fundamental()
@@ -1262,7 +1254,7 @@ pub async fn cmd_valuation(
         ("indicator", ind),
         ("range", range_val),
     ];
-    let is_us = is_us_fundamental(&symbol).await;
+    let is_us = crate::openapi::is_us_account().await;
     if is_us && history {
         anyhow::bail!(
             "US accounts do not support historical valuation; omit --history and use the current snapshot"
@@ -1310,7 +1302,7 @@ pub async fn cmd_valuation_detail(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    if is_us_fundamental(&symbol).await {
+    if crate::openapi::is_us_account().await {
         if indicator.is_some() {
             anyhow::bail!("US valuation does not support --indicator; omit it and retry");
         }
@@ -2103,7 +2095,7 @@ pub async fn cmd_finance_calendar(
 
 pub async fn cmd_company(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
-    let is_us = is_us_fundamental(&symbol).await;
+    let is_us = crate::openapi::is_us_account().await;
     let data = if is_us {
         to_value(
             crate::openapi::fundamental()
@@ -2906,7 +2898,7 @@ pub async fn cmd_financial_statement(
     let cid = symbol_to_counter_id(&symbol);
     let kind_upper = kind.to_uppercase();
     let report_lower = report.to_lowercase();
-    let mut data = if is_us_fundamental(&symbol).await {
+    let mut data = if crate::openapi::is_us_account().await {
         to_value(
             crate::openapi::fundamental()
                 .us_financial_statement(symbol.clone(), kind_upper.as_str(), report_lower.as_str())
@@ -3043,7 +3035,7 @@ pub async fn cmd_financial_report_latest(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    if is_us_fundamental(&symbol).await {
+    if crate::openapi::is_us_account().await {
         anyhow::bail!("financial-report --latest is not supported for US accounts");
     }
     let cid = symbol_to_counter_id(&symbol);
@@ -4171,8 +4163,8 @@ pub async fn cmd_etf_docs(
     format: &OutputFormat,
     _verbose: bool,
 ) -> Result<()> {
-    if !is_us_fundamental(&symbol).await {
-        anyhow::bail!("etf-docs requires a US account and a .US symbol");
+    if !crate::openapi::is_us_account().await {
+        anyhow::bail!("etf-docs requires a US account");
     }
     let data = to_value(
         crate::openapi::fundamental()
