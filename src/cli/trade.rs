@@ -2050,7 +2050,7 @@ pub async fn cmd_us_realized_pl(
             let msg = e.to_string();
             if msg.contains("data center") {
                 anyhow::anyhow!(
-                    "This command requires a US account (current account is AP/HK region)"
+                    "This command is only available for US accounts"
                 )
             } else {
                 anyhow::Error::from(e)

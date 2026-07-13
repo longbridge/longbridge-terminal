@@ -437,7 +437,7 @@ pub async fn cmd_financial_report_key_metrics(
     _verbose: bool,
 ) -> Result<()> {
     if !crate::openapi::is_us_account().await {
-        anyhow::bail!("financial-report key-metrics requires a US account");
+        anyhow::bail!("This command is only available for US accounts");
     }
     let ctx = crate::openapi::fundamental();
     let data = to_value(
@@ -4164,7 +4164,7 @@ pub async fn cmd_etf_docs(
     _verbose: bool,
 ) -> Result<()> {
     if !crate::openapi::is_us_account().await {
-        anyhow::bail!("etf-docs requires a US account");
+        anyhow::bail!("This command is only available for US accounts");
     }
     let data = to_value(
         crate::openapi::fundamental()
