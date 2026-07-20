@@ -9,10 +9,9 @@ const GEOTEST_URL: &str = "https://geotest.lbkrs.com";
 const GEOTEST_TIMEOUT_SECS: u64 = 3;
 
 // Global endpoint URLs
-// TEMP: pointed at the openapi-cdn.longbridge.com CDN gateway for online testing.
-pub const HTTP_URL_GLOBAL: &str = "https://openapi-cdn.longbridge.com";
-pub const QUOTE_WS_URL_GLOBAL: &str = "wss://openapi-cdn-quote.longbridge.com/v2";
-pub const TRADE_WS_URL_GLOBAL: &str = "wss://openapi-cdn-trade.longbridge.com/v2";
+pub const HTTP_URL_GLOBAL: &str = "https://openapi.longbridge.com";
+pub const QUOTE_WS_URL_GLOBAL: &str = "wss://openapi-quote.longbridge.com/v2";
+pub const TRADE_WS_URL_GLOBAL: &str = "wss://openapi-trade.longbridge.com/v2";
 pub const OPEN_URL_GLOBAL: &str = "https://open.longbridge.com";
 
 // CN endpoint URLs
