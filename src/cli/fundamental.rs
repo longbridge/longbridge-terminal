@@ -11,7 +11,6 @@ use crate::utils::datetime::format_date;
 use crate::utils::number::format_financial_value;
 use crate::utils::text::strip_html;
 
-
 /// Serialize any serde-serializable SDK response to a JSON Value for
 /// `print_json` / pretty rendering.
 fn to_value<T: serde::Serialize>(v: T) -> Result<Value> {
@@ -2273,7 +2272,11 @@ fn fmt_ratio(raw: &str) -> String {
 
 fn fmt_ratio_x(raw: &str) -> String {
     let r = fmt_ratio(raw);
-    if r == "-" { r } else { format!("{r}x") }
+    if r == "-" {
+        r
+    } else {
+        format!("{r}x")
+    }
 }
 
 fn fmt_pct(raw: &str) -> String {
@@ -2412,7 +2415,14 @@ pub async fn cmd_industry_valuation(
                         format!("{c}{}", val_str(&item["price_close"])),
                         fmt_ratio_x(&val_str(&item["pe"])),
                         fmt_ratio_x(&val_str(&item["pb"])),
-                        { let r = fmt_ratio(&val_str(&item["eps"])); if r == "-" { r } else { format!("{c}{r}") } },
+                        {
+                            let r = fmt_ratio(&val_str(&item["eps"]));
+                            if r == "-" {
+                                r
+                            } else {
+                                format!("{c}{r}")
+                            }
+                        },
                         fmt_pct(&val_str(&item["div_yld"])),
                     ]
                 })

@@ -3056,6 +3056,12 @@ pub enum AuthCmd {
     /// Pass `--auth-code` with no value for the browser Authorization Code flow:
     /// opens a browser on this machine and listens on `localhost:60355` for the
     /// OAuth callback.
+    ///
+    /// The authorization URL may point at either `longbridge.cn` or
+    /// `longbridge.com`. These are equivalent access points (CDN-style routing)
+    /// serving identical content, and a token issued by one is accepted by the
+    /// other — either URL completes the login. Set `LONGBRIDGE_REGION=cn|global`
+    /// to pin which access point this CLI calls.
     Login {
         /// Authorize using a code instead of the device flow.
         ///

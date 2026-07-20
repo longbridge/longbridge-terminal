@@ -8,6 +8,17 @@ use std::{path::PathBuf, time::Duration};
 const GEOTEST_URL: &str = "https://geotest.lbkrs.com";
 const GEOTEST_TIMEOUT_SECS: u64 = 3;
 
+// The `.com` and `.cn` hosts below are equivalent access points (CDN-style
+// routing), not separate environments: identical data, identical auth, and a
+// token issued by one is accepted by the other. Region selection only affects
+// network routing/acceleration. A server response containing the other region's
+// host is therefore valid and must not be rewritten client-side.
+//
+// Two orthogonal dimensions, easily confused:
+//   - Region site (`.cn` / `.com`)  — this module, network routing only.
+//   - Data center (`ap` / `us`)     — the `x-dc-region` header, selects the
+//     account's data center and determines which US-only APIs are available.
+
 // Global endpoint URLs
 pub const HTTP_URL_GLOBAL: &str = "https://openapi.longbridge.com";
 pub const QUOTE_WS_URL_GLOBAL: &str = "wss://openapi-quote.longbridge.com/v2";

@@ -216,7 +216,9 @@ impl QuoteApi for LbQuoteApi {
     }
 
     async fn us_crypto_overview(&self, symbol: String) -> Result<serde_json::Value> {
-        Ok(serde_json::to_value(self.ctx.us_crypto_overview(symbol).await?)?)
+        Ok(serde_json::to_value(
+            self.ctx.us_crypto_overview(symbol).await?,
+        )?)
     }
 
     async fn calc_indexes(

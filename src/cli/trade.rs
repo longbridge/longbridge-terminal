@@ -259,7 +259,9 @@ pub async fn cmd_orders(
                                 val(&o["status"]),
                                 val(&o["quantity"]),
                                 val(&o["price"]),
-                                o["create_time"].as_i64().map_or_else(|| val(&o["create_time"]), format_date),
+                                o["create_time"]
+                                    .as_i64()
+                                    .map_or_else(|| val(&o["create_time"]), format_date),
                             ]
                         })
                         .collect(),
@@ -2049,9 +2051,7 @@ pub async fn cmd_us_realized_pl(
         .map_err(|e| {
             let msg = e.to_string();
             if msg.contains("data center") {
-                anyhow::anyhow!(
-                    "This command is only available for US accounts"
-                )
+                anyhow::anyhow!("This command is only available for US accounts")
             } else {
                 anyhow::Error::from(e)
             }
