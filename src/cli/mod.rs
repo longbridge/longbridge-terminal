@@ -1415,11 +1415,13 @@ pub enum Commands {
 }
 
 #[derive(Subcommand)]
+// Backticks are rendered literally in `--help`, so PineScript stays bare here.
+#[allow(clippy::doc_markdown)]
 pub enum QuantCmd {
     /// Run a quant indicator script against historical K-line data on the server
     ///
     /// Executes the script server-side and returns the computed indicator/plot values as JSON.
-    /// Scripts default to Navi (.nv); pass --language pine for `PineScript`.
+    /// Scripts are written in Navi (.nv); pass --language pine for PineScript compatibility.
     ///
     /// Periods: 1m  5m  15m  30m  1h  day  week  month  year
     ///
@@ -1455,7 +1457,9 @@ pub enum QuantCmd {
         /// Must match the order of input.*() calls in the script.
         #[arg(long)]
         input: Option<String>,
-        /// Script language: navi or pine (default: navi)
+        // Backticks are rendered literally in `--help`, so PineScript stays bare here.
+        #[allow(clippy::doc_markdown)]
+        /// Script language: `navi` (default), or `pine` for PineScript compatibility
         #[arg(long, default_value = "navi")]
         language: String,
     },
