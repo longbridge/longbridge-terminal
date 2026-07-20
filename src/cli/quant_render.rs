@@ -70,17 +70,30 @@ fn extract_series(chart_json_raw: &Value) -> Vec<Series> {
         chart_json_raw.clone()
     };
 
-    let Some(Value::Object(graphs)) = chart_json.get("series_graphs") else {
-        return vec![];
+    // v2 returns `seriesGraphs` as an array; v1 returned `series_graphs` as an
+    // id-keyed object. Normalise both into a plot-ordered node list.
+    let nodes: Vec<&Value> = match (
+        chart_json.get("seriesGraphs"),
+        chart_json.get("series_graphs"),
+    ) {
+        (Some(Value::Array(list)), _) => list.iter().collect(),
+        (_, Some(Value::Object(graphs))) => {
+            let mut keys: Vec<u64> = graphs.keys().filter_map(|k| k.parse().ok()).collect();
+            keys.sort_unstable();
+            keys.into_iter()
+                .filter_map(|k| graphs.get(&k.to_string()))
+                .collect()
+        }
+        _ => return vec![],
     };
 
-    let mut keys: Vec<u64> = graphs.keys().filter_map(|k| k.parse().ok()).collect();
-    keys.sort_unstable();
-
-    keys.into_iter()
-        .filter_map(|k| {
-            let node = graphs.get(&k.to_string())?;
-            let plot = node.get("Plot").unwrap_or(node);
+    nodes
+        .into_iter()
+        .filter_map(|node| {
+            let plot = node
+                .get("plot")
+                .or_else(|| node.get("Plot"))
+                .unwrap_or(node);
             let title = plot
                 .get("title")
                 .and_then(Value::as_str)

@@ -23,6 +23,15 @@ fn period_to_line_type(period: &str) -> Result<i32> {
     }
 }
 
+/// Map CLI language string to the numeric `language` expected by the API.
+/// Anything unrecognised falls back to Navi.
+fn language_to_code(language: &str) -> i32 {
+    match language {
+        "pine" => 1,
+        _ => 0,
+    }
+}
+
 /// Run a quant indicator script against historical K-line data on the server.
 pub async fn cmd_run_script(
     symbol: String,
@@ -31,11 +40,13 @@ pub async fn cmd_run_script(
     end: &str,
     script_arg: Option<String>,
     input: Option<String>,
+    language: &str,
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
     let counter_id = symbol_to_counter_id(&symbol);
     let line_type = period_to_line_type(period)?;
+    let language = language_to_code(language);
 
     // Parse date strings to seconds-level Unix timestamps.
     let start_time = parse_datetime_start(start)?.unix_timestamp();
@@ -78,6 +89,7 @@ pub async fn cmd_run_script(
         "script": script,
         "inputs_json": input_json,
         "line_type": line_type,
+        "language": language,
         "exclude_chart": exclude_chart,
     });
 
@@ -87,7 +99,7 @@ pub async fn cmd_run_script(
         eprintln!("* start_time: {start_time}  end_time: {end_time}");
     }
 
-    let resp = http_post("/v1/quant/run_script", body, verbose).await?;
+    let resp = http_post("/v2/quant/run_script", body, verbose).await?;
     match format {
         OutputFormat::Json => print_json_value(&resp, format),
         OutputFormat::Pretty => quant_render::render_terminal(&resp),

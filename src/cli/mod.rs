@@ -1326,7 +1326,7 @@ pub enum Commands {
     ///
     /// Subcommands: run
     /// Example: longbridge quant run TSLA.US --start 2024-01-01 --end 2024-12-31 --script "..."
-    /// Example: cat script.pine | longbridge quant run TSLA.US --start 2024-01-01 --end 2024-12-31
+    /// Example: cat script.nv | longbridge quant run TSLA.US --start 2024-01-01 --end 2024-12-31
     Quant {
         #[command(subcommand)]
         cmd: QuantCmd,
@@ -1419,22 +1419,23 @@ pub enum QuantCmd {
     /// Run a quant indicator script against historical K-line data on the server
     ///
     /// Executes the script server-side and returns the computed indicator/plot values as JSON.
-    /// The script language is compatible with `PineScript` V6 syntax (minor exceptions may apply).
+    /// Scripts default to Navi (.nv); pass --language pine for `PineScript`.
     ///
     /// Periods: 1m  5m  15m  30m  1h  day  week  month  year
     ///
     /// Script source (--script takes priority over stdin):
     ///   --script TEXT   inline script text
-    ///   stdin           cat script.pine | longbridge quant run TSLA.US ...
+    ///   stdin           cat script.nv | longbridge quant run TSLA.US ...
     ///
     /// The optional --input flag accepts a JSON array matching the
     /// order of input.*() calls in the script, e.g. --input '[14,2.0]'
     ///
     /// Example: longbridge quant run TSLA.US --start 2024-01-01 --end 2024-12-31 --script "..."
-    /// Example: cat script.pine | longbridge quant run TSLA.US --start 2024-01-01 --end 2024-12-31
+    /// Example: cat script.nv | longbridge quant run TSLA.US --start 2024-01-01 --end 2024-12-31
     /// Example: longbridge quant run 700.HK --period 1h --start 2024-01-01 --end 2024-06-30 --script "..." --input '[14]'
     /// Example: longbridge quant run TSLA.US --start 2024-01-01 --end 2024-12-31 --script "..." --format json
     /// Example: longbridge quant run 700.HK --period 1m --start "2024-01-02 09:30" --end "2024-01-02 16:00" --script "..."
+    /// Example: cat script.pine | longbridge quant run TSLA.US --start 2024-01-01 --end 2024-12-31 --language pine
     Run {
         /// Symbol in <CODE>.<MARKET> format, e.g. TSLA.US 700.HK
         symbol: String,
@@ -1454,6 +1455,9 @@ pub enum QuantCmd {
         /// Must match the order of input.*() calls in the script.
         #[arg(long)]
         input: Option<String>,
+        /// Script language: navi or pine (default: navi)
+        #[arg(long, default_value = "navi")]
+        language: String,
     },
 }
 
@@ -3815,7 +3819,13 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 end,
                 script,
                 input,
-            } => run_script::cmd_run_script(symbol, &period, &start, &end, script, input, format, verbose).await,
+                language,
+            } => {
+                run_script::cmd_run_script(
+                    symbol, &period, &start, &end, script, input, &language, format, verbose,
+                )
+                .await
+            }
         },
 
         Commands::FinancialStatement { symbol, kind, report } => {
