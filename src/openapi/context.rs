@@ -139,9 +139,11 @@ pub async fn init_contexts() -> Result<(
         http_client_config = http_client_config.http_url(crate::region::HTTP_URL_TEST);
         effective_http_url = crate::region::HTTP_URL_TEST;
     } else if crate::region::is_cn_cached()
+        && !token_dc_is_us(&crate::auth::effective_client_id())
         && (cfg!(not(debug_assertions)) || std::env::var("LONGBRIDGE_HTTP_URL").is_err())
     {
         // If last geotest indicated China Mainland, use CN endpoints directly.
+        // Skip for US-DC tokens: US-specific APIs only exist on the global host.
         // In debug builds, skip if LONGBRIDGE_HTTP_URL is set (allows local mock server testing).
         tracing::debug!("Using CN region endpoints (cached)");
         config_builder = config_builder
@@ -151,6 +153,13 @@ pub async fn init_contexts() -> Result<(
         http_client_config = http_client_config.http_url(crate::region::HTTP_URL_CN);
         effective_http_url = crate::region::HTTP_URL_CN;
     } else {
+        // Explicitly pin to the global host so the SDK does not re-run geotest
+        // at request time (which would still resolve to CN on a China Mainland network).
+        config_builder = config_builder
+            .http_url(crate::region::HTTP_URL_GLOBAL)
+            .quote_ws_url(crate::region::QUOTE_WS_URL_GLOBAL)
+            .trade_ws_url(crate::region::TRADE_WS_URL_GLOBAL);
+        http_client_config = http_client_config.http_url(crate::region::HTTP_URL_GLOBAL);
         effective_http_url = crate::region::HTTP_URL_GLOBAL;
     }
 
@@ -161,12 +170,17 @@ pub async fn init_contexts() -> Result<(
         let mut iter = std::env::args().skip(1);
         let mut cmd = String::new();
         let mut args: Vec<String> = Vec::new();
+        let mut prev_was_flag = false;
         for arg in iter.by_ref() {
-            if cmd.is_empty() && !arg.starts_with('-') {
-                cmd = arg;
+            if cmd.is_empty() && !arg.starts_with('-') && !prev_was_flag {
+                cmd.clone_from(&arg);
             } else if !arg.is_empty() {
-                args.push(arg);
+                args.push(arg.clone());
             }
+            // Only global value-taking flags (--format, --lang) consume the next arg as
+            // their value. Boolean global flags do not, and subcommand-specific flags always
+            // appear after cmd is already captured, so they cannot affect cmd extraction.
+            prev_was_flag = matches!(arg.as_str(), "--format" | "--lang") && !arg.contains('=');
         }
         let cli_args = ascii_args(args);
         (if cmd.is_ascii() { cmd } else { String::new() }, cli_args)
@@ -330,6 +344,25 @@ pub fn http_client() -> &'static longbridge::httpclient::HttpClient {
         .expect("HttpClient not initialized, please call init_contexts() first")
 }
 
+/// Returns `true` when the current session is a US data-center account
+/// (`token.ac` starts with `us_lb`). Used to route commands to US-specific
+/// endpoints transparently without requiring a `--market` flag from the user.
+pub async fn is_us_account() -> bool {
+    http_client().dc_region().await == longbridge::DcRegion::Us
+}
+
+/// Returns `true` if the stored OAuth token carries a US data-center credential.
+/// Used before `HttpClient` is initialized to choose the correct HTTP endpoint.
+fn token_dc_is_us(client_id: &str) -> bool {
+    crate::secure_storage::EncryptedFileTokenStorage::load_full(client_id)
+        .and_then(|full| {
+            full["access_token"]
+                .as_str()
+                .map(|t| longbridge::DcRegion::from_credential(t) == longbridge::DcRegion::Us)
+        })
+        .unwrap_or(false)
+}
+
 /// Get rate-limited `TradeContext` (recommended for all API calls)
 pub fn trade_limited() -> &'static RateLimitedTradeContext {
     RATE_LIMITED_TRADE_CTX
@@ -472,22 +505,20 @@ mod cli_header_tests {
 
     #[test]
     fn all_ascii_pass_through() {
-        let args = ["--format", "json", "--verbose"]
-            .map(String::from)
-            .to_vec();
+        let args = ["--format", "json", "--verbose"].map(String::from).to_vec();
         assert_eq!(ascii_args(args), "--format json --verbose");
     }
 
     #[test]
     fn non_ascii_value_is_excluded() {
-        // The flag token itself is ASCII and kept; the CJK value is dropped.
-        let args = ["--name", "我的组"].map(String::from).to_vec();
+        // The flag token itself is ASCII and kept; the non-ASCII value is dropped.
+        let args = ["--name", "caf\u{00e9}"].map(String::from).to_vec();
         assert_eq!(ascii_args(args), "--name");
     }
 
     #[test]
     fn mixed_args_keep_ascii_only() {
-        let args = ["--format", "json", "--name", "我的组", "--verbose"]
+        let args = ["--format", "json", "--name", "na\u{00ef}ve", "--verbose"]
             .map(String::from)
             .to_vec();
         assert_eq!(ascii_args(args), "--format json --name --verbose");
@@ -495,7 +526,9 @@ mod cli_header_tests {
 
     #[test]
     fn all_non_ascii_yields_empty() {
-        let args = ["你好", "世界"].map(String::from).to_vec();
+        let args = ["r\u{00e9}sum\u{00e9}", "na\u{00ef}ve"]
+            .map(String::from)
+            .to_vec();
         assert_eq!(ascii_args(args), "");
     }
 
@@ -506,7 +539,9 @@ mod cli_header_tests {
 
     #[test]
     fn topic_body_non_ascii_excluded() {
-        let args = ["--body", "这是话题内容"].map(String::from).to_vec();
+        let args = ["--body", "\u{8fd9}\u{662f}\u{8bdd}\u{9898}\u{5185}\u{5bb9}"]
+            .map(String::from)
+            .to_vec();
         assert_eq!(ascii_args(args), "--body");
     }
 }

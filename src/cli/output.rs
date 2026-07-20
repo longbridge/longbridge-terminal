@@ -37,22 +37,36 @@ fn print_markdown_table(headers: &[&str], rows: &[Vec<String>]) {
 }
 
 /// Print data as table or JSON depending on format
+/// Derive a JSON object key from a table header label. Single source of truth
+/// so JSON built by `print_table` and by callers that merge extra records
+/// (e.g. `cmd_static` mixing crypto + stock) stay byte-identical.
+pub fn header_to_json_key(header: &str) -> String {
+    header.to_lowercase().replace(' ', "_")
+}
+
+/// Convert table headers + rows into JSON objects, one per row, keyed via
+/// [`header_to_json_key`].
+pub fn table_rows_to_json(headers: &[&str], rows: &[Vec<String>]) -> Vec<serde_json::Value> {
+    rows.iter()
+        .map(|row| {
+            let mut map = serde_json::Map::new();
+            for (i, val) in row.iter().enumerate() {
+                if let Some(&key) = headers.get(i) {
+                    map.insert(
+                        header_to_json_key(key),
+                        serde_json::Value::String(val.clone()),
+                    );
+                }
+            }
+            serde_json::Value::Object(map)
+        })
+        .collect()
+}
+
 pub fn print_table(headers: &[&str], rows: Vec<Vec<String>>, format: &OutputFormat) {
     match format {
         OutputFormat::Json => {
-            let records: Vec<serde_json::Value> = rows
-                .into_iter()
-                .map(|row| {
-                    let mut map = serde_json::Map::new();
-                    for (i, val) in row.into_iter().enumerate() {
-                        if let Some(&key) = headers.get(i) {
-                            let key = key.to_lowercase().replace(' ', "_");
-                            map.insert(key, serde_json::Value::String(val));
-                        }
-                    }
-                    serde_json::Value::Object(map)
-                })
-                .collect();
+            let records = table_rows_to_json(headers, &rows);
             println!(
                 "{}",
                 serde_json::to_string_pretty(&records).unwrap_or_default()
@@ -226,8 +240,30 @@ pub fn strip_private_fields(v: &mut serde_json::Value) {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_datetime_end, parse_datetime_start, strip_private_fields};
+    use super::{
+        header_to_json_key, parse_datetime_end, parse_datetime_start, strip_private_fields,
+        table_rows_to_json,
+    };
     use serde_json::json;
+
+    #[test]
+    fn header_to_json_key_lowercases_and_underscores() {
+        assert_eq!(header_to_json_key("Symbol"), "symbol");
+        assert_eq!(header_to_json_key("EPS TTM"), "eps_ttm");
+        // Dot is preserved (regression: mixed-mode static once dropped it).
+        assert_eq!(header_to_json_key("Circ. Shares"), "circ._shares");
+    }
+
+    #[test]
+    fn table_rows_to_json_uses_shared_key_derivation() {
+        let headers = &["Symbol", "Circ. Shares"];
+        let rows = vec![vec!["AAPL.US".to_string(), "123".to_string()]];
+        let out = table_rows_to_json(headers, &rows);
+        let obj = out[0].as_object().unwrap();
+        assert_eq!(obj["symbol"], json!("AAPL.US"));
+        assert_eq!(obj["circ._shares"], json!("123"));
+        assert!(!obj.contains_key("circ_shares"));
+    }
 
     #[test]
     fn parse_datetime_accepts_rfc3339_with_offset() {

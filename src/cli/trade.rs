@@ -1,8 +1,9 @@
 use anyhow::{bail, Result};
 use longbridge::trade::{
     EstimateMaxPurchaseQuantityOptions, GetCashFlowOptions, GetHistoryExecutionsOptions,
-    GetHistoryOrdersOptions, GetTodayExecutionsOptions, GetTodayOrdersOptions, OrderSide,
-    OrderType, OutsideRTH, ReplaceOrderOptions, SubmitOrderOptions, TimeInForceType,
+    GetHistoryOrdersOptions, GetTodayExecutionsOptions, GetTodayOrdersOptions,
+    GetUSRealizedPLOptions, OrderSide, OrderType, OutsideRTH, ReplaceOrderOptions,
+    SubmitOrderOptions, TimeInForceType,
 };
 use rust_decimal::Decimal;
 use std::fmt::Write as _;
@@ -15,7 +16,7 @@ use super::{
     },
     OutputFormat,
 };
-use crate::utils::datetime::fmt_rfc3339;
+use crate::utils::datetime::{fmt_rfc3339, format_date};
 
 fn risk_level_name(level: i32) -> &'static str {
     match level {
@@ -55,13 +56,222 @@ fn parse_tif(s: &str) -> Result<TimeInForceType> {
     }
 }
 
+const INTERNAL_ORDER_FIELDS: &[&str] = &[
+    "aaid",
+    "org_id",
+    "ploy_id",
+    "ploy_type",
+    "card_ids",
+    "bid_size_list",
+    "button_control",
+    "current_millisecond",
+    "deductions_status",
+    "free_status",
+    "platform_deductions_status",
+    "force_only_rth",
+    "limit_depth_level",
+    "tag",
+    "trend",
+    "trigger_count",
+    "trigger_status",
+    "trigger_at",
+    "account_channel",
+];
+
+fn normalize_us_order_map(m: &mut serde_json::Map<String, serde_json::Value>) {
+    if let Some(action) = m.get("action").and_then(serde_json::Value::as_i64) {
+        let label = match action {
+            1 => "Buy",
+            2 => "Sell",
+            _ => "Unknown",
+        };
+        m.insert(
+            "action".to_string(),
+            serde_json::Value::String(label.to_string()),
+        );
+    }
+    for ts_key in &[
+        "submitted_at",
+        "updated_at",
+        "create_time",
+        "done_at",
+        "time",
+    ] {
+        if let Some(s) = m.get(*ts_key).and_then(|v| v.as_str()) {
+            if let Ok(n) = s.parse::<i64>() {
+                m.insert(
+                    (*ts_key).to_string(),
+                    serde_json::Value::Number(serde_json::Number::from(n)),
+                );
+            }
+        }
+    }
+    if let Some(s) = m.get("status").and_then(|v| v.as_str()) {
+        if let Some(clean) = s.strip_suffix("Status").filter(|s| !s.is_empty()) {
+            m.insert(
+                "status".to_string(),
+                serde_json::Value::String(clean.to_string()),
+            );
+        }
+    }
+    if let Some(tif) = m.get("time_in_force").and_then(serde_json::Value::as_i64) {
+        let label = match tif {
+            1 => "Day",
+            3 => "GTC",
+            4 => "GTD",
+            5 => "IOC",
+            6 => "FOK",
+            _ => "Unknown",
+        };
+        m.insert(
+            "time_in_force".to_string(),
+            serde_json::Value::String(label.to_string()),
+        );
+    }
+    if let Some(st) = m.get("security_type").and_then(|v| v.as_str()) {
+        let label = match st {
+            "CS" => "Stock",
+            "VA" => "Crypto",
+            "OPT" => "Option",
+            "WAR" => "Warrant",
+            "IOPT" => "Inline-Warrant",
+            "ETF" => "ETF",
+            "ADR" => "ADR",
+            _ => "",
+        };
+        if !label.is_empty() {
+            m.insert(
+                "security_type".to_string(),
+                serde_json::Value::String(label.to_string()),
+            );
+        }
+    }
+    if let Some(cid) = m.remove("counter_id") {
+        if !m.contains_key("symbol") {
+            let sym = cid.as_str().map_or_else(
+                || cid.clone(),
+                |s| serde_json::Value::String(crate::utils::counter::counter_id_to_symbol(s)),
+            );
+            m.insert("symbol".to_string(), sym);
+        }
+    }
+    for key in INTERNAL_ORDER_FIELDS {
+        m.remove(*key);
+    }
+    // Normalize empty strings to explicit null. Null = field returned with no value;
+    // AI agents use is_null() to detect this (e.g. price is null for market orders).
+    for v in m.values_mut() {
+        if matches!(v, serde_json::Value::String(s) if s.is_empty()) {
+            *v = serde_json::Value::Null;
+        }
+    }
+    // create_time is often absent; promote submitted_at so all output paths see a timestamp.
+    if m.get("create_time").is_none_or(serde_json::Value::is_null) {
+        if let Some(sa) = m.get("submitted_at").cloned() {
+            m.insert("create_time".to_string(), sa);
+        }
+    }
+}
+
 pub async fn cmd_orders(
     history: bool,
     start: Option<String>,
     end: Option<String>,
     symbol: Option<String>,
+    // US-only filters (interface 14); ignored for HK/CN accounts
+    us_action: Option<String>,
+    us_page: u32,
+    us_limit: u32,
     format: &OutputFormat,
+    _verbose: bool,
 ) -> Result<()> {
+    // US accounts: SDK us_query_orders (interface 14)
+    if crate::openapi::is_us_account().await {
+        use longbridge::trade::{GetUSHistoryOrders, OrderSide};
+        let side_str = us_action.as_deref().unwrap_or("").to_lowercase();
+        let side = match side_str.as_str() {
+            "buy" => OrderSide::Buy,
+            "sell" => OrderSide::Sell,
+            _ => OrderSide::Unknown,
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let now_i64 = i64::try_from(now).unwrap_or(i64::MAX);
+        // history=false: default start is today midnight UTC; history=true: 90 days
+        let default_start = if history {
+            now_i64 - 86400 * 90
+        } else {
+            now_i64 - (now_i64 % 86400)
+        };
+        let start_ts = match start.as_deref() {
+            Some(s) => parse_datetime_start(s)?.unix_timestamp(),
+            None => default_start,
+        };
+        let end_ts = match end.as_deref() {
+            Some(s) => parse_datetime_end(s)?.unix_timestamp(),
+            None => now_i64,
+        };
+        let opts = GetUSHistoryOrders {
+            symbol: symbol.clone(),
+            side,
+            start_at: start_ts,
+            end_at: end_ts,
+            query_type: 0,
+            page: i32::try_from(us_page).unwrap_or(1),
+            limit: i32::try_from(us_limit).unwrap_or(20),
+        };
+        let resp = crate::openapi::trade().us_query_orders(opts).await?;
+        let mut data = serde_json::to_value(&resp)?;
+        if let Some(orders) = data["orders"].as_array_mut() {
+            for o in orders {
+                if let Some(map) = o.as_object_mut() {
+                    normalize_us_order_map(map);
+                }
+            }
+        }
+        match format {
+            OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&data)?),
+            OutputFormat::Pretty => {
+                let empty = vec![];
+                let orders = data["orders"].as_array().unwrap_or(&empty);
+                let val = |v: &serde_json::Value| -> String {
+                    match v {
+                        serde_json::Value::String(s) => s.clone(),
+                        serde_json::Value::Number(n) => n.to_string(),
+                        _ => "-".to_string(),
+                    }
+                };
+                print_table(
+                    &[
+                        "Order ID", "Symbol", "Side", "Type", "Status", "Qty", "Price", "Created",
+                    ],
+                    orders
+                        .iter()
+                        .map(|o| {
+                            let side = val(&o["action"]);
+                            vec![
+                                val(&o["id"]),
+                                val(&o["symbol"]),
+                                side,
+                                val(&o["order_type"]),
+                                val(&o["status"]),
+                                val(&o["quantity"]),
+                                val(&o["price"]),
+                                o["create_time"]
+                                    .as_i64()
+                                    .map_or_else(|| val(&o["create_time"]), format_date),
+                            ]
+                        })
+                        .collect(),
+                    format,
+                );
+            }
+        }
+        return Ok(());
+    }
+
     let ctx = crate::openapi::trade();
 
     let orders = if history {
@@ -120,7 +330,113 @@ pub async fn cmd_orders(
     Ok(())
 }
 
-pub async fn cmd_order_detail(order_id: String, format: &OutputFormat) -> Result<()> {
+pub async fn cmd_order_detail(
+    order_id: String,
+    attached: bool,
+    format: &OutputFormat,
+) -> Result<()> {
+    // US accounts always use us_order_detail (interface 16).
+    // --attached: show the attached child order instead of the main order.
+    if crate::openapi::is_us_account().await {
+        let resp = crate::openapi::trade()
+            .us_order_detail(order_id.clone())
+            .await?;
+        let full = serde_json::to_value(&resp)?;
+        // Normalize the inner order object same as order list
+        let mut order_obj = if let Some(o) = full["order"].as_object() {
+            let mut m = o.clone();
+            normalize_us_order_map(&mut m);
+            serde_json::Value::Object(m)
+        } else if let Some(m) = full.as_object() {
+            let mut nm = m.clone();
+            normalize_us_order_map(&mut nm);
+            serde_json::Value::Object(nm)
+        } else {
+            full.clone()
+        };
+        // For --attached: replace with child order if present, applying the same normalization.
+        // current_attached_order may be nested inside full["order"] (same level as order_histories)
+        // or at the response root depending on SDK version — check both.
+        let attached_val = if full["order"]["current_attached_order"].is_null() {
+            full["current_attached_order"].clone()
+        } else {
+            full["order"]["current_attached_order"].clone()
+        };
+        let using_attached = attached && !attached_val.is_null();
+        let data = if using_attached {
+            if let Some(o) = attached_val.as_object() {
+                let mut m = o.clone();
+                normalize_us_order_map(&mut m);
+                serde_json::Value::Object(m)
+            } else {
+                attached_val
+            }
+        } else {
+            // Flatten: expose order fields at top level + order_histories.
+            // order_histories is now embedded inside USOrderDetail (order_obj), not at root.
+            if let Some(m) = order_obj.as_object_mut() {
+                if let Some(hist) = m.get("order_histories").and_then(|v| v.as_array()).cloned() {
+                    if !hist.is_empty() {
+                        let normalized: Vec<serde_json::Value> = hist
+                            .iter()
+                            .map(|entry| {
+                                if let Some(hm) = entry.as_object() {
+                                    let mut nm = hm.clone();
+                                    normalize_us_order_map(&mut nm);
+                                    serde_json::Value::Object(nm)
+                                } else {
+                                    entry.clone()
+                                }
+                            })
+                            .collect();
+                        m.insert(
+                            "order_histories".to_string(),
+                            serde_json::Value::Array(normalized),
+                        );
+                    }
+                }
+            }
+            order_obj
+        };
+        match format {
+            OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&data)?),
+            OutputFormat::Pretty => {
+                let val = |k: &str| -> String {
+                    match &data[k] {
+                        serde_json::Value::String(s) => s.clone(),
+                        serde_json::Value::Number(n) => n.to_string(),
+                        serde_json::Value::Null | serde_json::Value::Bool(_) => "-".to_string(),
+                        other => other.to_string(),
+                    }
+                };
+                let label = if using_attached {
+                    "Attached order"
+                } else {
+                    "Order"
+                };
+                println!("{label} detail for {order_id}:");
+                // US orders use id/symbol/action; HK/CN use order_id/symbol/side
+                let id_val = if data["id"].is_null() {
+                    val("order_id")
+                } else {
+                    val("id")
+                };
+                let sym_val = val("symbol");
+                let side_val = if data["action"].is_null() {
+                    val("side")
+                } else {
+                    val("action")
+                };
+                println!("  {:<20} {}", "order_id", id_val);
+                println!("  {:<20} {}", "symbol", sym_val);
+                println!("  {:<20} {}", "side", side_val);
+                for key in &["status", "order_type", "quantity", "price"] {
+                    println!("  {key:<20} {}", val(key));
+                }
+            }
+        }
+        return Ok(());
+    }
     let ctx = crate::openapi::trade();
     let detail = ctx.order_detail(order_id).await?;
 
@@ -236,6 +552,12 @@ pub async fn cmd_executions(
     format: &OutputFormat,
 ) -> Result<()> {
     use std::collections::HashMap;
+
+    if crate::openapi::is_us_account().await {
+        anyhow::bail!(
+            "Execution history is not supported for US accounts; use 'order --history' to view filled orders"
+        );
+    }
 
     let ctx = crate::openapi::trade();
 
@@ -628,39 +950,6 @@ pub async fn cmd_cash_flow(
             ]
         })
         .collect();
-
-    print_table(headers, rows, format);
-    Ok(())
-}
-
-pub async fn cmd_positions(format: &OutputFormat) -> Result<()> {
-    let ctx = crate::openapi::trade();
-    let resp = ctx.stock_positions(None).await?;
-
-    print_account_banner(format);
-    let headers = &[
-        "Symbol",
-        "Name",
-        "Quantity",
-        "Available",
-        "Cost Price",
-        "Currency",
-        "Market",
-    ];
-    let mut rows = vec![];
-    for channel in &resp.channels {
-        for pos in &channel.positions {
-            rows.push(vec![
-                pos.symbol.clone(),
-                pos.symbol_name.clone(),
-                pos.quantity.to_string(),
-                pos.available_quantity.to_string(),
-                pos.cost_price.to_string(),
-                pos.currency.clone(),
-                format!("{:?}", pos.market),
-            ]);
-        }
-    }
 
     print_table(headers, rows, format);
     Ok(())
@@ -1399,7 +1688,9 @@ pub async fn cmd_alert_add(
 }
 
 pub async fn cmd_alert_delete(id: String, format: &OutputFormat, verbose: bool) -> Result<()> {
-    let id_num: i64 = id.parse().unwrap_or(0);
+    let id_num: i64 = id
+        .parse()
+        .map_err(|_| anyhow::anyhow!("Invalid alert id '{id}': must be a numeric id"))?;
     let body = serde_json::json!({ "ids": [id_num] });
     let data = super::api::http_delete("/v1/notify/reminders", body, verbose).await?;
     match format {
@@ -1417,19 +1708,25 @@ pub async fn cmd_alert_set_enabled(
 ) -> Result<()> {
     // Fetch the existing alert to get all required fields
     let list_data = super::api::http_get("/v1/notify/reminders", &[], verbose).await?;
-    let stocks = list_data["lists"].as_array().unwrap_or(&Vec::new()).clone();
+    let stocks = list_data
+        .get("lists")
+        .or_else(|| list_data.get("list"))
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
 
-    let id_num: i64 = id.parse().unwrap_or(0);
+    let id_num: i64 = id
+        .parse()
+        .map_err(|_| anyhow::anyhow!("Invalid alert id '{id}': must be a numeric id"))?;
     let mut found = false;
 
     for stock in &stocks {
         let counter_id = stock["counter_id"].as_str().unwrap_or("");
         if let Some(indicators) = stock["indicators"].as_array() {
             for ind in indicators {
-                let ind_id = ind["id"]
-                    .as_str()
-                    .and_then(|s| s.parse::<i64>().ok())
-                    .unwrap_or(0);
+                let Some(ind_id) = ind["id"].as_str().and_then(|s| s.parse::<i64>().ok()) else {
+                    continue;
+                };
                 if ind_id == id_num {
                     let body = serde_json::json!({
                         "id": ind_id,
@@ -1471,8 +1768,10 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
 
     let command = path.join(" ");
     let schema = match command.as_str() {
-        "order" => array("Order list", order_schema_fields()),
-        "order detail" => object("Order detail", &["order_id", "symbol", "side", "status"]),
+        "order" => text("US accounts: object {orders: array of {id, symbol, action, order_type, status, price, quantity, submitted_at, updated_at}, has_more}; HK/CN accounts: array of {order_id, symbol, side, type, status, price, quantity, created_at, updated_at}"),
+        "order detail" => text(
+            "US accounts: object {id, symbol, action, status, order_type, quantity, price, submitted_at, updated_at, order_histories}; HK/CN accounts: object {order_id, symbol, side, order_type, status, quantity, price, submitted_at, updated_at, history}",
+        ),
         "order executions" => array(
             "Order executions",
             &[
@@ -1513,17 +1812,8 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
             "Portfolio overview",
             &["overview", "holdings", "cash_balances", "market_accounts"],
         ),
-        "positions" => array(
-            "Current stock positions",
-            &[
-                "symbol",
-                "name",
-                "quantity",
-                "available",
-                "cost_price",
-                "currency",
-                "market",
-            ],
+        "positions" => text(
+            "US accounts: object {account_type, cash_buy_power, stock_list, option_list, crypto_list, cash_list}; HK/CN accounts: array of {symbol, name, quantity, available, cost_price, currency, market}",
         ),
         "fund-positions" => array(
             "Current fund positions",
@@ -1549,20 +1839,297 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
     Some(schema)
 }
 
-fn order_schema_fields() -> &'static [&'static str] {
-    &[
-        "order_id",
-        "symbol",
-        "name",
-        "side",
-        "type",
-        "status",
-        "price",
-        "quantity",
-        "filled",
-        "submitted_at",
-        "updated_at",
-    ]
+// ── US-specific commands ─────────────────────────────────────────────────────
+
+/// `longbridge positions` — US account full overview.
+///
+/// When the session is a US account (`token.ac` starts with `us_lb`), calls
+/// `GET /v1/us/asset/overview` and renders stock / option / crypto positions
+/// plus buy-power. Falls back to the standard HK/CN SDK path otherwise.
+pub async fn cmd_positions(format: &OutputFormat) -> Result<()> {
+    if crate::openapi::is_us_account().await {
+        cmd_us_positions(format).await
+    } else {
+        let ctx = crate::openapi::trade();
+        let resp = ctx.stock_positions(None).await?;
+        print_account_banner(format);
+        let headers = &[
+            "Symbol",
+            "Name",
+            "Quantity",
+            "Available",
+            "Cost Price",
+            "Currency",
+            "Market",
+        ];
+        let mut rows = vec![];
+        for channel in &resp.channels {
+            for pos in &channel.positions {
+                rows.push(vec![
+                    pos.symbol.clone(),
+                    pos.symbol_name.clone(),
+                    pos.quantity.to_string(),
+                    pos.available_quantity.to_string(),
+                    pos.cost_price.to_string(),
+                    pos.currency.clone(),
+                    format!("{:?}", pos.market),
+                ]);
+            }
+        }
+        print_table(headers, rows, format);
+        Ok(())
+    }
+}
+
+fn print_json_us(data: &serde_json::Value) {
+    println!("{}", serde_json::to_string_pretty(data).unwrap_or_default());
+}
+
+async fn cmd_us_positions(format: &OutputFormat) -> Result<()> {
+    let resp = crate::openapi::trade().us_asset_overview().await?;
+    let mut data = serde_json::to_value(&resp)?;
+    // Normalize for AI agent: account_type code → readable string, timestamp string → int
+    if let Some(map) = data.as_object_mut() {
+        if let Some(s) = map.get("account_type").and_then(|v| v.as_str()) {
+            let label = match s {
+                "0" => "Standard (Margin)",
+                "1" => "Cash",
+                other => other,
+            };
+            map.insert(
+                "account_type".to_string(),
+                serde_json::Value::String(label.to_string()),
+            );
+        }
+        if let Some(s) = map.get("asset_timestamp").and_then(|v| v.as_str()) {
+            if let Ok(n) = s.parse::<i64>() {
+                map.insert(
+                    "asset_timestamp".to_string(),
+                    serde_json::Value::Number(serde_json::Number::from(n)),
+                );
+            }
+        }
+        // Ensure list fields are always [] rather than null/absent
+        for list_key in &["stock_list", "option_list", "crypto_list", "cash_list"] {
+            if map.get(*list_key).is_none_or(serde_json::Value::is_null) {
+                map.insert((*list_key).to_string(), serde_json::Value::Array(vec![]));
+            }
+        }
+    }
+    match format {
+        OutputFormat::Json => print_json_us(&data),
+        OutputFormat::Pretty => print_us_positions_pretty(&data),
+    }
+    Ok(())
+}
+
+fn print_us_positions_pretty(data: &serde_json::Value) {
+    let val = |v: &serde_json::Value| match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Number(n) => n.to_string(),
+        _ => "-".to_string(),
+    };
+    let acct_type = data["account_type"].as_str().unwrap_or("-");
+    println!("Account Type:   {acct_type}");
+    println!("Cash Buy Power: {}", val(&data["cash_buy_power"]));
+    println!();
+
+    let empty = vec![];
+
+    // Cash balances
+    let cash_list = data["cash_list"].as_array().unwrap_or(&empty);
+    if !cash_list.is_empty() {
+        println!("── Cash ────────────────────────────────────────────────────────");
+        print_table(
+            &["Currency", "Total Cash", "Settled Cash", "Frozen"],
+            cash_list
+                .iter()
+                .map(|c| {
+                    vec![
+                        val(&c["currency"]),
+                        val(&c["total_cash"]),
+                        val(&c["settled_cash"]),
+                        val(&c["frozen_buy_cash"]),
+                    ]
+                })
+                .collect(),
+            &OutputFormat::Pretty,
+        );
+    }
+
+    // Stock positions — counter_id field contains the already-converted symbol (USStockEntry.full_symbol)
+    let stock_list = data["stock_list"].as_array().unwrap_or(&empty);
+    if !stock_list.is_empty() {
+        println!("── Stocks ──────────────────────────────────────────────────────");
+        print_table(
+            &["Symbol", "Qty", "Cost", "Last", "Today P&L"],
+            stock_list
+                .iter()
+                .map(|p| {
+                    vec![
+                        val(&p["counter_id"]),
+                        val(&p["quantity"]),
+                        val(&p["average_cost"]),
+                        val(&p["last_done"]),
+                        val(&p["today_pl"]),
+                    ]
+                })
+                .collect(),
+            &OutputFormat::Pretty,
+        );
+    }
+
+    // Option positions (raw serde_json::Value entries — field names follow API response)
+    let option_list = data["option_list"].as_array().unwrap_or(&empty);
+    if !option_list.is_empty() {
+        println!("── Options ─────────────────────────────────────────────────────");
+        print_table(
+            &["Symbol", "Underlying", "Qty", "Cost"],
+            option_list
+                .iter()
+                .map(|p| {
+                    vec![
+                        val(&p["counter_id"]),
+                        val(&p["underlying_counter_id"]),
+                        val(&p["quantity"]),
+                        val(&p["average_cost"]),
+                    ]
+                })
+                .collect(),
+            &OutputFormat::Pretty,
+        );
+    }
+
+    let cryptos = data["crypto_list"].as_array().unwrap_or(&empty);
+    if !cryptos.is_empty() {
+        println!("── Crypto ──────────────────────────────────────────────────────");
+        print_table(
+            &["Symbol", "Type", "Avg Cost", "Currency", "Industry"],
+            cryptos
+                .iter()
+                .map(|p| {
+                    vec![
+                        val(&p["counter_id"]),
+                        val(&p["asset_type"]),
+                        val(&p["average_cost"]),
+                        val(&p["currency"]),
+                        val(&p["industry_name"]),
+                    ]
+                })
+                .collect(),
+            &OutputFormat::Pretty,
+        );
+    }
+}
+
+/// `longbridge profit-analysis realized` — US accounts only.
+///
+/// Calls `GET /v1/us/asset/pl/realized`.
+/// HK/CN token → `DcRegionRestricted` error from the SDK.
+pub async fn cmd_us_realized_pl(
+    category: &str,
+    currency: &str,
+    format: &OutputFormat,
+    _verbose: bool,
+) -> Result<()> {
+    // GetUSRealizedPLOptions.category: "" = all, "STOCK", "OPTION", "CRYPTO"
+    let cat = match category.to_lowercase().as_str() {
+        "all" | "0" => "",
+        "stock" | "1" => "STOCK",
+        "option" | "2" => "OPTION",
+        "crypto" | "3" => "CRYPTO",
+        other => {
+            anyhow::bail!("Invalid category '{other}'. Valid values: all | stock | option | crypto")
+        }
+    };
+    let resp = crate::openapi::trade()
+        .us_realized_pl(GetUSRealizedPLOptions {
+            currency: currency.to_string(),
+            category: cat.to_string(),
+        })
+        .await
+        .map_err(|e| {
+            let msg = e.to_string();
+            if msg.contains("data center") {
+                anyhow::anyhow!("This command is only available for US accounts")
+            } else {
+                anyhow::Error::from(e)
+            }
+        })?;
+    let mut data = serde_json::to_value(&resp)?;
+    // Annotate category/period integers with labels for AI agents
+    if let Some(list) = data["realized_pl_list"].as_array_mut() {
+        for entry in list.iter_mut() {
+            let cat = entry["category"].as_i64().unwrap_or(0);
+            entry["category_name"] = serde_json::json!(match cat {
+                0 => "All",
+                1 => "Stock",
+                2 => "Option",
+                3 => "Crypto",
+                _ => "Unknown",
+            });
+            if let Some(metrics) = entry["metrics"].as_array_mut() {
+                for m in metrics.iter_mut() {
+                    let period = m["period"].as_i64().unwrap_or(0);
+                    m["period_name"] = serde_json::json!(match period {
+                        1 => "YTD",
+                        2 => "Since Inception",
+                        _ => "Unknown",
+                    });
+                    // rate is a decimal fraction: -0.9303 means -93.03%
+                    m["rate_unit"] = serde_json::json!("decimal_fraction");
+                }
+            }
+        }
+    }
+    match format {
+        OutputFormat::Json => print_json_us(&data),
+        OutputFormat::Pretty => {
+            let empty = vec![];
+            let list = data["realized_pl_list"].as_array().unwrap_or(&empty);
+            if list.is_empty() {
+                println!("No realized P&L data.");
+            } else {
+                let cat_name = |c: i64| match c {
+                    0 => "All",
+                    1 => "Stock",
+                    2 => "Option",
+                    3 => "Crypto",
+                    _ => "Unknown",
+                };
+                let num = |v: &serde_json::Value| match v {
+                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Number(n) => n.to_string(),
+                    _ => "-".to_owned(),
+                };
+                print_table(
+                    &["Category", "Period", "Currency", "Amount", "Return Rate"],
+                    list.iter()
+                        .flat_map(|entry| {
+                            let cat = entry["category"].as_i64().unwrap_or(0);
+                            let currency = entry["currency"].as_str().unwrap_or("-");
+                            entry["metrics"]
+                                .as_array()
+                                .unwrap_or(&empty)
+                                .iter()
+                                .map(move |m| {
+                                    vec![
+                                        cat_name(cat).to_string(),
+                                        m["period_name"].as_str().unwrap_or("-").to_string(),
+                                        currency.to_string(),
+                                        num(&m["amount"]),
+                                        num(&m["rate"]),
+                                    ]
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .collect(),
+                    format,
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

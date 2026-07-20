@@ -52,25 +52,27 @@ pub fn handle_popup_input(
             }
         }
         PopupKind::Watchlist => {
-            let mut search = app.world.resource_mut::<LocalSearch<WatchlistGroup>>();
-            let (hidden, selected) = search.handle_key(event);
-            if hidden {
-                popup::close();
-            }
-            if let Some(group) = selected {
-                popup::close();
-                WATCHLIST.write().expect("poison").set_group_id(group.id);
-                systems::refresh_watchlist(update_tx.clone());
+            let result = app
+                .world
+                .get_resource_mut::<LocalSearch<WatchlistGroup>>()
+                .map(|mut s| s.handle_key(event));
+            if let Some((hidden, selected)) = result {
+                if hidden {
+                    popup::close();
+                }
+                if let Some(group) = selected {
+                    popup::close();
+                    WATCHLIST.write().expect("poison").set_group_id(group.id);
+                    systems::refresh_watchlist(update_tx.clone());
+                }
             }
         }
         PopupKind::Search => {
             // Check for direct symbol navigation: Enter with typed text but no dropdown selection
-            let direct_query = {
-                let mut search = app
-                    .world
-                    .resource_mut::<Search<openapi::search::StockItem>>();
-                search.consume_direct_enter(event)
-            };
+            let direct_query = app
+                .world
+                .get_resource_mut::<Search<openapi::search::StockItem>>()
+                .and_then(|mut s| s.consume_direct_enter(event));
             if let Some(query) = direct_query {
                 popup::close();
                 let counter = crate::data::Counter::new(&query);
@@ -83,24 +85,26 @@ pub fn handle_popup_input(
                 };
                 app.world.insert_resource(NextState(Some(next_state)));
             } else {
-                let mut search = app
+                let result = app
                     .world
-                    .resource_mut::<Search<openapi::search::StockItem>>();
-                let (hidden, selected) = search.handle_key(event);
-                if hidden {
-                    popup::close();
-                }
-                if let Some(selected) = selected {
-                    popup::close();
-                    app.world
-                        .insert_resource(systems::StockDetail(selected.counter_id));
-                    let state = *app.world.resource::<State<AppState>>().get();
-                    let next_state = if state == AppState::Stock {
-                        AppState::Stock
-                    } else {
-                        AppState::WatchlistStock
-                    };
-                    app.world.insert_resource(NextState(Some(next_state)));
+                    .get_resource_mut::<Search<openapi::search::StockItem>>()
+                    .map(|mut s| s.handle_key(event));
+                if let Some((hidden, selected)) = result {
+                    if hidden {
+                        popup::close();
+                    }
+                    if let Some(selected) = selected {
+                        popup::close();
+                        app.world
+                            .insert_resource(systems::StockDetail(selected.counter_id));
+                        let state = *app.world.resource::<State<AppState>>().get();
+                        let next_state = if state == AppState::Stock {
+                            AppState::Stock
+                        } else {
+                            AppState::WatchlistStock
+                        };
+                        app.world.insert_resource(NextState(Some(next_state)));
+                    }
                 }
             }
         }
@@ -325,17 +329,18 @@ pub fn handle_global_keys(
                 render_state.mark_dirty(DirtyFlags::WATCHLIST);
             }
             AppState::WatchlistStock => {
-                systems::refresh_stock_debounced(
-                    app.world.resource::<systems::StockDetail>().0.clone(),
-                );
+                if let Some(detail) = app.world.get_resource::<systems::StockDetail>() {
+                    systems::refresh_stock_debounced(detail.0.clone());
+                    render_state.mark_dirty(DirtyFlags::STOCK_DETAIL);
+                }
                 systems::refresh_watchlist(update_tx.clone());
-                render_state.mark_dirty(DirtyFlags::STOCK_DETAIL | DirtyFlags::WATCHLIST);
+                render_state.mark_dirty(DirtyFlags::WATCHLIST);
             }
             AppState::Stock => {
-                systems::refresh_stock_debounced(
-                    app.world.resource::<systems::StockDetail>().0.clone(),
-                );
-                render_state.mark_dirty(DirtyFlags::STOCK_DETAIL);
+                if let Some(detail) = app.world.get_resource::<systems::StockDetail>() {
+                    systems::refresh_stock_debounced(detail.0.clone());
+                    render_state.mark_dirty(DirtyFlags::STOCK_DETAIL);
+                }
             }
             AppState::Orders => {
                 systems::refresh_orders();

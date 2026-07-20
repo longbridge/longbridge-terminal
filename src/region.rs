@@ -8,8 +8,27 @@ use std::{path::PathBuf, time::Duration};
 const GEOTEST_URL: &str = "https://geotest.lbkrs.com";
 const GEOTEST_TIMEOUT_SECS: u64 = 3;
 
+// The `.com` and `.cn` hosts below are access points (CDN-style routing), not
+// separate environments: identical data, identical auth, and a token issued by
+// one is accepted by the other. A server response containing the other region's
+// host is therefore valid and must not be rewritten client-side.
+//
+// They differ in one respect: `.com` reaches both data centers, while `.cn` has
+// no path to US and can only authorize AP accounts. That restriction is enforced
+// server-side (the `.cn` login page does not offer US accounts), so nothing here
+// or in `auth` needs to account for it. Always logging in through `.com` is not
+// an alternative — China Mainland networks may be unable to reach it, which is
+// why `.cn` exists.
+//
+// Two separate concepts, easily confused:
+//   - Access point (`.cn` / `.com`) — this module, network routing.
+//   - Data center (`ap` / `us`)     — the `x-dc-region` header, selects the
+//     account's data center and determines which US-only APIs are available.
+
 // Global endpoint URLs
 pub const HTTP_URL_GLOBAL: &str = "https://openapi.longbridge.com";
+pub const QUOTE_WS_URL_GLOBAL: &str = "wss://openapi-quote.longbridge.com/v2";
+pub const TRADE_WS_URL_GLOBAL: &str = "wss://openapi-trade.longbridge.com/v2";
 pub const OPEN_URL_GLOBAL: &str = "https://open.longbridge.com";
 
 // CN endpoint URLs
@@ -22,7 +41,7 @@ pub const OPEN_URL_CN: &str = "https://open.longbridge.cn";
 // `-global` gateway, which performs `x-dc-region` data-center routing.
 pub const HTTP_URL_TEST: &str = "https://openapi-global.longbridge.xyz";
 pub const QUOTE_WS_URL_TEST: &str = "wss://openapi-global-quote.longbridge.xyz/v2";
-pub const TRADE_WS_URL_TEST: &str = "wss://openapi-trade.longbridge.xyz/v2";
+pub const TRADE_WS_URL_TEST: &str = "wss://openapi-global-trade.longbridge.xyz/v2";
 
 /// Whether the staging environment is active (`LONGBRIDGE_ENV=staging`).
 pub fn is_test_env() -> bool {

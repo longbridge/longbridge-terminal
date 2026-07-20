@@ -313,7 +313,8 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<ResponseSchema> {
         | "financial-statement"
         | "valuation-rank"
         | "compare"
-        | "macrodata" => fundamental::schema_for_path(path),
+        | "macrodata"
+        | "etf-docs" => fundamental::schema_for_path(path),
         "news" | "filing" => news::schema_for_path(path),
         "topic" => topic::schema_for_path(path),
         "watchlist" => watchlist::schema_for_path(path),
@@ -323,7 +324,9 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<ResponseSchema> {
         }
         "order" | "assets" | "cash-flow" | "portfolio" | "positions" | "fund-positions"
         | "margin-ratio" | "max-qty" | "alert" => trade::schema_for_path(path),
-        "exchange-rate" | "profit-analysis" => asset::schema_for_path(path),
+        "exchange-rate" | "profit-analysis" | "profit-analysis realized" => {
+            asset::schema_for_path(path)
+        }
         "insider-trades" => insider_trades::schema_for_path(path),
         "investors" => investors::schema_for_path(path),
         "dca" => dca::schema_for_path(path),
@@ -460,26 +463,24 @@ mod tests {
     use super::*;
 
     fn real_leaf_paths(command: &Command) -> Vec<Vec<String>> {
-        fn walk(command: &Command, prefix: &mut Vec<String>, out: &mut Vec<Vec<String>>) {
-            let real_subcommands = command
+        let mut out = Vec::new();
+        // Iterative DFS: stack holds (command_ref, current_prefix)
+        let mut stack: Vec<(&Command, Vec<String>)> = vec![(command, Vec::new())];
+        while let Some((cmd, prefix)) = stack.pop() {
+            let real_subcommands: Vec<_> = cmd
                 .get_subcommands()
-                .filter(|subcommand| subcommand.get_name() != "help")
-                .collect::<Vec<_>>();
-
+                .filter(|s| s.get_name() != "help")
+                .collect();
             if !prefix.is_empty() && real_subcommands.is_empty() {
-                out.push(prefix.clone());
-                return;
-            }
-
-            for subcommand in real_subcommands {
-                prefix.push(subcommand.get_name().to_string());
-                walk(subcommand, prefix, out);
-                prefix.pop();
+                out.push(prefix);
+            } else {
+                for sub in real_subcommands {
+                    let mut child_prefix = prefix.clone();
+                    child_prefix.push(sub.get_name().to_string());
+                    stack.push((sub, child_prefix));
+                }
             }
         }
-
-        let mut out = Vec::new();
-        walk(command, &mut Vec::new(), &mut out);
         out
     }
 
@@ -506,7 +507,7 @@ mod tests {
         let paths = real_leaf_paths(&root);
         assert_eq!(
             paths.len(),
-            139,
+            142,
             "real command count changed; review schema coverage"
         );
 

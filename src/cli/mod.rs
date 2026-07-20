@@ -397,11 +397,13 @@ pub enum Commands {
     /// Example: longbridge financial-report TSLA.US --kind BS --format json
     /// Example: longbridge financial-report snapshot AAPL.US
     /// Example: longbridge financial-report snapshot AAPL.US --report qf --year 2024 --period 4
+    /// Example: longbridge financial-report key-metrics AAPL.US
     FinancialReport {
         /// Symbol in <CODE>.<MARKET> format, e.g. TSLA.US 700.HK (omit when using a subcommand)
         symbol: Option<String>,
-        /// Statement type: IS (income), BS (balance sheet), CF (cash flow), ALL
-        #[arg(long, value_name = "TYPE", default_value = "ALL")]
+        /// Statement type: IS (income), BS (balance sheet), CF (cash flow), ALL.
+        /// US accounts: omit to get financial summary (finn-overview).
+        #[arg(long, value_name = "TYPE", default_value = "")]
         kind: String,
         /// Report period: af (annual), saf (semi-annual), q1 (Q1), 3q (3 quarters), qf (quarterly)
         #[arg(long)]
@@ -541,6 +543,18 @@ pub enum Commands {
     Consensus {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
+    },
+
+    /// US accounts only: ETF document list (prospectus, annual report, etc.)
+    ///
+    /// Example: longbridge etf-docs SPY.US
+    /// Example: longbridge etf-docs QQQ.US --limit 5 --format json
+    EtfDocs {
+        /// ETF symbol in <CODE>.US format
+        symbol: String,
+        /// Maximum number of documents to return (default: 10)
+        #[arg(long, default_value = "10")]
+        limit: u32,
     },
 
     /// Macroeconomic data by indicator: list all supported indicators or query historical data
@@ -734,6 +748,15 @@ pub enum Commands {
         /// Filter by symbol (e.g. TSLA.US)
         #[arg(long)]
         symbol: Option<String>,
+        /// US accounts only: filter by direction (buy | sell)
+        #[arg(long, value_name = "DIRECTION")]
+        action: Option<String>,
+        /// US accounts only: page number (default: 1)
+        #[arg(long, default_value = "1")]
+        page: u32,
+        /// US accounts only: page size (default: 20)
+        #[arg(long, default_value = "20")]
+        limit: u32,
         #[command(subcommand)]
         cmd: Option<OrderCmd>,
     },
@@ -1951,6 +1974,20 @@ pub enum ProfitAnalysisCmd {
         size: u32,
     },
 
+    /// US accounts only: realized (closed-position) P&L by asset category.
+    ///
+    /// Example: longbridge profit-analysis realized
+    /// Example: longbridge profit-analysis realized --category stock
+    /// Example: longbridge profit-analysis realized --currency USD --format json
+    Realized {
+        /// Asset category filter: all (default) | stock | option | crypto
+        #[arg(long, default_value = "all")]
+        category: String,
+        /// Currency (default: USD)
+        #[arg(long, default_value = "USD")]
+        currency: String,
+    },
+
     /// Stock P&L by market with pagination
     ///
     /// Example: longbridge profit-analysis by-market
@@ -2068,6 +2105,18 @@ pub enum FinancialReportCmd {
         /// Fiscal period (e.g. 1 2 3 4)
         #[arg(long)]
         period: Option<String>,
+    },
+
+    /// US accounts only: key financial ratios (ROE, gross margin, net margin, debt-to-assets).
+    ///
+    /// Example: longbridge financial-report key-metrics AAPL.US
+    /// Example: longbridge financial-report key-metrics AAPL.US --report annual
+    KeyMetrics {
+        /// Symbol in <CODE>.<MARKET> format (US only)
+        symbol: String,
+        /// Report period: annual (default) | quarterly
+        #[arg(long)]
+        report: Option<String>,
     },
 }
 
@@ -2538,9 +2587,13 @@ pub enum OrderCmd {
     ///
     /// Returns all fields from `order` plus `charge_detail`, `history_details`, msg.
     /// Example: longbridge order detail 20240101-123456789
+    /// Example: longbridge order detail 20240101-123456789 --attached
     Detail {
         /// Order ID (from `longbridge order` or returned by `order buy`/`order sell`)
         order_id: String,
+        /// US accounts only: query the attached child order (take-profit/stop-loss)
+        #[arg(long)]
+        attached: bool,
     },
 
     /// Today's trade executions (fills), or historical with --history
@@ -3003,6 +3056,18 @@ pub enum AuthCmd {
     /// Pass `--auth-code` with no value for the browser Authorization Code flow:
     /// opens a browser on this machine and listens on `localhost:60355` for the
     /// OAuth callback.
+    ///
+    /// The authorization URL may point at either `longbridge.cn` or
+    /// `longbridge.com`. These are access points (CDN-style routing) serving
+    /// identical content, and a token issued by one is accepted by the other.
+    /// The access point is picked automatically by network location;
+    /// `LONGBRIDGE_REGION=cn|global` pins it.
+    ///
+    /// One difference matters: `longbridge.com` can authorize accounts in both
+    /// data centers, while `longbridge.cn` can only authorize AP accounts
+    /// (Longbridge SG/HK) and does not offer US accounts on its login page. To
+    /// log in to a US account from China Mainland, run
+    /// `LONGBRIDGE_REGION=global longbridge auth login`.
     Login {
         /// Authorize using a code instead of the device flow.
         ///
@@ -3159,7 +3224,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             latest,
             cmd,
         } => {
-            if let Some(FinancialReportCmd::Snapshot {
+            if let Some(FinancialReportCmd::KeyMetrics { symbol: s, report: r }) = cmd {
+                fundamental::cmd_financial_report_key_metrics(s, r, format, verbose).await
+            } else if let Some(FinancialReportCmd::Snapshot {
                 symbol: s,
                 report: r,
                 year,
@@ -3248,6 +3315,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             fundamental::cmd_forecast_eps(symbol, format, verbose).await
         }
         Commands::Consensus { symbol } => fundamental::cmd_consensus(symbol, format, verbose).await,
+        Commands::EtfDocs { symbol, limit } => fundamental::cmd_etf_docs(symbol, limit, format, verbose).await,
         Commands::BusinessSegments {
             symbol,
             history,
@@ -3300,7 +3368,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             range,
         } => {
             if history {
-                fundamental::cmd_valuation(symbol, indicator, range, format, verbose).await
+                fundamental::cmd_valuation(symbol, history, indicator, range, format, verbose).await
             } else {
                 fundamental::cmd_valuation_detail(symbol, indicator, format, verbose).await
             }
@@ -3389,9 +3457,14 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             start,
             end,
             symbol,
+            action,
+            page,
+            limit,
             cmd,
         } => match cmd {
-            Some(OrderCmd::Detail { order_id }) => trade::cmd_order_detail(order_id, format).await,
+            Some(OrderCmd::Detail { order_id, attached }) => {
+                trade::cmd_order_detail(order_id, attached, format).await
+            }
             Some(OrderCmd::Executions {
                 history: h,
                 start: s,
@@ -3475,7 +3548,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 price,
                 yes,
             }) => trade::cmd_replace_order(order_id, qty, price, yes).await,
-            None => trade::cmd_orders(history, start, end, symbol, format).await,
+            None => trade::cmd_orders(history, start, end, symbol, action, page, limit, format, verbose).await,
         },
         Commands::Assets { currency } => trade::cmd_assets(currency, format).await,
         Commands::CashFlow { start, end } => trade::cmd_cash_flow(start, end, format).await,
@@ -3667,6 +3740,9 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             None => trade::cmd_alert_list(symbol, format, verbose).await,
         },
         Commands::ProfitAnalysis { start, end, cmd } => match cmd {
+            Some(ProfitAnalysisCmd::Realized { category, currency }) => {
+                trade::cmd_us_realized_pl(&category, &currency, format, verbose).await
+            }
             None => asset::cmd_profit_analysis(start.as_deref(), end.as_deref(), format, verbose).await,
             Some(ProfitAnalysisCmd::Detail {
                 symbol,
@@ -4333,6 +4409,7 @@ mod tests {
             end,
             symbol,
             cmd: None,
+            ..
         }) = cli.command
         {
             assert!(!history);
@@ -4378,7 +4455,7 @@ mod tests {
         assert!(matches!(
             cli.command,
             Some(Commands::Order {
-                cmd: Some(OrderCmd::Detail { order_id }),
+                cmd: Some(OrderCmd::Detail { order_id, .. }),
                 ..
             }) if order_id == "order-123"
         ));

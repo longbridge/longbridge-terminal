@@ -1,9 +1,12 @@
 //! Auth utilities for Longbridge `OpenAPI`.
 
 use anyhow::{Context, Result};
+use futures::StreamExt as _;
 use longbridge::oauth::TokenStorage as _;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 pub const CALLBACK_PORT: u16 = 60355;
 
@@ -410,27 +413,54 @@ async fn request_device_authorize(
 /// Poll `POST /token` on a single data center (selected via the `x-dc-region`
 /// header) for the shared `device_code` until it is authorized (returns the
 /// token), is rejected, or expires.
+/// Poll `POST /token` for a single DC.
+///
+/// `shared_interval_ms` is shared between both DC pollers so that a `slow_down`
+/// response received by either poller increases the rate for both, as required
+/// by RFC 8628 §3.5.
+///
+/// `initial_delay`: when `true`, sleep one interval before the first poll.
+/// Used for the secondary (US) poller to give the AP→US device-code replication
+/// a moment to complete before the first request.
 async fn poll_device_token(
     http_client: &reqwest::Client,
     oauth_base: &str,
     client_id: &str,
     device_code: &str,
     region: &'static str,
-    interval: u64,
+    shared_interval_ms: Arc<AtomicU64>,
     expires_in: u64,
+    initial_delay: bool,
     verbose: bool,
 ) -> Result<longbridge::oauth::StoredToken> {
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     let url = format!("{oauth_base}/token");
     let deadline = Instant::now() + Duration::from_secs(expires_in);
-    let poll_interval = Duration::from_secs(interval.max(1));
+
+    // initial_delay counts as the first iteration's sleep so the US poller doesn't double-sleep.
+    let mut skip_loop_sleep = if initial_delay {
+        let ms = shared_interval_ms.load(Ordering::Relaxed);
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if !remaining.is_zero() {
+            tokio::time::sleep(Duration::from_millis(ms).min(remaining)).await;
+        }
+        true
+    } else {
+        false
+    };
 
     loop {
-        tokio::time::sleep(poll_interval).await;
-
-        if Instant::now() >= deadline {
+        // Sleep for at most the remaining time so we don't overshoot the deadline.
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
             anyhow::bail!("Device authorization timed out ({region})");
+        }
+        if skip_loop_sleep {
+            skip_loop_sleep = false;
+        } else {
+            let poll_interval = Duration::from_millis(shared_interval_ms.load(Ordering::Relaxed));
+            tokio::time::sleep(poll_interval.min(remaining)).await;
         }
 
         if verbose {
@@ -475,7 +505,15 @@ async fn poll_device_token(
 
         let err_resp = raw.json::<serde_json::Value>().await.unwrap_or_default();
         match err_resp["error"].as_str() {
-            Some("authorization_pending" | "slow_down") => {}
+            Some("authorization_pending") => {}
+            Some("slow_down") => {
+                // RFC 8628 §3.5: increase interval by at least 5 seconds. Use fetch_max so
+                // that if both DC pollers receive slow_down simultaneously each computes
+                // current+5000 and fetch_max ensures the final value is current+5000, not
+                // current+10000 (which fetch_add would produce from two concurrent callers).
+                let current = shared_interval_ms.load(Ordering::Relaxed);
+                shared_interval_ms.fetch_max(current + 5000, Ordering::Relaxed);
+            }
             Some(other) => anyhow::bail!("Authorization failed ({region}): {other}"),
             None => anyhow::bail!("Unexpected token poll response ({region})"),
         }
@@ -527,21 +565,55 @@ pub async fn device_login(verbose: bool, client_name: Option<String>) -> Result<
     // poll both DCs in parallel for the shared `device_code`; the first to be
     // authorized wins. The access token carries that DC's `us_`/`ap_` prefix, so
     // subsequent API calls route back to the same data center automatically.
-    let polls = DEVICE_LOGIN_REGIONS.iter().map(|&region| {
-        Box::pin(poll_device_token(
-            &http_client,
-            &oauth_base,
-            &client_id,
-            &auth.device_code,
-            region,
-            auth.interval,
-            auth.expires_in,
-            verbose,
-        ))
-    });
-    let (token, _) = futures::future::select_ok(polls)
-        .await
-        .map_err(|e| anyhow::anyhow!("Device authorization failed: {e:#}"))?;
+    //
+    // `shared_interval_ms`: both pollers read and write the same atomic so that a
+    // `slow_down` from either DC increases the rate for both (RFC 8628 §3.5).
+    //
+    // The AP poller starts immediately; the US poller waits one interval before its
+    // first poll to give the AP→US device-code replication time to complete.
+    let shared_interval_ms = Arc::new(AtomicU64::new(auth.interval.max(1) * 1000));
+    let mut polls: futures::stream::FuturesUnordered<_> = DEVICE_LOGIN_REGIONS
+        .iter()
+        .enumerate()
+        .map(|(i, &region)| {
+            Box::pin(poll_device_token(
+                &http_client,
+                &oauth_base,
+                &client_id,
+                &auth.device_code,
+                region,
+                Arc::clone(&shared_interval_ms),
+                auth.expires_in,
+                i > 0, // US poller (index 1) waits one interval before first poll
+                verbose,
+            ))
+        })
+        .collect();
+    // Drain futures one at a time so access_denied surfaces immediately rather
+    // than being swallowed by select_ok keeping the other DC alive.
+    let mut last_err = anyhow::anyhow!("Device authorization failed: no response");
+    let token = loop {
+        match polls.next().await {
+            None => return Err(last_err),
+            Some(Ok(t)) => break t,
+            Some(Err(e)) => {
+                let msg = e.to_string();
+                if msg.contains("access_denied") {
+                    return Err(anyhow::anyhow!("Authorization was denied."));
+                }
+                // Terminal OAuth rejection codes that affect both DCs (device code state
+                // is shared). Transient codes (server_error, temporarily_unavailable)
+                // should not abort the sibling poller — only bail on permanent rejections.
+                let is_terminal_oauth = msg.contains("expired_token")
+                    || msg.contains("invalid_client")
+                    || msg.contains("invalid_grant");
+                if is_terminal_oauth {
+                    return Err(anyhow::anyhow!("Device authorization failed: {e:#}"));
+                }
+                last_err = anyhow::anyhow!("Device authorization failed: {e:#}");
+            }
+        }
+    };
 
     crate::secure_storage::EncryptedFileTokenStorage
         .save(&token)

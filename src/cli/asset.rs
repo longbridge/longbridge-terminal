@@ -555,6 +555,7 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
                 "updated_date",
             ],
         ),
+        "profit-analysis realized" => object("US realized P&L by category", &["realized_pl_list"]),
         _ => return None,
     };
     Some(schema)

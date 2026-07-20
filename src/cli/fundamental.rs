@@ -11,6 +11,103 @@ use crate::utils::datetime::format_date;
 use crate::utils::number::format_financial_value;
 use crate::utils::text::strip_html;
 
+/// Serialize any serde-serializable SDK response to a JSON Value for
+/// `print_json` / pretty rendering.
+fn to_value<T: serde::Serialize>(v: T) -> Result<Value> {
+    Ok(serde_json::to_value(v)?)
+}
+
+/// Walk a JSON value and normalize it for AI agent consumption:
+/// - cast `"timestamp"` string values to integers
+/// - cast `"value"` string values to floats (within list items, e.g. historical PE values)
+/// - strip HTML from text fields (`desc`, `tooltip`, `description`, `ai_summary`)
+/// - remove internal fields: `aichat_data`, `h5_data`, `layouts`, `stocks`, `peers`
+fn fix_valuation_value(v: &mut Value) {
+    match v {
+        Value::Object(map) => {
+            for key in &[
+                "aichat_data",
+                "h5_data",
+                "layouts",
+                "stocks",
+                "peers",
+                "circle",
+                "part",
+            ] {
+                map.remove(*key);
+            }
+            for val in map.values_mut() {
+                fix_valuation_value(val);
+            }
+            if let Some(ts) = map.get("timestamp").and_then(|v| v.as_str()) {
+                if let Ok(n) = ts.parse::<i64>() {
+                    map.insert(
+                        "timestamp".to_string(),
+                        Value::Number(serde_json::Number::from(n)),
+                    );
+                }
+            }
+            // Convert numeric string fields to floats
+            // "value": "27.78" → 27.78 (history list items)
+            // "industry_median": "7.89" → 7.89
+            for num_key in &["value", "industry_median", "median", "high", "low"] {
+                if let Some(s) = map.get(*num_key).and_then(|v| v.as_str()) {
+                    if let Ok(f) = s.parse::<f64>() {
+                        if let Some(n) = serde_json::Number::from_f64(f) {
+                            map.insert((*num_key).to_string(), Value::Number(n));
+                        }
+                    }
+                }
+            }
+            // "metric": "35.3x" → 35.3 (strip trailing non-numeric suffix)
+            if let Some(s) = map.get("metric").and_then(|v| v.as_str()) {
+                let stripped = s.trim_end_matches(|c: char| !c.is_ascii_digit() && c != '.');
+                if let Ok(f) = stripped.parse::<f64>() {
+                    if let Some(n) = serde_json::Number::from_f64(f) {
+                        map.insert("metric".to_string(), Value::Number(n));
+                    }
+                }
+            }
+            for key in &["desc", "tooltip", "description", "ai_summary"] {
+                if let Some(s) = map.get(*key).and_then(|v| v.as_str()) {
+                    let clean = strip_html(s);
+                    if clean != s {
+                        map.insert((*key).to_string(), Value::String(clean));
+                    }
+                }
+            }
+        }
+        Value::Array(arr) => arr.iter_mut().for_each(fix_valuation_value),
+        _ => {}
+    }
+}
+
+/// Recursively strip trailing `%` from the named fields and convert to a JSON number.
+/// e.g. `"dividend_yield": "1.85%"` → `"dividend_yield": 1.85`
+fn normalize_pct_fields(v: &mut Value, keys: &[&str]) {
+    match v {
+        Value::Object(map) => {
+            for key in keys {
+                if let Some(s) = map.get(*key).and_then(|v| v.as_str()) {
+                    let trimmed = s.trim_end_matches('%');
+                    if let Ok(f) = trimmed.parse::<f64>() {
+                        if let Some(n) = serde_json::Number::from_f64(f) {
+                            map.insert((*key).to_string(), Value::Number(n));
+                        }
+                    }
+                }
+            }
+            for val in map.values_mut() {
+                normalize_pct_fields(val, keys);
+            }
+        }
+        Value::Array(arr) => arr
+            .iter_mut()
+            .for_each(|item| normalize_pct_fields(item, keys)),
+        _ => {}
+    }
+}
+
 async fn http_get(path: &str, params: &[(&str, &str)], verbose: bool) -> Result<Value> {
     http_get_dc(path, params, None, verbose).await
 }
@@ -226,7 +323,67 @@ fn print_financials(value: &Value) {
     }
 }
 
+fn print_us_financials(data: &Value) {
+    let ccy = data["ccy_symbol"].as_str().unwrap_or("");
+    let sections: &[(&str, &str, &[&str])] = &[
+        (
+            "Balance Sheet",
+            "bs_list",
+            &["total_assets", "total_liabilities", "debt_assets_ratio"],
+        ),
+        (
+            "Income Statement",
+            "is_list",
+            &["revenue", "net_income", "net_margin"],
+        ),
+        (
+            "Cash Flow",
+            "cf_list",
+            &["operating", "investing", "financing"],
+        ),
+    ];
+    let mut printed = false;
+    for (title, key, fields) in sections {
+        let items = match data[*key].as_array() {
+            Some(a) if !a.is_empty() => a,
+            _ => continue,
+        };
+        if printed {
+            println!();
+        }
+        println!("── {title} ({ccy}) ──");
+        let mut headers: Vec<&str> = vec!["period"];
+        headers.extend_from_slice(fields);
+        let rows: Vec<Vec<String>> = items
+            .iter()
+            .map(|item| {
+                let period = item["report"]["report_txt"]
+                    .as_str()
+                    .or_else(|| item["report"]["end_date"].as_str())
+                    .unwrap_or("-")
+                    .to_owned();
+                let mut row = vec![period];
+                for f in *fields {
+                    let v = match &item[*f] {
+                        Value::String(s) => s.clone(),
+                        Value::Number(n) => n.to_string(),
+                        _ => "-".to_owned(),
+                    };
+                    row.push(v);
+                }
+                row
+            })
+            .collect();
+        super::output::print_table(&headers, rows, &OutputFormat::Pretty);
+        printed = true;
+    }
+    if !printed {
+        print_kv(data);
+    }
+}
+
 /// Fetch financial statements for a symbol.
+/// US accounts without `--kind` → finn-overview (`/v1/stock-info/finn-overview`).
 pub async fn cmd_financial_report(
     symbol: String,
     kind: String,
@@ -235,7 +392,30 @@ pub async fn cmd_financial_report(
     verbose: bool,
 ) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
-    let mut params: Vec<(&str, &str)> = vec![("counter_id", cid.as_str()), ("kind", kind.as_str())];
+    // US accounts always use finn-overview; --kind is only valid for HK/CN.
+    if crate::openapi::is_us_account().await {
+        if !kind.is_empty() {
+            eprintln!(
+                "Note: --kind is not supported for US accounts; returning all financial sections."
+            );
+        }
+        let ctx = crate::openapi::fundamental();
+        let data = to_value(
+            ctx.us_financial_overview(symbol.clone(), report.as_deref().unwrap_or("annual"))
+                .await?,
+        )?;
+        match format {
+            OutputFormat::Json => print_json(&data),
+            OutputFormat::Pretty => print_us_financials(&data),
+        }
+        return Ok(());
+    }
+    let kind_param = if kind.is_empty() {
+        "ALL"
+    } else {
+        kind.as_str()
+    };
+    let mut params: Vec<(&str, &str)> = vec![("counter_id", cid.as_str()), ("kind", kind_param)];
     if let Some(ref r) = report {
         params.push(("report", r.as_str()));
     }
@@ -243,6 +423,73 @@ pub async fn cmd_financial_report(
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => print_financials(&data),
+    }
+    Ok(())
+}
+
+/// `financial-report key-metrics <SYMBOL>` — US accounts only (interface 23).
+/// Returns ROE, `gross_margin`, `net_margin`, `debt_assets_ratio` per report period.
+pub async fn cmd_financial_report_key_metrics(
+    symbol: String,
+    report: Option<String>,
+    format: &OutputFormat,
+    _verbose: bool,
+) -> Result<()> {
+    if !crate::openapi::is_us_account().await {
+        anyhow::bail!("This command is only available for US accounts");
+    }
+    let ctx = crate::openapi::fundamental();
+    let data = to_value(
+        ctx.us_key_financial_metrics(symbol.clone(), report.as_deref().unwrap_or("annual"))
+            .await?,
+    )?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            let list = data["list"].as_array();
+            if list.is_none_or(Vec::is_empty) {
+                println!("No key metrics data.");
+                return Ok(());
+            }
+            let headers = ["Period", "Year", "End Date", "Report", "Metrics"];
+            let rows: Vec<Vec<String>> = list
+                .unwrap()
+                .iter()
+                .map(|item| {
+                    let metrics = item["fields"].as_array().map_or_else(
+                        || "-".to_string(),
+                        |fs| {
+                            fs.iter()
+                                .map(|f| {
+                                    if let Some(obj) = f.as_object() {
+                                        let name = obj
+                                            .get("field_name")
+                                            .or_else(|| obj.get("name"))
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("?");
+                                        let val = obj
+                                            .get("value")
+                                            .map_or_else(|| "-".to_string(), val_str);
+                                        format!("{name}: {val}")
+                                    } else {
+                                        val_str(f)
+                                    }
+                                })
+                                .collect::<Vec<_>>()
+                                .join("  ")
+                        },
+                    );
+                    vec![
+                        val_str(&item["ff_period"]),
+                        val_str(&item["ff_year"]),
+                        val_str(&item["fp_end"]),
+                        val_str(&item["report_txt"]),
+                        metrics,
+                    ]
+                })
+                .collect();
+            super::output::print_table(&headers, rows, format);
+        }
     }
     Ok(())
 }
@@ -490,6 +737,88 @@ pub async fn cmd_dividend(
     verbose: bool,
 ) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
+    // US: route to ETF or stock-specific dividend endpoint
+    if crate::openapi::is_us_account().await {
+        let ctx = crate::openapi::fundamental();
+        let mut data = if crate::utils::counter::is_etf(&symbol) {
+            to_value(ctx.us_etf_dividend_info(symbol.clone()).await?)? // interface 33
+        } else {
+            to_value(ctx.us_company_dividends(symbol.clone()).await?)? // interface 36
+        };
+        // Normalize: "1.85%" → 1.85 (float) for dividend_yield fields
+        normalize_pct_fields(&mut data, &["dividend_yield", "dividend_yield_ttm"]);
+        match format {
+            OutputFormat::Json => print_json(&data),
+            OutputFormat::Pretty => {
+                let currency = data["currency"].as_str().unwrap_or("USD");
+                let empty = vec![];
+                if crate::utils::counter::is_etf(&symbol) {
+                    let rows: Vec<Vec<String>> = data["fiscal_year_info"]
+                        .as_array()
+                        .unwrap_or(&empty)
+                        .iter()
+                        .filter(|r| {
+                            let d = val_str(&r["dividend"]);
+                            !d.is_empty() && d != "-"
+                        })
+                        .map(|r| {
+                            let yield_str = match r["dividend_yield"].as_f64() {
+                                Some(f) => format!("{f}%"),
+                                None => val_str(&r["dividend_yield"]),
+                            };
+                            vec![
+                                val_str(&r["fiscal_year"]),
+                                val_str(&r["fiscal_year_range"]),
+                                format!("{} {}", currency, val_str(&r["dividend"])),
+                                yield_str,
+                            ]
+                        })
+                        .collect();
+                    if rows.is_empty() {
+                        println!("No dividend data.");
+                    } else {
+                        super::output::print_table(
+                            &["Fiscal Year", "Period", "Dividend", "Yield"],
+                            rows,
+                            format,
+                        );
+                    }
+                } else {
+                    // USCompanyDividends.dividend_payout_history has individual payment records
+                    let payout_currency = data["recent_dividends"]["currency"]
+                        .as_str()
+                        .unwrap_or(currency);
+                    let rows: Vec<Vec<String>> = data["dividend_payout_history"]
+                        .as_array()
+                        .unwrap_or(&empty)
+                        .iter()
+                        .filter(|r| {
+                            let d = val_str(&r["dividend"]);
+                            !d.is_empty() && d != "-"
+                        })
+                        .map(|r| {
+                            vec![
+                                val_str(&r["ex_date"]),
+                                val_str(&r["payment_date"]),
+                                format!("{} {}", payout_currency, val_str(&r["dividend"])),
+                                val_str(&r["dividend_type"]),
+                            ]
+                        })
+                        .collect();
+                    if rows.is_empty() {
+                        println!("No dividend data.");
+                    } else {
+                        super::output::print_table(
+                            &["Ex Date", "Payment Date", "Dividend", "Type"],
+                            rows,
+                            format,
+                        );
+                    }
+                }
+            }
+        }
+        return Ok(());
+    }
     let page_str = page.to_string();
     let year_str = year.map(|y| y.to_string());
     let mut params = vec![
@@ -551,6 +880,7 @@ fn print_forecast_eps(data: &Value) {
             let ts = item["forecast_end_date"]
                 .as_str()
                 .and_then(|s| s.parse::<i64>().ok())
+                .or_else(|| item["forecast_end_date"].as_i64())
                 .unwrap_or(0);
             if ts == 0 {
                 return None;
@@ -561,14 +891,49 @@ fn print_forecast_eps(data: &Value) {
                 val_str(&item["forecast_eps_median"]),
                 val_str(&item["forecast_eps_highest"]),
                 val_str(&item["forecast_eps_lowest"]),
-                item["institution_up"].to_string(),
-                item["institution_down"].to_string(),
-                item["institution_total"].to_string(),
+                val_str(&item["institution_up"]),
+                val_str(&item["institution_down"]),
+                val_str(&item["institution_total"]),
             ])
         })
         .collect();
     println!("EPS Forecasts (recent {}):", rows.len());
     super::output::print_table(&headers, rows, &OutputFormat::Pretty);
+}
+
+fn print_us_consensus(data: &Value) {
+    let summary = data["ai_summary"].as_str().unwrap_or("").trim();
+    if !summary.is_empty() {
+        println!("{summary}");
+    }
+    // opt_reports is Vec<String> — items are report title strings, not objects
+    let opt_reports: Option<Vec<String>> = data["opt_reports"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_owned))
+                .collect::<Vec<_>>()
+        })
+        .filter(|v| !v.is_empty())
+        .or_else(|| {
+            data["opt_reports"]
+                .as_str()
+                .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+                .filter(|v| !v.is_empty())
+        });
+    let has_reports = opt_reports.is_some();
+    if has_reports {
+        if !summary.is_empty() {
+            println!();
+        }
+        println!("Reports:");
+        for r in opt_reports.unwrap() {
+            println!("  {r}");
+        }
+    }
+    if summary.is_empty() && !has_reports {
+        println!("No consensus data.");
+    }
 }
 
 /// Consensus estimates — rows = metrics, columns = periods.
@@ -657,15 +1022,32 @@ pub async fn cmd_forecast_eps(symbol: String, format: &OutputFormat, verbose: bo
 /// Fetch financial consensus detail.
 pub async fn cmd_consensus(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
-    let data = http_get(
-        "/v1/quote/financial-consensus-detail",
-        &[("counter_id", cid.as_str())],
-        verbose,
-    )
-    .await?;
+    let is_us = crate::openapi::is_us_account().await;
+    let data = if is_us {
+        let mut d = to_value(
+            crate::openapi::fundamental()
+                .us_analyst_consensus(symbol.clone(), "annual")
+                .await?,
+        )?;
+        fix_valuation_value(&mut d);
+        d
+    } else {
+        http_get(
+            "/v1/quote/financial-consensus-detail",
+            &[("counter_id", cid.as_str())],
+            verbose,
+        )
+        .await?
+    };
     match format {
         OutputFormat::Json => print_json(&data),
-        OutputFormat::Pretty => print_consensus(&data),
+        OutputFormat::Pretty => {
+            if is_us {
+                print_us_consensus(&data);
+            } else {
+                print_consensus(&data);
+            }
+        }
     }
     Ok(())
 }
@@ -673,6 +1055,77 @@ pub async fn cmd_consensus(symbol: String, format: &OutputFormat, verbose: bool)
 // ── valuation ───────────────────────────────────────────────────────────────
 
 /// Valuation detail — overview row + peer comparison table.
+fn print_us_valuation_detail(data: &Value) {
+    let indicator = val_str(&data["indicator"]).to_uppercase();
+    let range = data["range"].as_i64().unwrap_or(0);
+    let date_str = val_str(&data["date"]);
+    let ai_summary = strip_html(&val_str(&data["ai_summary"]));
+
+    let ind_label = if indicator.is_empty() {
+        "-".to_string()
+    } else {
+        indicator.clone()
+    };
+    let range_label = if range > 0 {
+        format!("{range}Y")
+    } else {
+        "-".to_string()
+    };
+    let date_label = if date_str.is_empty() {
+        "-".to_string()
+    } else {
+        date_str
+    };
+
+    println!("Valuation:");
+    super::output::print_table(
+        &["indicator", "range", "date"],
+        vec![vec![ind_label, range_label, date_label]],
+        &OutputFormat::Pretty,
+    );
+
+    let ind_key = indicator.to_lowercase();
+    let ci = &data["metrics"][ind_key.as_str()];
+    let metric = val_str(&ci["metric"]);
+    let metric_type = val_str(&ci["metric_type"]);
+    let desc = strip_html(&val_str(&ci["desc"]));
+    // ccy_symbol is a top-level field on USValuationOverview, not inside the metrics object
+    let ccy_raw = val_str(&data["ccy_symbol"]);
+    let ccy = if ccy_raw == "-" {
+        String::new()
+    } else {
+        ccy_raw
+    };
+
+    let sentinel = |s: &str| s.is_empty() || s == "-";
+    let has_ci = !sentinel(&metric) || !sentinel(&desc);
+    if has_ci {
+        println!("\nCurrent {indicator}:");
+        let mut rows: Vec<Vec<String>> = vec![];
+        if !sentinel(&metric) {
+            let label = if sentinel(&metric_type) {
+                format!("{ccy}{metric}")
+            } else {
+                format!("{ccy}{metric} ({metric_type})")
+            };
+            rows.push(vec!["value".to_string(), label]);
+        }
+        if !sentinel(&desc) {
+            rows.push(vec!["desc".to_string(), desc]);
+        }
+        super::output::print_table(&["field", "value"], rows, &OutputFormat::Pretty);
+    }
+
+    if !ai_summary.is_empty() {
+        println!("\nAI Analysis:");
+        println!("  {ai_summary}");
+    }
+
+    if !has_ci && ai_summary.is_empty() {
+        println!("No valuation detail available.");
+    }
+}
+
 fn print_valuation_detail(data: &Value) {
     let overview = &data["overview"];
     let indicator = val_str(&overview["indicator"]);
@@ -786,6 +1239,7 @@ fn print_valuation_history(data: &Value) {
 /// Fetch valuation overview: P/E, P/B, P/S, dividend yield + peer comparison.
 pub async fn cmd_valuation(
     symbol: String,
+    history: bool,
     indicator: Option<String>,
     range: Option<String>,
     format: &OutputFormat,
@@ -799,18 +1253,41 @@ pub async fn cmd_valuation(
         ("indicator", ind),
         ("range", range_val),
     ];
-    let data = http_get("/v1/quote/valuation", &params, verbose).await?;
+    let is_us = crate::openapi::is_us_account().await;
+    if is_us && history {
+        anyhow::bail!(
+            "US accounts do not support historical valuation; omit --history and use the current snapshot"
+        );
+    }
+    if is_us && (indicator.is_some() || range.is_some()) {
+        anyhow::bail!("US valuation does not support --indicator or --range; omit them and retry");
+    }
+    let data = if is_us {
+        let mut d = to_value(
+            crate::openapi::fundamental()
+                .us_valuation_overview(symbol.clone())
+                .await?,
+        )?;
+        fix_valuation_value(&mut d);
+        d
+    } else {
+        http_get("/v1/quote/valuation", &params, verbose).await?
+    };
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => {
-            let has_data = data["metrics"].as_object().is_some_and(|m| {
-                m.values()
-                    .any(|v| !val_str(&v["median"]).is_empty() && val_str(&v["median"]) != "-")
-            });
-            if has_data {
-                print_valuation_history(&data);
+            if is_us {
+                print_us_valuation_detail(&data);
             } else {
-                println!("No valuation data.");
+                let has_data = data["metrics"].as_object().is_some_and(|m| {
+                    m.values()
+                        .any(|v| !val_str(&v["median"]).is_empty() && val_str(&v["median"]) != "-")
+                });
+                if has_data {
+                    print_valuation_history(&data);
+                } else {
+                    println!("No valuation data.");
+                }
             }
         }
     }
@@ -824,6 +1301,27 @@ pub async fn cmd_valuation_detail(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
+    if crate::openapi::is_us_account().await {
+        if indicator.is_some() {
+            anyhow::bail!("US valuation does not support --indicator; omit it and retry");
+        }
+        let mut d = to_value(
+            crate::openapi::fundamental()
+                .us_valuation_overview(symbol.clone())
+                .await?,
+        )?;
+        match format {
+            OutputFormat::Json => {
+                fix_valuation_value(&mut d);
+                print_json(&d);
+            }
+            OutputFormat::Pretty => {
+                fix_valuation_value(&mut d);
+                print_us_valuation_detail(&d);
+            }
+        }
+        return Ok(());
+    }
     let cid = symbol_to_counter_id(&symbol);
     let mut params: Vec<(&str, &str)> = vec![("counter_id", cid.as_str())];
     if let Some(ref ind) = indicator {
@@ -1596,17 +2094,65 @@ pub async fn cmd_finance_calendar(
 
 pub async fn cmd_company(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
     let cid = symbol_to_counter_id(&symbol);
-    let data = http_get(
-        "/v1/quote/comp-overview",
-        &[("counter_id", cid.as_str())],
-        verbose,
-    )
-    .await?;
+    let is_us = crate::openapi::is_us_account().await;
+    let data = if is_us {
+        to_value(
+            crate::openapi::fundamental()
+                .us_company_overview(symbol.clone())
+                .await?,
+        )?
+    } else {
+        http_get(
+            "/v1/quote/comp-overview",
+            &[("counter_id", cid.as_str())],
+            verbose,
+        )
+        .await?
+    };
     match format {
         OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty if is_us => print_us_company(&data),
         OutputFormat::Pretty => print_company(&data),
     }
     Ok(())
+}
+
+/// Pretty-print the US company overview (`us_company_overview`), whose shape
+/// differs entirely from the HK company profile handled by [`print_company`].
+fn print_us_company(data: &Value) {
+    let market_cap = val_str(&data["market_cap"]);
+    if !market_cap.is_empty() && market_cap != "-" {
+        let ccy = val_str(&data["ccy_symbol"]);
+        println!(
+            "{:15} {ccy}{}",
+            "Market Cap",
+            format_financial_value(&market_cap, false)
+        );
+    }
+    if let Some(tags) = data["top_rank_tags"].as_array() {
+        for tag in tags {
+            let text = val_str(&tag["text"]);
+            if text.is_empty() || text == "-" {
+                continue;
+            }
+            let highlight = val_str(&tag["highlight_text"]);
+            if highlight.is_empty() || highlight == "-" {
+                println!("{:15} {text}", "Rank");
+            } else {
+                println!("{:15} {text} ({highlight})", "Rank");
+            }
+        }
+    }
+    let intro = val_str(&data["intro"]);
+    if !intro.is_empty() && intro != "-" {
+        println!();
+        println!("{intro}");
+    }
+    let url = val_str(&data["detail_url"]);
+    if !url.is_empty() && url != "-" {
+        println!();
+        println!("{:15} {url}", "Detail");
+    }
 }
 
 fn print_company(data: &Value) {
@@ -1694,7 +2240,12 @@ pub async fn cmd_buyback(symbol: String, format: &OutputFormat, verbose: bool) -
 }
 
 fn fmt_amount(raw: &str, currency: &str) -> String {
-    let v: f64 = raw.parse().unwrap_or(0.0);
+    if raw.is_empty() {
+        return "-".to_string();
+    }
+    let Ok(v) = raw.parse::<f64>() else {
+        return raw.to_string();
+    };
     if v == 0.0 {
         return "-".to_string();
     }
@@ -1712,11 +2263,26 @@ fn fmt_amount(raw: &str, currency: &str) -> String {
 }
 
 fn fmt_ratio(raw: &str) -> String {
+    if raw.is_empty() {
+        return "-".to_string();
+    }
     raw.parse::<f64>()
         .map_or_else(|_| raw.to_string(), |v| format!("{v:.2}"))
 }
 
+fn fmt_ratio_x(raw: &str) -> String {
+    let r = fmt_ratio(raw);
+    if r == "-" {
+        r
+    } else {
+        format!("{r}x")
+    }
+}
+
 fn fmt_pct(raw: &str) -> String {
+    if raw.is_empty() {
+        return "-".to_string();
+    }
     raw.parse::<f64>()
         .map_or_else(|_| raw.to_string(), |v| format!("{v:.2}%"))
 }
@@ -1847,9 +2413,16 @@ pub async fn cmd_industry_valuation(
                         val_str(&item["name"]),
                         fmt_amount(&val_str(&item["market_value"]), c),
                         format!("{c}{}", val_str(&item["price_close"])),
-                        format!("{}x", fmt_ratio(&val_str(&item["pe"]))),
-                        format!("{}x", fmt_ratio(&val_str(&item["pb"]))),
-                        format!("{c}{}", fmt_ratio(&val_str(&item["eps"]))),
+                        fmt_ratio_x(&val_str(&item["pe"])),
+                        fmt_ratio_x(&val_str(&item["pb"])),
+                        {
+                            let r = fmt_ratio(&val_str(&item["eps"]));
+                            if r == "-" {
+                                r
+                            } else {
+                                format!("{c}{r}")
+                            }
+                        },
                         fmt_pct(&val_str(&item["div_yld"])),
                     ]
                 })
@@ -1902,13 +2475,12 @@ pub async fn cmd_industry_valuation_dist(
                         .parse::<f64>()
                         .map(|v| format!("{:.1}%", v * 100.0))
                         .unwrap_or(ranking);
-                    let suffix = "x";
                     rows.push(vec![
                         label.to_string(),
-                        format!("{}{suffix}", fmt_ratio(&val_str(&m["value"]))),
-                        format!("{}{suffix}", fmt_ratio(&val_str(&m["low"]))),
-                        format!("{}{suffix}", fmt_ratio(&val_str(&m["median"]))),
-                        format!("{}{suffix}", fmt_ratio(&val_str(&m["high"]))),
+                        fmt_ratio_x(&val_str(&m["value"])),
+                        fmt_ratio_x(&val_str(&m["low"])),
+                        fmt_ratio_x(&val_str(&m["median"])),
+                        fmt_ratio_x(&val_str(&m["high"])),
                         rank,
                         pct,
                     ]);
@@ -2315,8 +2887,12 @@ fn fmt_yoy(s: &str) -> String {
 }
 
 fn period_label(ff_period: &str, ff_year: i64, report: &str) -> String {
-    if report == "af" {
+    if report == "annual" || report == "af" {
         format!("FY{ff_year}")
+    } else if report == "saf" {
+        format!("H{ff_period} {ff_year}")
+    } else if report == "cumul" {
+        format!("Acc{ff_period} {ff_year}")
     } else {
         format!("Q{ff_period} {ff_year}")
     }
@@ -2332,16 +2908,37 @@ pub async fn cmd_financial_statement(
     let cid = symbol_to_counter_id(&symbol);
     let kind_upper = kind.to_uppercase();
     let report_lower = report.to_lowercase();
-    let data = http_get(
-        "/v1/quote/financials/statements",
-        &[
-            ("counter_id", cid.as_str()),
-            ("kind", kind_upper.as_str()),
-            ("report", report_lower.as_str()),
-        ],
-        verbose,
-    )
-    .await?;
+    let mut data = if crate::openapi::is_us_account().await {
+        to_value(
+            crate::openapi::fundamental()
+                .us_financial_statement(symbol.clone(), kind_upper.as_str(), report_lower.as_str())
+                .await?,
+        )?
+    } else {
+        http_get(
+            "/v1/quote/financials/statements",
+            &[
+                ("counter_id", cid.as_str()),
+                ("kind", kind_upper.as_str()),
+                ("report", report_lower.as_str()),
+            ],
+            verbose,
+        )
+        .await?
+    };
+    // Normalise: US SDK returns "periods", HK returns "list"; also coerce null/empty-object.
+    if data["list"].is_null()
+        || data["list"]
+            .as_object()
+            .is_some_and(serde_json::Map::is_empty)
+        || data["list"].as_array().is_some_and(Vec::is_empty)
+    {
+        if let Some(periods) = data["periods"].as_array().cloned() {
+            data["list"] = Value::Array(periods);
+        } else {
+            data["list"] = Value::Array(vec![]);
+        }
+    }
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => {
@@ -2364,7 +2961,7 @@ pub async fn cmd_financial_statement(
                         .map(|n| n.to_string())
                         .or_else(|| p["ff_period"].as_str().map(str::to_string))
                         .unwrap_or_default();
-                    period_label(&per_val, yr, report)
+                    period_label(&per_val, yr, &report_lower)
                 })
                 .collect();
             let n_cols = cols.len();
@@ -2448,6 +3045,9 @@ pub async fn cmd_financial_report_latest(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
+    if crate::openapi::is_us_account().await {
+        anyhow::bail!("financial-report --latest is not supported for US accounts");
+    }
     let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
         "/v1/quote/financials/latest-report",
@@ -2915,12 +3515,10 @@ fn print_institution_rating_views(data: &Value) {
         .iter()
         .rev()
         .map(|item| {
-            let row_date = format_date(
-                item["date"]
-                    .as_i64()
-                    .or_else(|| item["date"].as_str().and_then(|s| s.parse::<i64>().ok()))
-                    .unwrap_or(0),
-            );
+            let row_date = item["date"]
+                .as_i64()
+                .or_else(|| item["date"].as_str().and_then(|s| s.parse::<i64>().ok()))
+                .map_or_else(|| "-".to_string(), format_date);
             vec![
                 row_date,
                 val_str(&item["buy"]),
@@ -3372,9 +3970,7 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
         ),
         "valuation" => object(
             "Valuation detail or history",
-            &[
-                "overview", "history", "layouts", "peers", "stocks", "metrics", "range",
-            ],
+            &["overview", "history", "metrics", "range"],
         ),
         "shareholder" => object(
             "Shareholder list, top holders, or detail",
@@ -3444,6 +4040,8 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
             "Macroeconomic indicator historical data",
             &["count", "has_more", "page", "limit", "info", "data"],
         ),
+        "etf-docs" => object("ETF document list", &["list"]),
+        "financial-report key-metrics" => object("US key financial ratios per period", &["list"]),
         _ => return None,
     };
     Some(schema)
@@ -3563,6 +4161,57 @@ fn print_financial_report_snapshot(data: &Value) {
             &OutputFormat::Pretty,
         );
     }
+}
+
+// ── US-only commands ─────────────────────────────────────────────────────────
+
+/// `longbridge etf-docs <SYMBOL>` — US accounts only (interface 34).
+/// Returns the ETF's document list (prospectus, annual reports, etc.).
+pub async fn cmd_etf_docs(
+    symbol: String,
+    limit: u32,
+    format: &OutputFormat,
+    _verbose: bool,
+) -> Result<()> {
+    if !crate::openapi::is_us_account().await {
+        anyhow::bail!("This command is only available for US accounts");
+    }
+    let data = to_value(
+        crate::openapi::fundamental()
+            .us_etf_files(symbol.clone(), Some(limit))
+            .await?,
+    )?;
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => print_us_etf_docs(&data),
+    }
+    Ok(())
+}
+
+fn is_blank(v: &Value) -> bool {
+    let s = val_str(v);
+    s.is_empty() || s == "-"
+}
+
+fn print_us_etf_docs(data: &Value) {
+    let empty = vec![];
+    let files = data["files"].as_array().unwrap_or(&empty);
+    let rows: Vec<Vec<String>> = files
+        .iter()
+        .filter(|f| !(is_blank(&f["file_type"]) && is_blank(&f["name"]) && is_blank(&f["url"])))
+        .map(|f| {
+            vec![
+                val_str(&f["file_type"]),
+                val_str(&f["name"]),
+                val_str(&f["url"]),
+            ]
+        })
+        .collect();
+    if rows.is_empty() {
+        println!("No ETF documents.");
+        return;
+    }
+    super::output::print_table(&["Type", "Name", "URL"], rows, &OutputFormat::Pretty);
 }
 
 // ── macrodata ────────────────────────────────────────────────────────────────
