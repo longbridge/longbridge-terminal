@@ -246,6 +246,27 @@ fn oauth_base_url() -> String {
     format!("{}/oauth2", crate::region::http_url())
 }
 
+/// Return the OAuth base URL for an explicit data-center region (`"us"` / `"ap"`).
+///
+/// The US data center is only reachable through the global (`.com`) access
+/// point: `.cn` has no route to it and rejects US requests outright (an
+/// authorization code comes back as `invalid_grant: code not found`) no matter
+/// what `x-dc-region` says — the header selects the DC, it cannot create a
+/// route to one. Region-aware selection still applies to AP, since `.com` may
+/// be unreachable from China Mainland networks.
+fn oauth_base_url_for_region(dc_region: longbridge::DcRegion) -> String {
+    if !crate::region::is_test_env() && dc_region == longbridge::DcRegion::Us {
+        return format!("{}/oauth2", crate::region::HTTP_URL_GLOBAL);
+    }
+    oauth_base_url()
+}
+
+/// Return the OAuth base URL to use for a credential carrying a data-center
+/// prefix (`us_…` / `ap_…`), such as an authorization code or a refresh token.
+fn oauth_base_url_for(credential: &str) -> String {
+    oauth_base_url_for_region(longbridge::DcRegion::from_credential(credential))
+}
+
 /// `/connect` reverse-authorization page URL for the current region.
 fn connect_url() -> String {
     format!("{}/connect", crate::region::open_url())
@@ -347,7 +368,8 @@ pub fn open_browser(url: &str) -> bool {
 /// web page (the region is chosen during web login). We poll both DCs for the
 /// token; the one the user authorized on returns it, and the access token's
 /// `us_`/`ap_` prefix identifies the region.
-const DEVICE_LOGIN_REGIONS: [&str; 2] = ["ap", "us"];
+const DEVICE_LOGIN_REGIONS: [longbridge::DcRegion; 2] =
+    [longbridge::DcRegion::Ap, longbridge::DcRegion::Us];
 
 /// A pending device-authorization request. Created once on AP and synced to US
 /// server-side, so the single `device_code` is valid on both data centers.
@@ -427,13 +449,16 @@ async fn poll_device_token(
     oauth_base: &str,
     client_id: &str,
     device_code: &str,
-    region: &'static str,
+    region: longbridge::DcRegion,
     shared_interval_ms: Arc<AtomicU64>,
     expires_in: u64,
     initial_delay: bool,
     verbose: bool,
 ) -> Result<longbridge::oauth::StoredToken> {
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+    // Shadow with the header/display form used throughout this function.
+    let region = region.as_str();
 
     let url = format!("{oauth_base}/token");
     let deadline = Instant::now() + Duration::from_secs(expires_in);
@@ -571,14 +596,23 @@ pub async fn device_login(verbose: bool, client_name: Option<String>) -> Result<
     //
     // The AP poller starts immediately; the US poller waits one interval before its
     // first poll to give the AP→US device-code replication time to complete.
+    //
+    // Each poller talks to its own DC's access point: the US data center is only
+    // reachable via `.com`, so on a CN region the US poller must not inherit the
+    // `.cn` base the device authorization was created on — it would poll a node
+    // with no route to the DC the user may have authorized on.
     let shared_interval_ms = Arc::new(AtomicU64::new(auth.interval.max(1) * 1000));
+    let region_bases: Vec<String> = DEVICE_LOGIN_REGIONS
+        .iter()
+        .map(|&r| oauth_base_url_for_region(r))
+        .collect();
     let mut polls: futures::stream::FuturesUnordered<_> = DEVICE_LOGIN_REGIONS
         .iter()
         .enumerate()
         .map(|(i, &region)| {
             Box::pin(poll_device_token(
                 &http_client,
-                &oauth_base,
+                &region_bases[i],
                 &client_id,
                 &auth.device_code,
                 region,
@@ -669,12 +703,18 @@ pub async fn refresh_if_expired() -> Result<()> {
         .build()
         .context("Failed to build HTTP client for token refresh")?;
 
-    let url = format!("{}/token", oauth_base_url());
-    tracing::debug!("Refreshing expired access token via {url}");
+    // The refresh token carries the same `us_…` / `ap_…` data-center prefix as
+    // the authorization code it came from: a US token can only be refreshed at
+    // `.com`, routed with `x-dc-region`. The prefix is part of the credential
+    // the server stores — send it verbatim.
+    let dc_region = longbridge::DcRegion::from_credential(&refresh_token).as_str();
+    let url = format!("{}/token", oauth_base_url_for(&refresh_token));
+    tracing::debug!("Refreshing expired access token via {url} (x-dc-region={dc_region})");
 
     let dynamic_client_id = effective_client_id();
     let resp = http_client
         .post(&url)
+        .header(longbridge::DC_REGION_HEADER, dc_region)
         .form(&[
             ("grant_type", "refresh_token"),
             ("refresh_token", refresh_token.as_str()),
@@ -891,7 +931,6 @@ pub async fn auth_code_exchange_login(code: &str) -> Result<()> {
         }
     }
 
-    let url = format!("{}/token", oauth_base_url());
     let http_client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .build()
@@ -904,9 +943,11 @@ pub async fn auth_code_exchange_login(code: &str) -> Result<()> {
     let saw_client_id = !attempts.is_empty();
     for (exchange_code, client_id) in &attempts {
         // The authorization code carries its data-center region as a prefix
-        // (`us_…` / `ap_…`); route the exchange to that DC via `x-dc-region` so
-        // a US-issued code is validated against the US server (default is AP).
+        // (`us_…` / `ap_…`). It selects both the access point (a `us_` code is
+        // only known to `.com`) and the `x-dc-region` routing header. The
+        // prefix is part of the stored code — send it verbatim, do not strip it.
         let dc_region = longbridge::DcRegion::from_credential(exchange_code).as_str();
+        let url = format!("{}/token", oauth_base_url_for(exchange_code));
         tracing::debug!("Exchanging authorization code via {url} (x-dc-region={dc_region})");
         let send_result = http_client
             .post(&url)
