@@ -24,6 +24,27 @@ const GEOTEST_TIMEOUT_SECS: u64 = 3;
 //   - Access point (`.cn` / `.com`) — this module, network routing.
 //   - Data center (`ap` / `us`)     — the `x-dc-region` header, selects the
 //     account's data center and determines which US-only APIs are available.
+//
+// The two are not freely combinable. A credential's prefix (`us_…` / `ap_…`,
+// see `longbridge::DcRegion::from_credential`) fixes which access points can
+// serve it:
+//
+//   | Data center | `.com`                             | `.cn` |
+//   |-------------|------------------------------------|-------|
+//   | `us`        | yes — the only usable access point | no    |
+//   | `ap`        | yes                                | yes   |
+//
+// `.cn` has no path to the US data center. This is a hard constraint, not a
+// latency preference: a US token sent to `.cn` still authenticates, and basic
+// calls such as `static_info` succeed, but every market-data request comes back
+// `301604 no quote access` because `.cn` cannot source US-account quotes. The
+// error reads like a missing permission and is not one.
+//
+// So a US-data-center token must be pinned to the global endpoints regardless
+// of where the client sits — see the `token_dc_is_us` guard in
+// `openapi::init_contexts`, which keeps US tokens off the CN branch even when
+// the cached geotest says China Mainland. AP tokens take the nearer access
+// point, since both serve them.
 
 // Global endpoint URLs
 pub const HTTP_URL_GLOBAL: &str = "https://openapi.longbridge.com";
