@@ -231,7 +231,11 @@ let order = ctx.submit_order(opts).await?;
 
 1. **Rate Limiting**: Longbridge OpenAPI rate limits to "no more than 10 calls per second"
 2. **Token Expiration**: The SDK automatically refreshes the access token when needed
-3. **CN / Global token interoperability**: The `.cn` and `.com` endpoints are equivalent access points (CDN-style routing), not separate environments — same user data, same token validation, same API responses. A token issued by one endpoint is accepted by the other. They differ only in routing/acceleration. Do not treat region as a token-refresh issue, and do not rewrite a server response client-side just because it contains the other region's host (e.g. a `verification_uri_complete` pointing at `.cn` is valid). Region site (`.cn`/`.com`) and data center (`x-dc-region: ap|us`) are orthogonal: only the latter determines which US-only APIs are available.
+3. **CN / Global access points**: The `.cn` and `.com` endpoints are access points (CDN-style routing), not separate environments — same user data, same token validation, same API responses, and a token issued by one is accepted by the other (`device_code` is shared across them too). Do not treat region as a token-refresh issue, and do not rewrite a server response client-side just because it contains the other region's host (a `verification_uri_complete` pointing at `.cn` is valid).
+
+   **The one difference is reach**: `.com` can authorize accounts in both data centers, while `.cn` has no path to the US data center, so it can only authorize AP accounts (Longbridge SG/HK). This is handled server-side — the `.cn` login page does not offer US accounts — so the CLI needs no detection or fallback for it. Logging in through `.com` unconditionally is not an option either: China Mainland networks may be unable to reach it.
+
+   Access point (`.cn`/`.com`) and data center (`x-dc-region: ap|us`) remain separate concepts; only the latter determines which US-only APIs are available.
 4. **Market Support**: Supports Hong Kong, US, and China A-share markets
 4. **Testing**: Per user instructions, update flow has no test coverage
 5. **Logging**: Uses `tracing` library, log files configured via `logger::init()`

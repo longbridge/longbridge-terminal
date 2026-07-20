@@ -3058,10 +3058,16 @@ pub enum AuthCmd {
     /// OAuth callback.
     ///
     /// The authorization URL may point at either `longbridge.cn` or
-    /// `longbridge.com`. These are equivalent access points (CDN-style routing)
-    /// serving identical content, and a token issued by one is accepted by the
-    /// other — either URL completes the login. Set `LONGBRIDGE_REGION=cn|global`
-    /// to pin which access point this CLI calls.
+    /// `longbridge.com`. These are access points (CDN-style routing) serving
+    /// identical content, and a token issued by one is accepted by the other.
+    /// The access point is picked automatically by network location;
+    /// `LONGBRIDGE_REGION=cn|global` pins it.
+    ///
+    /// One difference matters: `longbridge.com` can authorize accounts in both
+    /// data centers, while `longbridge.cn` can only authorize AP accounts
+    /// (Longbridge SG/HK) and does not offer US accounts on its login page. To
+    /// log in to a US account from China Mainland, run
+    /// `LONGBRIDGE_REGION=global longbridge auth login`.
     Login {
         /// Authorize using a code instead of the device flow.
         ///
