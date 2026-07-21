@@ -249,6 +249,7 @@ pub(crate) fn stock_detail(
     let detail_container = Block::default()
         .title(Line::from(titles))
         .borders(Borders::ALL)
+        .border_type(ratatui::widgets::BorderType::Rounded)
         .border_style(styles::border());
 
     // draw border

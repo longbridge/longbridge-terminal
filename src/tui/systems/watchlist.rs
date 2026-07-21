@@ -151,6 +151,7 @@ pub fn watch(frame: &mut Frame, rect: Rect, full_mode: bool) {
 
     let background = Block::default()
         .borders(Borders::ALL)
+        .border_type(ratatui::widgets::BorderType::Rounded)
         .border_style(styles::border())
         .title(format!(" {} ─── {}[g] ", t!("Watchlist"), group_name))
         .title_bottom(
@@ -211,6 +212,7 @@ fn banner(frame: &mut Frame, rect: Rect) {
     frame.render_widget(
         Block::default()
             .borders(Borders::ALL)
+            .border_type(ratatui::widgets::BorderType::Rounded)
             .border_style(styles::border()),
         rect,
     );

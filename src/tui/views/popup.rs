@@ -56,6 +56,7 @@ fn switch_account(frame: &mut Frame, rect: Rect, account: &mut LocalSearch<crate
     let paragraph = Paragraph::new(input.value()).block(
         Block::default()
             .borders(Borders::ALL)
+            .border_type(ratatui::widgets::BorderType::Rounded)
             .border_style(styles::border())
             .title(t!("SwitchAccount.title")),
     );
@@ -86,6 +87,7 @@ fn switch_account(frame: &mut Frame, rect: Rect, account: &mut LocalSearch<crate
         .block(
             Block::default()
                 .borders(Borders::all())
+                .border_type(ratatui::widgets::BorderType::Rounded)
                 .border_style(styles::border()),
         )
         .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
@@ -115,6 +117,7 @@ fn switch_currency(
     let paragraph = Paragraph::new(input.value()).block(
         Block::default()
             .borders(Borders::ALL)
+            .border_type(ratatui::widgets::BorderType::Rounded)
             .border_style(styles::border())
             .title(t!("SwitchCurrency.title")),
     );
@@ -145,6 +148,7 @@ fn switch_currency(
         .block(
             Block::default()
                 .borders(Borders::all())
+                .border_type(ratatui::widgets::BorderType::Rounded)
                 .border_style(styles::border()),
         )
         .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
@@ -174,6 +178,7 @@ fn switch_watchlist(
     let paragraph = Paragraph::new(input.value()).block(
         Block::default()
             .borders(Borders::ALL)
+            .border_type(ratatui::widgets::BorderType::Rounded)
             .border_style(styles::border())
             .title(t!("SwitchWatchlist.title")),
     );
@@ -204,6 +209,7 @@ fn switch_watchlist(
         .block(
             Block::default()
                 .borders(Borders::all())
+                .border_type(ratatui::widgets::BorderType::Rounded)
                 .border_style(styles::border()),
         )
         .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
@@ -222,6 +228,7 @@ fn searching(frame: &mut Frame, rect: Rect, search: &mut Search<openapi::search:
     let paragraph = Paragraph::new(input.value()).block(
         Block::default()
             .borders(Borders::ALL)
+            .border_type(ratatui::widgets::BorderType::Rounded)
             .border_style(styles::border())
             .title(t!("SearchStock.title")),
     );
@@ -257,6 +264,7 @@ fn search_watchlist(frame: &mut Frame, rect: Rect, search: &mut LocalSearch<Coun
     let paragraph = Paragraph::new(input.value()).block(
         Block::default()
             .borders(Borders::ALL)
+            .border_type(ratatui::widgets::BorderType::Rounded)
             .border_style(border_style)
             .title(title),
     );
@@ -289,6 +297,7 @@ fn search_watchlist(frame: &mut Frame, rect: Rect, search: &mut LocalSearch<Coun
         .block(
             Block::default()
                 .borders(Borders::all())
+                .border_type(ratatui::widgets::BorderType::Rounded)
                 .border_style(styles::border()),
         )
         .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))

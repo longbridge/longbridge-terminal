@@ -100,6 +100,7 @@ pub fn render_portfolio(
                     .block(
                         Block::default()
                             .borders(Borders::ALL)
+                            .border_type(ratatui::widgets::BorderType::Rounded)
                             .border_style(styles::border()),
                     ),
                 content_rect,
@@ -128,6 +129,7 @@ pub fn render_portfolio(
         {
             let overview_block = Block::default()
                 .borders(Borders::ALL)
+                .border_type(ratatui::widgets::BorderType::Rounded)
                 .border_style(styles::border())
                 .title(format!(
                     " {} ({}) ─── Refresh [r] ",
@@ -158,7 +160,7 @@ pub fn render_portfolio(
 
             // Split inner area: 3-column overview + 1 distribution row
             let inner_vertical = Layout::default()
-                .constraints([Constraint::Min(3), Constraint::Length(1)])
+                .constraints([Constraint::Min(3), Constraint::Length(2)])
                 .direction(Direction::Vertical)
                 .split(inner_area);
 
@@ -200,14 +202,28 @@ pub fn render_portfolio(
             let middle_items = vec![
                 ListItem::new(Line::from(vec![
                     Span::styled(format!("{}: ", t!("Portfolio.P/L")), styles::label()),
-                    Span::styled(format!("{:+.2}", overview.total_pl), pl_style),
+                    Span::styled(
+                        format!(
+                            "{}{:+.2}",
+                            styles::trend_arrow(overview.total_pl.cmp(&Decimal::ZERO)),
+                            overview.total_pl
+                        ),
+                        pl_style,
+                    ),
                 ])),
                 ListItem::new(Line::from(vec![
                     Span::styled(
                         format!("{}: ", t!("Portfolio.Intraday P/L")),
                         styles::label(),
                     ),
-                    Span::styled(format!("{:+.2}", overview.total_today_pl), today_pl_style),
+                    Span::styled(
+                        format!(
+                            "{}{:+.2}",
+                            styles::trend_arrow(overview.total_today_pl.cmp(&Decimal::ZERO)),
+                            overview.total_today_pl
+                        ),
+                        today_pl_style,
+                    ),
                 ])),
                 ListItem::new(Line::from(vec![
                     Span::styled(
@@ -281,21 +297,41 @@ pub fn render_portfolio(
                 entries.push(("Cash".to_string(), overview.total_cash, None));
                 entries.sort_by_key(|b| std::cmp::Reverse(b.1));
 
-                let mut spans: Vec<Span> = Vec::new();
+                // Two rows: a stacked proportion bar, then the legend below it.
+                let dist_rows = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Length(1), Constraint::Length(1)])
+                    .split(inner_vertical[1]);
+
+                // Row 0: one colored block segment per entry, widths
+                // proportional to value and summing to the row width.
+                let values: Vec<Decimal> = entries.iter().map(|(_, v, _)| *v).collect();
+                let seg_total: Decimal = values.iter().copied().sum();
+                let widths = distribution_segments(&values, seg_total, dist_rows[0].width);
+                let bar_spans: Vec<Span> = entries
+                    .iter()
+                    .zip(widths)
+                    .filter(|(_, w)| *w > 0)
+                    .map(|((_, _, market_opt), w)| {
+                        let color = (*market_opt).map_or(Color::Green, styles::market_color);
+                        Span::styled("█".repeat(w as usize), Style::default().fg(color))
+                    })
+                    .collect();
+                frame.render_widget(Paragraph::new(Line::from(bar_spans)), dist_rows[0]);
+
+                // Row 1: legend — colored dot + label + percent.
+                let mut legend: Vec<Span> = Vec::new();
                 for (label, value, market_opt) in &entries {
                     let pct = value / total * Decimal::ONE_HUNDRED;
-                    let dot_style = if let Some(m) = market_opt {
-                        styles::market(*m)
-                    } else {
-                        Style::default().fg(Color::Green)
-                    };
-                    spans.push(Span::styled("● ", dot_style));
-                    spans.push(Span::styled(
+                    let dot_style =
+                        market_opt.map_or(Style::default().fg(Color::Green), styles::market);
+                    legend.push(Span::styled("● ", dot_style));
+                    legend.push(Span::styled(
                         format!("{label} {pct:.1}%  "),
                         styles::label(),
                     ));
                 }
-                frame.render_widget(Paragraph::new(Line::from(spans)), inner_vertical[1]);
+                frame.render_widget(Paragraph::new(Line::from(legend)), dist_rows[1]);
             }
         }
 
@@ -303,6 +339,7 @@ pub fn render_portfolio(
         {
             let holdings_block = Block::default()
                 .borders(Borders::ALL)
+                .border_type(ratatui::widgets::BorderType::Rounded)
                 .border_style(styles::border())
                 .title(format!(" {} ", t!("Holding.Holding")))
                 .title_bottom(
@@ -510,6 +547,63 @@ pub struct View {
     pub overview: Overview,
     pub market_portfolio: HashMap<Market, MarketPortfolio>,
     pub cash_balance: CashBalance,
+}
+
+/// Split `values` into integer column widths proportional to each value,
+/// summing exactly to `width` (largest-remainder apportionment). Used to draw
+/// the asset-distribution bar without rounding drift.
+#[allow(clippy::cast_sign_loss)] // ratios are clamped non-negative before flooring
+fn distribution_segments(values: &[Decimal], total: Decimal, width: u16) -> Vec<u16> {
+    use rust_decimal::prelude::ToPrimitive;
+    if width == 0 || total <= Decimal::ZERO {
+        return vec![0; values.len()];
+    }
+    let w = f64::from(width);
+    let total_f = total.to_f64().unwrap_or(1.0);
+    let raw: Vec<f64> = values
+        .iter()
+        .map(|v| v.to_f64().unwrap_or(0.0).max(0.0) / total_f * w)
+        .collect();
+    let mut out: Vec<u16> = raw.iter().map(|r| r.floor() as u16).collect();
+    let assigned: u16 = out.iter().copied().sum();
+    let mut remainder = width.saturating_sub(assigned);
+    let mut order: Vec<usize> = (0..raw.len()).collect();
+    order.sort_by(|&a, &b| {
+        (raw[b] - raw[b].floor())
+            .partial_cmp(&(raw[a] - raw[a].floor()))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    for i in order {
+        if remainder == 0 {
+            break;
+        }
+        out[i] += 1;
+        remainder -= 1;
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::distribution_segments;
+    use rust_decimal::Decimal;
+
+    #[test]
+    fn distribution_segments_sum_to_width() {
+        let values = [Decimal::from(50), Decimal::from(30), Decimal::from(20)];
+        let segs = distribution_segments(&values, Decimal::from(100), 10);
+        assert_eq!(segs.iter().copied().sum::<u16>(), 10);
+        assert_eq!(segs, vec![5, 3, 2]);
+    }
+
+    #[test]
+    fn distribution_segments_handles_zero_total() {
+        let values = [Decimal::ZERO, Decimal::ZERO];
+        assert_eq!(
+            distribution_segments(&values, Decimal::ZERO, 10),
+            vec![0, 0]
+        );
+    }
 }
 
 pub async fn fetch_holdings() -> anyhow::Result<Vec<Counter>> {

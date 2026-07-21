@@ -59,6 +59,7 @@ pub fn render(frame: &mut Frame, rect: Rect) {
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(ratatui::widgets::BorderType::Rounded)
         .border_style(styles::border())
         .title(Span::styled(t!("settings.title"), styles::title()));
     frame.render_widget(Clear, area);

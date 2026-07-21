@@ -114,6 +114,7 @@ impl LogPanel {
             .title(" Debug Log [`] ")
             .bg(Color::Black)
             .borders(Borders::ALL)
+            .border_type(ratatui::widgets::BorderType::Rounded)
             .border_style(Style::default().fg(Color::Yellow))
             .style(Style::default().bg(Color::Black));
 

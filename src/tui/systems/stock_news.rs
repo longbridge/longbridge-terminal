@@ -306,6 +306,7 @@ fn render_news_list(frame: &mut Frame, rect: Rect, compact: bool) {
     let block = Block::default()
         .title(format!(" {title_str} "))
         .borders(Borders::ALL)
+        .border_type(ratatui::widgets::BorderType::Rounded)
         .border_style(styles::border());
     frame.render_widget(block, rect);
 
@@ -395,6 +396,7 @@ pub fn render_news_detail_view(frame: &mut Frame, rect: Rect) {
     let block = Block::default()
         .title(format!(" {detail_title} "))
         .borders(Borders::ALL)
+        .border_type(ratatui::widgets::BorderType::Rounded)
         .border_style(styles::border());
     frame.render_widget(block, chunks[1]);
 
