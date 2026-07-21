@@ -131,11 +131,13 @@ pub fn render_portfolio(
                 .borders(Borders::ALL)
                 .border_type(ratatui::widgets::BorderType::Rounded)
                 .border_style(styles::border())
-                .title(format!(
-                    " {} ({}) ─── Refresh [r] ",
-                    t!("Portfolio.Title"),
-                    overview.currency
-                ))
+                .title(Line::from(vec![
+                    Span::styled(
+                        format!(" {} ({}) ", t!("Portfolio.Title"), overview.currency),
+                        styles::title(),
+                    ),
+                    Span::styled("─── Refresh [r] ", styles::dark_gray()),
+                ]))
                 .title_bottom(
                     Line::from(Span::styled(
                         format!(" {} ", t!("Portfolio.QuoteDisclaimer")),
