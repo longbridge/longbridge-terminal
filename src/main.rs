@@ -59,6 +59,11 @@ fn print_cli_error(e: &anyhow::Error, using_api_key: bool) {
                     "Error: WebSocket error (status={status}, code={}): {}",
                     detail.code, detail.msg
                 );
+                if let Some(guidance) =
+                    option_quote_permission_guidance(detail.code, std::env::args())
+                {
+                    eprintln!("\n{guidance}");
+                }
                 return;
             }
             LbError::WsClient(WsClientError::ConnectionClosed {
@@ -74,6 +79,30 @@ fn print_cli_error(e: &anyhow::Error, using_api_key: bool) {
         }
     }
     eprintln!("Error: {e:#}");
+}
+
+fn is_option_quote_command(args: impl IntoIterator<Item = impl AsRef<str>>) -> bool {
+    let positional: Vec<String> = args
+        .into_iter()
+        .map(|arg| arg.as_ref().to_owned())
+        .filter(|arg| !arg.starts_with('-'))
+        .collect();
+
+    positional
+        .windows(2)
+        .any(|pair| pair[0] == "option" && pair[1] == "quote")
+}
+
+fn option_quote_permission_guidance(
+    error_code: u64,
+    args: impl IntoIterator<Item = impl AsRef<str>>,
+) -> Option<&'static str> {
+    (error_code == 301_604 && is_option_quote_command(args)).then_some(
+        "US option quotes require the \"OPRA US Options\" OpenAPI market data permission.\n\
+         OpenAPI permissions are separate from App / PC / Web permissions.\n\
+         Subscribe: https://open.longbridge.com/pricing/\n\
+         Check access: longbridge auth status",
+    )
 }
 
 #[tokio::main]
@@ -260,4 +289,60 @@ async fn main() {
     }
 
     update::notify_if_update_available();
+}
+
+#[cfg(test)]
+mod error_guidance_tests {
+    use super::{is_option_quote_command, option_quote_permission_guidance};
+
+    #[test]
+    fn detects_option_quote_command() {
+        assert!(is_option_quote_command([
+            "longbridge",
+            "--format",
+            "json",
+            "option",
+            "quote",
+            "AAPL260722C320000.US",
+        ]));
+    }
+
+    #[test]
+    fn ignores_other_quote_commands() {
+        assert!(!is_option_quote_command(
+            ["longbridge", "quote", "AAPL.US",]
+        ));
+        assert!(!is_option_quote_command([
+            "longbridge",
+            "option",
+            "chain",
+            "AAPL.US",
+        ]));
+    }
+
+    #[test]
+    fn guides_option_quote_access_errors() {
+        let guidance = option_quote_permission_guidance(
+            301_604,
+            ["longbridge", "option", "quote", "AAPL260722C320000.US"],
+        )
+        .expect("permission guidance");
+
+        assert!(guidance.contains("OPRA US Options"));
+        assert!(guidance.contains("https://open.longbridge.com/pricing/"));
+        assert!(guidance.contains("longbridge auth status"));
+    }
+
+    #[test]
+    fn does_not_guide_unrelated_errors() {
+        assert!(option_quote_permission_guidance(
+            301_600,
+            ["longbridge", "option", "quote", "INVALID.US"],
+        )
+        .is_none());
+        assert!(
+            option_quote_permission_guidance(301_604, ["longbridge", "quote", "AAPL.US"],)
+                .is_none()
+        );
+    }
 }
