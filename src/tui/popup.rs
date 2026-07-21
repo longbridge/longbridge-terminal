@@ -16,6 +16,7 @@ pub enum PopupKind {
     CancelOrder,
     ReplaceOrder,
     DateFilter,
+    Settings,
 }
 
 impl PopupKind {

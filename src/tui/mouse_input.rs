@@ -13,6 +13,14 @@ use crate::tui::popup::{self, PopupKind};
 use crate::tui::render::{DirtyFlags, RenderState};
 use crate::tui::systems;
 
+/// Send a navigation `Key` event into the ECS world (same path the keyboard
+/// uses), so mouse scrolling reuses each screen's existing cursor handling.
+fn send_key(world: &mut World, key: systems::Key) {
+    use bevy_ecs::system::SystemState;
+    let mut state = SystemState::<EventWriter<systems::Key>>::new(world);
+    state.get_mut(world).send(key);
+}
+
 fn kline_tab_at(rel_col: u16) -> Option<KlineType> {
     let mut x = 0u16;
     for kline_type in <KlineType as strum::IntoEnumIterator>::iter() {
@@ -37,9 +45,27 @@ pub fn handle_mouse_event(
 ) {
     use crossterm::event::{MouseButton, MouseEventKind};
 
-    let MouseEventKind::Down(MouseButton::Left) = event.kind else {
-        return;
-    };
+    // Scroll wheel: map to cursor up/down on the active screen's list, reusing
+    // the same Key events as the keyboard so every list scrolls with no
+    // per-list plumbing. (Popups manage their own scrolling elsewhere.)
+    match event.kind {
+        MouseEventKind::ScrollUp => {
+            if !popup.is_open() {
+                send_key(&mut app.world, systems::Key::Up);
+                render_state.mark_dirty(DirtyFlags::ALL);
+            }
+            return;
+        }
+        MouseEventKind::ScrollDown => {
+            if !popup.is_open() {
+                send_key(&mut app.world, systems::Key::Down);
+                render_state.mark_dirty(DirtyFlags::ALL);
+            }
+            return;
+        }
+        MouseEventKind::Down(MouseButton::Left) => {}
+        _ => return,
+    }
 
     let col = event.column;
     let row = event.row;

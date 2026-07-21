@@ -35,6 +35,7 @@ pub fn render(
         PopupKind::CancelOrder => crate::tui::systems::render_cancel_order_popup(frame, rect),
         PopupKind::ReplaceOrder => crate::tui::systems::render_replace_order_popup(frame, rect),
         PopupKind::DateFilter => crate::tui::systems::render_date_filter_popup(frame, rect),
+        PopupKind::Settings => crate::tui::views::settings::render(frame, rect),
         PopupKind::None => {}
     }
 }

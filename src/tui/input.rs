@@ -5,7 +5,7 @@ use tokio::sync::mpsc;
 
 use crate::data::WatchlistGroup;
 use crate::tui::app::{AppState, WATCHLIST};
-use crate::tui::keys::KeyConfig;
+use crate::tui::keymap::{ActionId, Context, Keymap};
 use crate::tui::nav::{get_active_symbol, navigate_to_counter, normalize_counter, show_index};
 use crate::tui::popup::{self, PopupKind};
 use crate::tui::render::{DirtyFlags, RenderState};
@@ -126,6 +126,9 @@ pub fn handle_popup_input(
         PopupKind::DateFilter => {
             systems::handle_date_filter_key(event);
         }
+        PopupKind::Settings => {
+            crate::tui::settings::handle_key(event);
+        }
         PopupKind::None => {}
     }
 }
@@ -171,6 +174,17 @@ fn handle_watchlist_search_input(app: &mut bevy_app::App, event: KeyEvent) {
     }
 }
 
+/// Whether the current screen supports opening an order-entry ticket.
+fn is_tradeable(state: AppState) -> bool {
+    matches!(
+        state,
+        AppState::Watchlist | AppState::WatchlistStock | AppState::Stock | AppState::Portfolio
+    )
+}
+
+/// Resolve a key event to an [`ActionId`] via the data-driven [`Keymap`], then
+/// execute the action for the current screen. Behavior per action is screen-
+/// aware; the keymap only decides *which* action a key triggers.
 #[allow(clippy::too_many_lines)]
 pub fn handle_global_keys(
     app: &mut bevy_app::App,
@@ -178,80 +192,78 @@ pub fn handle_global_keys(
     state: AppState,
     update_tx: mpsc::UnboundedSender<CommandQueue>,
     render_state: &mut RenderState,
-    keys: &KeyConfig,
+    keymap: &Keymap,
 ) {
-    // Ctrl+C: force quit
-    if event == keys.force_quit {
-        crate::tui::widgets::Terminal::graceful_exit(0);
-    }
+    let Some(action) = keymap.lookup(&event, Context::from_state(state)) else {
+        return;
+    };
 
-    // Number keys: switch tabs
-    if event == keys.tab_watchlist && state != AppState::Watchlist {
-        app.world
-            .insert_resource(NextState(Some(AppState::Watchlist)));
-        render_state.mark_dirty(DirtyFlags::ALL);
-        return;
-    }
-    if event == keys.tab_portfolio && state != AppState::Portfolio {
-        if app.world.get_resource::<systems::Portfolio>().is_none() {
-            app.world.insert_resource(systems::Portfolio::default());
-        }
-        app.world
-            .insert_resource(NextState(Some(AppState::Portfolio)));
-        render_state.mark_dirty(DirtyFlags::ALL);
-        return;
-    }
-    if event == keys.tab_orders && state != AppState::Orders {
-        app.world.insert_resource(NextState(Some(AppState::Orders)));
-        render_state.mark_dirty(DirtyFlags::ALL);
-        return;
-    }
+    match action {
+        ActionId::ForceQuit => crate::tui::widgets::Terminal::graceful_exit(0),
 
-    // Buy/Sell: open order entry
-    let tradeable = matches!(
-        state,
-        AppState::Watchlist | AppState::WatchlistStock | AppState::Stock | AppState::Portfolio
-    );
-    if event == keys.buy && tradeable {
-        if let Some(symbol) = get_active_symbol(app, state) {
-            systems::open_order_entry(symbol, longbridge::trade::OrderSide::Buy, None);
-            popup::open(PopupKind::OrderEntry);
-            render_state.mark_dirty(DirtyFlags::ALL);
+        ActionId::TabWatchlist => {
+            if state != AppState::Watchlist {
+                app.world
+                    .insert_resource(NextState(Some(AppState::Watchlist)));
+                render_state.mark_dirty(DirtyFlags::ALL);
+            }
         }
-        return;
-    }
-    if event == keys.sell && tradeable {
-        if let Some(symbol) = get_active_symbol(app, state) {
-            systems::open_order_entry(symbol, longbridge::trade::OrderSide::Sell, None);
-            popup::open(PopupKind::OrderEntry);
-            render_state.mark_dirty(DirtyFlags::ALL);
+        ActionId::TabPortfolio => {
+            if state != AppState::Portfolio {
+                if app.world.get_resource::<systems::Portfolio>().is_none() {
+                    app.world.insert_resource(systems::Portfolio::default());
+                }
+                app.world
+                    .insert_resource(NextState(Some(AppState::Portfolio)));
+                render_state.mark_dirty(DirtyFlags::ALL);
+            }
         }
-        return;
-    }
+        ActionId::TabOrders => {
+            if state != AppState::Orders {
+                app.world.insert_resource(NextState(Some(AppState::Orders)));
+                render_state.mark_dirty(DirtyFlags::ALL);
+            }
+        }
 
-    // Orders-specific actions
-    if state == AppState::Orders {
-        let history_mode = systems::ORDERS_MODE.load(std::sync::atomic::Ordering::Relaxed);
-        if event == keys.cancel_order && !history_mode {
-            systems::try_open_cancel_for_selected();
-            render_state.mark_dirty(DirtyFlags::ALL);
-            return;
+        ActionId::Buy => {
+            if is_tradeable(state) {
+                if let Some(symbol) = get_active_symbol(app, state) {
+                    systems::open_order_entry(symbol, longbridge::trade::OrderSide::Buy, None);
+                    popup::open(PopupKind::OrderEntry);
+                    render_state.mark_dirty(DirtyFlags::ALL);
+                }
+            }
         }
-        if event == keys.modify_order && !history_mode {
-            systems::try_open_replace_for_selected();
-            render_state.mark_dirty(DirtyFlags::ALL);
-            return;
+        ActionId::Sell => {
+            if is_tradeable(state) {
+                if let Some(symbol) = get_active_symbol(app, state) {
+                    systems::open_order_entry(symbol, longbridge::trade::OrderSide::Sell, None);
+                    popup::open(PopupKind::OrderEntry);
+                    render_state.mark_dirty(DirtyFlags::ALL);
+                }
+            }
         }
-        if event == keys.date_filter && history_mode {
-            systems::open_date_filter();
-            render_state.mark_dirty(DirtyFlags::ALL);
-            return;
-        }
-    }
 
-    // Portfolio-specific popups (a/c keys)
-    if state == AppState::Portfolio {
-        if event == keys.account_selector {
+        ActionId::CancelOrder => {
+            if !systems::ORDERS_MODE.load(std::sync::atomic::Ordering::Relaxed) {
+                systems::try_open_cancel_for_selected();
+                render_state.mark_dirty(DirtyFlags::ALL);
+            }
+        }
+        ActionId::ModifyOrder => {
+            if !systems::ORDERS_MODE.load(std::sync::atomic::Ordering::Relaxed) {
+                systems::try_open_replace_for_selected();
+                render_state.mark_dirty(DirtyFlags::ALL);
+            }
+        }
+        ActionId::DateFilter => {
+            if systems::ORDERS_MODE.load(std::sync::atomic::Ordering::Relaxed) {
+                systems::open_date_filter();
+                render_state.mark_dirty(DirtyFlags::ALL);
+            }
+        }
+
+        ActionId::AccountSelector => {
             if let Some(mut account) = app
                 .world
                 .get_resource_mut::<LocalSearch<crate::data::Account>>()
@@ -260,9 +272,8 @@ pub fn handle_global_keys(
                 account.visible();
                 render_state.mark_dirty(DirtyFlags::POPUP_ACCOUNT);
             }
-            return;
         }
-        if event == keys.currency_selector {
+        ActionId::CurrencySelector => {
             if let Some(mut currency) = app
                 .world
                 .get_resource_mut::<LocalSearch<openapi::account::CurrencyInfo>>()
@@ -271,55 +282,40 @@ pub fn handle_global_keys(
                 currency.visible();
                 render_state.mark_dirty(DirtyFlags::POPUP_CURRENCY);
             }
-            return;
         }
-    }
-
-    // Watchlist group selector (g/G)
-    if (state == AppState::Watchlist || state == AppState::WatchlistStock)
-        && (event == keys.group_selector || event == keys.group_selector_upper)
-    {
-        if let Some(mut search) = app.world.get_resource_mut::<LocalSearch<WatchlistGroup>>() {
-            popup::open(PopupKind::Watchlist);
-            search.visible();
-            render_state.mark_dirty(DirtyFlags::POPUP_WATCHLIST);
+        ActionId::GroupSelector => {
+            if let Some(mut search) = app.world.get_resource_mut::<LocalSearch<WatchlistGroup>>() {
+                popup::open(PopupKind::Watchlist);
+                search.visible();
+                render_state.mark_dirty(DirtyFlags::POPUP_WATCHLIST);
+            }
         }
-        return;
-    }
 
-    // Index shortcuts (Q/W/E)
-    if event == keys.index_us {
-        show_index(&mut app.world, 0);
-        render_state.mark_dirty(DirtyFlags::STOCK_DETAIL | DirtyFlags::WATCHLIST);
-        return;
-    }
-    if event == keys.index_hk {
-        show_index(&mut app.world, 1);
-        render_state.mark_dirty(DirtyFlags::STOCK_DETAIL | DirtyFlags::WATCHLIST);
-        return;
-    }
-    if event == keys.index_cn {
-        show_index(&mut app.world, 2);
-        render_state.mark_dirty(DirtyFlags::STOCK_DETAIL | DirtyFlags::WATCHLIST);
-        return;
-    }
-
-    // Toggle layout (t): switch between Stock/WatchlistStock
-    if event == keys.toggle_layout {
-        if state == AppState::Stock {
-            app.world
-                .insert_resource(NextState(Some(AppState::WatchlistStock)));
-            render_state.mark_dirty(DirtyFlags::STOCK_DETAIL | DirtyFlags::WATCHLIST);
-        } else if state == AppState::WatchlistStock {
-            app.world.insert_resource(NextState(Some(AppState::Stock)));
+        ActionId::IndexUs => {
+            show_index(&mut app.world, 0);
             render_state.mark_dirty(DirtyFlags::STOCK_DETAIL | DirtyFlags::WATCHLIST);
         }
-        return;
-    }
+        ActionId::IndexHk => {
+            show_index(&mut app.world, 1);
+            render_state.mark_dirty(DirtyFlags::STOCK_DETAIL | DirtyFlags::WATCHLIST);
+        }
+        ActionId::IndexCn => {
+            show_index(&mut app.world, 2);
+            render_state.mark_dirty(DirtyFlags::STOCK_DETAIL | DirtyFlags::WATCHLIST);
+        }
 
-    // Refresh (R)
-    if event == keys.refresh {
-        match state {
+        ActionId::ToggleLayout => {
+            if state == AppState::Stock {
+                app.world
+                    .insert_resource(NextState(Some(AppState::WatchlistStock)));
+                render_state.mark_dirty(DirtyFlags::STOCK_DETAIL | DirtyFlags::WATCHLIST);
+            } else if state == AppState::WatchlistStock {
+                app.world.insert_resource(NextState(Some(AppState::Stock)));
+                render_state.mark_dirty(DirtyFlags::STOCK_DETAIL | DirtyFlags::WATCHLIST);
+            }
+        }
+
+        ActionId::Refresh => match state {
             AppState::Portfolio => {
                 systems::refresh_portfolio();
                 render_state.mark_dirty(DirtyFlags::PORTFOLIO);
@@ -348,186 +344,137 @@ pub fn handle_global_keys(
                 render_state.mark_dirty(DirtyFlags::ALL);
             }
             _ => {}
-        }
-        return;
-    }
+        },
 
-    // Search (/)
-    if event == keys.search {
-        if state == AppState::Watchlist || state == AppState::WatchlistStock {
-            let mut ws = app
-                .world
-                .resource_mut::<LocalSearch<crate::data::Counter>>();
-            ws.visible();
-            popup::open(PopupKind::WatchlistSearch);
-            render_state.mark_dirty(DirtyFlags::ALL);
-        } else {
-            let mut search = app
-                .world
-                .resource_mut::<Search<openapi::search::StockItem>>();
-            search.visible();
-            popup::open(PopupKind::Search);
-            render_state.mark_dirty(DirtyFlags::POPUP_SEARCH);
-        }
-        return;
-    }
-
-    // Help (?)
-    if event == keys.help {
-        popup::open(PopupKind::Help);
-        render_state.mark_dirty(DirtyFlags::POPUP_HELP);
-        return;
-    }
-
-    // Quit (q)
-    if event == keys.quit {
-        if state == AppState::WatchlistStock {
-            let news_view = systems::NEWS_VIEW.load(std::sync::atomic::Ordering::Relaxed);
-            match news_view {
-                systems::NewsView::Detail => {
-                    systems::NEWS_VIEW.store(
-                        systems::NewsView::List,
-                        std::sync::atomic::Ordering::Relaxed,
-                    );
-                    render_state.mark_dirty(DirtyFlags::ALL);
-                }
-                systems::NewsView::List => {
-                    systems::NEWS_VIEW.store(
-                        systems::NewsView::Quote,
-                        std::sync::atomic::Ordering::Relaxed,
-                    );
-                    render_state.mark_dirty(DirtyFlags::ALL);
-                }
-                systems::NewsView::Quote => {
-                    app.world
-                        .insert_resource(NextState(Some(AppState::Watchlist)));
-                    render_state.mark_dirty(DirtyFlags::ALL);
-                }
+        ActionId::Search => {
+            if state == AppState::Watchlist || state == AppState::WatchlistStock {
+                let mut ws = app
+                    .world
+                    .resource_mut::<LocalSearch<crate::data::Counter>>();
+                ws.visible();
+                popup::open(PopupKind::WatchlistSearch);
+                render_state.mark_dirty(DirtyFlags::ALL);
+            } else {
+                let mut search = app
+                    .world
+                    .resource_mut::<Search<openapi::search::StockItem>>();
+                search.visible();
+                popup::open(PopupKind::Search);
+                render_state.mark_dirty(DirtyFlags::POPUP_SEARCH);
             }
-        } else {
-            crate::tui::widgets::Terminal::graceful_exit(0);
         }
-        return;
-    }
 
-    // WatchlistStock-specific actions
-    if state == AppState::WatchlistStock {
-        if event == keys.news_toggle {
+        ActionId::Help => {
+            popup::open(PopupKind::Help);
+            render_state.mark_dirty(DirtyFlags::POPUP_HELP);
+        }
+
+        ActionId::Quit => {
+            if state == AppState::WatchlistStock {
+                cycle_news_view_back(app, render_state);
+            } else {
+                crate::tui::widgets::Terminal::graceful_exit(0);
+            }
+        }
+
+        ActionId::Escape => {
+            if state == AppState::WatchlistStock {
+                cycle_news_view_back(app, render_state);
+            } else if state == AppState::Stock || state == AppState::Orders {
+                app.world
+                    .insert_resource(NextState(Some(AppState::Watchlist)));
+                render_state.mark_dirty(DirtyFlags::ALL);
+            } else {
+                crate::tui::widgets::Terminal::graceful_exit(0);
+            }
+        }
+
+        ActionId::NewsToggle => {
             send_evt(systems::Key::NewsToggle, &mut app.world);
             render_state.mark_dirty(DirtyFlags::ALL);
-            return;
         }
-        if event == keys.news_open {
+        ActionId::NewsOpen => {
             send_evt(systems::Key::NewsOpen, &mut app.world);
             render_state.mark_dirty(DirtyFlags::ALL);
-            return;
         }
-        if is_page_up(event) || is_shift_k(event) {
+        ActionId::NewsScrollUp => {
             send_evt(systems::Key::NewsScrollUp, &mut app.world);
             render_state.mark_dirty(DirtyFlags::ALL);
-            return;
         }
-        if is_page_down(event) || is_shift_j(event) {
+        ActionId::NewsScrollDown => {
             send_evt(systems::Key::NewsScrollDown, &mut app.world);
             render_state.mark_dirty(DirtyFlags::ALL);
-            return;
         }
-    }
 
-    // Escape
-    if is_esc(event) {
-        if state == AppState::WatchlistStock {
-            let news_view = systems::NEWS_VIEW.load(std::sync::atomic::Ordering::Relaxed);
-            match news_view {
-                systems::NewsView::Detail => {
-                    systems::NEWS_VIEW.store(
-                        systems::NewsView::List,
-                        std::sync::atomic::Ordering::Relaxed,
-                    );
-                    render_state.mark_dirty(DirtyFlags::ALL);
-                }
-                systems::NewsView::List => {
-                    systems::NEWS_VIEW.store(
-                        systems::NewsView::Quote,
-                        std::sync::atomic::Ordering::Relaxed,
-                    );
-                    render_state.mark_dirty(DirtyFlags::ALL);
-                }
-                systems::NewsView::Quote => {
-                    app.world
-                        .insert_resource(NextState(Some(AppState::Watchlist)));
-                    render_state.mark_dirty(DirtyFlags::ALL);
-                }
-            }
-        } else if state == AppState::Stock || state == AppState::Orders {
+        ActionId::Up => {
+            send_evt(systems::Key::Up, &mut app.world);
+            render_state.mark_dirty(nav_dirty(state));
+        }
+        ActionId::Down => {
+            send_evt(systems::Key::Down, &mut app.world);
+            render_state.mark_dirty(nav_dirty(state));
+        }
+        ActionId::Left => {
+            send_evt(systems::Key::Left, &mut app.world);
+            render_state.mark_dirty(match state {
+                AppState::Stock => DirtyFlags::STOCK_DETAIL,
+                _ => DirtyFlags::ALL,
+            });
+        }
+        ActionId::Right => {
+            send_evt(systems::Key::Right, &mut app.world);
+            render_state.mark_dirty(match state {
+                AppState::Stock => DirtyFlags::STOCK_DETAIL,
+                _ => DirtyFlags::ALL,
+            });
+        }
+        ActionId::Tab => {
+            send_evt(systems::Key::Tab, &mut app.world);
+            render_state.mark_dirty(match state {
+                AppState::Stock => DirtyFlags::STOCK_DETAIL,
+                _ => DirtyFlags::ALL,
+            });
+        }
+        ActionId::BackTab => {
+            send_evt(systems::Key::BackTab, &mut app.world);
+            render_state.mark_dirty(match state {
+                AppState::Stock => DirtyFlags::STOCK_DETAIL,
+                _ => DirtyFlags::ALL,
+            });
+        }
+        ActionId::Enter => {
+            send_evt(systems::Key::Enter, &mut app.world);
+            render_state.mark_dirty(DirtyFlags::ALL);
+        }
+
+        ActionId::OpenSettings => {
+            crate::tui::settings::open();
+            render_state.mark_dirty(DirtyFlags::ALL);
+        }
+
+        // Handled globally in the event loop (before the popup check), so it
+        // is never reached here; listed for exhaustiveness.
+        ActionId::ToggleLog => {}
+    }
+}
+
+/// Step the `WatchlistStock` news view back one level (Detail -> List -> Quote),
+/// finally returning to the Watchlist. Shared by `q` and `Esc`.
+fn cycle_news_view_back(app: &mut bevy_app::App, render_state: &mut RenderState) {
+    use std::sync::atomic::Ordering;
+    match systems::NEWS_VIEW.load(Ordering::Relaxed) {
+        systems::NewsView::Detail => {
+            systems::NEWS_VIEW.store(systems::NewsView::List, Ordering::Relaxed);
+        }
+        systems::NewsView::List => {
+            systems::NEWS_VIEW.store(systems::NewsView::Quote, Ordering::Relaxed);
+        }
+        systems::NewsView::Quote => {
             app.world
                 .insert_resource(NextState(Some(AppState::Watchlist)));
-            render_state.mark_dirty(DirtyFlags::ALL);
-        } else {
-            crate::tui::widgets::Terminal::graceful_exit(0);
         }
-        return;
     }
-
-    // Navigation: Up/k/K
-    if is_up(event) {
-        send_evt(systems::Key::Up, &mut app.world);
-        render_state.mark_dirty(nav_dirty(state));
-        return;
-    }
-
-    // Navigation: Down/j/J
-    if is_down(event) {
-        send_evt(systems::Key::Down, &mut app.world);
-        render_state.mark_dirty(nav_dirty(state));
-        return;
-    }
-
-    // Navigation: Left/h/H
-    if is_left(event) {
-        send_evt(systems::Key::Left, &mut app.world);
-        render_state.mark_dirty(match state {
-            AppState::Stock => DirtyFlags::STOCK_DETAIL,
-            _ => DirtyFlags::ALL,
-        });
-        return;
-    }
-
-    // Navigation: Right/l/L
-    if is_right(event) {
-        send_evt(systems::Key::Right, &mut app.world);
-        render_state.mark_dirty(match state {
-            AppState::Stock => DirtyFlags::STOCK_DETAIL,
-            _ => DirtyFlags::ALL,
-        });
-        return;
-    }
-
-    // Tab
-    if is_tab(event) {
-        send_evt(systems::Key::Tab, &mut app.world);
-        render_state.mark_dirty(match state {
-            AppState::Stock => DirtyFlags::STOCK_DETAIL,
-            _ => DirtyFlags::ALL,
-        });
-        return;
-    }
-
-    // BackTab (Shift+Tab)
-    if is_backtab(event) {
-        send_evt(systems::Key::BackTab, &mut app.world);
-        render_state.mark_dirty(match state {
-            AppState::Stock => DirtyFlags::STOCK_DETAIL,
-            _ => DirtyFlags::ALL,
-        });
-        return;
-    }
-
-    // Enter
-    if is_enter(event) {
-        send_evt(systems::Key::Enter, &mut app.world);
-        render_state.mark_dirty(DirtyFlags::ALL);
-    }
+    render_state.mark_dirty(DirtyFlags::ALL);
 }
 
 fn nav_dirty(state: AppState) -> DirtyFlags {
@@ -542,92 +489,6 @@ fn nav_dirty(state: AppState) -> DirtyFlags {
 fn send_evt<T: Event>(evt: T, world: &mut World) {
     let mut state = SystemState::<EventWriter<T>>::new(world);
     state.get_mut(world).send(evt);
-}
-
-// Key matching helpers to replace the verbose struct literal patterns
-
-fn is_esc(event: KeyEvent) -> bool {
-    use crossterm::event::{KeyCode, KeyModifiers};
-    event.code == KeyCode::Esc
-        && event.modifiers == KeyModifiers::NONE
-        && event.kind == crossterm::event::KeyEventKind::Press
-}
-
-fn is_up(event: KeyEvent) -> bool {
-    use crossterm::event::{KeyCode, KeyModifiers};
-    event.kind == crossterm::event::KeyEventKind::Press
-        && matches!(event.code, KeyCode::Up | KeyCode::Char('k'))
-        && matches!(event.modifiers, KeyModifiers::NONE | KeyModifiers::SHIFT)
-}
-
-fn is_down(event: KeyEvent) -> bool {
-    use crossterm::event::{KeyCode, KeyModifiers};
-    event.kind == crossterm::event::KeyEventKind::Press
-        && matches!(event.code, KeyCode::Down | KeyCode::Char('j'))
-        && matches!(event.modifiers, KeyModifiers::NONE | KeyModifiers::SHIFT)
-}
-
-fn is_left(event: KeyEvent) -> bool {
-    use crossterm::event::{KeyCode, KeyModifiers};
-    event.kind == crossterm::event::KeyEventKind::Press
-        && matches!(event.code, KeyCode::Left | KeyCode::Char('h'))
-        && matches!(event.modifiers, KeyModifiers::NONE | KeyModifiers::SHIFT)
-}
-
-fn is_right(event: KeyEvent) -> bool {
-    use crossterm::event::{KeyCode, KeyModifiers};
-    event.kind == crossterm::event::KeyEventKind::Press
-        && matches!(event.code, KeyCode::Right | KeyCode::Char('l'))
-        && matches!(event.modifiers, KeyModifiers::NONE | KeyModifiers::SHIFT)
-}
-
-fn is_tab(event: KeyEvent) -> bool {
-    use crossterm::event::{KeyCode, KeyModifiers};
-    event.code == KeyCode::Tab
-        && event.modifiers == KeyModifiers::NONE
-        && event.kind == crossterm::event::KeyEventKind::Press
-}
-
-fn is_backtab(event: KeyEvent) -> bool {
-    use crossterm::event::{KeyCode, KeyModifiers};
-    event.code == KeyCode::BackTab
-        && event.modifiers == KeyModifiers::SHIFT
-        && event.kind == crossterm::event::KeyEventKind::Press
-}
-
-fn is_enter(event: KeyEvent) -> bool {
-    use crossterm::event::{KeyCode, KeyModifiers};
-    event.code == KeyCode::Enter
-        && event.modifiers == KeyModifiers::NONE
-        && event.kind == crossterm::event::KeyEventKind::Press
-}
-
-fn is_page_up(event: KeyEvent) -> bool {
-    use crossterm::event::{KeyCode, KeyModifiers};
-    event.code == KeyCode::PageUp
-        && event.modifiers == KeyModifiers::NONE
-        && event.kind == crossterm::event::KeyEventKind::Press
-}
-
-fn is_page_down(event: KeyEvent) -> bool {
-    use crossterm::event::{KeyCode, KeyModifiers};
-    event.code == KeyCode::PageDown
-        && event.modifiers == KeyModifiers::NONE
-        && event.kind == crossterm::event::KeyEventKind::Press
-}
-
-fn is_shift_k(event: KeyEvent) -> bool {
-    use crossterm::event::{KeyCode, KeyModifiers};
-    event.code == KeyCode::Char('K')
-        && event.modifiers == KeyModifiers::SHIFT
-        && event.kind == crossterm::event::KeyEventKind::Press
-}
-
-fn is_shift_j(event: KeyEvent) -> bool {
-    use crossterm::event::{KeyCode, KeyModifiers};
-    event.code == KeyCode::Char('J')
-        && event.modifiers == KeyModifiers::SHIFT
-        && event.kind == crossterm::event::KeyEventKind::Press
 }
 
 pub fn handle_popup_mouse_click(
