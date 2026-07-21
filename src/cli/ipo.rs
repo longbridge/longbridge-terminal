@@ -13,6 +13,18 @@ fn print_json(value: &Value) {
     );
 }
 
+fn optional_detail_result(result: Result<Value>, endpoint: &str, verbose: bool) -> Value {
+    match result {
+        Ok(value) => value,
+        Err(error) => {
+            if verbose {
+                eprintln!("* Warning: {endpoint} unavailable: {error}");
+            }
+            Value::Null
+        }
+    }
+}
+
 fn val_str(v: &Value) -> String {
     match v {
         Value::String(s) => s.clone(),
@@ -691,9 +703,13 @@ pub async fn cmd_ipo_detail(
         http_get("/v1/ipo/eligibility", &eligibility_params, verbose),
         http_get("/v1/ipo/holdings", &holdings_params, verbose),
     );
-    let timeline_data = timeline_data?;
-    let eligibility_data = eligibility_data?;
-    let holdings_data = holdings_data?;
+    // Profile is the source of truth for whether IPO detail exists. The remaining
+    // endpoints enrich the output, but some account types (notably paper trading)
+    // do not support every endpoint. Do not discard valid profile data when one
+    // optional service is unavailable.
+    let timeline_data = optional_detail_result(timeline_data, "IPO timeline", verbose);
+    let eligibility_data = optional_detail_result(eligibility_data, "IPO eligibility", verbose);
+    let holdings_data = optional_detail_result(holdings_data, "IPO holdings", verbose);
     match format {
         OutputFormat::Json => {
             let mut result = serde_json::Map::new();
@@ -1397,4 +1413,32 @@ fn ipo_order_detail_schema_fields() -> &'static [&'static str] {
         "doc",
         "explanation",
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::optional_detail_result;
+    use anyhow::anyhow;
+    use serde_json::{json, Value};
+
+    #[test]
+    fn optional_detail_preserves_successful_response() {
+        let response = json!({"available": true});
+
+        assert_eq!(
+            optional_detail_result(Ok(response.clone()), "IPO holdings", false),
+            response
+        );
+    }
+
+    #[test]
+    fn optional_detail_degrades_api_error_to_null() {
+        let response = optional_detail_result(
+            Err(anyhow!("openapi error: code=202101: internal server error")),
+            "IPO holdings",
+            false,
+        );
+
+        assert_eq!(response, Value::Null);
+    }
 }
