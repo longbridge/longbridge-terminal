@@ -11,7 +11,10 @@ use crate::utils::Sign;
 
 #[inline]
 pub fn header() -> Style {
-    Style::default().fg(Color::Gray)
+    // Bold table headers to lift them off the data rows below.
+    Style::default()
+        .fg(Color::Gray)
+        .add_modifier(Modifier::BOLD)
 }
 
 #[inline]
@@ -49,6 +52,13 @@ pub fn keyboard() -> Style {
     text()
 }
 
+/// Style for the `[key]` part of a shortcut hint — brighter + bold so the key
+/// stands out from its dimmed description (Grok-style hint hierarchy).
+#[inline]
+pub fn hint_key() -> Style {
+    gray().add_modifier(Modifier::BOLD)
+}
+
 #[inline]
 pub fn popup() -> Style {
     text()
@@ -56,7 +66,8 @@ pub fn popup() -> Style {
 
 #[inline]
 pub fn title() -> Style {
-    text()
+    // Bold titles give panels/modals a clear visual anchor.
+    text().add_modifier(Modifier::BOLD)
 }
 
 #[inline]
@@ -70,15 +81,19 @@ pub fn active_border() -> Style {
 }
 
 #[inline]
-pub fn market(m: Market) -> Style {
+pub fn market_color(m: Market) -> Color {
     use crate::data::Market as M;
-    let color = match m {
+    match m {
         M::US => Color::Blue,
         M::HK => Color::Magenta,
         M::CN => Color::Red,
         M::SG => Color::Cyan,
-    };
-    Style::default().fg(color)
+    }
+}
+
+#[inline]
+pub fn market(m: Market) -> Style {
+    Style::default().fg(market_color(m))
 }
 
 #[inline]
@@ -87,6 +102,17 @@ pub fn up(val: Ordering) -> Style {
         Ordering::Less => bull_bear().1,
         Ordering::Equal => Style::default().fg(Color::Reset),
         Ordering::Greater => bull_bear().0,
+    }
+}
+
+/// Direction glyph for a value's sign — a quick up/down cue, independent of the
+/// red/green color convention (▲ = up, ▼ = down, empty = flat).
+#[inline]
+pub fn trend_arrow(val: Ordering) -> &'static str {
+    match val {
+        Ordering::Greater => "▲ ",
+        Ordering::Less => "▼ ",
+        Ordering::Equal => "",
     }
 }
 
@@ -232,4 +258,17 @@ pub fn offline() -> Style {
 
 pub fn bmp() -> Style {
     Style::default().fg(Color::Yellow)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::trend_arrow;
+    use std::cmp::Ordering;
+
+    #[test]
+    fn trend_arrow_directions() {
+        assert_eq!(trend_arrow(Ordering::Greater), "▲ ");
+        assert_eq!(trend_arrow(Ordering::Less), "▼ ");
+        assert_eq!(trend_arrow(Ordering::Equal), "");
+    }
 }

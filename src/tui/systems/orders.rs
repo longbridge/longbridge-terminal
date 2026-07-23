@@ -932,6 +932,7 @@ fn make_orders_table<'a>(
     let border_style = styles::border();
     let mut block = Block::default()
         .borders(Borders::ALL)
+        .border_type(ratatui::widgets::BorderType::Rounded)
         .border_style(border_style)
         .title(title);
     if let Some(hints) = bottom_hints {
@@ -1245,6 +1246,7 @@ pub fn render_order_entry_popup(frame: &mut Frame, rect: Rect) {
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(ratatui::widgets::BorderType::Rounded)
         .border_style(side_style)
         .title(Line::from(vec![
             Span::raw(format!(" {} — ", t!("Trade.PlaceOrder"))),
@@ -1434,6 +1436,7 @@ pub fn render_cancel_order_popup(frame: &mut Frame, rect: Rect) {
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(ratatui::widgets::BorderType::Rounded)
         .border_style(styles::border())
         .title(format!(" {} ", t!("CancelOrder.Title")));
 
@@ -1488,6 +1491,7 @@ pub fn render_replace_order_popup(frame: &mut Frame, rect: Rect) {
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(ratatui::widgets::BorderType::Rounded)
         .border_style(styles::border())
         .title(format!(" {} ", t!("ReplaceOrder.Title")))
         .title_bottom(
@@ -1618,6 +1622,7 @@ pub fn render_date_filter_popup(frame: &mut Frame, rect: Rect) {
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(ratatui::widgets::BorderType::Rounded)
         .border_style(styles::border())
         .title(format!(" {} ", t!("Orders.DateFilterTitle")))
         .title_bottom(

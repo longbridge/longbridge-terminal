@@ -53,7 +53,15 @@ pub fn render(frame: &mut Frame, rect: Rect, state: AppState) {
         if i > 0 {
             spans.push(Span::styled(" ", dark_gray_style));
         }
-        spans.push(Span::styled(t!(action.label).to_string(), dark_gray_style));
+        // Split "Name [key]" into a dim label + a bold key.
+        let label = t!(action.label).to_string();
+        if let Some(open) = label.rfind('[') {
+            let (name, key) = label.split_at(open);
+            spans.push(Span::styled(name.to_string(), dark_gray_style));
+            spans.push(Span::styled(key.to_string(), styles::hint_key()));
+        } else {
+            spans.push(Span::styled(label, dark_gray_style));
+        }
     }
     let user_info = Paragraph::new(Line::from(spans)).alignment(Alignment::Right);
 

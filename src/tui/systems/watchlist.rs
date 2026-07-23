@@ -151,8 +151,12 @@ pub fn watch(frame: &mut Frame, rect: Rect, full_mode: bool) {
 
     let background = Block::default()
         .borders(Borders::ALL)
+        .border_type(ratatui::widgets::BorderType::Rounded)
         .border_style(styles::border())
-        .title(format!(" {} ─── {}[g] ", t!("Watchlist"), group_name))
+        .title(Line::from(vec![
+            Span::styled(format!(" {} ", t!("Watchlist")), styles::title()),
+            Span::styled(format!("─── {group_name}[g] "), styles::dark_gray()),
+        ]))
         .title_bottom(
             Line::from(vec![
                 Span::styled(format!(" {} ", t!("Trade.BuyKey")), styles::dark_gray()),
@@ -211,6 +215,7 @@ fn banner(frame: &mut Frame, rect: Rect) {
     frame.render_widget(
         Block::default()
             .borders(Borders::ALL)
+            .border_type(ratatui::widgets::BorderType::Rounded)
             .border_style(styles::border()),
         rect,
     );
