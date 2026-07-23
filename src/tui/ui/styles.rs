@@ -120,11 +120,20 @@ pub fn currency(currency: &str) -> Style {
     Style::default().fg(color)
 }
 
+// Global up/down color convention. Defaults to GreenUp (China mainland
+// convention: green = up); overridden at startup from persisted user settings.
+static STOCK_COLOR_MODE: atomic::Atomic<StockColorMode> =
+    atomic::Atomic::new(StockColorMode::GreenUp);
+
+/// Set the global stock up/down color convention (called from settings).
+#[inline]
+pub fn set_stock_color_mode(mode: StockColorMode) {
+    STOCK_COLOR_MODE.store(mode, std::sync::atomic::Ordering::Relaxed);
+}
+
 #[inline]
 pub fn stock_color_mode() -> StockColorMode {
-    // Default to GreenUp mode (green for up, red for down - China mainland convention)
-    // TODO: Read from user settings
-    StockColorMode::GreenUp
+    STOCK_COLOR_MODE.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 #[inline]

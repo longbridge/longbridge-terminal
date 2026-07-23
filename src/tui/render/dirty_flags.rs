@@ -91,7 +91,8 @@ impl DirtyFlags {
             PopupKind::OrderEntry
             | PopupKind::CancelOrder
             | PopupKind::ReplaceOrder
-            | PopupKind::DateFilter => self.insert(Self::ALL),
+            | PopupKind::DateFilter
+            | PopupKind::Settings => self.insert(Self::ALL),
             PopupKind::None => {}
         }
         self

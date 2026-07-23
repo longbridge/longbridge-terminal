@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 use crate::data::{Counter, User, Watchlist, WatchlistGroup};
 use crate::tui::init;
 use crate::tui::input;
-use crate::tui::keys::KeyConfig;
+use crate::tui::keymap::{ActionId, Context};
 use crate::tui::mouse_input;
 use crate::tui::popup;
 use crate::tui::render::{DirtyFlags, RenderState};
@@ -51,6 +51,9 @@ pub async fn run(
     _args: crate::Args,
     mut quote_receiver: impl tokio_stream::Stream<Item = longbridge::quote::PushEvent> + Unpin,
 ) {
+    // Apply persisted user settings (e.g. up/down colors) before first render.
+    crate::tui::settings::load_and_apply();
+
     let (update_tx, mut update_rx) = mpsc::unbounded_channel();
     UPDATE_TX.set(update_tx.clone()).ok();
 
@@ -166,7 +169,7 @@ pub async fn run(
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-    let keys = KeyConfig::default();
+    let keymap = crate::tui::keymap::global();
     let mut events = crossterm::event::EventStream::new();
     let mut render_state = RenderState::new();
     render_state.mark_all_dirty();
@@ -251,7 +254,7 @@ pub async fn run(
                 let state = *app.world.resource::<State<AppState>>().get();
 
                 // Toggle log panel: global shortcut, works even with popups
-                if event == keys.toggle_log {
+                if keymap.lookup(&event, Context::Always) == Some(ActionId::ToggleLog) {
                     let was_visible = LOG_PANEL_VISIBLE.load(Ordering::Relaxed);
                     LOG_PANEL_VISIBLE.store(!was_visible, Ordering::Relaxed);
                     render_state.mark_dirty(DirtyFlags::ALL);
@@ -306,7 +309,7 @@ pub async fn run(
                     state,
                     update_tx.clone(),
                     &mut render_state,
-                    &keys,
+                    keymap,
                 );
             }
         }

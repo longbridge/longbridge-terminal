@@ -153,7 +153,10 @@ impl TradeStatusExt for TradeStatus {
 }
 
 /// Stock color mode
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, bytemuck::NoUninit,
+)]
+#[repr(u8)]
 pub enum StockColorMode {
     #[default]
     RedUp,

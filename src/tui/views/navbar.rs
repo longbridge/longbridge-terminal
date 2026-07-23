@@ -33,11 +33,6 @@ pub fn render(frame: &mut Frame, rect: Rect, state: AppState) {
         });
 
     let dark_gray_style = styles::dark_gray();
-    let search = Span::styled(t!("Keyboard.Search"), dark_gray_style);
-    let help = Span::styled(t!("Keyboard.Help"), dark_gray_style);
-    let log = Span::styled(t!("Keyboard.Console"), dark_gray_style);
-    let quit = Span::styled(t!("Keyboard.Quit"), dark_gray_style);
-
     let account_channel = ACCOUNT_CHANNEL.read().expect("poison").clone();
     let mut spans: Vec<Span> = Vec::new();
     if account_channel.as_deref() == Some("lb_papertrading") {
@@ -47,15 +42,19 @@ pub fn render(frame: &mut Frame, rect: Rect, state: AppState) {
         ));
         spans.push(Span::styled(" | ", dark_gray_style));
     }
-    spans.extend([
-        search,
-        Span::styled(" ", dark_gray_style),
-        help,
-        Span::styled(" ", dark_gray_style),
-        log,
-        Span::styled(" ", dark_gray_style),
-        quit,
-    ]);
+    // Context-aware shortcut hints derived from the keymap (single source of
+    // truth), so the navbar shows the keys actually available on this screen.
+    let ctx = crate::tui::keymap::Context::from_state(state);
+    for (i, action) in crate::tui::keymap::global()
+        .navbar_hints(ctx)
+        .iter()
+        .enumerate()
+    {
+        if i > 0 {
+            spans.push(Span::styled(" ", dark_gray_style));
+        }
+        spans.push(Span::styled(t!(action.label).to_string(), dark_gray_style));
+    }
     let user_info = Paragraph::new(Line::from(spans)).alignment(Alignment::Right);
 
     frame.render_widget(tabs, chunks[0]);
