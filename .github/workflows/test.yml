@@ -25,3 +25,22 @@ jobs:
           key: ubuntu-test-cargo-${{ hashFiles('**/Cargo.lock') }}
       - name: Test
         run: make test
+
+      # The runner sits outside China Mainland, so access-point detection must
+      # resolve to the global endpoints. This is the regression guard for
+      # reading geotest's country code: while detection keyed off mere
+      # reachability, geotest's globally reachable CDN answered here too and
+      # this asserted "CN", pinning overseas clients to longbridge.cn.
+      #
+      # `check` needs no credentials — it reports the token as invalid and
+      # still prints the region it resolved.
+      - name: Verify region detection resolves to global
+        run: |
+          cargo run --quiet -- check --format json > check.json
+          cat check.json
+          active=$(jq -r '.region.active' check.json)
+          cached=$(jq -r '.region.cached' check.json)
+          if [ "$active" != "Global" ] || [ "$cached" != "global" ]; then
+            echo "::error::Expected the global access point on a runner outside China Mainland, got active=$active cached=$cached"
+            exit 1
+          fi
