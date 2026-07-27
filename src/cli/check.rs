@@ -16,9 +16,41 @@ const RED: &str = "\x1b[31m";
 const DIM: &str = "\x1b[2m";
 const RESET: &str = "\x1b[0m";
 
+/// How much faster the other access point must measure before its latency
+/// overrides the geo verdict — both an absolute and a relative margin.
+///
+/// Geolocation is only a proxy for "which access point serves you better"; the
+/// probe measures that directly. But a single sample is noisy, and a
+/// split-tunnel proxy can route geotest and the API over entirely different
+/// paths, so only a wide, unambiguous gap should repin. Sized from observed
+/// data: a same-continent 41ms / 20% edge is noise; a split-tunnel 135ms / 42%
+/// gap is not.
+const REPIN_MIN_DELTA_MS: u64 = 50;
+
 struct ProbeStats {
     ok: bool,
     ms: u64,
+}
+
+/// Whether measured latency should override the geo verdict, and which way.
+///
+/// `None` leaves the verdict alone.
+fn repin_from_latency(is_cn: bool, global: &ProbeStats, cn: &ProbeStats) -> Option<bool> {
+    let (active, other) = if is_cn { (cn, global) } else { (global, cn) };
+
+    // An unreachable access point is never the right one — switch whenever the
+    // alternative works. This is the case that stranded overseas clients.
+    if !active.ok {
+        return other.ok.then_some(!is_cn);
+    }
+    if !other.ok {
+        return None;
+    }
+
+    let faster_by = active.ms.checked_sub(other.ms)?;
+    // `other.ms * 4 <= active.ms * 3` is "at least 25% faster" in integers.
+    let decisive = faster_by >= REPIN_MIN_DELTA_MS && other.ms * 4 <= active.ms * 3;
+    decisive.then_some(!is_cn)
 }
 
 /// Measures HTTPS warm-connection latency with `PROBE_COUNT` requests.
@@ -82,10 +114,9 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
     // ── Region ───────────────────────────────────────────────────────────────
     // Detect rather than read the cache: reporting a stale verdict would defeat
     // the point of a diagnostic, and detecting repairs the cache along the way.
-    region::redetect_region().await;
-    let region_cached = region::cached_verdict().unwrap_or("none");
+    let geotest_country = region::redetect_region().await;
     let region_override = region::region_override();
-    let is_cn = region::is_cn_cached();
+    let mut is_cn = region::is_cn_cached();
 
     // ── Token verification via market temperature API ─────────────────────────
     let token_ok: bool;
@@ -116,6 +147,26 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
     let cn_probe_url = format!("{}/health", region::HTTP_URL_CN);
     let (global, cn) = tokio::join!(probe(&global_probe_url), probe(&cn_probe_url),);
 
+    // ── Repin from measurement ───────────────────────────────────────────────
+    // The latency probe measures the thing geolocation only approximates, so a
+    // decisive gap wins. Persisted, so subsequent commands follow it too.
+    let repinned = region_override
+        .is_none()
+        .then(|| repin_from_latency(is_cn, &global, &cn))
+        .flatten();
+    if let Some(measured_is_cn) = repinned {
+        region::record_region(measured_is_cn);
+        is_cn = measured_is_cn;
+    }
+
+    let region_cached = region::cached_verdict().unwrap_or("none");
+    let geotest_label = match (region_override, geotest_country.as_deref()) {
+        // Not probed: the override decides regardless of location.
+        (Some(_), _) => None,
+        (None, Some(country)) => Some(country),
+        (None, None) => Some("unreachable"),
+    };
+
     match format {
         OutputFormat::Json => {
             let value = json!({
@@ -127,6 +178,8 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
                     "cached": region_cached,
                     "active": if is_cn { "CN" } else { "Global" },
                     "override": region_override,
+                    "geotest": geotest_label,
+                    "repinned_by_latency": repinned.is_some(),
                 },
                 "connectivity": {
                     "global": { "url": region::HTTP_URL_GLOBAL, "ok": global.ok, "ms": global.ms },
@@ -153,9 +206,12 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
                 "  {:<8} {}  {}  {DIM}{}{RESET}",
                 "token", token_icon, token_label, token_detail
             );
-            let region_source = match region_override {
-                Some(value) => format!("  {DIM}(pinned by LONGBRIDGE_REGION={value}){RESET}"),
-                None => String::new(),
+            let region_source = match (region_override, geotest_label) {
+                (Some(value), _) => {
+                    format!("  {DIM}(pinned by LONGBRIDGE_REGION={value}){RESET}")
+                }
+                (None, Some(country)) => format!("  {DIM}(geotest: {country}){RESET}"),
+                (None, None) => String::new(),
             };
             println!(
                 "  {:<8} {}  (active: {}){}",
@@ -169,6 +225,17 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
             println!("Connectivity {DIM}(avg of {PROBE_COUNT}){RESET}");
             println!("{}", probe_line("global", &global, region::HTTP_URL_GLOBAL));
             println!("{}", probe_line("cn", &cn, region::HTTP_URL_CN));
+            if let Some(measured_is_cn) = repinned {
+                let (winner, loser) = if measured_is_cn {
+                    ("cn", "global")
+                } else {
+                    ("global", "cn")
+                };
+                println!(
+                    "  {YELLOW}→{RESET} repinned to {winner}: measurably better than {loser}, \
+                     overriding geotest"
+                );
+            }
         }
     }
 
@@ -186,7 +253,8 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
             field(
                 "region",
                 "object",
-                "Cached verdict, active access point, and any LONGBRIDGE_REGION override",
+                "Active access point, the geotest country behind it, any \
+                 LONGBRIDGE_REGION override, and whether latency repinned it",
             ),
             field(
                 "connectivity",
@@ -196,4 +264,50 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
             field("status", "string", "Compatibility status summary"),
         ],
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ok(ms: u64) -> ProbeStats {
+        ProbeStats { ok: true, ms }
+    }
+    fn down() -> ProbeStats {
+        ProbeStats { ok: false, ms: 0 }
+    }
+
+    #[test]
+    fn repins_when_the_other_access_point_is_decisively_faster() {
+        // Measured on a split-tunnel proxy: geotest said CN, but the global
+        // endpoint was 135ms (42%) ahead of the CN one.
+        assert_eq!(repin_from_latency(true, &ok(321), &ok(456)), Some(false));
+    }
+
+    #[test]
+    fn ignores_a_narrow_lead() {
+        // Measured on a US CI runner: cn led global by 41ms (20%). Too close to
+        // act on — repinning here would undo correct geo detection.
+        assert_eq!(repin_from_latency(false, &ok(244), &ok(203)), None);
+    }
+
+    #[test]
+    fn leaves_an_already_optimal_verdict_alone() {
+        // CN proxy exit: cn is active and far ahead, nothing to do.
+        assert_eq!(repin_from_latency(true, &ok(228), &ok(46)), None);
+    }
+
+    #[test]
+    fn always_leaves_an_unreachable_access_point() {
+        // The case that stranded overseas clients on longbridge.cn.
+        assert_eq!(repin_from_latency(true, &ok(300), &down()), Some(false));
+        assert_eq!(repin_from_latency(false, &down(), &ok(300)), Some(true));
+    }
+
+    #[test]
+    fn stays_put_when_the_alternative_is_also_down() {
+        assert_eq!(repin_from_latency(true, &down(), &down()), None);
+        // A working active endpoint is kept even if the other one is dead.
+        assert_eq!(repin_from_latency(true, &down(), &ok(50)), None);
+    }
 }

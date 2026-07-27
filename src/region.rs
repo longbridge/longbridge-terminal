@@ -205,9 +205,10 @@ pub async fn refresh_region_cache() {
 
 /// Probe geotest, falling back to the previous verdict when it cannot answer.
 async fn probe_or_keep(cached: Option<CachedRegion>) -> bool {
-    if let Some(is_cn) = check_geotest().await {
+    if let Some(country) = probe_country().await {
+        let is_cn = country.eq_ignore_ascii_case("CN");
         tracing::debug!(
-            "Region check: geotest={}",
+            "Region check: geotest={country} → {}",
             if is_cn { "CN" } else { "global" }
         );
         return is_cn;
@@ -224,17 +225,35 @@ async fn probe_or_keep(cached: Option<CachedRegion>) -> bool {
 }
 
 /// Detect the region again and persist it, ignoring the cached verdict's TTL.
+/// Returns the country code geotest reported, or `None` if it could not answer.
 ///
 /// `check` uses this instead of reading the cache: a diagnostic that reports a
 /// possibly stale verdict is answering the wrong question, since a stale
 /// verdict is exactly what the user is likely running it to investigate.
 /// Detecting here also repairs the cache as a side effect.
-pub async fn redetect_region() {
+pub async fn redetect_region() -> Option<String> {
     // With an override in force nothing reads the cache, so leave it as it is.
+    if std::env::var("LONGBRIDGE_REGION").is_ok() {
+        return None;
+    }
+
+    let country = probe_country().await;
+    let is_cn = match country.as_deref() {
+        Some(code) => code.eq_ignore_ascii_case("CN"),
+        None => read_cache().is_some_and(|c| c.is_cn),
+    };
+    write_cache(is_cn);
+    country
+}
+
+/// Persist a verdict reached some other way than the geotest probe — `check`
+/// repinning from measured endpoint latency. No-op while an override is set,
+/// since nothing would read the result.
+pub fn record_region(is_cn: bool) {
     if std::env::var("LONGBRIDGE_REGION").is_ok() {
         return;
     }
-    write_cache(probe_or_keep(read_cache()).await);
+    write_cache(is_cn);
 }
 
 /// The region forced by `LONGBRIDGE_REGION`, if that variable is set.
@@ -250,7 +269,7 @@ pub fn region_override() -> Option<&'static str> {
     })
 }
 
-/// Probe geotest for the caller's country. `None` when the answer is unknown.
+/// Probe geotest for the caller's country code. `None` when it cannot answer.
 ///
 /// `geotest.lbkrs.com` is served by a global CDN and echoes `<ip>,<country>`
 /// (e.g. `1.2.3.4,CN`). It is reachable from outside China Mainland, so
@@ -261,7 +280,7 @@ pub fn region_override() -> Option<&'static str> {
 /// The probe deliberately honours the ambient proxy environment: if all traffic
 /// exits through a China Mainland proxy, then so will the API requests, and the
 /// `.cn` access point is the right one for them.
-async fn check_geotest() -> Option<bool> {
+async fn probe_country() -> Option<String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(GEOTEST_TIMEOUT_SECS))
         .build()
@@ -271,7 +290,7 @@ async fn check_geotest() -> Option<bool> {
         return None;
     }
     let body = resp.text().await.ok()?;
-    Some(parse_geotest_country(&body)?.eq_ignore_ascii_case("CN"))
+    parse_geotest_country(&body).map(str::to_ascii_uppercase)
 }
 
 /// Extract the ISO country code from a geotest body of the form `<ip>,<country>`.
