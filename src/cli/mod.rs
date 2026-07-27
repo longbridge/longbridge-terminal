@@ -111,7 +111,11 @@ pub enum Commands {
 
     /// Check token validity, and API connectivity
     ///
-    /// Shows token status, cached region, and latency to both Global and CN API endpoints.
+    /// Shows token status, and latency to both Global and CN API endpoints.
+    /// Detects the access-point region again rather than reading the cache, so
+    /// running this also repairs a cached region that no longer matches reality
+    /// — after moving between China Mainland and elsewhere, or after turning a
+    /// proxy on or off.
     /// Does not require authentication.
     /// Example: longbridge check
     /// Example: longbridge check --format json
