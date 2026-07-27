@@ -111,20 +111,15 @@ pub enum Commands {
 
     /// Check token validity, and API connectivity
     ///
-    /// Shows token status, cached region, and latency to both Global and CN API endpoints.
+    /// Shows token status, and latency to both Global and CN API endpoints.
+    /// Detects the access-point region again rather than reading the cache, so
+    /// running this also repairs a cached region that no longer matches reality
+    /// — after moving between China Mainland and elsewhere, or after turning a
+    /// proxy on or off.
     /// Does not require authentication.
     /// Example: longbridge check
     /// Example: longbridge check --format json
-    /// Example: longbridge check --reset-region
-    Check {
-        /// Discard the cached access-point region and detect it again.
-        ///
-        /// Use when the cached region no longer matches reality — after moving
-        /// between China Mainland and elsewhere, or after turning a proxy on or
-        /// off — instead of waiting for the cache to expire on its own.
-        #[arg(long)]
-        reset_region: bool,
-    },
+    Check,
 
     /// Update longbridge to the latest version
     ///
@@ -3904,7 +3899,7 @@ IpoCmd::ProfitLoss { period, page, count } => {
 
         Commands::Auth { .. }
         | Commands::Tui
-        | Commands::Check { .. }
+        | Commands::Check
         | Commands::Update { .. }
         | Commands::Completion { .. }
         | Commands::Init { .. } => {

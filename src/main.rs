@@ -105,7 +105,7 @@ fn cn_access_point_guidance(rendered: &str) -> Option<&'static str> {
     (rendered.contains("longbridge.cn") && is_connect_failure).then_some(
         "This request used the China Mainland access point (longbridge.cn),\n\
          which is normally unreachable from outside China Mainland.\n\
-         Re-detect: longbridge check --reset-region\n\
+         Re-detect: longbridge check\n\
          Override:  LONGBRIDGE_REGION=global longbridge <command>",
     )
 }
@@ -159,7 +159,10 @@ async fn main() {
 
     // Re-probe the access-point region if the cached verdict has gone stale.
     // Usually a no-op; only the first run after the cache TTL expires waits.
-    region::refresh_region_cache().await;
+    // `check` detects unconditionally, so skip the routine refresh for it.
+    if !matches!(cli.command, Some(cli::Commands::Check)) {
+        region::refresh_region_cache().await;
+    }
 
     // Kick off background version check to refresh the update cache for the next run.
     update::spawn_version_check();
@@ -212,8 +215,8 @@ async fn main() {
             }
         }
 
-        Some(cli::Commands::Check { reset_region }) => {
-            if let Err(e) = cli::check::cmd_check(&cli.format, reset_region).await {
+        Some(cli::Commands::Check) => {
+            if let Err(e) = cli::check::cmd_check(&cli.format).await {
                 print_cli_error(&e, false);
                 std::process::exit(1);
             }

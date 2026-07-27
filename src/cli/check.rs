@@ -78,11 +78,11 @@ fn probe_line(label: &str, r: &ProbeStats, url: &str) -> String {
     format!("  {label:<8} {icon}  {status:<10}  {DIM}{url}{RESET}")
 }
 
-pub async fn cmd_check(format: &OutputFormat, reset_region: bool) -> Result<()> {
-    // ── Region cache ─────────────────────────────────────────────────────────
-    if reset_region {
-        region::reset_region_cache().await;
-    }
+pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
+    // ── Region ───────────────────────────────────────────────────────────────
+    // Detect rather than read the cache: reporting a stale verdict would defeat
+    // the point of a diagnostic, and detecting repairs the cache along the way.
+    region::redetect_region().await;
     let region_cached = region::cached_verdict().unwrap_or("none");
     let region_override = region::region_override();
     let is_cn = region::is_cn_cached();

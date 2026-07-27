@@ -200,40 +200,41 @@ pub async fn refresh_region_cache() {
         return;
     }
 
-    let is_cn = if let Some(is_cn) = check_geotest().await {
+    write_cache(probe_or_keep(cached).await);
+}
+
+/// Probe geotest, falling back to the previous verdict when it cannot answer.
+async fn probe_or_keep(cached: Option<CachedRegion>) -> bool {
+    if let Some(is_cn) = check_geotest().await {
         tracing::debug!(
             "Region check: geotest={}",
             if is_cn { "CN" } else { "global" }
         );
-        is_cn
-    } else {
-        // Inconclusive (unreachable, non-2xx, or unparsable body). Keep the
-        // previous verdict but still refresh the timestamp, so a broken
-        // network does not make every command pay the probe timeout.
-        let fallback = cached.is_some_and(|c| c.is_cn);
-        tracing::debug!(
-            "Region check: geotest inconclusive, keeping {}",
-            if fallback { "CN" } else { "global" }
-        );
-        fallback
-    };
-    write_cache(is_cn);
+        return is_cn;
+    }
+    // Inconclusive (unreachable, non-2xx, or unparsable body). Keep the
+    // previous verdict but let the caller refresh the timestamp, so a broken
+    // network does not make every command pay the probe timeout.
+    let fallback = cached.is_some_and(|c| c.is_cn);
+    tracing::debug!(
+        "Region check: geotest inconclusive, keeping {}",
+        if fallback { "CN" } else { "global" }
+    );
+    fallback
 }
 
-/// Discard the cached verdict and detect the region again, ignoring the TTL.
+/// Detect the region again and persist it, ignoring the cached verdict's TTL.
 ///
-/// The escape hatch for a cache that no longer matches reality — a laptop
-/// carried across the border, a proxy switched on or off — without waiting out
-/// the TTL or hand-editing the cache file.
-///
-/// With `LONGBRIDGE_REGION` set the cache is cleared but not rewritten: the
-/// override decides the region, so a stored verdict would be meaningless.
-pub async fn reset_region_cache() {
-    if let Some(path) = cache_file_path() {
-        let _ = std::fs::remove_file(path);
+/// `check` uses this instead of reading the cache: a diagnostic that reports a
+/// possibly stale verdict is answering the wrong question, since a stale
+/// verdict is exactly what the user is likely running it to investigate.
+/// Detecting here also repairs the cache as a side effect.
+pub async fn redetect_region() {
+    // With an override in force nothing reads the cache, so leave it as it is.
+    if std::env::var("LONGBRIDGE_REGION").is_ok() {
+        return;
     }
-    // With no cache on disk this always probes.
-    refresh_region_cache().await;
+    write_cache(probe_or_keep(read_cache()).await);
 }
 
 /// The region forced by `LONGBRIDGE_REGION`, if that variable is set.

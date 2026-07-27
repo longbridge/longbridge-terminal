@@ -87,10 +87,11 @@ Token is shared between CLI and TUI. After `login`, all commands work without re
 The CLI picks its API access point from your location: it asks `geotest.lbkrs.com` which country you are in and caches the answer for 6 hours, so at most one command per session waits on the probe. China Mainland uses the `.cn` endpoints; everywhere else uses the global ones.
 
 ```bash
-longbridge check                 # Show the active access point and its latency
-longbridge check --reset-region  # Detect again after moving, or after changing proxy
-LONGBRIDGE_REGION=global ...     # Pin the access point explicitly (cn or global)
+longbridge check              # Detect the access point again, and show both latencies
+LONGBRIDGE_REGION=global ...  # Pin the access point explicitly (cn or global)
 ```
+
+`check` always re-detects instead of trusting the cache, so running it also repairs a cached region that no longer matches reality — after moving between regions, or after turning a proxy on or off.
 
 ## Shell Completion
 
