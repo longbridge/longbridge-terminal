@@ -220,6 +220,35 @@ pub async fn refresh_region_cache() {
     write_cache(is_cn);
 }
 
+/// Discard the cached verdict and detect the region again, ignoring the TTL.
+///
+/// The escape hatch for a cache that no longer matches reality — a laptop
+/// carried across the border, a proxy switched on or off — without waiting out
+/// the TTL or hand-editing the cache file.
+///
+/// With `LONGBRIDGE_REGION` set the cache is cleared but not rewritten: the
+/// override decides the region, so a stored verdict would be meaningless.
+pub async fn reset_region_cache() {
+    if let Some(path) = cache_file_path() {
+        let _ = std::fs::remove_file(path);
+    }
+    // With no cache on disk this always probes.
+    refresh_region_cache().await;
+}
+
+/// The region forced by `LONGBRIDGE_REGION`, if that variable is set.
+///
+/// Normalised the same way [`is_cn_cached`] reads it: anything other than `cn`
+/// pins the global access point.
+pub fn region_override() -> Option<&'static str> {
+    let raw = std::env::var("LONGBRIDGE_REGION").ok()?;
+    Some(if raw.trim().eq_ignore_ascii_case("cn") {
+        "cn"
+    } else {
+        "global"
+    })
+}
+
 /// Probe geotest for the caller's country. `None` when the answer is unknown.
 ///
 /// `geotest.lbkrs.com` is served by a global CDN and echoes `<ip>,<country>`

@@ -105,8 +105,8 @@ fn cn_access_point_guidance(rendered: &str) -> Option<&'static str> {
     (rendered.contains("longbridge.cn") && is_connect_failure).then_some(
         "This request used the China Mainland access point (longbridge.cn),\n\
          which is normally unreachable from outside China Mainland.\n\
-         Diagnose: longbridge check\n\
-         Override: LONGBRIDGE_REGION=global longbridge <command>",
+         Re-detect: longbridge check --reset-region\n\
+         Override:  LONGBRIDGE_REGION=global longbridge <command>",
     )
 }
 
@@ -212,8 +212,8 @@ async fn main() {
             }
         }
 
-        Some(cli::Commands::Check) => {
-            if let Err(e) = cli::check::cmd_check(&cli.format).await {
+        Some(cli::Commands::Check { reset_region }) => {
+            if let Err(e) = cli::check::cmd_check(&cli.format, reset_region).await {
                 print_cli_error(&e, false);
                 std::process::exit(1);
             }

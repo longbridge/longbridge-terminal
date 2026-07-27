@@ -115,7 +115,16 @@ pub enum Commands {
     /// Does not require authentication.
     /// Example: longbridge check
     /// Example: longbridge check --format json
-    Check,
+    /// Example: longbridge check --reset-region
+    Check {
+        /// Discard the cached access-point region and detect it again.
+        ///
+        /// Use when the cached region no longer matches reality — after moving
+        /// between China Mainland and elsewhere, or after turning a proxy on or
+        /// off — instead of waiting for the cache to expire on its own.
+        #[arg(long)]
+        reset_region: bool,
+    },
 
     /// Update longbridge to the latest version
     ///
@@ -3895,7 +3904,7 @@ IpoCmd::ProfitLoss { period, page, count } => {
 
         Commands::Auth { .. }
         | Commands::Tui
-        | Commands::Check
+        | Commands::Check { .. }
         | Commands::Update { .. }
         | Commands::Completion { .. }
         | Commands::Init { .. } => {

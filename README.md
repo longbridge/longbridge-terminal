@@ -84,7 +84,13 @@ longbridge check    # Verify token, region, and API endpoint connectivity
 
 Token is shared between CLI and TUI. After `login`, all commands work without re-authenticating.
 
-The CLI auto-detects China Mainland on each startup by probing `geotest.lbkrs.com` in the background and caches the result. If detected, CN API endpoints are used automatically on the next run.
+The CLI picks its API access point from your location: it asks `geotest.lbkrs.com` which country you are in and caches the answer for 6 hours, so at most one command per session waits on the probe. China Mainland uses the `.cn` endpoints; everywhere else uses the global ones.
+
+```bash
+longbridge check                 # Show the active access point and its latency
+longbridge check --reset-region  # Detect again after moving, or after changing proxy
+LONGBRIDGE_REGION=global ...     # Pin the access point explicitly (cn or global)
+```
 
 ## Shell Completion
 

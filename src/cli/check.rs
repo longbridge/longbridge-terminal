@@ -78,9 +78,13 @@ fn probe_line(label: &str, r: &ProbeStats, url: &str) -> String {
     format!("  {label:<8} {icon}  {status:<10}  {DIM}{url}{RESET}")
 }
 
-pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
+pub async fn cmd_check(format: &OutputFormat, reset_region: bool) -> Result<()> {
     // ── Region cache ─────────────────────────────────────────────────────────
+    if reset_region {
+        region::reset_region_cache().await;
+    }
     let region_cached = region::cached_verdict().unwrap_or("none");
+    let region_override = region::region_override();
     let is_cn = region::is_cn_cached();
 
     // ── Token verification via market temperature API ─────────────────────────
@@ -122,6 +126,7 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
                 "region": {
                     "cached": region_cached,
                     "active": if is_cn { "CN" } else { "Global" },
+                    "override": region_override,
                 },
                 "connectivity": {
                     "global": { "url": region::HTTP_URL_GLOBAL, "ok": global.ok, "ms": global.ms },
@@ -148,11 +153,16 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
                 "  {:<8} {}  {}  {DIM}{}{RESET}",
                 "token", token_icon, token_label, token_detail
             );
+            let region_source = match region_override {
+                Some(value) => format!("  {DIM}(pinned by LONGBRIDGE_REGION={value}){RESET}"),
+                None => String::new(),
+            };
             println!(
-                "  {:<8} {}  (active: {})",
+                "  {:<8} {}  (active: {}){}",
                 "region",
                 region_cached,
-                if is_cn { "CN" } else { "Global" }
+                if is_cn { "CN" } else { "Global" },
+                region_source
             );
 
             println!();
@@ -173,7 +183,11 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
         root: RootKind::Object,
         fields: vec![
             field("session", "object", "Token validity details"),
-            field("region", "object", "Cached and active region details"),
+            field(
+                "region",
+                "object",
+                "Cached verdict, active access point, and any LONGBRIDGE_REGION override",
+            ),
             field(
                 "connectivity",
                 "object",
