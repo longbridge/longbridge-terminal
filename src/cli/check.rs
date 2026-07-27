@@ -80,10 +80,7 @@ fn probe_line(label: &str, r: &ProbeStats, url: &str) -> String {
 
 pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
     // ── Region cache ─────────────────────────────────────────────────────────
-    let region_cached = dirs::home_dir()
-        .map(|h| h.join(".longbridge").join("openapi").join("region-cache"))
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .map_or_else(|| "none".to_string(), |s| s.trim().to_lowercase());
+    let region_cached = region::cached_verdict().unwrap_or("none");
     let is_cn = region::is_cn_cached();
 
     // ── Token verification via market temperature API ─────────────────────────

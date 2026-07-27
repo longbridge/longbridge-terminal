@@ -78,7 +78,36 @@ fn print_cli_error(e: &anyhow::Error, using_api_key: bool) {
             _ => {}
         }
     }
-    eprintln!("Error: {e:#}");
+
+    // Network-layer failures (`HttpClientError::Http`, WebSocket connect
+    // errors) carry no structured detail, so they fall through to the raw
+    // message here.
+    let rendered = format!("{e:#}");
+    eprintln!("Error: {rendered}");
+    if let Some(guidance) = cn_access_point_guidance(&rendered) {
+        eprintln!("\n{guidance}");
+    }
+}
+
+/// Guidance for a failed request against the China Mainland access point.
+///
+/// A client outside China Mainland can end up pinned to `longbridge.cn` — by a
+/// region cache written while travelling, or by a proxy that exits in China —
+/// and then every request fails to connect. The bare transport error names the
+/// host but gives no hint that the host is the problem, or that it can be
+/// overridden.
+fn cn_access_point_guidance(rendered: &str) -> Option<&'static str> {
+    let is_connect_failure = rendered.contains("error sending request")
+        || rendered.contains("Connect")
+        || rendered.contains("timeout")
+        || rendered.contains("dns error");
+
+    (rendered.contains("longbridge.cn") && is_connect_failure).then_some(
+        "This request used the China Mainland access point (longbridge.cn),\n\
+         which is normally unreachable from outside China Mainland.\n\
+         Diagnose: longbridge check\n\
+         Override: LONGBRIDGE_REGION=global longbridge <command>",
+    )
 }
 
 fn is_option_quote_command(args: impl IntoIterator<Item = impl AsRef<str>>) -> bool {
@@ -128,8 +157,9 @@ async fn main() {
     locale::init(cli.lang.as_deref());
     rust_i18n::set_locale(locale::get());
 
-    // Kick off background geotest check to refresh the region cache for the next run.
-    region::spawn_region_update();
+    // Re-probe the access-point region if the cached verdict has gone stale.
+    // Usually a no-op; only the first run after the cache TTL expires waits.
+    region::refresh_region_cache().await;
 
     // Kick off background version check to refresh the update cache for the next run.
     update::spawn_version_check();
