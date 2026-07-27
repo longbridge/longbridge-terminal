@@ -42,7 +42,9 @@ fn css_color(c: Color) -> Option<String> {
 }
 
 fn esc(sym: &str) -> String {
-    sym.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    sym.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// Serialize a rendered buffer to a standalone HTML page.

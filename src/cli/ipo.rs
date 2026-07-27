@@ -573,75 +573,144 @@ pub async fn cmd_ipo_listed(
     Ok(())
 }
 
-/// Show the IPO calendar (all upcoming and recent IPOs).
-pub async fn cmd_ipo_calendar(format: &OutputFormat, verbose: bool) -> Result<()> {
-    let data = http_get("/v1/ipo/calendar", &[], verbose).await?;
-    match format {
-        OutputFormat::Json => {
-            if let Some(list) = data["list"].as_array() {
-                let transformed: Vec<Value> = list.iter().map(transform_ipo_list_item).collect();
-                print_json(&Value::Array(transformed));
-            } else {
-                print_json(&data);
-            }
+// Normalize a finance-calendar event date ("2026.07.30" / "2026-07-30") to
+// "YYYY-MM-DD", falling back to the date-group date when the event date is empty.
+fn calendar_event_date(info: &Value, group_date: &str) -> String {
+    let s = val_str(&info["date"]);
+    let s = if s == "-" || s.is_empty() {
+        group_date.to_string()
+    } else {
+        s
+    };
+    s.replace('.', "-")
+}
+
+// Flatten a finance-calendar response (date-grouped events) into a flat list of
+// IPO rows: {symbol, name, market, date, event, content, industry}.
+fn flatten_ipo_calendar(data: &Value) -> Vec<Value> {
+    let mut rows = Vec::new();
+    let Some(groups) = data["list"].as_array() else {
+        return rows;
+    };
+    for group in groups {
+        let group_date = val_str(&group["date"]);
+        let Some(infos) = group["infos"].as_array() else {
+            continue;
+        };
+        for info in infos {
+            let mut obj = Map::new();
+            obj.insert(
+                "symbol".to_string(),
+                Value::String(counter_id_to_symbol(&val_str(&info["counter_id"]))),
+            );
+            obj.insert(
+                "name".to_string(),
+                Value::String(val_str(&info["counter_name"])),
+            );
+            obj.insert(
+                "market".to_string(),
+                Value::String(val_str(&info["market"])),
+            );
+            obj.insert(
+                "date".to_string(),
+                Value::String(calendar_event_date(info, &group_date)),
+            );
+            // date_type is the lifecycle label (e.g. subscription day, listing day),
+            // returned localized by the API; pass it through unchanged.
+            obj.insert(
+                "event".to_string(),
+                Value::String(val_str(&info["date_type"])),
+            );
+            obj.insert(
+                "content".to_string(),
+                Value::String(val_str(&info["content"])),
+            );
+            obj.insert(
+                "industry".to_string(),
+                Value::String(val_str(&info["ext"]["industry"])),
+            );
+            rows.push(Value::Object(obj));
         }
+    }
+    rows
+}
+
+/// Show the IPO calendar (upcoming and recent IPO listings across markets).
+///
+/// The legacy `/v1/ipo/calendar` aggregation endpoint no longer returns data, so
+/// this reads IPO events from the finance calendar (`/v1/quote/finance_calendar`
+/// with `types[]=ipo`) — the same source as `finance-calendar ipo`. A single page
+/// with a generous count covers the sparse IPO pipeline without pagination.
+pub async fn cmd_ipo_calendar(format: &OutputFormat, verbose: bool) -> Result<()> {
+    // Start 30 days back to include recently listed IPOs, then page forward via
+    // `next_date` (bounded) to cover the full upcoming pipeline.
+    let mut current = time::OffsetDateTime::now_utc()
+        .date()
+        .saturating_sub(time::Duration::days(30))
+        .to_string();
+    let mut rows: Vec<Value> = Vec::new();
+    for _ in 0..20u32 {
+        let params = [
+            ("date", current.as_str()),
+            ("count", "100"),
+            ("offset", "0"),
+            ("next", "later"),
+            ("types[]", "ipo"),
+        ];
+        let data = http_get("/v1/quote/finance_calendar", &params, verbose).await?;
+        rows.extend(flatten_ipo_calendar(&data));
+        let next_date = data["next_date"].as_str().unwrap_or("").to_string();
+        if next_date.is_empty() {
+            break;
+        }
+        current = next_date;
+    }
+    match format {
+        OutputFormat::Json => print_json(&Value::Array(rows)),
         OutputFormat::Pretty => {
-            if let Some(list) = data["list"].as_array() {
-                if list.is_empty() {
-                    println!("No IPO calendar entries found.");
-                    return Ok(());
+            if rows.is_empty() {
+                println!("No IPO calendar entries found.");
+                return Ok(());
+            }
+            let headers = ["date", "event", "symbol", "name", "content"];
+            let to_row = |item: &Value| -> Vec<String> {
+                vec![
+                    val_str(&item["date"]),
+                    val_str(&item["event"]),
+                    val_str(&item["symbol"]),
+                    val_str(&item["name"]),
+                    val_str(&item["content"]),
+                ]
+            };
+            let mut hk_rows: Vec<Vec<String>> = Vec::new();
+            let mut us_rows: Vec<Vec<String>> = Vec::new();
+            let mut other_rows: Vec<Vec<String>> = Vec::new();
+            for item in &rows {
+                match val_str(&item["market"]).as_str() {
+                    "HK" => hk_rows.push(to_row(item)),
+                    "US" => us_rows.push(to_row(item)),
+                    _ => other_rows.push(to_row(item)),
                 }
-                let headers = [
-                    "name",
-                    "symbol",
-                    "state",
-                    "sub_date",
-                    "sub_end_date",
-                    "ipo_date",
-                ];
-                let mut hk_rows: Vec<Vec<String>> = Vec::new();
-                let mut us_rows: Vec<Vec<String>> = Vec::new();
-                let mut other_rows: Vec<Vec<String>> = Vec::new();
-                for item in list {
-                    let cid = val_str(&item["counter_id"]);
-                    let row = vec![
-                        val_str(&item["name"]),
-                        counter_id_to_symbol(&cid),
-                        state_stage_label(&item["state_stage"]).to_string(),
-                        fmt_date_opt(&item["sub_date"]),
-                        fmt_date_opt(&item["sub_end_date"]),
-                        fmt_date_opt(&item["ipo_date"]),
-                    ];
-                    if cid.contains("/HK/") {
-                        hk_rows.push(row);
-                    } else if cid.contains("/US/") {
-                        us_rows.push(row);
-                    } else {
-                        other_rows.push(row);
-                    }
+            }
+            let mut printed = false;
+            if !hk_rows.is_empty() {
+                println!("── HK ──");
+                print_table(&headers, hk_rows, &OutputFormat::Pretty);
+                printed = true;
+            }
+            if !us_rows.is_empty() {
+                if printed {
+                    println!();
                 }
-                let mut printed = false;
-                if !hk_rows.is_empty() {
-                    println!("── HK ──");
-                    print_table(&headers, hk_rows, &OutputFormat::Pretty);
-                    printed = true;
+                println!("── US ──");
+                print_table(&headers, us_rows, &OutputFormat::Pretty);
+                printed = true;
+            }
+            if !other_rows.is_empty() {
+                if printed {
+                    println!();
                 }
-                if !us_rows.is_empty() {
-                    if printed {
-                        println!();
-                    }
-                    println!("── US ──");
-                    print_table(&headers, us_rows, &OutputFormat::Pretty);
-                    printed = true;
-                }
-                if !other_rows.is_empty() {
-                    if printed {
-                        println!();
-                    }
-                    print_table(&headers, other_rows, &OutputFormat::Pretty);
-                }
-            } else {
-                print_json(&data);
+                print_table(&headers, other_rows, &OutputFormat::Pretty);
             }
         }
     }
@@ -1348,15 +1417,7 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
         "ipo calendar" => array(
             "IPO calendar rows",
             &[
-                "symbol",
-                "name",
-                "ipo_date",
-                "mart_date",
-                "sub_date",
-                "sub_end_date",
-                "result_date",
-                "state",
-                "tags",
+                "symbol", "name", "market", "date", "event", "content", "industry",
             ],
         ),
         "ipo detail" => object(
