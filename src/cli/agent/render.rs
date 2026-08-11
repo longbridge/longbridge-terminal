@@ -469,7 +469,12 @@ fn render_pie_block(categories: &[String], series: &[ChartSeries], width: usize)
     for (ci, cat) in categories.iter().enumerate() {
         let Some(&v) = s.values.get(ci) else { continue };
         let pct = v / total * 100.0;
-        let n = ((pct / 100.0) * bar_w as f64).round().max(1.0) as usize;
+        // Clamp the bar length to `bar_w`: with mixed-sign values a single
+        // slice's `pct` can exceed 100 (e.g. data [100, -50] → total 50 →
+        // 200%), which would otherwise print a bar wider than the terminal.
+        let n = ((pct / 100.0) * bar_w as f64)
+            .round()
+            .clamp(1.0, bar_w as f64) as usize;
         let bar = "▓".repeat(n);
         let padded = pad_display(cat, label_w);
         let _ = writeln!(out, "  {padded} {bar} {pct:.1}%");

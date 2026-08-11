@@ -186,23 +186,39 @@ pub(crate) async fn collect_agents(
             a
         }));
     } else {
-        for ws in api.list_workspaces().await? {
-            let mut fetched: u32 = 0;
-            let mut p: u32 = 1;
-            loop {
-                let page_data = api.list_agents(ws.id.clone(), p, 100, name.clone()).await?;
-                let got = page_data.agents.len() as u32;
-                all.extend(page_data.agents.into_iter().map(|mut a| {
-                    a.workspace_id.clone_from(&ws.id);
-                    a.workspace_name.clone_from(&ws.name);
-                    a
-                }));
-                fetched += got;
-                if got == 0 || fetched >= page_data.total {
-                    break;
+        // Fetch each workspace's agents concurrently rather than serially:
+        // discovery is O(latency) instead of O(workspaces × latency). The
+        // shared rate limiter inside `list_agents` still bounds throughput to
+        // 10 req/s, and `join_all` preserves workspace order. Paging within a
+        // single workspace stays sequential — `total` is only known after the
+        // first page.
+        let workspaces = api.list_workspaces().await?;
+        let per_workspace = futures::future::join_all(workspaces.iter().map(|ws| {
+            let name = name.clone();
+            async move {
+                let mut ws_agents = Vec::new();
+                let mut fetched: u32 = 0;
+                let mut p: u32 = 1;
+                loop {
+                    let page_data = api.list_agents(ws.id.clone(), p, 100, name.clone()).await?;
+                    let got = page_data.agents.len() as u32;
+                    ws_agents.extend(page_data.agents.into_iter().map(|mut a| {
+                        a.workspace_id.clone_from(&ws.id);
+                        a.workspace_name.clone_from(&ws.name);
+                        a
+                    }));
+                    fetched += got;
+                    if got == 0 || fetched >= page_data.total {
+                        break;
+                    }
+                    p += 1;
                 }
-                p += 1;
+                Ok::<_, anyhow::Error>(ws_agents)
             }
+        }))
+        .await;
+        for ws_agents in per_workspace {
+            all.extend(ws_agents?);
         }
         // Only when listing across workspaces: `--workspace` asks about one
         // specific workspace, and these belong to none of them.
