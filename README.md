@@ -300,6 +300,19 @@ longbridge sharelist sort <id> TSLA.US AAPL.US 700.HK            # Reorder stock
 longbridge sharelist popular [--count 10]                         # Get popular (trending) sharelists
 ```
 
+### AI Agents
+
+```bash
+longbridge workspace list                                           # List AI workspaces
+longbridge agent list [--workspace 33] [--name 选股]                # Discover chat-capable AI agents (--all includes workflow agents)
+longbridge agent chat chatbot "分析一下 TSLA"                       # `chatbot` (LongbridgeAI) is public — usable by any account
+longbridge agent chat chatbot "分析一下 TSLA"                       # Chat with an agent (SSE; --stream for live tokens)
+longbridge agent chat chatbot <CHAT_UID> <MSG_ID> "继续"            # Multi-turn follow-up
+longbridge agent continue chatbot <CHAT_UID> <MSG_ID> --answer "…"  # Resume an interrupted run
+longbridge agent continue chatbot <CHAT_UID> <MSG_ID> --answers-json '{…}'  # Resume with the raw answers payload
+longbridge agent --skill                                            # Print the A2A skill doc for AI harnesses
+```
+
 ### Trading
 
 ```bash
