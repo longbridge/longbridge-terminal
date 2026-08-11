@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::{bail, Result};
+use rust_i18n::t;
 
 use client::{AgentApi, AgentInfo, LbAgentApi};
 
@@ -120,20 +121,20 @@ pub(crate) const PUBLIC_WORKSPACE_LABEL: &str = "Public: Longbridge";
 /// than the set you can discover — an AI harness reading `agent list` would
 /// never learn these exist. Seed them here until the server exposes a
 /// public-agent listing, then delete this table.
-const PUBLIC_AGENTS: &[(&str, &str, &str)] = &[(
-    "chatbot",
-    "LongbridgeAI",
-    "与 AI 智能助手对话，获取专业的投资分析和建议",
-)];
+/// `(uid, name, description i18n key)`. The description is localized at
+/// build time via [`t!`] rather than hardcoded, per the repo's i18n rule; if
+/// this table ever holds more than one agent, give each its own key.
+const PUBLIC_AGENTS: &[(&str, &str, &str)] =
+    &[("chatbot", "LongbridgeAI", "Agent.PublicChatbotDescription")];
 
 /// Build the synthetic entries for [`PUBLIC_AGENTS`].
 fn public_agents() -> Vec<AgentInfo> {
     PUBLIC_AGENTS
         .iter()
-        .map(|(uid, name, description)| AgentInfo {
+        .map(|(uid, name, description_key)| AgentInfo {
             uid: (*uid).to_string(),
             name: (*name).to_string(),
-            description: (*description).to_string(),
+            description: t!(*description_key).to_string(),
             mode: CHAT_MODES[0].to_string(),
             is_published: true,
             workspace_id: PUBLIC_WORKSPACE_LABEL.to_string(),

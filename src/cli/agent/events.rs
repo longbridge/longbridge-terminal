@@ -205,7 +205,12 @@ impl ChatAggregator {
                     self.outcome.status.clone_from(status);
                 }
                 self.outcome.elapsed_time = *elapsed_time;
-                self.outcome.error_message.clone_from(error_message);
+                // Only set the error message, never blank an existing one: a
+                // preceding `chat_finished` may already have carried the real
+                // cause while this event's `error_message` is empty.
+                if !error_message.is_empty() {
+                    self.outcome.error_message.clone_from(error_message);
+                }
                 if let Some(refs) = outputs.get("references").and_then(Value::as_array) {
                     self.outcome.references.clone_from(refs);
                 }

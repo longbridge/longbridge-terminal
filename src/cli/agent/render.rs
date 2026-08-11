@@ -217,7 +217,11 @@ fn chart_series(spec: &Value) -> (Vec<String>, Vec<ChartSeries>) {
                 values: s
                     .get("data")
                     .and_then(Value::as_array)
-                    .map(|a| a.iter().filter_map(Value::as_f64).collect())
+                    // Keep positional alignment with `categories`: a
+                    // non-numeric/`null` point becomes 0.0 rather than being
+                    // dropped, otherwise every later value would shift onto
+                    // the wrong category.
+                    .map(|a| a.iter().map(|v| v.as_f64().unwrap_or(0.0)).collect())
                     .unwrap_or_default(),
             })
             .collect();
