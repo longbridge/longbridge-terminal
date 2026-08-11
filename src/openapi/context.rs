@@ -27,6 +27,164 @@ pub static RATE_LIMITED_QUOTE_CTX: OnceLock<RateLimitedQuoteContext> = OnceLock:
 /// Global rate-limited `TradeContext` wrapper
 pub static RATE_LIMITED_TRADE_CTX: OnceLock<RateLimitedTradeContext> = OnceLock::new();
 
+/// The HTTP base URL chosen at context init (test env / CN / global).
+static EFFECTIVE_HTTP_URL: OnceLock<String> = OnceLock::new();
+
+/// Whether the session authenticated with API-key env vars instead of OAuth.
+static USING_API_KEY: OnceLock<bool> = OnceLock::new();
+
+/// `true` when the current process authenticated through
+/// `LONGBRIDGE_APP_KEY` / `LONGBRIDGE_APP_SECRET` / `LONGBRIDGE_ACCESS_TOKEN`
+/// (see [`init_contexts`]) rather than OAuth. Callers that bypass the SDK
+/// `HttpClient` — notably the SSE transport in `cli::agent::client`, which
+/// signs nothing and sends a plain OAuth bearer token — must check this so
+/// they fail with an actionable message instead of authenticating as a
+/// different principal (or not at all).
+///
+/// Defaults to `false` before contexts are initialized.
+pub fn using_api_key() -> bool {
+    USING_API_KEY.get().copied().unwrap_or(false)
+}
+
+/// `LONGBRIDGE_HTTP_URL` as it was at process start, captured once.
+static CAPTURED_HTTP_URL_OVERRIDE: OnceLock<Option<String>> = OnceLock::new();
+
+/// The `LONGBRIDGE_HTTP_URL` override, read from the environment exactly once
+/// and cached for the life of the process.
+///
+/// Security-relevant: the SDK constructors load a `.env` file from the current
+/// working directory during [`init_contexts`], which means a checked-in `.env`
+/// in whatever repository the user happens to `cd` into can inject environment
+/// variables *after* startup. If the agent SSE transport re-read the variable
+/// at request time, such a file could redirect a request carrying the OAuth
+/// bearer token to an attacker-controlled host. Capturing the value before any
+/// of that runs (see the first statement of `main`) removes that window; every
+/// consumer must use this accessor and never `std::env::var` directly.
+pub fn captured_http_url_override() -> Option<&'static str> {
+    CAPTURED_HTTP_URL_OVERRIDE
+        .get_or_init(|| {
+            std::env::var("LONGBRIDGE_HTTP_URL")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+        })
+        .as_deref()
+}
+
+/// The host override, but only when it is actually allowed to take effect.
+///
+/// Invariant — *one resolution, both transports*: the SDK-backed REST/WS
+/// clients and the hand-rolled agent SSE transport must always talk to the
+/// same host. [`init_contexts`] only honors the override in debug builds (it
+/// exists for pointing a local build at a mock server), so the same gate is
+/// applied here; otherwise a release build would send REST to the region host
+/// and SSE somewhere else.
+fn allowed_http_url_override() -> Option<String> {
+    if cfg!(debug_assertions) {
+        captured_http_url_override().map(ToString::to_string)
+    } else {
+        None
+    }
+}
+
+/// Resolve the effective HTTP base URL from its three sources, in priority
+/// order: the URL published by [`init_contexts`], the allowed
+/// `LONGBRIDGE_HTTP_URL` override, and finally the region-derived default.
+/// Split out from [`effective_http_url`] so the precedence is unit-testable
+/// without touching process-global state.
+///
+/// Invariant — *host resolution happens once, both transports read that one
+/// value*: `initialized` is whatever [`init_contexts`] pinned the SDK clients
+/// to, so once it exists it is authoritative and nothing may override it. The
+/// captured override is a pre-init fallback only; consulting it first would
+/// let the SSE transport disagree with the SDK whenever `init_contexts` chose
+/// a different host (e.g. `LONGBRIDGE_ENV=staging` wins over the override).
+fn resolve_http_url(initialized: Option<String>, env_override: Option<String>) -> String {
+    initialized
+        .or_else(|| env_override.filter(|s| !s.trim().is_empty()))
+        .unwrap_or_else(|| crate::region::http_url().to_string())
+}
+
+/// The HTTP base URL chosen at context init (override / test env / CN /
+/// global). This is what the agent SSE transport builds its request URL from.
+///
+/// Once [`init_contexts`] has run, `EFFECTIVE_HTTP_URL` holds the host the SDK
+/// clients were pinned to — including the override when it applied — and that
+/// value wins outright, so both transports agree by construction. The override
+/// is only consulted for callers that run before contexts exist.
+pub fn effective_http_url() -> String {
+    resolve_http_url(
+        EFFECTIVE_HTTP_URL.get().cloned(),
+        allowed_http_url_override(),
+    )
+}
+
+/// The endpoint triple the SDK clients get pinned to, and whose `http` field is
+/// published through `EFFECTIVE_HTTP_URL` for the SSE transport to reuse.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Endpoints {
+    http: String,
+    quote_ws: String,
+    trade_ws: String,
+}
+
+/// Derive a WebSocket URL from an HTTP base URL, for the debug-only
+/// `LONGBRIDGE_HTTP_URL` override. The other branches pair their HTTP host
+/// with the matching WS constants; an override names a single host (typically
+/// a local mock), so quote and trade both point at it rather than silently
+/// falling back to the production global endpoints.
+fn ws_url_from_http(http_url: &str) -> String {
+    let trimmed = http_url.trim_end_matches('/');
+    let base = if let Some(rest) = trimmed.strip_prefix("https://") {
+        format!("wss://{rest}")
+    } else if let Some(rest) = trimmed.strip_prefix("http://") {
+        format!("ws://{rest}")
+    } else {
+        // Already a ws/wss URL, or scheme-less: leave the authority as given.
+        trimmed.to_string()
+    };
+    if base.ends_with("/v2") {
+        base
+    } else {
+        format!("{base}/v2")
+    }
+}
+
+/// The single place endpoints are chosen. Pure so the SSE resolver and the SDK
+/// host can be asserted to agree in tests for every combination of inputs.
+///
+/// Priority: staging env > debug-only host override > CN access point > global.
+fn resolve_endpoints(is_test_env: bool, override_url: Option<String>, use_cn: bool) -> Endpoints {
+    if is_test_env {
+        // `LONGBRIDGE_ENV=staging` outranks everything, including the override.
+        Endpoints {
+            http: crate::region::HTTP_URL_TEST.to_string(),
+            quote_ws: crate::region::QUOTE_WS_URL_TEST.to_string(),
+            trade_ws: crate::region::TRADE_WS_URL_TEST.to_string(),
+        }
+    } else if let Some(url) = override_url.filter(|s| !s.trim().is_empty()) {
+        // Debug builds only: point the whole CLI at a local mock server. WS is
+        // derived from the same host so REST, WS and SSE cannot diverge.
+        let ws = ws_url_from_http(&url);
+        Endpoints {
+            http: url,
+            quote_ws: ws.clone(),
+            trade_ws: ws,
+        }
+    } else if use_cn {
+        Endpoints {
+            http: crate::region::HTTP_URL_CN.to_string(),
+            quote_ws: crate::region::QUOTE_WS_URL_CN.to_string(),
+            trade_ws: crate::region::TRADE_WS_URL_CN.to_string(),
+        }
+    } else {
+        Endpoints {
+            http: crate::region::HTTP_URL_GLOBAL.to_string(),
+            quote_ws: crate::region::QUOTE_WS_URL_GLOBAL.to_string(),
+            trade_ws: crate::region::TRADE_WS_URL_GLOBAL.to_string(),
+        }
+    }
+}
+
 /// Map the effective content language to the SDK Language enum.
 fn get_api_language() -> longbridge::Language {
     match crate::locale::get() {
@@ -52,7 +210,7 @@ fn ascii_args(args: Vec<String>) -> String {
 pub async fn init_contexts() -> Result<(
     impl tokio_stream::Stream<Item = longbridge::quote::PushEvent> + Send + Unpin,
     bool,
-    &'static str,
+    String,
 )> {
     let (config_builder, http_client_config, using_api_key) = if let (Ok(config), Ok(http_config)) = (
         longbridge::Config::from_apikey_env(),
@@ -119,6 +277,8 @@ pub async fn init_contexts() -> Result<(
         (config_builder, http_client_config, false)
     };
 
+    let _ = USING_API_KEY.set(using_api_key);
+
     let mut config_builder = config_builder;
     let mut http_client_config = http_client_config;
 
@@ -127,41 +287,36 @@ pub async fn init_contexts() -> Result<(
     // session is gated behind it (matches the longbridge-mcp server).
     config_builder = config_builder.enable_overnight();
 
+    // Host resolution happens exactly once, here, and the result is published
+    // through `EFFECTIVE_HTTP_URL`. Both transports read that one value: the
+    // SDK clients because they are pinned below, and the agent SSE transport
+    // through `effective_http_url()`. Nothing downstream may re-derive a host
+    // (and nothing may read `LONGBRIDGE_HTTP_URL` from the live environment —
+    // see `captured_http_url_override`).
+    //
     // If LONGBRIDGE_ENV=staging, override all endpoints to test environment.
-    // This takes highest priority over region detection.
-    let effective_http_url;
-    if crate::region::is_test_env() {
-        tracing::info!("Using TEST environment endpoints (openapi.longbridge.xyz)");
-        config_builder = config_builder
-            .http_url(crate::region::HTTP_URL_TEST)
-            .quote_ws_url(crate::region::QUOTE_WS_URL_TEST)
-            .trade_ws_url(crate::region::TRADE_WS_URL_TEST);
-        http_client_config = http_client_config.http_url(crate::region::HTTP_URL_TEST);
-        effective_http_url = crate::region::HTTP_URL_TEST;
-    } else if crate::region::is_cn_cached()
-        && !token_dc_is_us(&crate::auth::effective_client_id())
-        && (cfg!(not(debug_assertions)) || std::env::var("LONGBRIDGE_HTTP_URL").is_err())
-    {
-        // If last geotest indicated China Mainland, use CN endpoints directly.
-        // Skip for US-DC tokens: US-specific APIs only exist on the global host.
-        // In debug builds, skip if LONGBRIDGE_HTTP_URL is set (allows local mock server testing).
-        tracing::debug!("Using CN region endpoints (cached)");
-        config_builder = config_builder
-            .http_url(crate::region::HTTP_URL_CN)
-            .quote_ws_url(crate::region::QUOTE_WS_URL_CN)
-            .trade_ws_url(crate::region::TRADE_WS_URL_CN);
-        http_client_config = http_client_config.http_url(crate::region::HTTP_URL_CN);
-        effective_http_url = crate::region::HTTP_URL_CN;
-    } else {
-        // Explicitly pin to the global host so the SDK does not re-run geotest
-        // at request time (which would still resolve to CN on a China Mainland network).
-        config_builder = config_builder
-            .http_url(crate::region::HTTP_URL_GLOBAL)
-            .quote_ws_url(crate::region::QUOTE_WS_URL_GLOBAL)
-            .trade_ws_url(crate::region::TRADE_WS_URL_GLOBAL);
-        http_client_config = http_client_config.http_url(crate::region::HTTP_URL_GLOBAL);
-        effective_http_url = crate::region::HTTP_URL_GLOBAL;
-    }
+    // This takes highest priority over region detection and over the override.
+    //
+    // If last geotest indicated China Mainland, use CN endpoints directly.
+    // Skip for US-DC tokens: US-specific APIs only exist on the global host.
+    // Otherwise pin to the global host explicitly so the SDK does not re-run
+    // geotest at request time (which would still resolve to CN on a China
+    // Mainland network).
+    let endpoints = resolve_endpoints(
+        crate::region::is_test_env(),
+        allowed_http_url_override(),
+        crate::region::is_cn_cached() && !token_dc_is_us(&crate::auth::effective_client_id()),
+    );
+    tracing::info!("Using API endpoints: {}", endpoints.http);
+
+    config_builder = config_builder
+        .http_url(&endpoints.http)
+        .quote_ws_url(&endpoints.quote_ws)
+        .trade_ws_url(&endpoints.trade_ws);
+    http_client_config = http_client_config.http_url(&endpoints.http);
+    let effective_http_url = endpoints.http;
+
+    let _ = EFFECTIVE_HTTP_URL.set(effective_http_url.clone());
 
     // Extract x-cli-cmd and x-cli-args from process arguments.
     // x-cli-cmd: the first positional (subcommand) arg.
@@ -495,6 +650,200 @@ mod quote_cmd_tests {
             "CLI must use `openapi::quote_cmd()` (fires the /v1/quote/cmd beacon), \
              not raw `openapi::quote()`. Untracked QuoteContext access at:\n{}",
             offenders.join("\n")
+        );
+    }
+}
+
+#[cfg(test)]
+mod http_url_tests {
+    use super::{
+        allowed_http_url_override, captured_http_url_override, effective_http_url,
+        resolve_endpoints, resolve_http_url, ws_url_from_http,
+    };
+    use serial_test::serial;
+
+    /// The host `init_contexts` published is authoritative: once it exists,
+    /// the pre-init override must not move the SSE transport off it.
+    #[test]
+    fn initialized_url_wins_over_env_override() {
+        assert_eq!(
+            resolve_http_url(
+                Some("https://openapi-global.longbridge.xyz".to_string()),
+                Some("http://127.0.0.1:8080".to_string()),
+            ),
+            "https://openapi-global.longbridge.xyz"
+        );
+    }
+
+    /// Before `init_contexts` publishes anything, the override is the only
+    /// signal available and is used.
+    #[test]
+    fn env_override_applies_before_initialization() {
+        assert_eq!(
+            resolve_http_url(None, Some("http://127.0.0.1:8080".to_string())),
+            "http://127.0.0.1:8080"
+        );
+    }
+
+    #[test]
+    fn blank_env_override_is_ignored() {
+        assert_eq!(
+            resolve_http_url(None, Some("   ".to_string())),
+            crate::region::http_url().to_string()
+        );
+        assert_eq!(
+            resolve_http_url(Some("https://openapi.longbridge.cn".to_string()), None),
+            "https://openapi.longbridge.cn"
+        );
+    }
+
+    #[test]
+    fn falls_back_to_region_url_without_cache() {
+        assert_eq!(
+            resolve_http_url(None, None),
+            crate::region::http_url().to_string()
+        );
+    }
+
+    /// Blocker 1 regression: with `LONGBRIDGE_ENV=staging` *and* a captured
+    /// `LONGBRIDGE_HTTP_URL` override both present, `init_contexts` pins the
+    /// SDK to the staging host — and the SSE resolver must land on that same
+    /// host rather than preferring the override.
+    #[test]
+    fn sse_resolver_agrees_with_sdk_host_when_staging_and_override_collide() {
+        let override_url = "http://127.0.0.1:8080".to_string();
+        let endpoints = resolve_endpoints(true, Some(override_url.clone()), false);
+        assert_eq!(endpoints.http, crate::region::HTTP_URL_TEST);
+
+        // What `effective_http_url()` computes after `init_contexts` published
+        // the SDK's choice, with the override still captured.
+        let sse_url = resolve_http_url(Some(endpoints.http.clone()), Some(override_url));
+        assert_eq!(
+            sse_url, endpoints.http,
+            "SSE transport and SDK must resolve the same host"
+        );
+    }
+
+    /// The same agreement must hold for every branch `resolve_endpoints` can
+    /// take, with and without an override captured.
+    #[test]
+    fn sse_resolver_agrees_with_sdk_host_for_every_branch() {
+        let override_url = Some("http://127.0.0.1:8080".to_string());
+        for is_test_env in [true, false] {
+            for over in [None, override_url.clone()] {
+                for use_cn in [true, false] {
+                    let endpoints = resolve_endpoints(is_test_env, over.clone(), use_cn);
+                    assert_eq!(
+                        resolve_http_url(Some(endpoints.http.clone()), over.clone()),
+                        endpoints.http,
+                        "mismatch for staging={is_test_env} override={over:?} cn={use_cn}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn staging_outranks_the_override() {
+        let endpoints = resolve_endpoints(true, Some("http://127.0.0.1:8080".to_string()), true);
+        assert_eq!(endpoints.http, crate::region::HTTP_URL_TEST);
+        assert_eq!(endpoints.quote_ws, crate::region::QUOTE_WS_URL_TEST);
+        assert_eq!(endpoints.trade_ws, crate::region::TRADE_WS_URL_TEST);
+    }
+
+    /// Blocker 2 regression: the override branch must derive its WS URLs from
+    /// the override, not silently keep the production global endpoints.
+    #[test]
+    fn override_branch_derives_ws_urls_from_the_override() {
+        let endpoints = resolve_endpoints(false, Some("http://127.0.0.1:8080".to_string()), false);
+        assert_eq!(endpoints.http, "http://127.0.0.1:8080");
+        assert_eq!(endpoints.quote_ws, "ws://127.0.0.1:8080/v2");
+        assert_eq!(endpoints.trade_ws, "ws://127.0.0.1:8080/v2");
+        assert_ne!(endpoints.quote_ws, crate::region::QUOTE_WS_URL_GLOBAL);
+        assert_ne!(endpoints.trade_ws, crate::region::TRADE_WS_URL_GLOBAL);
+    }
+
+    #[test]
+    fn ws_url_derivation_maps_schemes() {
+        assert_eq!(
+            ws_url_from_http("http://localhost:9000"),
+            "ws://localhost:9000/v2"
+        );
+        assert_eq!(
+            ws_url_from_http("https://mock.example/"),
+            "wss://mock.example/v2"
+        );
+        assert_eq!(
+            ws_url_from_http("wss://mock.example/v2"),
+            "wss://mock.example/v2"
+        );
+    }
+
+    #[test]
+    fn blank_override_falls_through_to_region_endpoints() {
+        let endpoints = resolve_endpoints(false, Some("   ".to_string()), true);
+        assert_eq!(endpoints.http, crate::region::HTTP_URL_CN);
+        assert_eq!(endpoints.quote_ws, crate::region::QUOTE_WS_URL_CN);
+    }
+
+    #[test]
+    fn cn_and_global_branches_keep_their_paired_constants() {
+        let cn = resolve_endpoints(false, None, true);
+        assert_eq!(cn.http, crate::region::HTTP_URL_CN);
+        assert_eq!(cn.quote_ws, crate::region::QUOTE_WS_URL_CN);
+        assert_eq!(cn.trade_ws, crate::region::TRADE_WS_URL_CN);
+
+        let global = resolve_endpoints(false, None, false);
+        assert_eq!(global.http, crate::region::HTTP_URL_GLOBAL);
+        assert_eq!(global.quote_ws, crate::region::QUOTE_WS_URL_GLOBAL);
+        assert_eq!(global.trade_ws, crate::region::TRADE_WS_URL_GLOBAL);
+    }
+
+    /// Security property: the override is captured once, at process start.
+    /// A `.env` file loaded later by the SDK (from whatever directory the user
+    /// happens to be in) must not be able to move the host — that host
+    /// receives the OAuth bearer token on the agent SSE path.
+    #[test]
+    #[serial]
+    fn captured_override_ignores_later_env_mutations() {
+        let first = captured_http_url_override().map(ToString::to_string);
+        std::env::set_var("LONGBRIDGE_HTTP_URL", "http://attacker.example");
+        let second = captured_http_url_override().map(ToString::to_string);
+        let effective = effective_http_url();
+        std::env::remove_var("LONGBRIDGE_HTTP_URL");
+
+        assert_eq!(first, second, "captured override must not change");
+        assert_ne!(second.as_deref(), Some("http://attacker.example"));
+        assert!(
+            !effective.contains("attacker.example"),
+            "late env mutation reached the SSE host: {effective}"
+        );
+    }
+
+    /// One resolution, both transports. Two halves:
+    ///
+    /// 1. The override may only be *considered* where `init_contexts` also
+    ///    applies it to the SDK configs (debug builds).
+    /// 2. Even when considered, it never outranks the host `init_contexts`
+    ///    published — that value is authoritative for both transports. (The
+    ///    earlier version of this test asserted the opposite precedence, which
+    ///    is exactly what let staging + override split the two transports.)
+    #[test]
+    fn override_gate_matches_the_sdk_gate() {
+        if cfg!(debug_assertions) {
+            assert_eq!(
+                allowed_http_url_override().as_deref(),
+                captured_http_url_override()
+            );
+        } else {
+            assert!(allowed_http_url_override().is_none());
+        }
+
+        let published = "https://openapi-global.longbridge.xyz".to_string();
+        assert_eq!(
+            resolve_http_url(Some(published.clone()), allowed_http_url_override()),
+            published,
+            "the initialized host must outrank the captured override"
         );
     }
 }

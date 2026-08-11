@@ -286,6 +286,22 @@ pub fn token_file_path() -> Result<PathBuf> {
         .join("cli-auth"))
 }
 
+/// Read the current OAuth access token from the encrypted token store.
+///
+/// Used by hand-rolled HTTP calls (e.g. SSE streaming) that cannot go
+/// through the SDK's `HttpClient`. Call `refresh_if_expired()` first so the
+/// token on disk is fresh.
+pub fn access_token() -> Result<String> {
+    let full = crate::secure_storage::EncryptedFileTokenStorage::load_full(&effective_client_id())
+        .ok_or_else(|| anyhow::anyhow!("No access token found; run `longbridge auth login`"))?;
+    full["access_token"]
+        .as_str()
+        .map(ToString::to_string)
+        .ok_or_else(|| {
+            anyhow::anyhow!("No access_token in token file; run `longbridge auth login`")
+        })
+}
+
 /// Invite code file path: `~/.longbridge/openapi/invite-code`
 fn invite_code_file_path() -> Result<PathBuf> {
     Ok(dirs::home_dir()
