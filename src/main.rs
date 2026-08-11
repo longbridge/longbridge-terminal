@@ -28,6 +28,15 @@ pub struct Args {
     pub logout: bool,
 }
 
+/// Strip terminal control/escape sequences from server-controlled text before
+/// it is printed to stderr, so a hostile API error `message` cannot repaint
+/// the terminal. Newlines and tabs are kept so multi-line errors still read.
+fn sanitize_server_text(s: &str) -> String {
+    s.chars()
+        .filter(|&c| c == '\n' || c == '\t' || !c.is_control())
+        .collect()
+}
+
 fn print_cli_error(e: &anyhow::Error, using_api_key: bool) {
     use longbridge::{httpclient::HttpClientError, wsclient::WsClientError, Error as LbError};
 
@@ -38,7 +47,10 @@ fn print_cli_error(e: &anyhow::Error, using_api_key: bool) {
                 message,
                 trace_id,
             }) => {
-                eprintln!("Error: API error (code {code}): {message}");
+                eprintln!(
+                    "Error: API error (code {code}): {}",
+                    sanitize_server_text(message)
+                );
                 if !trace_id.is_empty() {
                     eprintln!("  trace_id: {trace_id}");
                 }
@@ -57,7 +69,8 @@ fn print_cli_error(e: &anyhow::Error, using_api_key: bool) {
             }) => {
                 eprintln!(
                     "Error: WebSocket error (status={status}, code={}): {}",
-                    detail.code, detail.msg
+                    detail.code,
+                    sanitize_server_text(&detail.msg)
                 );
                 if let Some(guidance) =
                     option_quote_permission_guidance(detail.code, std::env::args())
@@ -71,7 +84,8 @@ fn print_cli_error(e: &anyhow::Error, using_api_key: bool) {
             }) => {
                 eprintln!(
                     "Error: Connection closed ({:?}): {}",
-                    reason.code, reason.message
+                    reason.code,
+                    sanitize_server_text(&reason.message)
                 );
                 return;
             }
@@ -82,7 +96,7 @@ fn print_cli_error(e: &anyhow::Error, using_api_key: bool) {
     // Network-layer failures (`HttpClientError::Http`, WebSocket connect
     // errors) carry no structured detail, so they fall through to the raw
     // message here.
-    let rendered = format!("{e:#}");
+    let rendered = sanitize_server_text(&format!("{e:#}"));
     eprintln!("Error: {rendered}");
     if let Some(guidance) = cn_access_point_guidance(&rendered) {
         eprintln!("\n{guidance}");

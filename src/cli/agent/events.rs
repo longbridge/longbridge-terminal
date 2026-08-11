@@ -16,9 +16,6 @@ pub enum AgentEvent {
     AnswerDelta {
         text: String,
     },
-    ProcessDelta {
-        text: String,
-    },
     ThinkingStarted,
     ThinkingFinished,
     ToolUseStarted {
@@ -80,13 +77,14 @@ pub fn parse_data_line(payload: &str) -> Option<AgentEvent> {
             chat_uid: str_field(&data, "chat_uid"),
             message_id: data.get("message_id").map(id_string).unwrap_or_default(),
         },
-        "message" => {
-            let text = str_field(&data, "text");
-            match data.get("type").and_then(Value::as_str) {
-                Some("answer") => AgentEvent::AnswerDelta { text },
-                _ => AgentEvent::ProcessDelta { text },
-            }
-        }
+        "message" => match data.get("type").and_then(Value::as_str) {
+            Some("answer") => AgentEvent::AnswerDelta {
+                text: str_field(&data, "text"),
+            },
+            // Non-answer (think/process) messages are progress-only and are
+            // dropped on the production path; mirror that here.
+            _ => return None,
+        },
         "thinking_started" => AgentEvent::ThinkingStarted,
         "thinking_finished" => AgentEvent::ThinkingFinished,
         "node_tool_use_started" => AgentEvent::ToolUseStarted {

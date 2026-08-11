@@ -193,7 +193,7 @@ pub(crate) async fn collect_agents(
         // single workspace stays sequential — `total` is only known after the
         // first page.
         let workspaces = api.list_workspaces().await?;
-        let per_workspace = futures::future::join_all(workspaces.iter().map(|ws| {
+        let per_workspace = futures::future::try_join_all(workspaces.iter().map(|ws| {
             let name = name.clone();
             async move {
                 let mut ws_agents = Vec::new();
@@ -216,10 +216,8 @@ pub(crate) async fn collect_agents(
                 Ok::<_, anyhow::Error>(ws_agents)
             }
         }))
-        .await;
-        for ws_agents in per_workspace {
-            all.extend(ws_agents?);
-        }
+        .await?;
+        all.extend(per_workspace.into_iter().flatten());
         // Only when listing across workspaces: `--workspace` asks about one
         // specific workspace, and these belong to none of them.
         for extra in public_agents() {

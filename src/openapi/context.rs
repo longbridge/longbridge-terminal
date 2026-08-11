@@ -21,6 +21,9 @@ pub static FUNDAMENTAL_CTX: OnceLock<longbridge::FundamentalContext> = OnceLock:
 /// Global `AgentContext` for AI agent discovery and conversations
 pub static AGENT_CTX: OnceLock<longbridge::agent::AgentContext> = OnceLock::new();
 
+/// Whether this process authenticated with API-key env vars (vs OAuth).
+static USING_API_KEY: OnceLock<bool> = OnceLock::new();
+
 /// Global `HttpClient` for making authenticated requests to the Longbridge `OpenAPI`
 pub static HTTP_CLIENT: OnceLock<longbridge::httpclient::HttpClient> = OnceLock::new();
 
@@ -202,6 +205,10 @@ pub async fn init_contexts() -> Result<(
 
     let config = Arc::new(config_builder);
 
+    // Published for callers that bypass the SDK client and need to know the
+    // auth mode (e.g. the agent commands reject API-key mode).
+    let _ = USING_API_KEY.set(using_api_key);
+
     let content_ctx = longbridge::ContentContext::new(Arc::clone(&config));
     CONTENT_CTX
         .set(content_ctx)
@@ -346,6 +353,12 @@ pub fn fundamental() -> &'static longbridge::FundamentalContext {
 }
 
 /// Get global `AgentContext` for AI agent discovery and conversations
+/// Whether the session authenticated with API-key env vars rather than
+/// OAuth. Defaults to `false` before [`init_contexts`] runs.
+pub fn using_api_key() -> bool {
+    USING_API_KEY.get().copied().unwrap_or(false)
+}
+
 pub fn agent() -> &'static longbridge::agent::AgentContext {
     AGENT_CTX
         .get()

@@ -1,7 +1,6 @@
 //! REST and SSE transport for AI agent endpoints, backed by the SDK's
 //! [`AgentContext`](longbridge::agent::AgentContext).
 
-use std::future::Future;
 use std::pin::Pin;
 
 use anyhow::{Context, Result};
@@ -11,19 +10,6 @@ use longbridge::agent::{ConversationStatus, ConversationStreamEvent, GetAgentsOp
 use serde_json::json;
 
 use super::events::AgentEvent;
-
-/// Take a token from the process-wide rate limiter before issuing an agent
-/// call, so agent traffic shares one 10 req/s budget with every other command
-/// (quotes, trades, …) instead of running an unmetered lane.
-///
-/// `acquire()` rather than `RateLimiter::execute()`: `execute` layers its own
-/// retry/backoff on any error whose text contains "429", which would nest
-/// inside [`with_rate_limit_retry`] and multiply the wait. The retry policy
-/// for agent calls lives in one place; the limiter only meters.
-async fn acquire_rate_limit_token(request_name: &str) {
-    tracing::debug!("Rate-limited agent request: {request_name}");
-    crate::openapi::global_rate_limiter().acquire().await;
-}
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct WorkspaceInfo {
@@ -82,14 +68,16 @@ impl AgentApi for LbAgentApi {
         if self.verbose {
             eprintln!("* GET /v1/ai/workspaces");
         }
-        let resp = with_rate_limit_retry(|| async {
-            acquire_rate_limit_token("agent_list_workspaces").await;
-            crate::openapi::agent()
-                .workspaces()
-                .await
-                .context("Failed to list AI workspaces")
-        })
-        .await?;
+        // The shared limiter meters (10 req/s) and retries the 429002
+        // rate-limit rejection with backoff. The op returns the raw SDK error
+        // so the limiter's "429" detection can see the code; the user-facing
+        // context is attached only after retries are exhausted.
+        let resp = crate::openapi::global_rate_limiter()
+            .execute("agent_list_workspaces", || {
+                Box::pin(async { crate::openapi::agent().workspaces().await })
+            })
+            .await
+            .context("Failed to list AI workspaces")?;
         Ok(resp
             .workspaces
             .into_iter()
@@ -118,14 +106,14 @@ impl AgentApi for LbAgentApi {
         if let Some(n) = name {
             opts = opts.name(n);
         }
-        let resp = with_rate_limit_retry(|| async {
-            acquire_rate_limit_token("agent_list_agents").await;
-            crate::openapi::agent()
-                .agents(workspace_id.clone(), Some(opts.clone()))
-                .await
-                .context("Failed to list AI agents")
-        })
-        .await?;
+        let resp = crate::openapi::global_rate_limiter()
+            .execute("agent_list_agents", || {
+                let ws = workspace_id.clone();
+                let opts = opts.clone();
+                Box::pin(async move { crate::openapi::agent().agents(ws, Some(opts)).await })
+            })
+            .await
+            .context("Failed to list AI agents")?;
         Ok(AgentPage {
             agents: resp
                 .agents
@@ -146,38 +134,19 @@ impl AgentApi for LbAgentApi {
     }
 }
 
-/// True when the error is the `OpenAPI` 429002 rate-limit rejection.
-pub fn is_rate_limited(err: &anyhow::Error) -> bool {
-    let s = err.to_string();
-    s.contains("429002") || s.contains("slow down request frequency")
-}
-
-#[cfg(test)]
-const BACKOFF_SECS: [f64; 3] = [0.01, 0.02, 0.04];
-#[cfg(not(test))]
-const BACKOFF_SECS: [f64; 3] = [1.0, 2.0, 4.0];
-
-/// Run `op`, retrying up to 3 times with exponential backoff when the API
-/// rejects the call with a 429002 rate limit.
-pub async fn with_rate_limit_retry<T, F, Fut>(mut op: F) -> Result<T>
-where
-    F: FnMut() -> Fut,
-    Fut: Future<Output = Result<T>>,
-{
-    for backoff in BACKOFF_SECS {
-        match op().await {
-            Ok(v) => return Ok(v),
-            Err(e) if is_rate_limited(&e) => {
-                tokio::time::sleep(std::time::Duration::from_secs_f64(backoff)).await;
-            }
-            Err(e) => return Err(e),
-        }
+/// Reject AI conversations when the process authenticated with API-key env
+/// vars. The AI conversation endpoints are only known to accept an OAuth
+/// principal; failing fast with an actionable message beats an opaque 401
+/// mid-stream. (Can be lifted once API-key auth is confirmed to work against
+/// the AI endpoints, now that requests go through the SDK's signing client.)
+fn ensure_oauth_auth(using_api_key: bool) -> Result<()> {
+    if using_api_key {
+        anyhow::bail!(
+            "agent chat requires OAuth login (API-key auth is not supported for AI \
+             conversations); run `longbridge auth login`"
+        );
     }
-    // Final attempt after backoff is exhausted: propagate whatever error it
-    // actually produces. A stale 429 from an earlier attempt must not mask
-    // a different, more informative failure on this last try (e.g. the
-    // server may have moved on to rejecting the request outright).
-    op().await
+    Ok(())
 }
 
 /// A conversation to stream: either a fresh round or the resumption of an
@@ -185,6 +154,7 @@ where
 /// ([`AgentContext::conversation_streamed`](longbridge::agent::AgentContext::conversation_streamed)
 /// and
 /// [`continue_conversation_streamed`](longbridge::agent::AgentContext::continue_conversation_streamed)).
+#[derive(Clone)]
 pub enum ConversationRequest {
     New {
         agent_uid: String,
@@ -223,11 +193,12 @@ fn map_event(ev: ConversationStreamEvent) -> Option<AgentEvent> {
             message_id: p.message_id,
         },
         ConversationStreamEvent::Message(p) => {
-            // `answer` is the final answer body; `think`/`process` are progress.
+            // Only the final answer body is surfaced; `think`/`process`
+            // progress messages are dropped like the other progress events.
             if p.message_type == "answer" {
                 AgentEvent::AnswerDelta { text: p.text }
             } else {
-                AgentEvent::ProcessDelta { text: p.text }
+                return None;
             }
         }
         ConversationStreamEvent::ThinkingStarted(_) => AgentEvent::ThinkingStarted,
@@ -282,55 +253,51 @@ type EventStream = Pin<Box<dyn Stream<Item = longbridge::Result<ConversationStre
 /// Stream a conversation through the SDK's `AgentContext`, dispatching each
 /// surfaced event to `on_event`.
 ///
-/// Retry covers only the pre-stream handshake and only the 429002 rejection:
-/// once the server starts delivering events the run cannot be replayed, so a
-/// mid-stream failure is propagated as-is.
+/// The shared rate limiter meters and retries the pre-stream 429002 handshake
+/// rejection: the op returns the raw SDK error (whose Display carries the
+/// code) so the limiter can classify it, and only the handshake is retried —
+/// once draining starts below, a mid-stream failure is propagated as-is.
 pub async fn stream_conversation(
     req: ConversationRequest,
     verbose: bool,
     on_event: &mut dyn FnMut(AgentEvent),
 ) -> Result<()> {
+    ensure_oauth_auth(crate::openapi::using_api_key())?;
     let ctx = crate::openapi::agent();
     if verbose {
         eprintln!("* POST agent conversation (SSE)");
     }
-    let mut stream: EventStream = with_rate_limit_retry(|| async {
-        acquire_rate_limit_token("agent_conversation").await;
-        let stream: EventStream = match &req {
-            ConversationRequest::New {
-                agent_uid,
-                query,
-                chat_uid,
-                parent_message_id,
-            } => Box::pin(
-                ctx.conversation_streamed(
-                    agent_uid.clone(),
-                    query.clone(),
-                    chat_uid.clone(),
-                    parent_message_id.clone(),
-                )
-                .await
-                .context("Failed to start the AI conversation")?,
-            ),
-            ConversationRequest::Continue {
-                agent_uid,
-                chat_uid,
-                message_id,
-                answers,
-            } => Box::pin(
-                ctx.continue_conversation_streamed(
-                    agent_uid.clone(),
-                    chat_uid.clone(),
-                    message_id.clone(),
-                    answers.clone(),
-                )
-                .await
-                .context("Failed to resume the AI conversation")?,
-            ),
-        };
-        Ok(stream)
-    })
-    .await?;
+    let mut stream = crate::openapi::global_rate_limiter()
+        .execute("agent_conversation", || {
+            let req = req.clone();
+            Box::pin(async move {
+                let stream: EventStream = match req {
+                    ConversationRequest::New {
+                        agent_uid,
+                        query,
+                        chat_uid,
+                        parent_message_id,
+                    } => Box::pin(
+                        ctx.conversation_streamed(agent_uid, query, chat_uid, parent_message_id)
+                            .await?,
+                    ),
+                    ConversationRequest::Continue {
+                        agent_uid,
+                        chat_uid,
+                        message_id,
+                        answers,
+                    } => Box::pin(
+                        ctx.continue_conversation_streamed(
+                            agent_uid, chat_uid, message_id, answers,
+                        )
+                        .await?,
+                    ),
+                };
+                Ok::<_, longbridge::Error>(stream)
+            })
+        })
+        .await
+        .context("Failed to run the AI conversation")?;
 
     while let Some(item) = stream.next().await {
         let ev = item.context("SSE stream error")?;
@@ -346,14 +313,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rate_limited_detects_429002() {
-        assert!(is_rate_limited(&anyhow::anyhow!(
-            "api error: code=429002 api request is limited"
-        )));
-        assert!(is_rate_limited(&anyhow::anyhow!(
-            "please slow down request frequency"
-        )));
-        assert!(!is_rate_limited(&anyhow::anyhow!("404 not found")));
+    fn api_key_mode_is_rejected_with_actionable_message() {
+        let err = ensure_oauth_auth(true).unwrap_err().to_string();
+        assert!(err.contains("OAuth"), "unexpected message: {err}");
+        assert!(
+            err.contains("longbridge auth login"),
+            "message must be actionable: {err}"
+        );
+        ensure_oauth_auth(false).expect("OAuth mode must be allowed");
     }
 
     #[test]
@@ -456,10 +423,8 @@ mod tests {
             message_type: "think".into(),
             ..Default::default()
         };
-        assert!(matches!(
-            map_event(ConversationStreamEvent::Message(think)),
-            Some(AgentEvent::ProcessDelta { .. })
-        ));
+        // Non-answer progress messages are dropped, not surfaced.
+        assert!(map_event(ConversationStreamEvent::Message(think)).is_none());
     }
 
     #[test]
@@ -481,60 +446,5 @@ mod tests {
             serde_json::json!({"id": "33", "name": "Longbridge", "created_at": 0, "updated_at": 0});
         let w: WorkspaceInfo = serde_json::from_value(json).unwrap();
         assert_eq!(w.id, "33");
-    }
-
-    #[tokio::test]
-    async fn retry_helper_retries_on_rate_limit_then_succeeds() {
-        let mut calls = 0;
-        let result = with_rate_limit_retry(|| {
-            calls += 1;
-            let attempt = calls;
-            async move {
-                if attempt < 2 {
-                    Err(anyhow::anyhow!("code=429002 api request is limited"))
-                } else {
-                    Ok(42)
-                }
-            }
-        })
-        .await
-        .unwrap();
-        assert_eq!(result, 42);
-        assert_eq!(calls, 2);
-    }
-
-    #[tokio::test]
-    async fn retry_helper_passes_through_other_errors() {
-        let result: anyhow::Result<i32> =
-            with_rate_limit_retry(|| async { Err(anyhow::anyhow!("boom")) }).await;
-        assert_eq!(result.unwrap_err().to_string(), "boom");
-    }
-
-    #[tokio::test]
-    async fn retry_helper_final_attempt_error_is_not_masked_by_stale_429() {
-        // Every attempt inside the backoff loop is rate-limited; the final
-        // (post-backoff) attempt fails with a *different* error. The
-        // returned error must be that final failure, not a stale 429 from
-        // an earlier attempt.
-        let mut calls = 0;
-        let result: anyhow::Result<i32> = with_rate_limit_retry(|| {
-            calls += 1;
-            let attempt = calls;
-            async move {
-                if attempt <= BACKOFF_SECS.len() {
-                    Err(anyhow::anyhow!("code=429002 api request is limited"))
-                } else {
-                    Err(anyhow::anyhow!("boom: real failure on last attempt"))
-                }
-            }
-        })
-        .await;
-        assert_eq!(calls, BACKOFF_SECS.len() + 1);
-        let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("boom: real failure on last attempt"),
-            "expected the final attempt's real error, got: {err}"
-        );
-        assert!(!err.contains("429002"), "stale 429 leaked through: {err}");
     }
 }
