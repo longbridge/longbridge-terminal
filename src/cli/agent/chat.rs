@@ -9,7 +9,7 @@ use anyhow::{bail, Context, Result};
 use rust_i18n::t;
 use serde_json::{json, Value};
 
-use super::client::stream_conversation;
+use super::client::{stream_conversation, ConversationRequest};
 use super::events::{AgentEvent, ChatAggregator, ChatOutcome, Widget};
 use super::render::{parse_quote_widget_symbol, render_answer, strip_control_chars, QuoteCardData};
 use super::ChatTarget;
@@ -332,15 +332,13 @@ pub async fn cmd_chat(
     // does when the agent asks something back, so it carries the same
     // pretty-only constraint. Check before any network work.
     ensure_interactive_supported(interactive, format)?;
-    let mut body = json!({ "query": target.query });
-    if let Some(c) = &target.chat_uid {
-        body["chat_uid"] = json!(c);
-    }
-    if let Some(p) = &target.parent_message_id {
-        body["parent_message_id"] = json!(p);
-    }
-    let path = format!("/v1/ai/agents/{}/conversations", target.agent_uid);
-    let outcome = run_streaming(&path, body, stream, format, verbose).await?;
+    let req = ConversationRequest::New {
+        agent_uid: target.agent_uid.clone(),
+        query: target.query.clone(),
+        chat_uid: target.chat_uid.clone(),
+        parent_message_id: target.parent_message_id.clone(),
+    };
+    let outcome = run_streaming(req, stream, format, verbose).await?;
     handle_outcome(
         &target.agent_uid,
         outcome,
@@ -541,21 +539,30 @@ async fn run_continue(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let path = format!(
-        "/v1/ai/agents/{agent_uid}/conversations/{chat_uid}/messages/{message_id}/continue"
-    );
-    let body = json!({ "answers_by_tool_call": answers_value });
-    let mut outcome = run_streaming(&path, body, false, format, verbose).await?;
+    let req = ConversationRequest::Continue {
+        agent_uid: agent_uid.clone(),
+        chat_uid: chat_uid.clone(),
+        message_id: message_id.clone(),
+        answers: answers_by_tool_call(answers_value)?,
+    };
+    let mut outcome = run_streaming(req, false, format, verbose).await?;
     backfill_outcome_ids(&mut outcome, &chat_uid, &message_id);
     clear_interrupt(&chat_uid, &message_id);
     handle_outcome(&agent_uid, outcome, false, interactive, format, verbose).await
 }
 
+/// Convert the validated `answers_by_tool_call` JSON (an object of objects of
+/// strings) into the SDK's typed map. The shape was already checked upstream
+/// (`parse_answers_json` / `parse_answer_specs` / `prompt_answers`), so a
+/// failure here means a programming error rather than bad user input.
+fn answers_by_tool_call(value: Value) -> Result<longbridge::agent::AnswersByToolCall> {
+    serde_json::from_value(value).context("Invalid answers payload")
+}
+
 /// Drive the SSE stream, printing progress to stderr (pretty) and answer
 /// deltas to stdout (--stream). Returns the aggregated outcome.
 async fn run_streaming(
-    path: &str,
-    body: Value,
+    req: ConversationRequest,
     stream: bool,
     format: &OutputFormat,
     verbose: bool,
@@ -563,7 +570,7 @@ async fn run_streaming(
     let pretty = matches!(format, OutputFormat::Pretty);
     let mut agg = ChatAggregator::default();
     let mut answer_started = false;
-    let result = stream_conversation(path, body, verbose, &mut |ev| {
+    let result = stream_conversation(req, verbose, &mut |ev| {
         if pretty {
             match &ev {
                 AgentEvent::ThinkingStarted => eprintln!("* {}", t!("Agent.Thinking")),
@@ -661,12 +668,13 @@ async fn handle_outcome_depth(
             {
                 eprintln!("{}", t!("Agent.Interrupted"));
                 let answers = prompt_answers(interrupt)?;
-                let path = format!(
-                    "/v1/ai/agents/{agent_uid}/conversations/{}/messages/{}/continue",
-                    outcome.chat_uid, outcome.message_id
-                );
-                let body = json!({ "answers_by_tool_call": answers });
-                let mut next = run_streaming(&path, body, streamed, format, verbose).await?;
+                let req = ConversationRequest::Continue {
+                    agent_uid: agent_uid.to_string(),
+                    chat_uid: outcome.chat_uid.clone(),
+                    message_id: outcome.message_id.clone(),
+                    answers: answers_by_tool_call(answers)?,
+                };
+                let mut next = run_streaming(req, streamed, format, verbose).await?;
                 backfill_outcome_ids(&mut next, &outcome.chat_uid, &outcome.message_id);
                 clear_interrupt(&outcome.chat_uid, &outcome.message_id);
                 return Box::pin(handle_outcome_depth(

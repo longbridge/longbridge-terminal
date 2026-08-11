@@ -46,6 +46,7 @@ pub enum AgentEvent {
 }
 
 /// Render a JSON id that may be a number or a string as a plain string.
+#[cfg(test)]
 fn id_string(v: &Value) -> String {
     match v {
         Value::String(s) => s.clone(),
@@ -53,6 +54,7 @@ fn id_string(v: &Value) -> String {
     }
 }
 
+#[cfg(test)]
 fn str_field(data: &Value, key: &str) -> String {
     data.get(key)
         .and_then(Value::as_str)
@@ -61,6 +63,11 @@ fn str_field(data: &Value, key: &str) -> String {
 }
 
 /// Parse one SSE `data:` payload. Returns `None` for unparseable JSON.
+///
+/// The SDK now owns SSE parsing on the production path; this is retained as a
+/// test helper so the recorded golden stream still cross-checks the event
+/// shapes the [`AgentEvent`] mapping in `client.rs` depends on.
+#[cfg(test)]
 pub fn parse_data_line(payload: &str) -> Option<AgentEvent> {
     let frame: Value = serde_json::from_str(payload).ok()?;
     let event = frame
@@ -110,12 +117,15 @@ pub fn parse_data_line(payload: &str) -> Option<AgentEvent> {
 ///
 /// Network chunks can split a frame anywhere, including mid-UTF-8-codepoint,
 /// so buffering happens at the byte level and lines are only decoded once a
-/// `\n` is seen.
+/// `\n` is seen. Test-only: the SDK buffers the live stream on the production
+/// path.
+#[cfg(test)]
 #[derive(Default)]
 pub struct SseLineBuffer {
     buf: Vec<u8>,
 }
 
+#[cfg(test)]
 impl SseLineBuffer {
     pub fn push(&mut self, chunk: &[u8]) -> Vec<String> {
         self.buf.extend_from_slice(chunk);

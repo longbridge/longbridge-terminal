@@ -136,15 +136,6 @@ fn option_quote_permission_guidance(
 
 #[tokio::main]
 async fn main() {
-    // FIRST statement on purpose: snapshot `LONGBRIDGE_HTTP_URL` before
-    // anything can mutate the environment. The SDK constructors called later
-    // by `init_contexts` load a `.env` from the current working directory, so
-    // a `.env` in an untrusted repository could otherwise redirect requests
-    // that carry the OAuth bearer token (notably the agent SSE stream) to an
-    // attacker-controlled host. Everything downstream reads the captured
-    // value via `openapi::context::captured_http_url_override()`.
-    let _ = openapi::context::captured_http_url_override();
-
     match cli::schema::handle_schema_args(std::env::args_os()) {
         Ok(cli::schema::SchemaOutcome::NotRequested) => {}
         Ok(cli::schema::SchemaOutcome::Handled) => return,
