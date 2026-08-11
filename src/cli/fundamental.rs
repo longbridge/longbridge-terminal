@@ -312,8 +312,8 @@ fn print_financials(value: &Value) {
 
                 let mut row = vec![name];
                 for p in &periods {
-                    let raw = value_map.get(p.as_str()).copied().unwrap_or("-");
-                    row.push(format_financial_value(raw, is_percent));
+                    let value = value_map.get(p.as_str()).copied().unwrap_or("-");
+                    row.push(format_financial_value(value, is_percent));
                 }
                 rows.push(row);
             }
@@ -3716,7 +3716,7 @@ pub async fn cmd_compare(
                 ("Liab/Assets", "liabilities_assets"),
                 ("Leverage", "leverage"),
             ] {
-                let mut row = vec![label.to_string()];
+                let mut row = vec![(*label).to_string()];
                 row.extend(list.iter().map(|s| fmt_val(key, val_str(&s[*key]))));
                 rows.push(row);
             }
@@ -4150,7 +4150,7 @@ fn print_financial_report_snapshot(data: &Value) {
     ] {
         let v = val_str(&data[*key]);
         if v != "-" && !v.is_empty() {
-            financials_rows.push(vec![label.to_string(), v, String::new()]);
+            financials_rows.push(vec![(*label).to_string(), v, String::new()]);
         }
     }
     if !financials_rows.is_empty() {

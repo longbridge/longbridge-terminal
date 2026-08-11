@@ -213,6 +213,20 @@ pub fn fmt_date(d: time::Date) -> String {
     d.format(&fmt).unwrap_or_else(|_| d.to_string())
 }
 
+/// Format a unix timestamp (seconds) as `YYYY-MM-DD HH:MM`, or `-` for 0.
+pub fn fmt_unix_ts(ts: i64) -> String {
+    if ts == 0 {
+        return "-".to_string();
+    }
+    time::OffsetDateTime::from_unix_timestamp(ts).map_or_else(
+        |_| "-".to_string(),
+        |dt| {
+            let fmt = time::macros::format_description!("[year]-[month]-[day] [hour]:[minute]");
+            dt.format(&fmt).unwrap_or_else(|_| ts.to_string())
+        },
+    )
+}
+
 /// Recursively remove non-public internal fields from a JSON value.
 ///
 /// Longbridge API responses may include fields like `aaid` that are internal

@@ -136,6 +136,15 @@ fn option_quote_permission_guidance(
 
 #[tokio::main]
 async fn main() {
+    // FIRST statement on purpose: snapshot `LONGBRIDGE_HTTP_URL` before
+    // anything can mutate the environment. The SDK constructors called later
+    // by `init_contexts` load a `.env` from the current working directory, so
+    // a `.env` in an untrusted repository could otherwise redirect requests
+    // that carry the OAuth bearer token (notably the agent SSE stream) to an
+    // attacker-controlled host. Everything downstream reads the captured
+    // value via `openapi::context::captured_http_url_override()`.
+    let _ = openapi::context::captured_http_url_override();
+
     match cli::schema::handle_schema_args(std::env::args_os()) {
         Ok(cli::schema::SchemaOutcome::NotRequested) => {}
         Ok(cli::schema::SchemaOutcome::Handled) => return,
@@ -156,6 +165,41 @@ async fn main() {
 
     locale::init(cli.lang.as_deref());
     rust_i18n::set_locale(locale::get());
+
+    // `agent --skill` prints a static, built-in document: no auth, no
+    // network. Handle it before the region-cache refresh (and the background
+    // version check) so it stays reliably offline and instant, which is what
+    // makes it usable from a harness bootstrap step.
+    if let Some(cli::Commands::Agent { skill: true, .. }) = &cli.command {
+        cli::agent::skills::print_skills_doc();
+        return;
+    }
+
+    // The same reasoning covers every request that is answerable without the
+    // network: decide it here, before the region probe and `init_contexts`.
+    // Reaching these from `dispatch` would be too late — a logged-out user
+    // asking `longbridge agent` what it can do would get an auth failure
+    // instead of the help they asked for.
+    match &cli.command {
+        // A command group with no subcommand: show the options, exit like
+        // clap does for a missing mandatory subcommand.
+        Some(cli::Commands::Agent { cmd: None, .. }) => {
+            cli::exit_with_subcommand_help("agent");
+        }
+        Some(cli::Commands::Workspace { cmd: None }) => {
+            cli::exit_with_subcommand_help("workspace");
+        }
+        // `--interactive` needs a terminal to prompt on, so it cannot be
+        // combined with machine-readable output. Rejecting it here keeps the
+        // failure free of any token refresh or region request.
+        Some(cli::Commands::Agent { cmd: Some(sub), .. }) => {
+            if let Err(e) = cli::agent::chat::ensure_interactive_supported_for(sub, &cli.format) {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        }
+        _ => {}
+    }
 
     // Re-probe the access-point region if the cached verdict has gone stale.
     // Usually a no-op; only the first run after the cache TTL expires waits.
@@ -297,6 +341,8 @@ async fn main() {
             cli::completion::cmd_completion(shell);
         }
 
+        // `Agent { skill: true }` never reaches here: it is handled above,
+        // before any network work.
         Some(cmd) => {
             let start = verbose.then(Instant::now);
             // CLI mode: init contexts (auth), then dispatch
