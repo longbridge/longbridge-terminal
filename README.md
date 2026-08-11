@@ -377,6 +377,25 @@ longbridge dca check TSLA.US AAPL.US 700.HK                  # Check which symbo
 longbridge dca set-reminder 6                                 # Set reminder hours before trade (1 | 6 | 12)
 ```
 
+### Grid Trading
+
+```bash
+longbridge grid                                               # List grid orders
+longbridge grid --symbol 700.HK --status Performing           # Filter grid orders by symbol / status
+longbridge grid --ids <ORDER_ID1> <ORDER_ID2>                 # Query specific grid orders by ID
+longbridge grid submit 700.HK --currency HKD --base-price 300 --upper-price 360 --lower-price 240 \
+  --trigger-type percent --trigger-up 2 --trigger-down 2 --quantity 100 \
+  --upper-quantity 200 --lower-quantity 100 --order-type GMO --tif gtc   # Submit a grid strategy
+longbridge grid detail <ORDER_ID>                             # Grid order detail (rule, sub-orders, history)
+longbridge grid triggers <ORDER_ID>                           # Grid trigger history
+longbridge grid replace <ORDER_ID> --base-price 305 ...       # Replace (modify) a grid rule
+longbridge grid cancel <ORDER_ID>                             # Cancel a grid order
+longbridge grid suspend <ORDER_ID>                            # Suspend a grid order
+longbridge grid restart <ORDER_ID>                            # Restart a suspended grid order
+longbridge grid info 700.HK                                   # Order info (lot size, authorization, currency)
+longbridge grid questionnaire                                 # Submit the strategy risk-disclosure questionnaire
+```
+
 ### Short Selling
 
 ```bash

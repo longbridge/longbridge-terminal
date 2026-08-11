@@ -4,8 +4,8 @@ use serde_json::{json, Map, Value};
 use std::ffi::OsString;
 
 use super::{
-    asset, atm, auth, check, completion, dca, fundamental, init, insider_trades, investors, ipo,
-    news, quote, run_script, screener, sharelist, statement, topic, trade, watchlist, Cli,
+    asset, atm, auth, check, completion, dca, fundamental, grid, init, insider_trades, investors,
+    ipo, news, quote, run_script, screener, sharelist, statement, topic, trade, watchlist, Cli,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -330,6 +330,7 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<ResponseSchema> {
         "insider-trades" => insider_trades::schema_for_path(path),
         "investors" => investors::schema_for_path(path),
         "dca" => dca::schema_for_path(path),
+        "grid" => grid::schema_for_path(path),
         "sharelist" => sharelist::schema_for_path(path),
         "quant" => run_script::schema_for_path(path),
         "screener" => screener::schema_for_path(path),
@@ -462,6 +463,21 @@ fn print_no_schema_error(path: &[String]) {
 mod tests {
     use super::*;
 
+    /// Run a test body on a thread with a large stack.
+    ///
+    /// `clap`'s `Command::build` recurses over the whole command tree; with the
+    /// full CLI the depth exceeds the 2 MiB default stack of test threads and
+    /// overflows. The main binary runs on the 8 MiB main thread, so this only
+    /// affects tests. Give them a roomy stack instead.
+    fn with_large_stack(f: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(f)
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
     fn real_leaf_paths(command: &Command) -> Vec<Vec<String>> {
         let mut out = Vec::new();
         // Iterative DFS: stack holds (command_ref, current_prefix)
@@ -486,37 +502,41 @@ mod tests {
 
     #[test]
     fn schema_path_preparse_selects_nested_command_without_required_args() {
-        let mut root = Cli::command();
-        root.build();
-        let args = [
-            OsString::from("kline"),
-            OsString::from("history"),
-            OsString::from("--schema"),
-        ];
+        with_large_stack(|| {
+            let mut root = Cli::command();
+            root.build();
+            let args = [
+                OsString::from("kline"),
+                OsString::from("history"),
+                OsString::from("--schema"),
+            ];
 
-        let (selected, path) = selected_command_and_path_for_args(&root, args.iter());
+            let (selected, path) = selected_command_and_path_for_args(&root, args.iter());
 
-        assert_eq!(selected.get_name(), "history");
-        assert_eq!(path, vec!["kline".to_string(), "history".to_string()]);
+            assert_eq!(selected.get_name(), "history");
+            assert_eq!(path, vec!["kline".to_string(), "history".to_string()]);
+        });
     }
 
     #[test]
     fn every_real_leaf_command_has_schema_provider() {
-        let mut root = Cli::command();
-        root.build();
-        let paths = real_leaf_paths(&root);
-        assert_eq!(
-            paths.len(),
-            142,
-            "real command count changed; review schema coverage"
-        );
+        with_large_stack(|| {
+            let mut root = Cli::command();
+            root.build();
+            let paths = real_leaf_paths(&root);
+            assert_eq!(
+                paths.len(),
+                151,
+                "real command count changed; review schema coverage"
+            );
 
-        let missing = paths
-            .iter()
-            .filter(|path| schema_for_path(path).is_none())
-            .map(|path| path.join(" "))
-            .collect::<Vec<_>>();
+            let missing = paths
+                .iter()
+                .filter(|path| schema_for_path(path).is_none())
+                .map(|path| path.join(" "))
+                .collect::<Vec<_>>();
 
-        assert!(missing.is_empty(), "missing schema coverage: {missing:#?}");
+            assert!(missing.is_empty(), "missing schema coverage: {missing:#?}");
+        });
     }
 }
