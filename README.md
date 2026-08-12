@@ -393,7 +393,7 @@ longbridge grid replace <ORDER_ID> --base-price 305 ...       # Replace (modify)
 longbridge grid cancel <ORDER_ID>                             # Cancel a grid order
 longbridge grid suspend <ORDER_ID>                            # Suspend a grid order
 longbridge grid restart <ORDER_ID>                            # Restart a suspended grid order
-longbridge grid info 700.HK                                   # Order info (lot size, authorization, currency)
+longbridge grid info 700.HK                                   # Symbol's grid-trading info (lot size, last price, authorization, currency)
 longbridge grid questionnaire                                 # Submit the strategy risk-disclosure questionnaire
 ```
 

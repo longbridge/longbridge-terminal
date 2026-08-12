@@ -1798,7 +1798,7 @@ pub enum GridCmd {
         /// Grid order ID
         order_id: String,
     },
-    /// Show order info (lot size, authorization) for a symbol
+    /// Show a symbol's grid-trading info: lot size, last price, strategy authorization, currency
     Info {
         /// Symbol (e.g. 700.HK)
         symbol: String,

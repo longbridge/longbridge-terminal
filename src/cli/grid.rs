@@ -660,7 +660,7 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
             ],
         ),
         "grid info" => object(
-            "Grid order info",
+            "Grid-trading info for a symbol (lot size, last price, authorization, currency)",
             &[
                 "name",
                 "last_done",
