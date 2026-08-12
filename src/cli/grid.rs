@@ -488,16 +488,20 @@ async fn cmd_info(symbol: String, format: &OutputFormat) -> Result<()> {
         OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&i).unwrap_or_default()),
         OutputFormat::Pretty => {
             print_json_value(
+                // Keep the same key shape as --format json: channel fields stay
+                // nested under `channel_infos` so switching format never moves a key.
                 &serde_json::json!({
                     "name": i.name,
                     "last_done": i.last_done,
                     "lot_size": i.lot_size,
                     "buy_lot_size": i.buy_lot_size,
                     "sell_lot_size": i.sell_lot_size,
-                    "strategy_granted": i.channel_infos.strategy_granted,
-                    "support_rth": i.channel_infos.support_rth,
-                    "currency": i.channel_infos.currency,
-                    "settlement_currency": i.channel_infos.settlement_currency,
+                    "channel_infos": {
+                        "strategy_granted": i.channel_infos.strategy_granted,
+                        "support_rth": i.channel_infos.support_rth,
+                        "currency": i.channel_infos.currency,
+                        "settlement_currency": i.channel_infos.settlement_currency,
+                    },
                 }),
                 format,
             );
@@ -542,31 +546,54 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
     use super::schema::{array, object, text};
 
     let command = path.join(" ");
+    // `grid` / `grid --ids` serialize the full GridOrder struct; describe every
+    // key so agents relying on the schema see the complete JSON shape.
     let order_fields = &[
         "order_id",
         "symbol",
         "stock_name",
+        "market",
         "status",
         "grid_status",
-        "market",
         "submitted_base_price",
         "current_base_price",
+        "pre_trigger_base_price",
+        "post_trigger_base_price",
         "upper_limit_price",
         "lower_limit_price",
         "trigger_price_type",
-        "trigger_percent_up",
-        "trigger_percent_down",
         "trigger_spread_up",
         "trigger_spread_down",
+        "trigger_percent_up",
+        "trigger_percent_down",
+        "pullback_percent",
+        "pullback_spread",
+        "rebound_percent",
+        "rebound_spread",
+        "trigger_sell_order_type",
+        "trigger_buy_order_type",
+        "trigger_sell_depth",
+        "trigger_buy_depth",
         "trigger_quantity",
+        "trigger_sell_quantity",
+        "trigger_buy_quantity",
         "upper_limit_quantity",
         "lower_limit_quantity",
-        "grid_order_type_up",
-        "grid_order_type_down",
+        "upper_limit_event",
+        "lower_limit_event",
+        "multiple_trigger",
+        "trigger_times",
+        "total_buy_quantity",
+        "total_sell_quantity",
+        "total_profit_balance",
+        "settlement_currency",
         "time_in_force",
-        "rth",
         "gtd",
         "created_at",
+        "rth",
+        "support_shortsell",
+        "grid_order_type_up",
+        "grid_order_type_down",
     ];
     // `grid detail` serializes the full GridOrderDetail struct, which is a
     // superset of the list fields; describe every key so agents relying on the
