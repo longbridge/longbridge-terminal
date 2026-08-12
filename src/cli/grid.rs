@@ -483,13 +483,15 @@ async fn cmd_triggers(
 }
 
 async fn cmd_info(symbol: String, format: &OutputFormat) -> Result<()> {
-    let i = openapi::grid().order_info(symbol).await?;
+    let i = openapi::grid().symbol_info(symbol).await?;
     match format {
         OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&i).unwrap_or_default()),
         OutputFormat::Pretty => {
             print_json_value(
-                // Keep the same key shape as --format json: channel fields stay
-                // nested under `channel_infos` so switching format never moves a key.
+                // Keep the same key shape as --format json: the SDK serializes the
+                // field as `channel_infos` (serde rename), so emit that plural key —
+                // matching the wire JSON, not the Rust field name — so switching
+                // format never moves a key.
                 &serde_json::json!({
                     "name": i.name,
                     "last_done": i.last_done,
@@ -497,10 +499,10 @@ async fn cmd_info(symbol: String, format: &OutputFormat) -> Result<()> {
                     "buy_lot_size": i.buy_lot_size,
                     "sell_lot_size": i.sell_lot_size,
                     "channel_infos": {
-                        "strategy_granted": i.channel_infos.strategy_granted,
-                        "support_rth": i.channel_infos.support_rth,
-                        "currency": i.channel_infos.currency,
-                        "settlement_currency": i.channel_infos.settlement_currency,
+                        "strategy_granted": i.channel_info.strategy_granted,
+                        "support_rth": i.channel_info.support_rth,
+                        "currency": i.channel_info.currency,
+                        "settlement_currency": i.channel_info.settlement_currency,
                     },
                 }),
                 format,
