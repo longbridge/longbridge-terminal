@@ -60,6 +60,25 @@ fn build_rule(r: &GridRuleArgs) -> Result<longbridge::grid::GridTradeRule> {
     if trig_up <= zero || trig_down <= zero {
         anyhow::bail!("--trigger-up ({trig_up}) / --trigger-down ({trig_down}) must be positive");
     }
+    // The gateway reports out-of-range enum-like ints as a generic "parameter
+    // missing" (602080), which is misleading to callers. Validate them locally
+    // so agents get an actionable message naming the offending flag.
+    if !(0..=2).contains(&r.rth) {
+        anyhow::bail!("--rth ({}) must be 0, 1, or 2", r.rth);
+    }
+    for (flag, v) in [
+        ("--upper-event", r.upper_event),
+        ("--lower-event", r.lower_event),
+    ] {
+        if v != 1 && v != 2 {
+            anyhow::bail!("{flag} ({v}) must be 1 (ignore) or 2 (close at last price)");
+        }
+    }
+    for (flag, v) in [("--sell-depth", r.sell_depth), ("--buy-depth", r.buy_depth)] {
+        if !(-5..=5).contains(&v) {
+            anyhow::bail!("{flag} ({v}) must be within [-5, 5]");
+        }
+    }
 
     // trigger-up/down interpreted by trigger-type (percent vs spread enum)
     let trigger = match r.trigger_type {
