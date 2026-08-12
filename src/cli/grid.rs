@@ -61,6 +61,18 @@ fn build_rule(r: &GridRuleArgs) -> Result<longbridge::grid::GridTradeRule> {
     Ok(rule)
 }
 
+/// Print a write-command result: structured JSON under `--format json`, a
+/// human-readable line otherwise. Keeps mutation output parseable for agents
+/// while staying friendly on a terminal.
+fn print_mutation(format: &OutputFormat, json: &serde_json::Value, human: &str) {
+    match format {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(json).unwrap_or_default());
+        }
+        OutputFormat::Pretty => println!("{human}"),
+    }
+}
+
 pub async fn cmd_grid(
     cmd: Option<GridCmd>,
     ids: Vec<String>,
@@ -85,8 +97,8 @@ pub async fn cmd_grid(
             currency,
             rule,
             agree_terms,
-        }) => cmd_submit(symbol, currency, &rule, agree_terms).await,
-        Some(GridCmd::Replace { order_id, rule }) => cmd_replace(order_id, &rule).await,
+        }) => cmd_submit(symbol, currency, &rule, agree_terms, format).await,
+        Some(GridCmd::Replace { order_id, rule }) => cmd_replace(order_id, &rule, format).await,
         Some(GridCmd::Detail { order_id }) => cmd_detail(order_id, format).await,
         Some(GridCmd::Triggers {
             order_id,
@@ -95,17 +107,29 @@ pub async fn cmd_grid(
         }) => cmd_triggers(order_id, page, limit, format).await,
         Some(GridCmd::Cancel { order_id }) => {
             openapi::grid().cancel(order_id.clone()).await?;
-            println!("Grid order {order_id} cancelled.");
+            print_mutation(
+                format,
+                &serde_json::json!({ "status": "cancelled", "order_id": order_id }),
+                &format!("Grid order {order_id} cancelled."),
+            );
             Ok(())
         }
         Some(GridCmd::Suspend { order_id }) => {
             openapi::grid().suspend(order_id.clone()).await?;
-            println!("Grid order {order_id} suspended.");
+            print_mutation(
+                format,
+                &serde_json::json!({ "status": "suspended", "order_id": order_id }),
+                &format!("Grid order {order_id} suspended."),
+            );
             Ok(())
         }
         Some(GridCmd::Restart { order_id }) => {
             openapi::grid().restart(order_id.clone()).await?;
-            println!("Grid order {order_id} restarted.");
+            print_mutation(
+                format,
+                &serde_json::json!({ "status": "restarted", "order_id": order_id }),
+                &format!("Grid order {order_id} restarted."),
+            );
             Ok(())
         }
         Some(GridCmd::Info { symbol }) => cmd_info(symbol, format).await,
@@ -115,7 +139,11 @@ pub async fn cmd_grid(
                     longbridge::grid::SubmitStrategyQuestionnaireOptions::new(),
                 )
                 .await?;
-            println!("Strategy risk-disclosure questionnaire submitted.");
+            print_mutation(
+                format,
+                &serde_json::json!({ "status": "submitted" }),
+                "Strategy risk-disclosure questionnaire submitted.",
+            );
             Ok(())
         }
     }
@@ -212,6 +240,7 @@ async fn cmd_submit(
     currency: String,
     rule: &GridRuleArgs,
     agree_terms: bool,
+    format: &OutputFormat,
 ) -> Result<()> {
     if !agree_terms && !confirm_terms()? {
         println!("Grid order submission cancelled.");
@@ -223,11 +252,15 @@ async fn cmd_submit(
             symbol, currency, rule,
         ))
         .await?;
-    println!("Grid order submitted. Order ID: {}", resp.order_id);
+    print_mutation(
+        format,
+        &serde_json::json!({ "status": "submitted", "order_id": resp.order_id }),
+        &format!("Grid order submitted. Order ID: {}", resp.order_id),
+    );
     Ok(())
 }
 
-async fn cmd_replace(order_id: String, rule: &GridRuleArgs) -> Result<()> {
+async fn cmd_replace(order_id: String, rule: &GridRuleArgs, format: &OutputFormat) -> Result<()> {
     let rule = build_rule(rule)?;
     openapi::grid()
         .replace(longbridge::grid::ReplaceGridOrderOptions::new(
@@ -235,7 +268,11 @@ async fn cmd_replace(order_id: String, rule: &GridRuleArgs) -> Result<()> {
             rule,
         ))
         .await?;
-    println!("Grid order {order_id} replaced.");
+    print_mutation(
+        format,
+        &serde_json::json!({ "status": "replaced", "order_id": order_id }),
+        &format!("Grid order {order_id} replaced."),
+    );
     Ok(())
 }
 
@@ -363,7 +400,15 @@ fn tif_label(v: i32) -> String {
 }
 
 fn confirm_terms() -> Result<bool> {
-    use std::io::Write;
+    use std::io::{IsTerminal, Write};
+    // Non-interactive (agent / pipe / CI): don't hang reading stdin. Fail with an
+    // actionable message so the caller re-runs with --agree-terms explicitly.
+    if !std::io::stdin().is_terminal() {
+        anyhow::bail!(
+            "Grid submission needs risk-disclosure confirmation, but stdin is not a terminal. \
+             Re-run with --agree-terms to confirm non-interactively."
+        );
+    }
     println!(
         "\nGrid trading involves risk. By submitting you confirm you have read and \
          agreed to the strategy risk disclosure.\nTip: pass --agree-terms to skip this prompt."
