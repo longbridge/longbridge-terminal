@@ -52,7 +52,7 @@ pub fn handle_schema_args(args: impl IntoIterator<Item = OsString>) -> Result<Sc
     }
 
     if let Some(schema) = schema_for_path(&path) {
-        print_response_schema(&schema);
+        print_response_schema(selected, &schema);
         Ok(SchemaOutcome::Handled)
     } else if selected.has_subcommands() {
         let mut help_cmd = selected.clone();
@@ -149,11 +149,73 @@ fn short_option_takes_value(command: &Command, raw: &str) -> bool {
     false
 }
 
-fn print_response_schema(schema: &ResponseSchema) {
+fn print_response_schema(cmd: &Command, schema: &ResponseSchema) {
+    // Keep the response JSON Schema at the top level (backwards-compatible with
+    // existing --schema consumers) and attach the reflected request parameters
+    // as an extra `request` key so agents can discover how to build the call.
+    let mut out = response_json_schema(schema);
+    if let Some(obj) = out.as_object_mut() {
+        obj.insert("request".to_string(), request_object_schema(cmd));
+    }
     println!(
         "{}",
-        serde_json::to_string_pretty(&response_json_schema(schema)).expect("schema JSON")
+        serde_json::to_string_pretty(&out).expect("schema JSON")
     );
+}
+
+/// Build a request-parameter schema by reflecting the clap `Command`, so the
+/// `--schema` output tells an agent exactly which flags to pass (required vs
+/// optional, enum choices, defaults) without any hand-maintained duplication.
+fn request_object_schema(cmd: &Command) -> Value {
+    let mut required: Vec<Value> = Vec::new();
+    let mut props = serde_json::Map::new();
+    for arg in cmd.get_arguments() {
+        let id = arg.get_id().as_str();
+        if id == "help" {
+            continue;
+        }
+        let name = if arg.is_positional() {
+            id.to_string()
+        } else {
+            arg.get_long()
+                .map_or_else(|| id.to_string(), |l| format!("--{l}"))
+        };
+
+        let mut prop = serde_json::Map::new();
+        let is_flag = matches!(
+            arg.get_action(),
+            clap::ArgAction::SetTrue | clap::ArgAction::SetFalse
+        );
+        let choices: Vec<String> = arg
+            .get_possible_values()
+            .iter()
+            .map(|v| v.get_name().to_string())
+            .collect();
+        if is_flag {
+            prop.insert("type".to_string(), json!("boolean"));
+        } else {
+            prop.insert("type".to_string(), json!("string"));
+            if !choices.is_empty() {
+                prop.insert("enum".to_string(), json!(choices));
+            }
+        }
+        if let Some(help) = arg.get_help() {
+            prop.insert("description".to_string(), json!(help.to_string()));
+        }
+        if let Some(def) = arg.get_default_values().first() {
+            prop.insert("default".to_string(), json!(def.to_string_lossy()));
+        }
+        if arg.is_required_set() {
+            required.push(json!(name));
+        }
+        props.insert(name, Value::Object(prop));
+    }
+
+    json!({
+        "type": "object",
+        "required": required,
+        "properties": props,
+    })
 }
 
 fn response_json_schema(schema: &ResponseSchema) -> Value {

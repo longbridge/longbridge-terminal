@@ -18,14 +18,52 @@ fn parse_dec(s: &str, field: &str) -> Result<Decimal> {
 fn build_rule(r: &GridRuleArgs) -> Result<longbridge::grid::GridTradeRule> {
     use longbridge::grid::GridTradeRule;
 
+    let base = parse_dec(&r.base_price, "base-price")?;
+    let upper = parse_dec(&r.upper_price, "upper-price")?;
+    let lower = parse_dec(&r.lower_price, "lower-price")?;
+    let qty = parse_dec(&r.quantity, "quantity")?;
+    let upper_qty = parse_dec(&r.upper_quantity, "upper-quantity")?;
+    let lower_qty = parse_dec(&r.lower_quantity, "lower-quantity")?;
+    let trig_up = parse_dec(&r.trigger_up, "trigger-up")?;
+    let trig_down = parse_dec(&r.trigger_down, "trigger-down")?;
+
+    // Local pre-flight: reject mathematically-invalid rules before hitting the
+    // gateway, so callers (including agents) get an actionable message instead
+    // of a bare gateway code. Only invariant relations are checked here; the
+    // gateway remains the final authority on strategy-specific rules.
+    let zero = Decimal::ZERO;
+    if lower <= zero {
+        anyhow::bail!("--lower-price ({lower}) must be positive");
+    }
+    if upper <= lower {
+        anyhow::bail!("--upper-price ({upper}) must be greater than --lower-price ({lower})");
+    }
+    if base < lower || base > upper {
+        anyhow::bail!("--base-price ({base}) must be within [{lower}, {upper}]");
+    }
+    if qty <= zero {
+        anyhow::bail!("--quantity ({qty}) must be positive");
+    }
+    if lower_qty <= zero {
+        anyhow::bail!("--lower-quantity ({lower_qty}) must be positive");
+    }
+    if upper_qty <= lower_qty {
+        anyhow::bail!(
+            "--upper-quantity ({upper_qty}) must be greater than --lower-quantity ({lower_qty})"
+        );
+    }
+    if trig_up <= zero || trig_down <= zero {
+        anyhow::bail!("--trigger-up ({trig_up}) / --trigger-down ({trig_down}) must be positive");
+    }
+
     let mut rule = GridTradeRule {
-        submitted_base_price: Some(parse_dec(&r.base_price, "base-price")?),
-        upper_limit_price: Some(parse_dec(&r.upper_price, "upper-price")?),
-        lower_limit_price: Some(parse_dec(&r.lower_price, "lower-price")?),
+        submitted_base_price: Some(base),
+        upper_limit_price: Some(upper),
+        lower_limit_price: Some(lower),
         trigger_price_type: Some(r.trigger_type.as_i32()),
-        trigger_quantity: Some(parse_dec(&r.quantity, "quantity")?),
-        upper_limit_quantity: Some(parse_dec(&r.upper_quantity, "upper-quantity")?),
-        lower_limit_quantity: Some(parse_dec(&r.lower_quantity, "lower-quantity")?),
+        trigger_quantity: Some(qty),
+        upper_limit_quantity: Some(upper_qty),
+        lower_limit_quantity: Some(lower_qty),
         time_in_force: Some(r.tif.as_i32()),
         expire_time: r.expire,
         upper_limit_event: Some(r.upper_event),
@@ -41,12 +79,12 @@ fn build_rule(r: &GridRuleArgs) -> Result<longbridge::grid::GridTradeRule> {
     // trigger-up/down interpreted by trigger-type (percent = 2, spread = 1)
     match r.trigger_type {
         super::GridTriggerTypeArg::Percent => {
-            rule.trigger_percent_up = Some(parse_dec(&r.trigger_up, "trigger-up")?);
-            rule.trigger_percent_down = Some(parse_dec(&r.trigger_down, "trigger-down")?);
+            rule.trigger_percent_up = Some(trig_up);
+            rule.trigger_percent_down = Some(trig_down);
         }
         super::GridTriggerTypeArg::Spread => {
-            rule.trigger_spread_up = Some(parse_dec(&r.trigger_up, "trigger-up")?);
-            rule.trigger_spread_down = Some(parse_dec(&r.trigger_down, "trigger-down")?);
+            rule.trigger_spread_up = Some(trig_up);
+            rule.trigger_spread_down = Some(trig_down);
         }
     }
 
