@@ -118,11 +118,25 @@ fn build_rule(r: &GridRuleArgs) -> Result<longbridge::grid::GridTradeRule> {
     .support_shortsell(r.support_shortsell)
     .multiple_trigger(r.multiple_trigger)
     .rth(r.rth);
-    if let Some(expire) = r.expire {
-        rule = rule.expire_time(expire);
+    if let Some(expire) = &r.expire {
+        rule = rule.expire_time(parse_expire(expire)?);
     }
 
     Ok(rule)
+}
+
+/// Parse an `--expire` value into unix seconds. Accepts RFC3339 (matching the
+/// `expire_time` field emitted by `detail`, so a value can be round-tripped) or
+/// a bare unix-seconds integer.
+fn parse_expire(s: &str) -> Result<i64> {
+    if let Ok(dt) = time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339) {
+        return Ok(dt.unix_timestamp());
+    }
+    s.parse::<i64>().with_context(|| {
+        format!(
+            "invalid --expire ({s}): expected RFC3339 (e.g. 2026-11-10T08:00:00Z) or unix seconds"
+        )
+    })
 }
 
 /// Print a write-command result: structured JSON under `--format json`, a
@@ -308,6 +322,15 @@ fn render_orders(orders: &[longbridge::grid::GridOrder], format: &OutputFormat) 
     }
 }
 
+/// Print the payload a write command would send, for `--dry-run`. Always JSON
+/// (both formats), since dry-run exists to be inspected by a caller or agent.
+fn print_dry_run(payload: &serde_json::Value) {
+    println!(
+        "{}",
+        serde_json::to_string_pretty(payload).unwrap_or_default()
+    );
+}
+
 async fn cmd_submit(
     symbol: String,
     currency: String,
@@ -315,14 +338,26 @@ async fn cmd_submit(
     agree_terms: bool,
     format: &OutputFormat,
 ) -> Result<()> {
+    // Build (and validate) the rule first so --dry-run reports the same errors a
+    // real submit would, before any terms prompt or gateway call.
+    let built = build_rule(rule)?;
+    if rule.dry_run {
+        print_dry_run(&serde_json::json!({
+            "dry_run": true,
+            "action": "submit",
+            "symbol": symbol,
+            "currency": currency,
+            "rule": serde_json::to_value(&built).unwrap_or_default(),
+        }));
+        return Ok(());
+    }
     if !agree_terms && !confirm_terms()? {
         println!("Grid order submission cancelled.");
         return Ok(());
     }
-    let rule = build_rule(rule)?;
     let resp = openapi::grid()
         .submit(longbridge::grid::SubmitGridOrderOptions::new(
-            symbol, currency, rule,
+            symbol, currency, built,
         ))
         .await?;
     print_mutation(
@@ -334,11 +369,20 @@ async fn cmd_submit(
 }
 
 async fn cmd_replace(order_id: String, rule: &GridRuleArgs, format: &OutputFormat) -> Result<()> {
-    let rule = build_rule(rule)?;
+    let built = build_rule(rule)?;
+    if rule.dry_run {
+        print_dry_run(&serde_json::json!({
+            "dry_run": true,
+            "action": "replace",
+            "order_id": order_id,
+            "rule": serde_json::to_value(&built).unwrap_or_default(),
+        }));
+        return Ok(());
+    }
     openapi::grid()
         .replace(longbridge::grid::ReplaceGridOrderOptions::new(
             order_id.clone(),
-            rule,
+            built,
         ))
         .await?;
     print_mutation(
@@ -363,7 +407,7 @@ async fn cmd_detail(order_id: String, format: &OutputFormat) -> Result<()> {
                     "stock_name": d.stock_name,
                     "status": d.status,
                     "grid_status": d.grid_status,
-                    "base_price": d.submitted_base_price,
+                    "submitted_base_price": d.submitted_base_price,
                     "current_base_price": d.current_base_price,
                     "upper_limit_price": d.upper_limit_price,
                     "lower_limit_price": d.lower_limit_price,
@@ -524,9 +568,56 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
         "gtd",
         "created_at",
     ];
+    // `grid detail` serializes the full GridOrderDetail struct, which is a
+    // superset of the list fields; describe every key so agents relying on the
+    // schema see the complete shape (sub-orders, history, timestamps, reasons).
+    let detail_fields = &[
+        "order_id",
+        "symbol",
+        "stock_name",
+        "status",
+        "grid_status",
+        "suspend_reason",
+        "sleeping_reason",
+        "submitted_base_price",
+        "current_base_price",
+        "upper_limit_price",
+        "lower_limit_price",
+        "trigger_price_type",
+        "trigger_spread_up",
+        "trigger_spread_down",
+        "trigger_percent_up",
+        "trigger_percent_down",
+        "pullback_percent",
+        "pullback_spread",
+        "rebound_percent",
+        "rebound_spread",
+        "multiple_trigger",
+        "time_in_force",
+        "trigger_quantity",
+        "trigger_sell_quantity",
+        "trigger_buy_quantity",
+        "upper_limit_quantity",
+        "lower_limit_quantity",
+        "upper_limit_event",
+        "lower_limit_event",
+        "trigger_sell_depth",
+        "trigger_buy_depth",
+        "created_at",
+        "updated_at",
+        "settlement_currency",
+        "expire_time",
+        "gtd",
+        "grid_sub_orders",
+        "sub_has_more",
+        "grid_order_history",
+        "history_has_more",
+        "support_shortsell",
+        "rth",
+    ];
     let schema = match command.as_str() {
         "grid" => array("Grid trading orders", order_fields),
-        "grid detail" => object("Grid trading order detail", order_fields),
+        "grid detail" => object("Grid trading order detail", detail_fields),
         "grid triggers" => array(
             "Grid trigger history",
             &[

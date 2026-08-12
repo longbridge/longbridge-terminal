@@ -386,6 +386,7 @@ longbridge grid --ids <ORDER_ID1> <ORDER_ID2>                 # Query specific g
 longbridge grid submit 700.HK --currency HKD --base-price 300 --upper-price 360 --lower-price 240 \
   --trigger-type percent --trigger-up 2 --trigger-down 2 --quantity 100 \
   --upper-quantity 200 --lower-quantity 100 --order-type GMO --tif gtc   # Submit a grid strategy
+longbridge grid submit 700.HK --base-price 300 ... --dry-run  # Validate + print the rule without submitting
 longbridge grid detail <ORDER_ID>                             # Grid order detail (rule, sub-orders, history)
 longbridge grid triggers <ORDER_ID>                           # Grid trigger history
 longbridge grid replace <ORDER_ID> --base-price 305 ...       # Replace (modify) a grid rule

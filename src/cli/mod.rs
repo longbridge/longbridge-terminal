@@ -1715,9 +1715,9 @@ pub struct GridRuleArgs {
     /// Time in force: day | gtc | gtd
     #[arg(long, default_value = "gtc")]
     pub tif: GridTifArg,
-    /// Expiry time (unix seconds), for GTD
+    /// Expiry for GTD: RFC3339 (e.g. 2026-11-10T08:00:00Z) or unix seconds
     #[arg(long)]
-    pub expire: Option<i64>,
+    pub expire: Option<String>,
     /// Regular trading hours flag: 0 | 1 | 2
     #[arg(long, default_value = "0")]
     pub rth: i32,
@@ -1739,6 +1739,9 @@ pub struct GridRuleArgs {
     /// Buy-side order-book depth (-5..5, 0 = use order type)
     #[arg(long, default_value = "0")]
     pub buy_depth: i32,
+    /// Validate and print the rule that would be sent, without submitting
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 /// Grid trading subcommands.
