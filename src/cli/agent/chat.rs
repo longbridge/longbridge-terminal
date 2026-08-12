@@ -607,7 +607,12 @@ async fn run_streaming(
         Ok(()) => Ok(outcome),
         Err(e) if !outcome.answer.is_empty() => {
             // Partial answer: warn but still show what we have
-            eprintln!("{} ({e})", t!("Agent.PartialAnswer"));
+            // `e` wraps server-controlled stream text; sanitize before stderr.
+            eprintln!(
+                "{} ({})",
+                t!("Agent.PartialAnswer"),
+                strip_control_chars(&format!("{e:#}"))
+            );
             Ok(outcome)
         }
         Err(e) => Err(e),

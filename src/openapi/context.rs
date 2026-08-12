@@ -352,13 +352,13 @@ pub fn fundamental() -> &'static longbridge::FundamentalContext {
         .expect("FundamentalContext not initialized, please call init_contexts() first")
 }
 
-/// Get global `AgentContext` for AI agent discovery and conversations
 /// Whether the session authenticated with API-key env vars rather than
 /// OAuth. Defaults to `false` before [`init_contexts`] runs.
 pub fn using_api_key() -> bool {
     USING_API_KEY.get().copied().unwrap_or(false)
 }
 
+/// Get global `AgentContext` for AI agent discovery and conversations
 pub fn agent() -> &'static longbridge::agent::AgentContext {
     AGENT_CTX
         .get()
