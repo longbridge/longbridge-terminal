@@ -489,16 +489,15 @@ async fn cmd_info(symbol: String, format: &OutputFormat) -> Result<()> {
         OutputFormat::Pretty => {
             print_json_value(
                 // Keep the same key shape as --format json: the SDK serializes the
-                // field as `channel_infos` (serde rename), so emit that plural key —
-                // matching the wire JSON, not the Rust field name — so switching
-                // format never moves a key.
+                // field as `channel_info`, so emit that key too so switching format
+                // never moves a key.
                 &serde_json::json!({
                     "name": i.name,
                     "last_done": i.last_done,
                     "lot_size": i.lot_size,
                     "buy_lot_size": i.buy_lot_size,
                     "sell_lot_size": i.sell_lot_size,
-                    "channel_infos": {
+                    "channel_info": {
                         "strategy_granted": i.channel_info.strategy_granted,
                         "support_rth": i.channel_info.support_rth,
                         "currency": i.channel_info.currency,
@@ -670,7 +669,7 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
                 "buy_lot_size",
                 "sell_lot_size",
                 "bid_sizes",
-                "channel_infos",
+                "channel_info",
             ],
         ),
         "grid submit" | "grid replace" | "grid cancel" | "grid suspend" | "grid restart"
