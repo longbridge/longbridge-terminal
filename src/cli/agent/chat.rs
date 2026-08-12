@@ -834,8 +834,8 @@ fn print_footer(agent_uid: &str, outcome: &ChatOutcome) {
     if !outcome.references.is_empty() {
         println!("{}:", t!("Agent.References"));
         for r in &outcome.references {
-            let idx = r.get("index").and_then(Value::as_i64).unwrap_or(0);
-            let content = r.get("content").cloned().unwrap_or(Value::Null);
+            let idx = r.index;
+            let content = r.content.clone().unwrap_or(Value::Null);
             let source =
                 strip_control_chars(content.get("source").and_then(Value::as_str).unwrap_or("-"));
             let desc = strip_control_chars(

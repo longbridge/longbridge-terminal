@@ -5,9 +5,12 @@
 //! inner `event` field. Unknown inner events map to `AgentEvent::Unknown`
 //! so new server-side event types never break the CLI.
 
+use longbridge::agent::Reference;
 use serde_json::Value;
 
-#[derive(Debug, Clone, PartialEq)]
+// `PartialEq` is intentionally not derived: `WorkflowFinished` now carries the
+// SDK's `Reference`, which is not `PartialEq`. Tests match on variants instead.
+#[derive(Debug, Clone)]
 pub enum AgentEvent {
     ChatStarted {
         chat_uid: String,
@@ -27,7 +30,8 @@ pub enum AgentEvent {
     },
     WorkflowFinished {
         status: String,
-        outputs: Value,
+        references: Vec<Reference>,
+        further_questions: Vec<String>,
         elapsed_time: Option<f64>,
         error_message: String,
     },
@@ -94,12 +98,31 @@ pub fn parse_data_line(payload: &str) -> Option<AgentEvent> {
             tool_name: str_field(&data, "tool_name"),
             status: str_field(&data, "status"),
         },
-        "workflow_finished" => AgentEvent::WorkflowFinished {
-            status: str_field(&data, "status"),
-            outputs: data.get("outputs").cloned().unwrap_or(Value::Null),
-            elapsed_time: data.get("elapsed_time").and_then(Value::as_f64),
-            error_message: str_field(&data, "error_message"),
-        },
+        "workflow_finished" => {
+            let outputs = data.get("outputs").cloned().unwrap_or(Value::Null);
+            let references = outputs
+                .get("references")
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok())
+                .unwrap_or_default();
+            let further_questions = outputs
+                .get("further_questions")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(Value::as_str)
+                        .map(ToString::to_string)
+                        .collect()
+                })
+                .unwrap_or_default();
+            AgentEvent::WorkflowFinished {
+                status: str_field(&data, "status"),
+                references,
+                further_questions,
+                elapsed_time: data.get("elapsed_time").and_then(Value::as_f64),
+                error_message: str_field(&data, "error_message"),
+            }
+        }
         "human_interaction_required" => AgentEvent::HumanInteractionRequired { interrupt: data },
         "chat_finished" => AgentEvent::ChatFinished {
             error_message: str_field(&data, "error_message"),
@@ -159,7 +182,7 @@ pub struct ChatOutcome {
     pub answer: String,
     pub widgets: Vec<Widget>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub references: Vec<Value>,
+    pub references: Vec<Reference>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub further_questions: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -193,7 +216,8 @@ impl ChatAggregator {
             }
             AgentEvent::WorkflowFinished {
                 status,
-                outputs,
+                references,
+                further_questions,
                 elapsed_time,
                 error_message,
             } => {
@@ -209,16 +233,8 @@ impl ChatAggregator {
                 if !error_message.is_empty() {
                     self.outcome.error_message.clone_from(error_message);
                 }
-                if let Some(refs) = outputs.get("references").and_then(Value::as_array) {
-                    self.outcome.references.clone_from(refs);
-                }
-                if let Some(qs) = outputs.get("further_questions").and_then(Value::as_array) {
-                    self.outcome.further_questions = qs
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .map(ToString::to_string)
-                        .collect();
-                }
+                self.outcome.references.clone_from(references);
+                self.outcome.further_questions.clone_from(further_questions);
             }
             AgentEvent::ChatFinished { error_message } => {
                 if !error_message.is_empty() && self.outcome.error_message.is_empty() {
@@ -347,7 +363,8 @@ mod tests {
         let events = fixture_events();
         let Some(AgentEvent::WorkflowFinished {
             status,
-            outputs,
+            references,
+            further_questions,
             elapsed_time,
             ..
         }) = events
@@ -358,10 +375,11 @@ mod tests {
         };
         assert_eq!(status, "succeeded");
         assert!(elapsed_time.unwrap() > 100.0);
-        assert!(outputs.get("further_questions").is_some());
-        assert!(outputs.get("references").is_some());
-        // The fixture was sanitized: the giant LLM context must not be present
-        assert!(outputs.get("context").is_none());
+        assert!(!further_questions.is_empty());
+        // References parse into the typed SDK shape, preserving the nested
+        // `content` the footer reads from.
+        assert_eq!(references.len(), 2);
+        assert!(references[0].content.is_some());
     }
 
     #[test]
@@ -385,10 +403,10 @@ mod tests {
         assert!(buf.push(a).is_empty());
         let payloads = buf.push(b);
         assert_eq!(payloads.len(), 1);
-        assert_eq!(
+        assert!(matches!(
             parse_data_line(&payloads[0]),
             Some(AgentEvent::ThinkingStarted)
-        );
+        ));
     }
 
     #[test]
@@ -403,7 +421,7 @@ mod tests {
 
     #[test]
     fn unparseable_payload_returns_none() {
-        assert_eq!(parse_data_line("not json"), None);
+        assert!(parse_data_line("not json").is_none());
     }
 
     #[test]

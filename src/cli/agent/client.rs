@@ -7,7 +7,6 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use futures::{Stream, StreamExt};
 use longbridge::agent::{ConversationStatus, ConversationStreamEvent, GetAgentsOptions};
-use serde_json::json;
 
 use super::events::AgentEvent;
 
@@ -212,13 +211,10 @@ fn map_event(ev: ConversationStreamEvent) -> Option<AgentEvent> {
         },
         ConversationStreamEvent::WorkflowFinished(resp) => AgentEvent::WorkflowFinished {
             status: status_str(resp.status),
-            // Rebuild the `outputs` object the aggregator reads (`references`
-            // and `further_questions`); the SDK already parsed them off the
-            // raw event.
-            outputs: json!({
-                "references": resp.references,
-                "further_questions": resp.further_questions,
-            }),
+            // Carry the SDK's already-typed values straight through — no
+            // JSON round-trip.
+            references: resp.references.unwrap_or_default(),
+            further_questions: resp.further_questions.unwrap_or_default(),
             elapsed_time: Some(resp.elapsed_time),
             error_message: resp.error.map(|e| e.message).unwrap_or_default(),
         },
@@ -341,8 +337,16 @@ mod tests {
             answer: "hi".into(),
             references: Some(vec![Reference {
                 index: 1,
-                title: "t".into(),
-                url: "u".into(),
+                original_index: 3,
+                ref_type: "NewsArticle".into(),
+                id: "n1".into(),
+                title: String::new(),
+                url: String::new(),
+                // The real nested content the footer/JSON reads from.
+                content: Some(serde_json::json!({
+                    "source": "Zhitong",
+                    "published_at": "2026-08-10T03:45:02Z",
+                })),
             }]),
             further_questions: Some(vec!["What next?".into()]),
             elapsed_time: 1.5,
@@ -351,7 +355,8 @@ mod tests {
         };
         let Some(AgentEvent::WorkflowFinished {
             status,
-            outputs,
+            references,
+            further_questions,
             elapsed_time,
             error_message,
         }) = map_event(ConversationStreamEvent::WorkflowFinished(resp))
@@ -361,8 +366,10 @@ mod tests {
         assert_eq!(status, "succeeded");
         assert_eq!(elapsed_time, Some(1.5));
         assert!(error_message.is_empty());
-        assert_eq!(outputs["references"][0]["index"], 1);
-        assert_eq!(outputs["further_questions"][0], "What next?");
+        assert_eq!(references[0].index, 1);
+        // The nested `content` must survive so the References footer renders.
+        assert_eq!(references[0].content.as_ref().unwrap()["source"], "Zhitong");
+        assert_eq!(further_questions[0], "What next?");
     }
 
     #[test]
