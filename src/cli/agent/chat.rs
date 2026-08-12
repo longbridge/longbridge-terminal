@@ -841,8 +841,9 @@ fn print_footer(agent_uid: &str, outcome: &ChatOutcome) {
         for r in &outcome.references {
             let idx = r.index;
             let content = r.content.clone().unwrap_or(Value::Null);
+            // News-article `content` shape.
             let source =
-                strip_control_chars(content.get("source").and_then(Value::as_str).unwrap_or("-"));
+                strip_control_chars(content.get("source").and_then(Value::as_str).unwrap_or(""));
             let desc = strip_control_chars(
                 content
                     .get("description")
@@ -850,13 +851,27 @@ fn print_footer(agent_uid: &str, outcome: &ChatOutcome) {
                     .or_else(|| content.get("title").and_then(Value::as_str))
                     .unwrap_or(""),
             );
-            let published = strip_control_chars(
-                content
-                    .get("published_at")
-                    .and_then(Value::as_str)
-                    .unwrap_or(""),
-            );
-            println!("  [{idx}] {source} · {desc} {published}");
+            if source.is_empty() && desc.is_empty() {
+                // Non-news reference (e.g. a `SecurityQuote` whose `content`
+                // has no source/description) — fall back to the identity the
+                // server did send so the line isn't blank.
+                let ty = strip_control_chars(&r.ref_type);
+                let id = strip_control_chars(&r.id);
+                let label = [ty.as_str(), id.as_str()]
+                    .into_iter()
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" · ");
+                println!("  [{idx}] {label}");
+            } else {
+                let published = strip_control_chars(
+                    content
+                        .get("published_at")
+                        .and_then(Value::as_str)
+                        .unwrap_or(""),
+                );
+                println!("  [{idx}] {source} · {desc} {published}");
+            }
         }
     }
     if !outcome.further_questions.is_empty() {
