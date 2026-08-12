@@ -246,13 +246,61 @@ fn map_event(ev: ConversationStreamEvent) -> Option<AgentEvent> {
 
 type EventStream = Pin<Box<dyn Stream<Item = longbridge::Result<ConversationStreamEvent>> + Send>>;
 
+/// Backoff schedule for the pre-stream 429002 handshake retry (short in tests).
+#[cfg(test)]
+const HANDSHAKE_BACKOFF_SECS: [f64; 3] = [0.01, 0.02, 0.04];
+#[cfg(not(test))]
+const HANDSHAKE_BACKOFF_SECS: [f64; 3] = [1.0, 2.0, 4.0];
+
+/// True only for the exact 429002 rate-limit rejection. A *typed* check (not a
+/// Display substring like the shared limiter's) because a false positive on
+/// the streaming path would replay the conversation POST — a non-idempotent
+/// duplicate agent run.
+fn is_rate_limited(err: &longbridge::Error) -> bool {
+    matches!(
+        err,
+        longbridge::Error::HttpClient(longbridge::httpclient::HttpClientError::OpenApi {
+            code, ..
+        }) if *code == 429_002
+    )
+}
+
+/// One pre-stream POST handshake attempt, returning the raw SDK error so the
+/// caller can classify it precisely.
+async fn open_conversation_stream(
+    ctx: &longbridge::agent::AgentContext,
+    req: &ConversationRequest,
+) -> longbridge::Result<EventStream> {
+    let stream: EventStream = match req.clone() {
+        ConversationRequest::New {
+            agent_uid,
+            query,
+            chat_uid,
+            parent_message_id,
+        } => Box::pin(
+            ctx.conversation_streamed(agent_uid, query, chat_uid, parent_message_id)
+                .await?,
+        ),
+        ConversationRequest::Continue {
+            agent_uid,
+            chat_uid,
+            message_id,
+            answers,
+        } => Box::pin(
+            ctx.continue_conversation_streamed(agent_uid, chat_uid, message_id, answers)
+                .await?,
+        ),
+    };
+    Ok(stream)
+}
+
 /// Stream a conversation through the SDK's `AgentContext`, dispatching each
 /// surfaced event to `on_event`.
 ///
-/// The shared rate limiter meters and retries the pre-stream 429002 handshake
-/// rejection: the op returns the raw SDK error (whose Display carries the
-/// code) so the limiter can classify it, and only the handshake is retried —
-/// once draining starts below, a mid-stream failure is propagated as-is.
+/// Every attempt is metered through the shared 10 req/s limiter, and only the
+/// pre-stream handshake is retried — and only on a typed 429002 rate limit, so
+/// a misclassified error can never replay (and duplicate) the conversation
+/// POST. Once draining starts below, a mid-stream failure is propagated as-is.
 pub async fn stream_conversation(
     req: ConversationRequest,
     verbose: bool,
@@ -263,37 +311,25 @@ pub async fn stream_conversation(
     if verbose {
         eprintln!("* POST agent conversation (SSE)");
     }
-    let mut stream = crate::openapi::global_rate_limiter()
-        .execute("agent_conversation", || {
-            let req = req.clone();
-            Box::pin(async move {
-                let stream: EventStream = match req {
-                    ConversationRequest::New {
-                        agent_uid,
-                        query,
-                        chat_uid,
-                        parent_message_id,
-                    } => Box::pin(
-                        ctx.conversation_streamed(agent_uid, query, chat_uid, parent_message_id)
-                            .await?,
-                    ),
-                    ConversationRequest::Continue {
-                        agent_uid,
-                        chat_uid,
-                        message_id,
-                        answers,
-                    } => Box::pin(
-                        ctx.continue_conversation_streamed(
-                            agent_uid, chat_uid, message_id, answers,
-                        )
-                        .await?,
-                    ),
-                };
-                Ok::<_, longbridge::Error>(stream)
-            })
-        })
-        .await
-        .context("Failed to run the AI conversation")?;
+    let mut stream = 'handshake: {
+        for backoff in HANDSHAKE_BACKOFF_SECS {
+            crate::openapi::global_rate_limiter().acquire().await;
+            match open_conversation_stream(ctx, &req).await {
+                Ok(s) => break 'handshake s,
+                Err(e) if is_rate_limited(&e) => {
+                    tokio::time::sleep(std::time::Duration::from_secs_f64(backoff)).await;
+                }
+                Err(e) => {
+                    return Err(anyhow::Error::new(e).context("Failed to run the AI conversation"));
+                }
+            }
+        }
+        // Backoff exhausted: one final attempt, propagating whatever it yields.
+        crate::openapi::global_rate_limiter().acquire().await;
+        open_conversation_stream(ctx, &req)
+            .await
+            .context("Failed to run the AI conversation")?
+    };
 
     while let Some(item) = stream.next().await {
         let ev = item.context("SSE stream error")?;
@@ -307,6 +343,23 @@ pub async fn stream_conversation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn is_rate_limited_matches_only_429002() {
+        use longbridge::httpclient::HttpClientError;
+        let limited = longbridge::Error::HttpClient(HttpClientError::OpenApi {
+            code: 429_002,
+            message: "api request is limited".into(),
+            trace_id: "t".into(),
+        });
+        assert!(is_rate_limited(&limited));
+        let other = longbridge::Error::HttpClient(HttpClientError::OpenApi {
+            code: 429_001,
+            message: "not the rate limit code".into(),
+            trace_id: "t".into(),
+        });
+        assert!(!is_rate_limited(&other));
+    }
 
     #[test]
     fn api_key_mode_is_rejected_with_actionable_message() {
