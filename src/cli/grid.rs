@@ -12,6 +12,11 @@ fn parse_dec(s: &str, field: &str) -> Result<Decimal> {
         .with_context(|| format!("invalid decimal for {field}: {s}"))
 }
 
+/// Render an optional response decimal for table display (empty when absent).
+fn dec(v: Option<Decimal>) -> String {
+    v.map(|d| d.to_string()).unwrap_or_default()
+}
+
 /// Build a `GridTradeRule` from the shared CLI rule flags. `trigger-up/down` are
 /// interpreted as percent or spread according to `--trigger-type`; every
 /// enum-like field is always sent explicitly (the engine rejects partial rules).
@@ -56,45 +61,47 @@ fn build_rule(r: &GridRuleArgs) -> Result<longbridge::grid::GridTradeRule> {
         anyhow::bail!("--trigger-up ({trig_up}) / --trigger-down ({trig_down}) must be positive");
     }
 
-    let mut rule = GridTradeRule {
-        submitted_base_price: Some(base),
-        upper_limit_price: Some(upper),
-        lower_limit_price: Some(lower),
-        trigger_price_type: Some(r.trigger_type.as_i32()),
-        trigger_quantity: Some(qty),
-        upper_limit_quantity: Some(upper_qty),
-        lower_limit_quantity: Some(lower_qty),
-        time_in_force: Some(r.tif.as_i32()),
-        expire_time: r.expire,
-        upper_limit_event: Some(r.upper_event),
-        lower_limit_event: Some(r.lower_event),
-        trigger_sell_depth: Some(r.sell_depth),
-        trigger_buy_depth: Some(r.buy_depth),
-        support_shortsell: Some(r.support_shortsell),
-        multiple_trigger: Some(r.multiple_trigger),
-        rth: Some(r.rth),
-        ..Default::default()
+    // trigger-up/down interpreted by trigger-type (percent vs spread enum)
+    let trigger = match r.trigger_type {
+        super::GridTriggerTypeArg::Percent => longbridge::grid::GridTrigger::Percent {
+            up: trig_up,
+            down: trig_down,
+        },
+        super::GridTriggerTypeArg::Spread => longbridge::grid::GridTrigger::Spread {
+            up: trig_up,
+            down: trig_down,
+        },
     };
-
-    // trigger-up/down interpreted by trigger-type (percent = 2, spread = 1)
-    match r.trigger_type {
-        super::GridTriggerTypeArg::Percent => {
-            rule.trigger_percent_up = Some(trig_up);
-            rule.trigger_percent_down = Some(trig_down);
-        }
-        super::GridTriggerTypeArg::Spread => {
-            rule.trigger_spread_up = Some(trig_up);
-            rule.trigger_spread_down = Some(trig_down);
-        }
-    }
 
     // order type: --order-type applies to both sides; --order-type-up/down override
     let both = r.order_type.as_str().to_string();
-    rule.grid_order_type_up = Some(
-        r.order_type_up
-            .map_or_else(|| both.clone(), |o| o.as_str().to_string()),
-    );
-    rule.grid_order_type_down = Some(r.order_type_down.map_or(both, |o| o.as_str().to_string()));
+    let order_up = r
+        .order_type_up
+        .map_or_else(|| both.clone(), |o| o.as_str().to_string());
+    let order_down = r.order_type_down.map_or(both, |o| o.as_str().to_string());
+
+    let mut rule = GridTradeRule::new(
+        base,
+        upper,
+        lower,
+        trigger,
+        qty,
+        upper_qty,
+        lower_qty,
+        longbridge::grid::GridTimeInForce::from(r.tif.as_i32()),
+    )
+    .limit_events(
+        longbridge::grid::GridLimitEvent::from(r.upper_event),
+        longbridge::grid::GridLimitEvent::from(r.lower_event),
+    )
+    .depths(r.sell_depth, r.buy_depth)
+    .order_types(order_up, order_down)
+    .support_shortsell(r.support_shortsell)
+    .multiple_trigger(r.multiple_trigger)
+    .rth(r.rth);
+    if let Some(expire) = r.expire {
+        rule = rule.expire_time(expire);
+    }
 
     Ok(rule)
 }
@@ -247,20 +254,29 @@ fn render_orders(orders: &[longbridge::grid::GridOrder], format: &OutputFormat) 
             let rows: Vec<Vec<String>> = orders
                 .iter()
                 .map(|o| {
-                    let trigger = if o.trigger_price_type == 1 {
-                        format!("±{}/{}", o.trigger_spread_up, o.trigger_spread_down)
-                    } else {
-                        format!("±{}%/{}%", o.trigger_percent_up, o.trigger_percent_down)
-                    };
+                    let trigger =
+                        if o.trigger_price_type == longbridge::grid::TriggerPriceType::Spread {
+                            format!(
+                                "±{}/{}",
+                                dec(o.trigger_spread_up),
+                                dec(o.trigger_spread_down)
+                            )
+                        } else {
+                            format!(
+                                "±{}%/{}%",
+                                dec(o.trigger_percent_up),
+                                dec(o.trigger_percent_down)
+                            )
+                        };
                     vec![
                         o.order_id.clone(),
                         o.symbol.clone(),
                         o.stock_name.clone(),
                         o.status.clone(),
-                        o.submitted_base_price.clone(),
-                        o.upper_limit_price.clone(),
-                        o.lower_limit_price.clone(),
-                        o.trigger_quantity.clone(),
+                        dec(o.submitted_base_price),
+                        dec(o.upper_limit_price),
+                        dec(o.lower_limit_price),
+                        dec(o.trigger_quantity),
                         trigger,
                         o.grid_order_type_up.clone(),
                         o.grid_order_type_down.clone(),
@@ -389,10 +405,10 @@ async fn cmd_triggers(
                         t.id.clone(),
                         t.symbol.clone(),
                         t.status.clone(),
-                        t.price.clone(),
-                        t.quantity.clone(),
-                        t.executed_price.clone(),
-                        t.executed_qty.clone(),
+                        dec(t.price),
+                        dec(t.quantity),
+                        dec(t.executed_price),
+                        dec(t.executed_qty),
                         t.order_type.clone(),
                     ]
                 })
@@ -427,12 +443,13 @@ async fn cmd_info(symbol: String, format: &OutputFormat) -> Result<()> {
     Ok(())
 }
 
-fn tif_label(v: i32) -> String {
+fn tif_label(v: longbridge::grid::GridTimeInForce) -> String {
+    use longbridge::grid::GridTimeInForce::{Day, GoodTilCanceled, GoodTilDate, Unknown};
     match v {
-        0 => "Day",
-        1 => "GTC",
-        6 => "GTD",
-        _ => "-",
+        Day => "Day",
+        GoodTilCanceled => "GTC",
+        GoodTilDate => "GTD",
+        Unknown(_) => "-",
     }
     .to_string()
 }
