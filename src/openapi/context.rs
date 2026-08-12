@@ -49,6 +49,24 @@ fn ascii_args(args: Vec<String>) -> String {
         .join(" ")
 }
 
+/// Derive a WebSocket URL from an HTTP base URL, for the debug-only
+/// `LONGBRIDGE_HTTP_URL` override so REST/WS/SSE all target the same host.
+fn ws_url_from_http(http_url: &str) -> String {
+    let trimmed = http_url.trim_end_matches('/');
+    let base = if let Some(rest) = trimmed.strip_prefix("https://") {
+        format!("wss://{rest}")
+    } else if let Some(rest) = trimmed.strip_prefix("http://") {
+        format!("ws://{rest}")
+    } else {
+        trimmed.to_string()
+    };
+    if base.ends_with("/v2") {
+        base
+    } else {
+        format!("{base}/v2")
+    }
+}
+
 /// Initialize contexts (should be called once at app startup).
 /// If `LONGBRIDGE_APP_KEY`, `LONGBRIDGE_APP_SECRET`, and `LONGBRIDGE_ACCESS_TOKEN`
 /// are all set, uses API key authentication (no browser needed).
@@ -58,7 +76,7 @@ fn ascii_args(args: Vec<String>) -> String {
 pub async fn init_contexts() -> Result<(
     impl tokio_stream::Stream<Item = longbridge::quote::PushEvent> + Send + Unpin,
     bool,
-    &'static str,
+    String,
 )> {
     let (config_builder, http_client_config, using_api_key) = if let (Ok(config), Ok(http_config)) = (
         longbridge::Config::from_apikey_env(),
@@ -135,7 +153,7 @@ pub async fn init_contexts() -> Result<(
 
     // If LONGBRIDGE_ENV=staging, override all endpoints to test environment.
     // This takes highest priority over region detection.
-    let effective_http_url;
+    let effective_http_url: String;
     if crate::region::is_test_env() {
         tracing::info!("Using TEST environment endpoints (openapi.longbridge.xyz)");
         config_builder = config_builder
@@ -143,7 +161,25 @@ pub async fn init_contexts() -> Result<(
             .quote_ws_url(crate::region::QUOTE_WS_URL_TEST)
             .trade_ws_url(crate::region::TRADE_WS_URL_TEST);
         http_client_config = http_client_config.http_url(crate::region::HTTP_URL_TEST);
-        effective_http_url = crate::region::HTTP_URL_TEST;
+        effective_http_url = crate::region::HTTP_URL_TEST.to_string();
+    } else if cfg!(debug_assertions)
+        && std::env::var("LONGBRIDGE_HTTP_URL").is_ok_and(|s| !s.trim().is_empty())
+    {
+        // Debug builds only: point the whole CLI at a custom host (a local mock
+        // or a staging gateway) via LONGBRIDGE_HTTP_URL. WS is derived from the
+        // same host so REST, WS and the agent SSE stay consistent.
+        let http = std::env::var("LONGBRIDGE_HTTP_URL")
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let ws = ws_url_from_http(&http);
+        tracing::info!("Using LONGBRIDGE_HTTP_URL override: {http}");
+        config_builder = config_builder
+            .http_url(&http)
+            .quote_ws_url(&ws)
+            .trade_ws_url(&ws);
+        http_client_config = http_client_config.http_url(&http);
+        effective_http_url = http;
     } else if crate::region::is_cn_cached()
         && !token_dc_is_us(&crate::auth::effective_client_id())
         && (cfg!(not(debug_assertions)) || std::env::var("LONGBRIDGE_HTTP_URL").is_err())
@@ -157,7 +193,7 @@ pub async fn init_contexts() -> Result<(
             .quote_ws_url(crate::region::QUOTE_WS_URL_CN)
             .trade_ws_url(crate::region::TRADE_WS_URL_CN);
         http_client_config = http_client_config.http_url(crate::region::HTTP_URL_CN);
-        effective_http_url = crate::region::HTTP_URL_CN;
+        effective_http_url = crate::region::HTTP_URL_CN.to_string();
     } else {
         // Explicitly pin to the global host so the SDK does not re-run geotest
         // at request time (which would still resolve to CN on a China Mainland network).
@@ -166,7 +202,7 @@ pub async fn init_contexts() -> Result<(
             .quote_ws_url(crate::region::QUOTE_WS_URL_GLOBAL)
             .trade_ws_url(crate::region::TRADE_WS_URL_GLOBAL);
         http_client_config = http_client_config.http_url(crate::region::HTTP_URL_GLOBAL);
-        effective_http_url = crate::region::HTTP_URL_GLOBAL;
+        effective_http_url = crate::region::HTTP_URL_GLOBAL.to_string();
     }
 
     // Extract x-cli-cmd and x-cli-args from process arguments.
