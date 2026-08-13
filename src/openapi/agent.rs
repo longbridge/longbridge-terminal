@@ -12,6 +12,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
+    time::{Duration, Instant},
 };
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -377,6 +378,27 @@ impl AgentBackend for OpenApiAgent {
             .map_or_else(Vec::new, |stored| stored.events.clone());
         captured.push(AgentEvent::UserText(original_prompt));
         let mut title = stored.and_then(|stored| stored.title);
+        let mut current_state = session.clone();
+        let mut last_checkpoint = Instant::now();
+        let mut visible_checkpointed = false;
+        if let Some(session_id) = current_state
+            .acp_session_id
+            .as_ref()
+            .or(current_state.conversation_id.as_ref())
+        {
+            let mut history = self
+                .history
+                .lock()
+                .map_err(|_| std::io::Error::other("session history lock is poisoned"))?;
+            history.upsert(StoredSession {
+                session_id: session_id.clone(),
+                cwd: cwd.clone(),
+                title: title.clone(),
+                state: current_state.clone(),
+                events: captured.clone(),
+            });
+            self.persist_history(&history);
+        }
 
         let stream = if let Some(pending) = &session.pending_interaction {
             self.context
@@ -760,19 +782,30 @@ impl AgentBackend for OpenApiAgent {
                         }
                         captured.push(event.clone());
                         if let Some(state) = event_session(event) {
-                            if let Some(session_id) = state
-                                .acp_session_id
-                                .as_ref()
-                                .or(state.conversation_id.as_ref())
-                            {
-                                if let Ok(mut history) = history.lock() {
-                                    history.upsert(StoredSession {
-                                        session_id: session_id.clone(),
-                                        cwd: cwd.clone(),
-                                        title: title.clone(),
-                                        state: state.clone(),
-                                        events: captured.clone(),
-                                    });
+                            current_state = state.clone();
+                        } else {
+                            update_session_from_event(&mut current_state, event);
+                        }
+                        if let Some(session_id) = current_state
+                            .acp_session_id
+                            .as_ref()
+                            .or(current_state.conversation_id.as_ref())
+                        {
+                            if let Ok(mut history) = history.lock() {
+                                history.upsert(StoredSession {
+                                    session_id: session_id.clone(),
+                                    cwd: cwd.clone(),
+                                    title: title.clone(),
+                                    state: current_state.clone(),
+                                    events: captured.clone(),
+                                });
+                                let visible = is_visible_history_event(event);
+                                let checkpoint = is_history_boundary(event)
+                                    || (visible
+                                        && (!visible_checkpointed
+                                            || last_checkpoint.elapsed()
+                                                >= Duration::from_secs(1)));
+                                if checkpoint {
                                     if let Some(path) = history_path.as_deref() {
                                         if let Err(error) = history.save(path) {
                                             tracing::warn!(
@@ -781,6 +814,9 @@ impl AgentBackend for OpenApiAgent {
                                                 path = %path.display(),
                                                 "failed to persist ACP session history"
                                             );
+                                        } else {
+                                            last_checkpoint = Instant::now();
+                                            visible_checkpointed |= visible;
                                         }
                                     }
                                 }
@@ -803,6 +839,60 @@ fn event_session(event: &AgentEvent<OpenApiAgentSession>) -> Option<&OpenApiAgen
         | AgentEvent::Finished(session) => Some(session),
         _ => None,
     }
+}
+
+fn update_session_from_event(
+    state: &mut OpenApiAgentSession,
+    event: &AgentEvent<OpenApiAgentSession>,
+) {
+    let AgentEvent::Extension {
+        event: event_name,
+        data,
+        ..
+    } = event
+    else {
+        return;
+    };
+    if event_name != "chat_started" {
+        return;
+    }
+    if let Some(chat_uid) = data
+        .get("chat_uid")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty())
+    {
+        state.conversation_id = Some(chat_uid.to_owned());
+    }
+    if let Some(message_id) = data.get("message_id").and_then(|value| {
+        value
+            .as_str()
+            .map(str::to_owned)
+            .or_else(|| value.as_i64().map(|value| value.to_string()))
+    }) {
+        state.parent_message_id = Some(message_id);
+    }
+}
+
+fn is_visible_history_event(event: &AgentEvent<OpenApiAgentSession>) -> bool {
+    matches!(
+        event,
+        AgentEvent::Text(_)
+            | AgentEvent::Thought(_)
+            | AgentEvent::Content { .. }
+            | AgentEvent::ToolStarted { .. }
+            | AgentEvent::ToolFinished { .. }
+            | AgentEvent::ToolStartedRich { .. }
+            | AgentEvent::ToolFinishedRich { .. }
+            | AgentEvent::ToolProgressRich { .. }
+            | AgentEvent::Plan { .. }
+            | AgentEvent::RichContent(_)
+    )
+}
+
+fn is_history_boundary(event: &AgentEvent<OpenApiAgentSession>) -> bool {
+    event_session(event).is_some()
+        || matches!(event, AgentEvent::SessionTitle { .. })
+        || matches!(event, AgentEvent::Extension { event, .. } if event == "chat_started")
 }
 
 fn plan_entries(outputs: Option<&serde_json::Value>) -> Vec<AgentPlanEntry> {
@@ -1108,5 +1198,45 @@ mod tests {
         };
 
         assert_eq!(state.acp_session_id.as_deref(), Some("acp-session-1"));
+    }
+
+    #[test]
+    fn chat_started_checkpoint_retains_backend_continuation_ids() {
+        let mut state = OpenApiAgentSession {
+            acp_session_id: Some("acp-session-1".into()),
+            ..Default::default()
+        };
+        update_session_from_event(
+            &mut state,
+            &native_event(
+                "chat_started",
+                serde_json::json!({
+                    "chat_uid": "chat-uid-1",
+                    "message_id": 42
+                }),
+            ),
+        );
+
+        assert_eq!(state.acp_session_id.as_deref(), Some("acp-session-1"));
+        assert_eq!(state.conversation_id.as_deref(), Some("chat-uid-1"));
+        assert_eq!(state.parent_message_id.as_deref(), Some("42"));
+    }
+
+    #[test]
+    fn history_checkpoint_classifies_visible_boundaries_and_ignores_ping() {
+        let answer = AgentEvent::Text("partial answer".into());
+        assert!(is_visible_history_event(&answer));
+        assert!(!is_history_boundary(&answer));
+
+        let started = native_event(
+            "chat_started",
+            serde_json::json!({ "chat_uid": "chat-1", "message_id": 1 }),
+        );
+        assert!(!is_visible_history_event(&started));
+        assert!(is_history_boundary(&started));
+
+        let ping = native_event("ping", serde_json::Value::Null);
+        assert!(!is_visible_history_event(&ping));
+        assert!(!is_history_boundary(&ping));
     }
 }
