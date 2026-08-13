@@ -21,8 +21,8 @@ Longbridge OpenAPI 已提供 LongbridgeAI Agent 能力。我们希望把它收�
 ### 1.1 设计目标
 
 - 对外兼容标准 ACP，不向 Zed、Cherry Studio 等客户端暴露 Longbridge 私有协议。
-- `longbridge-ai-acp` 成为 deep module：用较小、稳定的 Interface 隐藏 OpenAPI 流式事件、会话续接、人工交互和 ACP 映射的复杂度。
-- CLI 和桌面产品复用同一 LongbridgeAI Adapter，但各自拥有独立的 API 地址、凭证来源和授权生命周期。
+- `longbridge-ai-acp` 成为 deep module：用较小、稳定的 Interface 隐藏 ACP 协议运行时、会话管理、人工交互和后端事件映射的复杂度。
+- CLI 和桌面产品复用同一 ACP runtime 与 `AgentBackend` seam，但不复用 API Adapter：CLI 使用 OpenAPI Adapter，桌面产品使用各自私有 API Adapter。
 - 桌面 AI Chat 只依赖 ACP Client Interface，能够在 LongbridgeAI、Codex、Claude 等 Agent 之间切换。
 - 明确取消、错误、恢复、进程生命周期和敏感信息的处理规则。
 - Interface 同时作为生产调用与测试的 seam，避免业务逻辑散落在 CLI 和多个桌面产品中。
@@ -41,22 +41,23 @@ Longbridge OpenAPI 已提供 LongbridgeAI Agent 能力。我们希望把它收�
 ### 2.1 As-is（当前 worktree 已有事实）
 
 - workspace 已包含 `crates/longbridge-ai-acp`。
-- crate 提供 provider-neutral 的 `AgentBackend` seam，以及 `LongbridgeAgent` Adapter。
-- `LongbridgeAgent::from_api(config, api_url, agent_id)` 允许宿主传入 SDK 配置、API 地址和 Agent ID；`from_config` 接受宿主已配置好的 `longbridge::Config`。
-- crate 不读取 CLI credential storage；调用方负责构造授权配置。
+- crate 只提供 provider-neutral 的 `AgentBackend` seam、ACP client/server runtime 与会话 actor，不依赖 OpenAPI 或任何桌面私有 API。
+- CLI 专属 `OpenApiAgent` Adapter 位于 `longbridge-terminal` 主包；它不属于可复用 ACP crate。
+- 桌面产品必须在各自仓库实现私有 API Adapter；API 地址、请求类型、凭证与授权刷新不进入 ACP crate。
 - crate 已能把 LongbridgeAI 的文本、思考、工具开始/结束、人工补充信息和完成事件映射为内部 `AgentEvent`，并将其转换为 ACP session update。
 - `acp_agent` 可在进程内构造 ACP Agent，`serve_stdio` 可通过 stdin/stdout 提供 ACP JSON-RPC。
 - CLI 已有 `longbridge acp --agent-id <ID>`，也可通过 `LONGBRIDGE_AGENT_ID` 提供 Agent ID；该命令使用 CLI 自己的 OpenAPI 初始化与授权。
 - crate 重新导出官方 ACP SDK，并以 `ExternalAgent` / `ExternalAgentConfig` 类型别名提供外部 ACP 子进程的底层入口。
-- 当前会话状态保存在进程内；已处理 ACP 回合取消并通过丢弃 OpenAPI stream 停止请求，Client helper 也会暴露协商后的 capability 与实现信息；但尚无服务端显式 cancel endpoint、持久化恢复、完整桌面 AI Chat facade 或 Codex/Claude 真实 Adapter 端到端集成证据。
+- 当前会话状态保存在进程内；已处理 ACP 回合取消并通过丢弃宿主 backend stream 停止请求，Client helper 也会暴露协商后的 capability 与实现信息；但尚无服务端显式 cancel endpoint 或持久化恢复。
 - crate 已提供 `with_session`（进程内 LongbridgeAI）和 `with_external_session`（外部 ACP 进程）的持久会话 helper，并通过 `ClientDelegate` 把 permission request 交回宿主；文件与 terminal 等完整桌面 capability facade 仍属于 To-be。
-- crate 还提供后台驱动的 `DesktopSession`：它持有 ACP connection/外部子进程，向 GPUI 或 Tauri 暴露 `prompt`、`cancel`、`shutdown` 命令与 `SessionUpdate`、`TurnFinished`、`Failed` 事件；已覆盖多轮会话、重叠 prompt 拒绝、取消以及真实 stdio 子进程关闭。
+- crate 还提供后台驱动的 `DesktopSession`：它持有 ACP connection/外部子进程，向 GPUI 或 Tauri 暴露 `prompt`、`cancel`、`shutdown` 命令与 `SessionUpdate`、`TurnFinished`、`Failed` 事件；控制 handle 与独占 event stream 可拆分，避免 UI 等待流式事件时阻塞 Stop。已覆盖多轮会话、重叠 prompt 拒绝、取消以及真实 stdio 子进程关闭。
+- `longbridge-gpui` 的 `ai_agent` 已实现宿主私有 Babbage API 的 `AgentBackend`，`ai_panel` 已提供 LongbridgeAI ACP、Codex、Claude provider 入口，并把 ACP 文本、思考、工具和完成事件接入现有消息 UI。Codex 与 Claude 官方 Adapter 的真实 ACP V1 initialize 已通过；权限确认、附件与发布级 Adapter 分发仍需补齐。
 
 ### 2.2 To-be（目标状态）
 
 - `longbridge-ai-acp` 提供稳定的 Agent-side 与 Client-side Interface，桌面 AI Chat 不需要直接理解 ACP SDK 的底层连接细节。
 - CLI 的 stdio ACP 可被至少一个真实第三方 ACP Client 验证；stdout 严格保留给协议帧。
-- Longbridge Pro 与 Longbridge AI 桌面端通过宿主注入的 API 地址和凭证，进程内运行 LongbridgeAI Adapter。
+- Longbridge Pro 与 Longbridge AI 桌面端将各自私有 API Adapter 注入进程内 ACP runtime。
 - 桌面 AI Chat 通过同一个 client facade 消费进程内 LongbridgeAI 和外部 Codex/Claude ACP Agent 的标准化事件。
 - 取消信号贯穿 UI → ACP connection → backend request；会话可按明确策略恢复或宣告不可恢复。
 - capability、错误类别、交互请求和工具事件均有一致的产品语义与兼容测试。
@@ -66,7 +67,7 @@ Longbridge OpenAPI 已提供 LongbridgeAI Agent 能力。我们希望把它收�
 - **Module**：具有一个 Interface 和对应 Implementation 的代码单元。本架构中的核心 Module 是 `longbridge-ai-acp`。
 - **Interface**：调用者正确使用 Module 所需知道的全部事实，包括类型、约束、事件顺序、错误、取消和生命周期。
 - **Seam**：不修改调用点即可替换行为的位置。核心 seam 是 `AgentBackend`、ACP transport，以及桌面端的 `AgentConnection` facade。
-- **Adapter**：在 seam 上满足 Interface 的具体实现，例如 `LongbridgeAgent`、stdio ACP Adapter、Codex ACP subprocess Adapter。
+- **Adapter**：在 seam 上满足 Interface 的宿主实现，例如 CLI `OpenApiAgent`、桌面私有 API Adapter、Codex ACP subprocess Adapter。
 - **ACP Agent**：实现 ACP Agent 一侧协议、接收 session/prompt 请求并产生更新的一方。
 - **ACP Client**：创建连接、发送请求、消费 session update 和处理 capability 的一方。
 - **宿主**：拥有进程、配置、授权和 UI 生命周期的产品；包括 CLI、Longbridge Pro 和 Longbridge AI 桌面端。
@@ -87,7 +88,7 @@ Longbridge OpenAPI 已提供 LongbridgeAI Agent 能力。我们希望把它收�
 关键不变量：
 
 - `longbridge-ai-acp` 不主动读取任何产品的全局 credential storage。
-- `LongbridgeAgent` 接收已经完成授权配置的 SDK context/config；它不决定使用 OAuth 还是 API key。
+- ACP crate 不接收、解析或存储任何 API config；每个宿主 Adapter 自己拥有 endpoint 与授权。
 - API 地址必须由宿主显式提供或由宿主已配置的 `Config` 携带，不能在 crate 内隐式覆盖。
 - CLI 的凭证不可被桌面产品自动继承；桌面凭证也不可写入 CLI storage。
 - 外部 ACP Agent 是独立信任域。其可执行文件、参数、环境变量、工作目录和权限都由桌面宿主进行 allowlist 与用户确认。
@@ -120,33 +121,36 @@ Longbridge OpenAPI 已提供 LongbridgeAI Agent 能力。我们希望把它收�
 
 ### 5.2 Adapter
 
-- `LongbridgeAgent`：将 LongbridgeAI OpenAPI 实现为 `AgentBackend`。
+- `OpenApiAgent`：CLI 内部将 LongbridgeAI OpenAPI 实现为 `AgentBackend`。
+- `PrivateApiAgent`：由每个桌面宿主将其私有 API 实现为 `AgentBackend`，不属于本 crate。
 - `InProcessAcpAdapter`：在同一 Rust 进程中连接 ACP Client 与 `AgentBackend`，供桌面产品使用。
 - `StdioAcpServerAdapter`：把 `AgentBackend` 暴露为 stdio ACP，供 CLI 使用。
 - `ExternalAcpProcessAdapter`：启动并连接 Codex/Claude 等外部 ACP Agent。
 - `FakeAgentBackend` / `ScriptedAcpAgent`：测试 Adapter，用确定事件脚本验证所有调用方。
 
-不要为每个产品复制 LongbridgeAI 映射。产品差异应停留在组合根：配置、授权、可用 capability 和 UI 策略。
+不要把某个产品的 API 映射塞进 ACP runtime。CLI OpenAPI 与桌面私有 API 本来就是不同接口；它们只在 `AgentBackend` 事件语义处收敛。
 
 ## 6. 组件关系
 
 ```mermaid
 flowchart LR
     Z[Zed / Cherry Studio<br/>ACP Client] -->|stdio ACP| CLI[longbridge acp]
-    CLI -->|CLI-owned Config + endpoint| LBA[LongbridgeAgent Adapter]
+    CLI -->|CLI OpenAPI auth| LBA[OpenApiAgent Adapter]
 
     subgraph CRATE[longbridge-ai-acp deep module]
-        LBA --> AB[AgentBackend seam]
-        AB --> RT[ACP Agent Runtime]
+        AB[AgentBackend seam] --> RT[ACP Agent Runtime]
         RT --> IPC[In-process ACP connection]
         EP[External ACP Process Adapter] --> CF[AgentConnection facade]
         IPC --> CF
     end
 
+    LBA --> AB
     LBA -->|OpenAPI Agent stream| SERVER[LongbridgeAI 服务端]
 
-    PRO[Longbridge Pro AI Chat] -->|host-owned Config + endpoint| IPC
-    AI[Longbridge AI 桌面端 AI Chat] -->|host-owned Config + endpoint| IPC
+    PROAPI[Pro Private API Adapter] --> AB
+    AIAPI[AI Desktop Private API Adapter] --> AB
+    PRO[Longbridge Pro AI Chat] --> IPC
+    AI[Longbridge AI 桌面端 AI Chat] --> IPC
     PRO --> CF
     AI --> CF
 
@@ -154,7 +158,7 @@ flowchart LR
     CF -->|ACP subprocess| CLAUDE[Claude ACP Agent]
 ```
 
-图中的 `AgentConnection` 是 To-be facade；当前 worktree 只有官方 ACP SDK 类型的底层重新导出，不应把它视为已经完成的产品级 Interface。
+图中的 `AgentConnection` 已由 `DesktopSession`、可克隆控制 handle、独占 event stream，以及 `longbridge-gpui::ai_agent::acp::ChatAgent`/`ChatUpdate` 分层落地。完整产品级能力仍需补齐权限确认、附件、Adapter 安装发现和崩溃恢复。
 
 ## 7. 主要时序
 
@@ -164,7 +168,7 @@ flowchart LR
 sequenceDiagram
     participant C as Zed / Cherry Studio
     participant CLI as longbridge acp
-    participant B as LongbridgeAgent
+    participant B as OpenApiAgent
     participant S as LongbridgeAI 服务端
 
     C->>CLI: 启动进程（agent-id + CLI 授权环境）
@@ -190,15 +194,15 @@ sequenceDiagram
     participant UI as Desktop AI Chat
     participant H as Desktop composition root
     participant AC as AgentConnection
-    participant LB as LongbridgeAgent
+    participant LB as Desktop PrivateApiAgent
     participant S as LongbridgeAI 服务端
 
-    H->>H: 完成桌面 OAuth/授权
-    H->>LB: from_api(config, api_url, agent_id)
+    H->>H: 初始化桌面私有 API 与授权
+    H->>LB: 构造宿主自己的 AgentBackend
     H->>AC: connect_in_process(LB)
     UI->>AC: new_session / prompt
     AC->>LB: ACP Agent request
-    LB->>S: OpenAPI Agent stream
+    LB->>S: Desktop private API stream
     S-->>LB: streamed events
     LB-->>AC: ACP updates
     AC-->>UI: normalized events
@@ -258,31 +262,29 @@ ACP `session_id` 由 ACP Agent Runtime 分配，映射到 `(cwd, AgentSession)`�
 - 工具完成事件必须引用已开始的 tool call；若服务端乱序，Adapter 负责缓冲或发出协议错误。
 - `Finished` 之后不得再发送该回合的 chunk。
 - `NeedsInput` 必须先保存续接状态，再通知客户端，避免 UI 回答到达时状态丢失。
-- 非文本 prompt block 不应静默丢失。As-is 只拼接文本；To-be 必须协商支持、转换或返回明确的 unsupported-content 错误。
+- 非文本 prompt block 不应静默丢失。As-is 支持文本与 resource link，其他未声明内容返回参数错误；新增内容类型必须先协商 capability。
 
 ## 9. 授权与安全设计
 
 ### 9.1 宿主注入
 
-推荐的 seam 不是“让 crate 去登录”，而是“让宿主交付可用的连接配置”：
+推荐的 seam 不是“让 crate 去登录或拿到连接配置”，而是“让宿主实现行为接口”：
 
 ```rust,ignore
-pub struct LongbridgeAgentOptions {
-    pub config: Arc<longbridge::Config>,
-    pub agent_id: String,
+impl AgentBackend for DesktopPrivateApiAgent {
+    type Session = DesktopPrivateSession;
+    // prompt() 内部使用桌面私有 API client 与授权。
 }
-
-pub fn longbridge_agent(options: LongbridgeAgentOptions) -> LongbridgeAgent;
 ```
 
-若宿主希望单独指定 API 地址，可在构造 `Config` 前设置，或使用现有 `LongbridgeAgent::from_api(config, api_url, agent_id)`。后者表达的是便利构造函数，不转移授权所有权。
+ACP crate 看不到 API 地址、token、OAuth 对象或私有请求类型。endpoint 校验、刷新与吊销全部由宿主 Adapter 负责。
 
 ### 9.2 安全要求
 
 - 禁止在命令行参数中直接传递 access token，避免 shell history 和进程列表泄漏。
 - CLI 仅复用 CLI 自己的安全存储与 OpenAPI 专属授权流程。
 - 桌面端 token 只存在于桌面授权域，由宿主决定刷新和吊销。
-- API endpoint 必须校验 scheme；生产构建默认只允许 TLS，开发环境的明文 endpoint 需显式开关。
+- 每个宿主 Adapter 必须校验自己的 API endpoint；生产构建默认只允许 TLS，开发环境的明文 endpoint 需显式开关。
 - 外部 Agent executable 使用绝对路径或可信发现机制；参数不经 shell 拼接。
 - 环境变量采用 allowlist 注入，不能无条件继承宿主全部环境。
 - 对文件、terminal、tool permission 请求进行逐项授权，并向用户展示发起 Agent、目标和范围。
@@ -317,7 +319,7 @@ To-be 的稳定错误类型至少区分：
 - 短暂网络错误：只有在服务端操作具备幂等/游标语义时才能自动重试，否则向用户暴露“状态未知”。
 - ACP Client 重连：内存 session 仅在 Agent 进程仍存活时可恢复。
 - CLI 子进程退出：As-is 会话状态丢失；若未来支持跨进程恢复，应由版本化 session store 保存最小续接标识。
-- 人工交互：保存 `conversation_id`、`parent_message_id` 和 `tool_call_id` 后再结束当前回合；用户回答进入同一 ACP session。
+- 人工交互：Backend 在自己的关联 `Session` 类型中保存所需续接状态后再结束当前回合；ACP runtime 不理解这些私有字段。
 - 外部 Agent 崩溃：保留 UI 消息历史，但只有对方声明 load/resume capability 时才恢复 Agent 内部会话。
 
 ## 11. Rust crate Interface 草图
@@ -326,18 +328,15 @@ To-be 的稳定错误类型至少区分：
 
 ```rust,ignore
 pub trait AgentBackend: Send + Sync + 'static {
+    type Session: Clone + Default + Send + Sync + 'static;
+
     async fn prompt(
         &self,
-        session: AgentSession,
+        session: Self::Session,
         prompt: AgentPrompt,
         context: PromptContext,
         cancel: CancellationToken,
     ) -> Result<AgentEventStream, AgentError>;
-}
-
-pub struct LongbridgeAgentOptions {
-    pub config: Arc<longbridge::Config>,
-    pub agent_id: String,
 }
 
 pub struct AcpAgentRuntime<B> { /* hidden */ }
@@ -361,7 +360,7 @@ pub trait AgentConnection: Send + Sync {
 }
 
 pub enum AgentTarget {
-    LongbridgeInProcess(LongbridgeAgentOptions),
+    InProcess(Box<dyn AgentBackendFactory>),
     ExternalAcp(ExternalAgentOptions),
 }
 
@@ -400,7 +399,7 @@ longbridge acp --agent-id <AGENT_ID>
 
 ### 阶段 0：当前基线固化
 
-- 为现有 `AgentBackend`、`LongbridgeAgent`、stdio server 和事件映射补齐架构契约测试。
+- 为现有 `AgentBackend`、CLI `OpenApiAgent`、stdio server 和事件映射补齐架构契约测试。
 - 验证 stdout purity、CLI 授权隔离和显式 endpoint 注入。
 - 写明当前不支持的 ACP capability 与恢复限制。
 

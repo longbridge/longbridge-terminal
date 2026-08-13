@@ -490,9 +490,10 @@ Zed 已纳入 stdio 集成测试。Cherry Studio 是目标客户端，但其当�
 是不同协议。
 
 Agent ID 也可以通过 `LONGBRIDGE_AGENT_ID` 设置。Rust 桌面客户端不需要启动
-CLI：[`longbridge-ai-acp`](crates/longbridge-ai-acp) crate 可在进程内运行桥接，
-支持显式传入 API 地址和由宿主维护的 OpenAPI/OAuth 配置，也可接入 Codex、
-Claude 等外部 ACP Agent。二者需要分别安装 `codex-acp` 和
+CLI：[`longbridge-ai-acp`](crates/longbridge-ai-acp) crate 可在进程内运行
+provider-neutral 桥接。每个桌面端通过自己的私有 API、地址与授权流程实现
+`AgentBackend`；该 crate 不依赖 OpenAPI。它也可接入 Codex、Claude 等外部
+ACP Agent。二者需要分别安装 `codex-acp` 和
 `claude-agent-acp` 适配器；原生 `codex`、`claude` 命令本身不是 ACP Server。
 
 ## 输出格式

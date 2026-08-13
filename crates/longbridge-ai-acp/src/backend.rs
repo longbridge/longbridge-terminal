@@ -4,24 +4,9 @@ use std::path::Path;
 
 pub type BackendError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
-/// Opaque backend state retained for one ACP session.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct AgentSession {
-    pub conversation_id: Option<String>,
-    pub parent_message_id: Option<String>,
-    pub pending_interaction: Option<PendingInteraction>,
-}
-
-/// Information required to resume an interrupted Longbridge conversation.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PendingInteraction {
-    pub tool_call_id: String,
-    pub questions: Vec<String>,
-}
-
 /// Events understood by the protocol adapter.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum AgentEvent {
+pub enum AgentEvent<Session> {
     Text(String),
     Thought(String),
     ToolStarted {
@@ -36,19 +21,21 @@ pub enum AgentEvent {
         raw_output: Option<serde_json::Value>,
     },
     NeedsInput {
-        session: AgentSession,
+        session: Session,
         questions: Vec<String>,
     },
-    Finished(AgentSession),
+    Finished(Session),
 }
 
 /// Provider-neutral seam used by both the CLI and an embedded desktop client.
 #[async_trait]
 pub trait AgentBackend: Send + Sync + 'static {
+    type Session: Clone + Default + Send + Sync + 'static;
+
     async fn prompt(
         &self,
-        session: AgentSession,
+        session: Self::Session,
         prompt: String,
         cwd: &Path,
-    ) -> Result<BoxStream<'static, Result<AgentEvent, BackendError>>, BackendError>;
+    ) -> Result<BoxStream<'static, Result<AgentEvent<Self::Session>, BackendError>>, BackendError>;
 }

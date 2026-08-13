@@ -1,8 +1,21 @@
-use crate::{AgentBackend, AgentEvent, AgentSession, BackendError, PendingInteraction};
 use async_trait::async_trait;
 use futures::{stream::BoxStream, StreamExt};
 use longbridge::agent::ConversationStreamEvent;
-use std::{path::Path, sync::Arc};
+use longbridge_ai_acp::{AgentBackend, AgentEvent, BackendError};
+use std::path::Path;
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct OpenApiAgentSession {
+    conversation_id: Option<String>,
+    parent_message_id: Option<String>,
+    pending_interaction: Option<PendingInteraction>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PendingInteraction {
+    tool_call_id: String,
+    questions: Vec<String>,
+}
 
 fn answers_for(
     pending: &PendingInteraction,
@@ -49,71 +62,32 @@ fn answers_for(
         .collect())
 }
 
-/// Adapter for one published Longbridge AI agent.
 #[derive(Clone)]
-pub struct LongbridgeAgent {
+pub struct OpenApiAgent {
     context: longbridge::AgentContext,
     agent_id: String,
 }
 
-impl LongbridgeAgent {
-    #[must_use]
+impl OpenApiAgent {
     pub fn new(context: longbridge::AgentContext, agent_id: impl Into<String>) -> Self {
         Self {
             context,
             agent_id: agent_id.into(),
         }
     }
-
-    /// Construct an agent for an explicit API endpoint.
-    ///
-    /// The caller owns authentication: build `config` with either
-    /// `longbridge::Config::from_oauth` (desktop login) or
-    /// `longbridge::Config::from_apikey` (`OpenAPI` credentials). No CLI token
-    /// storage or process-global state is consulted.
-    pub fn from_api(
-        mut config: longbridge::Config,
-        api_url: impl Into<String>,
-        agent_id: impl Into<String>,
-    ) -> Result<Self, BackendError> {
-        let api_url = api_url.into();
-        let parsed = url::Url::parse(&api_url)?;
-        let secure = parsed.scheme() == "https";
-        let local_development = cfg!(debug_assertions)
-            && parsed.scheme() == "http"
-            && parsed
-                .host_str()
-                .is_some_and(|host| matches!(host, "localhost" | "127.0.0.1" | "::1"));
-        if !secure && !local_development {
-            return Err("Longbridge AI API URL must use HTTPS (HTTP is allowed only for local debug endpoints)".into());
-        }
-        config.set_http_url(api_url);
-        Ok(Self::new(
-            longbridge::AgentContext::new(Arc::new(config)),
-            agent_id,
-        ))
-    }
-
-    /// Construct from a fully configured SDK value supplied by the host app.
-    #[must_use]
-    pub fn from_config(config: Arc<longbridge::Config>, agent_id: impl Into<String>) -> Self {
-        Self::new(longbridge::AgentContext::new(config), agent_id)
-    }
-
-    #[must_use]
-    pub fn agent_id(&self) -> &str {
-        &self.agent_id
-    }
 }
 
 #[async_trait]
-impl AgentBackend for LongbridgeAgent {
+impl AgentBackend for OpenApiAgent {
+    type Session = OpenApiAgentSession;
+
     async fn prompt(
         &self,
-        session: AgentSession,
+        session: Self::Session,
         prompt: String,
         _cwd: &Path,
-    ) -> Result<BoxStream<'static, Result<AgentEvent, BackendError>>, BackendError> {
+    ) -> Result<BoxStream<'static, Result<AgentEvent<Self::Session>, BackendError>>, BackendError>
+    {
         let stream = if let Some(pending) = &session.pending_interaction {
             self.context
                 .continue_conversation_streamed(
@@ -179,7 +153,7 @@ impl AgentBackend for LongbridgeAgent {
                             .into_iter()
                             .map(|question| question.question)
                             .collect::<Vec<_>>();
-                        let state = AgentSession {
+                        let state = OpenApiAgentSession {
                             conversation_id: Some(response.chat_uid),
                             parent_message_id: Some(response.message_id),
                             pending_interaction: Some(PendingInteraction {
@@ -193,7 +167,7 @@ impl AgentBackend for LongbridgeAgent {
                         }))
                     }
                     Ok(ConversationStreamEvent::WorkflowFinished(response)) => {
-                        Some(Ok(AgentEvent::Finished(AgentSession {
+                        Some(Ok(AgentEvent::Finished(OpenApiAgentSession {
                             conversation_id: Some(response.chat_uid),
                             parent_message_id: Some(response.message_id),
                             pending_interaction: None,
@@ -230,11 +204,5 @@ mod tests {
         let answers = answers_for(&pending, "US\n1 month").expect("answers");
         assert_eq!(answers["tool-1"]["Market?"], "US");
         assert_eq!(answers["tool-1"]["Period?"], "1 month");
-    }
-
-    #[test]
-    fn production_api_requires_https() {
-        let config = longbridge::Config::from_apikey("key", "secret", "token");
-        assert!(LongbridgeAgent::from_api(config, "http://example.com", "agent").is_err());
     }
 }

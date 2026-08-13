@@ -1,4 +1,4 @@
-use crate::{AgentBackend, AgentEvent, AgentSession};
+use crate::{AgentBackend, AgentEvent};
 use agent_client_protocol::schema::{
     v1::{
         AgentCapabilities, CancelNotification, ContentBlock, ContentChunk, Implementation,
@@ -14,13 +14,13 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-struct SessionRecord {
+struct SessionRecord<BackendSession> {
     cwd: std::path::PathBuf,
-    state: AgentSession,
+    state: BackendSession,
     cancel: tokio::sync::watch::Sender<u64>,
 }
 
-type Sessions = Arc<RwLock<HashMap<SessionId, SessionRecord>>>;
+type Sessions<BackendSession> = Arc<RwLock<HashMap<SessionId, SessionRecord<BackendSession>>>>;
 
 fn flatten_prompt(blocks: &[ContentBlock]) -> agent_client_protocol::Result<String> {
     blocks
@@ -37,11 +37,11 @@ fn flatten_prompt(blocks: &[ContentBlock]) -> agent_client_protocol::Result<Stri
 }
 
 /// Build an ACP agent component around any backend.
-pub fn acp_agent(
-    backend: impl AgentBackend,
+pub fn acp_agent<B: AgentBackend>(
+    backend: B,
 ) -> impl agent_client_protocol::component::ConnectTo<Client> {
     let backend = Arc::new(backend);
-    let sessions: Sessions = Arc::new(RwLock::new(HashMap::new()));
+    let sessions: Sessions<B::Session> = Arc::new(RwLock::new(HashMap::new()));
 
     let new_sessions = Arc::clone(&sessions);
     let prompt_sessions = Arc::clone(&sessions);
@@ -77,7 +77,7 @@ pub fn acp_agent(
                     id.clone(),
                     SessionRecord {
                         cwd: request.cwd,
-                        state: AgentSession::default(),
+                        state: B::Session::default(),
                         cancel: tokio::sync::watch::channel(0).0,
                     },
                 );
@@ -228,7 +228,7 @@ pub fn acp_agent(
 }
 
 /// Serve a backend over newline-delimited ACP JSON-RPC on stdin/stdout.
-pub async fn serve_stdio(backend: impl AgentBackend) -> agent_client_protocol::Result<()> {
+pub async fn serve_stdio<B: AgentBackend>(backend: B) -> agent_client_protocol::Result<()> {
     use agent_client_protocol::component::ConnectTo;
     acp_agent(backend).connect_to(Stdio::new()).await
 }
@@ -244,39 +244,48 @@ mod tests {
 
     #[derive(Default)]
     struct MockBackend {
-        seen: Mutex<Vec<AgentSession>>,
+        seen: Mutex<Vec<TestSession>>,
+    }
+
+    #[derive(Clone, Debug, Default, Eq, PartialEq)]
+    struct TestSession {
+        conversation_id: Option<String>,
     }
 
     struct SlowBackend;
 
     #[async_trait]
     impl AgentBackend for SlowBackend {
+        type Session = ();
+
         async fn prompt(
             &self,
-            _session: AgentSession,
+            _session: (),
             _prompt: String,
             _cwd: &Path,
-        ) -> Result<BoxStream<'static, Result<AgentEvent, BackendError>>, BackendError> {
+        ) -> Result<BoxStream<'static, Result<AgentEvent<()>, BackendError>>, BackendError>
+        {
             Ok(Box::pin(stream::pending()))
         }
     }
 
     #[async_trait]
     impl AgentBackend for MockBackend {
+        type Session = TestSession;
+
         async fn prompt(
             &self,
-            session: AgentSession,
+            session: TestSession,
             prompt: String,
             _cwd: &Path,
-        ) -> Result<BoxStream<'static, Result<AgentEvent, BackendError>>, BackendError> {
+        ) -> Result<BoxStream<'static, Result<AgentEvent<TestSession>, BackendError>>, BackendError>
+        {
             self.seen.lock().expect("mutex").push(session);
             Ok(Box::pin(stream::iter([
                 Ok(AgentEvent::Thought("checking".into())),
                 Ok(AgentEvent::Text(format!("answer: {prompt}"))),
-                Ok(AgentEvent::Finished(AgentSession {
+                Ok(AgentEvent::Finished(TestSession {
                     conversation_id: Some("chat-1".into()),
-                    parent_message_id: Some("message-1".into()),
-                    pending_interaction: None,
                 })),
             ])))
         }

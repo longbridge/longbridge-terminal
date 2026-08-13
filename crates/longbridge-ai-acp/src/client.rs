@@ -145,7 +145,7 @@ pub async fn with_external_session<R>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{acp_agent, AgentBackend, AgentEvent, AgentSession, BackendError};
+    use crate::{acp_agent, AgentBackend, AgentEvent, BackendError};
     use futures::{stream, stream::BoxStream};
     use std::path::Path;
 
@@ -153,15 +153,18 @@ mod tests {
 
     #[async_trait]
     impl AgentBackend for Echo {
+        type Session = ();
+
         async fn prompt(
             &self,
-            _session: AgentSession,
+            _session: (),
             prompt: String,
             _cwd: &Path,
-        ) -> Result<BoxStream<'static, Result<AgentEvent, BackendError>>, BackendError> {
+        ) -> Result<BoxStream<'static, Result<AgentEvent<()>, BackendError>>, BackendError>
+        {
             Ok(Box::pin(stream::iter([
                 Ok(AgentEvent::Text(format!("echo: {prompt}"))),
-                Ok(AgentEvent::Finished(AgentSession::default())),
+                Ok(AgentEvent::Finished(())),
             ])))
         }
     }

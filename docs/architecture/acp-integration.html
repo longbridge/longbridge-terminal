@@ -450,7 +450,7 @@
             <div class="lane" data-lane="embedded">
               <div class="node host"><strong>Pro / AI Desktop</strong><small>AI Chat + host bridge</small></div>
               <div class="connector"></div>
-              <div class="node adapter"><strong>longbridge-ai-acp</strong><small>in-process component<br>host-owned Config</small></div>
+              <div class="node adapter"><strong>longbridge-ai-acp</strong><small>in-process runtime<br>private API Backend</small></div>
               <div class="lane-label">PATH B · ZERO SUBPROCESS</div>
             </div>
             <div class="lane" data-lane="external">
@@ -473,7 +473,7 @@
         <article class="host-card" data-stack="RUST · GPUI · AI_PANEL">
           <div class="host-icon">PRO</div>
           <h3>Longbridge Pro</h3>
-          <p><code>longbridge-gpui</code> 是完整 Rust workspace；现有 <code>ai_panel</code> 负责对话 UI，<code>ai_agent</code> 直接处理 Babbage SSE、会话与 HITL。ACP Client facade 应成为两者之间的新协议边界。</p>
+          <p><code>longbridge-gpui</code> 是完整 Rust workspace；<code>ai_agent</code> 已实现私有 Babbage API 的 ACP backend 与统一 Chat facade，<code>ai_panel</code> 已可选择 LongbridgeAI ACP、Codex、Claude，并消费标准化文本、思考与工具事件。</p>
           <ul><li>在 workspace 中直接依赖 longbridge-ai-acp crate</li><li>由 Pro 的 config / engine 注入授权与 endpoint</li><li>ai_panel 消费统一 ACP session updates</li></ul>
         </article>
         <article class="host-card" data-stack="TAURI · RUST · REACT">
@@ -509,11 +509,11 @@
       <p class="section-intro">统一协议不等于统一凭证。最重要的安全边界是：谁启动 Agent，谁提供该 Agent 的配置；适配 crate 只消费，不发现、不持久化、不刷新。</p>
       <div class="boundary reveal">
         <div class="boundary-col"><span class="owner host">HOST OWNS</span><h3>产品宿主</h3><ul><li>OAuth / token 生命周期</li><li>API endpoint 与环境选择</li><li>Agent ID 与产品配置</li><li>权限确认 UI</li><li>外部进程 allowlist</li></ul></div>
-        <div class="boundary-col"><span class="owner crate">CRATE OWNS</span><h3>longbridge-ai-acp</h3><ul><li>ACP initialize 与能力协商</li><li>session / prompt / cancel</li><li>OpenAPI ↔ ACP 事件映射</li><li>conversation 状态封装</li><li>一致的结构化错误</li></ul></div>
+        <div class="boundary-col"><span class="owner crate">CRATE OWNS</span><h3>longbridge-ai-acp</h3><ul><li>ACP initialize 与能力协商</li><li>session / prompt / cancel</li><li>宿主后端事件 ↔ ACP 映射</li><li>通用会话状态封装</li><li>一致的结构化错误</li></ul></div>
         <div class="boundary-col"><span class="owner provider">AGENT OWNS</span><h3>Codex / Claude</h3><ul><li>Provider 登录与模型配置</li><li>原生工具实现</li><li>自身会话语义</li><li>stderr 诊断输出</li><li>支持的 capability 集合</li></ul></div>
       </div>
       <div class="contract-grid reveal">
-        <article class="contract"><code>from_api(config, url, id)</code><p>桌面宿主显式注入 API 地址；生产环境仅接受 TLS endpoint。</p></article>
+        <article class="contract"><code>impl AgentBackend</code><p>CLI 实现 OpenAPI Adapter；桌面端分别实现私有 API Adapter。ACP crate 不持有 endpoint 或凭证。</p></article>
         <article class="contract"><code>initialize(v1)</code><p>只宣告真实实现的 capability；未知协议版本不伪装成功。</p></article>
         <article class="contract"><code>session/update</code><p>文本、思考与工具事件统一回流，UI 不依赖 Longbridge 私有类型。</p></article>
         <article class="contract"><code>session/cancel</code><p>取消必须到达正在运行的 stream，返回明确的 Cancelled stop reason。</p></article>

@@ -1,22 +1,22 @@
-//! ACP integration for Longbridge AI.
+//! Provider-neutral ACP runtime for Longbridge products.
 //!
-//! The crate deliberately contains no CLI globals. Desktop applications can
-//! construct [`LongbridgeAgent`] from their own `OpenAPI` configuration and run
-//! it in-process, while the `longbridge` binary exposes the same component over
-//! ACP on stdio.
+//! The crate deliberately contains no Longbridge API client, endpoint, or
+//! credential handling. Each host implements [`AgentBackend`] using its own API
+//! and authorization flow, then runs that backend in-process or over stdio.
 
 mod backend;
 mod client;
 mod desktop;
-mod longbridge;
 mod server;
 
 pub use agent_client_protocol as acp;
-pub use backend::{AgentBackend, AgentEvent, AgentSession, BackendError, PendingInteraction};
+pub use backend::{AgentBackend, AgentEvent, BackendError};
 pub use client::{
     with_external_session, with_initialized_session, with_session, AgentHandshake, ClientDelegate,
     DenyPermissions, ExternalAgent, ExternalAgentConfig, ExternalAgentKind,
 };
-pub use desktop::{DesktopSession, DesktopSessionEvent, SessionControlError};
-pub use longbridge::LongbridgeAgent;
+pub use desktop::{
+    DesktopSession, DesktopSessionEvent, DesktopSessionEvents, DesktopSessionHandle,
+    SessionControlError,
+};
 pub use server::{acp_agent, serve_stdio};

@@ -46,6 +46,20 @@ pub struct DesktopSession {
     task: Option<tokio::task::JoinHandle<()>>,
 }
 
+/// Cloneable command side of a desktop ACP session.
+#[derive(Clone)]
+pub struct DesktopSessionHandle {
+    handshake: AgentHandshake,
+    commands: mpsc::UnboundedSender<SessionCommand>,
+}
+
+/// Exclusive event side of a desktop ACP session.
+pub struct DesktopSessionEvents {
+    commands: mpsc::UnboundedSender<SessionCommand>,
+    events: mpsc::UnboundedReceiver<DesktopSessionEvent>,
+    task: Option<tokio::task::JoinHandle<()>>,
+}
+
 impl DesktopSession {
     /// Initialize an ACP agent and create one persistent chat session.
     pub async fn connect(
@@ -130,9 +144,72 @@ impl DesktopSession {
             let _ = task.await;
         }
     }
+
+    /// Split the session so UI state can issue commands while a background task
+    /// exclusively waits for streaming events.
+    #[must_use]
+    pub fn split(mut self) -> (DesktopSessionHandle, DesktopSessionEvents) {
+        let handle = DesktopSessionHandle {
+            handshake: self.handshake.clone(),
+            commands: self.commands.clone(),
+        };
+        let events = DesktopSessionEvents {
+            commands: self.commands.clone(),
+            events: std::mem::replace(&mut self.events, mpsc::unbounded_channel().1),
+            task: self.task.take(),
+        };
+        (handle, events)
+    }
 }
 
 impl Drop for DesktopSession {
+    fn drop(&mut self) {
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+    }
+}
+
+impl DesktopSessionHandle {
+    #[must_use]
+    pub fn handshake(&self) -> &AgentHandshake {
+        &self.handshake
+    }
+
+    pub async fn prompt(&self, text: impl Into<String>) -> Result<(), SessionControlError> {
+        let (accepted_tx, accepted_rx) = oneshot::channel();
+        self.commands
+            .send(SessionCommand::Prompt {
+                text: text.into(),
+                accepted: accepted_tx,
+            })
+            .map_err(|_| SessionControlError::Closed)?;
+        accepted_rx
+            .await
+            .unwrap_or(Err(SessionControlError::Closed))
+    }
+
+    pub fn cancel(&self) -> Result<(), SessionControlError> {
+        self.commands
+            .send(SessionCommand::Cancel)
+            .map_err(|_| SessionControlError::Closed)
+    }
+}
+
+impl DesktopSessionEvents {
+    pub async fn next_event(&mut self) -> Option<DesktopSessionEvent> {
+        self.events.recv().await
+    }
+
+    pub async fn shutdown(mut self) {
+        let _ = self.commands.send(SessionCommand::Shutdown);
+        if let Some(task) = self.task.take() {
+            let _ = task.await;
+        }
+    }
+}
+
+impl Drop for DesktopSessionEvents {
     fn drop(&mut self) {
         if let Some(task) = self.task.take() {
             task.abort();
@@ -208,7 +285,7 @@ async fn drive_turn(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{acp_agent, AgentBackend, AgentEvent, AgentSession, BackendError, DenyPermissions};
+    use crate::{acp_agent, AgentBackend, AgentEvent, BackendError, DenyPermissions};
     use agent_client_protocol::schema::v1::{ContentBlock, ContentChunk};
     use async_trait::async_trait;
     use futures::{stream, stream::BoxStream};
@@ -219,12 +296,15 @@ mod tests {
 
     #[async_trait]
     impl AgentBackend for Echo {
+        type Session = ();
+
         async fn prompt(
             &self,
-            session: AgentSession,
+            session: (),
             prompt: String,
             _cwd: &Path,
-        ) -> Result<BoxStream<'static, Result<AgentEvent, BackendError>>, BackendError> {
+        ) -> Result<BoxStream<'static, Result<AgentEvent<()>, BackendError>>, BackendError>
+        {
             Ok(Box::pin(stream::iter([
                 Ok(AgentEvent::Text(format!("echo: {prompt}"))),
                 Ok(AgentEvent::Finished(session)),
@@ -234,12 +314,15 @@ mod tests {
 
     #[async_trait]
     impl AgentBackend for Slow {
+        type Session = ();
+
         async fn prompt(
             &self,
-            _session: AgentSession,
+            _session: (),
             _prompt: String,
             _cwd: &Path,
-        ) -> Result<BoxStream<'static, Result<AgentEvent, BackendError>>, BackendError> {
+        ) -> Result<BoxStream<'static, Result<AgentEvent<()>, BackendError>>, BackendError>
+        {
             Ok(Box::pin(stream::pending()))
         }
     }
@@ -272,6 +355,25 @@ mod tests {
         }
 
         session.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn split_session_accepts_commands_while_events_are_owned_elsewhere() {
+        let session = DesktopSession::connect(acp_agent(Echo), "/tmp", Arc::new(DenyPermissions))
+            .await
+            .expect("desktop session");
+        let (handle, mut events) = session.split();
+
+        handle.prompt("split").await.expect("accepted prompt");
+        assert!(matches!(
+            events.next_event().await,
+            Some(DesktopSessionEvent::Update(_))
+        ));
+        assert!(matches!(
+            events.next_event().await,
+            Some(DesktopSessionEvent::TurnFinished(_))
+        ));
+        events.shutdown().await;
     }
 
     #[tokio::test]

@@ -4,18 +4,21 @@ version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 description = "Embeddable ACP bridge for Longbridge AI agents"
+repository = "https://github.com/longbridge/longbridge-terminal"
+documentation = "https://docs.rs/longbridge-ai-acp"
+readme = "README.md"
+keywords = ["acp", "agent", "longbridge", "ai"]
+categories = ["api-bindings"]
 
 [dependencies]
 agent-client-protocol = "2.0.0"
 async-trait = "0.1"
 futures = "0.3"
-longbridge = { git = "https://github.com/longbridge/openapi.git" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
-tokio = { version = "1", features = ["process", "rt", "sync"] }
+tokio = { version = "1", features = ["macros", "process", "rt", "sync"] }
 uuid = { version = "1", features = ["v4"] }
-url = "2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

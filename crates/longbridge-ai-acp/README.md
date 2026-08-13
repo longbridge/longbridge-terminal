@@ -1,33 +1,20 @@
 # longbridge-ai-acp
 
-Embeddable Agent Client Protocol bridge for Longbridge AI. It supports both
-sides needed by Longbridge products:
+Provider-neutral Agent Client Protocol runtime for Longbridge products. It
+supports both sides needed by Longbridge products:
 
 - expose a Longbridge AI agent to Zed and other ACP clients;
 - connect a native Rust desktop UI to external ACP agents such as Codex and
   Claude through the official ACP SDK.
 
-The crate does not read CLI credentials. A desktop app supplies its own SDK
-configuration and API endpoint:
+The crate has no dependency on the Longbridge OpenAPI SDK or any private desktop
+API. A host implements `AgentBackend` with its own API client, endpoint,
+authorization, and opaque session state. The CLI keeps its OpenAPI adapter in
+`longbridge-terminal`; Longbridge Pro and Longbridge AI Desktop supply their own
+private API adapters.
 
-```rust,no_run
-use longbridge_ai_acp::LongbridgeAgent;
-
-# fn example(oauth: longbridge::oauth::OAuth) {
-let config = longbridge::Config::from_oauth(oauth);
-let agent = LongbridgeAgent::from_api(
-    config,
-    "https://openapi.longbridge.com",
-    "ag_7d3f9b2c",
-).expect("valid API endpoint");
-// Pass `agent` directly to your in-process ACP client or `serve_stdio`.
-# }
-```
-
-For an existing host-owned configuration, use
-`LongbridgeAgent::from_config`. For an external subprocess agent, construct an
-`ExternalAgentConfig` and connect `ExternalAgent` to an
-`agent_client_protocol::Client`.
+For an external subprocess agent, construct an `ExternalAgentConfig` and
+connect `ExternalAgent` to an `agent_client_protocol::Client`.
 
 Desktop applications normally use `with_session` for an embedded Longbridge
 agent and `with_external_session` for a subprocess agent. Both yield one
@@ -48,12 +35,11 @@ and receives protocol events without retaining SDK lifetimes:
 
 ```rust,no_run
 use longbridge_ai_acp::{
-    acp_agent, DenyPermissions, DesktopSession, DesktopSessionEvent,
-    LongbridgeAgent,
+    acp_agent, AgentBackend, DenyPermissions, DesktopSession, DesktopSessionEvent,
 };
 use std::sync::Arc;
 
-# async fn example(agent: LongbridgeAgent) -> Result<(), Box<dyn std::error::Error>> {
+# async fn example(agent: impl AgentBackend) -> Result<(), Box<dyn std::error::Error>> {
 let mut session = DesktopSession::connect(
     acp_agent(agent),
     std::env::current_dir()?,

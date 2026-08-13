@@ -503,9 +503,10 @@ protocols.
 
 The agent ID can also be set as `LONGBRIDGE_AGENT_ID`. Rust desktop clients do
 not need to launch the CLI: the [`longbridge-ai-acp`](crates/longbridge-ai-acp)
-crate runs the bridge in-process, accepts an explicit API URL and host-owned
-OpenAPI/OAuth configuration, and can connect to external ACP agents such as
-Codex and Claude. Those CLIs require their ACP adapters (`codex-acp` and
+crate runs a provider-neutral bridge in-process. Each desktop implements its
+own `AgentBackend` using its private API, endpoint, and authorization flow; the
+crate does not depend on OpenAPI. It can also connect to external ACP agents
+such as Codex and Claude. Those CLIs require their ACP adapters (`codex-acp` and
 `claude-agent-acp`); the native `codex` and `claude` commands are not ACP
 servers.
 

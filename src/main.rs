@@ -310,8 +310,7 @@ async fn main() {
                     std::process::exit(1);
                 }
             };
-            let backend =
-                longbridge_ai_acp::LongbridgeAgent::new(openapi::agent().clone(), agent_id);
+            let backend = openapi::OpenApiAgent::new(openapi::agent().clone(), agent_id);
             if let Err(e) = longbridge_ai_acp::serve_stdio(backend).await {
                 print_cli_error(&anyhow::anyhow!(e), using_api_key);
                 std::process::exit(1);
