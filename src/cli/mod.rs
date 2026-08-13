@@ -1281,8 +1281,14 @@ pub enum Commands {
     Grid {
         #[command(subcommand)]
         cmd: Option<GridCmd>,
-        /// Query specific grid orders by ID (lists these instead of filtering)
-        #[arg(long, num_args = 1.., value_delimiter = ' ')]
+        /// Query specific grid orders by ID (lists these instead of filtering).
+        /// Mutually exclusive with the filter/sort flags below.
+        #[arg(
+            long,
+            num_args = 1..,
+            value_delimiter = ' ',
+            conflicts_with_all = ["symbol", "status", "page", "limit", "sort_by", "sort_order"]
+        )]
         ids: Vec<String>,
         /// Filter by symbol (e.g. 700.HK)
         #[arg(long)]
