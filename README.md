@@ -473,6 +473,42 @@ longbridge tui
 
 Features: real-time watchlist, candlestick charts, portfolio view, stock search, Vim-like keybindings.
 
+## ACP agent server
+
+Expose a published Longbridge AI agent to an ACP client over stdio:
+
+```bash
+longbridge acp --agent-id ag_7d3f9b2c
+```
+
+Zed can register it as a custom external agent:
+
+```json
+{
+  "agent_servers": {
+    "longbridge-ai": {
+      "type": "custom",
+      "command": "longbridge",
+      "args": ["acp", "--agent-id", "ag_7d3f9b2c"],
+      "env": {}
+    }
+  }
+}
+```
+
+Zed is covered by the stdio integration test. Cherry Studio is a target client,
+but its current public documentation does not expose an ACP custom-agent entry;
+do not configure this command as MCP, because ACP and MCP are different
+protocols.
+
+The agent ID can also be set as `LONGBRIDGE_AGENT_ID`. Rust desktop clients do
+not need to launch the CLI: the [`longbridge-ai-acp`](crates/longbridge-ai-acp)
+crate runs the bridge in-process, accepts an explicit API URL and host-owned
+OpenAPI/OAuth configuration, and can connect to external ACP agents such as
+Codex and Claude. Those CLIs require their ACP adapters (`codex-acp` and
+`claude-agent-acp`); the native `codex` and `claude` commands are not ACP
+servers.
+
 ## Output Format
 
 ```bash

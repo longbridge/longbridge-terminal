@@ -297,6 +297,27 @@ async fn main() {
             cli::completion::cmd_completion(shell);
         }
 
+        Some(cli::Commands::Acp { agent_id }) => {
+            let Some(agent_id) = agent_id.or_else(|| std::env::var("LONGBRIDGE_AGENT_ID").ok())
+            else {
+                eprintln!("{}", t!("ACP.AgentIdRequired"));
+                std::process::exit(2);
+            };
+            let using_api_key = match openapi::init_contexts().await {
+                Ok((_, using_api_key, _)) => using_api_key,
+                Err(e) => {
+                    eprintln!("{}: {e}", t!("ACP.AuthenticationFailed"));
+                    std::process::exit(1);
+                }
+            };
+            let backend =
+                longbridge_ai_acp::LongbridgeAgent::new(openapi::agent().clone(), agent_id);
+            if let Err(e) = longbridge_ai_acp::serve_stdio(backend).await {
+                print_cli_error(&anyhow::anyhow!(e), using_api_key);
+                std::process::exit(1);
+            }
+        }
+
         Some(cmd) => {
             let start = verbose.then(Instant::now);
             // CLI mode: init contexts (auth), then dispatch

@@ -462,6 +462,39 @@ longbridge tui
 
 功能：实时自选列表、K 线图、投资组合视图、股票搜索、类 Vim 快捷键。
 
+## ACP Agent 服务
+
+通过 stdio 将已发布的 Longbridge AI Agent 提供给 ACP 客户端：
+
+```bash
+longbridge acp --agent-id ag_7d3f9b2c
+```
+
+Zed 可将它注册为自定义 External Agent：
+
+```json
+{
+  "agent_servers": {
+    "longbridge-ai": {
+      "type": "custom",
+      "command": "longbridge",
+      "args": ["acp", "--agent-id", "ag_7d3f9b2c"],
+      "env": {}
+    }
+  }
+}
+```
+
+Zed 已纳入 stdio 集成测试。Cherry Studio 是目标客户端，但其当前公开文档
+尚未提供 ACP 自定义 Agent 入口；不能把以上命令配置成 MCP，因为 ACP 与 MCP
+是不同协议。
+
+Agent ID 也可以通过 `LONGBRIDGE_AGENT_ID` 设置。Rust 桌面客户端不需要启动
+CLI：[`longbridge-ai-acp`](crates/longbridge-ai-acp) crate 可在进程内运行桥接，
+支持显式传入 API 地址和由宿主维护的 OpenAPI/OAuth 配置，也可接入 Codex、
+Claude 等外部 ACP Agent。二者需要分别安装 `codex-acp` 和
+`claude-agent-acp` 适配器；原生 `codex`、`claude` 命令本身不是 ACP Server。
+
 ## 输出格式
 
 ```bash

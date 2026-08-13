@@ -1,0 +1,651 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Longbridge ACP integration architecture — meeting presentation">
+  <title>Longbridge × ACP · 架构方案</title>
+  <style>
+    :root {
+      --ink: #152238;
+      --muted: #657188;
+      --paper: #f5f8fc;
+      --surface: #ffffff;
+      --line: #dbe4f0;
+      --blue: #1769e0;
+      --blue-soft: #eaf2ff;
+      --cyan: #00a9b7;
+      --cyan-soft: #e5f8fa;
+      --violet: #7257d9;
+      --violet-soft: #f0edff;
+      --orange: #e66c37;
+      --orange-soft: #fff0e8;
+      --green: #178861;
+      --green-soft: #e7f7f0;
+      --shadow: 0 18px 55px rgba(25, 53, 92, .10);
+      --radius: 18px;
+      --content: 1180px;
+      --sans: "Avenir Next", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+      --display: "Arial Narrow", "Avenir Next Condensed", "PingFang SC", sans-serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(rgba(23, 105, 224, .035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(23, 105, 224, .035) 1px, transparent 1px),
+        var(--paper);
+      background-size: 32px 32px;
+      font-family: var(--sans);
+      line-height: 1.65;
+    }
+    a { color: inherit; }
+    button { font: inherit; }
+    :focus-visible { outline: 3px solid rgba(23, 105, 224, .35); outline-offset: 3px; }
+
+    .progress {
+      position: fixed;
+      inset: 0 auto auto 0;
+      z-index: 100;
+      width: 0;
+      height: 4px;
+      background: linear-gradient(90deg, var(--blue), var(--cyan));
+    }
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 90;
+      border-bottom: 1px solid rgba(219, 228, 240, .85);
+      background: rgba(245, 248, 252, .9);
+      backdrop-filter: blur(16px);
+    }
+    .topbar-inner {
+      max-width: var(--content);
+      height: 64px;
+      margin: auto;
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 28px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-right: auto;
+      font-weight: 750;
+      letter-spacing: -.02em;
+      white-space: nowrap;
+    }
+    .brand-mark {
+      position: relative;
+      width: 25px;
+      height: 25px;
+      border: 6px solid var(--blue);
+      border-right-color: var(--cyan);
+      border-radius: 50%;
+      transform: rotate(-25deg);
+    }
+    .brand small { color: var(--muted); font-weight: 600; }
+    nav { display: flex; gap: 24px; }
+    nav a { color: var(--muted); font-size: 13px; text-decoration: none; }
+    nav a:hover { color: var(--blue); }
+    .status-chip {
+      padding: 6px 10px;
+      border: 1px solid #b9decf;
+      border-radius: 999px;
+      color: var(--green);
+      background: var(--green-soft);
+      font: 700 11px/1 var(--mono);
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+
+    main { overflow: hidden; }
+    .section {
+      max-width: var(--content);
+      margin: 0 auto;
+      padding: 108px 24px;
+    }
+    .section-kicker {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: var(--blue);
+      font: 700 12px/1 var(--mono);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    .section-kicker::before { content: ""; width: 28px; height: 2px; background: currentColor; }
+    h1, h2, h3, p { margin-top: 0; }
+    p, li, code, small, span { overflow-wrap: anywhere; }
+    h1, h2 { font-family: var(--display); }
+    h1 {
+      max-width: 980px;
+      margin: 28px 0 24px;
+      font-size: clamp(54px, 8vw, 112px);
+      line-height: .93;
+      letter-spacing: -.065em;
+      font-weight: 800;
+    }
+    h1 em { color: var(--blue); font-style: normal; }
+    h2 {
+      margin: 18px 0 20px;
+      font-size: clamp(38px, 5vw, 66px);
+      line-height: 1.02;
+      letter-spacing: -.045em;
+    }
+    h3 { margin-bottom: 10px; font-size: 18px; line-height: 1.3; }
+    .lead { max-width: 760px; color: #42516a; font-size: clamp(18px, 2vw, 23px); }
+    .section-intro { max-width: 720px; color: var(--muted); font-size: 17px; }
+
+    .hero { min-height: calc(100vh - 64px); padding-top: 90px; display: grid; align-content: center; }
+    .hero-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px 28px;
+      margin-top: 42px;
+      padding-top: 24px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font: 12px/1.5 var(--mono);
+    }
+    .hero-meta strong { color: var(--ink); }
+    .thesis {
+      margin-top: 52px;
+      display: grid;
+      grid-template-columns: 1fr auto 1fr auto 1fr;
+      align-items: center;
+      gap: 12px;
+    }
+    .thesis-card {
+      min-width: 0;
+      min-height: 132px;
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: 0 8px 25px rgba(25, 53, 92, .05);
+    }
+    .thesis-card.accent { border-color: #8acbd2; background: var(--cyan-soft); }
+    .thesis-card span { color: var(--muted); font: 11px var(--mono); letter-spacing: .08em; }
+    .thesis-card strong { display: block; margin: 9px 0 4px; font-size: 20px; }
+    .thesis-card p { margin: 0; color: var(--muted); font-size: 13px; }
+    .arrow { color: var(--blue); font-size: 26px; }
+
+    .premise-grid { display: grid; grid-template-columns: 1.15fr .85fr; gap: 24px; margin-top: 46px; }
+    .premise-main, .premise-side { padding: 32px; border-radius: var(--radius); }
+    .premise-main { color: white; background: var(--ink); box-shadow: var(--shadow); }
+    .premise-main blockquote { margin: 0; font: 700 clamp(25px, 3vw, 38px)/1.25 var(--display); letter-spacing: -.02em; }
+    .premise-main footer { margin-top: 24px; color: #aebbd0; font-size: 14px; }
+    .premise-side { border: 1px solid #efc9b6; background: var(--orange-soft); }
+    .premise-side ul { margin: 16px 0 0; padding-left: 20px; }
+
+    .switchboard-wrap { margin-top: 48px; }
+    .switch-tabs { display: flex; gap: 8px; margin-bottom: 18px; overflow-x: auto; padding-bottom: 4px; }
+    .switch-tab {
+      padding: 10px 15px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      background: var(--surface);
+      cursor: pointer;
+      white-space: nowrap;
+      font-size: 13px;
+    }
+    .switch-tab[aria-selected="true"] { color: white; border-color: var(--blue); background: var(--blue); }
+    .switchboard {
+      position: relative;
+      min-height: 520px;
+      padding: 36px;
+      overflow: hidden;
+      border: 1px solid #cbd8e9;
+      border-radius: 26px;
+      background: #edf3fa;
+      box-shadow: var(--shadow);
+    }
+    .switchboard::before {
+      content: "ACP / JSON-RPC / stdio or in-process";
+      position: absolute;
+      left: 15%; right: 15%; top: 242px;
+      height: 48px;
+      display: grid;
+      place-items: center;
+      border: 1px solid #76c3ca;
+      border-radius: 10px;
+      color: #087f89;
+      background: var(--cyan-soft);
+      font: 700 12px var(--mono);
+      letter-spacing: .04em;
+      z-index: 3;
+    }
+    .nodes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 30px; position: relative; z-index: 4; }
+    .lane { display: grid; grid-template-rows: 160px 100px 150px; gap: 34px; text-align: center; }
+    .node {
+      position: relative;
+      display: grid;
+      place-content: center;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: white;
+      transition: opacity .25s, transform .25s, box-shadow .25s;
+    }
+    .node strong { display: block; font-size: 16px; }
+    .node small { display: block; margin-top: 7px; color: var(--muted); font: 11px/1.45 var(--mono); }
+    .node.host { border-top: 4px solid var(--violet); }
+    .node.adapter { border-top: 4px solid var(--blue); }
+    .node.provider { border-top: 4px solid var(--cyan); }
+    .node.muted { opacity: .2; transform: scale(.96); }
+    .node.active { box-shadow: 0 12px 32px rgba(23, 105, 224, .18); }
+    .connector { align-self: stretch; width: 2px; margin: auto; background: var(--line); position: relative; }
+    .connector::after { content: ""; position: absolute; bottom: -2px; left: -4px; border: 5px solid transparent; border-top-color: var(--line); }
+    .lane.active .connector { background: var(--blue); }
+    .lane.active .connector::after { border-top-color: var(--blue); }
+    .lane-label { align-self: end; color: var(--muted); font: 11px var(--mono); }
+    .switch-note { margin: 22px 0 0; color: var(--muted); font-size: 14px; }
+    .switch-note strong { color: var(--ink); }
+
+    .host-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 24px; margin-top: 46px; }
+    .host-card { position: relative; padding: 30px; border: 1px solid var(--line); border-radius: var(--radius); background: white; }
+    .host-card::after { content: attr(data-stack); position: absolute; top: 20px; right: 22px; color: var(--violet); font: 700 10px var(--mono); letter-spacing: .08em; }
+    .host-icon { width: 48px; height: 48px; display: grid; place-items: center; margin-bottom: 22px; border-radius: 13px; color: var(--violet); background: var(--violet-soft); font: 800 18px var(--mono); }
+    .host-card ul { margin: 20px 0 0; padding: 18px 0 0; border-top: 1px solid var(--line); list-style: none; }
+    .host-card li { margin: 8px 0; color: var(--muted); font-size: 14px; }
+    .host-card li::before { content: "→"; margin-right: 8px; color: var(--blue); }
+    .truth { margin-top: 24px; padding: 16px 20px; border-left: 4px solid var(--orange); color: #77503e; background: var(--orange-soft); font-size: 14px; }
+
+    .flow-layout { display: grid; grid-template-columns: 300px 1fr; gap: 38px; margin-top: 48px; align-items: start; }
+    .flow-menu { position: sticky; top: 92px; display: grid; gap: 8px; }
+    .flow-button { padding: 16px 18px; border: 1px solid var(--line); border-radius: 12px; text-align: left; background: white; cursor: pointer; }
+    .flow-button span { display: block; color: var(--muted); font: 10px var(--mono); }
+    .flow-button strong { display: block; margin-top: 4px; }
+    .flow-button[aria-selected="true"] { color: white; border-color: var(--ink); background: var(--ink); }
+    .flow-button[aria-selected="true"] span { color: #aab9ce; }
+    .sequence { min-height: 440px; padding: 30px; border: 1px solid var(--line); border-radius: var(--radius); background: white; }
+    .sequence-head { display: flex; justify-content: space-between; gap: 20px; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
+    .sequence-head code { color: var(--blue); font: 12px var(--mono); }
+    .steps { margin-top: 22px; display: grid; gap: 0; }
+    .step { display: grid; grid-template-columns: 44px 155px 1fr; gap: 14px; align-items: start; padding: 12px 0; opacity: .35; transform: translateX(-6px); transition: .35s ease; }
+    .step.visible { opacity: 1; transform: none; }
+    .step-num { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; color: var(--blue); background: var(--blue-soft); font: 700 11px var(--mono); }
+    .step-route { padding-top: 4px; font: 700 12px/1.4 var(--mono); }
+    .step-detail { color: var(--muted); font-size: 14px; }
+
+    .boundary {
+      margin-top: 48px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--line);
+    }
+    .boundary-col { padding: 28px; background: white; }
+    .boundary-col h3 { min-height: 46px; }
+    .boundary-col ul { padding: 0; list-style: none; }
+    .boundary-col li { padding: 10px 0; border-top: 1px solid #edf1f6; color: var(--muted); font-size: 13px; }
+    .owner { display: inline-flex; margin-bottom: 16px; padding: 5px 8px; border-radius: 5px; font: 700 10px var(--mono); }
+    .owner.host { color: var(--violet); background: var(--violet-soft); }
+    .owner.crate { color: var(--blue); background: var(--blue-soft); }
+    .owner.provider { color: var(--cyan); background: var(--cyan-soft); }
+
+    .contract-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 40px; }
+    .contract { min-height: 180px; padding: 22px; border: 1px solid var(--line); border-radius: 14px; background: white; }
+    .contract code { color: var(--blue); font: 700 12px var(--mono); }
+    .contract p { margin: 14px 0 0; color: var(--muted); font-size: 13px; }
+
+    .roadmap { position: relative; margin-top: 52px; display: grid; grid-template-columns: repeat(5, 1fr); gap: 18px; }
+    .roadmap::before { content: ""; position: absolute; left: 8%; right: 8%; top: 23px; height: 2px; background: var(--line); }
+    .phase { position: relative; padding-top: 56px; }
+    .phase-dot { position: absolute; top: 13px; left: 10px; width: 21px; height: 21px; border: 5px solid var(--paper); border-radius: 50%; background: var(--line); box-shadow: 0 0 0 1px var(--line); }
+    .phase.now .phase-dot { background: var(--blue); box-shadow: 0 0 0 1px var(--blue), 0 0 0 7px var(--blue-soft); }
+    .phase span { color: var(--muted); font: 11px var(--mono); }
+    .phase h3 { margin-top: 8px; }
+    .phase p { color: var(--muted); font-size: 13px; }
+
+    .decision-list { margin-top: 42px; display: grid; gap: 12px; }
+    .decision { display: grid; grid-template-columns: 150px 1fr auto; gap: 22px; align-items: center; padding: 20px 22px; border: 1px solid var(--line); border-radius: 13px; background: white; }
+    .decision code { color: var(--muted); font: 11px var(--mono); }
+    .decision p { margin: 0; font-size: 14px; }
+    .decision-status { padding: 5px 9px; border-radius: 999px; color: var(--green); background: var(--green-soft); font: 700 10px var(--mono); white-space: nowrap; }
+    .decision-status.open { color: var(--orange); background: var(--orange-soft); }
+
+    .finale { padding-bottom: 130px; }
+    .finale-card { position: relative; overflow: hidden; padding: clamp(34px, 6vw, 72px); border-radius: 28px; color: white; background: var(--ink); box-shadow: var(--shadow); }
+    .finale-card::after { content: "ACP"; position: absolute; right: -28px; bottom: -68px; color: rgba(255,255,255,.045); font: 900 210px/1 var(--display); }
+    .finale-card h2 { max-width: 800px; margin-top: 0; }
+    .finale-card p { max-width: 680px; color: #b6c2d5; }
+    .finale-points { position: relative; z-index: 1; display: flex; flex-wrap: wrap; gap: 10px; margin-top: 28px; }
+    .finale-points span { padding: 9px 13px; border: 1px solid rgba(255,255,255,.2); border-radius: 999px; font-size: 12px; }
+
+    .reveal { opacity: 0; transform: translateY(18px); transition: opacity .55s ease, transform .55s ease; }
+    .reveal.in { opacity: 1; transform: none; }
+    .print-only { display: none; }
+
+    @media (max-width: 900px) {
+      nav { display: none; }
+      .section { padding-top: 82px; padding-bottom: 82px; }
+      .thesis { grid-template-columns: 1fr; }
+      .arrow { transform: rotate(90deg); justify-self: center; }
+      .premise-grid, .flow-layout { grid-template-columns: 1fr; }
+      .flow-menu { position: static; grid-template-columns: repeat(3, minmax(190px, 1fr)); overflow-x: auto; }
+      .switchboard { overflow-x: auto; }
+      .nodes { min-width: 760px; }
+      .host-grid, .boundary { grid-template-columns: 1fr; }
+      .contract-grid { grid-template-columns: repeat(2, 1fr); }
+      .roadmap { grid-template-columns: 1fr; }
+      .roadmap::before { top: 0; bottom: 0; left: 20px; right: auto; width: 2px; height: auto; }
+      .phase { padding: 0 0 20px 56px; }
+      .phase-dot { left: 10px; top: 4px; }
+      .decision { grid-template-columns: 1fr; gap: 6px; }
+      .decision-status { justify-self: start; }
+    }
+    @media (max-width: 560px) {
+      .topbar-inner { height: 56px; padding: 0 16px; }
+      .brand small, .status-chip { display: none; }
+      .section { padding-left: 17px; padding-right: 17px; }
+      h1 { font-size: 45px; letter-spacing: -.055em; }
+      .lead { font-size: 17px; }
+      .section-kicker { max-width: 100%; font-size: 10px; line-height: 1.5; letter-spacing: .08em; }
+      .section-kicker::before { flex: 0 0 28px; }
+      .hero-meta { display: grid; grid-template-columns: 1fr; gap: 9px; }
+      .hero { min-height: auto; }
+      .contract-grid { grid-template-columns: 1fr; }
+      .switchboard { padding: 22px; }
+      .step { grid-template-columns: 38px 1fr; }
+      .step-detail { grid-column: 2; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; }
+    }
+    @media print {
+      .topbar, .progress, .switch-tabs, .flow-menu { display: none; }
+      body { background: white; }
+      .section { max-width: none; padding: 38px 24px; break-inside: avoid; }
+      .hero { min-height: auto; }
+      .reveal { opacity: 1; transform: none; }
+      .print-only { display: block; }
+      .switchboard { box-shadow: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="progress" aria-hidden="true"></div>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand"><span class="brand-mark" aria-hidden="true"></span>Longbridge × ACP <small>Architecture Brief</small></div>
+      <nav aria-label="页面导航">
+        <a href="#why">为什么</a><a href="#architecture">目标架构</a><a href="#flows">关键链路</a><a href="#roadmap">落地计划</a>
+      </nav>
+      <span class="status-chip">Proposal · 2026.08</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="section hero" id="top">
+      <div class="section-kicker">Architecture proposal / meeting edition</div>
+      <h1>让 Agent 成为<br><em>可插拔能力</em>，<br>而不是产品孤岛。</h1>
+      <p class="lead">以 ACP 作为统一协议面：LongbridgeAI 一次适配，同时服务 CLI、Longbridge Pro 与 LongbridgeAI Desktop；同一套 AI Chat 也能连接 Codex、Claude。</p>
+      <div class="hero-meta">
+        <span><strong>协议</strong> Agent Client Protocol v1</span>
+        <span><strong>核心模块</strong> longbridge-ai-acp crate</span>
+        <span><strong>传输</strong> in-process + stdio</span>
+        <span><strong>原则</strong> 授权归宿主，协议归适配层</span>
+      </div>
+      <div class="thesis reveal" aria-label="架构主张">
+        <article class="thesis-card"><span>TODAY</span><strong>每个产品各自接 Agent</strong><p>会话、流事件、授权与 UI 反复耦合。</p></article>
+        <span class="arrow">→</span>
+        <article class="thesis-card accent"><span>THE SEAM</span><strong>ACP 统一协议面</strong><p>标准化 session、prompt、update、cancel。</p></article>
+        <span class="arrow">→</span>
+        <article class="thesis-card"><span>OUTCOME</span><strong>Agent 与客户端自由组合</strong><p>一个 UI，多种 Agent；一个 Agent，多种客户端。</p></article>
+      </div>
+    </section>
+
+    <section class="section" id="why">
+      <div class="section-kicker">01 / The decision</div>
+      <h2>我们引入的不是另一个 SDK，<br>而是一条稳定边界。</h2>
+      <p class="section-intro">OpenAPI 已具备 Longbridge Agent 能力。下一步的关键不是把接口复制到三个客户端，而是把变化最频繁的 Agent 能力封装在一个可协商的协议边界后。</p>
+      <div class="premise-grid reveal">
+        <div class="premise-main">
+          <blockquote>“桌面端直接链接 Rust crate；CLI 只负责对外 stdio。两条路径复用同一个 ACP Agent 实现。”</blockquote>
+          <footer>核心选择：复用协议组件，不复用 CLI 进程。</footer>
+        </div>
+        <aside class="premise-side">
+          <h3>明确不做</h3>
+          <ul>
+            <li>桌面端不启动或嵌入 longbridge CLI</li>
+            <li>crate 不读取 CLI 的 OAuth 与全局配置</li>
+            <li>不把 Longbridge 私有事件泄漏给 AI Chat</li>
+            <li>当前阶段不扩大为网络 ACP Gateway</li>
+          </ul>
+        </aside>
+      </div>
+    </section>
+
+    <section class="section" id="architecture">
+      <div class="section-kicker">02 / The switchboard</div>
+      <h2>一个协议交换台，三条真实路径。</h2>
+      <p class="section-intro">点击路径查看会议中最容易混淆的三种运行方式。亮起的节点属于当前调用链；灰色节点不参与，不存在“桌面端绕路 CLI”。</p>
+      <div class="switchboard-wrap reveal">
+        <div class="switch-tabs" role="tablist" aria-label="架构路径">
+          <button class="switch-tab" role="tab" aria-selected="true" data-path="cli">CLI 对外：Zed / Cherry*</button>
+          <button class="switch-tab" role="tab" aria-selected="false" data-path="embedded">桌面进程内：LongbridgeAI</button>
+          <button class="switch-tab" role="tab" aria-selected="false" data-path="external">桌面外部：Codex / Claude</button>
+        </div>
+        <div class="switchboard">
+          <div class="nodes">
+            <div class="lane active" data-lane="cli">
+              <div class="node host active"><strong>Zed / Cherry*</strong><small>Zed 已有 ACP 入口<br>*Cherry 待客户端支持</small></div>
+              <div class="connector"></div>
+              <div class="node adapter active"><strong>longbridge acp</strong><small>stdio transport<br>CLI OAuth</small></div>
+              <div class="lane-label">PATH A · MACHINE MODE</div>
+            </div>
+            <div class="lane" data-lane="embedded">
+              <div class="node host"><strong>Pro / AI Desktop</strong><small>AI Chat + host bridge</small></div>
+              <div class="connector"></div>
+              <div class="node adapter"><strong>longbridge-ai-acp</strong><small>in-process component<br>host-owned Config</small></div>
+              <div class="lane-label">PATH B · ZERO SUBPROCESS</div>
+            </div>
+            <div class="lane" data-lane="external">
+              <div class="node host"><strong>Desktop AI Chat</strong><small>统一 Client facade</small></div>
+              <div class="connector"></div>
+              <div class="node provider"><strong>Codex / Claude</strong><small>external ACP agent<br>provider auth</small></div>
+              <div class="lane-label">PATH C · CONTROLLED PROCESS</div>
+            </div>
+          </div>
+        </div>
+        <p class="switch-note" id="switch-note"><strong>CLI 对外路径：</strong>Zed 可通过 stdio 连接 <code>longbridge acp</code>；Cherry Studio 是目标客户端，但当前公开配置面尚未提供 ACP 入口，不能用 MCP 代替。</p>
+      </div>
+    </section>
+
+    <section class="section" id="hosts">
+      <div class="section-kicker">03 / Real host boundaries</div>
+      <h2>两个桌面产品，两个组合根。</h2>
+      <p class="section-intro">相邻仓库的实际技术边界不同。ACP crate 保持 UI 无关；每个产品在自己的主进程/原生层负责构造配置、权限确认和生命周期。</p>
+      <div class="host-grid reveal">
+        <article class="host-card" data-stack="RUST · GPUI · AI_PANEL">
+          <div class="host-icon">PRO</div>
+          <h3>Longbridge Pro</h3>
+          <p><code>longbridge-gpui</code> 是完整 Rust workspace；现有 <code>ai_panel</code> 负责对话 UI，<code>ai_agent</code> 直接处理 Babbage SSE、会话与 HITL。ACP Client facade 应成为两者之间的新协议边界。</p>
+          <ul><li>在 workspace 中直接依赖 longbridge-ai-acp crate</li><li>由 Pro 的 config / engine 注入授权与 endpoint</li><li>ai_panel 消费统一 ACP session updates</li></ul>
+        </article>
+        <article class="host-card" data-stack="TAURI · RUST · REACT">
+          <div class="host-icon">AI</div>
+          <h3>LongbridgeAI Desktop</h3>
+          <p>React 对话 UI 运行于 Tauri WebView，Rust backend 已承担认证、bridge 与进程能力。ACP Client/Agent 组合根自然位于 <code>src-tauri</code>。</p>
+          <ul><li>Tauri command 只传结构化会话事件</li><li>权限请求回到产品确认 UI</li><li>外部 Agent 生命周期由 Rust 层托管</li></ul>
+        </article>
+      </div>
+      <div class="truth reveal"><strong>现状迁移重点：</strong>Longbridge Pro 已有成熟的 <code>ai_agent → ai_panel</code> SSE 事件链路。ACP 接入不应平行复制一套 UI，而应让 <code>ai_panel</code> 面向统一会话事件，并逐步把 Longbridge 私有网络协议收敛到 Adapter 内。</div>
+    </section>
+
+    <section class="section" id="flows">
+      <div class="section-kicker">04 / Runtime stories</div>
+      <h2>把协议落到每一次调用。</h2>
+      <p class="section-intro">切换三条时序，观察授权归属、进程边界与事件回流。每条链路都经过 ACP 会话模型，但 transport 不相同。</p>
+      <div class="flow-layout reveal">
+        <div class="flow-menu" role="tablist" aria-label="关键时序">
+          <button class="flow-button" role="tab" aria-selected="true" data-flow="cli"><span>FLOW A</span><strong>第三方 Client → CLI</strong></button>
+          <button class="flow-button" role="tab" aria-selected="false" data-flow="embedded"><span>FLOW B</span><strong>桌面 → LongbridgeAI</strong></button>
+          <button class="flow-button" role="tab" aria-selected="false" data-flow="external"><span>FLOW C</span><strong>桌面 → Codex / Claude</strong></button>
+        </div>
+        <div class="sequence" aria-live="polite">
+          <div class="sequence-head"><strong id="flow-title">第三方 ACP Client 接入 Longbridge CLI</strong><code id="flow-transport">TRANSPORT · STDIO</code></div>
+          <div class="steps" id="flow-steps"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="ownership">
+      <div class="section-kicker">05 / Trust & ownership</div>
+      <h2>授权不穿透，职责不漂移。</h2>
+      <p class="section-intro">统一协议不等于统一凭证。最重要的安全边界是：谁启动 Agent，谁提供该 Agent 的配置；适配 crate 只消费，不发现、不持久化、不刷新。</p>
+      <div class="boundary reveal">
+        <div class="boundary-col"><span class="owner host">HOST OWNS</span><h3>产品宿主</h3><ul><li>OAuth / token 生命周期</li><li>API endpoint 与环境选择</li><li>Agent ID 与产品配置</li><li>权限确认 UI</li><li>外部进程 allowlist</li></ul></div>
+        <div class="boundary-col"><span class="owner crate">CRATE OWNS</span><h3>longbridge-ai-acp</h3><ul><li>ACP initialize 与能力协商</li><li>session / prompt / cancel</li><li>OpenAPI ↔ ACP 事件映射</li><li>conversation 状态封装</li><li>一致的结构化错误</li></ul></div>
+        <div class="boundary-col"><span class="owner provider">AGENT OWNS</span><h3>Codex / Claude</h3><ul><li>Provider 登录与模型配置</li><li>原生工具实现</li><li>自身会话语义</li><li>stderr 诊断输出</li><li>支持的 capability 集合</li></ul></div>
+      </div>
+      <div class="contract-grid reveal">
+        <article class="contract"><code>from_api(config, url, id)</code><p>桌面宿主显式注入 API 地址；生产环境仅接受 TLS endpoint。</p></article>
+        <article class="contract"><code>initialize(v1)</code><p>只宣告真实实现的 capability；未知协议版本不伪装成功。</p></article>
+        <article class="contract"><code>session/update</code><p>文本、思考与工具事件统一回流，UI 不依赖 Longbridge 私有类型。</p></article>
+        <article class="contract"><code>session/cancel</code><p>取消必须到达正在运行的 stream，返回明确的 Cancelled stop reason。</p></article>
+      </div>
+    </section>
+
+    <section class="section" id="roadmap">
+      <div class="section-kicker">06 / Delivery path</div>
+      <h2>按可验证的纵向链路推进。</h2>
+      <p class="section-intro">先证明协议与边界，再做多产品接入。每一阶段都产生可运行、可演示、可回归的能力，而不是等待“大集成”。</p>
+      <div class="roadmap reveal">
+        <article class="phase now"><span>PHASE 0 · NOW</span><i class="phase-dot"></i><h3>基线固化</h3><p>crate、CLI 命令、事件映射、TLS endpoint、取消与测试。</p></article>
+        <article class="phase"><span>PHASE 1</span><i class="phase-dot"></i><h3>CLI 可用性</h3><p>真实 stdio E2E 与 Zed 验证；跟踪 Cherry Studio 的 ACP Client 入口。</p></article>
+        <article class="phase"><span>PHASE 2</span><i class="phase-dot"></i><h3>桌面进程内</h3><p>统一 Client facade，分别进入 Pro 与 AI Desktop 组合根。</p></article>
+        <article class="phase"><span>PHASE 3</span><i class="phase-dot"></i><h3>外部 Agent</h3><p>Codex / Claude 的 spawn、权限、取消、崩溃与能力探测。</p></article>
+        <article class="phase"><span>PHASE 4</span><i class="phase-dot"></i><h3>产品化</h3><p>telemetry、兼容矩阵、灰度开关与协议升级 CI。</p></article>
+      </div>
+    </section>
+
+    <section class="section" id="decisions">
+      <div class="section-kicker">07 / Meeting decisions</div>
+      <h2>这次会议需要对齐什么。</h2>
+      <div class="decision-list reveal">
+        <div class="decision"><code>DECISION 01</code><p><strong>确认 ACP 是产品级 Agent 接入边界，</strong>而非 CLI 独占功能。</p><span class="decision-status">RECOMMENDED</span></div>
+        <div class="decision"><code>DECISION 02</code><p><strong>确认宿主持有 API 地址与授权，</strong>crate 不读取 CLI 凭证。</p><span class="decision-status">RECOMMENDED</span></div>
+        <div class="decision"><code>DECISION 03</code><p><strong>确认桌面端不调度 CLI，</strong>LongbridgeAI 使用进程内组件。</p><span class="decision-status">RECOMMENDED</span></div>
+        <div class="decision"><code>OPEN 01</code><p>CLI 是否公开 <code>--api-url</code>，以及与现有配置的优先级。</p><span class="decision-status open">TO DECIDE</span></div>
+        <div class="decision"><code>OPEN 02</code><p>Longbridge Pro 现有 <code>ai_agent</code> crate 是演进为 ACP host adapter，还是由新的薄 Client crate 替代。</p><span class="decision-status open">TO DECIDE</span></div>
+      </div>
+    </section>
+
+    <section class="section finale">
+      <div class="finale-card reveal">
+        <div class="section-kicker" style="color:#63d4dd">The architectural outcome</div>
+        <h2>一个 LongbridgeAI Adapter，<br>覆盖所有入口。</h2>
+        <p>CLI 获得标准 ACP 出口；两个桌面端获得不经过 CLI 的进程内能力；同一 AI Chat 获得连接 Codex 与 Claude 的开放入口。产品差异留在宿主，Agent 差异收敛到协议。</p>
+        <div class="finale-points"><span>✓ 无 CLI 嵌入</span><span>✓ 授权隔离</span><span>✓ 标准协议</span><span>✓ 可替换 Agent</span><span>✓ 渐进交付</span></div>
+      </div>
+      <p class="print-only">Source: docs/architecture/acp-integration.md</p>
+    </section>
+  </main>
+
+  <script>
+    const pathNotes = {
+      cli: '<strong>CLI 对外路径：</strong>Zed 可通过 stdio 连接 <code>longbridge acp</code>；Cherry Studio 是目标客户端，但当前公开配置面尚未提供 ACP 入口，不能用 MCP 代替。',
+      embedded: '<strong>桌面进程内路径：</strong>产品宿主将自身 <code>Config + API endpoint + Agent ID</code> 注入 crate；不启动 CLI，不共享 CLI OAuth。',
+      external: '<strong>外部 Agent 路径：</strong>桌面 Rust 层以 ACP Client 启动并监管 Codex / Claude；Provider 授权仍归外部 Agent。'
+    };
+
+    document.querySelectorAll('.switch-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        const selected = tab.dataset.path;
+        document.querySelectorAll('.switch-tab').forEach(item => item.setAttribute('aria-selected', String(item === tab)));
+        document.querySelectorAll('.lane').forEach(lane => {
+          const active = lane.dataset.lane === selected;
+          lane.classList.toggle('active', active);
+          lane.querySelectorAll('.node').forEach(node => {
+            node.classList.toggle('active', active);
+            node.classList.toggle('muted', !active);
+          });
+        });
+        document.querySelector('#switch-note').innerHTML = pathNotes[selected];
+      });
+    });
+
+    const flows = {
+      cli: {
+        title: '第三方 ACP Client 接入 Longbridge CLI', transport: 'TRANSPORT · STDIO',
+        steps: [
+          ['Client → CLI', '启动 longbridge acp；stdout 仅承载 JSON-RPC 帧。'],
+          ['Client → Agent', 'initialize(v1)，协商 LongbridgeAI 实际 capability。'],
+          ['Client → Agent', 'session/new，CLI 建立内存会话并绑定工作目录。'],
+          ['Client → Agent', 'session/prompt；CLI 自己的 OAuth 驱动 OpenAPI Agent stream。'],
+          ['Agent → Client', '文本、思考、工具与 stop reason 以 session/update 流式返回。']
+        ]
+      },
+      embedded: {
+        title: '桌面 AI Chat 进程内接入 LongbridgeAI', transport: 'TRANSPORT · IN-PROCESS',
+        steps: [
+          ['Host → Crate', '宿主创建 OpenAPI Config，显式提供 HTTPS endpoint 与 Agent ID。'],
+          ['Client ↔ Agent', '官方 ACP SDK 在内存中连接 Client component 与 Agent component。'],
+          ['UI → Host', 'AI Chat 发起 prompt；宿主桥接为 ACP content block。'],
+          ['Adapter → API', 'Longbridge Adapter 调用 AgentContext streamed API。'],
+          ['Host → UI', 'GPUI 直接更新 ai_panel；Tauri 通过 command/event 回到 React 对话界面。']
+        ]
+      },
+      external: {
+        title: '桌面 AI Chat 接入 Codex / Claude ACP', transport: 'TRANSPORT · MANAGED STDIO',
+        steps: [
+          ['Host → Process', '可信原生层按 allowlist 启动外部 ACP Agent。'],
+          ['Client → Agent', 'initialize 并读取 capability；UI 只展示实际支持的能力。'],
+          ['UI → Agent', '建立持久 session，连续发送对话 prompt。'],
+          ['Agent → Host', '工具权限请求回到产品确认 UI；默认拒绝未知权限。'],
+          ['Host → Process', '取消、关闭或崩溃时回收完整进程组并输出结构化状态。']
+        ]
+      }
+    };
+
+    function renderFlow(name) {
+      const flow = flows[name];
+      document.querySelector('#flow-title').textContent = flow.title;
+      document.querySelector('#flow-transport').textContent = flow.transport;
+      const container = document.querySelector('#flow-steps');
+      container.innerHTML = flow.steps.map((step, index) => `
+        <div class="step">
+          <span class="step-num">${String(index + 1).padStart(2, '0')}</span>
+          <span class="step-route">${step[0]}</span>
+          <span class="step-detail">${step[1]}</span>
+        </div>`).join('');
+      requestAnimationFrame(() => container.querySelectorAll('.step').forEach((step, index) => {
+        setTimeout(() => step.classList.add('visible'), index * 85);
+      }));
+    }
+
+    document.querySelectorAll('.flow-button').forEach(button => {
+      button.addEventListener('click', () => {
+        document.querySelectorAll('.flow-button').forEach(item => item.setAttribute('aria-selected', String(item === button)));
+        renderFlow(button.dataset.flow);
+      });
+    });
+    renderFlow('cli');
+
+    const reveals = new IntersectionObserver(entries => {
+      entries.forEach(entry => { if (entry.isIntersecting) entry.target.classList.add('in'); });
+    }, { threshold: .12 });
+    document.querySelectorAll('.reveal').forEach(element => reveals.observe(element));
+
+    const progress = document.querySelector('.progress');
+    addEventListener('scroll', () => {
+      const max = document.documentElement.scrollHeight - innerHeight;
+      progress.style.width = `${max > 0 ? (scrollY / max) * 100 : 0}%`;
+    }, { passive: true });
+  </script>
+</body>
+</html>

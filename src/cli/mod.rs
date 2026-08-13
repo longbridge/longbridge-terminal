@@ -141,6 +141,17 @@ pub enum Commands {
     /// Example: longbridge tui
     Tui,
 
+    /// Serve a Longbridge AI agent over ACP on stdin/stdout
+    ///
+    /// The process speaks newline-delimited JSON-RPC and is intended to be
+    /// launched by ACP clients such as Zed and Cherry Studio.
+    /// Example: longbridge acp --agent-id ag_7d3f9b2c
+    Acp {
+        /// Published Longbridge AI agent UID
+        #[arg(long)]
+        agent_id: Option<String>,
+    },
+
     /// Generate shell completion script
     ///
     /// Prints a shell completion script to stdout.
@@ -3898,6 +3909,7 @@ IpoCmd::ProfitLoss { period, page, count } => {
         },
 
         Commands::Auth { .. }
+        | Commands::Acp { .. }
         | Commands::Tui
         | Commands::Check
         | Commands::Update { .. }
@@ -3914,7 +3926,13 @@ mod tests {
     use clap::Parser;
 
     fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
-        Cli::try_parse_from(args)
+        let args = args.iter().map(ToString::to_string).collect::<Vec<_>>();
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(move || Cli::try_parse_from(args))
+            .expect("spawn CLI parser thread")
+            .join()
+            .expect("CLI parser thread")
     }
 
     // ─── Format flag ──────────────────────────────────────────────────────────
