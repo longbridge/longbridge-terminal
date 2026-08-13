@@ -52,7 +52,7 @@ Longbridge OpenAPI 已提供 LongbridgeAI Agent 能力。我们希望把它收�
 - crate 已提供 `with_session`（进程内 LongbridgeAI）和 `with_external_session`（外部 ACP 进程）的持久会话 helper，并通过 `ClientDelegate` 把 permission request 交回宿主；文件与 terminal 等完整桌面 capability facade 仍属于 To-be。
 - crate 还提供后台驱动的 `DesktopSession`：它持有 ACP connection/外部子进程，向 GPUI 或 Tauri 暴露 `prompt`、`cancel`、`shutdown` 命令与 `SessionUpdate`、`TurnFinished`、`Failed` 事件；控制 handle 与独占 event stream 可拆分，避免 UI 等待流式事件时阻塞 Stop。已覆盖多轮会话、重叠 prompt 拒绝、取消以及真实 stdio 子进程关闭。
 - `longbridge-gpui` 的 `ai_agent` 已实现宿主私有 Babbage API 的 `AgentBackend`，`ai_panel` 已提供 LongbridgeAI ACP、Codex、Claude provider 入口，并把 ACP 文本、思考、工具和完成事件接入现有消息 UI。Codex 与 Claude 官方 Adapter 的真实 ACP V1 initialize 已通过；权限确认、附件与发布级 Adapter 分发仍需补齐。
-- `ai-desktop` 的 Tauri Rust 壳已提供托管的 Codex/Claude ACP session bridge（connect/prompt/cancel/disconnect + event stream）；React Chat 的 provider picker 与消息模型接线仍属于下一步。私有 Longbridge API 继续由现有 renderer bridge 持有，不会被下沉到 ACP crate。
+- `ai-desktop` 的 Tauri Rust 壳已提供统一的 LongbridgeAI/Codex/Claude ACP session bridge（connect/prompt/cancel/disconnect + event stream）。LongbridgeAI 由宿主私有 Babbage API `AgentBackend` 进程内接入，复用桌面壳已有的受保护 loopback proxy、环境选择和 session cookie；Codex/Claude 由外部 ACP Adapter 接入。React Chat 已提供 provider picker，并消费文本、思考、工具和完成事件。权限确认、HITL、附件与发布级 Adapter 分发仍需补齐。
 
 ### 2.2 To-be（目标状态）
 
