@@ -50,6 +50,7 @@ Longbridge OpenAPI 已提供 LongbridgeAI Agent 能力。我们希望把它收�
 - crate 重新导出官方 ACP SDK，并以 `ExternalAgent` / `ExternalAgentConfig` 类型别名提供外部 ACP 子进程的底层入口。
 - 当前会话状态保存在进程内；已处理 ACP 回合取消并通过丢弃 OpenAPI stream 停止请求，Client helper 也会暴露协商后的 capability 与实现信息；但尚无服务端显式 cancel endpoint、持久化恢复、完整桌面 AI Chat facade 或 Codex/Claude 真实 Adapter 端到端集成证据。
 - crate 已提供 `with_session`（进程内 LongbridgeAI）和 `with_external_session`（外部 ACP 进程）的持久会话 helper，并通过 `ClientDelegate` 把 permission request 交回宿主；文件与 terminal 等完整桌面 capability facade 仍属于 To-be。
+- crate 还提供后台驱动的 `DesktopSession`：它持有 ACP connection/外部子进程，向 GPUI 或 Tauri 暴露 `prompt`、`cancel`、`shutdown` 命令与 `SessionUpdate`、`TurnFinished`、`Failed` 事件；已覆盖多轮会话、重叠 prompt 拒绝、取消以及真实 stdio 子进程关闭。
 
 ### 2.2 To-be（目标状态）
 

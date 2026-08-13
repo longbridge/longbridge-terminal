@@ -7,6 +7,7 @@
 
 mod backend;
 mod client;
+mod desktop;
 mod longbridge;
 mod server;
 
@@ -16,5 +17,6 @@ pub use client::{
     with_external_session, with_initialized_session, with_session, AgentHandshake, ClientDelegate,
     DenyPermissions, ExternalAgent, ExternalAgentConfig, ExternalAgentKind,
 };
+pub use desktop::{DesktopSession, DesktopSessionEvent, SessionControlError};
 pub use longbridge::LongbridgeAgent;
 pub use server::{acp_agent, serve_stdio};

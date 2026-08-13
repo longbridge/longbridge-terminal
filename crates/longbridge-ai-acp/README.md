@@ -41,3 +41,37 @@ version, capabilities, and implementation metadata. `ExternalAgentKind::Codex`
 and `ExternalAgentKind::Claude` produce launch configurations for the separately
 installed `codex-acp` and `claude-agent-acp` adapters. The native provider CLIs
 do not expose ACP themselves.
+
+For a UI model that must outlive one callback, use `DesktopSession`. It owns the
+ACP connection and, for external agents, the subprocess. The UI sends commands
+and receives protocol events without retaining SDK lifetimes:
+
+```rust,no_run
+use longbridge_ai_acp::{
+    acp_agent, DenyPermissions, DesktopSession, DesktopSessionEvent,
+    LongbridgeAgent,
+};
+use std::sync::Arc;
+
+# async fn example(agent: LongbridgeAgent) -> Result<(), Box<dyn std::error::Error>> {
+let mut session = DesktopSession::connect(
+    acp_agent(agent),
+    std::env::current_dir()?,
+    Arc::new(DenyPermissions),
+).await?;
+
+session.prompt("Summarize my portfolio risk").await?;
+while let Some(event) = session.next_event().await {
+    match event {
+        DesktopSessionEvent::Update(update) => println!("{update:?}"),
+        DesktopSessionEvent::TurnFinished(_) => break,
+        DesktopSessionEvent::Failed(error) => return Err(error.into()),
+    }
+}
+session.shutdown().await;
+# Ok(())
+# }
+```
+
+`DesktopSession::cancel` and `shutdown` are safe UI lifecycle operations. A
+second prompt before `TurnFinished` returns `SessionControlError::Busy`.
