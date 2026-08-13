@@ -480,7 +480,7 @@
           <div class="host-icon">AI</div>
           <h3>LongbridgeAI Desktop</h3>
           <p>React 对话 UI 运行于 Tauri WebView。Rust 壳已把宿主私有 Babbage API 实现为进程内 <code>AgentBackend</code>，并以同一 session bridge 托管 LongbridgeAI、Codex 与 Claude；endpoint、环境和登录 session 仍属于桌面宿主。</p>
-          <ul><li>Tauri command 只传结构化会话事件</li><li>权限确认与 HITL UI 仍需补齐</li><li>外部 Agent 生命周期由 Rust 层托管</li></ul>
+          <ul><li>Tauri command 只传结构化会话事件</li><li>ACP 权限选项已回到产品确认 UI；私有 API HITL 仍需补齐</li><li>外部 Agent 生命周期由 Rust 层托管</li></ul>
         </article>
       </div>
       <div class="truth reveal"><strong>现状迁移重点：</strong>Longbridge Pro 已有成熟的 <code>ai_agent → ai_panel</code> SSE 事件链路。ACP 接入不应平行复制一套 UI，而应让 <code>ai_panel</code> 面向统一会话事件，并逐步把 Longbridge 私有网络协议收敛到 Adapter 内。</div>
