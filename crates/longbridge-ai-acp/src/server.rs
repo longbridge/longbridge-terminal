@@ -241,6 +241,7 @@ pub fn acp_agent<B: AgentBackend>(
                                 tracing::debug!(target: "longbridge_ai_acp::protocol", session_id = %request.session_id.0, chars = text.chars().count(), thought, update = "content_chunk", "ACP session update sent");
                                 if !thought {
                                     rich_text.update_stocks(&metadata);
+                                    rich_text.update_references(&metadata);
                                     task_connection.send_notification(SessionNotification::new(
                                         request.session_id.clone(),
                                         SessionUpdate::AgentMessageChunk(ContentChunk::new(
@@ -593,6 +594,7 @@ struct RichTextFilter {
     next_chart: usize,
     next_html: usize,
     stocks: HashMap<String, String>,
+    references: HashMap<u64, Option<String>>,
 }
 
 impl RichTextFilter {
@@ -603,6 +605,7 @@ impl RichTextFilter {
             next_chart: 1,
             next_html: 1,
             stocks: HashMap::new(),
+            references: HashMap::new(),
         }
     }
 
@@ -629,26 +632,42 @@ impl RichTextFilter {
         }
     }
 
+    fn update_references(&mut self, metadata: &serde_json::Value) {
+        let references = metadata
+            .pointer("/data/outputs/references")
+            .and_then(serde_json::Value::as_array);
+        let Some(references) = references else { return };
+        for reference in references {
+            let Some(index) = reference.get("index").and_then(serde_json::Value::as_u64) else {
+                continue;
+            };
+            self.references.insert(index, reference_url(reference));
+        }
+    }
+
     fn push(&mut self, text: &str) -> Vec<FilteredContent> {
         const CHART_MARKER: &str = "```vis-chart";
         const HTML_MARKER: &str = "```html";
         const STOCK_MARKER: &str = "[stock ";
+        const CITATION_MARKER: &str = "[citation ";
         self.buffer.push_str(text);
         let mut output = Vec::new();
         loop {
             let chart_open = self.buffer.find(CHART_MARKER);
             let html_open = self.buffer.find(HTML_MARKER);
             let stock_open = self.buffer.find(STOCK_MARKER);
+            let citation_open = self.buffer.find(CITATION_MARKER);
             let selected = [
                 chart_open.map(|open| (open, CHART_MARKER, 0_u8)),
                 html_open.map(|open| (open, HTML_MARKER, 1_u8)),
                 stock_open.map(|open| (open, STOCK_MARKER, 2_u8)),
+                citation_open.map(|open| (open, CITATION_MARKER, 3_u8)),
             ]
             .into_iter()
             .flatten()
             .min_by_key(|(open, _, _)| *open);
             let Some((open, marker, kind)) = selected else {
-                let retained = [CHART_MARKER, HTML_MARKER, STOCK_MARKER]
+                let retained = [CHART_MARKER, HTML_MARKER, STOCK_MARKER, CITATION_MARKER]
                     .iter()
                     .map(|marker| marker_suffix_len(&self.buffer, marker))
                     .max()
@@ -673,6 +692,25 @@ impl RichTextFilter {
                 let replacement = self.stocks.get(label).map_or_else(
                     || format!("**{label}**"),
                     |symbol| stock_markdown_link(symbol),
+                );
+                output.push(FilteredContent::Text(replacement));
+                continue;
+            }
+            if kind == 3 {
+                let Some(close) = self.buffer.find(']') else {
+                    break;
+                };
+                let complete: String = self.buffer.drain(..=close).collect();
+                let index = complete[CITATION_MARKER.len()..complete.len() - 1]
+                    .trim()
+                    .parse::<u64>();
+                let replacement = index.ok().map_or_else(
+                    || complete.clone(),
+                    |index| match self.references.get(&index) {
+                        Some(Some(url)) => format!("[\\[{index}\\]]({})", escape_link_url(url)),
+                        Some(None) => format!("\\[{index}\\]"),
+                        None => complete.clone(),
+                    },
                 );
                 output.push(FilteredContent::Text(replacement));
                 continue;
@@ -752,6 +790,78 @@ fn stock_markdown_link(symbol: &str) -> String {
         "[{symbol}](https://longbridge.com/quote/{})",
         symbol.to_ascii_lowercase()
     )
+}
+
+fn reference_url(reference: &serde_json::Value) -> Option<String> {
+    let kind = reference
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let id = reference
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let content = reference.get("content");
+    let field = |name: &str| {
+        content
+            .and_then(|content| content.get(name))
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.is_empty())
+    };
+    match kind {
+        "NewsArticle" => {
+            let third_party = content
+                .and_then(|content| content.get("content_via"))
+                .and_then(serde_json::Value::as_i64)
+                .is_some_and(|value| value != 0);
+            if third_party {
+                field("source_url").map(ToOwned::to_owned)
+            } else {
+                (!id.is_empty()).then(|| format!("https://longbridge.com/news/{id}"))
+            }
+        }
+        "TopicArticle" => (!id.is_empty()).then(|| format!("https://longbridge.com/topics/{id}")),
+        "Fact" => {
+            (!id.is_empty()).then(|| format!("https://app.longbridge.com/insight/facts/{id}"))
+        }
+        "Signal" => {
+            (!id.is_empty()).then(|| format!("https://app.longbridge.com/insight/signal/{id}"))
+        }
+        "HelpCenterDocument" => field("url")
+            .or_else(|| (!id.is_empty()).then_some(id))
+            .map(ToOwned::to_owned),
+        kind if is_financial_reference(kind) => None,
+        _ => field("url")
+            .or_else(|| field("source_url"))
+            .map(ToOwned::to_owned),
+    }
+}
+
+fn is_financial_reference(kind: &str) -> bool {
+    matches!(
+        kind,
+        "SecurityCandlestick"
+            | "SecurityQuote"
+            | "InfraIndicator"
+            | "BusinessHistorical"
+            | "CompanyShareholder"
+            | "FinancialStatement"
+            | "FinancialIndicator"
+            | "CompanyBasicInfo"
+            | "ScreenerStock"
+            | "SecurityIndicator"
+            | "MacroIndicator"
+    )
+}
+
+fn escape_link_url(url: &str) -> String {
+    url.replace(' ', "%20")
+        .replace('\t', "%09")
+        .replace('\n', "%0A")
+        .replace('\r', "%0D")
+        .replace('\\', "\\\\")
+        .replace('(', "\\(")
+        .replace(')', "\\)")
 }
 
 fn html_text_fallback(html: &str) -> String {
@@ -961,6 +1071,61 @@ mod tests {
         assert!(matches!(
             output.first(),
             Some(FilteredContent::Text(text)) if text == "**Unknown Company**"
+        ));
+    }
+
+    #[test]
+    fn citations_become_standard_markdown_links() {
+        let mut filter = RichTextFilter::new("session-1");
+        filter.update_references(&serde_json::json!({
+            "event": "message",
+            "data": {
+                "outputs": {
+                    "references": [{
+                        "index": 1,
+                        "type": "WebSearch",
+                        "content": { "url": "https://example.com/a path_(1)" }
+                    }]
+                }
+            }
+        }));
+        assert!(filter
+            .push("Source [cita")
+            .iter()
+            .any(|item| matches!(item, FilteredContent::Text(text) if text == "Source ")));
+        let output = filter.push("tion 1].");
+        assert!(matches!(
+            output.first(),
+            Some(FilteredContent::Text(text))
+                if text == "[\\[1\\]](https://example.com/a%20path_\\(1\\))"
+        ));
+    }
+
+    #[test]
+    fn citation_without_url_becomes_plain_number() {
+        let mut filter = RichTextFilter::new("session-1");
+        filter.update_references(&serde_json::json!({
+            "event": "message",
+            "data": {
+                "outputs": {
+                    "references": [{ "index": 2, "type": "SecurityQuote", "id": "TSLA.US" }]
+                }
+            }
+        }));
+        let output = filter.push("[citation 2]");
+        assert!(matches!(
+            output.first(),
+            Some(FilteredContent::Text(text)) if text == "\\[2\\]"
+        ));
+    }
+
+    #[test]
+    fn unknown_citation_is_preserved() {
+        let mut filter = RichTextFilter::new("session-1");
+        let output = filter.push("[citation 9]");
+        assert!(matches!(
+            output.first(),
+            Some(FilteredContent::Text(text)) if text == "[citation 9]"
         ));
     }
 
