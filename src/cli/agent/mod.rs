@@ -1,4 +1,4 @@
-//! AI agent commands (A2A): discovery, chat, interrupt continuation.
+//! AI agent commands: discovery, chat, interrupt continuation, workspaces.
 
 use std::collections::BTreeMap;
 
@@ -12,6 +12,7 @@ pub mod client;
 pub mod events;
 pub mod render;
 pub mod skills;
+pub mod workspace;
 
 /// Agent modes `agent chat` can drive. Anything else is hidden from
 /// `agent list` unless `--all` is passed.
@@ -360,6 +361,7 @@ pub async fn cmd_agent(
             )
             .await
         }
+        Some(AgentCmd::Workspaces) => workspace::cmd_workspaces(format, verbose).await,
     }
 }
 
@@ -480,6 +482,9 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<crate::cli::schema::Res
                 ),
             ],
         ),
+        Some("workspaces") => {
+            schema::object("AI workspaces for the current account", &["workspaces"])
+        }
         // Bare `longbridge agent` runs `agent list`, so `agent --schema`
         // must describe the list response instead of falling through to help.
         None | Some("list") => schema::object("AI agents across workspaces", &["agents"]),

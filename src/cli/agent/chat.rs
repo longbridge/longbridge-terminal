@@ -408,7 +408,7 @@ pub(crate) fn ensure_interactive_supported_for(
     use crate::cli::AgentCmd;
     let interactive = match cmd {
         AgentCmd::Chat { interactive, .. } | AgentCmd::Continue { interactive, .. } => *interactive,
-        AgentCmd::List { .. } => false,
+        AgentCmd::List { .. } | AgentCmd::Workspaces => false,
     };
     ensure_interactive_supported(interactive, format)
 }
@@ -420,7 +420,7 @@ pub(crate) fn ensure_interactive_supported_for(
 /// `tool_call_id:question=answer` grammar — no separator can be confused for
 /// content, whatever the question contains.
 /// Every value echoed back by [`parse_answers_json`] is attacker-controlled:
-/// an A2A harness drives `--answers-json`, and its keys travel unmodified into
+/// an AI harness drives `--answers-json`, and its keys travel unmodified into
 /// stderr. Strip terminal control sequences and cap the length so a hostile
 /// payload cannot repaint the user's terminal through a validation error.
 fn sanitize_for_error(s: &str) -> String {
@@ -1574,7 +1574,7 @@ mod tests {
 
     // ── fix-round-5 regression tests ────────────────────────────────────────
 
-    /// Blocker 3 regression: `--answers-json` is written by the A2A harness,
+    /// Blocker 3 regression: `--answers-json` is written by an AI harness,
     /// so a malformed payload full of ANSI/OSC sequences must not reach stderr
     /// verbatim. Covers all three interpolation sites: the raw input, the
     /// decoded `tool_call_id` key, and the decoded question key.

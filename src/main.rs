@@ -186,9 +186,6 @@ async fn main() {
         Some(cli::Commands::Agent { cmd: None, .. }) => {
             cli::exit_with_subcommand_help("agent");
         }
-        Some(cli::Commands::Workspace { cmd: None }) => {
-            cli::exit_with_subcommand_help("workspace");
-        }
         // `--interactive` needs a terminal to prompt on, so it cannot be
         // combined with machine-readable output. Rejecting it here keeps the
         // failure free of any token refresh or region request.
