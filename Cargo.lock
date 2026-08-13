@@ -2741,7 +2741,7 @@ dependencies = [
 [[package]]
 name = "longbridge-ai-acp"
 version = "0.1.0"
-source = "git+https://github.com/longbridge/longbridge-ai-acp.git?branch=main#d3f7b587c0be8183a73cdd136640939d4690534d"
+source = "git+https://github.com/longbridge/longbridge-ai-acp.git?branch=main#af393a497a173b41762d3b82972c344cee7a497f"
 dependencies = [
  "agent-client-protocol",
  "async-trait",
