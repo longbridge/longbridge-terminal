@@ -142,6 +142,17 @@ pub enum Commands {
     /// Example: longbridge tui
     Tui,
 
+    /// Serve a Longbridge AI agent over ACP on stdin/stdout
+    ///
+    /// The process speaks newline-delimited JSON-RPC and is intended to be
+    /// launched by ACP clients such as Zed and Cherry Studio.
+    /// Example: longbridge acp
+    Acp {
+        /// Longbridge AI agent UID (defaults to the main `chatbot` agent)
+        #[arg(long)]
+        agent_id: Option<String>,
+    },
+
     /// Generate shell completion script
     ///
     /// Prints a shell completion script to stdout.
@@ -4178,6 +4189,7 @@ IpoCmd::ProfitLoss { period, page, count } => {
         },
 
         Commands::Auth { .. }
+        | Commands::Acp { .. }
         | Commands::Tui
         | Commands::Check
         | Commands::Update { .. }
@@ -4197,13 +4209,13 @@ mod tests {
         // `clap`'s command-tree build recurses deep enough to overflow the 2 MiB
         // default stack of test threads (the main binary runs on the 8 MiB main
         // thread). Parse on a thread with a roomy stack.
-        let args: Vec<String> = args.iter().map(|s| (*s).to_string()).collect();
+        let args = args.iter().map(ToString::to_string).collect::<Vec<_>>();
         std::thread::Builder::new()
-            .stack_size(16 * 1024 * 1024)
+            .stack_size(8 * 1024 * 1024)
             .spawn(move || Cli::try_parse_from(args))
-            .unwrap()
+            .expect("spawn CLI parser thread")
             .join()
-            .unwrap()
+            .expect("CLI parser thread")
     }
 
     // ─── Format flag ──────────────────────────────────────────────────────────
@@ -4241,6 +4253,24 @@ mod tests {
             Some(Commands::Auth {
                 cmd: AuthCmd::Logout
             })
+        ));
+    }
+
+    #[test]
+    fn test_acp_agent_id_is_optional() {
+        let cli = parse(&["longbridge", "acp"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Acp { agent_id: None })
+        ));
+    }
+
+    #[test]
+    fn test_acp_accepts_agent_id_override() {
+        let cli = parse(&["longbridge", "acp", "--agent-id", "custom-agent"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Acp { agent_id: Some(agent_id) }) if agent_id == "custom-agent"
         ));
     }
 

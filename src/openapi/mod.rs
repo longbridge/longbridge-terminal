@@ -1,4 +1,5 @@
 pub mod account;
+pub mod agent;
 pub mod context;
 pub mod helpers;
 pub mod login;
@@ -7,8 +8,9 @@ pub mod rate_limiter;
 pub mod search;
 pub mod wrapper;
 
+pub use agent::OpenApiAgent;
 pub use context::{
-    content, fundamental, grid, http_client, init_contexts, is_us_account, quote, quote_cmd,
+    agent, content, fundamental, grid, http_client, init_contexts, is_us_account, quote, quote_cmd,
     quote_limited, statement, track_quote_cmd, trade, trade_limited,
 };
 pub use rate_limiter::global_rate_limiter;
