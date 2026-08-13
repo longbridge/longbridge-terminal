@@ -430,6 +430,21 @@ pub(crate) fn schema(summary: &str, root: RootKind, fields: Vec<Field>) -> Respo
     }
 }
 
+/// Overlay human-readable descriptions onto specific response fields, keeping
+/// the rest generic. Use for enum-like integer fields whose meaning an agent
+/// cannot infer from the value alone (e.g. `trigger_price_type: 2`): the legend
+/// lands in the `--schema` output next to the field, without touching the JSON
+/// data itself. Unknown field names are ignored so callers can pass one legend
+/// table across schemas that share only some of the keys.
+pub(crate) fn with_legend(mut schema: ResponseSchema, legends: &[(&str, &str)]) -> ResponseSchema {
+    for (name, desc) in legends {
+        if let Some(f) = schema.fields.iter_mut().find(|f| f.name == *name) {
+            f.description = (*desc).to_string();
+        }
+    }
+    schema
+}
+
 pub(crate) fn fields(keys: &[&str]) -> Vec<Field> {
     keys.iter()
         .map(|key| field(key, inferred_type(key), "Response field"))

@@ -66,18 +66,22 @@ fn build_rule(r: &GridRuleArgs) -> Result<longbridge::grid::GridTradeRule> {
     if !(0..=2).contains(&r.rth) {
         anyhow::bail!("--rth ({}) must be 0, 1, or 2", r.rth);
     }
-    for (flag, v) in [
-        ("--upper-event", r.upper_event),
-        ("--lower-event", r.lower_event),
-    ] {
-        if v != 1 && v != 2 {
-            anyhow::bail!("{flag} ({v}) must be 1 (ignore) or 2 (close at last price)");
-        }
-    }
     for (flag, v) in [("--sell-depth", r.sell_depth), ("--buy-depth", r.buy_depth)] {
         if !(-5..=5).contains(&v) {
             anyhow::bail!("{flag} ({v}) must be within [-5, 5]");
         }
+    }
+    // GTD needs an explicit expiry, and `--expire` is meaningless without it.
+    // Catch both locally so the mismatch never turns into an opaque gateway
+    // rejection (a GTD rule silently sent with no expire_time).
+    match (r.tif, r.expire.is_some()) {
+        (super::GridTifArg::Gtd, false) => {
+            anyhow::bail!("--tif gtd requires --expire (RFC3339 or unix seconds)");
+        }
+        (tif, true) if !matches!(tif, super::GridTifArg::Gtd) => {
+            anyhow::bail!("--expire is only valid with --tif gtd");
+        }
+        _ => {}
     }
 
     // trigger-up/down interpreted by trigger-type (percent vs spread enum)
@@ -110,8 +114,8 @@ fn build_rule(r: &GridRuleArgs) -> Result<longbridge::grid::GridTradeRule> {
         longbridge::grid::GridTimeInForce::from(r.tif.as_i32()),
     )
     .limit_events(
-        longbridge::grid::GridLimitEvent::from(r.upper_event),
-        longbridge::grid::GridLimitEvent::from(r.lower_event),
+        longbridge::grid::GridLimitEvent::from(r.upper_event.as_i32()),
+        longbridge::grid::GridLimitEvent::from(r.lower_event.as_i32()),
     )
     .depths(r.sell_depth, r.buy_depth)
     .order_types(order_up, order_down)
@@ -544,9 +548,40 @@ fn confirm_terms() -> Result<bool> {
 }
 
 pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::ResponseSchema> {
-    use super::schema::{array, object, text};
+    use super::schema::{array, field, object, schema, with_legend, RootKind};
+
+    // Mutation commands emit a JSON object under `--format json` (not a bare
+    // string), so describe that object shape. `order_id` is present for every
+    // mutation except `questionnaire`.
+    let mutation = |summary: &str, with_order_id: bool| {
+        let mut fields = vec![field(
+            "status",
+            "string",
+            "Result status, e.g. submitted / replaced / cancelled / suspended / restarted",
+        )];
+        if with_order_id {
+            fields.push(field("order_id", "string", "Affected grid order ID"));
+        }
+        schema(summary, RootKind::Object, fields)
+    };
 
     let command = path.join(" ");
+    // Legend for the enum-like integer fields the SDK serializes as bare ints.
+    // An agent reading `--format json` sees e.g. `trigger_price_type: 2`; these
+    // descriptions decode the values in the `--schema` contract so the meaning
+    // is discoverable without a separate codebook. `action` (trigger orders) is
+    // an int too, but the SDK does not document its values, so it is left
+    // generic rather than guessed at.
+    let enum_legend: &[(&str, &str)] = &[
+        ("trigger_price_type", "Enum: 1=spread, 2=percent"),
+        ("time_in_force", "Enum: 0=day, 1=gtc, 6=gtd"),
+        ("upper_limit_event", "Enum: 1=ignore, 2=close-at-last"),
+        ("lower_limit_event", "Enum: 1=ignore, 2=close-at-last"),
+        (
+            "rth",
+            "Enum (OutsideRTH): 0=default, 1=RTH only, 2=any-time (pre/post-market)",
+        ),
+    ];
     // `grid` / `grid --ids` serialize the full GridOrder struct; describe every
     // key so agents relying on the schema see the complete JSON shape.
     let order_fields = &[
@@ -644,20 +679,30 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
         "rth",
     ];
     let schema = match command.as_str() {
-        "grid" => array("Grid trading orders", order_fields),
-        "grid detail" => object("Grid trading order detail", detail_fields),
+        "grid" => with_legend(array("Grid trading orders", order_fields), enum_legend),
+        "grid detail" => with_legend(
+            object("Grid trading order detail", detail_fields),
+            enum_legend,
+        ),
         "grid triggers" => array(
             "Grid trigger history",
+            // Full TriggerOrder field parity, matching the SDK struct order.
             &[
                 "id",
-                "symbol",
                 "status",
+                "name",
+                "symbol",
                 "price",
                 "quantity",
                 "executed_price",
                 "executed_qty",
+                "submitted_at",
+                "action",
                 "order_type",
                 "trigger_price",
+                "msg",
+                "currency",
+                "last_done",
             ],
         ),
         "grid info" => object(
@@ -672,8 +717,15 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
                 "channel_info",
             ],
         ),
-        "grid submit" | "grid replace" | "grid cancel" | "grid suspend" | "grid restart"
-        | "grid questionnaire" => text("Grid trading mutation status message"),
+        "grid submit" | "grid replace" => mutation(
+            "Grid mutation result. With --dry-run, instead returns the rule that would be \
+             sent: {dry_run, action, symbol?, currency?, order_id?, rule}",
+            true,
+        ),
+        "grid cancel" | "grid suspend" | "grid restart" => mutation("Grid mutation result", true),
+        "grid questionnaire" => {
+            mutation("Grid questionnaire submission result (status only)", false)
+        }
         _ => return None,
     };
     Some(schema)

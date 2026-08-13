@@ -1287,7 +1287,7 @@ pub enum Commands {
         /// Filter by symbol (e.g. 700.HK)
         #[arg(long)]
         symbol: Option<String>,
-        /// Filter by status (e.g. Performing, Suspended)
+        /// Filter by status: Performing, Suspended, Canceled
         #[arg(long)]
         status: Option<String>,
         /// Page number
@@ -1296,7 +1296,7 @@ pub enum Commands {
         /// Records per page
         #[arg(long)]
         limit: Option<i32>,
-        /// Sort field
+        /// Sort field (e.g. `created_at`)
         #[arg(long)]
         sort_by: Option<String>,
         /// Sort order: asc | desc
@@ -1672,11 +1672,30 @@ impl GridTifArg {
     }
 }
 
+/// Action taken when the price crosses a grid boundary.
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+#[value(rename_all = "kebab-case")]
+pub enum GridLimitEventArg {
+    /// Keep the grid running (ignore the breach)
+    Ignore,
+    /// Close the position at the last price
+    CloseAtLast,
+}
+
+impl GridLimitEventArg {
+    pub fn as_i32(self) -> i32 {
+        match self {
+            Self::Ignore => 1,
+            Self::CloseAtLast => 2,
+        }
+    }
+}
+
 /// Shared grid rule flags for `submit` / `replace`. `trigger-up/down` are
 /// interpreted as percent or spread according to `--trigger-type`.
 #[derive(Debug, Clone, clap::Args)]
 pub struct GridRuleArgs {
-    /// Base price the grid is anchored to
+    /// Base price the grid is anchored to (must be within [lower-price, upper-price])
     #[arg(long)]
     pub base_price: String,
     /// Upper price bound
@@ -1697,7 +1716,7 @@ pub struct GridRuleArgs {
     /// Quantity per trigger
     #[arg(long)]
     pub quantity: String,
-    /// Quantity handled at the upper bound
+    /// Quantity handled at the upper bound (must be greater than --lower-quantity)
     #[arg(long)]
     pub upper_quantity: String,
     /// Quantity handled at the lower bound
@@ -1718,7 +1737,9 @@ pub struct GridRuleArgs {
     /// Expiry for GTD: RFC3339 (e.g. 2026-11-10T08:00:00Z) or unix seconds
     #[arg(long)]
     pub expire: Option<String>,
-    /// Regular trading hours flag: 0 | 1 | 2
+    /// Regular trading hours (`OutsideRTH` convention): 0=default, 1=RTH only,
+    /// 2=include pre/post-market. The symbol must allow it — see `grid info`
+    /// → `channel_info.support_rth`.
     #[arg(long, default_value = "0")]
     pub rth: i32,
     /// Allow a single grid level to trigger multiple times
@@ -1727,12 +1748,12 @@ pub struct GridRuleArgs {
     /// Allow short selling
     #[arg(long)]
     pub support_shortsell: bool,
-    /// Action at the upper bound: 1=ignore, 2=close at last price
-    #[arg(long, default_value = "1")]
-    pub upper_event: i32,
-    /// Action at the lower bound: 1=ignore, 2=close at last price
-    #[arg(long, default_value = "1")]
-    pub lower_event: i32,
+    /// Action at the upper bound: ignore | close-at-last
+    #[arg(long, default_value = "ignore")]
+    pub upper_event: GridLimitEventArg,
+    /// Action at the lower bound: ignore | close-at-last
+    #[arg(long, default_value = "ignore")]
+    pub lower_event: GridLimitEventArg,
     /// Sell-side order-book depth (-5..5, 0 = use order type)
     #[arg(long, default_value = "0")]
     pub sell_depth: i32,
@@ -1751,7 +1772,8 @@ pub enum GridCmd {
     Submit {
         /// Symbol (e.g. 700.HK)
         symbol: String,
-        /// Settlement currency (e.g. HKD)
+        /// Settlement currency — match the symbol's market (HK→HKD, US→USD);
+        /// see `grid info` → `channel_info.settlement_currency`
         #[arg(long, default_value = "HKD")]
         currency: String,
         #[command(flatten)]
