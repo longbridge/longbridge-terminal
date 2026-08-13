@@ -240,6 +240,7 @@ pub fn acp_agent<B: AgentBackend>(
                             } => {
                                 tracing::debug!(target: "longbridge_ai_acp::protocol", session_id = %request.session_id.0, chars = text.chars().count(), thought, update = "content_chunk", "ACP session update sent");
                                 if !thought {
+                                    rich_text.update_stocks(&metadata);
                                     task_connection.send_notification(SessionNotification::new(
                                         request.session_id.clone(),
                                         SessionUpdate::AgentMessageChunk(ContentChunk::new(
@@ -591,6 +592,7 @@ struct RichTextFilter {
     content_id_prefix: String,
     next_chart: usize,
     next_html: usize,
+    stocks: HashMap<String, String>,
 }
 
 impl RichTextFilter {
@@ -600,25 +602,53 @@ impl RichTextFilter {
             content_id_prefix: content_id_prefix.to_owned(),
             next_chart: 1,
             next_html: 1,
+            stocks: HashMap::new(),
+        }
+    }
+
+    fn update_stocks(&mut self, metadata: &serde_json::Value) {
+        let stocks = metadata
+            .pointer("/data/outputs/stocks")
+            .and_then(serde_json::Value::as_array);
+        let Some(stocks) = stocks else { return };
+        for stock in stocks {
+            let Some(label) = stock.get("id").and_then(serde_json::Value::as_str) else {
+                continue;
+            };
+            let Some(counter_id) = stock
+                .get("counter_ids")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|ids| ids.first())
+                .and_then(serde_json::Value::as_str)
+            else {
+                continue;
+            };
+            if let Some(symbol) = symbol_from_counter_id(counter_id) {
+                self.stocks.insert(label.to_owned(), symbol);
+            }
         }
     }
 
     fn push(&mut self, text: &str) -> Vec<FilteredContent> {
         const CHART_MARKER: &str = "```vis-chart";
         const HTML_MARKER: &str = "```html";
+        const STOCK_MARKER: &str = "[stock ";
         self.buffer.push_str(text);
         let mut output = Vec::new();
         loop {
             let chart_open = self.buffer.find(CHART_MARKER);
             let html_open = self.buffer.find(HTML_MARKER);
-            let selected = match (chart_open, html_open) {
-                (Some(chart), Some(html)) if html < chart => Some((html, HTML_MARKER, true)),
-                (Some(chart), _) => Some((chart, CHART_MARKER, false)),
-                (None, Some(html)) => Some((html, HTML_MARKER, true)),
-                (None, None) => None,
-            };
-            let Some((open, marker, is_html)) = selected else {
-                let retained = [CHART_MARKER, HTML_MARKER]
+            let stock_open = self.buffer.find(STOCK_MARKER);
+            let selected = [
+                chart_open.map(|open| (open, CHART_MARKER, 0_u8)),
+                html_open.map(|open| (open, HTML_MARKER, 1_u8)),
+                stock_open.map(|open| (open, STOCK_MARKER, 2_u8)),
+            ]
+            .into_iter()
+            .flatten()
+            .min_by_key(|(open, _, _)| *open);
+            let Some((open, marker, kind)) = selected else {
+                let retained = [CHART_MARKER, HTML_MARKER, STOCK_MARKER]
                     .iter()
                     .map(|marker| marker_suffix_len(&self.buffer, marker))
                     .max()
@@ -633,6 +663,19 @@ impl RichTextFilter {
             };
             if open > 0 {
                 output.push(FilteredContent::Text(self.buffer.drain(..open).collect()));
+            }
+            if kind == 2 {
+                let Some(close) = self.buffer.find(']') else {
+                    break;
+                };
+                let complete: String = self.buffer.drain(..=close).collect();
+                let label = complete[STOCK_MARKER.len()..complete.len() - 1].trim();
+                let replacement = self.stocks.get(label).map_or_else(
+                    || format!("**{label}**"),
+                    |symbol| stock_markdown_link(symbol),
+                );
+                output.push(FilteredContent::Text(replacement));
+                continue;
             }
             let after_marker = marker.len();
             let Some(body_start) = self.buffer[after_marker..]
@@ -653,7 +696,7 @@ impl RichTextFilter {
             let end = close + 3;
             let complete: String = self.buffer.drain(..end).collect();
             let body = &complete[body_start..close];
-            if is_html {
+            if kind == 1 {
                 let fallback = html_text_fallback(body);
                 if let Ok(html) = RichContent::opaque(
                     format!("{}:html-{}", self.content_id_prefix, self.next_html),
@@ -691,6 +734,25 @@ impl RichTextFilter {
             vec![FilteredContent::Text(std::mem::take(&mut self.buffer))]
         }
     }
+}
+
+fn symbol_from_counter_id(counter_id: &str) -> Option<String> {
+    let mut parts = counter_id.split('/');
+    let _kind = parts.next()?;
+    let market = parts.next()?;
+    let code = parts.next()?;
+    if market.is_empty() || code.is_empty() || parts.next().is_some() {
+        return None;
+    }
+    Some(format!("{code}.{market}"))
+}
+
+fn stock_markdown_link(symbol: &str) -> String {
+    let display = symbol.split('.').next().unwrap_or(symbol);
+    format!(
+        "[{display}](https://longbridge.com/quote/{})",
+        symbol.to_ascii_lowercase()
+    )
 }
 
 fn html_text_fallback(html: &str) -> String {
@@ -864,6 +926,43 @@ mod tests {
         assert!(!html.fallback.contains("<html"));
         assert!(html.fallback.len() < 1_000);
         assert!(matches!(output.get(1), Some(FilteredContent::Text(text)) if text == "\nAfter"));
+    }
+
+    #[test]
+    fn stock_mentions_become_standard_quote_links() {
+        let mut filter = RichTextFilter::new("session-1");
+        filter.update_stocks(&serde_json::json!({
+            "event": "message",
+            "data": {
+                "outputs": {
+                    "stocks": [{ "id": "Tesla", "counter_ids": ["ST/US/TSLA"] }]
+                }
+            }
+        }));
+        assert!(filter
+            .push("Review [sto")
+            .iter()
+            .any(|item| matches!(item, FilteredContent::Text(text) if text == "Review ")));
+        let output = filter.push("ck Tesla] today");
+        assert!(matches!(
+            output.first(),
+            Some(FilteredContent::Text(text))
+                if text == "[TSLA](https://longbridge.com/quote/tsla.us)"
+        ));
+        assert!(matches!(
+            output.get(1),
+            Some(FilteredContent::Text(text)) if text == " today"
+        ));
+    }
+
+    #[test]
+    fn unknown_stock_mentions_degrade_to_emphasis_without_fake_links() {
+        let mut filter = RichTextFilter::new("session-1");
+        let output = filter.push("[stock Unknown Company]");
+        assert!(matches!(
+            output.first(),
+            Some(FilteredContent::Text(text)) if text == "**Unknown Company**"
+        ));
     }
 
     #[async_trait]
