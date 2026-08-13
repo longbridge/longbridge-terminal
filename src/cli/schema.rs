@@ -4,8 +4,9 @@ use serde_json::{json, Map, Value};
 use std::ffi::OsString;
 
 use super::{
-    asset, atm, auth, check, completion, dca, fundamental, grid, init, insider_trades, investors,
-    ipo, news, quote, run_script, screener, sharelist, statement, topic, trade, watchlist, Cli,
+    agent, asset, atm, auth, check, completion, dca, fundamental, grid, init, insider_trades,
+    investors, ipo, news, quote, run_script, screener, sharelist, statement, topic, trade,
+    watchlist, workspace, Cli,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -399,6 +400,8 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<ResponseSchema> {
         "screener" => screener::schema_for_path(path),
         "bank-cards" | "withdrawals" | "deposits" => atm::schema_for_path(path),
         "ipo" => ipo::schema_for_path(path),
+        "workspace" => workspace::schema_for_path(path),
+        "agent" => agent::schema_for_path(path),
         _ => None,
     }
 }
@@ -505,7 +508,9 @@ fn inferred_type(key: &str) -> &'static str {
         | "records"
         | "plans"
         | "buy"
-        | "sell" => "object[]",
+        | "sell"
+        | "agents"
+        | "workspaces" => "object[]",
         "id" | "rank" | "volume" | "quantity" | "available" | "shares" | "shares_after"
         | "value" | "price" | "total" | "page" | "count" | "active_count" | "finished_count"
         | "suspended_count" | "rest_days" | "trade_stock_num" | "total_holdings" | "win_qty"
@@ -604,7 +609,7 @@ mod tests {
             let paths = real_leaf_paths(&root);
             assert_eq!(
                 paths.len(),
-                152,
+                156,
                 "real command count changed; review schema coverage"
             );
 

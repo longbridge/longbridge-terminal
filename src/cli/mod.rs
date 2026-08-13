@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
+pub mod agent;
 pub mod api;
 pub mod asset;
 pub mod atm;
@@ -29,6 +30,7 @@ pub mod statement;
 pub mod topic;
 pub mod trade;
 pub mod watchlist;
+pub mod workspace;
 
 #[derive(ValueEnum, Clone, Default, Debug)]
 pub enum OutputFormat {
@@ -1475,6 +1477,37 @@ pub enum Commands {
         #[command(subcommand)]
         cmd: IpoCmd,
     },
+
+    // ── AI Agents ───────────────────────────────────────────────────────
+    /// AI workspaces: list workspaces for the current account
+    ///
+    /// Workspaces contain AI agents; use `longbridge agent list` to see them.
+    /// Returns: id, name, `created_at`, `updated_at`.
+    /// Example: longbridge workspace list
+    /// Example: longbridge workspace list --format json
+    Workspace {
+        #[command(subcommand)]
+        cmd: Option<WorkspaceCmd>,
+    },
+
+    /// AI agents: discover and chat with Longbridge AI agents (A2A)
+    ///
+    /// Chat transport is SSE under the hood; agent runs can take 1-2 minutes.
+    /// Returns (chat): `chat_uid`, `message_id`, status, answer (markdown), widgets,
+    /// references, `further_questions`, `elapsed_time`.
+    /// Example: longbridge agent list
+    /// Example: longbridge agent chat chatbot "分析一下 TSLA 近一个月走势"
+    /// Example: longbridge agent chat chatbot `ct_uid` 12345 "继续深入"
+    /// Example: longbridge agent --skill
+    Agent {
+        #[command(subcommand)]
+        cmd: Option<AgentCmd>,
+        /// Print the A2A skill document for AI harnesses and exit
+        // `--skills` is a silent alias kept for compatibility: the plural form
+        // shipped first. Only `--skill` is advertised in `--help`.
+        #[arg(long = "skill", alias = "skills")]
+        skill: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2570,6 +2603,112 @@ pub enum WatchlistCmd {
     },
 }
 
+#[derive(Subcommand)]
+pub enum WorkspaceCmd {
+    /// List AI workspaces for the current account
+    ///
+    /// Example: longbridge workspace list
+    List,
+}
+
+#[derive(Subcommand)]
+// Backticks render literally in `--help`, so the mode names stay bare here.
+#[allow(clippy::doc_markdown)]
+pub enum AgentCmd {
+    /// List chat-capable AI agents (all workspaces by default)
+    ///
+    /// Traverses every workspace sequentially when --workspace is omitted.
+    /// Only published agents can chat. Lists conversational modes (chat,
+    /// agentic_chat); others such as workflow are hidden with a note on
+    /// stderr saying what was withheld. Pass --all to list every mode.
+    /// Public agents usable by any account (e.g. chatbot) are shown under
+    /// workspace "Public: Longbridge"; the API cannot enumerate them, so any
+    /// published uid is worth trying even if it is absent here.
+    /// Example: longbridge agent list
+    /// Example: longbridge agent list --workspace 33 --name 选股
+    /// Example: longbridge agent list --all
+    List {
+        /// Workspace ID; omit to traverse all workspaces
+        #[arg(long)]
+        workspace: Option<String>,
+        /// Fuzzy name filter (server-side)
+        #[arg(long)]
+        name: Option<String>,
+        /// Show only published (chat-able) agents
+        #[arg(long)]
+        published: bool,
+        /// Include agents of every mode, not just chat (e.g. workflow agents)
+        #[arg(long)]
+        all: bool,
+        /// Page number (only with --workspace)
+        #[arg(long, default_value = "1")]
+        page: u32,
+        /// Page size (only with --workspace)
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: u32,
+    },
+
+    /// Chat with an agent (first round or follow-up)
+    ///
+    /// Positional forms: `chat <AGENT_UID> "<query>"` for the first round, or
+    /// `chat <AGENT_UID> <CHAT_UID> <PARENT_MESSAGE_ID> "<query>"` to follow up.
+    /// Flags --chat-uid/--parent-message-id are equivalent to the ID positionals.
+    /// Example: longbridge agent chat chatbot "分析一下 TSLA"
+    /// Example: longbridge agent chat chatbot `ct_x` 123 "那 NVDA 呢"
+    Chat {
+        /// Agent UID (from `longbridge agent list`)
+        agent_uid: String,
+        /// [`CHAT_UID` `PARENT_MESSAGE_ID`] QUERY — 1 arg = first-round query; 3 = follow-up
+        #[arg(num_args = 1..=3, required = true)]
+        args: Vec<String>,
+        /// Conversation ID from a previous response (follow-up)
+        #[arg(long)]
+        chat_uid: Option<String>,
+        /// `message_id` of the previous response (follow-up)
+        #[arg(long)]
+        parent_message_id: Option<String>,
+        /// Print answer text incrementally as it streams
+        #[arg(long)]
+        stream: bool,
+        /// If the agent asks clarifying questions, answer them in the terminal
+        #[arg(long)]
+        interactive: bool,
+    },
+
+    /// Answer an interrupted run's questions and resume it
+    ///
+    /// Only for `status=interrupted` responses; normal follow-ups use `chat`.
+    /// Positional form: `continue <AGENT_UID> <CHAT_UID> <MESSAGE_ID>`.
+    /// Example: longbridge agent continue chatbot `ct_x` 123 --answer "近一个月"
+    /// Example: longbridge agent continue chatbot --chat-uid=ct_x --message-id=123 --interactive
+    Continue {
+        /// Agent UID
+        agent_uid: String,
+        /// [`CHAT_UID` `MESSAGE_ID`] — or use --chat-uid / --message-id
+        #[arg(num_args = 0..=2)]
+        ids: Vec<String>,
+        /// Conversation ID of the interrupted run
+        #[arg(long)]
+        chat_uid: Option<String>,
+        /// `message_id` of the interrupted run
+        #[arg(long)]
+        message_id: Option<String>,
+        /// Answer; repeatable. Bare value (single cached question) or full
+        /// form `tool_call_id:question=answer`
+        #[arg(long)]
+        answer: Vec<String>,
+        /// Raw `answers_by_tool_call` object as JSON, e.g.
+        /// `{"call_a":{"Which period?":"1m"}}`. Avoids all `=`-parsing
+        /// ambiguity when a question itself contains `=`. Conflicts with
+        /// `--answer`
+        #[arg(long, conflicts_with = "answer")]
+        answers_json: Option<String>,
+        /// Answer the questions interactively in the terminal
+        #[arg(long)]
+        interactive: bool,
+    },
+}
+
 #[derive(ValueEnum, Clone, Debug)]
 pub enum StatementSection {
     #[value(name = "asset")]
@@ -3400,6 +3539,44 @@ pub enum AuthCmd {
     },
 }
 
+/// Render a top-level subcommand group's help text, e.g. `agent` or `workspace`.
+///
+/// Returns `None` only when `name` is not a top-level subcommand, which would
+/// be a caller bug rather than user input.
+pub fn render_subcommand_help(name: &str) -> Option<String> {
+    // clap's recursive build of this unusually broad command tree can exceed a
+    // small worker stack (e.g. the 2 MiB test harness thread), so build it on a
+    // generous one. Bare-group help is a rare, interactive path, so the extra
+    // thread costs nothing in practice.
+    let name = name.to_string();
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            use clap::CommandFactory;
+            let mut root = Cli::command();
+            root.build();
+            root.find_subcommand_mut(&name)
+                .map(|sub| sub.render_help().to_string())
+        })
+        .expect("spawn subcommand-help thread")
+        .join()
+        .expect("subcommand-help thread")
+}
+
+/// Print a subcommand group's help, then exit with clap's usage-error code.
+///
+/// Bare `longbridge agent` / `longbridge workspace` land here. A command group
+/// needs a subcommand to mean anything, so listing the options beats silently
+/// picking one and firing a network request at an account the user may not
+/// even be logged into. Exit code 2 is what clap itself returns for bare
+/// `longbridge auth`, whose subcommand is mandatory.
+pub fn exit_with_subcommand_help(name: &str) -> ! {
+    if let Some(help) = render_subcommand_help(name) {
+        print!("{help}");
+    }
+    std::process::exit(2)
+}
+
 pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Result<()> {
     match cmd {
         Commands::Quote { symbols } => quote::cmd_quote(symbols, format).await,
@@ -4187,6 +4364,9 @@ IpoCmd::ProfitLoss { period, page, count } => {
                 ipo::cmd_ipo_us_listed(page, count, format, verbose).await
             }
         },
+
+        Commands::Workspace { cmd } => workspace::cmd_workspace(cmd, format, verbose).await,
+        Commands::Agent { cmd, skill } => agent::cmd_agent(cmd, skill, format, verbose).await,
 
         Commands::Auth { .. }
         | Commands::Acp { .. }
@@ -5007,6 +5187,299 @@ mod tests {
         } else {
             panic!("expected MaxQty command");
         }
+    }
+
+    // ─── Workspace / Agent ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_workspace_list() {
+        let cli = parse(&["longbridge", "workspace", "list"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Workspace {
+                cmd: Some(WorkspaceCmd::List)
+            })
+        ));
+    }
+
+    #[test]
+    fn test_workspace_bare_defaults_to_list() {
+        let cli = parse(&["longbridge", "workspace"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Workspace { cmd: None })
+        ));
+    }
+
+    #[test]
+    fn test_agent_list_flags() {
+        let cli = parse(&[
+            "longbridge",
+            "agent",
+            "list",
+            "--workspace",
+            "33",
+            "--name",
+            "选股",
+            "--published",
+        ])
+        .unwrap();
+        let Some(Commands::Agent {
+            cmd:
+                Some(AgentCmd::List {
+                    workspace,
+                    name,
+                    published,
+                    ..
+                }),
+            ..
+        }) = cli.command
+        else {
+            panic!("expected Agent List");
+        };
+        assert_eq!(workspace.as_deref(), Some("33"));
+        assert_eq!(name.as_deref(), Some("选股"));
+        assert!(published);
+    }
+
+    #[test]
+    fn test_agent_chat_first_round() {
+        let cli = parse(&["longbridge", "agent", "chat", "chatbot", "analyze TSLA"]).unwrap();
+        let Some(Commands::Agent {
+            cmd: Some(AgentCmd::Chat {
+                agent_uid, args, ..
+            }),
+            ..
+        }) = cli.command
+        else {
+            panic!("expected Agent Chat");
+        };
+        assert_eq!(agent_uid, "chatbot");
+        assert_eq!(args, vec!["analyze TSLA"]);
+    }
+
+    #[test]
+    fn test_agent_chat_positional_followup() {
+        let cli = parse(&[
+            "longbridge",
+            "agent",
+            "chat",
+            "chatbot",
+            "ct_1",
+            "13025051",
+            "and NVDA?",
+        ])
+        .unwrap();
+        let Some(Commands::Agent {
+            cmd: Some(AgentCmd::Chat { args, .. }),
+            ..
+        }) = cli.command
+        else {
+            panic!("expected Agent Chat");
+        };
+        assert_eq!(args.len(), 3);
+    }
+
+    #[test]
+    fn test_agent_chat_flag_followup_with_equals() {
+        let cli = parse(&[
+            "longbridge",
+            "agent",
+            "chat",
+            "chatbot",
+            "and NVDA?",
+            "--chat-uid=ct_1",
+            "--parent-message-id=13025051",
+            "--stream",
+        ])
+        .unwrap();
+        let Some(Commands::Agent {
+            cmd:
+                Some(AgentCmd::Chat {
+                    chat_uid,
+                    parent_message_id,
+                    stream,
+                    ..
+                }),
+            ..
+        }) = cli.command
+        else {
+            panic!("expected Agent Chat");
+        };
+        assert_eq!(chat_uid.as_deref(), Some("ct_1"));
+        assert_eq!(parent_message_id.as_deref(), Some("13025051"));
+        assert!(stream);
+    }
+
+    #[test]
+    fn test_agent_continue_positional_and_answers() {
+        let cli = parse(&[
+            "longbridge",
+            "agent",
+            "continue",
+            "chatbot",
+            "ct_1",
+            "13025051",
+            "--answer",
+            "call_a:Which period?=1m",
+            "--answer",
+            "call_a:Which market?=US",
+        ])
+        .unwrap();
+        let Some(Commands::Agent {
+            cmd:
+                Some(AgentCmd::Continue {
+                    agent_uid,
+                    ids,
+                    answer,
+                    ..
+                }),
+            ..
+        }) = cli.command
+        else {
+            panic!("expected Agent Continue");
+        };
+        assert_eq!(agent_uid, "chatbot");
+        assert_eq!(ids, vec!["ct_1", "13025051"]);
+        assert_eq!(answer.len(), 2);
+    }
+
+    #[test]
+    fn test_agent_continue_flag_form() {
+        let cli = parse(&[
+            "longbridge",
+            "agent",
+            "continue",
+            "chatbot",
+            "--chat-uid=ct_1",
+            "--message-id=13025051",
+            "--interactive",
+        ])
+        .unwrap();
+        let Some(Commands::Agent {
+            cmd:
+                Some(AgentCmd::Continue {
+                    ids,
+                    chat_uid,
+                    message_id,
+                    interactive,
+                    ..
+                }),
+            ..
+        }) = cli.command
+        else {
+            panic!("expected Agent Continue");
+        };
+        assert!(ids.is_empty());
+        assert_eq!(chat_uid.as_deref(), Some("ct_1"));
+        assert_eq!(message_id.as_deref(), Some("13025051"));
+        assert!(interactive);
+    }
+
+    #[test]
+    fn test_agent_continue_answers_json() {
+        let cli = parse(&[
+            "longbridge",
+            "agent",
+            "continue",
+            "chatbot",
+            "ct_1",
+            "13025051",
+            "--answers-json",
+            r#"{"call_a":{"Is P/E=20 acceptable?":"yes"}}"#,
+        ])
+        .unwrap();
+        let Some(Commands::Agent {
+            cmd:
+                Some(AgentCmd::Continue {
+                    answer,
+                    answers_json,
+                    ..
+                }),
+            ..
+        }) = cli.command
+        else {
+            panic!("expected Agent Continue");
+        };
+        assert!(answer.is_empty());
+        assert_eq!(
+            answers_json.as_deref(),
+            Some(r#"{"call_a":{"Is P/E=20 acceptable?":"yes"}}"#)
+        );
+    }
+
+    #[test]
+    fn test_agent_continue_answers_json_conflicts_with_answer() {
+        assert!(parse(&[
+            "longbridge",
+            "agent",
+            "continue",
+            "chatbot",
+            "ct_1",
+            "13025051",
+            "--answer",
+            "1m",
+            "--answers-json",
+            r#"{"call_a":{"q":"a"}}"#,
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn test_agent_skill_flag() {
+        let cli = parse(&["longbridge", "agent", "--skill"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Agent {
+                cmd: None,
+                skill: true
+            })
+        ));
+    }
+
+    #[test]
+    fn test_agent_skills_alias() {
+        // `--skills` is the undocumented compatibility alias: the plural form
+        // shipped first, so harnesses pinned to it must keep working.
+        let cli = parse(&["longbridge", "agent", "--skills"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Agent {
+                cmd: None,
+                skill: true
+            })
+        ));
+    }
+
+    #[test]
+    fn agent_skill_is_advertised_but_skills_alias_is_hidden() {
+        let help = render_subcommand_help("agent").expect("agent is a subcommand");
+        assert!(help.contains("--skill"), "help must advertise --skill");
+        assert!(
+            !help.contains("--skills"),
+            "the plural alias must stay out of --help: {help}"
+        );
+    }
+
+    #[test]
+    fn bare_group_help_lists_every_subcommand() {
+        // Bare `agent` / `workspace` print this instead of running a command,
+        // so the text must actually name what the user can run next.
+        let agent = render_subcommand_help("agent").expect("agent is a subcommand");
+        for sub in ["list", "chat", "continue"] {
+            assert!(agent.contains(sub), "agent help must mention `{sub}`");
+        }
+
+        let workspace = render_subcommand_help("workspace").expect("workspace is a subcommand");
+        assert!(
+            workspace.contains("list"),
+            "workspace help must mention `list`"
+        );
+    }
+
+    #[test]
+    fn render_subcommand_help_rejects_unknown_group() {
+        assert!(render_subcommand_help("definitely-not-a-command").is_none());
     }
 
     // ─── Error cases ──────────────────────────────────────────────────────────

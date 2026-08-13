@@ -57,6 +57,11 @@ fn read_only_probes() -> Vec<Probe> {
     vec![
         p(&["auth", "status"], &["auth", "status", "--format", "json"]),
         p(&["check"], &["check", "--format", "json"]),
+        p(
+            &["workspace", "list"],
+            &["workspace", "list", "--format", "json"],
+        ),
+        p(&["agent", "list"], &["agent", "list", "--format", "json"]),
         p(&["quote"], &["quote", "TSLA.US", "--format", "json"]),
         p(&["depth"], &["depth", "TSLA.US", "--format", "json"]),
         p(&["brokers"], &["brokers", "700.HK", "--format", "json"]),
