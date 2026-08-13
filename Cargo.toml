@@ -1,6 +1,3 @@
-[workspace]
-members = ["crates/longbridge-ai-acp"]
-
 [package]
 edition = "2021"
 name = "longbridge-terminal"
@@ -41,7 +38,7 @@ dashmap = "6.1"
 dirs = "5.0"
 csv = "1"
 longbridge = { git = "https://github.com/longbridge/openapi.git", rev = "e8a0257b2776ec752f532e6f30fda1033f144d9e" }
-longbridge-ai-acp = { path = "crates/longbridge-ai-acp" }
+longbridge-ai-acp = { git = "https://github.com/longbridge/longbridge-ai-acp.git", branch = "main" }
 futures = "0.3.28"
 open = "5"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "gzip", "brotli"] }

@@ -40,7 +40,7 @@ Longbridge OpenAPI 已提供 LongbridgeAI Agent 能力。我们希望把它收�
 
 ### 2.1 As-is（当前 worktree 已有事实）
 
-- workspace 已包含 `crates/longbridge-ai-acp`。
+- ACP runtime 已提取到独立仓库 `longbridge/longbridge-ai-acp`；消费者直接跟踪其 `main` 分支。
 - crate 只提供 provider-neutral 的 `AgentBackend` seam、ACP client/server runtime 与会话 actor，不依赖 OpenAPI 或任何桌面私有 API。
 - CLI 专属 `OpenApiAgent` Adapter 位于 `longbridge-terminal` 主包；它不属于可复用 ACP crate。
 - 桌面产品必须在各自仓库实现私有 API Adapter；API 地址、请求类型、凭证与授权刷新不进入 ACP crate。
@@ -270,10 +270,10 @@ ACP `session_id` 由 ACP Agent Runtime 分配，映射到 `(cwd, AgentSession)`�
 
 ACP v1 没有通用的 chart/table session update。LongbridgeAI 的富内容因此采用“双重表达”，而不是把私有 JSON 冒充成标准 ACP 类型：
 
-1. **标准表达**：正文始终保留 Markdown 降级内容。表格使用 GFM table；图表使用 `vis-chart` fenced code block；HTML、SVG 和 widget 保留各自 fenced block 或资源链接。任何标准 ACP Client 至少能读取标题、原始数据和文字说明。
-2. **增强表达**：同一 content chunk 的 `_meta["longbridge.ai/rich-content"]` 携带结构化 envelope。Longbridge GPUI 和 AI Desktop 读取该扩展并复用原 Chat renderer；Zed、Codex 等通用客户端可安全忽略它。
+1. **标准表达**：表格与图表转换为 GFM Markdown table；支持的图表和安全的 `svg-inline` 另外发送 `image/svg+xml`；HTML 转换为有长度上限的纯文本摘要；widget 转换为公开链接、`ResourceLink` 或兼容说明。通用客户端不需要理解 Longbridge fenced block。
+2. **增强表达**：`_meta["longbridge.ai/event"]` 保留完整原始事件，`_meta["longbridge.ai/rich-content"]` 携带结构化 envelope。Longbridge GPUI 和 AI Desktop 优先读取原始事件并复用现有 Chat renderer；配对的标准表示带 `longbridge.ai/standard-fallback` 标记并由 Longbridge 客户端忽略，避免重复渲染。
 3. **单一事实源**：结构化 payload 是图表数据的事实源，fallback 仅用于不支持扩展的客户端。Adapter 必须保证二者语义一致，不能让图表与文字表格显示不同数值。
-4. **流式完整性**：围栏未闭合或 JSON 未完整时只作为正文增量传输；解析成功后才产生 rich-content snapshot。相同 `content_id` 的后续 snapshot 覆盖前一个，不追加重复图表。
+4. **流式完整性**：围栏、widget、stock mention 或 citation 跨 chunk 时先保留最短必要前缀；完整解析后才发送标准表示，不能泄漏半截 JSON/HTML/SVG。
 
 扩展 envelope 版本化如下：
 
@@ -284,7 +284,7 @@ ACP v1 没有通用的 chart/table session update。LongbridgeAI 的富内容因
   "kind": "chart",
   "mime_type": "application/vnd.longbridge.chart+json",
   "data": { "type": "column", "data": [] },
-  "fallback": "```vis-chart\n{...}\n```"
+  "fallback": "| category | value |\n| --- | --- |"
 }
 ```
 
@@ -293,18 +293,18 @@ ACP v1 没有通用的 chart/table session update。LongbridgeAI 的富内容因
 | Kind | 线格式 / MIME | PortAI | Longbridge GPUI | 通用 ACP 降级 |
 | --- | --- | --- | --- | --- |
 | Markdown table | GFM Markdown | 原生 | 原生 | 原生文本 |
-| Statistical chart | `application/vnd.longbridge.chart+json` | `pie`, `column`, `bar`, `line`, `area`, `scatter`, `histogram`, `treemap`, `word-cloud`, `dual-axes`, `radar`, `funnel`, `boxplot`, `sankey` | 原生 `pie/column/bar/line/area/radar/dual-axes`，其余显示可读占位/原始数据 | `vis-chart` JSON fence |
-| Diagram / graph | 同上 | `mind-map`, `fishbone-diagram`, `flow-diagram`, `indented-tree`, `network-graph`, `organization-chart` | 暂不原生绘制 | `vis-chart` JSON fence |
-| Geographic chart | 同上 | `pin-map`, `path-map`, `heat-map` | 暂不原生绘制 | `vis-chart` JSON fence |
-| Inline SVG | `image/svg+xml` / `svg-inline` | 原生 | 保留围栏，To-be 原生 | SVG resource 或 code fence |
-| Live HTML | `text/html` / `html-live` | 沙箱渲染 | 原生卡片/跳转 | code fence；不得直接执行 |
+| Statistical chart | `application/vnd.longbridge.chart+json` | `pie`, `column`, `bar`, `line`, `area`, `scatter`, `histogram`, `treemap`, `word-cloud`, `dual-axes`, `radar`, `funnel`, `boxplot`, `sankey` | 原生 `pie/column/bar/line/area/radar/dual-axes`，其余显示可读占位/原始数据 | GFM table；可绘制类型另带 SVG image |
+| Diagram / graph | 同上 | `mind-map`, `fishbone-diagram`, `flow-diagram`, `indented-tree`, `network-graph`, `organization-chart` | 暂不原生绘制 | GFM table / 有界说明，结构化数据留在 metadata |
+| Geographic chart | 同上 | `pin-map`, `path-map`, `heat-map` | 暂不原生绘制 | GFM table / 有界说明，结构化数据留在 metadata |
+| Inline SVG | `image/svg+xml` / `svg-inline` | 原生 | 原始事件进入现有 UI | 安全 SVG image + 简短文字；不回显源码 |
+| Live HTML | `text/html` / `html-live` | 沙箱渲染 | 原生卡片/跳转 | 有界纯文本摘要；不得直接执行或回显整页 HTML |
 | Longbridge widget | `widget://...` resource | 原生 `x-widget` | quote/comparison 等已知 widget 原生 | `ResourceLink` + 文本说明 |
 | Stock / citation | namespaced metadata + Markdown marker | 原生 | 原生 | 普通链接与文字 |
 | Artifact | ACP resource link 或 embedded resource | 原生 | 按 MIME/资源能力降级 | `ResourceLink` / `EmbeddedResource` |
 
 图表类型以 PortAI 当前 renderer 为基线，共 24 个规范化类型；`heatmap`/`heat-map`、`dualaxes`/`dual-axes` 等输入别名在 Adapter 内归一化。渲染能力按客户端 capability 决定，不能因为 GPUI 当前只实现其中一部分，就在 ACP seam 丢弃其余结构化数据。
 
-Longbridge 客户端的消费优先级是：原生 ACP content block → `longbridge.ai/rich-content` → Markdown fallback。未知 `version`、`kind` 或图表 `type` 必须显示 fallback，不能让整条回答失败。HTML/SVG/widget 必须继续执行现有的 URL、脚本和内容安全策略；ACP 扩展不扩大信任范围。
+Longbridge 客户端的消费优先级是：`longbridge.ai/event` 原始事件 → 非配对的 `longbridge.ai/rich-content` → 普通 ACP content。带 `longbridge.ai/standard-fallback` 的配对内容必须忽略。未知 `version`、`kind` 或图表 `type` 必须显示 fallback，不能让整条回答失败。HTML/SVG/widget 必须继续执行现有的 URL、脚本和内容安全策略；ACP 扩展不扩大信任范围。
 
 ## 9. 授权与安全设计
 
