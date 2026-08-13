@@ -1,8 +1,14 @@
 use async_trait::async_trait;
-use futures::{stream::BoxStream, StreamExt};
+use futures::{stream, stream::BoxStream, StreamExt};
 use longbridge::agent::ConversationStreamEvent;
-use longbridge_ai_acp::{AgentBackend, AgentEvent, AgentPlanEntry, BackendError};
-use std::path::Path;
+use longbridge_ai_acp::{
+    AgentBackend, AgentEvent, AgentPlanEntry, AgentSessionInfo, AgentSessionPage, BackendError,
+    LoadedAgentSession,
+};
+use std::{
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct OpenApiAgentSession {
@@ -96,8 +102,7 @@ fn answers_for(
                     .iter()
                     .zip(lines)
                     .map(|(question, answer)| normalize_answer(question, answer))
-                    .collect::<Result<Vec<_>, _>>()?
-                    .into_iter(),
+                    .collect::<Result<Vec<_>, _>>()?,
             )
             .collect()
     };
@@ -145,6 +150,67 @@ fn normalize_answer(question: &PendingQuestion, input: &str) -> Result<String, B
 pub struct OpenApiAgent {
     context: longbridge::AgentContext,
     agent_id: String,
+    history: Arc<Mutex<SessionHistory>>,
+}
+
+#[derive(Clone)]
+struct StoredSession {
+    session_id: String,
+    cwd: PathBuf,
+    title: Option<String>,
+    state: OpenApiAgentSession,
+    events: Vec<AgentEvent<OpenApiAgentSession>>,
+}
+
+#[derive(Default)]
+struct SessionHistory {
+    sessions: Vec<StoredSession>,
+}
+
+impl SessionHistory {
+    const PAGE_SIZE: usize = 50;
+
+    fn list(&self, cwd: Option<&Path>, cursor: Option<&str>) -> AgentSessionPage {
+        let offset = cursor
+            .and_then(|cursor| cursor.parse::<usize>().ok())
+            .unwrap_or_default();
+        let matching = self
+            .sessions
+            .iter()
+            .rev()
+            .filter(|session| cwd.is_none_or(|cwd| session.cwd == cwd))
+            .skip(offset)
+            .take(Self::PAGE_SIZE + 1)
+            .collect::<Vec<_>>();
+        let has_more = matching.len() > Self::PAGE_SIZE;
+        let sessions = matching
+            .into_iter()
+            .take(Self::PAGE_SIZE)
+            .map(|session| AgentSessionInfo {
+                session_id: session.session_id.clone(),
+                cwd: session.cwd.clone(),
+                title: session.title.clone(),
+                updated_at: None,
+            })
+            .collect::<Vec<_>>();
+        AgentSessionPage {
+            next_cursor: has_more.then(|| (offset + sessions.len()).to_string()),
+            sessions,
+        }
+    }
+
+    fn get(&self, session_id: &str, cwd: &Path) -> Option<StoredSession> {
+        self.sessions
+            .iter()
+            .find(|session| session.session_id == session_id && session.cwd == cwd)
+            .cloned()
+    }
+
+    fn upsert(&mut self, session: StoredSession) {
+        self.sessions
+            .retain(|existing| existing.session_id != session.session_id);
+        self.sessions.push(session);
+    }
 }
 
 impl OpenApiAgent {
@@ -152,6 +218,7 @@ impl OpenApiAgent {
         Self {
             context,
             agent_id: agent_id.into(),
+            history: Arc::new(Mutex::new(SessionHistory::default())),
         }
     }
 }
@@ -159,14 +226,62 @@ impl OpenApiAgent {
 #[async_trait]
 impl AgentBackend for OpenApiAgent {
     type Session = OpenApiAgentSession;
+    const SESSION_HISTORY: bool = true;
+
+    async fn list_sessions(
+        &self,
+        cwd: Option<&Path>,
+        cursor: Option<&str>,
+    ) -> Result<AgentSessionPage, BackendError> {
+        Ok(self
+            .history
+            .lock()
+            .map_err(|_| std::io::Error::other("session history lock is poisoned"))?
+            .list(cwd, cursor))
+    }
+
+    async fn load_session(
+        &self,
+        session_id: &str,
+        cwd: &Path,
+    ) -> Result<LoadedAgentSession<Self::Session>, BackendError> {
+        let stored = self
+            .history
+            .lock()
+            .map_err(|_| std::io::Error::other("session history lock is poisoned"))?
+            .get(session_id, cwd)
+            .ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::NotFound, "session not found")
+            })?;
+        Ok(LoadedAgentSession {
+            state: stored.state,
+            history: stream::iter(stored.events.into_iter().map(Ok)).boxed(),
+        })
+    }
 
     async fn prompt(
         &self,
         session: Self::Session,
         prompt: String,
-        _cwd: &Path,
+        cwd: &Path,
     ) -> Result<BoxStream<'static, Result<AgentEvent<Self::Session>, BackendError>>, BackendError>
     {
+        let original_prompt = prompt.clone();
+        let cwd = cwd.to_path_buf();
+        let stored = if let Some(session_id) = session.conversation_id.as_deref() {
+            self.history
+                .lock()
+                .map_err(|_| std::io::Error::other("session history lock is poisoned"))?
+                .get(session_id, &cwd)
+        } else {
+            None
+        };
+        let mut captured = stored
+            .as_ref()
+            .map_or_else(Vec::new, |stored| stored.events.clone());
+        captured.push(AgentEvent::UserText(original_prompt));
+        let mut title = stored.and_then(|stored| stored.title);
+
         let stream = if let Some(pending) = &session.pending_interaction {
             self.context
                 .continue_conversation_streamed(
@@ -528,7 +643,46 @@ impl AgentBackend for OpenApiAgent {
                     Err(error) => Some(Err(Box::new(error) as BackendError)),
                 }
             })
+            .map({
+                let history = Arc::clone(&self.history);
+                move |result| {
+                    if let Ok(event) = &result {
+                        if let AgentEvent::SessionTitle {
+                            title: new_title, ..
+                        } = event
+                        {
+                            title = Some(new_title.clone());
+                        }
+                        captured.push(event.clone());
+                        if let Some(state) = event_session(event) {
+                            if let Some(session_id) = &state.conversation_id {
+                                if let Ok(mut history) = history.lock() {
+                                    history.upsert(StoredSession {
+                                        session_id: session_id.clone(),
+                                        cwd: cwd.clone(),
+                                        title: title.clone(),
+                                        state: state.clone(),
+                                        events: captured.clone(),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    result
+                }
+            })
             .boxed())
+    }
+}
+
+fn event_session(event: &AgentEvent<OpenApiAgentSession>) -> Option<&OpenApiAgentSession> {
+    match event {
+        AgentEvent::NeedsInput { session, .. }
+        | AgentEvent::PermissionRequired { session, .. }
+        | AgentEvent::Notice { session, .. }
+        | AgentEvent::Completed { session, .. }
+        | AgentEvent::Finished(session) => Some(session),
+        _ => None,
     }
 }
 
@@ -597,9 +751,10 @@ fn render_question(question: &str, options: &[PendingOption], multi_select: bool
         options
             .iter()
             .enumerate()
-            .map(|(index, option)| match option.label.is_empty() {
-                true => format!("{}. {}", index + 1, option.description),
-                false => format!("{}. {} — {}", index + 1, option.label, option.description),
+            .map(|(index, option)| if option.label.is_empty() {
+                format!("{}. {}", index + 1, option.description)
+            } else {
+                format!("{}. {} — {}", index + 1, option.label, option.description)
             })
             .collect::<Vec<_>>()
             .join("\n"),
@@ -724,5 +879,57 @@ mod tests {
 
         let string = serde_json::Value::String(object.to_string());
         assert_eq!(plan_entries(Some(&string)), entries);
+    }
+
+    #[test]
+    fn session_history_lists_newest_first_and_filters_by_cwd() {
+        let mut history = SessionHistory::default();
+        for (session_id, cwd) in [
+            ("first", PathBuf::from("/workspace/a")),
+            ("other", PathBuf::from("/workspace/b")),
+            ("latest", PathBuf::from("/workspace/a")),
+        ] {
+            history.upsert(StoredSession {
+                session_id: session_id.into(),
+                cwd,
+                title: Some(session_id.into()),
+                state: OpenApiAgentSession::default(),
+                events: vec![AgentEvent::UserText(session_id.into())],
+            });
+        }
+
+        let page = history.list(Some(Path::new("/workspace/a")), None);
+        assert_eq!(
+            page.sessions
+                .iter()
+                .map(|session| session.session_id.as_str())
+                .collect::<Vec<_>>(),
+            ["latest", "first"]
+        );
+        assert_eq!(page.next_cursor, None);
+    }
+
+    #[test]
+    fn session_history_upsert_replaces_and_moves_session_to_front() {
+        let mut history = SessionHistory::default();
+        let stored = |title: &str| StoredSession {
+            session_id: "chat-1".into(),
+            cwd: PathBuf::from("/workspace"),
+            title: Some(title.into()),
+            state: OpenApiAgentSession {
+                conversation_id: Some("chat-1".into()),
+                ..Default::default()
+            },
+            events: vec![AgentEvent::Text(title.into())],
+        };
+        history.upsert(stored("old"));
+        history.upsert(stored("new"));
+
+        assert_eq!(history.sessions.len(), 1);
+        let loaded = history
+            .get("chat-1", Path::new("/workspace"))
+            .expect("stored session");
+        assert_eq!(loaded.title.as_deref(), Some("new"));
+        assert_eq!(loaded.events, vec![AgentEvent::Text("new".into())]);
     }
 }
