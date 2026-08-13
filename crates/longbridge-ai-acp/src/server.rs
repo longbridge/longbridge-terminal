@@ -590,6 +590,7 @@ struct RichTextFilter {
     buffer: String,
     content_id_prefix: String,
     next_chart: usize,
+    next_html: usize,
 }
 
 impl RichTextFilter {
@@ -598,16 +599,30 @@ impl RichTextFilter {
             buffer: String::new(),
             content_id_prefix: content_id_prefix.to_owned(),
             next_chart: 1,
+            next_html: 1,
         }
     }
 
     fn push(&mut self, text: &str) -> Vec<FilteredContent> {
-        const MARKER: &str = "```vis-chart";
+        const CHART_MARKER: &str = "```vis-chart";
+        const HTML_MARKER: &str = "```html";
         self.buffer.push_str(text);
         let mut output = Vec::new();
         loop {
-            let Some(open) = self.buffer.find(MARKER) else {
-                let retained = marker_suffix_len(&self.buffer, MARKER);
+            let chart_open = self.buffer.find(CHART_MARKER);
+            let html_open = self.buffer.find(HTML_MARKER);
+            let selected = match (chart_open, html_open) {
+                (Some(chart), Some(html)) if html < chart => Some((html, HTML_MARKER, true)),
+                (Some(chart), _) => Some((chart, CHART_MARKER, false)),
+                (None, Some(html)) => Some((html, HTML_MARKER, true)),
+                (None, None) => None,
+            };
+            let Some((open, marker, is_html)) = selected else {
+                let retained = [CHART_MARKER, HTML_MARKER]
+                    .iter()
+                    .map(|marker| marker_suffix_len(&self.buffer, marker))
+                    .max()
+                    .unwrap_or(0);
                 let emit_len = self.buffer.len() - retained;
                 if emit_len > 0 {
                     output.push(FilteredContent::Text(
@@ -619,7 +634,7 @@ impl RichTextFilter {
             if open > 0 {
                 output.push(FilteredContent::Text(self.buffer.drain(..open).collect()));
             }
-            let after_marker = MARKER.len();
+            let after_marker = marker.len();
             let Some(body_start) = self.buffer[after_marker..]
                 .strip_prefix("\r\n")
                 .map(|_| after_marker + 2)
@@ -638,6 +653,20 @@ impl RichTextFilter {
             let end = close + 3;
             let complete: String = self.buffer.drain(..end).collect();
             let body = &complete[body_start..close];
+            if is_html {
+                let fallback = html_text_fallback(body);
+                if let Ok(html) = RichContent::opaque(
+                    format!("{}:html-{}", self.content_id_prefix, self.next_html),
+                    crate::RichContentKind::Html,
+                    "text/html",
+                    serde_json::json!({ "html": body }),
+                    fallback,
+                ) {
+                    self.next_html += 1;
+                    output.push(FilteredContent::Rich(html));
+                }
+                continue;
+            }
             match serde_json::from_str(body.trim()).ok().and_then(|data| {
                 RichContent::chart(
                     format!("{}:chart-{}", self.content_id_prefix, self.next_chart),
@@ -661,6 +690,32 @@ impl RichTextFilter {
         } else {
             vec![FilteredContent::Text(std::mem::take(&mut self.buffer))]
         }
+    }
+}
+
+fn html_text_fallback(html: &str) -> String {
+    let mut text = String::new();
+    let mut in_tag = false;
+    for character in html.chars() {
+        match character {
+            '<' => in_tag = true,
+            '>' => {
+                in_tag = false;
+                if !text.ends_with(' ') {
+                    text.push(' ');
+                }
+            }
+            character if !in_tag => text.push(character),
+            _ => {}
+        }
+    }
+    let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let compact = compact.chars().take(800).collect::<String>();
+    if compact.is_empty() {
+        "Interactive HTML content was omitted because this ACP client may not render it safely."
+            .to_owned()
+    } else {
+        format!("Interactive HTML preview omitted.\n\n{compact}")
     }
 }
 
@@ -789,6 +844,26 @@ mod tests {
             tool_failure_message("Quote", None),
             "\nTool ‘Quote’ failed.\n"
         );
+    }
+
+    #[test]
+    fn streamed_html_is_replaced_with_bounded_plain_text() {
+        let mut filter = RichTextFilter::new("session-1");
+        assert!(filter
+            .push("Before\n```ht")
+            .iter()
+            .any(|item| { matches!(item, FilteredContent::Text(text) if text == "Before\n") }));
+        let output = filter.push(
+            "ml\n<!doctype html><html><body><h1>Grouped chart</h1><script>large()</script></body></html>\n```\nAfter",
+        );
+        let FilteredContent::Rich(html) = &output[0] else {
+            panic!("expected filtered HTML content");
+        };
+        assert_eq!(html.kind, crate::RichContentKind::Html);
+        assert!(html.fallback.contains("Grouped chart"));
+        assert!(!html.fallback.contains("<html"));
+        assert!(html.fallback.len() < 1_000);
+        assert!(matches!(output.get(1), Some(FilteredContent::Text(text)) if text == "\nAfter"));
     }
 
     #[async_trait]
