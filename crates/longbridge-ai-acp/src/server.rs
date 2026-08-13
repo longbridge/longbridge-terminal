@@ -748,9 +748,8 @@ fn symbol_from_counter_id(counter_id: &str) -> Option<String> {
 }
 
 fn stock_markdown_link(symbol: &str) -> String {
-    let display = symbol.split('.').next().unwrap_or(symbol);
     format!(
-        "[{display}](https://longbridge.com/quote/{})",
+        "[{symbol}](https://longbridge.com/quote/{})",
         symbol.to_ascii_lowercase()
     )
 }
@@ -947,7 +946,7 @@ mod tests {
         assert!(matches!(
             output.first(),
             Some(FilteredContent::Text(text))
-                if text == "[TSLA](https://longbridge.com/quote/tsla.us)"
+                if text == "[TSLA.US](https://longbridge.com/quote/tsla.us)"
         ));
         assert!(matches!(
             output.get(1),
