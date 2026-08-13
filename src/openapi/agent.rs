@@ -16,6 +16,8 @@ use std::{
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct OpenApiAgentSession {
+    #[serde(default)]
+    acp_session_id: Option<String>,
     conversation_id: Option<String>,
     parent_message_id: Option<String>,
     pending_interaction: Option<PendingInteraction>,
@@ -286,6 +288,13 @@ impl AgentBackend for OpenApiAgent {
     type Session = OpenApiAgentSession;
     const SESSION_HISTORY: bool = true;
 
+    fn new_session(&self, session_id: &str, _cwd: &Path) -> Self::Session {
+        OpenApiAgentSession {
+            acp_session_id: Some(session_id.to_owned()),
+            ..Default::default()
+        }
+    }
+
     async fn list_sessions(
         &self,
         cwd: Option<&Path>,
@@ -325,8 +334,13 @@ impl AgentBackend for OpenApiAgent {
     ) -> Result<BoxStream<'static, Result<AgentEvent<Self::Session>, BackendError>>, BackendError>
     {
         let original_prompt = prompt.clone();
+        let acp_session_id = session.acp_session_id.clone();
         let cwd = cwd.to_path_buf();
-        let stored = if let Some(session_id) = session.conversation_id.as_deref() {
+        let stored = if let Some(session_id) = session
+            .acp_session_id
+            .as_deref()
+            .or(session.conversation_id.as_deref())
+        {
             self.history
                 .lock()
                 .map_err(|_| std::io::Error::other("session history lock is poisoned"))?
@@ -369,7 +383,9 @@ impl AgentBackend for OpenApiAgent {
         };
 
         Ok(stream
-            .filter_map(|event| async move {
+            .filter_map(move |event| {
+                let acp_session_id = acp_session_id.clone();
+                async move {
                 match event {
                     Ok(ConversationStreamEvent::Message(message))
                         if message.message_type == "think" =>
@@ -450,6 +466,7 @@ impl AgentBackend for OpenApiAgent {
                             .find(|(_, interaction_type, _, _)| interaction_type == "authorization")
                         {
                             let state = OpenApiAgentSession {
+                                acp_session_id: acp_session_id.clone(),
                                 conversation_id: Some(response.chat_uid),
                                 parent_message_id: Some(response.message_id),
                                 pending_interaction: Some(PendingInteraction {
@@ -474,6 +491,7 @@ impl AgentBackend for OpenApiAgent {
                             interaction_type == "trade_password"
                         }) {
                             let state = OpenApiAgentSession {
+                                acp_session_id: acp_session_id.clone(),
                                 conversation_id: Some(response.chat_uid),
                                 parent_message_id: Some(response.message_id),
                                 pending_interaction: None,
@@ -488,6 +506,7 @@ impl AgentBackend for OpenApiAgent {
                             interaction_type == "data_authorization"
                         }) {
                             let state = OpenApiAgentSession {
+                                acp_session_id: acp_session_id.clone(),
                                 conversation_id: Some(response.chat_uid),
                                 parent_message_id: Some(response.message_id),
                                 pending_interaction: None,
@@ -524,6 +543,7 @@ impl AgentBackend for OpenApiAgent {
                             });
                         }
                         let state = OpenApiAgentSession {
+                            acp_session_id: acp_session_id.clone(),
                             conversation_id: Some(response.chat_uid),
                             parent_message_id: Some(response.message_id),
                             pending_interaction: Some(PendingInteraction { groups }),
@@ -550,6 +570,7 @@ impl AgentBackend for OpenApiAgent {
                         });
                         Some(Ok(AgentEvent::Completed {
                             session: OpenApiAgentSession {
+                                acp_session_id: acp_session_id.clone(),
                                 conversation_id: metadata
                                     .get("chat_uid")
                                     .and_then(serde_json::Value::as_str)
@@ -700,6 +721,7 @@ impl AgentBackend for OpenApiAgent {
                     }
                     Err(error) => Some(Err(Box::new(error) as BackendError)),
                 }
+                }
             })
             .map({
                 let history = Arc::clone(&self.history);
@@ -714,7 +736,11 @@ impl AgentBackend for OpenApiAgent {
                         }
                         captured.push(event.clone());
                         if let Some(state) = event_session(event) {
-                            if let Some(session_id) = &state.conversation_id {
+                            if let Some(session_id) = state
+                                .acp_session_id
+                                .as_ref()
+                                .or(state.conversation_id.as_ref())
+                            {
                                 if let Ok(mut history) = history.lock() {
                                     history.upsert(StoredSession {
                                         session_id: session_id.clone(),
@@ -1030,6 +1056,7 @@ mod tests {
             cwd: PathBuf::from("/workspace"),
             title: Some("Saved chat".into()),
             state: OpenApiAgentSession {
+                acp_session_id: Some("chat-1".into()),
                 conversation_id: Some("conversation-1".into()),
                 parent_message_id: Some("message-1".into()),
                 pending_interaction: None,
@@ -1051,5 +1078,15 @@ mod tests {
             Some("message-1")
         );
         assert_eq!(session.events.len(), 2);
+    }
+
+    #[test]
+    fn new_backend_session_retains_the_acp_session_id() {
+        let state = OpenApiAgentSession {
+            acp_session_id: Some("acp-session-1".into()),
+            ..Default::default()
+        };
+
+        assert_eq!(state.acp_session_id.as_deref(), Some("acp-session-1"));
     }
 }
