@@ -341,6 +341,24 @@ async fn main() {
             cli::completion::cmd_completion(shell);
         }
 
+        Some(cli::Commands::Acp { agent_id }) => {
+            let agent_id = agent_id
+                .or_else(|| std::env::var("LONGBRIDGE_AGENT_ID").ok())
+                .unwrap_or_else(|| "chatbot".to_string());
+            let using_api_key = match openapi::init_contexts().await {
+                Ok((_, using_api_key, _)) => using_api_key,
+                Err(e) => {
+                    eprintln!("{}: {e}", t!("ACP.AuthenticationFailed"));
+                    std::process::exit(1);
+                }
+            };
+            let backend = openapi::OpenApiAgent::new(openapi::agent().clone(), agent_id);
+            if let Err(e) = longbridge_ai_acp::serve_stdio(backend).await {
+                print_cli_error(&anyhow::anyhow!(e), using_api_key);
+                std::process::exit(1);
+            }
+        }
+
         // `Agent { skill: true }` never reaches here: it is handled above,
         // before any network work.
         Some(cmd) => {

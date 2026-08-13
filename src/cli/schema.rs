@@ -286,6 +286,7 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<ResponseSchema> {
         "update" => crate::update::schema_for_path(path),
         "tui" => crate::tui::schema_for_path(path),
         "completion" => completion::schema_for_path(path),
+        "acp" => (path == ["acp"]).then(|| text("ACP JSON-RPC session over stdio")),
         "quote" | "depth" | "brokers" | "trades" | "intraday" | "kline" | "static"
         | "calc-index" | "capital" | "market-temp" | "trading" | "security-list"
         | "participants" | "subscriptions" | "option" | "warrant" | "constituent"
@@ -491,37 +492,54 @@ mod tests {
 
     #[test]
     fn schema_path_preparse_selects_nested_command_without_required_args() {
-        let mut root = Cli::command();
-        root.build();
-        let args = [
-            OsString::from("kline"),
-            OsString::from("history"),
-            OsString::from("--schema"),
-        ];
+        // clap validates this broad command tree recursively in debug builds.
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut root = Cli::command();
+                root.build();
+                let args = [
+                    OsString::from("kline"),
+                    OsString::from("history"),
+                    OsString::from("--schema"),
+                ];
 
-        let (selected, path) = selected_command_and_path_for_args(&root, args.iter());
+                let (selected, path) = selected_command_and_path_for_args(&root, args.iter());
 
-        assert_eq!(selected.get_name(), "history");
-        assert_eq!(path, vec!["kline".to_string(), "history".to_string()]);
+                assert_eq!(selected.get_name(), "history");
+                assert_eq!(path, vec!["kline".to_string(), "history".to_string()]);
+            })
+            .expect("spawn schema preparse thread")
+            .join()
+            .expect("schema preparse thread");
     }
 
     #[test]
     fn every_real_leaf_command_has_schema_provider() {
-        let mut root = Cli::command();
-        root.build();
-        let paths = real_leaf_paths(&root);
-        assert_eq!(
-            paths.len(),
-            146,
-            "real command count changed; review schema coverage"
-        );
+        // clap's debug-time validation of this unusually broad command tree is
+        // recursive and exceeds the test harness's 2 MiB worker stack.
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut root = Cli::command();
+                root.build();
+                let paths = real_leaf_paths(&root);
+                assert_eq!(
+                    paths.len(),
+                    147,
+                    "real command count changed; review schema coverage"
+                );
 
-        let missing = paths
-            .iter()
-            .filter(|path| schema_for_path(path).is_none())
-            .map(|path| path.join(" "))
-            .collect::<Vec<_>>();
+                let missing = paths
+                    .iter()
+                    .filter(|path| schema_for_path(path).is_none())
+                    .map(|path| path.join(" "))
+                    .collect::<Vec<_>>();
 
-        assert!(missing.is_empty(), "missing schema coverage: {missing:#?}");
+                assert!(missing.is_empty(), "missing schema coverage: {missing:#?}");
+            })
+            .expect("spawn schema coverage thread")
+            .join()
+            .expect("schema coverage thread");
     }
 }

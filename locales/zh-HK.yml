@@ -330,6 +330,7 @@ ReplaceOrder.Title: "改單"
 ReplaceOrder.OrderId: "委託號"
 ReplaceOrder.NewQty: "新數量"
 ReplaceOrder.NewPrice: "新價格"
+ACP.AuthenticationFailed: "認證失敗"
 Agent:
   Thinking: "思考中…"
   CallingTool: "調用工具：%{name}"

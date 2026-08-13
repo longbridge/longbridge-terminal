@@ -143,6 +143,17 @@ pub enum Commands {
     /// Example: longbridge tui
     Tui,
 
+    /// Serve a Longbridge AI agent over ACP on stdin/stdout
+    ///
+    /// The process speaks newline-delimited JSON-RPC and is intended to be
+    /// launched by ACP clients such as Zed and Cherry Studio.
+    /// Example: longbridge acp
+    Acp {
+        /// Longbridge AI agent UID (defaults to the main `chatbot` agent)
+        #[arg(long)]
+        agent_id: Option<String>,
+    },
+
     /// Generate shell completion script
     ///
     /// Prints a shell completion script to stdout.
@@ -3267,11 +3278,23 @@ pub enum AuthCmd {
 /// Returns `None` only when `name` is not a top-level subcommand, which would
 /// be a caller bug rather than user input.
 pub fn render_subcommand_help(name: &str) -> Option<String> {
-    use clap::CommandFactory;
-    let mut root = Cli::command();
-    root.build();
-    root.find_subcommand_mut(name)
-        .map(|sub| sub.render_help().to_string())
+    // clap's recursive build of this unusually broad command tree can exceed a
+    // small worker stack (e.g. the 2 MiB test harness thread), so build it on a
+    // generous one. Bare-group help is a rare, interactive path, so the extra
+    // thread costs nothing in practice.
+    let name = name.to_string();
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            use clap::CommandFactory;
+            let mut root = Cli::command();
+            root.build();
+            root.find_subcommand_mut(&name)
+                .map(|sub| sub.render_help().to_string())
+        })
+        .expect("spawn subcommand-help thread")
+        .join()
+        .expect("subcommand-help thread")
 }
 
 /// Print a subcommand group's help, then exit with clap's usage-error code.
@@ -4066,6 +4089,7 @@ IpoCmd::ProfitLoss { period, page, count } => {
         Commands::Agent { cmd, skill } => agent::cmd_agent(cmd, skill, format, verbose).await,
 
         Commands::Auth { .. }
+        | Commands::Acp { .. }
         | Commands::Tui
         | Commands::Check
         | Commands::Update { .. }
@@ -4082,7 +4106,13 @@ mod tests {
     use clap::Parser;
 
     fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
-        Cli::try_parse_from(args)
+        let args = args.iter().map(ToString::to_string).collect::<Vec<_>>();
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(move || Cli::try_parse_from(args))
+            .expect("spawn CLI parser thread")
+            .join()
+            .expect("CLI parser thread")
     }
 
     // ─── Format flag ──────────────────────────────────────────────────────────
@@ -4120,6 +4150,24 @@ mod tests {
             Some(Commands::Auth {
                 cmd: AuthCmd::Logout
             })
+        ));
+    }
+
+    #[test]
+    fn test_acp_agent_id_is_optional() {
+        let cli = parse(&["longbridge", "acp"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Acp { agent_id: None })
+        ));
+    }
+
+    #[test]
+    fn test_acp_accepts_agent_id_override() {
+        let cli = parse(&["longbridge", "acp", "--agent-id", "custom-agent"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Acp { agent_id: Some(agent_id) }) if agent_id == "custom-agent"
         ));
     }
 

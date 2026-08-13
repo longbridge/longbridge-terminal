@@ -442,10 +442,12 @@ mod tests {
                 questions: vec![Question {
                     question: "Which period?".into(),
                     options: vec![QuestionOption {
+                        label: "1w".into(),
                         description: "1w".into(),
                     }],
                     multi_select: false,
                 }],
+                interactions: vec![],
                 message_id: 42,
                 chat_id: 1,
             }),

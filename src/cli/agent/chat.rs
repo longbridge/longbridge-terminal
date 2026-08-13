@@ -1634,53 +1634,62 @@ mod tests {
     /// builds a request, so this covers the ordering without any I/O.
     #[test]
     fn answers_json_does_not_bypass_the_interactive_guard() {
-        use crate::cli::{AgentCmd, Cli, Commands};
-        use clap::Parser;
+        // clap's debug-time build of this broad command tree is recursive and
+        // exceeds the test harness's 2 MiB worker stack; run it on a bigger one.
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                use crate::cli::{AgentCmd, Cli, Commands};
+                use clap::Parser;
 
-        let cli = Cli::try_parse_from([
-            "longbridge",
-            "--format",
-            "json",
-            "agent",
-            "continue",
-            "chatbot",
-            "ct_1",
-            "13025051",
-            "--interactive",
-            "--answers-json",
-            r#"{"call_a":{"Which period?":"1m"}}"#,
-        ])
-        .expect("clap must accept the flags; the guard is what rejects them");
+                let cli = Cli::try_parse_from([
+                    "longbridge",
+                    "--format",
+                    "json",
+                    "agent",
+                    "continue",
+                    "chatbot",
+                    "ct_1",
+                    "13025051",
+                    "--interactive",
+                    "--answers-json",
+                    r#"{"call_a":{"Which period?":"1m"}}"#,
+                ])
+                .expect("clap must accept the flags; the guard is what rejects them");
 
-        let Some(Commands::Agent {
-            cmd:
-                Some(AgentCmd::Continue {
-                    ids,
-                    answers_json,
-                    interactive,
+                let Some(Commands::Agent {
+                    cmd:
+                        Some(AgentCmd::Continue {
+                            ids,
+                            answers_json,
+                            interactive,
+                            ..
+                        }),
                     ..
-                }),
-            ..
-        }) = cli.command
-        else {
-            panic!("expected Agent Continue");
-        };
-        assert!(interactive);
-        assert!(matches!(cli.format, OutputFormat::Json));
+                }) = cli.command
+                else {
+                    panic!("expected Agent Continue");
+                };
+                assert!(interactive);
+                assert!(matches!(cli.format, OutputFormat::Json));
 
-        let err = resolve_continue_answers(
-            &ids[0],
-            &ids[1],
-            &[],
-            answers_json.as_deref(),
-            interactive,
-            &cli.format,
-        )
-        .expect_err("--answers-json --interactive --format json must be rejected");
-        assert!(
-            err.to_string().contains("--interactive requires"),
-            "expected the pretty-only guard, got: {err}"
-        );
+                let err = resolve_continue_answers(
+                    &ids[0],
+                    &ids[1],
+                    &[],
+                    answers_json.as_deref(),
+                    interactive,
+                    &cli.format,
+                )
+                .expect_err("--answers-json --interactive --format json must be rejected");
+                assert!(
+                    err.to_string().contains("--interactive requires"),
+                    "expected the pretty-only guard, got: {err}"
+                );
+            })
+            .expect("spawn interactive-guard thread")
+            .join()
+            .expect("interactive-guard thread");
     }
 
     /// The guard must not over-reach: the same payload without `--interactive`
