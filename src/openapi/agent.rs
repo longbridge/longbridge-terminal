@@ -5,37 +5,41 @@ use longbridge_ai_acp::{
     AgentBackend, AgentEvent, AgentPlanEntry, AgentSessionInfo, AgentSessionPage, BackendError,
     LoadedAgentSession,
 };
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
+    fmt::Write as _,
+    fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct OpenApiAgentSession {
     conversation_id: Option<String>,
     parent_message_id: Option<String>,
     pending_interaction: Option<PendingInteraction>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 struct PendingInteraction {
     groups: Vec<PendingQuestionGroup>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 struct PendingQuestionGroup {
     answer_key: String,
     questions: Vec<PendingQuestion>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 struct PendingQuestion {
     text: String,
     options: Vec<PendingOption>,
     multi_select: bool,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 struct PendingOption {
     label: String,
     description: String,
@@ -151,9 +155,10 @@ pub struct OpenApiAgent {
     context: longbridge::AgentContext,
     agent_id: String,
     history: Arc<Mutex<SessionHistory>>,
+    history_path: Option<Arc<PathBuf>>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 struct StoredSession {
     session_id: String,
     cwd: PathBuf,
@@ -162,13 +167,15 @@ struct StoredSession {
     events: Vec<AgentEvent<OpenApiAgentSession>>,
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 struct SessionHistory {
+    #[serde(default)]
     sessions: Vec<StoredSession>,
 }
 
 impl SessionHistory {
     const PAGE_SIZE: usize = 50;
+    const MAX_SESSIONS: usize = 200;
 
     fn list(&self, cwd: Option<&Path>, cursor: Option<&str>) -> AgentSessionPage {
         let offset = cursor
@@ -210,15 +217,66 @@ impl SessionHistory {
         self.sessions
             .retain(|existing| existing.session_id != session.session_id);
         self.sessions.push(session);
+        if self.sessions.len() > Self::MAX_SESSIONS {
+            self.sessions
+                .drain(..self.sessions.len() - Self::MAX_SESSIONS);
+        }
     }
+
+    fn load(path: &Path) -> Self {
+        fs::read(path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default()
+    }
+
+    fn save(&self, path: &Path) -> Result<(), BackendError> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let temporary = path.with_extension("json.tmp");
+        fs::write(&temporary, serde_json::to_vec(self)?)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600))?;
+        }
+        #[cfg(windows)]
+        if path.exists() {
+            fs::remove_file(path)?;
+        }
+        fs::rename(temporary, path)?;
+        Ok(())
+    }
+}
+
+fn session_history_path(agent_id: &str) -> Option<PathBuf> {
+    let digest = Sha256::digest(agent_id.as_bytes());
+    let key = digest[..12]
+        .iter()
+        .fold(String::with_capacity(24), |mut key, byte| {
+            let _ = write!(key, "{byte:02x}");
+            key
+        });
+    dirs::home_dir().map(|home| {
+        home.join(".longbridge")
+            .join("acp")
+            .join(format!("sessions-{key}.json"))
+    })
 }
 
 impl OpenApiAgent {
     pub fn new(context: longbridge::AgentContext, agent_id: impl Into<String>) -> Self {
+        let agent_id = agent_id.into();
+        let history_path = session_history_path(&agent_id).map(Arc::new);
+        let history = history_path
+            .as_deref()
+            .map_or_else(SessionHistory::default, |path| SessionHistory::load(path));
         Self {
             context,
-            agent_id: agent_id.into(),
-            history: Arc::new(Mutex::new(SessionHistory::default())),
+            agent_id,
+            history: Arc::new(Mutex::new(history)),
+            history_path,
         }
     }
 }
@@ -645,6 +703,7 @@ impl AgentBackend for OpenApiAgent {
             })
             .map({
                 let history = Arc::clone(&self.history);
+                let history_path = self.history_path.clone();
                 move |result| {
                     if let Ok(event) = &result {
                         if let AgentEvent::SessionTitle {
@@ -664,6 +723,16 @@ impl AgentBackend for OpenApiAgent {
                                         state: state.clone(),
                                         events: captured.clone(),
                                     });
+                                    if let Some(path) = history_path.as_deref() {
+                                        if let Err(error) = history.save(path) {
+                                            tracing::warn!(
+                                                target: "longbridge::acp",
+                                                %error,
+                                                path = %path.display(),
+                                                "failed to persist ACP session history"
+                                            );
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -931,5 +1000,56 @@ mod tests {
             .expect("stored session");
         assert_eq!(loaded.title.as_deref(), Some("new"));
         assert_eq!(loaded.events, vec![AgentEvent::Text("new".into())]);
+    }
+
+    #[test]
+    fn session_history_keeps_only_the_latest_two_hundred_sessions() {
+        let mut history = SessionHistory::default();
+        for index in 0..205 {
+            history.upsert(StoredSession {
+                session_id: format!("chat-{index}"),
+                cwd: PathBuf::from("/workspace"),
+                title: None,
+                state: OpenApiAgentSession::default(),
+                events: Vec::new(),
+            });
+        }
+
+        assert_eq!(history.sessions.len(), 200);
+        assert_eq!(history.sessions.first().unwrap().session_id, "chat-5");
+        assert_eq!(history.sessions.last().unwrap().session_id, "chat-204");
+    }
+
+    #[test]
+    fn session_history_round_trips_through_disk() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("sessions.json");
+        let mut history = SessionHistory::default();
+        history.upsert(StoredSession {
+            session_id: "chat-1".into(),
+            cwd: PathBuf::from("/workspace"),
+            title: Some("Saved chat".into()),
+            state: OpenApiAgentSession {
+                conversation_id: Some("conversation-1".into()),
+                parent_message_id: Some("message-1".into()),
+                pending_interaction: None,
+            },
+            events: vec![
+                AgentEvent::UserText("Question".into()),
+                AgentEvent::Text("Answer".into()),
+            ],
+        });
+
+        history.save(&path).expect("save history");
+        let loaded = SessionHistory::load(&path);
+        let session = loaded
+            .get("chat-1", Path::new("/workspace"))
+            .expect("loaded session");
+        assert_eq!(session.title.as_deref(), Some("Saved chat"));
+        assert_eq!(
+            session.state.parent_message_id.as_deref(),
+            Some("message-1")
+        );
+        assert_eq!(session.events.len(), 2);
     }
 }
