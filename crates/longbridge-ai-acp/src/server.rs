@@ -154,6 +154,24 @@ pub fn acp_agent<B: AgentBackend>(
                                     )),
                                 ))?;
                             }
+                            AgentEvent::Content {
+                                text,
+                                thought,
+                                metadata,
+                            } => {
+                                let content = ContentChunk::new(ContentBlock::Text(
+                                    TextContent::new(text).meta(longbridge_meta(metadata)),
+                                ));
+                                let update = if thought {
+                                    SessionUpdate::AgentThoughtChunk(content)
+                                } else {
+                                    SessionUpdate::AgentMessageChunk(content)
+                                };
+                                task_connection.send_notification(SessionNotification::new(
+                                    request.session_id.clone(),
+                                    update,
+                                ))?;
+                            }
                             AgentEvent::ToolStarted {
                                 id,
                                 title,
@@ -189,13 +207,74 @@ pub fn acp_agent<B: AgentBackend>(
                                     )),
                                 ))?;
                             }
-                            AgentEvent::NeedsInput { session, questions } => {
+                            AgentEvent::ToolStartedRich {
+                                id,
+                                title,
+                                raw_input,
+                                metadata,
+                            } => {
+                                task_connection.send_notification(SessionNotification::new(
+                                    request.session_id.clone(),
+                                    SessionUpdate::ToolCall(
+                                        ToolCall::new(id, title)
+                                            .status(ToolCallStatus::InProgress)
+                                            .raw_input(raw_input)
+                                            .meta(longbridge_meta(metadata)),
+                                    ),
+                                ))?;
+                            }
+                            AgentEvent::ToolFinishedRich {
+                                id,
+                                title,
+                                success,
+                                raw_output,
+                                metadata,
+                            } => {
+                                task_connection.send_notification(SessionNotification::new(
+                                    request.session_id.clone(),
+                                    SessionUpdate::ToolCallUpdate(
+                                        ToolCallUpdate::new(
+                                            id,
+                                            ToolCallUpdateFields::new()
+                                                .title(title)
+                                                .status(if success {
+                                                    ToolCallStatus::Completed
+                                                } else {
+                                                    ToolCallStatus::Failed
+                                                })
+                                                .raw_output(raw_output),
+                                        )
+                                        .meta(longbridge_meta(metadata)),
+                                    ),
+                                ))?;
+                            }
+                            AgentEvent::NeedsInput {
+                                session,
+                                questions,
+                                metadata,
+                            } => {
                                 prompt_sessions
                                     .write()
                                     .await
                                     .get_mut(&request.session_id)
                                     .expect("session exists")
                                     .state = session;
+                                if let Some(data) = metadata {
+                                    let mut meta = serde_json::Map::new();
+                                    meta.insert(
+                                        "longbridge.ai/event".to_string(),
+                                        serde_json::json!({
+                                            "event": "human_interaction_required",
+                                            "data": data,
+                                        }),
+                                    );
+                                    task_connection.send_notification(SessionNotification::new(
+                                        request.session_id.clone(),
+                                        SessionUpdate::AgentMessageChunk(ContentChunk::new(
+                                            ContentBlock::Text(TextContent::new("").meta(meta)),
+                                        )),
+                                    ))?;
+                                }
                                 let text = questions
                                     .iter()
                                     .enumerate()
@@ -213,6 +292,23 @@ pub fn acp_agent<B: AgentBackend>(
                                 // answer and resumes the persisted session state.
                                 break;
                             }
+                            AgentEvent::Extension {
+                                namespace,
+                                event,
+                                data,
+                            } => {
+                                let mut meta = serde_json::Map::new();
+                                meta.insert(
+                                    namespace,
+                                    serde_json::json!({ "event": event, "data": data }),
+                                );
+                                task_connection.send_notification(SessionNotification::new(
+                                    request.session_id.clone(),
+                                    SessionUpdate::AgentMessageChunk(ContentChunk::new(
+                                        ContentBlock::Text(TextContent::new("").meta(meta)),
+                                    )),
+                                ))?;
+                            }
                             AgentEvent::Finished(state) => {
                                 prompt_sessions
                                     .write()
@@ -220,6 +316,28 @@ pub fn acp_agent<B: AgentBackend>(
                                     .get_mut(&request.session_id)
                                     .expect("session exists")
                                     .state = state;
+                            }
+                            AgentEvent::Completed { session, metadata } => {
+                                prompt_sessions
+                                    .write()
+                                    .await
+                                    .get_mut(&request.session_id)
+                                    .expect("session exists")
+                                    .state = session;
+                                let mut meta = serde_json::Map::new();
+                                meta.insert(
+                                    "longbridge.ai/event".to_string(),
+                                    serde_json::json!({
+                                        "event": "workflow_finished",
+                                        "data": metadata,
+                                    }),
+                                );
+                                task_connection.send_notification(SessionNotification::new(
+                                    request.session_id.clone(),
+                                    SessionUpdate::AgentMessageChunk(ContentChunk::new(
+                                        ContentBlock::Text(TextContent::new("").meta(meta)),
+                                    )),
+                                ))?;
                             }
                         }
                     }
@@ -229,6 +347,12 @@ pub fn acp_agent<B: AgentBackend>(
             },
             agent_client_protocol::on_receive_request!(),
         )
+}
+
+fn longbridge_meta(data: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
+    let mut meta = serde_json::Map::new();
+    meta.insert("longbridge.ai/event".to_string(), data);
+    meta
 }
 
 /// Serve a backend over newline-delimited ACP JSON-RPC on stdin/stdout.

@@ -40,7 +40,7 @@ crossterm = { version = "0.29", features = ["event-stream"] }
 dashmap = "6.1"
 dirs = "5.0"
 csv = "1"
-longbridge = { git = "https://github.com/longbridge/openapi.git", rev = "25b687f72bdb2cc0afa30defbd716ef51cbdfe06" }
+longbridge = { git = "https://github.com/longbridge/openapi.git", rev = "e8a0257b2776ec752f532e6f30fda1033f144d9e" }
 longbridge-ai-acp = { path = "crates/longbridge-ai-acp" }
 futures = "0.3.28"
 open = "5"
