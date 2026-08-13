@@ -208,6 +208,10 @@ pub fn acp_agent<B: AgentBackend>(
                                         ContentBlock::Text(TextContent::new(text)),
                                     )),
                                 ))?;
+                                // A human-interaction event is terminal for this
+                                // backend turn. The next ACP prompt is the user's
+                                // answer and resumes the persisted session state.
+                                break;
                             }
                             AgentEvent::Finished(state) => {
                                 prompt_sessions

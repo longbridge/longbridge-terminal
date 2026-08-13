@@ -15,12 +15,27 @@ pub struct OpenApiAgentSession {
 struct PendingInteraction {
     tool_call_id: String,
     questions: Vec<String>,
+    authorization_only: bool,
 }
 
 fn answers_for(
     pending: &PendingInteraction,
     input: &str,
 ) -> Result<longbridge::agent::AnswersByToolCall, BackendError> {
+    if pending.authorization_only {
+        let approved = matches!(
+            input.trim().to_ascii_lowercase().as_str(),
+            "yes" | "y" | "true" | "approve" | "approved"
+        );
+        return Ok([(
+            pending.tool_call_id.clone(),
+            [("authorized".to_string(), approved.to_string())]
+                .into_iter()
+                .collect(),
+        )]
+        .into_iter()
+        .collect());
+    }
     let answers = if pending.questions.len() == 1 {
         [(pending.questions[0].clone(), input.to_owned())]
             .into_iter()
@@ -148,17 +163,46 @@ impl AgentBackend for OpenApiAgent {
                     }
                     Ok(ConversationStreamEvent::HumanInteractionRequired(response)) => {
                         let interrupt = response.interrupt?;
+                        let authorization_only = interrupt.questions.is_empty();
+                        let mut answer_questions = Vec::new();
                         let questions = interrupt
                             .questions
                             .into_iter()
-                            .map(|question| question.question)
+                            .map(|question| {
+                                answer_questions.push(question.question.clone());
+                                if question.options.is_empty() {
+                                    question.question
+                                } else {
+                                    format!(
+                                        "{} Options: {}{}",
+                                        question.question,
+                                        question
+                                            .options
+                                            .into_iter()
+                                            .map(|option| option.description)
+                                            .collect::<Vec<_>>()
+                                            .join(", "),
+                                        if question.multi_select {
+                                            " (multiple selections allowed)"
+                                        } else {
+                                            ""
+                                        }
+                                    )
+                                }
+                            })
                             .collect::<Vec<_>>();
+                        let questions = if authorization_only {
+                            vec!["Approve this protected operation? Reply yes or no.".to_string()]
+                        } else {
+                            questions
+                        };
                         let state = OpenApiAgentSession {
                             conversation_id: Some(response.chat_uid),
                             parent_message_id: Some(response.message_id),
                             pending_interaction: Some(PendingInteraction {
                                 tool_call_id: interrupt.tool_call_id,
-                                questions: questions.clone(),
+                                questions: answer_questions,
+                                authorization_only,
                             }),
                         };
                         Some(Ok(AgentEvent::NeedsInput {
@@ -186,10 +230,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn authorization_answer_is_encoded_for_continue_api() {
+        let pending = PendingInteraction {
+            tool_call_id: "approval-1".into(),
+            questions: Vec::new(),
+            authorization_only: true,
+        };
+        assert_eq!(
+            answers_for(&pending, "yes").unwrap()["approval-1"]["authorized"],
+            "true"
+        );
+    }
+
+    #[test]
+    fn question_answer_keeps_the_original_question_as_continue_key() {
+        let pending = PendingInteraction {
+            tool_call_id: "ask-1".into(),
+            questions: vec!["Which market?".into()],
+            authorization_only: false,
+        };
+        assert_eq!(
+            answers_for(&pending, "US").unwrap()["ask-1"]["Which market?"],
+            "US"
+        );
+    }
+    #[test]
     fn one_question_accepts_free_form_answer() {
         let pending = PendingInteraction {
             tool_call_id: "tool-1".into(),
             questions: vec!["Continue?".into()],
+            authorization_only: false,
         };
         let answers = answers_for(&pending, "yes").expect("answers");
         assert_eq!(answers["tool-1"]["Continue?"], "yes");
@@ -200,6 +270,7 @@ mod tests {
         let pending = PendingInteraction {
             tool_call_id: "tool-1".into(),
             questions: vec!["Market?".into(), "Period?".into()],
+            authorization_only: false,
         };
         let answers = answers_for(&pending, "US\n1 month").expect("answers");
         assert_eq!(answers["tool-1"]["Market?"], "US");
