@@ -145,9 +145,9 @@ pub enum Commands {
     ///
     /// The process speaks newline-delimited JSON-RPC and is intended to be
     /// launched by ACP clients such as Zed and Cherry Studio.
-    /// Example: longbridge acp --agent-id ag_7d3f9b2c
+    /// Example: longbridge acp
     Acp {
-        /// Published Longbridge AI agent UID
+        /// Longbridge AI agent UID (defaults to the main `chatbot` agent)
         #[arg(long)]
         agent_id: Option<String>,
     },
@@ -3970,6 +3970,24 @@ mod tests {
             Some(Commands::Auth {
                 cmd: AuthCmd::Logout
             })
+        ));
+    }
+
+    #[test]
+    fn test_acp_agent_id_is_optional() {
+        let cli = parse(&["longbridge", "acp"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Acp { agent_id: None })
+        ));
+    }
+
+    #[test]
+    fn test_acp_accepts_agent_id_override() {
+        let cli = parse(&["longbridge", "acp", "--agent-id", "custom-agent"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Acp { agent_id: Some(agent_id) }) if agent_id == "custom-agent"
         ));
     }
 

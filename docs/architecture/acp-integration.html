@@ -508,7 +508,7 @@
       <h2>授权不穿透，职责不漂移。</h2>
       <p class="section-intro">统一协议不等于统一凭证。最重要的安全边界是：谁启动 Agent，谁提供该 Agent 的配置；适配 crate 只消费，不发现、不持久化、不刷新。</p>
       <div class="boundary reveal">
-        <div class="boundary-col"><span class="owner host">HOST OWNS</span><h3>产品宿主</h3><ul><li>OAuth / token 生命周期</li><li>API endpoint 与环境选择</li><li>Agent ID 与产品配置</li><li>权限确认 UI</li><li>外部进程 allowlist</li></ul></div>
+        <div class="boundary-col"><span class="owner host">HOST OWNS</span><h3>产品宿主</h3><ul><li>OAuth / token 生命周期</li><li>API endpoint 与环境选择</li><li>可选 Agent ID（CLI 默认 <code>chatbot</code>）</li><li>权限确认 UI</li><li>外部进程 allowlist</li></ul></div>
         <div class="boundary-col"><span class="owner crate">CRATE OWNS</span><h3>longbridge-ai-acp</h3><ul><li>ACP initialize 与能力协商</li><li>session / prompt / cancel</li><li>宿主后端事件 ↔ ACP 映射</li><li>通用会话状态封装</li><li>一致的结构化错误</li></ul></div>
         <div class="boundary-col"><span class="owner provider">AGENT OWNS</span><h3>Codex / Claude</h3><ul><li>Provider 登录与模型配置</li><li>原生工具实现</li><li>自身会话语义</li><li>stderr 诊断输出</li><li>支持的 capability 集合</li></ul></div>
       </div>

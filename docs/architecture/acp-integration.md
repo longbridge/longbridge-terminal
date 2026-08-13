@@ -46,7 +46,7 @@ Longbridge OpenAPI 已提供 LongbridgeAI Agent 能力。我们希望把它收�
 - 桌面产品必须在各自仓库实现私有 API Adapter；API 地址、请求类型、凭证与授权刷新不进入 ACP crate。
 - crate 已能把 LongbridgeAI 的文本、思考、工具开始/结束、人工补充信息和完成事件映射为内部 `AgentEvent`，并将其转换为 ACP session update。
 - `acp_agent` 可在进程内构造 ACP Agent，`serve_stdio` 可通过 stdin/stdout 提供 ACP JSON-RPC。
-- CLI 已有 `longbridge acp --agent-id <ID>`，也可通过 `LONGBRIDGE_AGENT_ID` 提供 Agent ID；该命令使用 CLI 自己的 OpenAPI 初始化与授权。
+- CLI 已有 `longbridge acp`，默认使用 Longbridge AI 主 Agent `chatbot`；也可通过 `--agent-id <ID>` 或 `LONGBRIDGE_AGENT_ID` 覆盖。该命令使用 CLI 自己的 OpenAPI 初始化与授权。
 - crate 重新导出官方 ACP SDK，并以 `ExternalAgent` / `ExternalAgentConfig` 类型别名提供外部 ACP 子进程的底层入口。
 - 当前会话状态保存在进程内；已处理 ACP 回合取消并通过丢弃宿主 backend stream 停止请求，Client helper 也会暴露协商后的 capability 与实现信息；但尚无服务端显式 cancel endpoint 或持久化恢复。
 - crate 已提供 `with_session`（进程内 LongbridgeAI）和 `with_external_session`（外部 ACP 进程）的持久会话 helper，并通过 `ClientDelegate` 把 permission request 交回宿主；文件与 terminal 等完整桌面 capability facade 仍属于 To-be。
@@ -173,7 +173,7 @@ sequenceDiagram
     participant B as OpenApiAgent
     participant S as LongbridgeAI 服务端
 
-    C->>CLI: 启动进程（agent-id + CLI 授权环境）
+    C->>CLI: 启动进程（可选 agent-id + CLI 授权环境）
     C->>CLI: initialize
     CLI-->>C: capabilities + implementation info
     C->>CLI: session/new(cwd)
@@ -382,17 +382,17 @@ pub async fn connect(target: AgentTarget) -> Result<Arc<dyn AgentConnection>, Ag
 ### 12.1 当前命令
 
 ```text
-longbridge acp --agent-id <AGENT_ID>
+longbridge acp
 ```
 
-`agent-id` 也可由 `LONGBRIDGE_AGENT_ID` 提供。CLI 启动后在 stdin/stdout 上运行 ACP，使用 CLI 自己初始化的 OpenAPI context。
+默认 Agent ID 为 `chatbot`。如需覆盖，可传入 `--agent-id <AGENT_ID>`，也可由 `LONGBRIDGE_AGENT_ID` 提供。CLI 启动后在 stdin/stdout 上运行 ACP，使用 CLI 自己初始化的 OpenAPI context。
 
 ### 12.2 规划约束
 
 - 缺少 Agent ID 时在协议启动前以非零状态退出，并把诊断写到 stderr。
 - stdout 只写 ACP 帧；帮助、日志和认证诊断不得混入 stdout。
 - API endpoint 若开放命令参数，优先使用 `--api-url` 或 CLI 配置，不接受隐式跨产品配置；其优先级需固定并文档化。
-- `--agent-id`、CLI 配置与环境变量的优先级应可预测，推荐：显式参数 > 环境变量 > CLI 配置。
+- Agent ID 的优先级固定为：显式 `--agent-id` > `LONGBRIDGE_AGENT_ID` > 默认 `chatbot`。
 - ACP 客户端配置示例应只包含可执行文件、`acp` 子命令、Agent ID 来源和必要环境，不携带明文 token。
 - `longbridge acp` 是面向机器的长期运行模式；不渲染 TUI，不自动升级，不输出营销信息。
 - 初始化响应只宣告真实实现的 capability；新增能力通过兼容的 capability negotiation 演进。

@@ -44,7 +44,7 @@ async fn desktop_session_owns_external_agent_lifecycle() {
 
 fn cli_config() -> ExternalAgentConfig {
     ExternalAgentConfig::new(env!("CARGO_BIN_EXE_longbridge"))
-        .args(["acp", "--agent-id", "integration-test"])
+        .arg("acp")
         .env("LONGBRIDGE_APP_KEY", "test-app-key")
         .env("LONGBRIDGE_APP_SECRET", "test-app-secret")
         .env("LONGBRIDGE_ACCESS_TOKEN", "test-access-token")

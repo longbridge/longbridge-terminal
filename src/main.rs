@@ -298,11 +298,9 @@ async fn main() {
         }
 
         Some(cli::Commands::Acp { agent_id }) => {
-            let Some(agent_id) = agent_id.or_else(|| std::env::var("LONGBRIDGE_AGENT_ID").ok())
-            else {
-                eprintln!("{}", t!("ACP.AgentIdRequired"));
-                std::process::exit(2);
-            };
+            let agent_id = agent_id
+                .or_else(|| std::env::var("LONGBRIDGE_AGENT_ID").ok())
+                .unwrap_or_else(|| "chatbot".to_string());
             let using_api_key = match openapi::init_contexts().await {
                 Ok((_, using_api_key, _)) => using_api_key,
                 Err(e) => {
