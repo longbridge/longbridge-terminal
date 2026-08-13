@@ -47,6 +47,22 @@ pub enum AgentEvent<Session> {
         /// Provider-native interaction payload for rich host UIs.
         metadata: Option<serde_json::Value>,
     },
+    /// A yes/no tool authorization that maps to ACP's standard permission UI.
+    PermissionRequired {
+        session: Session,
+        tool_call_id: String,
+        title: String,
+        metadata: Option<serde_json::Value>,
+    },
+    /// A provider pause that ACP cannot safely satisfy (for example a trade
+    /// password challenge). It is displayed as text and ends the turn.
+    Notice {
+        session: Session,
+        text: String,
+        metadata: Option<serde_json::Value>,
+    },
+    /// Versioned rich content with a standard ACP fallback and optional preview.
+    RichContent(crate::RichContent),
     /// A provider event that has no lossless representation in core ACP v1.
     ///
     /// The server transports this through ACP `_meta` under the supplied

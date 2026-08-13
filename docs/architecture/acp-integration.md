@@ -266,6 +266,46 @@ ACP `session_id` 由 ACP Agent Runtime 分配，映射到 `(cwd, AgentSession)`�
 - `NeedsInput` 必须先保存续接状态，再通知客户端，避免 UI 回答到达时状态丢失。
 - 非文本 prompt block 不应静默丢失。As-is 支持文本与 resource link，其他未声明内容返回参数错误；新增内容类型必须先协商 capability。
 
+### 8.3 富内容、表格与可视化
+
+ACP v1 没有通用的 chart/table session update。LongbridgeAI 的富内容因此采用“双重表达”，而不是把私有 JSON 冒充成标准 ACP 类型：
+
+1. **标准表达**：正文始终保留 Markdown 降级内容。表格使用 GFM table；图表使用 `vis-chart` fenced code block；HTML、SVG 和 widget 保留各自 fenced block 或资源链接。任何标准 ACP Client 至少能读取标题、原始数据和文字说明。
+2. **增强表达**：同一 content chunk 的 `_meta["longbridge.ai/rich-content"]` 携带结构化 envelope。Longbridge GPUI 和 AI Desktop 读取该扩展并复用原 Chat renderer；Zed、Codex 等通用客户端可安全忽略它。
+3. **单一事实源**：结构化 payload 是图表数据的事实源，fallback 仅用于不支持扩展的客户端。Adapter 必须保证二者语义一致，不能让图表与文字表格显示不同数值。
+4. **流式完整性**：围栏未闭合或 JSON 未完整时只作为正文增量传输；解析成功后才产生 rich-content snapshot。相同 `content_id` 的后续 snapshot 覆盖前一个，不追加重复图表。
+
+扩展 envelope 版本化如下：
+
+```json
+{
+  "version": 1,
+  "content_id": "message-id:block-key",
+  "kind": "chart",
+  "mime_type": "application/vnd.longbridge.chart+json",
+  "data": { "type": "column", "data": [] },
+  "fallback": "```vis-chart\n{...}\n```"
+}
+```
+
+首版富内容兼容矩阵：
+
+| Kind | 线格式 / MIME | PortAI | Longbridge GPUI | 通用 ACP 降级 |
+| --- | --- | --- | --- | --- |
+| Markdown table | GFM Markdown | 原生 | 原生 | 原生文本 |
+| Statistical chart | `application/vnd.longbridge.chart+json` | `pie`, `column`, `bar`, `line`, `area`, `scatter`, `histogram`, `treemap`, `word-cloud`, `dual-axes`, `radar`, `funnel`, `boxplot`, `sankey` | 原生 `pie/column/bar/line/area/radar/dual-axes`，其余显示可读占位/原始数据 | `vis-chart` JSON fence |
+| Diagram / graph | 同上 | `mind-map`, `fishbone-diagram`, `flow-diagram`, `indented-tree`, `network-graph`, `organization-chart` | 暂不原生绘制 | `vis-chart` JSON fence |
+| Geographic chart | 同上 | `pin-map`, `path-map`, `heat-map` | 暂不原生绘制 | `vis-chart` JSON fence |
+| Inline SVG | `image/svg+xml` / `svg-inline` | 原生 | 保留围栏，To-be 原生 | SVG resource 或 code fence |
+| Live HTML | `text/html` / `html-live` | 沙箱渲染 | 原生卡片/跳转 | code fence；不得直接执行 |
+| Longbridge widget | `widget://...` resource | 原生 `x-widget` | quote/comparison 等已知 widget 原生 | `ResourceLink` + 文本说明 |
+| Stock / citation | namespaced metadata + Markdown marker | 原生 | 原生 | 普通链接与文字 |
+| Artifact | ACP resource link 或 embedded resource | 原生 | 按 MIME/资源能力降级 | `ResourceLink` / `EmbeddedResource` |
+
+图表类型以 PortAI 当前 renderer 为基线，共 24 个规范化类型；`heatmap`/`heat-map`、`dualaxes`/`dual-axes` 等输入别名在 Adapter 内归一化。渲染能力按客户端 capability 决定，不能因为 GPUI 当前只实现其中一部分，就在 ACP seam 丢弃其余结构化数据。
+
+Longbridge 客户端的消费优先级是：原生 ACP content block → `longbridge.ai/rich-content` → Markdown fallback。未知 `version`、`kind` 或图表 `type` 必须显示 fallback，不能让整条回答失败。HTML/SVG/widget 必须继续执行现有的 URL、脚本和内容安全策略；ACP 扩展不扩大信任范围。
+
 ## 9. 授权与安全设计
 
 ### 9.1 宿主注入
@@ -415,7 +455,7 @@ longbridge acp
 
 - 实现 `AgentConnection` facade 与进程内 Adapter。
 - Longbridge Pro、Longbridge AI 桌面端从各自组合根注入 config、API endpoint 和 Agent ID。
-- AI Chat 仅消费标准化 ACP capability/session/event，不依赖 Longbridge 私有事件。
+- AI Chat 以标准 ACP capability/session/event 为基础；Longbridge 产品可选消费版本化的 `longbridge.ai/*` 扩展以恢复现有富内容 Chat elements，但必须对未知或缺失扩展保持完整降级能力。
 
 ### 阶段 3：外部 Codex/Claude ACP Agent
 

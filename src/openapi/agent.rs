@@ -45,6 +45,16 @@ fn answers_for(
         });
     }
     let group = &pending.groups[0];
+    if group.questions.is_empty() {
+        return Ok([(
+            group.answer_key.clone(),
+            [("authorized".to_string(), input.trim().to_string())]
+                .into_iter()
+                .collect(),
+        )]
+        .into_iter()
+        .collect());
+    }
     let answers = if group.questions.len() == 1 {
         [(
             group.questions[0].text.clone(),
@@ -220,7 +230,11 @@ impl AgentBackend for OpenApiAgent {
                         let output = tool
                             .outputs
                             .data
-                            .or_else(|| tool.outputs.text.map(serde_json::Value::String));
+                            .or_else(|| tool.outputs.text.map(serde_json::Value::String))
+                            .or_else(|| {
+                                (!tool.error.trim().is_empty())
+                                    .then(|| serde_json::Value::String(tool.error.clone()))
+                            });
                         Some(Ok(AgentEvent::ToolFinishedRich {
                             id: tool.tool_use_id,
                             title: tool.tool_name,
@@ -233,7 +247,12 @@ impl AgentBackend for OpenApiAgent {
                         let interrupt = response.interrupt?;
                         let metadata = serde_json::to_value(&interrupt).ok();
                         let interaction_groups = if interrupt.interactions.is_empty() {
-                            vec![(interrupt.tool_call_id, interrupt.questions)]
+                            vec![(
+                                interrupt.tool_call_id.clone(),
+                                String::new(),
+                                String::new(),
+                                interrupt.questions,
+                            )]
                         } else {
                             interrupt
                                 .interactions
@@ -244,13 +263,71 @@ impl AgentBackend for OpenApiAgent {
                                     } else {
                                         interaction.interrupt_id
                                     };
-                                    (key, interaction.questions)
+                                    (
+                                        key,
+                                        interaction.interaction_type,
+                                        interaction.tool_name,
+                                        interaction.questions,
+                                    )
                                 })
                                 .collect()
                         };
+                        if let Some((answer_key, _, tool_name, _)) = interaction_groups
+                            .iter()
+                            .find(|(_, interaction_type, _, _)| interaction_type == "authorization")
+                        {
+                            let state = OpenApiAgentSession {
+                                conversation_id: Some(response.chat_uid),
+                                parent_message_id: Some(response.message_id),
+                                pending_interaction: Some(PendingInteraction {
+                                    groups: vec![PendingQuestionGroup {
+                                        answer_key: answer_key.clone(),
+                                        questions: Vec::new(),
+                                    }],
+                                }),
+                            };
+                            return Some(Ok(AgentEvent::PermissionRequired {
+                                session: state,
+                                tool_call_id: interrupt.tool_call_id,
+                                title: if tool_name.is_empty() {
+                                    "Access your Longbridge account".to_string()
+                                } else {
+                                    tool_name.clone()
+                                },
+                                metadata,
+                            }));
+                        }
+                        if interaction_groups.iter().any(|(_, interaction_type, _, _)| {
+                            interaction_type == "trade_password"
+                        }) {
+                            let state = OpenApiAgentSession {
+                                conversation_id: Some(response.chat_uid),
+                                parent_message_id: Some(response.message_id),
+                                pending_interaction: None,
+                            };
+                            return Some(Ok(AgentEvent::Notice {
+                                session: state,
+                                text: "This operation requires trade-password verification in an official Longbridge client. ACP cannot collect or verify a trade password.".to_string(),
+                                metadata,
+                            }));
+                        }
+                        if interaction_groups.iter().any(|(_, interaction_type, _, _)| {
+                            interaction_type == "data_authorization"
+                        }) {
+                            let state = OpenApiAgentSession {
+                                conversation_id: Some(response.chat_uid),
+                                parent_message_id: Some(response.message_id),
+                                pending_interaction: None,
+                            };
+                            return Some(Ok(AgentEvent::Notice {
+                                session: state,
+                                text: "This operation requires signing a securities-data authorization in an official Longbridge client. ACP cannot complete that external authorization flow.".to_string(),
+                                metadata,
+                            }));
+                        }
                         let mut groups = Vec::new();
                         let mut questions = Vec::new();
-                        for (answer_key, source_questions) in interaction_groups {
+                        for (answer_key, _, _, source_questions) in interaction_groups {
                             let mut pending_questions = Vec::new();
                             questions.extend(source_questions.into_iter().map(|question| {
                                 let options = question
@@ -329,24 +406,66 @@ impl AgentBackend for OpenApiAgent {
                     Ok(ConversationStreamEvent::ThinkingFinished(payload)) => Some(Ok(
                         native_event("thinking_finished", serde_json::to_value(payload).ok()?),
                     )),
-                    Ok(ConversationStreamEvent::SubagentStarted(payload)) => Some(Ok(
-                        native_event("subagent_started", serde_json::to_value(payload).ok()?),
-                    )),
+                    Ok(ConversationStreamEvent::SubagentStarted(payload)) => {
+                        let metadata = event_metadata("subagent_started", &payload);
+                        let title = if payload.goal.is_empty() {
+                            "Subagent".to_string()
+                        } else {
+                            payload.goal.clone()
+                        };
+                        Some(Ok(AgentEvent::ToolStartedRich {
+                            id: payload.tool_use_id,
+                            title,
+                            raw_input: Some(serde_json::json!({ "prompt": payload.prompt })),
+                            metadata,
+                        }))
+                    }
                     Ok(ConversationStreamEvent::SubagentProgress(payload)) => Some(Ok(
                         native_event("subagent_progress", serde_json::to_value(payload).ok()?),
                     )),
-                    Ok(ConversationStreamEvent::SubagentFinished(payload)) => Some(Ok(
-                        native_event("subagent_finished", serde_json::to_value(payload).ok()?),
-                    )),
-                    Ok(ConversationStreamEvent::AgentToolStarted(payload)) => Some(Ok(
-                        native_event("agent_tool_started", serde_json::to_value(payload).ok()?),
-                    )),
+                    Ok(ConversationStreamEvent::SubagentFinished(payload)) => {
+                        let metadata = event_metadata("subagent_finished", &payload);
+                        let title = payload
+                            .outputs
+                            .goal
+                            .clone()
+                            .filter(|goal| !goal.is_empty())
+                            .unwrap_or_else(|| "Subagent".to_string());
+                        Some(Ok(AgentEvent::ToolFinishedRich {
+                            id: payload.tool_use_id,
+                            title,
+                            success: payload.status == "succeeded",
+                            raw_output: serde_json::to_value(payload.outputs).ok(),
+                            metadata,
+                        }))
+                    }
+                    Ok(ConversationStreamEvent::AgentToolStarted(payload)) => {
+                        let metadata = event_metadata("agent_tool_started", &payload);
+                        let title = if payload.title.is_empty() {
+                            payload.agent_tool_name.clone()
+                        } else {
+                            payload.title.clone()
+                        };
+                        Some(Ok(AgentEvent::ToolStartedRich {
+                            id: payload.tool_use_id,
+                            title,
+                            raw_input: serde_json::from_str(&payload.tool_args).ok(),
+                            metadata,
+                        }))
+                    }
                     Ok(ConversationStreamEvent::AgentToolProgress(payload)) => Some(Ok(
                         native_event("agent_tool_progress", serde_json::to_value(payload).ok()?),
                     )),
-                    Ok(ConversationStreamEvent::AgentToolFinished(payload)) => Some(Ok(
-                        native_event("agent_tool_finished", serde_json::to_value(payload).ok()?),
-                    )),
+                    Ok(ConversationStreamEvent::AgentToolFinished(payload)) => {
+                        let metadata = event_metadata("agent_tool_finished", &payload);
+                        Some(Ok(AgentEvent::ToolFinishedRich {
+                            id: payload.tool_use_id,
+                            title: payload.agent_tool_name,
+                            success: payload.status == "succeeded",
+                            raw_output: payload.outputs,
+                            metadata,
+                        }))
+                    }
                     Ok(ConversationStreamEvent::QueryMasked(payload)) => Some(Ok(native_event(
                         "query_masked",
                         serde_json::to_value(payload).ok()?,
@@ -425,6 +544,20 @@ fn render_question(question: &str, options: &[PendingOption], multi_select: bool
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn authorization_without_questions_uses_authorized_answer() {
+        let pending = PendingInteraction {
+            groups: vec![PendingQuestionGroup {
+                answer_key: "authorization-1".into(),
+                questions: vec![],
+            }],
+        };
+        assert_eq!(
+            answers_for(&pending, "true").unwrap()["authorization-1"]["authorized"],
+            "true"
+        );
+    }
 
     #[test]
     fn option_label_is_resolved_to_description_for_continue_api() {

@@ -7,6 +7,7 @@
 mod backend;
 mod client;
 mod desktop;
+mod rich_content;
 mod server;
 
 pub use agent_client_protocol as acp;
@@ -18,5 +19,10 @@ pub use client::{
 pub use desktop::{
     DesktopSession, DesktopSessionEvent, DesktopSessionEvents, DesktopSessionHandle,
     SessionControlError,
+};
+pub use rich_content::{
+    charts_from_markdown, normalize_chart_type, supported_chart_types, RichContent,
+    RichContentError, RichContentKind, Table, CHART_MIME_TYPE, RICH_CONTENT_NAMESPACE,
+    RICH_CONTENT_VERSION, TABLE_MIME_TYPE,
 };
 pub use server::{acp_agent, serve_stdio};

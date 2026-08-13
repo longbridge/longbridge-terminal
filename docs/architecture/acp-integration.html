@@ -382,7 +382,7 @@
     <div class="topbar-inner">
       <div class="brand"><span class="brand-mark" aria-hidden="true"></span>Longbridge × ACP <small>Architecture Brief</small></div>
       <nav aria-label="页面导航">
-        <a href="#why">为什么</a><a href="#architecture">目标架构</a><a href="#flows">关键链路</a><a href="#roadmap">落地计划</a>
+        <a href="#why">为什么</a><a href="#architecture">目标架构</a><a href="#flows">关键链路</a><a href="#rich-content">富内容</a><a href="#roadmap">落地计划</a>
       </nav>
       <span class="status-chip">Proposal · 2026.08</span>
     </div>
@@ -503,8 +503,26 @@
       </div>
     </section>
 
+    <section class="section" id="rich-content">
+      <div class="section-kicker">05 / Rich content</div>
+      <h2>图表不降成截图，协议也不假装懂图表。</h2>
+      <p class="section-intro">ACP v1 没有通用 Chart 类型。Longbridge 采用双重表达：标准客户端读取 Markdown fallback；Longbridge 客户端读取同一 chunk 上版本化的 <code>longbridge.ai/rich-content</code> metadata，继续复用原有 Chat elements。</p>
+      <div class="boundary reveal">
+        <div class="boundary-col"><span class="owner host">STANDARD ACP</span><h3>始终可读</h3><ul><li>GFM Markdown 表格</li><li><code>vis-chart</code> JSON 围栏</li><li>ResourceLink / EmbeddedResource</li><li>未知类型仍显示原始数据</li></ul></div>
+        <div class="boundary-col"><span class="owner crate">RICH ENVELOPE</span><h3>结构化保真</h3><ul><li>version + content_id</li><li>kind + MIME + data</li><li>snapshot 覆盖，避免重复卡片</li><li>扩展不改变授权边界</li></ul></div>
+        <div class="boundary-col"><span class="owner provider">LONGBridge UI</span><h3>原 Chat 体验</h3><ul><li>PortAI：24 类规范化可视化类型</li><li>GPUI：柱/条/线/面积/饼/雷达/双轴</li><li>widget、引用、股票与 artifact</li><li>能力不足时稳定降级</li></ul></div>
+      </div>
+      <div class="contract-grid reveal">
+        <article class="contract"><code>application/vnd.longbridge.chart+json</code><p>柱状、折线、面积、饼图、雷达、双轴，以及地图、关系图等完整结构化配置。</p></article>
+        <article class="contract"><code>text/html · image/svg+xml</code><p>HTML/SVG 继续走既有沙箱与内容安全策略；ACP metadata 不授予新的执行权限。</p></article>
+        <article class="contract"><code>widget:// · artifact</code><p>已知 widget 复用 Quote/Comparison 等 Chat elements；未知资源退化为可点击链接和说明。</p></article>
+        <article class="contract"><code>unknown → fallback</code><p>未知版本、kind 或 chart type 不终止回答；展示 Markdown/JSON，保证数据永远不消失。</p></article>
+      </div>
+      <div class="truth reveal"><strong>关键不变量：</strong>结构化 payload 是事实源，fallback 与其数值语义必须一致；围栏完整后才发布 rich snapshot，同一 <code>content_id</code> 只更新、不重复追加。</div>
+    </section>
+
     <section class="section" id="ownership">
-      <div class="section-kicker">05 / Trust & ownership</div>
+      <div class="section-kicker">06 / Trust & ownership</div>
       <h2>授权不穿透，职责不漂移。</h2>
       <p class="section-intro">统一协议不等于统一凭证。最重要的安全边界是：谁启动 Agent，谁提供该 Agent 的配置；适配 crate 只消费，不发现、不持久化、不刷新。</p>
       <div class="boundary reveal">
@@ -521,7 +539,7 @@
     </section>
 
     <section class="section" id="roadmap">
-      <div class="section-kicker">06 / Delivery path</div>
+      <div class="section-kicker">07 / Delivery path</div>
       <h2>按可验证的纵向链路推进。</h2>
       <p class="section-intro">先证明协议与边界，再做多产品接入。每一阶段都产生可运行、可演示、可回归的能力，而不是等待“大集成”。</p>
       <div class="roadmap reveal">
@@ -534,7 +552,7 @@
     </section>
 
     <section class="section" id="decisions">
-      <div class="section-kicker">07 / Meeting decisions</div>
+      <div class="section-kicker">08 / Meeting decisions</div>
       <h2>这次会议需要对齐什么。</h2>
       <div class="decision-list reveal">
         <div class="decision"><code>DECISION 01</code><p><strong>确认 ACP 是产品级 Agent 接入边界，</strong>而非 CLI 独占功能。</p><span class="decision-status">RECOMMENDED</span></div>
