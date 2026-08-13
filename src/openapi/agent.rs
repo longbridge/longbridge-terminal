@@ -960,10 +960,12 @@ fn render_question(question: &str, options: &[PendingOption], multi_select: bool
         options
             .iter()
             .enumerate()
-            .map(|(index, option)| if option.label.is_empty() {
-                format!("{}. {}", index + 1, option.description)
-            } else {
-                format!("{}. {} — {}", index + 1, option.label, option.description)
+            .map(|(index, option)| {
+                if option.label.is_empty() {
+                    format!("{}. {}", index + 1, option.description)
+                } else {
+                    format!("{}. {} — {}", index + 1, option.label, option.description)
+                }
             })
             .collect::<Vec<_>>()
             .join("\n"),

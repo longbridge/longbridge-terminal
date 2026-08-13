@@ -26,7 +26,7 @@ const SEC_UA: &str = concat!(
 const TICKER_MAP_URL: &str = "https://www.sec.gov/files/company_tickers_mf.json";
 
 // On-disk cache time-to-live for the ticker map.
-const TICKER_MAP_TTL: Duration = Duration::from_hours(7 * 24);
+const TICKER_MAP_TTL: Duration = Duration::from_secs(7 * 24 * 3600);
 
 /// A single portfolio holding parsed from an N-PORT filing.
 #[derive(Debug, Clone, Serialize)]
@@ -58,7 +58,7 @@ pub struct EtfHoldings {
 fn sec_client() -> reqwest::Client {
     reqwest::Client::builder()
         .user_agent(SEC_UA)
-        .timeout(Duration::from_mins(1))
+        .timeout(Duration::from_secs(60))
         .build()
         .expect("failed to build HTTP client")
 }
