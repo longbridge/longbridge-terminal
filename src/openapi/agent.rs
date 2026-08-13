@@ -230,8 +230,8 @@ impl AgentBackend for OpenApiAgent {
                         }))
                     }
                     Ok(ConversationStreamEvent::HumanInteractionRequired(response)) => {
-                        let metadata = serde_json::to_value(&response).ok();
                         let interrupt = response.interrupt?;
+                        let metadata = serde_json::to_value(&interrupt).ok();
                         let interaction_groups = if interrupt.interactions.is_empty() {
                             vec![(interrupt.tool_call_id, interrupt.questions)]
                         } else {
@@ -285,12 +285,29 @@ impl AgentBackend for OpenApiAgent {
                         }))
                     }
                     Ok(ConversationStreamEvent::WorkflowFinished(response)) => {
-                        let metadata =
-                            serde_json::to_value(&response).unwrap_or(serde_json::Value::Null);
+                        let metadata = serde_json::json!({
+                            "status": response.status,
+                            "error_code": response.error.as_ref().map_or(0, |error| error.code),
+                            "error_message": response.error.as_ref().map_or("", |error| error.message.as_str()),
+                            "elapsed_time": response.elapsed_time,
+                            "outputs": {
+                                "answer": response.answer,
+                                "references": response.references,
+                                "further_questions": response.further_questions,
+                            },
+                            "chat_uid": response.chat_uid,
+                            "message_id": response.message_id,
+                        });
                         Some(Ok(AgentEvent::Completed {
                             session: OpenApiAgentSession {
-                                conversation_id: Some(response.chat_uid),
-                                parent_message_id: Some(response.message_id),
+                                conversation_id: metadata
+                                    .get("chat_uid")
+                                    .and_then(serde_json::Value::as_str)
+                                    .map(str::to_owned),
+                                parent_message_id: metadata
+                                    .get("message_id")
+                                    .and_then(serde_json::Value::as_str)
+                                    .map(str::to_owned),
                                 pending_interaction: None,
                             },
                             metadata,
