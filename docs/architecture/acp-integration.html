@@ -593,10 +593,10 @@
       embedded: {
         title: '桌面 AI Chat 进程内接入 LongbridgeAI', transport: 'TRANSPORT · IN-PROCESS',
         steps: [
-          ['Host → Crate', '宿主创建 OpenAPI Config，显式提供 HTTPS endpoint 与 Agent ID。'],
+          ['Host → Adapter', '宿主以自己的私有 API client、endpoint 与授权创建 AgentBackend Adapter。'],
           ['Client ↔ Agent', '官方 ACP SDK 在内存中连接 Client component 与 Agent component。'],
           ['UI → Host', 'AI Chat 发起 prompt；宿主桥接为 ACP content block。'],
-          ['Adapter → API', 'Longbridge Adapter 调用 AgentContext streamed API。'],
+          ['Adapter → API', '桌面 Adapter 调用宿主私有 API，并把流式事件映射为 provider-neutral AgentEvent。'],
           ['Host → UI', 'GPUI 直接更新 ai_panel；Tauri 通过 command/event 回到 React 对话界面。']
         ]
       },

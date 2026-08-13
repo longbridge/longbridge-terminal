@@ -107,12 +107,13 @@ Longbridge OpenAPI 已提供 LongbridgeAI Agent 能力。我们希望把它收�
 
 该 crate 应隐藏以下 Implementation 细节：
 
-- Longbridge OpenAPI Agent 请求与流式响应解析；
-- 服务端 conversation/message 标识与 ACP session 标识之间的关联；
-- Longbridge 私有事件到 ACP update 的映射；
+- provider-neutral Agent 事件与 ACP update 之间的映射；
+- 宿主定义的 session 状态与 ACP session 标识之间的关联；
 - 人工补充信息后的续跑；
 - transport 生命周期、错误归类和取消传播；
 - 外部 ACP Agent 的进程管理与 ACP Client 连接。
+
+OpenAPI 或桌面私有 API 的请求、响应解析、endpoint 和授权均由对应宿主 Adapter 持有，不属于该 crate 的 Implementation。
 
 建议对外保持三个小 Interface：
 
