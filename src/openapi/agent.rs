@@ -208,10 +208,10 @@ impl SessionHistory {
         }
     }
 
-    fn get(&self, session_id: &str, cwd: &Path) -> Option<StoredSession> {
+    fn get(&self, session_id: &str) -> Option<StoredSession> {
         self.sessions
             .iter()
-            .find(|session| session.session_id == session_id && session.cwd == cwd)
+            .find(|session| session.session_id == session_id)
             .cloned()
     }
 
@@ -281,6 +281,19 @@ impl OpenApiAgent {
             history_path,
         }
     }
+
+    fn persist_history(&self, history: &SessionHistory) {
+        if let Some(path) = self.history_path.as_deref() {
+            if let Err(error) = history.save(path) {
+                tracing::warn!(
+                    target: "longbridge::acp",
+                    %error,
+                    path = %path.display(),
+                    "failed to persist ACP session history"
+                );
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -288,11 +301,22 @@ impl AgentBackend for OpenApiAgent {
     type Session = OpenApiAgentSession;
     const SESSION_HISTORY: bool = true;
 
-    fn new_session(&self, session_id: &str, _cwd: &Path) -> Self::Session {
-        OpenApiAgentSession {
+    fn new_session(&self, session_id: &str, cwd: &Path) -> Self::Session {
+        let state = OpenApiAgentSession {
             acp_session_id: Some(session_id.to_owned()),
             ..Default::default()
+        };
+        if let Ok(mut history) = self.history.lock() {
+            history.upsert(StoredSession {
+                session_id: session_id.to_owned(),
+                cwd: cwd.to_path_buf(),
+                title: None,
+                state: state.clone(),
+                events: Vec::new(),
+            });
+            self.persist_history(&history);
         }
+        state
     }
 
     async fn list_sessions(
@@ -310,13 +334,13 @@ impl AgentBackend for OpenApiAgent {
     async fn load_session(
         &self,
         session_id: &str,
-        cwd: &Path,
+        _cwd: &Path,
     ) -> Result<LoadedAgentSession<Self::Session>, BackendError> {
         let stored = self
             .history
             .lock()
             .map_err(|_| std::io::Error::other("session history lock is poisoned"))?
-            .get(session_id, cwd)
+            .get(session_id)
             .ok_or_else(|| {
                 std::io::Error::new(std::io::ErrorKind::NotFound, "session not found")
             })?;
@@ -344,7 +368,7 @@ impl AgentBackend for OpenApiAgent {
             self.history
                 .lock()
                 .map_err(|_| std::io::Error::other("session history lock is poisoned"))?
-                .get(session_id, &cwd)
+                .get(session_id)
         } else {
             None
         };
@@ -1021,9 +1045,7 @@ mod tests {
         history.upsert(stored("new"));
 
         assert_eq!(history.sessions.len(), 1);
-        let loaded = history
-            .get("chat-1", Path::new("/workspace"))
-            .expect("stored session");
+        let loaded = history.get("chat-1").expect("stored session");
         assert_eq!(loaded.title.as_deref(), Some("new"));
         assert_eq!(loaded.events, vec![AgentEvent::Text("new".into())]);
     }
@@ -1069,9 +1091,7 @@ mod tests {
 
         history.save(&path).expect("save history");
         let loaded = SessionHistory::load(&path);
-        let session = loaded
-            .get("chat-1", Path::new("/workspace"))
-            .expect("loaded session");
+        let session = loaded.get("chat-1").expect("loaded session");
         assert_eq!(session.title.as_deref(), Some("Saved chat"));
         assert_eq!(
             session.state.parent_message_id.as_deref(),
