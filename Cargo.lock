@@ -1496,7 +1496,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2741,7 +2741,7 @@ dependencies = [
 [[package]]
 name = "longbridge-ai-acp"
 version = "0.1.0"
-source = "git+https://github.com/longbridge/longbridge-ai-acp.git?branch=main#2baad854839290cab3cb575c1a200a4547862708"
+source = "git+https://github.com/longbridge/longbridge-ai-acp.git?branch=main#23cae08681ae6e0353b5ba791008e1a659017942"
 dependencies = [
  "agent-client-protocol",
  "async-trait",
@@ -3870,7 +3870,7 @@ dependencies = [
  "once_cell",
  "socket2 0.6.2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4419,7 +4419,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5200,7 +5200,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

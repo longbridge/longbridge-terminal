@@ -395,7 +395,7 @@
       <p class="lead">以 ACP 作为统一协议面：LongbridgeAI 一次适配，同时服务 CLI、Longbridge Pro 与 LongbridgeAI Desktop；同一套 AI Chat 也能连接 Codex、Claude。</p>
       <div class="hero-meta">
         <span><strong>协议</strong> Agent Client Protocol v1</span>
-        <span><strong>核心模块</strong> longbridge-ai-acp crate</span>
+        <span><strong>核心模块</strong> 独立 longbridge-ai-acp 仓库</span>
         <span><strong>传输</strong> in-process + stdio</span>
         <span><strong>原则</strong> 授权归宿主，协议归适配层</span>
       </div>
@@ -450,7 +450,7 @@
             <div class="lane" data-lane="embedded">
               <div class="node host"><strong>Pro / AI Desktop</strong><small>AI Chat + host bridge</small></div>
               <div class="connector"></div>
-              <div class="node adapter"><strong>longbridge-ai-acp</strong><small>in-process runtime<br>private API Backend</small></div>
+              <div class="node adapter"><strong>longbridge-ai-acp</strong><small>独立 provider-neutral runtime<br>宿主注入 private API Backend</small></div>
               <div class="lane-label">PATH B · ZERO SUBPROCESS</div>
             </div>
             <div class="lane" data-lane="external">
@@ -474,7 +474,7 @@
           <div class="host-icon">PRO</div>
           <h3>Longbridge Pro</h3>
           <p><code>longbridge-gpui</code> 是完整 Rust workspace；<code>ai_agent</code> 已实现私有 Babbage API 的 ACP backend 与统一 Chat facade，<code>ai_panel</code> 已可选择 LongbridgeAI ACP、Codex、Claude，并消费标准化文本、思考与工具事件。</p>
-          <ul><li>在 workspace 中直接依赖 longbridge-ai-acp crate</li><li>由 Pro 的 config / engine 注入授权与 endpoint</li><li>ai_panel 消费统一 ACP session updates</li></ul>
+          <ul><li>直接跟踪独立 longbridge-ai-acp 仓库 main 分支</li><li>由 Pro 的 config / engine 注入授权与 endpoint</li><li>ai_panel 消费统一 ACP session updates</li></ul>
         </article>
         <article class="host-card" data-stack="TAURI · RUST · REACT">
           <div class="host-icon">AI</div>
@@ -506,9 +506,9 @@
     <section class="section" id="rich-content">
       <div class="section-kicker">05 / Rich content</div>
       <h2>图表不降成截图，协议也不假装懂图表。</h2>
-      <p class="section-intro">ACP v1 没有通用 Chart 类型。Longbridge 采用双重表达：标准客户端读取 Markdown fallback；Longbridge 客户端读取同一 chunk 上版本化的 <code>longbridge.ai/rich-content</code> metadata，继续复用原有 Chat elements。</p>
+      <p class="section-intro">ACP v1 没有通用 Chart 类型。Longbridge 采用双轨表达：标准客户端读取 Markdown、SVG image、公开链接与 ResourceLink；Longbridge 客户端读取 <code>longbridge.ai/event</code> 原始事件并继续复用原有 Chat elements。配对 fallback 带去重标记。</p>
       <div class="boundary reveal">
-        <div class="boundary-col"><span class="owner host">STANDARD ACP</span><h3>始终可读</h3><ul><li>GFM Markdown 表格</li><li><code>vis-chart</code> JSON 围栏</li><li>ResourceLink / EmbeddedResource</li><li>未知类型仍显示原始数据</li></ul></div>
+        <div class="boundary-col"><span class="owner host">STANDARD ACP</span><h3>始终可读</h3><ul><li>图表转 GFM Markdown 表格</li><li>安全 SVG 转 image/svg+xml</li><li>HTML 转有界纯文本摘要</li><li>Widget 转公开链接 / ResourceLink</li><li>不回显私有 JSON、HTML 或 SVG 源码</li></ul></div>
         <div class="boundary-col"><span class="owner crate">RICH ENVELOPE</span><h3>结构化保真</h3><ul><li>version + content_id</li><li>kind + MIME + data</li><li>snapshot 覆盖，避免重复卡片</li><li>扩展不改变授权边界</li></ul></div>
         <div class="boundary-col"><span class="owner provider">LONGBridge UI</span><h3>原 Chat 体验</h3><ul><li>PortAI：24 类规范化可视化类型</li><li>GPUI：柱/条/线/面积/饼/雷达/双轴</li><li>widget、引用、股票与 artifact</li><li>能力不足时稳定降级</li></ul></div>
       </div>
