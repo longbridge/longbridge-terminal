@@ -1,0 +1,1584 @@
+event:message
+data:{"event":"chat_started","workflow_run_id":"102676035333678374","data":{"chat_id":1046092,"chat_uid":"hfn2l0ccrmv1u","message_id":13025051,"error":"","error_message":""}}
+
+event:message
+data:{"event":"workflow_started","workflow_run_id":"102676035333678374","data":{"started_at":1786348486,"workflow_id":177448,"inputs":{"chat_id":1046092,"chat_uid":"hfn2l0ccrmv1u","message_id":13025051,"query":"分析一下特斯拉 TSLA 近一个月的股价走势"},"hit_cache":false}}
+
+event:message
+data:{"event":"thinking_started","workflow_run_id":"102676035333678374","data":{"started_at":1786348488}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"Let","type":"process","started_at":1786348488,"stage":"think","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" me think","type":"process","started_at":1786348488,"stage":"think","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" about what's happening","type":"process","started_at":1786348488,"stage":"think","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"ping"}
+
+event:message
+data:{"event":"thinking_finished","workflow_run_id":"102676035333678374","data":{"finished_at":1786348492,"elapsed_time":4}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"正在","type":"answer","started_at":1786348492,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"拉取 TSL","type":"answer","started_at":1786348492,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"A 近一个月的","type":"answer","started_at":1786348492,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" K 线数据","type":"answer","started_at":1786348492,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"、实时报价与市场","type":"answer","started_at":1786348492,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"指标，","type":"answer","started_at":1786348492,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"稍后为你做","type":"answer","started_at":1786348493,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"技术","type":"answer","started_at":1786348493,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"面解读。\n\n","type":"answer","started_at":1786348493,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"node_tool_use_started","workflow_run_id":"102676035333678374","data":{"tips":"获取证券 K 线数据: TSLA.US","tip_chips":["TSLA.US"],"started_at":1786348496,"tool_name":"获取证券 K 线数据","tool_func_name":"QuoteMCPServiceGetSecurityCandlestick","tool_args":"{\"adjust_type\":\"forward_adjustment\",\"end_date\":\"2026-08-10\",\"period\":\"day\",\"start_date\":\"2026-07-10\",\"symbol\":\"TSLA.US\"}","tool_use_id":"f7211b81-c8eb-4d62-93dc-cb654d5f5d79"}}
+
+event:message
+data:{"event":"node_tool_use_started","workflow_run_id":"102676035333678374","data":{"tips":"获取证券实时行情: TSLA.US","tip_chips":["TSLA.US"],"started_at":1786348496,"tool_name":"获取证券实时行情","tool_func_name":"QuoteMCPServiceGetSecurityQuote","tool_args":"{\"symbols\":[\"TSLA.US\"]}","tool_use_id":"612164a4-3e44-448d-b45a-529c54f748d4"}}
+
+event:message
+data:{"event":"node_tool_use_started","workflow_run_id":"102676035333678374","data":{"tips":"获取实时行情指标: TSLA.US","tip_chips":["TSLA.US"],"started_at":1786348496,"tool_name":"获取实时行情指标","tool_func_name":"QuoteMCPServiceGetSecurityIndicators","tool_args":"{\"symbols\":[\"TSLA.US\"]}","tool_use_id":"9d53b929-7c4b-4ade-9278-a7499c075858"}}
+
+event:message
+data:{"event":"node_tool_use_finished","workflow_run_id":"102676035333678374","data":{"status":"succeeded","elapsed_time":0.030822212,"started_at":1786348496,"tips":"获取证券 K 线数据: TSLA.US","tip_chips":["TSLA.US"],"tool_name":"获取证券 K 线数据","tool_func_name":"QuoteMCPServiceGetSecurityCandlestick","tool_args":"{\"adjust_type\":\"forward_adjustment\",\"end_date\":\"2026-08-10\",\"period\":\"day\",\"start_date\":\"2026-07-10\",\"symbol\":\"TSLA.US\"}","tool_type":"tool_call","outputs":{"query":"TSLA.US","text":"{\"symbol\":\"TSLA.US\", \"candlesticks\":[{\"close\":\"407.760\", \"open\":\"410.490\", \"low\":\"402.810\", \"high\":\"413.160\", \"volume\":\"33409995\", \"turnover\":\"13666975230.000\", \"timestamp\":\"1783656000\", \"trade_session\":\"regular\", \"time_utc\":\"2026-07-10T04:00:00Z\"}, {\"close\":\"394.760\", \"open\":\"404.610\", \"low\":\"391.370\", \"high\":\"405.570\", \"volume\":\"32809171\", \"turnover\":\"12966201297.000\", \"timestamp\":\"1783915200\", \"trade_session\":\"regular\", \"time_utc\":\"2026-07-13T04:00:00Z\"}, {\"close\":\"396.180\", \"open\":\"399.050\", \"low\":\"394.760\", \"high\":\"402.220\", \"volume\":\"23384992\", \"turnover\":\"9290561492.000\", \"timestamp\":\"1784001600\", \"trade_session\":\"regular\", \"time_utc\":\"2026-07-14T04:00:00Z\"}, {\"close\":\"394.460\", \"open\":\"399.395\", \"low\":\"390.660\", \"high\":\"406.590\", \"volume\":\"31549805\", \"turnover\":\"12521822876.000\", \"timestamp\":\"1784088000\", \"trade_session\":\"regular\", \"time_utc\":\"2026-07-15T04:00:00Z\"}, {\"close\":\"391.060\", \"open\":\"392.350\", \"low\":\"385.320\", \"high\":\"395.310\", \"volume\":\"29269113\", \"turnover\":\"11428159137.000\", \"timestamp\":\"1784174400\", \"trade_session\":\"regular\", \"time_utc\":\"2026-07-16T04:00:00Z\"}, {\"close\":\"380.840\", \"open\":\"381.780\", \"low\":\"377.220\", \"high\":\"385.690\", \"volume\":\"31394594\", \"turnover\":\"11977899870.000\", \"timestamp\":\"1784260800\", \"trade_session\":\"regular\", \"time_utc\":\"2026-07-17T04:00:00Z\"}, {\"close\":\"369.570\", \"open\":\"386.045\", \"low\":\"369.425\", \"high\":\"386.610\", \"volume\":\"33901516\", \"turnover\":\"12677395035.000\", \"timestamp\":\"1784520000\", \"trade_session\":\"regular\", \"time_utc\":\"2026-07-20T04:00:00Z\"}, {\"close\":\"378.930\", \"open\":\"371.165\", \"low\":\"369.980\", \"high\":\"384.070\", \"volume\":\"32735334\", \"turnover\":\"12407306611.000\", \"timestamp\":\"1784606400\", \"trade_session\":\"regular\", \"time_utc\":\"2026-07-21T04:00:00Z\"}, {\"close\":\"374.010\", \"open\":\"375.530\", \"low\":\"372.900\", \"high\":\"380.170\", \"volume\":\"30646124\", \"turnover\":\"11444176917.000\", \"timestamp\":\"1784692800\", \"trade_session\":\"regular\", \"time_utc\":\"2026-07-22T04:00:00Z\"}, {\"close\":\"319.690\", \"open\":\"341.000\", \"low\":\"315.735\", \"high\":\"342.110\", \"volume\":\"115606413\", \"turnover\":\"37606914184.000\", \"timestamp\":\"1784779200\", \"trade_session\":\"regular\", \"time_utc\":\"2026-07-23T04:00:00Z\"}, {\"close\":\"313.030\", \"open\":\"320.720\", \"low\":\"306.510\", \"high\":\"322.960\", \"volume\":\"62760007\", \"turnover\":\"19591146617.000\", \"timestamp\":\"1784865600\", \"trade_session\":\"regular\", \"time_utc\":\"2026-07-24T04:00:00Z\"}, {\"close\":\"309.220\", \"open\":\"313.240\", \"low\":\"304.280\", \"high\":\"317.000\", \"volume\":\"44919377\", \"turnover\":\"13884955188.000\", \"timestamp\":\"1785124800\", \"trade_session\":\"regular\", \"time_utc\":\"2026-07-27T04:00:00Z\"}, {\"close\":\"307.440\", \"open\":\"305.925\", \"low\":\"300.690\", \"high\":\"311.160\", \"volume\":\"39802421\", \"turnover\":\"12168756707.000\", \"timestamp\":\"1785211200\", \"trade_session\":\"regular\", \"time_utc\":\"2026-07-28T04:00:00Z\"}, {\"close\":\"298.320\", \"open\":\"307.140\", \"low\":\"297.380\", \"high\":\"309.060\", \"volume\":\"39478039\", \"turnover\":\"11927167681.000\", \"timestamp\":\"1785297600\", \"trade_session\":\"regular\", \"time_utc\":\"2026-07-29T04:00:00Z\"}, {\"close\":\"308.850\", \"open\":\"302.700\", \"low\":\"301.330\", \"high\":\"310.870\", \"volume\":\"38005390\", \"turnover\":\"11663638186.000\", \"timestamp\":\"1785384000\", \"trade_session\":\"regular\", \"time_utc\":\"2026-07-30T04:00:00Z\"}, {\"close\":\"311.210\", \"open\":\"309.690\", \"low\":\"301.970\", \"high\":\"315.500\", \"volume\":\"36630560\", \"turnover\":\"11318096232.000\", \"timestamp\":\"1785470400\", \"trade_session\":\"regular\", \"time_utc\":\"2026-07-31T04:00:00Z\"}, {\"close\":\"322.080\", \"open\":\"310.960\", \"low\":\"310.425\", \"high\":\"324.650\", \"volume\":\"38281362\", \"turnover\":\"12276987880.000\", \"timestamp\":\"1785729600\", \"trade_session\":\"regular\", \"time_utc\":\"2026-08-03T04:00:00Z\"}, {\"close\":\"327.350\", \"open\":\"324.000\", \"low\":\"320.790\", \"high\":\"329.570\", \"volume\":\"33318303\", \"turnover\":\"10849561517.000\", \"timestamp\":\"1785816000\", \"trade_session\":\"regular\", \"time_utc\":\"2026-08-04T04:00:00Z\"}, {\"close\":\"321.550\", \"open\":\"323.420\", \"low\":\"320.280\", \"high\":\"327.140\", \"volume\":\"27820813\", \"turnover\":\"8985160036.000\", \"timestamp\":\"1785902400\", \"trade_session\":\"regular\", \"time_utc\":\"2026-08-05T04:00:00Z\"}, {\"close\":\"319.530\", \"open\":\"317.050\", \"low\":\"315.521\", \"high\":\"323.000\", \"volume\":\"26033776\", \"turnover\":\"8318580341.000\", \"timestamp\":\"1785988800\", \"trade_session\":\"regular\", \"time_utc\":\"2026-08-06T04:00:00Z\"}, {\"close\":\"328.580\", \"open\":\"322.340\", \"low\":\"321.251\", \"high\":\"333.730\", \"volume\":\"39492345\", \"turnover\":\"12957302522.000\", \"timestamp\":\"1786075200\", \"trade_session\":\"regular\", \"time_utc\":\"2026-08-07T04:00:00Z\"}]}","tool_args":{"adjust_type":"forward_adjustment","end_date":"2026-08-10","period":"day","start_date":"2026-07-10","symbol":"TSLA.US"}},"tool_use_id":"f7211b81-c8eb-4d62-93dc-cb654d5f5d79","is_thinking":false}}
+
+event:message
+data:{"event":"node_tool_use_finished","workflow_run_id":"102676035333678374","data":{"status":"succeeded","elapsed_time":0.054773566,"started_at":1786348496,"tips":"获取证券实时行情: TSLA.US","tip_chips":["TSLA.US"],"tool_name":"获取证券实时行情","tool_func_name":"QuoteMCPServiceGetSecurityQuote","tool_args":"{\"symbols\":[\"TSLA.US\"]}","tool_type":"tool_call","outputs":{"query":"TSLA.US","text":"{\"security_quote\":[{\"symbol\":\"TSLA.US\", \"trade_status\":\"listing\", \"regular_market_quote\":{\"last_done\":\"328.580\", \"prev_close\":\"319.530\", \"open\":\"322.340\", \"high\":\"333.730\", \"low\":\"321.251\", \"timestamp\":\"1786132800\", \"volume\":\"39492345\", \"turnover\":\"12957302522.000\", \"time_utc\":\"2026-08-07T20:00:00Z\"}, \"pre_market_quote\":{\"last_done\":\"\", \"prev_close\":\"328.580\", \"high\":\"\", \"low\":\"\", \"timestamp\":\"0\", \"volume\":\"0\", \"turnover\":\"\", \"time_utc\":\"1970-01-01T00:00:00Z\"}, \"post_market_quote\":{\"last_done\":\"328.998\", \"prev_close\":\"328.580\", \"high\":\"329.154\", \"low\":\"327.416\", \"timestamp\":\"1786147196\", \"volume\":\"1357045\", \"turnover\":\"445885828.262\", \"time_utc\":\"2026-08-07T23:59:56Z\"}, \"over_night_quote\":{\"last_done\":\"331.580\", \"prev_close\":\"328.580\", \"high\":\"331.810\", \"low\":\"328.910\", \"timestamp\":\"1786348495\", \"volume\":\"180223\", \"turnover\":\"59581056.600\", \"time_utc\":\"2026-08-10T07:54:55Z\"}, \"timestamp\":\"1786348496\", \"time_utc\":\"2026-08-10T07:54:56Z\"}]}","tool_args":{"symbols":["TSLA.US"]}},"tool_use_id":"612164a4-3e44-448d-b45a-529c54f748d4","is_thinking":false}}
+
+event:message
+data:{"event":"node_tool_use_finished","workflow_run_id":"102676035333678374","data":{"status":"succeeded","elapsed_time":0.214056813,"started_at":1786348496,"tips":"获取实时行情指标: TSLA.US","tip_chips":["TSLA.US"],"tool_name":"获取实时行情指标","tool_func_name":"QuoteMCPServiceGetSecurityIndicators","tool_args":"{\"symbols\":[\"TSLA.US\"]}","tool_type":"tool_call","outputs":{"query":"TSLA.US","text":"{\"indicators\":[{\"symbol\":\"TSLA.US\", \"turnover_rate\":\"\", \"market_cap\":\"\", \"free_float_market_cap\":\"\", \"net_fund_flow\":\"105807063.831\", \"amplitude\":\"3.91\", \"volume_ratio\":\"0.68\", \"order_ratio\":\"\", \"pe_ttm\":\"\", \"pe_annual\":\"\", \"pe_forward\":\"\", \"price_to_book_ratio\":\"\", \"dividend_yield_ttm\":\"\", \"price_change_5min\":\"0.23\", \"price_change_5d\":\"5.58\", \"price_change_10d\":\"4.97\", \"price_change_6m\":\"-20.07\", \"price_change_ytd\":\"-26.94\", \"high_52_week\":\"498.830\", \"low_52_week\":\"297.380\", \"average_price\":\"328.097\", \"timestamp\":\"1786132800\", \"time_utc\":\"2026-08-07T20:00:00Z\"}]}","tool_args":{"symbols":["TSLA.US"]}},"tool_use_id":"9d53b929-7c4b-4ade-9278-a7499c075858","is_thinking":false}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"数据已拉到，","type":"answer","started_at":1786348509,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"正在","type":"answer","started_at":1786348509,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"拉取近期新闻","type":"answer","started_at":1786348509,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"与技术","type":"answer","started_at":1786348509,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"指标，补充走势","type":"answer","started_at":1786348510,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"背后的","type":"answer","started_at":1786348510,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"驱动因素。\n\n","type":"answer","started_at":1786348510,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"chat_title_updated","workflow_run_id":"102676035333678374","data":{"chat_id":1046092,"chat_uid":"hfn2l0ccrmv1u","title":"特斯拉近月股价技术面解读","source":"ai_generated","updated_at":1786348511}}
+
+event:message
+data:{"event":"node_tool_use_started","workflow_run_id":"102676035333678374","data":{"tips":"获取股票相关新闻: TSLA.US","tip_chips":["TSLA.US"],"started_at":1786348512,"tool_name":"获取股票相关新闻","tool_func_name":"SocialMCPServiceGetTickerNewsArticles","tool_args":"{\"end_at\":\"2026-08-10T23:59\",\"fuzzy_match\":true,\"limit\":10,\"sort_by\":\"published_at\",\"start_at\":\"2026-07-10T00:00\",\"tickers\":[\"TSLA.US\"]}","tool_use_id":"335a2e9d-0b2f-41bb-8675-8d7dd1235df0"}}
+
+event:message
+data:{"event":"node_tool_use_started","workflow_run_id":"102676035333678374","data":{"tips":"获取技术指标信号: TSLA.US","tip_chips":["TSLA.US"],"started_at":1786348512,"tool_name":"获取技术指标信号","tool_func_name":"GetInfraIndicator","tool_args":"{\"period\":\"1D\",\"symbol\":\"TSLA.US\"}","tool_use_id":"2663f3c8-f565-44bc-9a21-ed135073375c"}}
+
+event:message
+data:{"event":"node_tool_use_finished","workflow_run_id":"102676035333678374","data":{"status":"succeeded","elapsed_time":0.037788233,"started_at":1786348512,"tips":"获取技术指标信号: TSLA.US","tip_chips":["TSLA.US"],"tool_name":"获取技术指标信号","tool_func_name":"GetInfraIndicator","tool_args":"{\"period\":\"1D\",\"symbol\":\"TSLA.US\"}","tool_type":"tool_call","outputs":{"query":"TSLA.US","text":"{\"symbol\":\"TSLA.US\", \"period\":\"1D\", \"timestamp\":\"1786075200\", \"indicators\":[{\"name\":\"MA(5,10,20,30)\", \"conditions\":[], \"values\":{\"ma10\":\"315.413\", \"ma20\":\"343.333\", \"ma30\":\"364.287\", \"ma5\":\"323.818\"}}, {\"name\":\"MACD(12,26,9)\", \"conditions\":[\"Dea and diff are under 0\"], \"values\":{\"dea\":\"-20.783\", \"diff\":\"-19.758\"}}, {\"name\":\"BOLL(20,2)\", \"conditions\":[\"Bandwidth expansion which indicates increased volatility\"], \"values\":{\"boll_lower\":\"272.941\", \"boll_mid\":\"343.333\", \"boll_upper\":\"413.725\"}}, {\"name\":\"KDJ(9,3,3)\", \"conditions\":[], \"values\":{\"kdj_d\":\"46.470\", \"kdj_j\":\"102.058\", \"kdj_k\":\"64.999\"}}, {\"name\":\"RSI(6,12,24)\", \"conditions\":[], \"values\":{\"rsi1\":\"52.551\", \"rsi2\":\"42.073\", \"rsi3\":\"41.658\"}}, {\"name\":\"PSY(13,6)\", \"conditions\":[], \"values\":{\"psy\":\"38.462\", \"psyma\":\"34.615\"}}, {\"name\":\"CCI(14)\", \"conditions\":[\"Normal area\"], \"values\":{\"cci\":\"14.099\"}}, {\"name\":\"BIAS(6,12,24)\", \"conditions\":[\"Extremely oversold BIAS condition\"], \"values\":{\"bias\":\"-6.983\"}}, {\"name\":\"OSC(20,6)\", \"conditions\":[\"Oversold OSC condition\", \"OSC is under 0 but grows, the bearish trend reduced\"], \"values\":{\"osc\":\"-1475.300\"}}, {\"name\":\"ARBR(26)\", \"conditions\":[\"AR shows consolidation pattern\", \"Extremely oversold BR condition\"], \"values\":{\"ar\":\"68.443\", \"br\":\"1.713\"}}], \"time_utc\":\"2026-08-07T04:00:00Z\"}","tool_args":{"period":"1D","symbol":"TSLA.US"}},"tool_use_id":"2663f3c8-f565-44bc-9a21-ed135073375c","is_thinking":false}}
+
+event:message
+data:{"event":"node_tool_use_finished","workflow_run_id":"102676035333678374","data":{"status":"succeeded","elapsed_time":0.152357718,"started_at":1786348512,"tips":"获取股票相关新闻: TSLA.US","tip_chips":["TSLA.US"],"tool_name":"获取股票相关新闻","tool_func_name":"SocialMCPServiceGetTickerNewsArticles","tool_args":"{\"end_at\":\"2026-08-10T23:59\",\"fuzzy_match\":true,\"limit\":10,\"sort_by\":\"published_at\",\"start_at\":\"2026-07-10T00:00\",\"tickers\":[\"TSLA.US\"]}","tool_type":"tool_call","outputs":{"query":"TSLA.US","text":"{\"articles\":[{\"id\":\"295373415\", \"type\":\"\", \"title\":\"大科技夜盘普涨 特斯拉涨超1% 苹果谷歌小幅上扬\", \"description\":\"8 月 10 日大科技股夜盘集体上扬，特斯拉领涨主流标的涨超 1%，苹果、谷歌小幅上涨，亚马逊、Meta 微幅波动，台积电夜盘反弹。\", \"body\":\"\", \"published_at\":\"2026-08-10T07:46:52Z\", \"source\":\"异动播报\", \"kind\":\"live\", \"content_via\":0, \"source_url\":\"\", \"source_logo\":\"https://pub.lbkrs.com/news_source/icon/cYsf2biFgA9Ady5UPoPpze6uMFDeuJF5.png\"}, {\"id\":\"295372592\", \"type\":\"\", \"title\":\"马斯克称人工智能流量超过人类是确定的，同时伯里做空英伟达和特斯拉\", \"description\":\"埃隆·马斯克预测，到 2026 年 5 月，人工智能机器人互联网流量将超过人类使用量，并指出 Starlink 是关键基础设施。相反，投资者迈克尔·伯里正在积极做空英伟达、特斯拉及其他与人工智能相关的股票，认为该行业面临由不透明融资和夸大收益驱动的泡沫。这突显了马斯克的乐观与伯里对人工智能市场的悲观立场之间的明显分歧\", \"body\":\"\", \"published_at\":\"2026-08-10T07:38:41Z\", \"source\":\"TradingKey\", \"kind\":\"article\", \"content_via\":0, \"source_url\":\"https://www.tradingkey.com/analysis/stocks/us-stocks/262091750-musk-ai-traffic-surpasses-human-burry-shorting-nvidia-tesla-tradingkey\", \"source_logo\":\"https://pub.pbkrs.com/files/202111/Dfnkd4Z6aKBhb4Qk/default_source.png?x-oss-process=style/128\"}, {\"id\":\"295364349\", \"type\":\"\", \"title\":\"特斯拉秘密的 100 亿美元 “水晶太阳计划” 文件揭秘\", \"description\":\"特斯拉在德克萨斯州福特本德县申请了一项价值 101 亿美元的太阳能电池制造设施，内部命名为 “水晶太阳计划”。该项目旨在实现太阳能生产的垂直整合，到 2029 年创造近 10,000 个永久性就业岗位。特斯拉正在寻求为期 10 年的税收减免，以便在与一个未透露名称的外州替代方案竞争时保持竞争力，计划于今年开始建设\", \"body\":\"\", \"published_at\":\"2026-08-10T05:59:52Z\", \"source\":\"Teslarati\", \"kind\":\"article\", \"content_via\":0, \"source_url\":\"https://www.teslarati.com/inside-teslas-secretive-10-billion-project-crystal-sun-filing/\", \"source_logo\":\"https://pub.pbkrs.com/files/202111/Dfnkd4Z6aKBhb4Qk/default_source.png?x-oss-process=style/128\"}, {\"id\":\"295367103\", \"type\":\"\", \"title\":\"埃隆·马斯克称 Starlink 将安装在每辆车上，并称这是连接数十亿车辆的 ‘唯一方式’\", \"description\":\"埃隆·马斯克表示，未来所有汽车都将配备 Starlink 连接，他称这是为数十亿辆汽车提供高带宽互联网的唯一方式。这一评论是在关于特斯拉 Cybercab 上安装平 flush-mounted Starlink 天线的报道之后发表的。此外，马斯克重申了他的目标，即到 2030 年，SpaceX 年收入超过 1 万亿美元，可能处理全球一半以上的互联网流量\", \"body\":\"\", \"published_at\":\"2026-08-10T05:31:16Z\", \"source\":\"benzinga_article\", \"kind\":\"article\", \"content_via\":0, \"source_url\":\"https://www.benzinga.com/markets/tech/26/08/61065222/elon-musk-says-starlink-will-be-in-every-car-calls-it-the-only-way-to-connect-billions-of-vehicles\", \"source_logo\":\"https://pub.pbkrs.com/files/202111/Dfnkd4Z6aKBhb4Qk/default_source.png?x-oss-process=style/128\"}, {\"id\":\"295358502\", \"type\":\"\", \"title\":\"大科技夜盘普涨，特斯拉涨超0%、苹果涨近0%\", \"description\":\"8 月 10 日大科技股夜盘集体上扬，特斯拉涨 0.75%，苹果涨 0.10%，亚马逊、谷歌及 Meta 均录得小幅上涨，半导体龙头台积电亦收高。\", \"body\":\"\", \"published_at\":\"2026-08-10T04:46:22Z\", \"source\":\"异动播报\", \"kind\":\"article\", \"content_via\":0, \"source_url\":\"\", \"source_logo\":\"https://pub.lbkrs.com/news_source/icon/cYsf2biFgA9Ady5UPoPpze6uMFDeuJF5.png\"}, {\"id\":\"295354885\", \"type\":\"\", \"title\":\"\", \"description\":\"杰富瑞将特斯拉目标股价从 400 美元下调至 350 美元。\", \"body\":\"\", \"published_at\":\"2026-08-10T03:45:02Z\", \"source\":\"智通财经\", \"kind\":\"live\", \"content_via\":0, \"source_url\":\"https://m.zhitongcaijing.com/content/contentimmediatelydetail.html?immediately_id=7767312\", \"source_logo\":\"https://pub.pbkrs.com/cms/2021/0/HyCurh9ido7eT3f4m7wEecVyWoGTchPk.jpg?x-oss-process=style/128\"}, {\"id\":\"295353418\", \"type\":\"\", \"title\":\"特斯拉日本卖太好，要扩增交车据点\", \"description\":\"因日本市场需求激增，特斯拉计划将交车中心从 7 处扩增至 11 处，新增横滨、神户、东京及名古屋据点。受政府高额补贴及免费超充优惠推动，2026 年上半年销量已破 1.2 万辆，创历史新高。为应对订单压力，特斯拉还追加进口港口容量，并调整优惠期限以配合新交车点启用。\", \"body\":\"\", \"published_at\":\"2026-08-10T03:23:50Z\", \"source\":\"科技新报\", \"kind\":\"article\", \"content_via\":0, \"source_url\":\"https://technews.tw/2026/08/10/tesla-japan-expanding/\", \"source_logo\":\"https://pub.pbkrs.com/files/202111/Dfnkd4Z6aKBhb4Qk/default_source.png?x-oss-process=style/128\"}, {\"id\":\"295344396\", \"type\":\"\", \"title\":\"\", \"description\":\"特斯拉发布超大规模 AI 芯片制造项目 Terafab 概念视频。\", \"body\":\"\", \"published_at\":\"2026-08-10T01:37:12Z\", \"source\":\"智通财经\", \"kind\":\"live\", \"content_via\":0, \"source_url\":\"https://m.zhitongcaijing.com/content/contentimmediatelydetail.html?immediately_id=7766749\", \"source_logo\":\"https://pub.pbkrs.com/cms/2021/0/HyCurh9ido7eT3f4m7wEecVyWoGTchPk.jpg?x-oss-process=style/128\"}, {\"id\":\"295340963\", \"type\":\"\", \"title\":\"SpaceX 2026 年第二季度：Starlink 用户数量达到 1200 万，收入运行率达到 1000 亿美元，股票因 Terafab 和 Argus 的评级上调而飙升至 133 美元\", \"description\":\"SpaceX 报告了 2026 年第二季度的财报，收入为 78.14 亿美元，Starlink 订阅用户达到 1200 万，预计年化收入将达到 1000 亿美元。尽管由于 184 亿美元的人工智能资本支出，股价初期下跌了 14%，但在解禁后没有出现显著抛售，股价反弹 15.8%，达到 133.11 美元。此外，Argus 将其评级上调至买入，目标价为 160 美元，并且还传出与特斯拉达成 168 亿美元半导体合资企业的消息\", \"body\":\"\", \"published_at\":\"2026-08-10T00:56:42Z\", \"source\":\"TradingKey\", \"kind\":\"article\", \"content_via\":0, \"source_url\":\"https://www.tradingkey.com/analysis/stocks/us-stocks/262090853-spacex-spcx-q2-2026-starlink-ai-terafab-breakout-technical-tradingkey\", \"source_logo\":\"https://pub.pbkrs.com/files/202111/Dfnkd4Z6aKBhb4Qk/default_source.png?x-oss-process=style/128\"}, {\"id\":\"295332979\", \"type\":\"\", \"title\":\"马斯克或采用 FEL 技术挑战 EUV 光刻机\", \"description\":\"SpaceX 与特斯拉合作在得州建设 Terafab 芯片设施，初期投资 168 亿美元。市场推测马斯克拟采用自由电子激光器 (FEL) 技术挑战阿斯麦的 EUV 光刻机垄断，马斯克回应 “FEL FTW” 似予印证。尽管 FEL 具备波长更短等优势，但加速器系统庞大、成本高及量产稳定性仍是产业化主要挑战。\", \"body\":\"\", \"published_at\":\"2026-08-09T20:55:58Z\", \"source\":\"美港电讯\", \"kind\":\"live\", \"content_via\":0, \"source_url\":\"https://www.ushknews.com/20260810045558184800\", \"source_logo\":\"https://pub.pbkrs.com/cms/2021/0/saz3tNhNUv3j1HUueQ3ZE7RvWCPbHpaL.jpg?x-oss-process=style/128\"}]}","tool_args":{"end_at":"2026-08-10T23:59","fuzzy_match":true,"limit":10,"sort_by":"published_at","start_at":"2026-07-10T00:00","tickers":["TSLA.US"]}},"tool_use_id":"335a2e9d-0b2f-41bb-8675-8d7dd1235df0","is_thinking":false}}
+
+event:message
+data:{"event":"node_tool_use_started","workflow_run_id":"102676035333678374","data":{"tips":"Skill: vis-charts","tip_chips":["vis-charts"],"started_at":1786348533,"tool_name":"Skill","tool_func_name":"Skill","tool_args":"{\"skill\":\"vis-charts\"}","tool_use_id":"06d05220-f646-448e-8599-260f6d52e426"}}
+
+event:message
+data:{"event":"node_tool_use_finished","workflow_run_id":"102676035333678374","data":{"status":"succeeded","elapsed_time":3.976150096,"started_at":1786348537,"tips":"Skill: vis-charts","tip_chips":["vis-charts"],"tool_name":"Skill","tool_func_name":"Skill","tool_args":"{\"skill\":\"vis-charts\"}","tool_type":"tool_call","outputs":{"data":{"content":"---\nname: vis-charts\ndescription: Create data visualizations using GPTVis chart format. Always use this skill whenever the user wants any kind of chart, graph, diagram, or visual representation of data — including explicit requests (\"make a bar chart\", \"show a pie chart\") and implicit ones (\"compare these numbers\", \"show the trend\", \"draw a flowchart\", \"create a mind map\", \"visualize this data\"). Use it even when the user just shares data and visualization is helpful for user to understand the data. Supports 17+ types including column, bar, line, pie, area, scatter, radar, histogram, network graph, mind map, flow diagram, org chart, and more. Output format is vis-chart markdown code blocks.\n---\n\n# GPTVis Charts\n\n## Workflow\n\n**IMPORTANT: Follow this workflow to minimize context usage and maximize efficiency:**\n\n1. **Analyze user request** - Understand what data needs to be visualized\n2. **Select chart type** - Use the Chart Type Selection Guide below to determine the most appropriate chart type\n3. **Load detailed syntax** - Read ONLY the specific reference file for the selected chart type from `references/` directory. Note that you MUST read specific reference file for all charts except column/pie/line. !!!!\n4. **Generate chart** - Create the ```vis-chart code block using the loaded syntax\n\n**Do NOT load all reference files at once. Only load what you need for the specific chart type.**\n\n## Chart Type Selection Guide\n\n### Quick Chart Type Reference\n\n**Statistical Charts:**\n- `column` - Vertical bars for comparing categories (read `references/Column_Chart.md`)\n- `bar` - Horizontal bars for comparing categories with long names (read `references/Bar_Chart.md`)\n- `line` - Trends over time or ordered data (read `references/Line_Chart.md`)\n- `pie` - Part-to-whole proportions, ≤5 categories (read `references/Pie_Chart.md`)\n- `area` - Trends with volume emphasis (read `references/Area_Chart.md`)\n- `scatter` - Correlation between two variables (read `references/Scatter_Chart.md`)\n- `histogram` - Frequency distribution (read `references/Histogram_Chart.md`)\n- `boxplot` - Statistical summaries (read `references/Boxplot.md`)\n- `radar` - Multi-dimensional comparisons (read `references/Radar_Chart.md`)\n- `dualaxes` - Two metrics with different scales (read `references/DualAxes_Chart.md`)\n- `funnel` - Conversion funnels (read `references/Funnel_Chart.md`)\n- `sankey` - Flow between stages (read `references/Sankey_Chart.md`)\n- `wordcloud` - Text frequency (read `references/WordCloud_Chart.md`)\n\n**Relationship & Hierarchy Charts:**\n- `network` - Entity connections (read `references/Network_Graph.md`)\n- `mindmap` - Hierarchical concepts (read `references/Mind_Map.md`)\n- `flow` - Process steps (read `references/Flow_Diagram.md`)\n- `fishbone` - Cause-and-effect (read `references/Fishbone_Diagram.md`)\n- `organization` - Org structures (read `references/Organization_Chart.md`)\n\n\n### Selection Criteria by Purpose\n\n**For Comparisons:**\n- Comparing categories → `column` or `bar`\n- Multiple series across categories → `column` with `group: true`\n- Multi-dimensional comparison → `radar`\n\n**For Trends:**\n- Time series where X-axis contains actual time points → `line` (requires ≥3 points per group)\n- X-axis is categories, not time → `column` (not `line`)\n- Trends with volume → `area`\n- Two metrics with different scales → `dualaxes`\n\n**For Composition:**\n- Part-to-whole (≤5 parts) → `pie`\n- Composition over time → stacked `column`/`bar`/`area`\n- Hierarchical composition → `treemap`\n\n**For Distribution:**\n- Frequency distribution → `histogram`\n- Statistical summary → `boxplot`\n- Two-variable correlation → `scatter`\n\n**For Relationships:**\n- Entity connections → `network`\n- Hierarchical concepts → `mindmap`\n- Process flows → `flow`\n- Flow quantities → `sankey`\n\n\n### Financial Data Scenarios\n\n**Common financial visualizations:**\n- Stock price trends → `line`\n- Capital flows → `line` or `area`\n- Quarterly comparisons → `column`\n- Portfolio allocation → `pie`\n- P/E ratios correlation → `scatter`\n- Return distributions → `histogram` or `boxplot`\n- Multi-metric performance → `radar`\n- Short selling analysis → `dualaxes`\n\n\n## Chart Generation Rules\n\nThese rules prevent common rendering failures:\n\n**Data values:** Use pure numbers only — no \"约\", no \"±\", no \"~\", no unit suffixes inside data fields. Units belong in `title`, `axisXTitle`, or `axisYTitle` only.\n\n**Scale normalization:** Normalize large numbers so absolute values stay readable. For example, 1,500,000,000 → 1.5, with title saying \"（亿元）\". Never mix two very different scales in one chart (e.g., one series around 500 and another around 0.05) — split into two charts or use `dualaxes`.\n\n**Code block:** Always close the code block with a terminating ` ``` `. Never add comments inside chart JSON. Never use special formats like `[stock xxx]` inside data.\n\n**Chart type discipline:** Only use the chart types listed in this skill. Do not invent new types.\n\n**Use charts generously:** When the user shares data or asks analytical questions, proactively choose the most informative chart rather than responding with plain text.\n\n## Best practices\n- Time series prioritizes line charts/area charts, while categorical comparisons prioritize bar charts/column charts.\n- Pie charts should have no more than 5 categories. If there are more, it is recommended to merge them into \"Other\" or switch to a bar chart.\n- Do not use pie charts to display trends, and do not use line charts to display unordered categories.\n- Numerical fields must be of numeric type, and categorical fields must be of text type.\n\n## Basic Chart Format\n\nAll GPTVis charts use this structure:\n\n```vis-chart\n{\n  \"type\": \"chart-type\",\n  \"data\": [...],\n  \"title\": \"Chart Title\"\n}\n```\n\nDo not include `theme`, `style`, `backgroundColor`, `palette`, or any other visual styling fields — these are controlled by the host system.\n\n## Common Examples\n\n### Column Chart\n```vis-chart\n{\n  \"type\": \"column\",\n  \"data\": [\n    { \"category\": \"Q1\", \"value\": 120 },\n    { \"category\": \"Q2\", \"value\": 150 }\n  ],\n  \"title\": \"Quarterly Sales\"\n}\n```\n\n### Line Chart\n```vis-chart\n{\n  \"type\": \"line\",\n  \"data\": [\n    { \"time\": \"2024-01\", \"value\": 100 },\n    { \"time\": \"2024-02\", \"value\": 120 }\n  ],\n  \"title\": \"Monthly Trend\"\n}\n```\n\n### Pie Chart\n```vis-chart\n{\n  \"type\": \"pie\",\n  \"data\": [\n    { \"category\": \"Product A\", \"value\": 45 },\n    { \"category\": \"Product B\", \"value\": 30 },\n    { \"category\": \"Product C\", \"value\": 25 }\n  ],\n  \"title\": \"Market Share\"\n}\n```\n\n### dual-axes Chart\n```vis-chart\n{\"type\":\"dual-axes\",\"categories\":[\"2018\",\"2019\",\"2020\",\"2021\",\"2022\"],\"title\":\"2018-2022销售额与利润率\",\"axisXTitle\":\"年份\",\"series\":[{\"type\":\"column\",\"data\":[91.9,99.1,101.6,114.4,121],\"axisYTitle\":\"销售额\"},{\"type\":\"line\",\"data\":[0.055,0.06,0.062,0.07,0.075],\"axisYTitle\":\"利润率\"}]}\n```\n\n## Detailed Documentation\n\n**After selecting the appropriate chart type, read the corresponding reference file for complete syntax:**\n\nEach reference file contains:\n- Complete TypeScript type definitions\n- All required and optional fields\n- Data structure requirements\n- Multiple usage examples\n- Chinese descriptions and use cases\n\n**Example workflow:**\n1. User asks: \"Show me quarterly sales comparison\"\n2. Determine chart type: `column` (comparing categories)\n3. Read file: `references/Column_Chart.md`\n4. Generate chart using the detailed syntax from that file\n","description":"Create data visualizations using GPTVis chart format. Always use this skill whenever the user wants any kind of chart, graph, diagram, or visual representation of data — including explicit requests (\"make a bar chart\", \"show a pie chart\") and implicit ones (\"compare these numbers\", \"show the trend\", \"draw a flowchart\", \"create a mind map\", \"visualize this data\"). Use it even when the user just shares data and visualization is helpful for user to understand the data. Supports 17+ types including column, bar, line, pie, area, scatter, radar, histogram, network graph, mind map, flow diagram, org chart, and more. Output format is vis-chart markdown code blocks.","location":"skills/vis-charts/SKILL.md","name":"vis-charts","qualified_name":"vis-charts"},"query":"vis-charts","text":"<skill_content name=\"vis-charts\">\n# GPTVis Charts\n\n## Workflow\n\n**IMPORTANT: Follow this workflow to minimize context usage and maximize efficiency:**\n\n1. **Analyze user request** - Understand what data needs to be visualized\n2. **Select chart type** - Use the Chart Type Selection Guide below to determine the most appropriate chart type\n3. **Load detailed syntax** - Read ONLY the specific reference file for the selected chart type from `references/` directory. Note that you MUST read specific reference file for all charts except column/pie/line. !!!!\n4. **Generate chart** - Create the ```vis-chart code block using the loaded syntax\n\n**Do NOT load all reference files at once. Only load what you need for the specific chart type.**\n\n## Chart Type Selection Guide\n\n### Quick Chart Type Reference\n\n**Statistical Charts:**\n- `column` - Vertical bars for comparing categories (read `references/Column_Chart.md`)\n- `bar` - Horizontal bars for comparing categories with long names (read `references/Bar_Chart.md`)\n- `line` - Trends over time or ordered data (read `references/Line_Chart.md`)\n- `pie` - Part-to-whole proportions, ≤5 categories (read `references/Pie_Chart.md`)\n- `area` - Trends with volume emphasis (read `references/Area_Chart.md`)\n- `scatter` - Correlation between two variables (read `references/Scatter_Chart.md`)\n- `histogram` - Frequency distribution (read `references/Histogram_Chart.md`)\n- `boxplot` - Statistical summaries (read `references/Boxplot.md`)\n- `radar` - Multi-dimensional comparisons (read `references/Radar_Chart.md`)\n- `dualaxes` - Two metrics with different scales (read `references/DualAxes_Chart.md`)\n- `funnel` - Conversion funnels (read `references/Funnel_Chart.md`)\n- `sankey` - Flow between stages (read `references/Sankey_Chart.md`)\n- `wordcloud` - Text frequency (read `references/WordCloud_Chart.md`)\n\n**Relationship & Hierarchy Charts:**\n- `network` - Entity connections (read `references/Network_Graph.md`)\n- `mindmap` - Hierarchical concepts (read `references/Mind_Map.md`)\n- `flow` - Process steps (read `references/Flow_Diagram.md`)\n- `fishbone` - Cause-and-effect (read `references/Fishbone_Diagram.md`)\n- `organization` - Org structures (read `references/Organization_Chart.md`)\n\n\n### Selection Criteria by Purpose\n\n**For Comparisons:**\n- Comparing categories → `column` or `bar`\n- Multiple series across categories → `column` with `group: true`\n- Multi-dimensional comparison → `radar`\n\n**For Trends:**\n- Time series where X-axis contains actual time points → `line` (requires ≥3 points per group)\n- X-axis is categories, not time → `column` (not `line`)\n- Trends with volume → `area`\n- Two metrics with different scales → `dualaxes`\n\n**For Composition:**\n- Part-to-whole (≤5 parts) → `pie`\n- Composition over time → stacked `column`/`bar`/`area`\n- Hierarchical composition → `treemap`\n\n**For Distribution:**\n- Frequency distribution → `histogram`\n- Statistical summary → `boxplot`\n- Two-variable correlation → `scatter`\n\n**For Relationships:**\n- Entity connections → `network`\n- Hierarchical concepts → `mindmap`\n- Process flows → `flow`\n- Flow quantities → `sankey`\n\n\n### Financial Data Scenarios\n\n**Common financial visualizations:**\n- Stock price trends → `line`\n- Capital flows → `line` or `area`\n- Quarterly comparisons → `column`\n- Portfolio allocation → `pie`\n- P/E ratios correlation → `scatter`\n- Return distributions → `histogram` or `boxplot`\n- Multi-metric performance → `radar`\n- Short selling analysis → `dualaxes`\n\n\n## Chart Generation Rules\n\nThese rules prevent common rendering failures:\n\n**Data values:** Use pure numbers only — no \"约\", no \"±\", no \"~\", no unit suffixes inside data fields. Units belong in `title`, `axisXTitle`, or `axisYTitle` only.\n\n**Scale normalization:** Normalize large numbers so absolute values stay readable. For example, 1,500,000,000 → 1.5, with title saying \"（亿元）\". Never mix two very different scales in one chart (e.g., one series around 500 and another around 0.05) — split into two charts or use `dualaxes`.\n\n**Code block:** Always close the code block with a terminating ` ``` `. Never add comments inside chart JSON. Never use special formats like `[stock xxx]` inside data.\n\n**Chart type discipline:** Only use the chart types listed in this skill. Do not invent new types.\n\n**Use charts generously:** When the user shares data or asks analytical questions, proactively choose the most informative chart rather than responding with plain text.\n\n## Best practices\n- Time series prioritizes line charts/area charts, while categorical comparisons prioritize bar charts/column charts.\n- Pie charts should have no more than 5 categories. If there are more, it is recommended to merge them into \"Other\" or switch to a bar chart.\n- Do not use pie charts to display trends, and do not use line charts to display unordered categories.\n- Numerical fields must be of numeric type, and categorical fields must be of text type.\n\n## Basic Chart Format\n\nAll GPTVis charts use this structure:\n\n```vis-chart\n{\n  \"type\": \"chart-type\",\n  \"data\": [...],\n  \"title\": \"Chart Title\"\n}\n```\n\nDo not include `theme`, `style`, `backgroundColor`, `palette`, or any other visual styling fields — these are controlled by the host system.\n\n## Common Examples\n\n### Column Chart\n```vis-chart\n{\n  \"type\": \"column\",\n  \"data\": [\n    { \"category\": \"Q1\", \"value\": 120 },\n    { \"category\": \"Q2\", \"value\": 150 }\n  ],\n  \"title\": \"Quarterly Sales\"\n}\n```\n\n### Line Chart\n```vis-chart\n{\n  \"type\": \"line\",\n  \"data\": [\n    { \"time\": \"2024-01\", \"value\": 100 },\n    { \"time\": \"2024-02\", \"value\": 120 }\n  ],\n  \"title\": \"Monthly Trend\"\n}\n```\n\n### Pie Chart\n```vis-chart\n{\n  \"type\": \"pie\",\n  \"data\": [\n    { \"category\": \"Product A\", \"value\": 45 },\n    { \"category\": \"Product B\", \"value\": 30 },\n    { \"category\": \"Product C\", \"value\": 25 }\n  ],\n  \"title\": \"Market Share\"\n}\n```\n\n### dual-axes Chart\n```vis-chart\n{\"type\":\"dual-axes\",\"categories\":[\"2018\",\"2019\",\"2020\",\"2021\",\"2022\"],\"title\":\"2018-2022销售额与利润率\",\"axisXTitle\":\"年份\",\"series\":[{\"type\":\"column\",\"data\":[91.9,99.1,101.6,114.4,121],\"axisYTitle\":\"销售额\"},{\"type\":\"line\",\"data\":[0.055,0.06,0.062,0.07,0.075],\"axisYTitle\":\"利润率\"}]}\n```\n\n## Detailed Documentation\n\n**After selecting the appropriate chart type, read the corresponding reference file for complete syntax:**\n\nEach reference file contains:\n- Complete TypeScript type definitions\n- All required and optional fields\n- Data structure requirements\n- Multiple usage examples\n- Chinese descriptions and use cases\n\n**Example workflow:**\n1. User asks: \"Show me quarterly sales comparison\"\n2. Determine chart type: `column` (comparing categories)\n3. Read file: `references/Column_Chart.md`\n4. Generate chart using the detailed syntax from that file\n\nSkill directory: ./skills/vis-charts\nRelative paths in this skill are relative to the skill directory.\n\n<skill_resources>\n  <file>references/Area_Chart.md</file>\n  <file>references/Bar_Chart.md</file>\n  <file>references/Boxplot.md</file>\n  <file>references/Column_Chart.md</file>\n  <file>references/DualAxes_Chart.md</file>\n  <file>references/Fishbone_Diagram.md</file>\n  <file>references/Flow_Diagram.md</file>\n  <file>references/Funnel_Chart.md</file>\n  <file>references/Histogram_Chart.md</file>\n  <file>references/Line_Chart.md</file>\n  <file>references/Mind_Map.md</file>\n  <file>references/Network_Graph.md</file>\n  <file>references/Organization_Chart.md</file>\n  <file>references/Overview.md</file>\n  <file>references/Pie_Chart.md</file>\n  <file>references/Radar_Chart.md</file>\n  <file>references/Sankey_Chart.md</file>\n  <file>references/Scatter_Chart.md</file>\n  <file>references/Treemap_Chart.md</file>\n  <file>references/WordCloud_Chart.md</file>\n</skill_resources>\n</skill_content>","tool_args":{"skill":"vis-charts"}},"tool_use_id":"06d05220-f646-448e-8599-260f6d52e426","is_thinking":false}}
+
+event:message
+data:{"event":"node_tool_use_started","workflow_run_id":"102676035333678374","data":{"tips":"读取文件","started_at":1786348552,"tool_name":"读取文件","tool_func_name":"Read","tool_args":"{\"file_path\":\"skills/vis-charts/references/DualAxes_Chart.md\"}","tool_use_id":"fdcad22a-7d7e-49fa-8a4b-d246d177cedd"}}
+
+event:message
+data:{"event":"node_tool_use_finished","workflow_run_id":"102676035333678374","data":{"status":"succeeded","elapsed_time":0.082485352,"started_at":1786348552,"tips":"读取文件","tool_name":"读取文件","tool_func_name":"Read","tool_args":"{\"file_path\":\"skills/vis-charts/references/DualAxes_Chart.md\"}","tool_type":"tool_call","outputs":{"data":{"content":"## 图表属性\n\n- 名称：双轴图\n- 别名：组合图，英文名：DualAxes Chart\n- 形状：柱形、折线\n- 图表类别：组合图表\n- 图表功能：多维度比较、趋势分析\n\n## 基础概念\n\n双轴图是一种结合两个不同图表类型的组合图表，通常是将柱状图与折线图结合起来显示。双轴图通过在一个图表中使用两个垂直 Y 轴（左侧和右侧），分别对应不同的数值维度。柱状图用于展示一组数据的大小或数量，而折线图则展示另一组数据的趋势。双轴图非常适合同时展示不同类型的数据变化趋势。\n\n## 适用场景\n\n- 同时展示两个具有不同数量级的数据，例如销售额和增长率。\n- 比较两组变量的相对变化趋势，如同时观察某时间段内的销量和利润率。\n- 数据维度不同且具有共同的 X 轴（例如时间、类别）。\n\n## 不适用场景\n\n- 数据类型相同且数量级相近时，单一类型图表（如折线图或柱状图）更简洁。\n- 无法找到具有相关性的两个数据维度进行比较时，双轴图的价值会降低。\n\n## 图表用法\n\n### 图表属性\n\n```typescript\ntype DualAxes = {\n  type: 'dual-axes';\n  categories: string[];\n  title?: string;\n  axisXTitle?: string;\n  series: SeriesDataItem[];\n};\n\ntype SeriesDataItem = {\n  type: 'line' | 'column';\n  data: number[];\n  axisYTitle?: string;\n};\n```\n\n### 数据要求\n\n- type：图表的类型，必填，文本类型，值必须为 \"dual-axes\"。\n- categories：图表的 X 轴的数组，必填，数组文本类型。\n- title：图表的标题，选填，文本类型。\n- axisXTitle：图表的 X 轴的标题，选填，文本类型。\n- series：图表详细组合，必填，数组对象类型，每个对象代表一个基础图表，包含：\n  - type：基础图表的类型，必填，\"column\"表示柱状图，\"line\"表示折线图；\n  - data：基础图表的数据，必填，数组数值类型；\n  - axisYTitle：基础图表的 Y 轴标题，选填，文本类型；\n\n## 使用示例\n\n1. 用双轴图展示某公司的年销售额与利润率，2018 年至 2022 年的销售额分别为 91.9 亿、99.1 亿、101.6 亿、114.4 亿、121 亿，利润率分别为 5.5%、6.0%、6.2%、7.0%、7.5%。\n\n```vis-chart\n{\n  \"type\": \"dual-axes\",\n  \"categories\": [\"2018\", \"2019\", \"2020\", \"2021\", \"2022\"],\n  \"title\": \"2018-2022销售额与利润率\",\n  \"axisXTitle\": \"年份\",\n  \"series\": [\n    {\n      \"type\": \"column\",\n      \"data\": [91.9, 99.1, 101.6, 114.4, 121],\n      \"axisYTitle\": \"销售额\"\n    },\n    {\n      \"type\": \"line\",\n      \"data\": [0.055, 0.06, 0.062, 0.07, 0.075],\n      \"axisYTitle\": \"利润率\"\n    }\n  ]\n}\n```\n\n2. 用双轴图可视化我的数据 [{ \"year\": 2020, \"revenue\": 500, \"growth_rate\": 10 }, { \"year\": 2021, \"revenue\": 600, \"growth_rate\": 12 }, { \"year\": 2022, \"revenue\": 700, \"growth_rate\": 15 }]。\n\n```vis-chart\n{\n  \"type\": \"dual-axes\",\n  \"categories\": [\"2020\", \"2021\", \"2022\"],\n  \"title\": \"2020-2022 Income and Growth Rate\",\n  \"axisXTitle\": \"Year\",\n  \"series\": [\n    {\n      \"type\": \"column\",\n      \"data\": [500, 600, 700],\n      \"axisYTitle\": \"Income\"\n    },\n    {\n      \"type\": \"line\",\n      \"data\": [10, 12, 15],\n      \"axisYTitle\": \"Growth Rate\"\n    }\n  ]\n}\n```\n\n3. 用组合图可视化我的数据 [{ \"day\": \"20240501\", \"cnt\": 1000, \"growth_rate\": 10 }, { \"day\": \"20240502\", \"cnt\": 1200, \"growth_rate\": 12 }, { \"day\": \"20240503\", \"cnt\": 1500, \"growth_rate\": 16 }]。\n\n```vis-chart\n{\n  \"type\": \"dual-axes\",\n  \"categories\": [\"20240501\", \"20240502\", \"20240503\"],\n  \"title\": \"五一期间景区人流量\",\n  \"axisXTitle\": \"日期\",\n  \"series\": [\n    {\n      \"type\": \"column\",\n      \"data\": [1000, 1200, 1500],\n      \"axisYTitle\": \"人数\"\n    },\n    {\n      \"type\": \"line\",\n      \"data\": [10, 12, 16],\n      \"axisYTitle\": \"增长率\"\n    }\n  ]\n}\n```\n","file_path":"/home/sandbox/skills/vis-charts/references/DualAxes_Chart.md"},"query":"","text":"## 图表属性\n\n- 名称：双轴图\n- 别名：组合图，英文名：DualAxes Chart\n- 形状：柱形、折线\n- 图表类别：组合图表\n- 图表功能：多维度比较、趋势分析\n\n## 基础概念\n\n双轴图是一种结合两个不同图表类型的组合图表，通常是将柱状图与折线图结合起来显示。双轴图通过在一个图表中使用两个垂直 Y 轴（左侧和右侧），分别对应不同的数值维度。柱状图用于展示一组数据的大小或数量，而折线图则展示另一组数据的趋势。双轴图非常适合同时展示不同类型的数据变化趋势。\n\n## 适用场景\n\n- 同时展示两个具有不同数量级的数据，例如销售额和增长率。\n- 比较两组变量的相对变化趋势，如同时观察某时间段内的销量和利润率。\n- 数据维度不同且具有共同的 X 轴（例如时间、类别）。\n\n## 不适用场景\n\n- 数据类型相同且数量级相近时，单一类型图表（如折线图或柱状图）更简洁。\n- 无法找到具有相关性的两个数据维度进行比较时，双轴图的价值会降低。\n\n## 图表用法\n\n### 图表属性\n\n```typescript\ntype DualAxes = {\n  type: 'dual-axes';\n  categories: string[];\n  title?: string;\n  axisXTitle?: string;\n  series: SeriesDataItem[];\n};\n\ntype SeriesDataItem = {\n  type: 'line' | 'column';\n  data: number[];\n  axisYTitle?: string;\n};\n```\n\n### 数据要求\n\n- type：图表的类型，必填，文本类型，值必须为 \"dual-axes\"。\n- categories：图表的 X 轴的数组，必填，数组文本类型。\n- title：图表的标题，选填，文本类型。\n- axisXTitle：图表的 X 轴的标题，选填，文本类型。\n- series：图表详细组合，必填，数组对象类型，每个对象代表一个基础图表，包含：\n  - type：基础图表的类型，必填，\"column\"表示柱状图，\"line\"表示折线图；\n  - data：基础图表的数据，必填，数组数值类型；\n  - axisYTitle：基础图表的 Y 轴标题，选填，文本类型；\n\n## 使用示例\n\n1. 用双轴图展示某公司的年销售额与利润率，2018 年至 2022 年的销售额分别为 91.9 亿、99.1 亿、101.6 亿、114.4 亿、121 亿，利润率分别为 5.5%、6.0%、6.2%、7.0%、7.5%。\n\n```vis-chart\n{\n  \"type\": \"dual-axes\",\n  \"categories\": [\"2018\", \"2019\", \"2020\", \"2021\", \"2022\"],\n  \"title\": \"2018-2022销售额与利润率\",\n  \"axisXTitle\": \"年份\",\n  \"series\": [\n    {\n      \"type\": \"column\",\n      \"data\": [91.9, 99.1, 101.6, 114.4, 121],\n      \"axisYTitle\": \"销售额\"\n    },\n    {\n      \"type\": \"line\",\n      \"data\": [0.055, 0.06, 0.062, 0.07, 0.075],\n      \"axisYTitle\": \"利润率\"\n    }\n  ]\n}\n```\n\n2. 用双轴图可视化我的数据 [{ \"year\": 2020, \"revenue\": 500, \"growth_rate\": 10 }, { \"year\": 2021, \"revenue\": 600, \"growth_rate\": 12 }, { \"year\": 2022, \"revenue\": 700, \"growth_rate\": 15 }]。\n\n```vis-chart\n{\n  \"type\": \"dual-axes\",\n  \"categories\": [\"2020\", \"2021\", \"2022\"],\n  \"title\": \"2020-2022 Income and Growth Rate\",\n  \"axisXTitle\": \"Year\",\n  \"series\": [\n    {\n      \"type\": \"column\",\n      \"data\": [500, 600, 700],\n      \"axisYTitle\": \"Income\"\n    },\n    {\n      \"type\": \"line\",\n      \"data\": [10, 12, 15],\n      \"axisYTitle\": \"Growth Rate\"\n    }\n  ]\n}\n```\n\n3. 用组合图可视化我的数据 [{ \"day\": \"20240501\", \"cnt\": 1000, \"growth_rate\": 10 }, { \"day\": \"20240502\", \"cnt\": 1200, \"growth_rate\": 12 }, { \"day\": \"20240503\", \"cnt\": 1500, \"growth_rate\": 16 }]。\n\n```vis-chart\n{\n  \"type\": \"dual-axes\",\n  \"categories\": [\"20240501\", \"20240502\", \"20240503\"],\n  \"title\": \"五一期间景区人流量\",\n  \"axisXTitle\": \"日期\",\n  \"series\": [\n    {\n      \"type\": \"column\",\n      \"data\": [1000, 1200, 1500],\n      \"axisYTitle\": \"人数\"\n    },\n    {\n      \"type\": \"line\",\n      \"data\": [10, 12, 16],\n      \"axisYTitle\": \"增长率\"\n    }\n  ]\n}\n```\n","tool_args":{"file_path":"skills/vis-charts/references/DualAxes_Chart.md"}},"tool_use_id":"fdcad22a-7d7e-49fa-8a4b-d246d177cedd","is_thinking":false}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"数据收集","type":"answer","started_at":1786348563,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"完毕，下面","type":"answer","started_at":1786348563,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"为你做完整的技术","type":"answer","started_at":1786348564,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"面 +","type":"answer","started_at":1786348564,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"消息面分析。","type":"answer","started_at":1786348564,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"\n\n","type":"answer","started_at":1786348564,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"---\n\n## T","type":"answer","started_at":1786348564,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"SLA 近","type":"answer","started_at":1786348564,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"一个月走势总览","type":"answer","started_at":1786348564,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"\n\n**核心","type":"answer","started_at":1786348564,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"结论：TSL","type":"answer","started_at":1786348564,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"A 在","type":"answer","started_at":1786348564,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 7 月","type":"answer","started_at":1786348564,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 23 ","type":"answer","started_at":1786348564,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"日出现放量暴跌","type":"answer","started_at":1786348564,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"（单日跌幅","type":"answer","started_at":1786348564,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"约 14","type":"answer","started_at":1786348565,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":".5%","type":"answer","started_at":1786348565,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"），随后进入底部","type":"answer","started_at":1786348565,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"震荡筑","type":"answer","started_at":1786348565,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"底阶段，8","type":"answer","started_at":1786348565,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 月初反弹","type":"answer","started_at":1786348565,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"至 \\$32","type":"answer","started_at":1786348565,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"8 ","type":"answer","started_at":1786348565,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"附近，但均线","type":"answer","started_at":1786348565,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"系统仍呈空头","type":"answer","started_at":1786348565,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"排列，中期趋势","type":"answer","started_at":1786348565,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"尚未扭转","type":"answer","started_at":1786348565,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"。**\n\n```vis","type":"answer","started_at":1786348565,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"-chart\n{","type":"answer","started_at":1786348565,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"\n  \"type","type":"answer","started_at":1786348565,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"\": \"dual","type":"answer","started_at":1786348565,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"-axes\",\n","type":"answer","started_at":1786348566,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"  \"categories\":","type":"answer","started_at":1786348566,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" [\"7/1","type":"answer","started_at":1786348566,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"0\",\"","type":"answer","started_at":1786348566,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"7/13","type":"answer","started_at":1786348566,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"\",\"7/1","type":"answer","started_at":1786348566,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"4\",\"7/","type":"answer","started_at":1786348566,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"15\",\"7","type":"answer","started_at":1786348566,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"/16\",\"","type":"answer","started_at":1786348566,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"7/17","type":"answer","started_at":1786348566,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"\",\"7/2","type":"answer","started_at":1786348566,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"0\",\"7/","type":"answer","started_at":1786348566,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"21\",\"7","type":"answer","started_at":1786348566,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"/22\",\"","type":"answer","started_at":1786348566,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"7/23","type":"answer","started_at":1786348566,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"\",\"7/2","type":"answer","started_at":1786348566,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"4\",\"7/","type":"answer","started_at":1786348566,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"27\",\"7","type":"answer","started_at":1786348566,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"/28\",\"","type":"answer","started_at":1786348567,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"7/29","type":"answer","started_at":1786348567,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"\",\"7/3","type":"answer","started_at":1786348567,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"0\",\"7/","type":"answer","started_at":1786348567,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"31\",\"8","type":"answer","started_at":1786348567,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"/3\",\"8","type":"answer","started_at":1786348567,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"/4\",\"8","type":"answer","started_at":1786348567,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"/5\",\"8","type":"answer","started_at":1786348567,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"/6\",\"8","type":"answer","started_at":1786348567,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"/7\"],\n","type":"answer","started_at":1786348567,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"  \"title\":","type":"answer","started_at":1786348567,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" \"TSLA","type":"answer","started_at":1786348567,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 近一个月收盘价","type":"answer","started_at":1786348567,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"与成交量\",","type":"answer","started_at":1786348567,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"\n  \"axis","type":"answer","started_at":1786348567,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"XTitle","type":"answer","started_at":1786348567,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"\": \"日期\",","type":"answer","started_at":1786348568,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"\n ","type":"answer","started_at":1786348568,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" \"series\": ","type":"answer","started_at":1786348568,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"[\n    {\n","type":"answer","started_at":1786348568,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"      \"type\":","type":"answer","started_at":1786348568,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" \"line","type":"answer","started_at":1786348568,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"\",\n      \"","type":"answer","started_at":1786348568,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"data\": [4","type":"answer","started_at":1786348568,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"07.7","type":"answer","started_at":1786348568,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"6,39","type":"answer","started_at":1786348568,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"4.76","type":"answer","started_at":1786348568,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":",396","type":"answer","started_at":1786348568,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":".18,","type":"answer","started_at":1786348568,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"394.","type":"answer","started_at":1786348568,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"46,3","type":"answer","started_at":1786348568,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"91.0","type":"answer","started_at":1786348568,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"6,38","type":"answer","started_at":1786348568,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"0.84","type":"answer","started_at":1786348568,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":",369","type":"answer","started_at":1786348569,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":".57,","type":"answer","started_at":1786348569,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"378.","type":"answer","started_at":1786348569,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"93,3","type":"answer","started_at":1786348569,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"74.0","type":"answer","started_at":1786348569,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"1,31","type":"answer","started_at":1786348569,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"9.69","type":"answer","started_at":1786348569,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":",313","type":"answer","started_at":1786348569,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":".03,","type":"answer","started_at":1786348569,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"309.","type":"answer","started_at":1786348569,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"22,3","type":"answer","started_at":1786348569,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"07.4","type":"answer","started_at":1786348569,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"4,29","type":"answer","started_at":1786348569,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"8.3","type":"answer","started_at":1786348569,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"2,30","type":"answer","started_at":1786348569,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"8.85","type":"answer","started_at":1786348569,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":",311","type":"answer","started_at":1786348570,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":".21,","type":"answer","started_at":1786348570,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"322.","type":"answer","started_at":1786348570,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"08,3","type":"answer","started_at":1786348570,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"27.3","type":"answer","started_at":1786348570,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"5,32","type":"answer","started_at":1786348570,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"1.55","type":"answer","started_at":1786348570,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":",319","type":"answer","started_at":1786348570,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":".53,","type":"answer","started_at":1786348570,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"328.","type":"answer","started_at":1786348570,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"58],\n","type":"answer","started_at":1786348570,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"      \"axisY","type":"answer","started_at":1786348570,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"Title\": \"收盘价","type":"answer","started_at":1786348570,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" (USD)\"\n","type":"answer","started_at":1786348570,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"    },\n   ","type":"answer","started_at":1786348570,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" {\n      \"","type":"answer","started_at":1786348570,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"type\": \"column","type":"answer","started_at":1786348570,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"\",\n      \"","type":"answer","started_at":1786348570,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"data\": [3","type":"answer","started_at":1786348571,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"341","type":"answer","started_at":1786348571,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":",328","type":"answer","started_at":1786348571,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"1,2","type":"answer","started_at":1786348571,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"338,","type":"answer","started_at":1786348571,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"3","type":"answer","started_at":1786348571,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"155,","type":"answer","started_at":1786348571,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"2927","type":"answer","started_at":1786348571,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":",313","type":"answer","started_at":1786348571,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"9,33","type":"answer","started_at":1786348571,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"90,3","type":"answer","started_at":1786348571,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"274,","type":"answer","started_at":1786348571,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"3065","type":"answer","started_at":1786348571,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":",1","type":"answer","started_at":1786348571,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"1561","type":"answer","started_at":1786348571,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":",627","type":"answer","started_at":1786348571,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"6,44","type":"answer","started_at":1786348572,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"92,3","type":"answer","started_at":1786348572,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"980,","type":"answer","started_at":1786348572,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"3948","type":"answer","started_at":1786348572,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":",380","type":"answer","started_at":1786348572,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"1,36","type":"answer","started_at":1786348572,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"63,3","type":"answer","started_at":1786348572,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"828,","type":"answer","started_at":1786348572,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"3332","type":"answer","started_at":1786348572,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":",278","type":"answer","started_at":1786348572,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"2,26","type":"answer","started_at":1786348572,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"03,","type":"answer","started_at":1786348572,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"3949","type":"answer","started_at":1786348572,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"],\n      \"","type":"answer","started_at":1786348572,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"axisYTitle\":","type":"answer","started_at":1786348572,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" \"成交量 ( 万股","type":"answer","started_at":1786348572,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" )\"\n    }","type":"answer","started_at":1786348573,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"\n  ]\n","type":"answer","started_at":1786348573,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"}\n```\n\n","type":"answer","started_at":1786348573,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"###","type":"answer","started_at":1786348573,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 走势阶段拆解","type":"answer","started_at":1786348573,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"\n\n| 阶段","type":"answer","started_at":1786348573,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" | 时间 |","type":"answer","started_at":1786348573,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 价格区间 |","type":"answer","started_at":1786348573,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 特征 |\n","type":"answer","started_at":1786348573,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"|---","type":"answer","started_at":1786348573,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"|---|---","type":"answer","started_at":1786348573,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"|---|\n","type":"answer","started_at":1786348573,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"| 高位阴","type":"answer","started_at":1786348573,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"跌 | 7","type":"answer","started_at":1786348573,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"/10 →","type":"answer","started_at":1786348573,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 7/1","type":"answer","started_at":1786348573,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"7 | \\$4","type":"answer","started_at":1786348574,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"08","type":"answer","started_at":1786348574,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" → \\$38","type":"answer","started_at":1786348574,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"1 | 缓慢","type":"answer","started_at":1786348574,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"下行，日均跌幅","type":"answer","started_at":1786348574,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"约 1","type":"answer","started_at":1786348574,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"%，成交稳定 |","type":"answer","started_at":1786348574,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"\n| ","type":"answer","started_at":1786348574,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"加速下跌 | ","type":"answer","started_at":1786348574,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"7/20","type":"answer","started_at":1786348574,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" → 7/","type":"answer","started_at":1786348574,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"22 | \\$","type":"answer","started_at":1786348574,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"370 →","type":"answer","started_at":1786348574,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" \\$3","type":"answer","started_at":1786348574,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"74 | ","type":"answer","started_at":1786348575,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"跌破","type":"answer","started_at":1786348575,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"前低支撑，","type":"answer","started_at":1786348575,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"但量能","type":"answer","started_at":1786348575,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"未明显放大 |","type":"answer","started_at":1786348575,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"\n|","type":"answer","started_at":1786348575,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" **放量暴跌**","type":"answer","started_at":1786348575,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" | **","type":"answer","started_at":1786348575,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"7/23","type":"answer","started_at":1786348575,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"** | **\\$","type":"answer","started_at":1786348575,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"374 →","type":"answer","started_at":1786348575,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" \\$32","type":"answer","started_at":1786348575,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"0** | **","type":"answer","started_at":1786348575,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"单日跌","type":"answer","started_at":1786348575,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 14.","type":"answer","started_at":1786348576,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"5%，成交","type":"answer","started_at":1786348576,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 1.1","type":"answer","started_at":1786348576,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"6 亿股（","type":"answer","started_at":1786348576,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"正常日 3","type":"answer","started_at":1786348576,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"-4","type":"answer","started_at":1786348576,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 倍）** |","type":"answer","started_at":1786348576,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"\n| 惯性","type":"answer","started_at":1786348576,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"探底 | ","type":"answer","started_at":1786348576,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"7/24","type":"answer","started_at":1786348576,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" → 7/","type":"answer","started_at":1786348576,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"29 | \\$","type":"answer","started_at":1786348576,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"313 →","type":"answer","started_at":1786348576,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" \\$298","type":"answer","started_at":1786348576,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" | 缩量阴","type":"answer","started_at":1786348576,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"跌，触及","type":"answer","started_at":1786348576,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 52 ","type":"answer","started_at":1786348577,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"周低点 \\$2","type":"answer","started_at":1786348577,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"97.3","type":"answer","started_at":1786348577,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"8 |\n|","type":"answer","started_at":1786348577,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 反弹修复 |","type":"answer","started_at":1786348577,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 7/3","type":"answer","started_at":1786348577,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"0 → 8","type":"answer","started_at":1786348577,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"/7 | \\$","type":"answer","started_at":1786348577,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"309 →","type":"answer","started_at":1786348577,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" \\$","type":"answer","started_at":1786348577,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"329 |","type":"answer","started_at":1786348577,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 成交量","type":"answer","started_at":1786348577,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"回归正常，价格","type":"answer","started_at":1786348577,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"逐步企稳","type":"answer","started_at":1786348577,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"回升 |\n\n###","type":"answer","started_at":1786348578,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" ","type":"answer","started_at":1786348578,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"关键技术指标信号\n\n","type":"answer","started_at":1786348578,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"| 指标 |","type":"answer","started_at":1786348578,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 数值 | ","type":"answer","started_at":1786348578,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"信号 |","type":"answer","started_at":1786348578,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"\n|---|","type":"answer","started_at":1786348578,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"---|---|","type":"answer","started_at":1786348578,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"\n| MA5","type":"answer","started_at":1786348578,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" / MA1","type":"answer","started_at":1786348578,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"0 / MA2","type":"answer","started_at":1786348578,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"0 / MA3","type":"answer","started_at":1786348578,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"0 | 3","type":"answer","started_at":1786348578,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"24","type":"answer","started_at":1786348578,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" / 31","type":"answer","started_at":1786348578,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"5 / 3","type":"answer","started_at":1786348578,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"43 / ","type":"answer","started_at":1786348579,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"364 |","type":"answer","started_at":1786348579,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" **空头排列**","type":"answer","started_at":1786348579,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"（短","type":"answer","started_at":1786348579,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"周期均线在长","type":"answer","started_at":1786348579,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"周期下方","type":"answer","started_at":1786348579,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"），中期趋势偏弱","type":"answer","started_at":1786348579,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" |\n| MAC","type":"answer","started_at":1786348579,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"D | DIF","type":"answer","started_at":1786348579,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" = -1","type":"answer","started_at":1786348579,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"9.8,","type":"answer","started_at":1786348579,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" DEA = -","type":"answer","started_at":1786348579,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"20.8","type":"answer","started_at":1786348579,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" | 双线","type":"answer","started_at":1786348579,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"在零轴下方","type":"answer","started_at":1786348580,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"，","type":"answer","started_at":1786348580,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"但 DIF ","type":"answer","started_at":1786348580,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"已","type":"answer","started_at":1786348580,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"上穿 DEA ","type":"answer","started_at":1786348580,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"形成**金叉","type":"answer","started_at":1786348580,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"**，空头动能","type":"answer","started_at":1786348580,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"减弱 |\n","type":"answer","started_at":1786348580,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"| KDJ |","type":"answer","started_at":1786348580,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" K=","type":"answer","started_at":1786348580,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"65, D","type":"answer","started_at":1786348580,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"=46","type":"answer","started_at":1786348580,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":", **J=","type":"answer","started_at":1786348580,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"10","type":"answer","started_at":1786348580,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"2** | J","type":"answer","started_at":1786348580,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 值超买","type":"answer","started_at":1786348580,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"区域，短线反弹","type":"answer","started_at":1786348580,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"动能","type":"answer","started_at":1786348580,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"释放较快 |\n","type":"answer","started_at":1786348581,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"| R","type":"answer","started_at":1786348581,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"SI(6)","type":"answer","started_at":1786348581,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" | ","type":"answer","started_at":1786348581,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"52.6","type":"answer","started_at":1786348581,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" | 中性偏弱","type":"answer","started_at":1786348581,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"，既不超买","type":"answer","started_at":1786348581,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"也不","type":"answer","started_at":1786348581,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"超卖 |\n","type":"answer","started_at":1786348581,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"| BIAS(","type":"answer","started_at":1786348581,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"6) | **-","type":"answer","started_at":1786348581,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"7","type":"answer","started_at":1786348581,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":".0%** |","type":"answer","started_at":1786348581,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 极度","type":"answer","started_at":1786348581,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"超卖状态，","type":"answer","started_at":1786348581,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"偏离","type":"answer","started_at":1786348582,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"度较大 |\n","type":"answer","started_at":1786348582,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"|","type":"answer","started_at":1786348582,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" BOLL | ","type":"answer","started_at":1786348582,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"上轨 4","type":"answer","started_at":1786348582,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"14 / ","type":"answer","started_at":1786348582,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"中轨 3","type":"answer","started_at":1786348582,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"43 / ","type":"answer","started_at":1786348582,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"下轨 2","type":"answer","started_at":1786348582,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"73 | ","type":"answer","started_at":1786348582,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"当前","type":"answer","started_at":1786348582,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"价格在中轨下方","type":"answer","started_at":1786348582,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"运行，布林","type":"answer","started_at":1786348582,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"带扩张表示波动","type":"answer","started_at":1786348582,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"率","type":"answer","started_at":1786348582,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"加大 |\n|","type":"answer","started_at":1786348583,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 52","type":"answer","started_at":1786348583,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 周高低 |","type":"answer","started_at":1786348583,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" \\$498","type":"answer","started_at":1786348583,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":".83 /","type":"answer","started_at":1786348583,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" \\$297","type":"answer","started_at":1786348583,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":".38 |","type":"answer","started_at":1786348583,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 距","type":"answer","started_at":1786348583,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 52 ","type":"answer","started_at":1786348583,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"周","type":"answer","started_at":1786348583,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"低点仅 1","type":"answer","started_at":1786348583,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"0.5%，","type":"answer","started_at":1786348583,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"距 52","type":"answer","started_at":1786348583,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 周高点 -","type":"answer","started_at":1786348584,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"34% |","type":"answer","started_at":1786348584,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"\n\n### 7","type":"answer","started_at":1786348584,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"/23 ","type":"answer","started_at":1786348584,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"暴跌驱动","type":"answer","started_at":1786348584,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"因素\n\n7 ","type":"answer","started_at":1786348584,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"月 23","type":"answer","started_at":1786348584,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 日成交量暴","type":"answer","started_at":1786348584,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"增至 1.","type":"answer","started_at":1786348584,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"16 亿股","type":"answer","started_at":1786348584,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"，是正常","type":"answer","started_at":1786348584,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"交易日的 3","type":"answer","started_at":1786348584,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"-","type":"answer","started_at":1786348584,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"4 倍，","type":"answer","started_at":1786348584,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"单日","type":"answer","started_at":1786348584,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"跌幅达 1","type":"answer","started_at":1786348584,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"4.","type":"answer","started_at":1786348584,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"5%。这一","type":"answer","started_at":1786348585,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"异动","type":"answer","started_at":1786348585,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"大概率与财报或","type":"answer","started_at":1786348585,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"重大利空","type":"answer","started_at":1786348585,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"消息有关。从","type":"answer","started_at":1786348585,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"后续走势","type":"answer","started_at":1786348585,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"看，市场在","type":"answer","started_at":1786348585,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"约","type":"answer","started_at":1786348585,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"一周内消化了","type":"answer","started_at":1786348585,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"该","type":"answer","started_at":1786348585,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"冲击，8 ","type":"answer","started_at":1786348585,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"月初成交量","type":"answer","started_at":1786348585,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"回归正常水平。","type":"answer","started_at":1786348586,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"\n\n","type":"answer","started_at":1786348586,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"### 近期消息","type":"answer","started_at":1786348586,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"面\n\n","type":"answer","started_at":1786348586,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"- **杰富","type":"answer","started_at":1786348586,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"瑞下调目标价","type":"answer","started_at":1786348586,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"**：从 \\$","type":"answer","started_at":1786348586,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"400 ","type":"answer","started_at":1786348586,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"下调至 \\$3","type":"answer","started_at":1786348586,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"50，反映","type":"answer","started_at":1786348586,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"机构对短期基本","type":"answer","started_at":1786348586,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"面的谨慎","type":"answer","started_at":1786348586,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"态度 ","type":"answer","started_at":1786348586,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"[citation 1]\n","type":"answer","started_at":1786348586,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":{"references":[{"type":"NewsArticle","id":"295354885","content":{"body":"","content_via":0,"description":"杰富瑞将特斯拉目标股价从 400 美元下调至 350 美元。","id":"295354885","kind":"live","published_at":"2026-08-10T03:45:02Z","source":"智通财经","source_logo":"https://pub.pbkrs.com/cms/2021/0/HyCurh9ido7eT3f4m7wEecVyWoGTchPk.jpg?x-oss-process=style/128","source_url":"https://m.zhitongcaijing.com/content/contentimmediatelydetail.html?immediately_id=7767312","title":"","type":""},"index":1,"original_index":10}]}}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"- **Tera","type":"answer","started_at":1786348586,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"fab 芯片","type":"answer","started_at":1786348586,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"工厂**：特斯拉","type":"answer","started_at":1786348587,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"发布","type":"answer","started_at":1786348587,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"超大规模 AI ","type":"answer","started_at":1786348587,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"芯片制造项目概念","type":"answer","started_at":1786348587,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"视频，并与 SpaceX","type":"answer","started_at":1786348587,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" ","type":"answer","started_at":1786348587,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"合作建设 1","type":"answer","started_at":1786348587,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"68","type":"answer","started_at":1786348587,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 亿美元半导体设施","type":"answer","started_at":1786348587,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" ","type":"answer","started_at":1786348587,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"[citation 2]","type":"answer","started_at":1786348587,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":{"references":[{"type":"NewsArticle","id":"295344396","content":{"body":"","content_via":0,"description":"特斯拉发布超大规模 AI 芯片制造项目 Terafab 概念视频。","id":"295344396","kind":"live","published_at":"2026-08-10T01:37:12Z","source":"智通财经","source_logo":"https://pub.pbkrs.com/cms/2021/0/HyCurh9ido7eT3f4m7wEecVyWoGTchPk.jpg?x-oss-process=style/128","source_url":"https://m.zhitongcaijing.com/content/contentimmediatelydetail.html?immediately_id=7766749","title":"","type":""},"index":2,"original_index":12}]}}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"[citation 3]\n","type":"answer","started_at":1786348587,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":{"references":[{"type":"NewsArticle","id":"295332979","content":{"body":"","content_via":0,"description":"SpaceX 与特斯拉合作在得州建设 Terafab 芯片设施，初期投资 168 亿美元。市场推测马斯克拟采用自由电子激光器 (FEL) 技术挑战阿斯麦的 EUV 光刻机垄断，马斯克回应 “FEL FTW” 似予印证。尽管 FEL 具备波长更短等优势，但加速器系统庞大、成本高及量产稳定性仍是产业化主要挑战。","id":"295332979","kind":"live","published_at":"2026-08-09T20:55:58Z","source":"美港电讯","source_logo":"https://pub.pbkrs.com/cms/2021/0/saz3tNhNUv3j1HUueQ3ZE7RvWCPbHpaL.jpg?x-oss-process=style/128","source_url":"https://www.ushknews.com/20260810045558184800","title":"马斯克或采用 FEL 技术挑战 EUV 光刻机","type":""},"index":3,"original_index":14}]}}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"- **日本市场","type":"answer","started_at":1786348587,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"扩张**：2","type":"answer","started_at":1786348587,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"026 ","type":"answer","started_at":1786348587,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"上半年销量","type":"answer","started_at":1786348587,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"破 1.","type":"answer","started_at":1786348588,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"2 万辆创","type":"answer","started_at":1786348588,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"历史新高，交车","type":"answer","started_at":1786348588,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"中心从 7","type":"answer","started_at":1786348588,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 处扩至","type":"answer","started_at":1786348588,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 11 ","type":"answer","started_at":1786348588,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"处 ","type":"answer","started_at":1786348588,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"[citation 4]\n","type":"answer","started_at":1786348588,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":{"references":[{"type":"NewsArticle","id":"295353418","content":{"body":"","content_via":0,"description":"因日本市場需求激增，特斯拉計劃將交車中心從 7 處擴增至 11 處，新增橫濱、神戶、東京及名古屋據點。受政府高額補貼及免費超充優惠推動，2026 年上半年銷量已破 1.2 萬輛，創歷史新高。為應對訂單壓力，特斯拉還追加進口港口容量，並調整優惠期限以配合新交車點啟用。","id":"295353418","kind":"article","published_at":"2026-08-10T03:23:50Z","source":"科技新报","source_logo":"https://pub.pbkrs.com/files/202111/Dfnkd4Z6aKBhb4Qk/default_source.png?x-oss-process=style/128","source_url":"https://technews.tw/2026/08/10/tesla-japan-expanding/","title":"特斯拉日本賣太好，要擴增交車據點","type":""},"index":4,"original_index":11}]}}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"- **马斯克 Star","type":"answer","started_at":1786348588,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"link 上车","type":"answer","started_at":1786348588,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"计划**：宣布","type":"answer","started_at":1786348588,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"未来所有车辆","type":"answer","started_at":1786348588,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"将配备 Starlink","type":"answer","started_at":1786348588,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 连接 ","type":"answer","started_at":1786348588,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"[citation 5]\n","type":"answer","started_at":1786348588,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":{"references":[{"type":"NewsArticle","id":"295367103","content":{"body":"","content_via":0,"description":"埃隆·马斯克表示，未来所有汽车都将配备 Starlink 连接，他称这是为数十亿辆汽车提供高带宽互联网的唯一方式。这一评论是在关于特斯拉 Cybercab 上安装平 flush-mounted Starlink 天线的报道之后发表的。此外，马斯克重申了他的目标，即到 2030 年，SpaceX 年收入超过 1 万亿美元，可能处理全球一半以上的互联网流量","id":"295367103","kind":"article","published_at":"2026-08-10T05:31:16Z","source":"benzinga_article","source_logo":"https://pub.pbkrs.com/files/202111/Dfnkd4Z6aKBhb4Qk/default_source.png?x-oss-process=style/128","source_url":"https://www.benzinga.com/markets/tech/26/08/61065222/elon-musk-says-starlink-will-be-in-every-car-calls-it-the-only-way-to-connect-billions-of-vehicles","title":"埃隆·马斯克称 Starlink 将安装在每辆车上，并称这是连接数十亿车辆的 ‘唯一方式’","type":""},"index":5,"original_index":8}]}}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"- **1","type":"answer","started_at":1786348588,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"01 亿美元","type":"answer","started_at":1786348589,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"太阳能项目**：","type":"answer","started_at":1786348589,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"德州\"水晶太阳","type":"answer","started_at":1786348589,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"计划","type":"answer","started_at":1786348589,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"\"文件曝光，","type":"answer","started_at":1786348589,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"瞄准","type":"answer","started_at":1786348589,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"垂直整合太阳能生产","type":"answer","started_at":1786348589,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" ","type":"answer","started_at":1786348589,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"[citation 6]\n-","type":"answer","started_at":1786348589,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":{"references":[{"type":"NewsArticle","id":"295364349","content":{"body":"","content_via":0,"description":"特斯拉在德克萨斯州福特本德县申请了一项价值 101 亿美元的太阳能电池制造设施，内部命名为 “水晶太阳计划”。该项目旨在实现太阳能生产的垂直整合，到 2029 年创造近 10,000 个永久性就业岗位。特斯拉正在寻求为期 10 年的税收减免，以便在与一个未透露名称的外州替代方案竞争时保持竞争力，计划于今年开始建设","id":"295364349","kind":"article","published_at":"2026-08-10T05:59:52Z","source":"Teslarati","source_logo":"https://pub.pbkrs.com/files/202111/Dfnkd4Z6aKBhb4Qk/default_source.png?x-oss-process=style/128","source_url":"https://www.teslarati.com/inside-teslas-secretive-10-billion-project-crystal-sun-filing/","title":"特斯拉秘密的 100 亿美元 “水晶太阳计划” 文件揭秘","type":""},"index":6,"original_index":7}]}}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" **Michael","type":"answer","started_at":1786348589,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" Burry 做空","type":"answer","started_at":1786348589,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"**：","type":"answer","started_at":1786348589,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"知名做空投资者 Bur","type":"answer","started_at":1786348589,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"ry 正在积极","type":"answer","started_at":1786348589,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"做空特斯拉与英","type":"answer","started_at":1786348590,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"伟达，","type":"answer","started_at":1786348590,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"认为 AI 存在","type":"answer","started_at":1786348590,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"泡沫 ","type":"answer","started_at":1786348590,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"[citation 7]\n\n###","type":"answer","started_at":1786348590,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":{"references":[{"type":"NewsArticle","id":"295372592","content":{"body":"","content_via":0,"description":"埃隆·马斯克预测，到 2026 年 5 月，人工智能机器人互联网流量将超过人类使用量，并指出 Starlink 是关键基础设施。相反，投资者迈克尔·伯里正在积极做空英伟达、特斯拉及其他与人工智能相关的股票，认为该行业面临由不透明融资和夸大收益驱动的泡沫。这突显了马斯克的乐观与伯里对人工智能市场的悲观立场之间的明显分歧","id":"295372592","kind":"article","published_at":"2026-08-10T07:38:41Z","source":"TradingKey","source_logo":"https://pub.pbkrs.com/files/202111/Dfnkd4Z6aKBhb4Qk/default_source.png?x-oss-process=style/128","source_url":"https://www.tradingkey.com/analysis/stocks/us-stocks/262091750-musk-ai-traffic-surpasses-human-burry-shorting-nvidia-tesla-tradingkey","title":"马斯克称人工智能流量超过人类是确定的，同时伯里做空英伟达和特斯拉","type":""},"index":7,"original_index":6}]}}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 技术面综合","type":"answer","started_at":1786348590,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"判断\n\n**短期","type":"answer","started_at":1786348590,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"（1-2","type":"answer","started_at":1786348590,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 周）**：","type":"answer","started_at":1786348590,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"MACD 金","type":"answer","started_at":1786348590,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"叉 + BIAS","type":"answer","started_at":1786348590,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 极度超","type":"answer","started_at":1786348590,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"卖 + KDJ","type":"answer","started_at":1786348590,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" J","type":"answer","started_at":1786348590,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 值冲至","type":"answer","started_at":1786348590,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 10","type":"answer","started_at":1786348590,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"2，短线反弹","type":"answer","started_at":1786348591,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"动能已","type":"answer","started_at":1786348591,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"部分释放。当前","type":"answer","started_at":1786348591,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" \\$328","type":"answer","started_at":1786348591,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 附近面临 MA","type":"answer","started_at":1786348591,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"10（","type":"answer","started_at":1786348591,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"\\$315","type":"answer","started_at":1786348591,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"）的","type":"answer","started_at":1786348591,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"支撑测试——若能","type":"answer","started_at":1786348593,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"站稳并向","type":"answer","started_at":1786348593,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" MA20（","type":"answer","started_at":1786348593,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"\\$343","type":"answer","started_at":1786348593,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"）靠拢，则","type":"answer","started_at":1786348593,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"反弹延续","type":"answer","started_at":1786348593,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"概率增大；若","type":"answer","started_at":1786348593,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" K","type":"answer","started_at":1786348593,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"DJ 高位钝","type":"answer","started_at":1786348593,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"化后","type":"answer","started_at":1786348593,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"回落，可能回","type":"answer","started_at":1786348594,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"踩","type":"answer","started_at":1786348594,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" \\$310","type":"answer","started_at":1786348594,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"-31","type":"answer","started_at":1786348594,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"5 支撑区","type":"answer","started_at":1786348594,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"。\n\n**中期","type":"answer","started_at":1786348594,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"（1-3","type":"answer","started_at":1786348594,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 个月","type":"answer","started_at":1786348594,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"）**：均线空头","type":"answer","started_at":1786348594,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"排列未","type":"answer","started_at":1786348594,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"改变，MA2","type":"answer","started_at":1786348594,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"0（\\$","type":"answer","started_at":1786348594,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"343）","type":"answer","started_at":1786348594,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"和 MA30","type":"answer","started_at":1786348594,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"（\\$36","type":"answer","started_at":1786348594,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"4）构成上方","type":"answer","started_at":1786348594,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"两道压力。中期","type":"answer","started_at":1786348595,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"趋势反转","type":"answer","started_at":1786348595,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"需要价格有效突破","type":"answer","started_at":1786348595,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" MA20","type":"answer","started_at":1786348595,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 并伴随放量","type":"answer","started_at":1786348595,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"确认。\n\n**","type":"answer","started_at":1786348595,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"关键价位**：","type":"answer","started_at":1786348595,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"\n- ","type":"answer","started_at":1786348595,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"支撑位：\\$","type":"answer","started_at":1786348595,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"31","type":"answer","started_at":1786348595,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"0（7/","type":"answer","started_at":1786348595,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"31","type":"answer","started_at":1786348595,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 平台）、\\$","type":"answer","started_at":1786348595,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"29","type":"answer","started_at":1786348595,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"8（52","type":"answer","started_at":1786348596,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 周低点附近","type":"answer","started_at":1786348596,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"）\n- ","type":"answer","started_at":1786348596,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"压力位：\\$","type":"answer","started_at":1786348596,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"343（","type":"answer","started_at":1786348596,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"MA20 /","type":"answer","started_at":1786348596,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" 布林中轨","type":"answer","started_at":1786348596,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"）、","type":"answer","started_at":1786348596,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"\\$364","type":"answer","started_at":1786348596,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"（MA30","type":"answer","started_at":1786348596,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"）\n\n<x-widget","type":"answer","started_at":1786348596,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":" src=\"widget://","type":"answer","started_at":1786348596,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"quote/security/detail?","type":"answer","started_at":1786348596,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"symbol=TSLA","type":"answer","started_at":1786348596,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":".US&time_range","type":"answer","started_at":1786348596,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"=1\"></x","type":"answer","started_at":1786348596,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"message","workflow_run_id":"102676035333678374","data":{"text":"-widget>","type":"answer","started_at":1786348596,"stage":"","stage_title":"","stage_finished_title":"","key":"177208969224164","outputs":null}}
+
+event:message
+data:{"event":"chat_finished","workflow_run_id":"102676035333678374","data":{"chat_id":1046092,"chat_uid":"hfn2l0ccrmv1u","message_id":13025051,"error":"","error_message":""}}
+
+event:message
+data:{"event":"workflow_finished","workflow_run_id":"102676035333678374","data":{"started_at":1786348598,"workflow_id":177448,"status":"succeeded","error":"","error_code":0,"outputs":{"answer":"正在拉取 TSLA 近一个月的 K 线数据、实时报价与市场指标，稍后为你做技术面解读。\n\n数据已拉到，正在拉取近期新闻与技术指标，补充走势背后的驱动因素。\n\n数据收集完毕，下面为你做完整的技术面 +消息面分析。\n\n---\n\n## TSLA 近一个月走势总览\n\n**核心结论：TSLA 在 7 月 23 日出现放量暴跌（单日跌幅约 14.5%），随后进入底部震荡筑底阶段，8 月初反弹至 \\$328 附近，但均线系统仍呈空头排列，中期趋势尚未扭转。**\n\n```vis-chart\n{\n  \"type\": \"dual-axes\",\n  \"categories\": [\"7/10\",\"7/13\",\"7/14\",\"7/15\",\"7/16\",\"7/17\",\"7/20\",\"7/21\",\"7/22\",\"7/23\",\"7/24\",\"7/27\",\"7/28\",\"7/29\",\"7/30\",\"7/31\",\"8/3\",\"8/4\",\"8/5\",\"8/6\",\"8/7\"],\n  \"title\": \"TSLA 近一个月收盘价与成交量\",\n  \"axisXTitle\": \"日期\",\n  \"series\": [\n    {\n      \"type\": \"line\",\n      \"data\": [407.76,394.76,396.18,394.46,391.06,380.84,369.57,378.93,374.01,319.69,313.03,309.22,307.44,298.32,308.85,311.21,322.08,327.35,321.55,319.53,328.58],\n      \"axisYTitle\": \"收盘价 (USD)\"\n    },\n    {\n      \"type\": \"column\",\n      \"data\": [3341,3281,2338,3155,2927,3139,3390,3274,3065,11561,6276,4492,3980,3948,3801,3663,3828,3332,2782,2603,3949],\n      \"axisYTitle\": \"成交量 ( 万股 )\"\n    }\n  ]\n}\n```\n\n### 走势阶段拆解\n\n| 阶段 | 时间 | 价格区间 | 特征 |\n|---|---|---|---|\n| 高位阴跌 | 7/10 → 7/17 | \\$408 → \\$381 | 缓慢下行，日均跌幅约 1%，成交稳定 |\n| 加速下跌 | 7/20 → 7/22 | \\$370 → \\$374 | 跌破前低支撑，但量能未明显放大 |\n| **放量暴跌** | **7/23** | **\\$374 → \\$320** | **单日跌 14.5%，成交 1.16 亿股（正常日 3-4 倍）** |\n| 惯性探底 | 7/24 → 7/29 | \\$313 → \\$298 | 缩量阴跌，触及 52 周低点 \\$297.38 |\n| 反弹修复 | 7/30 → 8/7 | \\$309 → \\$329 | 成交量回归正常，价格逐步企稳回升 |\n\n### 关键技术指标信号\n\n| 指标 | 数值 | 信号 |\n|---|---|---|\n| MA5 / MA10 / MA20 / MA30 | 324 / 315 / 343 / 364 | **空头排列**（短周期均线在长周期下方），中期趋势偏弱 |\n| MACD | DIF = -19.8, DEA = -20.8 | 双线在零轴下方，但 DIF 已上穿 DEA 形成**金叉**，空头动能减弱 |\n| KDJ | K=65, D=46, **J=102** | J 值超买区域，短线反弹动能释放较快 |\n| RSI(6) | 52.6 | 中性偏弱，既不超买也不超卖 |\n| BIAS(6) | **-7.0%** | 极度超卖状态，偏离度较大 |\n| BOLL | 上轨 414 / 中轨 343 / 下轨 273 | 当前价格在中轨下方运行，布林带扩张表示波动率加大 |\n| 52 周高低 | \\$498.83 / \\$297.38 | 距 52 周低点仅 10.5%，距 52 周高点 -34% |\n\n### 7/23 暴跌驱动因素\n\n7 月 23 日成交量暴增至 1.16 亿股，是正常交易日的 3-4 倍，单日跌幅达 14.5%。这一异动大概率与财报或重大利空消息有关。从后续走势看，市场在约一周内消化了该冲击，8 月初成交量回归正常水平。\n\n### 近期消息面\n\n- **杰富瑞下调目标价**：从 \\$400 下调至 \\$350，反映机构对短期基本面的谨慎态度 [citation 1]\n- **Terafab 芯片工厂**：特斯拉发布超大规模 AI 芯片制造项目概念视频，并与 SpaceX 合作建设 168 亿美元半导体设施 [citation 2][citation 3]\n- **日本市场扩张**：2026 上半年销量破 1.2 万辆创历史新高，交车中心从 7 处扩至 11 处 [citation 4]\n- **马斯克 Starlink 上车计划**：宣布未来所有车辆将配备 Starlink 连接 [citation 5]\n- **101 亿美元太阳能项目**：德州\"水晶太阳计划\"文件曝光，瞄准垂直整合太阳能生产 [citation 6]\n- **Michael Burry 做空**：知名做空投资者 Burry 正在积极做空特斯拉与英伟达，认为 AI 存在泡沫 [citation 7]\n\n### 技术面综合判断\n\n**短期（1-2 周）**：MACD 金叉 + BIAS 极度超卖 + KDJ J 值冲至 102，短线反弹动能已部分释放。当前 \\$328 附近面临 MA10（\\$315）的支撑测试——若能站稳并向 MA20（\\$343）靠拢，则反弹延续概率增大；若 KDJ 高位钝化后回落，可能回踩 \\$310-315 支撑区。\n\n**中期（1-3 个月）**：均线空头排列未改变，MA20（\\$343）和 MA30（\\$364）构成上方两道压力。中期趋势反转需要价格有效突破 MA20 并伴随放量确认。\n\n**关键价位**：\n- 支撑位：\\$310（7/31 平台）、\\$298（52 周低点附近）\n- 压力位：\\$343（MA20 / 布林中轨）、\\$364（MA30）\n\n<x-widget src=\"widget://quote/security/detail?symbol=TSLA.US&time_range=1\"></x-widget>","further_questions":["7 月 23 日放量暴跌的根本财报原因是什么？","目前 MA20 均线（343 美元）附近的阻力力度如何？","Michael Burry 做空对当前盘面抛压有多大影响？"],"references":[{"type":"NewsArticle","id":"295354885","content":{"body":"","content_via":0,"description":"杰富瑞将特斯拉目标股价从 400 美元下调至 350 美元。","id":"295354885","kind":"live","published_at":"2026-08-10T03:45:02Z","source":"智通财经","source_logo":"https://pub.pbkrs.com/cms/2021/0/HyCurh9ido7eT3f4m7wEecVyWoGTchPk.jpg?x-oss-process=style/128","source_url":"https://m.zhitongcaijing.com/content/contentimmediatelydetail.html?immediately_id=7767312","title":"","type":""},"index":1,"original_index":10},{"type":"NewsArticle","id":"295344396","content":{"body":"","content_via":0,"description":"特斯拉发布超大规模 AI 芯片制造项目 Terafab 概念视频。","id":"295344396","kind":"live","published_at":"2026-08-10T01:37:12Z","source":"智通财经","source_logo":"https://pub.pbkrs.com/cms/2021/0/HyCurh9ido7eT3f4m7wEecVyWoGTchPk.jpg?x-oss-process=style/128","source_url":"https://m.zhitongcaijing.com/content/contentimmediatelydetail.html?immediately_id=7766749","title":"","type":""},"index":2,"original_index":12}]},"elapsed_time":112.30504689200001,"process_data":[{"stage":"think","stage_title":"","stage_finished_title":"","message":"Let me think about what's happening here.\n\nThe user is asking me to analyze Tesla (TSLA) stock price movement over the past month. This is a straightforward request that doesn't require a full skill invocation — it's a price trend analysis, not a full technical analysis or price movement anomaly investigation.\n\nWhat I need to do:\n1. Get recent TSLA price data (candlestick data for the past month)\n2. Get current quote for TSLA\n3. Maybe get some recent news to provide context\n\nLet me think about the time range. Current date is approximately 2026-08-10 (based on system time). So \"past month\" would be roughly 2026-07-10 to 2026-08-10.\n\n\nNow I'll pull the candlestick data for TSLA over that timeframe along with the current quote and recent market indicators to get a complete picture of the price movement.Let me analyze the TSLA data I received:\n\n1. **Candlestick data** - 21 trading days from July 10 to August 7, 2026\n2. **Real-time quote** - Current price around $331.58 (overnight session on Aug 10)\n3. **Market indicators** - Various change metrics and 52-week range\n\nLet me process the key data points:\n\n**Price action over the past month:**\n- July 10: Open $410.49, Close $407.76\n- July 17: Close $380.84 (declining)\n- July 20: Close $369.57 (continued decline)\n\n\n- July 23: **Major gap down** - Open $341, Close $319.69, with volume spiking dramatically to 115.6M shares versus the typical 30-33M\n- July 24 through 29: Continued downward pressure with closes at $313.03, $309.22, $307.44, and $298.32\n- July 29: **Hit the 52-week low** of $297.38 intraday, closing near $298.32\n- July 30 onward: Started recovering with closes at $308.85 and $311\n\n, then accelerated through August with $322.08, $327.35, and $328.58 by August 7\n\nThe stock fell roughly 27.5% from the July 10 high of $407.76 down to that July 29 low, then bounced back about 10.5% over the following week. Right now in overnight trading it's sitting around $331.58, up about $3 from the regular close.\n\nLooking at the broader picture, the 5-day move has been strong at +5.58%, though the 6-month and year-to-date performance shows significant weakness at -20.07% and -26.94% respectively. The 52-week range spans from $297.38 to $498.83, and I'm noticing the volume spike on July 23 was massive—115.6M shares versus the normal 30-35M average—which coincided with that sharp selloff. Volume has been tapering off during the recovery phase, now around 26-39M.\n\nI should pull in some technical indicators to get a fuller picture of what's driving these moves and whether there's any news context behind the recent volatility.Let me analyze the TSLA data comprehensively:\n\n**Price Action (July 10 - Aug 7, 2026):**\n- Started at ~$407.76 (close on July 10)\n- Major drop on July 23 from ~$341 open to $319.69 close (about -14.5% in one day from previous close of $374.01)\n- Continued declining to a low of $298.32 on July 29\n- Recovery phase from July 30 onwards, bouncing back to $328.58 on Aug 7\n\nLet me calculate key metrics:\n- July 10 close: $407.76\n\n\n- Aug 7 close: $328.58\n- Period change: -19.4%\n- Period high: ~$413.16 (July 10)\n- Period low: ~$297.38 (July 29) — this matches the 52-week low\n- The massive drop on July 23 was likely tied to earnings, dropping from $374.01 to $319.69, a -14.5% single-day decline\n\nNow I'm looking at the technical indicators as of Aug 7, starting with the moving averages — the 5-day MA sits at 323.82 while the 10-day MA is around 315.\n\n41, and both the 20-day and 30-day MAs are significantly higher at 343.33 and 364.29 respectively, indicating a bearish structure where shorter-term averages are below longer-term ones. The MACD shows both the DIFF and DEA in negative territory with the DIFF crossing above the DEA, which could signal a potential bullish crossover forming. Bollinger Bands are expanding with the price near the lower band at 272.94, suggesting heightened volatility, while the KDJ indicator shows the K line at 65 and J line at 102 — a bullish arrangement. RSI readings are mixed with the 6-period at 52.55 (neutral) but the 12 and 24-period readings both in oversold territory around 42, and the BIAS indicator is showing extreme oversold conditions at -6.98.\n\nThe OSC is deeply negative at -1475 but starting to recover, which suggests the bearish momentum is weakening. Looking at the market indicators, the recent price action shows strength with a 5.58% gain over five days and 4.97% over ten days, though the longer-term picture is much weaker with losses of 20% over six months and nearly 27% year-to-date. The 52-week range spans from 297.38 to 498.83, and the stock just hit that low in late July before bouncing back — that sharp 14.5% drop on July 23 was likely an earnings reaction, and the subsequent recovery from $298 to $329 represents roughly a 10% rebound, now trading above the short-term moving average.\n\nThe technical setup is mixed: MACD shows a golden cross forming below zero, KDJ is turning bullish with the J line elevated, and both BIAS and BR are flashing extreme oversold conditions. But the medium-term picture remains bearish since the price is still trading below both the 20-day and 30-day moving averages. Recent news includes Jefferies cutting their price target to $350, major capital projects like Terafab and Crystal Sun, Starlink integration plans, and Japanese market expansion, plus some positive commentary from Argus and Michael Burry's well-known short positioning on the stock.Now I have all the data I need. Let me analyze TSLA's price movement over the past month and create a comprehensive analysis with a visualization.\n\nKey data points from the candlestick data:\n- Jul 10: Open $410.49, Close $407.76, High $413.16, Low $402.81\n- Jul 13: Close $394.76\n- Jul 14: Close $396.18\n- Jul 15: Close $394.46\n- Jul 16: Close $391.06\n- Jul 17: Close $380.84\n- Jul 20: Close $369.57 (significant drop)\n\n\n- Jul 21: Close $378.93\n- Jul 22: Close $374.01\n- Jul 23: Close $319.69 (MASSIVE drop, volume 115M vs normal ~30M)\n- Jul 24: Close $313.03\n- Jul 27: Close $309.22\n- Jul 28: Close $307.44\n- Jul 29: Close $298.32 (52-week low area)\n- Jul 30: Close $308.85 (bounce)\n- Jul 31: Close $311.21\n- Aug 3: Close $322.08\n- Aug 4: Close $327\n\nThe most dramatic event is that sharp crash on July 23rd with the massive volume spike, followed by a gradual recovery through early August. Looking at the recovery pattern, the stock bounced back nearly 10% from its July low over the following two weeks, though it's still well below the 20-day moving average. The technical indicators show conflicting signals—the KDJ and J-value suggest it's overbought in the short term, while RSI remains neutral and MACD is still negative. The Bollinger Bands are widening, indicating volatility is picking up, and there's recent news about Jefferies that could be a catalyst. downgraded target from $400 to $350\n- Terafab chip manufacturing project announcement\n- SpaceX/Tesla semiconductor JV ($16.8B)\n- Japan sales expansion\n- \"Crystal Sun\" $10.1B solar project\n- Michael Burry shorting TSLA and NVDA\n\nLet me create the dual-axes chart showing price and volume.\n\nLooking at the price action over the past month, TSLA fell from $407.76 on July 10 to a low of $298.32 on July 29—that's a 26.8% decline—before recovering to $328.58 by August 7, which is a 10.1% bounce from the bottom but still down 19.4% overall. The sharp drop on July 23 with massive volume was the key inflection point, followed by a V-shaped recovery starting July 30, and now the stock is consolidating in the $320-$330 range.Now I have all the data needed. Let me analyze TSLA's price action over the past month and create a comprehensive analysis.\n\nKey observations from the K-line data:\n- July 10: Open ~$410, Close ~$408 — starting point\n- July 10-17: Gradual decline from ~$408 to ~$381\n- July 20: Sharp drop to ~$370 area\n- July 21-22: Slight bounce to ~$374\n- July 23: MASSIVE drop — opened at $341, closed at $319.69, volume 115.6M (3-4x normal) — this is the key event\n\n\n- The selling pressure continued through late July, bottoming out around $298 on July 29, then began stabilizing and recovering through early August, climbing back to the $328 range by August 7.\n- Overall, the stock fell roughly 20% from its July 10 level to that late-month low before bouncing back.\n- Looking at the technical picture, the moving averages are in a bearish alignment suggesting a downtrend, though the KDJ indicator is flashing oversold signals with a strong J value, and MACD is negative but appears to be bottoming out.\n- The BIAS metric is extremely oversold at nearly -7%, which combined with the price action suggests we're near a floor.\n- Several catalysts emerged in early August—analyst downgrades and target cuts were offset by positive developments like Japan expansion plans, new chip technology announcements, and semiconductor partnerships, which likely contributed to the bounce.\n- Year-to-date the stock is down 27%, with the 52-week range showing significant volatility between $498 and $297.\n\nBuilding a dual-axis chart to visualize the price movements and trading volume...\n","finished_at":"0001-01-01T00:00:00Z","started_at":"2026-08-10T07:54:48.01103251Z"}],"error_message":""}}
+

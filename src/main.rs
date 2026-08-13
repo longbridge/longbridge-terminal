@@ -30,6 +30,10 @@ pub struct Args {
 
 fn print_cli_error(e: &anyhow::Error, using_api_key: bool) {
     use longbridge::{httpclient::HttpClientError, wsclient::WsClientError, Error as LbError};
+    // Strip terminal control/escape sequences from server-controlled text
+    // before it hits stderr, so a hostile API error cannot repaint the
+    // terminal. Reuses the shared helper (keeps newlines/tabs).
+    use crate::cli::agent::render::strip_control_chars as sanitize_server_text;
 
     if let Some(lb_err) = e.downcast_ref::<LbError>() {
         match lb_err {
@@ -38,9 +42,12 @@ fn print_cli_error(e: &anyhow::Error, using_api_key: bool) {
                 message,
                 trace_id,
             }) => {
-                eprintln!("Error: API error (code {code}): {message}");
+                eprintln!(
+                    "Error: API error (code {code}): {}",
+                    sanitize_server_text(message)
+                );
                 if !trace_id.is_empty() {
-                    eprintln!("  trace_id: {trace_id}");
+                    eprintln!("  trace_id: {}", sanitize_server_text(trace_id));
                 }
                 if using_api_key && *code == 401_003 {
                     eprintln!(
@@ -57,7 +64,8 @@ fn print_cli_error(e: &anyhow::Error, using_api_key: bool) {
             }) => {
                 eprintln!(
                     "Error: WebSocket error (status={status}, code={}): {}",
-                    detail.code, detail.msg
+                    detail.code,
+                    sanitize_server_text(&detail.msg)
                 );
                 if let Some(guidance) =
                     option_quote_permission_guidance(detail.code, std::env::args())
@@ -71,7 +79,8 @@ fn print_cli_error(e: &anyhow::Error, using_api_key: bool) {
             }) => {
                 eprintln!(
                     "Error: Connection closed ({:?}): {}",
-                    reason.code, reason.message
+                    reason.code,
+                    sanitize_server_text(&reason.message)
                 );
                 return;
             }
@@ -82,7 +91,7 @@ fn print_cli_error(e: &anyhow::Error, using_api_key: bool) {
     // Network-layer failures (`HttpClientError::Http`, WebSocket connect
     // errors) carry no structured detail, so they fall through to the raw
     // message here.
-    let rendered = format!("{e:#}");
+    let rendered = sanitize_server_text(&format!("{e:#}"));
     eprintln!("Error: {rendered}");
     if let Some(guidance) = cn_access_point_guidance(&rendered) {
         eprintln!("\n{guidance}");
@@ -156,6 +165,41 @@ async fn main() {
 
     locale::init(cli.lang.as_deref());
     rust_i18n::set_locale(locale::get());
+
+    // `agent --skill` prints a static, built-in document: no auth, no
+    // network. Handle it before the region-cache refresh (and the background
+    // version check) so it stays reliably offline and instant, which is what
+    // makes it usable from a harness bootstrap step.
+    if let Some(cli::Commands::Agent { skill: true, .. }) = &cli.command {
+        cli::agent::skills::print_skills_doc();
+        return;
+    }
+
+    // The same reasoning covers every request that is answerable without the
+    // network: decide it here, before the region probe and `init_contexts`.
+    // Reaching these from `dispatch` would be too late — a logged-out user
+    // asking `longbridge agent` what it can do would get an auth failure
+    // instead of the help they asked for.
+    match &cli.command {
+        // A command group with no subcommand: show the options, exit like
+        // clap does for a missing mandatory subcommand.
+        Some(cli::Commands::Agent { cmd: None, .. }) => {
+            cli::exit_with_subcommand_help("agent");
+        }
+        Some(cli::Commands::Workspace { cmd: None }) => {
+            cli::exit_with_subcommand_help("workspace");
+        }
+        // `--interactive` needs a terminal to prompt on, so it cannot be
+        // combined with machine-readable output. Rejecting it here keeps the
+        // failure free of any token refresh or region request.
+        Some(cli::Commands::Agent { cmd: Some(sub), .. }) => {
+            if let Err(e) = cli::agent::chat::ensure_interactive_supported_for(sub, &cli.format) {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        }
+        _ => {}
+    }
 
     // Re-probe the access-point region if the cached verdict has gone stale.
     // Usually a no-op; only the first run after the cache TTL expires waits.
@@ -315,6 +359,8 @@ async fn main() {
             }
         }
 
+        // `Agent { skill: true }` never reaches here: it is handled above,
+        // before any network work.
         Some(cmd) => {
             let start = verbose.then(Instant::now);
             // CLI mode: init contexts (auth), then dispatch

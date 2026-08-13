@@ -336,7 +336,7 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
                             |(label, opt)| match opt.as_ref().filter(|p| pre_post_has_data(p)) {
                                 Some(pmq) => vec![
                                     q.symbol.clone(),
-                                    label.to_string(),
+                                    (*label).to_string(),
                                     fmt_dec(pmq.last_done),
                                     change_val(pmq.last_done, pmq.prev_close),
                                     change_pct(pmq.last_done, pmq.prev_close).unwrap_or_default(),
@@ -348,7 +348,7 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
                                 ],
                                 None => vec![
                                     q.symbol.clone(),
-                                    label.to_string(),
+                                    (*label).to_string(),
                                     "--".to_string(),
                                     "--".to_string(),
                                     "--".to_string(),
@@ -822,7 +822,7 @@ pub async fn cmd_calc_index(
                         serde_json::Value::String(r.symbol.clone()),
                     );
                     for (key, _, extract) in &columns {
-                        map.insert(key.to_string(), serde_json::Value::String(extract(r)));
+                        map.insert((*key).to_string(), serde_json::Value::String(extract(r)));
                     }
                     serde_json::Value::Object(map)
                 })

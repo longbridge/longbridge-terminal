@@ -177,7 +177,7 @@ async fn cmd_export(
                     data.headers
                         .iter()
                         .zip(row.iter())
-                        .map(|(k, v)| (k.to_string(), Value::String(v.to_string())))
+                        .map(|(k, v)| ((*k).to_string(), Value::String((*v).to_string())))
                         .collect()
                 })
                 .collect();

@@ -6,7 +6,7 @@ use crate::utils::datetime::fmt_rfc3339;
 const NEWS_DETAIL_HOST: &str = "https://longbridge.com";
 
 /// Return `s` truncated to `max` chars with a trailing `…`, or the original if it fits.
-fn truncate_display(s: &str, max: usize) -> String {
+pub(crate) fn truncate_display(s: &str, max: usize) -> String {
     if s.chars().count() > max {
         format!("{}…", s.chars().take(max).collect::<String>())
     } else {
