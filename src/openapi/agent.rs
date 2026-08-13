@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use futures::{stream::BoxStream, StreamExt};
 use longbridge::agent::ConversationStreamEvent;
-use longbridge_ai_acp::{AgentBackend, AgentEvent, BackendError};
+use longbridge_ai_acp::{AgentBackend, AgentEvent, AgentPlanEntry, BackendError};
 use std::path::Path;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -420,9 +420,20 @@ impl AgentBackend for OpenApiAgent {
                             metadata,
                         }))
                     }
-                    Ok(ConversationStreamEvent::SubagentProgress(payload)) => Some(Ok(
-                        native_event("subagent_progress", serde_json::to_value(payload).ok()?),
-                    )),
+                    Ok(ConversationStreamEvent::SubagentProgress(payload)) => {
+                        let metadata = event_metadata("subagent_progress", &payload);
+                        let title = if payload.subagent_tool_name.is_empty() {
+                            "Subagent".to_string()
+                        } else {
+                            payload.subagent_tool_name.clone()
+                        };
+                        Some(Ok(AgentEvent::ToolProgressRich {
+                            id: payload.parent_tool_call_id.clone(),
+                            title,
+                            raw_output: serde_json::to_value(payload).ok(),
+                            metadata,
+                        }))
+                    }
                     Ok(ConversationStreamEvent::SubagentFinished(payload)) => {
                         let metadata = event_metadata("subagent_finished", &payload);
                         let title = payload
@@ -453,9 +464,20 @@ impl AgentBackend for OpenApiAgent {
                             metadata,
                         }))
                     }
-                    Ok(ConversationStreamEvent::AgentToolProgress(payload)) => Some(Ok(
-                        native_event("agent_tool_progress", serde_json::to_value(payload).ok()?),
-                    )),
+                    Ok(ConversationStreamEvent::AgentToolProgress(payload)) => {
+                        let metadata = event_metadata("agent_tool_progress", &payload);
+                        let title = if payload.inner_tool_name.is_empty() {
+                            payload.agent_tool_name.clone()
+                        } else {
+                            payload.inner_tool_name.clone()
+                        };
+                        Some(Ok(AgentEvent::ToolProgressRich {
+                            id: payload.parent_tool_call_id.clone(),
+                            title,
+                            raw_output: serde_json::to_value(payload).ok(),
+                            metadata,
+                        }))
+                    }
                     Ok(ConversationStreamEvent::AgentToolFinished(payload)) => {
                         let metadata = event_metadata("agent_tool_finished", &payload);
                         Some(Ok(AgentEvent::ToolFinishedRich {
@@ -470,10 +492,13 @@ impl AgentBackend for OpenApiAgent {
                         "query_masked",
                         serde_json::to_value(payload).ok()?,
                     ))),
-                    Ok(ConversationStreamEvent::PlanChanged(payload)) => Some(Ok(native_event(
-                        "plan_changed",
-                        serde_json::to_value(payload).ok()?,
-                    ))),
+                    Ok(ConversationStreamEvent::PlanChanged(payload)) => {
+                        let metadata = event_metadata("plan_changed", &payload);
+                        Some(Ok(AgentEvent::Plan {
+                            entries: plan_entries(payload.outputs.as_ref()),
+                            metadata,
+                        }))
+                    }
                     Ok(ConversationStreamEvent::ContextCompressStarted(payload)) => {
                         Some(Ok(native_event(
                             "context_compress_started",
@@ -490,9 +515,13 @@ impl AgentBackend for OpenApiAgent {
                         "chat_finished",
                         serde_json::to_value(payload).ok()?,
                     ))),
-                    Ok(ConversationStreamEvent::ChatTitleUpdated(payload)) => Some(Ok(
-                        native_event("chat_title_updated", serde_json::to_value(payload).ok()?),
-                    )),
+                    Ok(ConversationStreamEvent::ChatTitleUpdated(payload)) => {
+                        let metadata = event_metadata("chat_title_updated", &payload);
+                        Some(Ok(AgentEvent::SessionTitle {
+                            title: payload.title,
+                            metadata,
+                        }))
+                    }
                     Ok(ConversationStreamEvent::Other { event, data }) => {
                         Some(Ok(native_event(&event, data)))
                     }
@@ -501,6 +530,47 @@ impl AgentBackend for OpenApiAgent {
             })
             .boxed())
     }
+}
+
+fn plan_entries(outputs: Option<&serde_json::Value>) -> Vec<AgentPlanEntry> {
+    let Some(outputs) = outputs else {
+        return Vec::new();
+    };
+    let parsed;
+    let outputs = if let Some(value) = outputs.as_str() {
+        parsed = serde_json::from_str(value).unwrap_or(serde_json::Value::Null);
+        &parsed
+    } else {
+        outputs
+    };
+    let todos = outputs
+        .get("todos")
+        .or_else(|| outputs.get("plan"))
+        .and_then(serde_json::Value::as_array)
+        .or_else(|| outputs.as_array());
+    todos
+        .into_iter()
+        .flatten()
+        .filter_map(|todo| {
+            let content = todo
+                .get("content")
+                .or_else(|| todo.get("title"))
+                .and_then(serde_json::Value::as_str)?;
+            Some(AgentPlanEntry {
+                content: content.to_string(),
+                priority: todo
+                    .get("priority")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("medium")
+                    .to_string(),
+                status: todo
+                    .get("status")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("pending")
+                    .to_string(),
+            })
+        })
+        .collect()
 }
 
 fn native_event(event: &str, data: serde_json::Value) -> AgentEvent<OpenApiAgentSession> {
@@ -635,5 +705,24 @@ mod tests {
         let answers = answers_for(&pending, "US\n1 month").expect("answers");
         assert_eq!(answers["tool-1"]["Market?"], "US");
         assert_eq!(answers["tool-1"]["Period?"], "1 month");
+    }
+
+    #[test]
+    fn plan_outputs_accept_object_and_json_string_shapes() {
+        let object = serde_json::json!({
+            "todos": [
+                { "content": "Inspect", "priority": "high", "status": "in_progress" },
+                { "title": "Report", "status": "completed" }
+            ]
+        });
+        let entries = plan_entries(Some(&object));
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].content, "Inspect");
+        assert_eq!(entries[0].priority, "high");
+        assert_eq!(entries[1].content, "Report");
+        assert_eq!(entries[1].priority, "medium");
+
+        let string = serde_json::Value::String(object.to_string());
+        assert_eq!(plan_entries(Some(&string)), entries);
     }
 }

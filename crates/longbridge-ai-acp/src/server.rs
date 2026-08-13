@@ -3,10 +3,10 @@ use agent_client_protocol::schema::{
     v1::{
         AgentCapabilities, CancelNotification, ContentBlock, ContentChunk, Implementation,
         InitializeRequest, InitializeResponse, NewSessionRequest, NewSessionResponse,
-        PermissionOption, PermissionOptionKind, PromptRequest, PromptResponse,
-        RequestPermissionOutcome, RequestPermissionRequest, SessionId, SessionNotification,
-        SessionUpdate, StopReason, TextContent, ToolCall, ToolCallStatus, ToolCallUpdate,
-        ToolCallUpdateFields,
+        PermissionOption, PermissionOptionKind, Plan as AcpPlan, PlanEntry, PlanEntryPriority,
+        PlanEntryStatus, PromptRequest, PromptResponse, RequestPermissionOutcome,
+        RequestPermissionRequest, SessionId, SessionInfoUpdate, SessionNotification, SessionUpdate,
+        StopReason, TextContent, ToolCall, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
     },
     ProtocolVersion,
 };
@@ -374,6 +374,62 @@ pub fn acp_agent<B: AgentBackend>(
                                     )?;
                                 }
                             }
+                            AgentEvent::ToolProgressRich {
+                                id,
+                                title,
+                                raw_output,
+                                metadata,
+                            } => {
+                                task_connection.send_notification(SessionNotification::new(
+                                    request.session_id.clone(),
+                                    SessionUpdate::ToolCallUpdate(
+                                        ToolCallUpdate::new(
+                                            id,
+                                            ToolCallUpdateFields::new()
+                                                .title(title)
+                                                .status(ToolCallStatus::InProgress)
+                                                .raw_output(raw_output),
+                                        )
+                                        .meta(longbridge_meta(metadata)),
+                                    ),
+                                ))?;
+                            }
+                            AgentEvent::Plan { entries, metadata } => {
+                                let entries = entries
+                                    .into_iter()
+                                    .map(|entry| {
+                                        let priority = match entry.priority.as_str() {
+                                            "high" => PlanEntryPriority::High,
+                                            "low" => PlanEntryPriority::Low,
+                                            _ => PlanEntryPriority::Medium,
+                                        };
+                                        let status = match entry.status.as_str() {
+                                            "in_progress" | "running" => PlanEntryStatus::InProgress,
+                                            "completed" | "succeeded" | "done" => {
+                                                PlanEntryStatus::Completed
+                                            }
+                                            _ => PlanEntryStatus::Pending,
+                                        };
+                                        PlanEntry::new(entry.content, priority, status)
+                                    })
+                                    .collect();
+                                task_connection.send_notification(SessionNotification::new(
+                                    request.session_id.clone(),
+                                    SessionUpdate::Plan(
+                                        AcpPlan::new(entries).meta(longbridge_meta(metadata)),
+                                    ),
+                                ))?;
+                            }
+                            AgentEvent::SessionTitle { title, metadata } => {
+                                task_connection.send_notification(SessionNotification::new(
+                                    request.session_id.clone(),
+                                    SessionUpdate::SessionInfoUpdate(
+                                        SessionInfoUpdate::new()
+                                            .title(title)
+                                            .meta(longbridge_meta(metadata)),
+                                    ),
+                                ))?;
+                            }
                             AgentEvent::NeedsInput {
                                 session,
                                 questions,
@@ -593,6 +649,7 @@ struct RichTextFilter {
     content_id_prefix: String,
     next_chart: usize,
     next_html: usize,
+    next_widget: usize,
     stocks: HashMap<String, String>,
     references: HashMap<u64, Option<String>>,
 }
@@ -604,6 +661,7 @@ impl RichTextFilter {
             content_id_prefix: content_id_prefix.to_owned(),
             next_chart: 1,
             next_html: 1,
+            next_widget: 1,
             stocks: HashMap::new(),
             references: HashMap::new(),
         }
@@ -647,31 +705,48 @@ impl RichTextFilter {
 
     fn push(&mut self, text: &str) -> Vec<FilteredContent> {
         const CHART_MARKER: &str = "```vis-chart";
+        const HTML_LIVE_MARKER: &str = "```html-live";
         const HTML_MARKER: &str = "```html";
+        const WIDGET_MARKER: &str = "<x-widget";
         const STOCK_MARKER: &str = "[stock ";
         const CITATION_MARKER: &str = "[citation ";
+        const BRACKET_MARKER: &str = "[";
         self.buffer.push_str(text);
         let mut output = Vec::new();
         loop {
             let chart_open = self.buffer.find(CHART_MARKER);
+            let html_live_open = self.buffer.find(HTML_LIVE_MARKER);
             let html_open = self.buffer.find(HTML_MARKER);
+            let widget_open = self.buffer.find(WIDGET_MARKER);
             let stock_open = self.buffer.find(STOCK_MARKER);
             let citation_open = self.buffer.find(CITATION_MARKER);
+            let bracket_open = self.buffer.find(BRACKET_MARKER);
             let selected = [
                 chart_open.map(|open| (open, CHART_MARKER, 0_u8)),
+                html_live_open.map(|open| (open, HTML_LIVE_MARKER, 1_u8)),
                 html_open.map(|open| (open, HTML_MARKER, 1_u8)),
                 stock_open.map(|open| (open, STOCK_MARKER, 2_u8)),
                 citation_open.map(|open| (open, CITATION_MARKER, 3_u8)),
+                widget_open.map(|open| (open, WIDGET_MARKER, 4_u8)),
+                bracket_open.map(|open| (open, BRACKET_MARKER, 5_u8)),
             ]
             .into_iter()
             .flatten()
             .min_by_key(|(open, _, _)| *open);
             let Some((open, marker, kind)) = selected else {
-                let retained = [CHART_MARKER, HTML_MARKER, STOCK_MARKER, CITATION_MARKER]
-                    .iter()
-                    .map(|marker| marker_suffix_len(&self.buffer, marker))
-                    .max()
-                    .unwrap_or(0);
+                let retained = [
+                    CHART_MARKER,
+                    HTML_LIVE_MARKER,
+                    HTML_MARKER,
+                    STOCK_MARKER,
+                    CITATION_MARKER,
+                    WIDGET_MARKER,
+                    BRACKET_MARKER,
+                ]
+                .iter()
+                .map(|marker| marker_suffix_len(&self.buffer, marker))
+                .max()
+                .unwrap_or(0);
                 let emit_len = self.buffer.len() - retained;
                 if emit_len > 0 {
                     output.push(FilteredContent::Text(
@@ -706,13 +781,64 @@ impl RichTextFilter {
                     .parse::<u64>();
                 let replacement = index.ok().map_or_else(
                     || complete.clone(),
-                    |index| match self.references.get(&index) {
-                        Some(Some(url)) => format!("[\\[{index}\\]]({})", escape_link_url(url)),
-                        Some(None) => format!("\\[{index}\\]"),
-                        None => complete.clone(),
-                    },
+                    |index| render_citation(index, &complete, &self.references),
                 );
                 output.push(FilteredContent::Text(replacement));
+                continue;
+            }
+            if kind == 5 {
+                let newline = self.buffer.find('\n');
+                let close = self.buffer.find(']');
+                if newline.is_some_and(|newline| close.is_none_or(|close| newline < close)) {
+                    output.push(FilteredContent::Text(self.buffer.drain(..1).collect()));
+                    continue;
+                }
+                let Some(close) = close else { break };
+                let complete: String = self.buffer.drain(..=close).collect();
+                let inner = &complete[1..complete.len() - 1];
+                let digits = inner.strip_prefix('^').unwrap_or(inner);
+                let replacement = digits.parse::<u64>().ok().map_or_else(
+                    || complete.clone(),
+                    |index| render_citation(index, &complete, &self.references),
+                );
+                output.push(FilteredContent::Text(replacement));
+                continue;
+            }
+            if kind == 4 {
+                let Some(open_end) = find_html_tag_end(&self.buffer) else {
+                    break;
+                };
+                let open_tag = &self.buffer[..=open_end];
+                let self_closing = open_tag[..open_tag.len() - 1].trim_end().ends_with('/');
+                let end = if self_closing {
+                    open_end + 1
+                } else {
+                    let Some(close) = self.buffer[open_end + 1..].find("</x-widget>") else {
+                        break;
+                    };
+                    open_end + 1 + close + "</x-widget>".len()
+                };
+                let complete: String = self.buffer.drain(..end).collect();
+                let Some(uri) = widget_src(&complete) else {
+                    output.push(FilteredContent::Text(
+                        "Interactive Longbridge content is unavailable.".to_owned(),
+                    ));
+                    continue;
+                };
+                let fallback = widget_fallback(&uri);
+                match RichContent::widget(
+                    format!("{}:widget-{}", self.content_id_prefix, self.next_widget),
+                    uri,
+                    fallback,
+                ) {
+                    Ok(widget) => {
+                        self.next_widget += 1;
+                        output.push(FilteredContent::Rich(widget));
+                    }
+                    Err(_) => output.push(FilteredContent::Text(
+                        "Interactive Longbridge content is unavailable.".to_owned(),
+                    )),
+                }
                 continue;
             }
             let after_marker = marker.len();
@@ -772,6 +898,98 @@ impl RichTextFilter {
             vec![FilteredContent::Text(std::mem::take(&mut self.buffer))]
         }
     }
+}
+
+fn find_html_tag_end(value: &str) -> Option<usize> {
+    let mut quote = None;
+    for (index, character) in value.char_indices() {
+        match (quote, character) {
+            (Some(active), character) if character == active => quote = None,
+            (None, '"' | '\'') => quote = Some(character),
+            (None, '>') => return Some(index),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn widget_src(tag: &str) -> Option<String> {
+    let bytes = tag.as_bytes();
+    let mut index = 0;
+    while index + 3 <= bytes.len() {
+        if &bytes[index..index + 3] != b"src" {
+            index += 1;
+            continue;
+        }
+        let previous_ok =
+            index == 0 || bytes[index - 1].is_ascii_whitespace() || bytes[index - 1] == b'<';
+        if !previous_ok {
+            index += 1;
+            continue;
+        }
+        let mut cursor = index + 3;
+        while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        if bytes.get(cursor) != Some(&b'=') {
+            index += 1;
+            continue;
+        }
+        cursor += 1;
+        while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        let quote = *bytes.get(cursor)?;
+        if !matches!(quote, b'"' | b'\'') {
+            return None;
+        }
+        cursor += 1;
+        let start = cursor;
+        while cursor < bytes.len() && bytes[cursor] != quote {
+            cursor += 1;
+        }
+        return (cursor < bytes.len()).then(|| tag[start..cursor].replace("&amp;", "&"));
+    }
+    None
+}
+
+fn widget_fallback(uri: &str) -> String {
+    let symbols = widget_query_values(uri, "symbols");
+    if !symbols.is_empty() {
+        return symbols
+            .iter()
+            .map(|symbol| stock_markdown_link(symbol))
+            .collect::<Vec<_>>()
+            .join(" · ");
+    }
+    if let Some(symbol) = widget_query_values(uri, "symbol").first() {
+        return stock_markdown_link(symbol);
+    }
+    if let Some(counter_id) = widget_query_values(uri, "counter_id").first() {
+        if let Some(symbol) = symbol_from_counter_id(counter_id) {
+            return stock_markdown_link(&symbol);
+        }
+    }
+    "Interactive Longbridge content is available in a compatible client.".to_owned()
+}
+
+fn widget_query_values(uri: &str, key: &str) -> Vec<String> {
+    let Some((_, query)) = uri.split_once('?') else {
+        return Vec::new();
+    };
+    let mut values = Vec::new();
+    for value in query
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .filter(|(candidate, _)| *candidate == key)
+        .flat_map(|(_, value)| value.split(','))
+    {
+        let value = value.trim();
+        if !value.is_empty() && !values.iter().any(|existing| existing == value) {
+            values.push(value.to_owned());
+        }
+    }
+    values
 }
 
 fn symbol_from_counter_id(counter_id: &str) -> Option<String> {
@@ -864,6 +1082,18 @@ fn escape_link_url(url: &str) -> String {
         .replace(')', "\\)")
 }
 
+fn render_citation(
+    index: u64,
+    original: &str,
+    references: &HashMap<u64, Option<String>>,
+) -> String {
+    match references.get(&index) {
+        Some(Some(url)) => format!("[\\[{index}\\]]({})", escape_link_url(url)),
+        Some(None) => format!("\\[{index}\\]"),
+        None => original.to_owned(),
+    }
+}
+
 fn html_text_fallback(html: &str) -> String {
     let mut text = String::new();
     let mut in_tag = false;
@@ -925,7 +1155,7 @@ fn send_filtered_text(
                 ))?;
             }
             FilteredContent::Rich(rich) => {
-                for chunk in rich.to_acp_chunks() {
+                for chunk in rich.to_acp_chunks_with_meta(text_metadata) {
                     connection.send_notification(SessionNotification::new(
                         session_id.clone(),
                         SessionUpdate::AgentMessageChunk(chunk),
@@ -1002,6 +1232,8 @@ mod tests {
 
     struct MarkdownChartBackend;
 
+    struct StructuredEventsBackend;
+
     #[test]
     fn failed_tool_message_prefers_structured_error_detail() {
         assert_eq!(
@@ -1035,6 +1267,75 @@ mod tests {
         assert!(!html.fallback.contains("<html"));
         assert!(html.fallback.len() < 1_000);
         assert!(matches!(output.get(1), Some(FilteredContent::Text(text)) if text == "\nAfter"));
+    }
+
+    #[test]
+    fn html_live_is_recognized_before_the_html_prefix() {
+        let mut filter = RichTextFilter::new("session-1");
+        assert!(filter.push("```html-li").is_empty());
+        let output = filter.push("ve\n<h1>Profit dashboard</h1><p>Body</p>\n```");
+        let FilteredContent::Rich(html) = &output[0] else {
+            panic!("expected html-live rich content");
+        };
+        assert_eq!(html.kind, crate::RichContentKind::Html);
+        assert!(html.fallback.contains("Profit dashboard"));
+        assert!(!html.fallback.contains("<h1>"));
+    }
+
+    #[test]
+    fn quote_widget_becomes_public_quote_link_and_resource() {
+        let mut filter = RichTextFilter::new("session-1");
+        assert!(filter
+            .push("See <x-wid")
+            .iter()
+            .any(|item| matches!(item, FilteredContent::Text(text) if text == "See ")));
+        let output = filter.push(
+            "get src=\"widget://quote/security/detail?symbol=AAPL.US&amp;time_range=1\"></x-widget>.",
+        );
+        let FilteredContent::Rich(widget) = &output[0] else {
+            panic!("expected widget rich content");
+        };
+        assert_eq!(widget.kind, crate::RichContentKind::Widget);
+        assert_eq!(
+            widget.fallback,
+            "[AAPL.US](https://longbridge.com/quote/aapl.us)"
+        );
+        assert_eq!(
+            widget.data["uri"],
+            "widget://quote/security/detail?symbol=AAPL.US&time_range=1"
+        );
+    }
+
+    #[test]
+    fn comparison_widget_lists_every_security_as_a_link() {
+        let mut filter = RichTextFilter::new("session-1");
+        let output = filter.push(concat!(
+            "<x-widget src='widget://quote/security/comparison?",
+            "symbols=TSLA.US&symbols=GM.US'></x-widget>"
+        ));
+        let FilteredContent::Rich(widget) = &output[0] else {
+            panic!("expected comparison widget");
+        };
+        assert_eq!(
+            widget.fallback,
+            concat!(
+                "[TSLA.US](https://longbridge.com/quote/tsla.us) · ",
+                "[GM.US](https://longbridge.com/quote/gm.us)"
+            )
+        );
+    }
+
+    #[test]
+    fn unsupported_widget_uses_a_bounded_compatibility_notice() {
+        let mut filter = RichTextFilter::new("session-1");
+        let output = filter.push("<x-widget src=\"widget://activity/list\" />");
+        let FilteredContent::Rich(widget) = &output[0] else {
+            panic!("expected widget");
+        };
+        assert_eq!(
+            widget.fallback,
+            "Interactive Longbridge content is available in a compatible client."
+        );
     }
 
     #[test]
@@ -1129,6 +1430,46 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn footnote_and_plain_citation_forms_are_supported() {
+        let mut filter = RichTextFilter::new("session-1");
+        filter.update_references(&serde_json::json!({
+            "event": "message",
+            "data": { "outputs": { "references": [
+                { "index": 1, "content": { "url": "https://one.example" } },
+                { "index": 2, "content": { "url": "https://two.example" } }
+            ] } }
+        }));
+        let output = filter.push("A[^1] B[2]");
+        let text = output
+            .iter()
+            .filter_map(|item| match item {
+                FilteredContent::Text(text) => Some(text.as_str()),
+                FilteredContent::Rich(_) => None,
+            })
+            .collect::<String>();
+        assert_eq!(
+            text,
+            "A[\\[1\\]](https://one.example) B[\\[2\\]](https://two.example)"
+        );
+    }
+
+    #[test]
+    fn ordinary_markdown_links_and_multiline_brackets_are_unchanged() {
+        let mut filter = RichTextFilter::new("session-1");
+        let output = filter.push("[docs](https://example.com) and [not\na citation]");
+        let mut output = output;
+        output.extend(filter.finish());
+        let text = output
+            .iter()
+            .filter_map(|item| match item {
+                FilteredContent::Text(text) => Some(text.as_str()),
+                FilteredContent::Rich(_) => None,
+            })
+            .collect::<String>();
+        assert_eq!(text, "[docs](https://example.com) and [not\na citation]");
+    }
+
     #[async_trait]
     impl AgentBackend for SlowBackend {
         type Session = ();
@@ -1215,6 +1556,49 @@ mod tests {
         }
     }
 
+    #[async_trait]
+    impl AgentBackend for StructuredEventsBackend {
+        type Session = ();
+
+        async fn prompt(
+            &self,
+            _session: (),
+            _prompt: String,
+            _cwd: &Path,
+        ) -> Result<BoxStream<'static, Result<AgentEvent<()>, BackendError>>, BackendError>
+        {
+            Ok(Box::pin(stream::iter([
+                Ok(AgentEvent::Plan {
+                    entries: vec![crate::AgentPlanEntry {
+                        content: "Inspect data".into(),
+                        priority: "high".into(),
+                        status: "in_progress".into(),
+                    }],
+                    metadata: serde_json::json!({
+                        "event": "plan_changed",
+                        "data": { "node_id": "plan-1" }
+                    }),
+                }),
+                Ok(AgentEvent::ToolProgressRich {
+                    id: "subagent-1".into(),
+                    title: "Web Search".into(),
+                    raw_output: Some(serde_json::json!({ "status": "running" })),
+                    metadata: serde_json::json!({
+                        "event": "subagent_progress",
+                        "data": { "parent_tool_call_id": "subagent-1" }
+                    }),
+                }),
+                Ok(AgentEvent::SessionTitle {
+                    title: "Market review".into(),
+                    metadata: serde_json::json!({
+                        "event": "chat_title_updated",
+                        "data": { "title": "Market review" }
+                    }),
+                }),
+            ])))
+        }
+    }
+
     #[tokio::test]
     async fn exposes_streaming_acp_session() {
         let updates = Arc::new(Mutex::new(Vec::new()));
@@ -1260,6 +1644,70 @@ mod tests {
             updates.get(1),
             Some(SessionUpdate::AgentMessageChunk(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn provider_events_use_standard_acp_updates_and_keep_native_metadata() {
+        let updates = Arc::new(Mutex::new(Vec::new()));
+        let received = Arc::clone(&updates);
+        let client = agent_client_protocol::Client
+            .builder()
+            .on_receive_notification(
+                async move |notification: SessionNotification, _cx| {
+                    received.lock().expect("mutex").push(notification.update);
+                    Ok(())
+                },
+                agent_client_protocol::on_receive_notification!(),
+            );
+
+        client
+            .connect_with(acp_agent(StructuredEventsBackend), async |connection| {
+                connection
+                    .send_request(InitializeRequest::new(ProtocolVersion::V1))
+                    .block_task()
+                    .await?;
+                let session = connection
+                    .send_request(NewSessionRequest::new(std::path::PathBuf::from("/tmp")))
+                    .block_task()
+                    .await?;
+                connection
+                    .send_request(PromptRequest::new(
+                        session.session_id,
+                        vec![ContentBlock::Text(TextContent::new("review"))],
+                    ))
+                    .block_task()
+                    .await?;
+                Ok(())
+            })
+            .await
+            .expect("ACP exchange");
+
+        let updates = updates.lock().expect("mutex");
+        let SessionUpdate::Plan(plan) = &updates[0] else {
+            panic!("expected standard plan update");
+        };
+        assert_eq!(plan.entries[0].content, "Inspect data");
+        assert_eq!(plan.entries[0].priority, PlanEntryPriority::High);
+        assert_eq!(plan.entries[0].status, PlanEntryStatus::InProgress);
+        assert_eq!(
+            plan.meta.as_ref().unwrap()["longbridge.ai/event"]["event"],
+            "plan_changed"
+        );
+        let SessionUpdate::ToolCallUpdate(progress) = &updates[1] else {
+            panic!("expected standard tool progress");
+        };
+        assert_eq!(progress.tool_call_id.0.as_ref(), "subagent-1");
+        assert_eq!(
+            progress.meta.as_ref().unwrap()["longbridge.ai/event"]["event"],
+            "subagent_progress"
+        );
+        let SessionUpdate::SessionInfoUpdate(info) = &updates[2] else {
+            panic!("expected standard session title update");
+        };
+        assert_eq!(
+            info.meta.as_ref().unwrap()["longbridge.ai/event"]["event"],
+            "chat_title_updated"
+        );
     }
 
     #[tokio::test]

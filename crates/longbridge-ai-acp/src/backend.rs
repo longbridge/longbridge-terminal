@@ -4,6 +4,13 @@ use std::path::Path;
 
 pub type BackendError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AgentPlanEntry {
+    pub content: String,
+    pub priority: String,
+    pub status: String,
+}
+
 /// Events understood by the protocol adapter.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AgentEvent<Session> {
@@ -39,6 +46,23 @@ pub enum AgentEvent<Session> {
         title: String,
         success: bool,
         raw_output: Option<serde_json::Value>,
+        metadata: serde_json::Value,
+    },
+    /// Progress for an existing tool call with the complete provider payload.
+    ToolProgressRich {
+        id: String,
+        title: String,
+        raw_output: Option<serde_json::Value>,
+        metadata: serde_json::Value,
+    },
+    /// Provider plan mapped to ACP's standard plan update.
+    Plan {
+        entries: Vec<AgentPlanEntry>,
+        metadata: serde_json::Value,
+    },
+    /// Provider session title mapped to ACP session metadata.
+    SessionTitle {
+        title: String,
         metadata: serde_json::Value,
     },
     NeedsInput {

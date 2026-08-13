@@ -11,7 +11,7 @@ mod rich_content;
 mod server;
 
 pub use agent_client_protocol as acp;
-pub use backend::{AgentBackend, AgentEvent, BackendError};
+pub use backend::{AgentBackend, AgentEvent, AgentPlanEntry, BackendError};
 pub use client::{
     with_external_session, with_initialized_session, with_session, AgentHandshake, ClientDelegate,
     DenyPermissions, ExternalAgent, ExternalAgentConfig, ExternalAgentKind,

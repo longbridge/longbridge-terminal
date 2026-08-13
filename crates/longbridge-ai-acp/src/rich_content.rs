@@ -1,4 +1,6 @@
-use agent_client_protocol::schema::v1::{ContentBlock, ContentChunk, ImageContent, TextContent};
+use agent_client_protocol::schema::v1::{
+    ContentBlock, ContentChunk, ImageContent, ResourceLink, TextContent,
+};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -88,6 +90,8 @@ pub enum RichContentError {
     },
     #[error("SVG contains active or external content")]
     UnsafeSvg,
+    #[error("widget URI must use the widget scheme and contain no control characters")]
+    InvalidWidgetUri,
 }
 
 impl RichContent {
@@ -170,16 +174,55 @@ impl RichContent {
         })
     }
 
+    pub fn widget(
+        content_id: impl Into<String>,
+        uri: impl Into<String>,
+        fallback: impl Into<String>,
+    ) -> Result<Self, RichContentError> {
+        let uri = uri.into();
+        if !uri.starts_with("widget://")
+            || uri.len() > 2_048
+            || uri.chars().any(char::is_control)
+            || uri.contains(['<', '>', '"', '\'', '`'])
+        {
+            return Err(RichContentError::InvalidWidgetUri);
+        }
+        Ok(Self {
+            version: RICH_CONTENT_VERSION,
+            content_id: checked_id(content_id.into())?,
+            kind: RichContentKind::Widget,
+            mime_type: "application/vnd.longbridge.widget+uri".to_owned(),
+            data: serde_json::json!({ "uri": uri }),
+            fallback: fallback.into(),
+            svg: None,
+        })
+    }
+
     #[must_use]
     pub fn to_acp_chunks(&self) -> Vec<ContentChunk> {
+        self.to_acp_chunks_with_meta(None)
+    }
+
+    #[must_use]
+    pub fn to_acp_chunks_with_meta(&self, extra: Option<&Map<String, Value>>) -> Vec<ContentChunk> {
         let metadata = self.metadata();
+        let metadata = merge_metadata(metadata, extra);
         let text = ContentBlock::Text(TextContent::new(&self.fallback).meta(metadata.clone()));
         let mut chunks = vec![ContentChunk::new(text)];
         if let Some(svg) = &self.svg {
             let image = ImageContent::new(STANDARD.encode(svg), "image/svg+xml")
                 .uri(format!("longbridge-rich://{}/preview.svg", self.content_id))
-                .meta(metadata);
+                .meta(metadata.clone());
             chunks.push(ContentChunk::new(ContentBlock::Image(image)));
+        }
+        if self.kind == RichContentKind::Widget {
+            if let Some(uri) = self.data.get("uri").and_then(Value::as_str) {
+                let resource = ResourceLink::new(widget_title(uri), uri)
+                    .mime_type(&self.mime_type)
+                    .description(&self.fallback)
+                    .meta(metadata);
+                chunks.push(ContentChunk::new(ContentBlock::ResourceLink(resource)));
+            }
         }
         chunks
     }
@@ -201,6 +244,28 @@ impl RichContent {
             serde_json::to_value(self).expect("rich content always serializes"),
         );
         metadata
+    }
+}
+
+fn merge_metadata(
+    mut metadata: Map<String, Value>,
+    extra: Option<&Map<String, Value>>,
+) -> Map<String, Value> {
+    if let Some(extra) = extra {
+        metadata.extend(extra.clone());
+    }
+    metadata
+}
+
+fn widget_title(uri: &str) -> &'static str {
+    if uri.starts_with("widget://quote/security/comparison") {
+        "Security comparison"
+    } else if uri.starts_with("widget://quote/security") {
+        "Security quote"
+    } else if uri.starts_with("widget://stock/list") {
+        "Security list"
+    } else {
+        "Longbridge interactive content"
     }
 }
 
@@ -817,6 +882,38 @@ mod tests {
             .to_acp_chunks()
             .iter()
             .all(|chunk| matches!(chunk.content, ContentBlock::Text(_))));
+    }
+
+    #[test]
+    fn widget_has_text_fallback_and_standard_resource_link() {
+        let widget = RichContent::widget(
+            "widget-1",
+            "widget://quote/security/detail?symbol=TSLA.US&time_range=1",
+            "[TSLA.US](https://longbridge.com/quote/tsla.us)",
+        )
+        .unwrap();
+        let chunks = widget.to_acp_chunks();
+        assert_eq!(chunks.len(), 2);
+        assert!(matches!(chunks[0].content, ContentBlock::Text(_)));
+        let ContentBlock::ResourceLink(resource) = &chunks[1].content else {
+            panic!("expected widget resource link");
+        };
+        assert_eq!(
+            resource.uri,
+            "widget://quote/security/detail?symbol=TSLA.US&time_range=1"
+        );
+    }
+
+    #[test]
+    fn widget_rejects_non_widget_and_markup_injection_uris() {
+        assert_eq!(
+            RichContent::widget("widget-1", "https://example.com", "fallback"),
+            Err(RichContentError::InvalidWidgetUri)
+        );
+        assert_eq!(
+            RichContent::widget("widget-1", "widget://quote/<script>", "fallback"),
+            Err(RichContentError::InvalidWidgetUri)
+        );
     }
 
     #[test]
