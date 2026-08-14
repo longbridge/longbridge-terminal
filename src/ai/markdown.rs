@@ -114,7 +114,8 @@ enum Block {
     Math(Vec<String>),
     /// An ATX heading: `(level, text)` with the hashes stripped.
     Heading(u8, String),
-    /// A `---` thematic break.
+    /// A `---` thematic break. Recognised so it does not reach the screen as text,
+    /// and then drawn as nothing at all — see the render arm.
     Rule,
 }
 
@@ -139,7 +140,11 @@ pub fn render(md: &str, width: usize) -> Vec<Line<'static>> {
             Block::Chart(spec) => render_chart(&spec, width, &mut out),
             Block::Math(lines) => render_math(&lines, width, &mut out),
             Block::Heading(level, text) => render_heading(level, &text, width, &mut out),
-            Block::Rule => render_rule(width, &mut out),
+            // Nothing: the blank row every block already gets is the break. It has
+            // been a full-width rule (louder than the sections it separated), a
+            // left-aligned `---` (leftover markup) and a short centred rule
+            // (decoration nobody asked for). Air does the job.
+            Block::Rule => {}
         }
     }
     // Prose blocks end with their own trailing blank; drop it so the answer
@@ -148,21 +153,6 @@ pub fn render(md: &str, width: usize) -> Vec<Line<'static>> {
         out.pop();
     }
     out
-}
-
-/// A section break: a short dim rule, centred.
-///
-/// It has been three things. A rule across the full width shouted louder than the
-/// sections it separated; a left-aligned `---` read as leftover markup. Centred and
-/// short, it reads as deliberate typography and gets out of the way.
-fn render_rule(width: usize, out: &mut Vec<Line<'static>>) {
-    const RULE: usize = 10;
-    let rule = "─".repeat(RULE.min(width.max(1)));
-    let pad = width.saturating_sub(UnicodeWidthStr::width(rule.as_str())) / 2;
-    out.push(Line::from(Span::styled(
-        format!("{}{rule}", " ".repeat(pad)),
-        Style::default().fg(BORDER),
-    )));
 }
 
 /// Whether a rendered line has no visible content.
@@ -972,24 +962,32 @@ mod tests {
         }
     }
 
-    /// A section break is short, dim and centred: a full-width rule outshouted the
-    /// sections it separated, and a left-aligned `---` read as leftover markup.
+    /// A thematic break draws nothing: not a rule, and not its own markup either.
     #[test]
-    fn thematic_break_is_a_centred_short_rule() {
+    fn thematic_break_is_air() {
         for width in [20usize, 40, 80] {
             let lines = render("above\n\n---\n\nbelow", width);
-            let rule = lines
+            let text = lines
                 .iter()
-                .flat_map(|l| &l.spans)
-                .find(|s| s.content.contains('─'))
-                .unwrap_or_else(|| panic!("no break at width {width}"));
-            assert_eq!(rule.style.fg, Some(super::BORDER), "it stays dim");
-            let dashes = rule.content.chars().filter(|c| *c == '─').count();
-            assert!(dashes <= 10 && dashes > 0, "short: {dashes} at {width}");
-            // Centred: the leading pad matches the trailing space.
-            let lead = rule.content.chars().take_while(|c| *c == ' ').count();
-            let expected = (width - dashes) / 2;
-            assert_eq!(lead, expected, "centred at width {width}");
+                .map(|l| {
+                    l.spans
+                        .iter()
+                        .map(|s| s.content.as_ref())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(!text.contains('─'), "no rule at width {width}: {text:?}");
+            assert!(!text.contains("---"), "and no markup: {text:?}");
+            assert!(
+                text.contains("above") && text.contains("below"),
+                "the sections survive: {text:?}"
+            );
+            // Separated, and by no more than the blank a block already gets.
+            assert!(
+                text.contains("above\n\nbelow") || text.contains("above\nbelow"),
+                "one blank between them: {text:?}"
+            );
         }
     }
 
