@@ -171,6 +171,10 @@ struct Ui {
     selection: Option<((u16, u16), (u16, u16))>,
     /// The text under the current selection, extracted during render.
     selected_text: Option<String>,
+    /// Cached rendered lines of the committed transcript and the signature they
+    /// were built for, so Markdown is not re-parsed every frame.
+    transcript_cache: Vec<Line<'static>>,
+    cache_sig: u64,
     /// Set to break the event loop (via `/exit` or a double Ctrl+C).
     should_quit: bool,
     /// True after one Ctrl+C on an empty prompt; a second one exits.
@@ -201,6 +205,8 @@ impl Ui {
             transcript: Rect::default(),
             selection: None,
             selected_text: None,
+            transcript_cache: Vec::new(),
+            cache_sig: 0,
             should_quit: false,
             ctrl_c_armed: false,
             focused: true,
@@ -1225,12 +1231,43 @@ fn render_chat(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatStat
         return;
     }
     let width = area.width.max(1) as usize;
-    let mut lines = transcript_lines(state, width);
+    // Committed messages are parsed once and cached; only the streaming tail is
+    // re-rendered each frame, and only the visible window is cloned. This keeps
+    // the 120ms spinner ticks from re-parsing the whole transcript's Markdown.
+    let sig = transcript_sig(state, width);
+    if ui.cache_sig != sig {
+        let mut cache = Vec::new();
+        for m in &state.messages {
+            push_message(&mut cache, m, width);
+        }
+        ui.transcript_cache = cache;
+        ui.cache_sig = sig;
+    }
+    let mut streaming = Vec::new();
+    if let Some(text) = &state.streaming {
+        push_message(
+            &mut streaming,
+            &Message {
+                role: Role::Assistant,
+                text: text.clone(),
+            },
+            width,
+        );
+    }
+    let cache_len = ui.transcript_cache.len();
+    let total = cache_len + streaming.len();
     let height = area.height as usize;
-    let total = lines.len();
     let bottom = total.saturating_sub(state.scroll as usize);
     let start = bottom.saturating_sub(height);
-    let window: Vec<Line> = lines.drain(start..bottom).collect();
+    let window: Vec<Line> = (start..bottom)
+        .map(|i| {
+            if i < cache_len {
+                ui.transcript_cache[i].clone()
+            } else {
+                streaming[i - cache_len].clone()
+            }
+        })
+        .collect();
 
     let Some((anchor, cursor)) = ui.selection else {
         ui.selected_text = None;
@@ -1960,24 +1997,19 @@ fn render_footer(f: &mut ratatui::Frame, area: Rect, ui: &Ui, editor: &Editor) {
     f.set_cursor_position((inner.x + col, inner.y + cy));
 }
 
-/// Flatten the transcript (and any in-progress answer) into styled, width-wrapped
-/// lines. Assistant text is rendered as Markdown; user/system text stays plain.
-fn transcript_lines(state: &ChatState, width: usize) -> Vec<Line<'static>> {
-    let mut lines = Vec::new();
-    for m in &state.messages {
-        push_message(&mut lines, m, width);
+/// A cheap signature of the committed transcript: message count, width, and a
+/// hash of the last message's text. It changes on any append, reset, or
+/// restore (even one that keeps the count), invalidating the render cache
+/// without hashing the whole transcript each frame.
+fn transcript_sig(state: &ChatState, width: usize) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    state.messages.len().hash(&mut h);
+    width.hash(&mut h);
+    if let Some(last) = state.messages.last() {
+        last.text.hash(&mut h);
     }
-    if let Some(text) = &state.streaming {
-        push_message(
-            &mut lines,
-            &Message {
-                role: Role::Assistant,
-                text: text.clone(),
-            },
-            width,
-        );
-    }
-    lines
+    h.finish()
 }
 
 fn push_message(lines: &mut Vec<Line<'static>>, message: &Message, width: usize) {
