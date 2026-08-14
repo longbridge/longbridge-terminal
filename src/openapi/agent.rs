@@ -161,6 +161,24 @@ pub struct OpenApiAgent {
     history_path: Option<Arc<PathBuf>>,
 }
 
+/// ACP backend used before the user completes `longbridge auth login`.
+pub struct AuthenticationRequiredAgent;
+
+#[async_trait]
+impl AgentBackend for AuthenticationRequiredAgent {
+    type Session = ();
+
+    async fn prompt(
+        &self,
+        _session: Self::Session,
+        _prompt: String,
+        _cwd: &Path,
+    ) -> Result<BoxStream<'static, Result<AgentEvent<Self::Session>, BackendError>>, BackendError>
+    {
+        Err(rust_i18n::t!("ACP.LoginRequired").to_string().into())
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 struct StoredSession {
     session_id: String,
