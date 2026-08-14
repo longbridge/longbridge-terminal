@@ -12,8 +12,8 @@
 //! - **code** — a shaded block with an optional language tag
 //! - **tables** — aligned box-drawn borders, fitted to width, with each cell run
 //!   through `tui-markdown` so a cell and a sentence agree on `**x**` and `\$`
-//! - **charts** — the braille plot from [`crate::cli::agent::render`], the same
-//!   one `agent chat` prints, rather than the JSON that produced it
+//! - **charts** — the braille plot from [`super::chart`], the same drawing
+//!   `agent chat` prints, rather than the JSON that produced it
 //! - **math** — LaTeX flattened to readable text in a gutter
 //! - **`---`** — a full-width rule
 
@@ -529,24 +529,12 @@ fn wrap_chars(chars: &[(char, Style)], width: usize) -> Vec<Vec<(char, Style)>> 
     out
 }
 
-/// Draw a `vis-chart` spec with the same renderer `agent chat` uses, so the TUI
-/// shows the braille plot rather than the JSON that produced it. The renderer
-/// emits ANSI, which is converted back into styled lines.
+/// Draw a `vis-chart` spec instead of the JSON that produced it.
+///
+/// [`super::chart`] already yields styled lines sized to `width`, so they go
+/// straight through — no wrapping, which would fold a braille row in half.
 fn render_chart(spec: &Value, width: usize, out: &mut Vec<Line<'static>>) {
-    let text = crate::cli::agent::render::render_vis_chart(spec, width, true);
-    match ansi_to_tui::IntoText::into_text(&text) {
-        Ok(parsed) => {
-            for line in &parsed.lines {
-                wrap_line(line, width, out);
-            }
-        }
-        // Fall back to the uncolored form rather than losing the chart.
-        Err(_) => {
-            for line in crate::cli::agent::render::render_vis_chart(spec, width, false).lines() {
-                out.push(Line::from(line.to_string()));
-            }
-        }
-    }
+    out.extend(super::chart::render(spec, width));
 }
 
 /// LaTeX fragments the agent's finance formulas actually use, mapped to plain

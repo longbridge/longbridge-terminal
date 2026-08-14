@@ -3,24 +3,13 @@
 
 use serde_json::Value;
 use std::fmt::Write;
-use unicode_width::UnicodeWidthStr;
 
-/// Terminal display width (CJK / fullwidth glyphs count as 2 columns), as
-/// opposed to `chars().count()` which undercounts wide glyphs and would
-/// misalign labels, bars, and boxes containing Chinese/Japanese/Korean text.
-fn display_width(s: &str) -> usize {
-    UnicodeWidthStr::width(s)
-}
+use ratatui::style::Color;
 
-/// Right-pad `s` with spaces until it reaches `width` display columns.
-fn pad_display(s: &str, width: usize) -> String {
-    let w = display_width(s);
-    if w >= width {
-        s.to_string()
-    } else {
-        format!("{s}{}", " ".repeat(width - w))
-    }
-}
+// Width-aware helpers and the server-text sanitizer live in `utils::text` so the
+// chart renderer in `ai::chart` can share them without depending on this module.
+pub use crate::utils::text::strip_control_chars;
+use crate::utils::text::{display_width, pad_display};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Segment {
@@ -109,19 +98,6 @@ fn flush_text(segments: &mut Vec<Segment>, acc: &mut String) {
     }
 }
 
-/// Strip control characters from server-originated text before it reaches
-/// the terminal. C0 controls are removed except `\n` and `\t` (needed for
-/// readable formatting); `ESC` (0x1b, the entry point for ANSI/OSC escape
-/// sequences) and `DEL` (0x7f) are removed too. Without this, a
-/// malicious/buggy answer, question, tool name, or reference field could
-/// smuggle terminal escape sequences (e.g. an OSC title-bar rewrite or an
-/// SGR color reset) into stdout/stderr.
-pub fn strip_control_chars(s: &str) -> String {
-    s.chars()
-        .filter(|&c| c == '\n' || c == '\t' || (!c.is_control()))
-        .collect()
-}
-
 /// Replace `[stock Name]` and `[citation N]` inline markers.
 pub fn replace_inline_markers(text: &str, color: bool) -> String {
     let mut out = String::with_capacity(text.len());
@@ -177,329 +153,39 @@ pub struct QuoteCardData {
     pub direction: i8,
 }
 
-/// One extracted numeric series from a vis-chart spec.
-struct ChartSeries {
-    kind: String, // "line" | "column"
-    label: String,
-    values: Vec<f64>,
-}
-
-/// Normalize the two observed vis-chart data shapes into (categories, series):
-/// - `{categories: [...], series: [{type, data: [...], axisYTitle}]}` (dual-axes)
-/// - `{data: [{category, value, group?}]}` (column / pie / line)
-fn chart_series(spec: &Value) -> (Vec<String>, Vec<ChartSeries>) {
-    // Every string pulled out of the spec is server/LLM-controlled and ends up
-    // on the terminal verbatim, so it is stripped of control characters here,
-    // once, at the single point where the spec is decoded.
-    if let Some(series) = spec.get("series").and_then(Value::as_array) {
-        let categories = spec
-            .get("categories")
-            .and_then(Value::as_array)
-            .map(|a| {
-                a.iter()
-                    .map(|v| strip_control_chars(v.as_str().unwrap_or_default()))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let series = series
-            .iter()
-            .map(|s| ChartSeries {
-                kind: s
-                    .get("type")
-                    .and_then(Value::as_str)
-                    .unwrap_or("line")
-                    .to_string(),
-                label: strip_control_chars(
-                    s.get("axisYTitle")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default(),
-                ),
-                values: s
-                    .get("data")
-                    .and_then(Value::as_array)
-                    // Keep positional alignment with `categories`: a
-                    // non-numeric/`null` point becomes 0.0 rather than being
-                    // dropped, otherwise every later value would shift onto
-                    // the wrong category.
-                    .map(|a| a.iter().map(|v| v.as_f64().unwrap_or(0.0)).collect())
-                    .unwrap_or_default(),
-            })
-            .collect();
-        return (categories, series);
-    }
-    if let Some(data) = spec.get("data").and_then(Value::as_array) {
-        // group rows by `group` (falling back to a single anonymous series)
-        let mut categories: Vec<String> = Vec::new();
-        let mut groups: Vec<(String, Vec<f64>)> = Vec::new();
-        for row in data {
-            let cat = strip_control_chars(
-                row.get("category")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default(),
-            );
-            if !categories.contains(&cat) {
-                categories.push(cat.clone());
-            }
-            let group =
-                strip_control_chars(row.get("group").and_then(Value::as_str).unwrap_or_default());
-            let value = row.get("value").and_then(Value::as_f64).unwrap_or(0.0);
-            match groups.iter_mut().find(|(g, _)| *g == group) {
-                Some((_, vals)) => vals.push(value),
-                None => groups.push((group, vec![value])),
-            }
-        }
-        let series = groups
-            .into_iter()
-            .map(|(label, values)| ChartSeries {
-                kind: "column".to_string(),
-                label,
-                values,
-            })
-            .collect();
-        return (categories, series);
-    }
-    (Vec::new(), Vec::new())
-}
-
-/// Render a vis-chart JSON spec as terminal text.
+/// Render a vis-chart spec for stdout.
+///
+/// The drawing lives in [`crate::ai::chart`], which produces styled lines; this
+/// flattens them to ANSI (or to bare text when `color` is off). Charts are drawn
+/// once, in one place, so `agent chat` and the `ai` TUI cannot drift apart.
 pub fn render_vis_chart(spec: &Value, width: usize, color: bool) -> String {
-    let chart_type = spec.get("type").and_then(Value::as_str).unwrap_or_default();
-    let title = strip_control_chars(
-        spec.get("title")
-            .and_then(Value::as_str)
-            .unwrap_or_default(),
-    );
-    let (categories, series) = chart_series(spec);
     let mut out = String::new();
-    if !title.is_empty() {
-        let _ = writeln!(out, "  {title}");
-    }
-    let body = match chart_type {
-        "line" | "area" | "dual-axes" => render_line_block(&categories, &series, width, color),
-        "column" | "bar" => render_bar_block(&categories, &series, width),
-        "pie" => render_pie_block(&categories, &series, width),
-        _ => render_table_block(&categories, &series),
-    };
-    out.push_str(&body);
-    out
-}
-
-const BRAILLE_DOTS: [[u8; 2]; 4] = [[0x01, 0x08], [0x02, 0x10], [0x04, 0x20], [0x40, 0x80]];
-
-/// Braille canvas for line series + block row for column series.
-#[allow(clippy::cast_precision_loss, clippy::cast_sign_loss)]
-fn render_line_block(
-    categories: &[String],
-    series: &[ChartSeries],
-    width: usize,
-    color: bool,
-) -> String {
-    // Series with no data points are dropped up front: an empty line series
-    // has no min/max and would otherwise poison the shared braille canvas
-    // (division by a zero span, garbage plotting positions).
-    let lines: Vec<&ChartSeries> = series
-        .iter()
-        .filter(|s| s.kind != "column" && !s.values.is_empty())
-        .collect();
-    let columns: Vec<&ChartSeries> = series
-        .iter()
-        .filter(|s| s.kind == "column" && !s.values.is_empty())
-        .collect();
-    if lines.is_empty() && columns.is_empty() {
-        return String::new();
-    }
-    let mut out = String::new();
-
-    if !lines.is_empty() {
-        let all: Vec<f64> = lines
-            .iter()
-            .flat_map(|s| s.values.iter().copied())
-            .collect();
-        let (min, max) = all
-            .iter()
-            .fold((f64::MAX, f64::MIN), |(lo, hi), &v| (lo.min(v), hi.max(v)));
-        let span = if (max - min).abs() < f64::EPSILON {
-            1.0
-        } else {
-            max - min
-        };
-        let label_w = format!("{max:.1}").len().max(format!("{min:.1}").len());
-        let chart_w = width.saturating_sub(label_w + 2).clamp(16, 120);
-        let rows = 6usize; // 6 braille rows = 24 dot rows
-        let mut canvas = vec![vec![0u8; chart_w]; rows];
-        let n = lines.iter().map(|s| s.values.len()).max().unwrap_or(0);
-        for s in &lines {
-            let mut prev: Option<(usize, usize)> = None;
-            for (i, &v) in s.values.iter().enumerate() {
-                let x = if n <= 1 {
-                    0
-                } else {
-                    i * (chart_w * 2 - 1) / (n - 1)
-                };
-                let y = ((max - v) / span * ((rows * 4 - 1) as f64)).round() as usize;
-                if let Some((px, py)) = prev {
-                    // vertical interpolation so lines look connected
-                    let (from, to) = if py <= y { (py, y) } else { (y, py) };
-                    for yy in from..=to {
-                        plot(&mut canvas, usize::midpoint(px, x), yy);
-                    }
+    for line in crate::ai::chart::render(spec, width) {
+        for span in &line.spans {
+            match span.style.fg.filter(|_| color) {
+                Some(fg) => {
+                    let _ = write!(out, "\x1b[{}m{}\x1b[0m", sgr(fg), span.content);
                 }
-                plot(&mut canvas, x, y);
-                prev = Some((x, y));
+                None => out.push_str(&span.content),
             }
         }
-        for (r, row) in canvas.iter().enumerate() {
-            let label = if r == 0 {
-                format!("{max:>label_w$.1}")
-            } else if r == rows - 1 {
-                format!("{min:>label_w$.1}")
-            } else {
-                " ".repeat(label_w)
-            };
-            let cells: String = row.iter().map(|&bits| braille(bits)).collect();
-            let _ = writeln!(out, "{label}┤{cells}");
-        }
-        let names: Vec<String> = lines
-            .iter()
-            .filter(|s| !s.label.is_empty())
-            .map(|s| s.label.clone())
-            .collect();
-        if !names.is_empty() {
-            let joined = names.join(" · ");
-            if color {
-                let _ = writeln!(out, "{}\x1b[2m⣿ {joined}\x1b[0m", " ".repeat(label_w + 1));
-            } else {
-                let _ = writeln!(out, "{}⣿ {joined}", " ".repeat(label_w + 1));
-            }
-        }
-    }
-
-    for s in &columns {
-        let max = s.values.iter().copied().fold(f64::MIN, f64::max).max(1.0);
-        let blocks: String = s
-            .values
-            .iter()
-            .map(|&v| {
-                let idx = ((v / max) * 7.0).round() as u32;
-                char::from_u32(0x2581 + idx.min(7)).unwrap_or('▁')
-            })
-            .collect();
-        let label = if s.label.is_empty() {
-            "volume"
-        } else {
-            &s.label
-        };
-        let _ = writeln!(out, "  {blocks} {label}");
-    }
-
-    if !categories.is_empty() {
-        let first = categories.first().map_or("", String::as_str);
-        let last = categories.last().map_or("", String::as_str);
-        let _ = writeln!(out, "  {first} … {last}");
+        out.push('\n');
     }
     out
 }
 
-fn plot(canvas: &mut [Vec<u8>], dot_x: usize, dot_y: usize) {
-    let (cx, cy) = (dot_x / 2, dot_y / 4);
-    if let Some(cell) = canvas.get_mut(cy).and_then(|row| row.get_mut(cx)) {
-        *cell |= BRAILLE_DOTS[dot_y % 4][dot_x % 2];
+/// SGR foreground code for the colors the chart renderer uses.
+fn sgr(color: Color) -> u8 {
+    match color {
+        Color::Cyan => 36,
+        Color::Blue => 34,
+        Color::DarkGray => 90,
+        Color::Red => 31,
+        Color::Green => 32,
+        Color::Yellow => 33,
+        Color::Magenta => 35,
+        _ => 39, // default foreground
     }
-}
-
-fn braille(bits: u8) -> char {
-    char::from_u32(0x2800 + u32::from(bits)).unwrap_or(' ')
-}
-
-/// Horizontal ▓ bars, one per (category, group) pair.
-#[allow(clippy::cast_precision_loss, clippy::cast_sign_loss)]
-fn render_bar_block(categories: &[String], series: &[ChartSeries], width: usize) -> String {
-    let max = series
-        .iter()
-        .flat_map(|s| s.values.iter().copied())
-        .fold(f64::MIN, f64::max)
-        .max(f64::EPSILON);
-    let label_w = categories
-        .iter()
-        .map(|c| display_width(c))
-        .max()
-        .unwrap_or(0)
-        + series
-            .iter()
-            .map(|s| display_width(&s.label))
-            .max()
-            .unwrap_or(0)
-        + 1;
-    let bar_w = width.saturating_sub(label_w + 12).clamp(10, 60);
-    let mut out = String::new();
-    for (ci, cat) in categories.iter().enumerate() {
-        for s in series {
-            let Some(&v) = s.values.get(ci) else { continue };
-            let n = ((v / max) * bar_w as f64).round().max(1.0) as usize;
-            let label = if s.label.is_empty() {
-                cat.clone()
-            } else {
-                format!("{cat} {}", s.label)
-            };
-            let bar = "▓".repeat(n);
-            let padded = pad_display(&label, label_w);
-            let _ = writeln!(out, "  {padded} {bar} {v}");
-        }
-    }
-    out
-}
-
-/// Proportion bars with percentages.
-#[allow(clippy::cast_precision_loss, clippy::cast_sign_loss)]
-fn render_pie_block(categories: &[String], series: &[ChartSeries], width: usize) -> String {
-    let Some(s) = series.first() else {
-        return String::new();
-    };
-    let total: f64 = s.values.iter().sum();
-    if total <= 0.0 {
-        return String::new();
-    }
-    let label_w = categories
-        .iter()
-        .map(|c| display_width(c))
-        .max()
-        .unwrap_or(0);
-    let bar_w = width.saturating_sub(label_w + 12).clamp(10, 40);
-    let mut out = String::new();
-    for (ci, cat) in categories.iter().enumerate() {
-        let Some(&v) = s.values.get(ci) else { continue };
-        let pct = v / total * 100.0;
-        // Clamp the bar length to `bar_w`: with mixed-sign values a single
-        // slice's `pct` can exceed 100 (e.g. data [100, -50] → total 50 →
-        // 200%), which would otherwise print a bar wider than the terminal.
-        let n = ((pct / 100.0) * bar_w as f64)
-            .round()
-            .clamp(1.0, bar_w as f64) as usize;
-        let bar = "▓".repeat(n);
-        let padded = pad_display(cat, label_w);
-        let _ = writeln!(out, "  {padded} {bar} {pct:.1}%");
-    }
-    out
-}
-
-/// Fallback: plain aligned table of category/value pairs per series.
-fn render_table_block(categories: &[String], series: &[ChartSeries]) -> String {
-    let mut out = String::new();
-    let label_w = categories
-        .iter()
-        .map(|c| display_width(c))
-        .max()
-        .unwrap_or(0);
-    for (ci, cat) in categories.iter().enumerate() {
-        let values: Vec<String> = series
-            .iter()
-            .filter_map(|s| s.values.get(ci).map(|v| format!("{v}")))
-            .collect();
-        let joined = values.join("  ");
-        let padded = pad_display(cat, label_w);
-        let _ = writeln!(out, "  {padded}  {joined}");
-    }
-    out
 }
 
 /// Boxed mini quote card. `head` and `body` sit on their own lines inside the
@@ -580,6 +266,7 @@ pub fn render_answer(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use unicode_width::UnicodeWidthStr;
 
     #[test]
     fn segments_split_text_chart_widget() {
@@ -824,10 +511,20 @@ mod tests {
             ]
         });
         let out = render_vis_chart(&spec, 60, false);
-        // No braille garbage from an empty/degenerate line series.
-        assert!(!out.chars().any(|c| ('\u{2800}'..='\u{28FF}').contains(&c)));
-        // The column block row is still rendered.
-        assert!(out.chars().any(|c| ('\u{2581}'..='\u{2588}').contains(&c)));
+        // The column series still draws (as braille bars on the shared canvas).
+        assert!(out.chars().any(|c| ('\u{2800}'..='\u{28FF}').contains(&c)));
+        // A degenerate line series must not poison the scale: no NaN/inf labels,
+        // and nothing wider than the width we asked for.
+        assert!(
+            !out.contains("NaN") && !out.contains("inf"),
+            "degenerate scale leaked into labels:\n{out}"
+        );
+        for line in out.lines() {
+            assert!(
+                UnicodeWidthStr::width(line) <= 60,
+                "line exceeds width: {line}"
+            );
+        }
     }
 
     #[test]
