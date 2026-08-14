@@ -177,8 +177,10 @@ struct Ui {
     quotes: HashMap<String, crate::cli::agent::render::QuoteCardData>,
     /// True while the server History list is being fetched.
     sessions_loading: bool,
+    /// True when the last History fetch failed (vs. genuinely empty).
+    sessions_error: bool,
     /// Senders for background History fetch / load, set once in `run`.
-    history_tx: Option<UnboundedSender<Vec<SessionSummary>>>,
+    history_tx: Option<UnboundedSender<Option<Vec<SessionSummary>>>>,
     load_tx: Option<UnboundedSender<session_store::LoadedChat>>,
     /// Set to break the event loop (via `/exit` or a double Ctrl+C).
     should_quit: bool,
@@ -214,6 +216,7 @@ impl Ui {
             cache_sig: 0,
             quotes: HashMap::new(),
             sessions_loading: false,
+            sessions_error: false,
             history_tx: None,
             load_tx: None,
             should_quit: false,
@@ -286,7 +289,7 @@ pub async fn run(agent_uid: String) -> Result<()> {
     let (agents_tx, mut agents_rx) = unbounded_channel::<Vec<AgentInfo>>();
     let (cards_tx, mut cards_rx) =
         unbounded_channel::<HashMap<String, crate::cli::agent::render::QuoteCardData>>();
-    let (history_tx, mut history_rx) = unbounded_channel::<Vec<SessionSummary>>();
+    let (history_tx, mut history_rx) = unbounded_channel::<Option<Vec<SessionSummary>>>();
     let (load_tx, mut load_rx) = unbounded_channel::<session_store::LoadedChat>();
     ui.history_tx = Some(history_tx);
     ui.load_tx = Some(load_tx);
@@ -346,9 +349,15 @@ pub async fn run(agent_uid: String) -> Result<()> {
                 ui.quotes.extend(cards);
                 ui.cache_sig = 0; // force a transcript rebuild so cards appear
             }
-            Some(list) = history_rx.recv() => {
-                ui.sessions = list;
+            Some(result) = history_rx.recv() => {
                 ui.sessions_loading = false;
+                if let Some(list) = result {
+                    ui.sessions = list;
+                    ui.sessions_error = false;
+                } else {
+                    ui.sessions.clear();
+                    ui.sessions_error = true;
+                }
                 ui.clamp_sel();
             }
             Some(loaded) = load_rx.recv() => {
@@ -884,6 +893,7 @@ fn open_history(ui: &mut Ui) {
     ui.search.clear();
     ui.question = None;
     ui.sessions_loading = true;
+    ui.sessions_error = false;
     if let Some(tx) = ui.history_tx.clone() {
         tokio::spawn(async move {
             let _ = tx.send(session_store::list_summaries().await);
@@ -1577,6 +1587,16 @@ fn render_sessions(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
         })
         .collect();
     let n = entries.len();
+    if ui.sessions_error && n == 0 {
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                t!("Ai.SessionsError").to_string(),
+                Style::default().fg(Color::Red),
+            ))),
+            list_area,
+        );
+        return;
+    }
     if n == 0 && !ui.search.is_empty() {
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(

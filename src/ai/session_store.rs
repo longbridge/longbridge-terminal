@@ -28,11 +28,10 @@ pub struct LoadedChat {
     pub messages: Vec<Message>,
 }
 
-/// List the account's chats, newest first.
-pub async fn list_summaries() -> Vec<SessionSummary> {
-    let Ok(resp) = crate::openapi::chats::list_chats(1, 50, None).await else {
-        return Vec::new();
-    };
+/// List the account's chats, newest first. `None` means the request failed
+/// (as opposed to an account with no conversations).
+pub async fn list_summaries() -> Option<Vec<SessionSummary>> {
+    let resp = crate::openapi::chats::list_chats(1, 50, None).await.ok()?;
     let mut sessions: Vec<SessionSummary> = resp
         .chats
         .into_iter()
@@ -52,7 +51,7 @@ pub async fn list_summaries() -> Vec<SessionSummary> {
         })
         .collect();
     sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-    sessions
+    Some(sessions)
 }
 
 /// Load one chat's full message history for resuming.

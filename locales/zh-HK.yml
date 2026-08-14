@@ -362,6 +362,7 @@ Ai:
   SessionsHint: "回車/點擊繼續 · 輸入即搜尋 · Del 刪除 · Esc：清空 / 返回"
   SessionsEmpty: "還沒有已儲存的對話。"
   SessionsNoMatch: "沒有符合搜尋的對話。"
+  SessionsError: "載入歷史失敗 —— 請檢查網絡後重新開啟。"
   SessionDeleted: "對話已刪除。"
   SettingsHint: "回車/點擊執行 · Esc：返回"
   SettingAgent: "智能體"

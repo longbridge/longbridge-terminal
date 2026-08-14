@@ -362,6 +362,7 @@ Ai:
   SessionsHint: "Enter/click resumes · type to search · Del removes · Esc: clear / back"
   SessionsEmpty: "No saved conversations yet."
   SessionsNoMatch: "No conversations match your search."
+  SessionsError: "Couldn't load history — check your connection and reopen."
   SessionDeleted: "Conversation deleted."
   SettingsHint: "Enter/click runs a row · Esc: back"
   SettingAgent: "Agent"
