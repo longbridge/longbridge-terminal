@@ -69,13 +69,10 @@ const SEL_BG: Color = Color::Rgb(45, 50, 62);
 const IDX: Color = Color::Rgb(110, 140, 190);
 const IDX_SEL: Color = Color::Rgb(240, 150, 90);
 
-/// Interactive rows in the Settings view, in display order.
-#[derive(Clone, Copy)]
-enum Setting {
-    NewChat,
+/// The chat's preference rows, off the shared registry.
+fn settings_rows() -> Vec<&'static crate::tui::settings::SettingMeta> {
+    crate::tui::settings::in_scope(crate::tui::settings::Scope::Chat)
 }
-
-const SETTINGS: [Setting; 1] = [Setting::NewChat];
 
 /// One slash command. `aliases` are dispatched and completed but never listed
 /// on their own, so `/exit` and `/quit` are one entry rather than two.
@@ -331,7 +328,7 @@ impl Ui {
                     v + 1
                 }
             }
-            View::Settings => SETTINGS.len(),
+            View::Settings => settings_rows().len(),
             View::Question => self
                 .question
                 .as_ref()
@@ -423,7 +420,7 @@ pub async fn run(agent_uid: String) -> Result<()> {
                     turn = None;
                     maybe_open_question(&mut ui, &state);
                     fetch_quote_cards_for(&state, &cards_tx);
-                    if !ui.focused {
+                    if !ui.focused && super::settings::notify_on_finish() {
                         notify(&t!("Ai.NotifyDone"));
                     }
                 }
@@ -484,6 +481,9 @@ fn fetch_quote_cards_for(
     else {
         return;
     };
+    if !super::settings::quote_cards() {
+        return;
+    }
     let widgets = crate::cli::agent::events::extract_widgets(&answer);
     if !widgets
         .iter()
@@ -881,7 +881,10 @@ fn on_list_key(key: crossterm::event::KeyEvent, ui: &mut Ui, state: &mut ChatSta
             let last = ui.row_count().saturating_sub(1);
             ui.sel = (ui.sel + 1).min(last);
         }
+        // Space changes a setting as well as Enter, matching the market view's
+        // modal — the same table, the same keys.
         KeyCode::Enter => activate(ui, state),
+        KeyCode::Char(' ') if ui.view == View::Settings => activate(ui, state),
         _ => {}
     }
 }
@@ -1033,14 +1036,16 @@ fn activate(ui: &mut Ui, state: &mut ChatState) {
                 ui.switch(View::Chat);
             }
         }
-        View::Settings => match SETTINGS.get(ui.sel) {
-            Some(Setting::NewChat) => {
-                state.reset(t!("Ai.Welcome").to_string());
-                ui.reset_render();
-                ui.switch(View::Chat);
+        // A preference changes in place and stays on the list: the reader is here
+        // to set several, and a row that navigated away was a command wearing a
+        // setting's clothes.
+        View::Settings => {
+            if let Some(meta) = settings_rows().get(ui.sel) {
+                crate::tui::settings::cycle(meta);
+                // A colour or card change alters every rendered answer.
+                ui.cache_sig = 0;
             }
-            None => {}
-        },
+        }
         View::Chat | View::Question => {}
     }
 }
@@ -1992,17 +1997,68 @@ fn relative_time(updated: u64, now: u64) -> String {
 
 /// Render the Settings panel and record a hit rectangle per row.
 fn render_settings(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
-    let rows: Vec<(usize, String)> = SETTINGS
+    use ratatui::widgets::{List, ListItem, ListState};
+
+    ui.rows.clear();
+    ui.clamp_sel();
+    let rows = settings_rows();
+    let width = area.width as usize;
+    let items: Vec<ListItem> = rows
         .iter()
-        .enumerate()
-        .map(|(i, setting)| {
-            let label = match setting {
-                Setting::NewChat => t!("Ai.NewChat").to_string(),
-            };
-            (i, label)
+        .map(|meta| {
+            let label = t!(meta.label).to_string();
+            let value = t!(meta.value_label()).to_string();
+            // The value is right-aligned so a column of them reads down the page,
+            // and the label gives way when the row is tight — a setting you
+            // cannot read the value of is not set.
+            let gap = width
+                .saturating_sub(2 + UnicodeWidthStr::width(label.as_str()))
+                .saturating_sub(UnicodeWidthStr::width(value.as_str()) + 2);
+            ListItem::new(vec![
+                Line::from(vec![
+                    Span::styled(format!("  {label}"), Style::default().fg(Color::Gray)),
+                    Span::raw(" ".repeat(gap)),
+                    Span::styled(
+                        value,
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]),
+                Line::from(Span::styled(
+                    truncate_width(&format!("  {}", t!(meta.description)), width),
+                    Style::default().fg(Color::DarkGray),
+                )),
+                Line::from(""),
+            ])
         })
         .collect();
-    render_rows(f, area, ui, &rows);
+    let mut list_state = ListState::default().with_selected(Some(ui.sel));
+    f.render_stateful_widget(
+        List::new(items).highlight_style(Style::default().bg(SEL_BG)),
+        area,
+        &mut list_state,
+    );
+    // Hit rects come after the render, because the widget is what decides where
+    // the list scrolled to — computing them from the selection alone would map a
+    // click to the wrong row once the list is longer than the pane. Each item is
+    // three rows tall and the third is its spacer, so a rect covers the first two.
+    let offset = list_state.offset();
+    for i in offset..rows.len() {
+        let y = area.y + ((i - offset) as u16) * 3;
+        let Some(height) = (area.y + area.height).checked_sub(y).filter(|h| *h > 0) else {
+            break;
+        };
+        ui.rows.push((
+            i,
+            Rect {
+                x: area.x,
+                y,
+                width: area.width,
+                height: height.min(2),
+            },
+        ));
+    }
 }
 
 /// Render the structured Question view: the current question and its options.
@@ -2378,7 +2434,16 @@ fn push_message(
     // answer around it, so it gets no accent bar and no trailing blank.
     if message.role == Role::Tool {
         if let Some(status) = message.tool {
-            lines.push(tool_line(&message.text, status, width));
+            // A failure changes how much to trust the answer above it; a success
+            // rarely does, so the reader can keep only the failures — or nothing.
+            let show = match super::settings::tool_calls() {
+                super::settings::ToolCalls::All => true,
+                super::settings::ToolCalls::Failures => status == ToolStatus::Failed,
+                super::settings::ToolCalls::Off => false,
+            };
+            if show {
+                lines.push(tool_line(&message.text, status, width));
+            }
         }
         return;
     }
@@ -2594,11 +2659,15 @@ fn pending_ref(symbol: &str) -> Line<'static> {
 }
 
 /// The color a change should be tinted, honoring the up/down color preference.
+/// The colour of a price change, honouring the terminal's up/down convention.
+///
+/// A reader who set red-up in the market view was seeing the opposite here,
+/// which for a price is not a cosmetic difference.
 fn change_color(direction: i8) -> Color {
-    match direction {
-        1 => Color::Green,
-        -1 => Color::Red,
-        _ => Color::Gray,
+    match crate::tui::ui::styles::up_color(direction.cmp(&0)) {
+        // `up_color` returns Reset for no change; the transcript wants it dim.
+        Color::Reset => Color::Gray,
+        c => c,
     }
 }
 

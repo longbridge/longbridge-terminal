@@ -9,6 +9,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::ai::settings::ToolCalls;
 use crate::data::StockColorMode;
 
 /// On-disk user configuration. Fields are optional so unset settings are
@@ -17,6 +18,12 @@ use crate::data::StockColorMode;
 pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stock_color_mode: Option<StockColorMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_tool_calls: Option<ToolCalls>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_notify_on_finish: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_quote_cards: Option<bool>,
 }
 
 fn config_path() -> Option<PathBuf> {
@@ -68,9 +75,15 @@ mod tests {
     fn config_round_trips_through_json() {
         let config = Config {
             stock_color_mode: Some(StockColorMode::GreenUp),
+            chat_tool_calls: Some(ToolCalls::Failures),
+            chat_notify_on_finish: Some(false),
+            chat_quote_cards: Some(true),
         };
         let json = serde_json::to_string(&config).unwrap();
         let back: Config = serde_json::from_str(&json).unwrap();
         assert_eq!(back.stock_color_mode, Some(StockColorMode::GreenUp));
+        assert_eq!(back.chat_tool_calls, Some(ToolCalls::Failures));
+        assert_eq!(back.chat_notify_on_finish, Some(false));
+        assert_eq!(back.chat_quote_cards, Some(true));
     }
 }

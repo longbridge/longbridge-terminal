@@ -20,6 +20,7 @@ pub mod markdown;
 pub mod quotes;
 pub mod runtime;
 pub mod session_store;
+pub mod settings;
 pub mod state;
 pub mod tui;
 
