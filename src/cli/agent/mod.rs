@@ -8,6 +8,7 @@ use rust_i18n::t;
 use client::{AgentApi, AgentInfo, LbAgentApi};
 
 pub mod chat;
+pub mod chats;
 pub mod client;
 pub mod events;
 pub mod render;
@@ -362,6 +363,14 @@ pub async fn cmd_agent(
             .await
         }
         Some(AgentCmd::Workspaces) => workspace::cmd_workspaces(format, verbose).await,
+        Some(AgentCmd::Chats {
+            exclude_agent_uids,
+            page,
+            count,
+        }) => chats::cmd_chats(page, count, exclude_agent_uids, format, verbose).await,
+        Some(AgentCmd::ChatDetail { chat_uid }) => {
+            chats::cmd_chat_detail(chat_uid, format, verbose).await
+        }
     }
 }
 
@@ -485,6 +494,11 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<crate::cli::schema::Res
         Some("workspaces") => {
             schema::object("AI workspaces for the current account", &["workspaces"])
         }
+        Some("chats") => schema::object("AI chats (conversations) across Agents", &["chats"]),
+        Some("chat-detail") => schema::object(
+            "A chat's detail, including its messages",
+            &["chat", "chat_relation", "messages"],
+        ),
         // Bare `longbridge agent` runs `agent list`, so `agent --schema`
         // must describe the list response instead of falling through to help.
         None | Some("list") => schema::object("AI agents across workspaces", &["agents"]),

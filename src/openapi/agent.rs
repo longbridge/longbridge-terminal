@@ -7,13 +7,10 @@ use longbridge_ai_acp::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{
-    fmt::Write as _,
-    fs,
-    path::{Path, PathBuf},
-    sync::{Arc, Mutex},
-    time::{Duration, Instant},
-};
+use std::fmt::Write as _;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct OpenApiAgentSession {
@@ -157,8 +154,6 @@ fn normalize_answer(question: &PendingQuestion, input: &str) -> Result<String, B
 pub struct OpenApiAgent {
     context: longbridge::AgentContext,
     agent_id: String,
-    history: Arc<Mutex<SessionHistory>>,
-    history_path: Option<Arc<PathBuf>>,
 }
 
 /// ACP backend used before the user completes `longbridge auth login`.
@@ -377,21 +372,10 @@ fn session_history_path(agent_id: &str) -> Option<PathBuf> {
 
 impl OpenApiAgent {
     pub fn new(context: longbridge::AgentContext, agent_id: impl Into<String>) -> Self {
-        let agent_id = agent_id.into();
-        let history_path = session_history_path(&agent_id).map(Arc::new);
-        let history = history_path
-            .as_deref()
-            .map_or_else(SessionHistory::default, |path| SessionHistory::load(path));
         Self {
             context,
-            agent_id,
-            history: Arc::new(Mutex::new(history)),
-            history_path,
+            agent_id: agent_id.into(),
         }
-    }
-
-    fn persist_history(&self, history: &SessionHistory) {
-        persist_session_history(self.history_path.as_deref(), history);
     }
 }
 
@@ -413,34 +397,59 @@ impl AgentBackend for OpenApiAgent {
     type Session = OpenApiAgentSession;
     const SESSION_HISTORY: bool = true;
 
-    fn new_session(&self, session_id: &str, cwd: &Path) -> Self::Session {
-        let state = OpenApiAgentSession {
+    fn new_session(&self, session_id: &str, _cwd: &Path) -> Self::Session {
+        OpenApiAgentSession {
             acp_session_id: Some(session_id.to_owned()),
             ..Default::default()
-        };
-        if let Ok(mut history) = self.history.lock() {
-            history.upsert(StoredSession {
-                session_id: session_id.to_owned(),
-                cwd: cwd.to_path_buf(),
-                title: None,
-                state: state.clone(),
-                events: Vec::new(),
-            });
-            self.persist_history(&history);
         }
-        state
     }
 
     async fn list_sessions(
         &self,
-        cwd: Option<&Path>,
+        _cwd: Option<&Path>,
         cursor: Option<&str>,
     ) -> Result<AgentSessionPage, BackendError> {
-        Ok(self
-            .history
-            .lock()
-            .map_err(|_| std::io::Error::other("session history lock is poisoned"))?
-            .list(cwd, cursor))
+        const PAGE_SIZE: u32 = 50;
+        // Server chats are account-scoped, not per-directory, so the `cwd`
+        // filter is ignored — every chat is returned. The cursor is the
+        // 1-based page number.
+        let page = cursor
+            .and_then(|cursor| cursor.parse::<u32>().ok())
+            .unwrap_or(1)
+            .max(1);
+        // `session/list` must never break the ACP flow: an ACP client treats a
+        // failed listing as fatal and then cannot even start a new session. If
+        // the chats API is unreachable (network, auth, or not yet deployed to
+        // this environment), degrade to an empty page instead of erroring.
+        let resp = match crate::openapi::chats::list_chats(page, PAGE_SIZE, None).await {
+            Ok(resp) => resp,
+            Err(error) => {
+                tracing::warn!(
+                    target: "longbridge::acp",
+                    %error,
+                    "failed to list chats for session/list; returning an empty page"
+                );
+                return Ok(AgentSessionPage {
+                    sessions: Vec::new(),
+                    next_cursor: None,
+                });
+            }
+        };
+        let has_more = resp.chats.len() as u32 >= PAGE_SIZE;
+        let sessions = resp
+            .chats
+            .into_iter()
+            .map(|chat| AgentSessionInfo {
+                session_id: chat.uid,
+                cwd: PathBuf::new(),
+                title: (!chat.name.is_empty()).then_some(chat.name),
+                updated_at: (chat.updated_at > 0).then(|| chat.updated_at.to_string()),
+            })
+            .collect();
+        Ok(AgentSessionPage {
+            sessions,
+            next_cursor: has_more.then(|| (page + 1).to_string()),
+        })
     }
 
     async fn load_session(
@@ -448,17 +457,74 @@ impl AgentBackend for OpenApiAgent {
         session_id: &str,
         _cwd: &Path,
     ) -> Result<LoadedAgentSession<Self::Session>, BackendError> {
-        let stored = self
-            .history
-            .lock()
-            .map_err(|_| std::io::Error::other("session history lock is poisoned"))?
-            .get(session_id)
-            .ok_or_else(|| {
-                std::io::Error::new(std::io::ErrorKind::NotFound, "session not found")
-            })?;
+        // Like `session/list`, `session/load` must not break the ACP flow: a
+        // client that resumes a remembered session treats a failed load as
+        // fatal. If the chat can't be fetched (network, auth, not deployed to
+        // this environment, or an id that isn't a server chat), resume with an
+        // empty history so the user can keep chatting.
+        // The client remembers a session by its ACP id. For a session created
+        // via `session/new` that id is a local UUID, and the server chat it maps
+        // to is only learned after the first prompt — so translate through the
+        // local id index. A session resumed from `session/list` already carries
+        // the server chat uid, which has no index entry and is used as-is.
+        let chat_uid = resolve_chat_uid(session_id).unwrap_or_else(|| session_id.to_owned());
+        let detail = match crate::openapi::chats::chat_detail(&chat_uid).await {
+            Ok(detail) => detail,
+            Err(error) => {
+                tracing::warn!(
+                    target: "longbridge::acp",
+                    %error,
+                    session_id,
+                    "failed to load chat detail; resuming with empty history"
+                );
+                return Ok(LoadedAgentSession {
+                    state: OpenApiAgentSession {
+                        acp_session_id: Some(session_id.to_owned()),
+                        ..Default::default()
+                    },
+                    history: stream::iter(Vec::new()).boxed(),
+                });
+            }
+        };
+        // Resume the server-side chat: the next prompt continues this
+        // conversation, appended after its most recent *completed* round. The
+        // parent must be the last assistant message that actually produced an
+        // answer — not simply the last message, nor the last assistant message.
+        // A failed/aborted round leaves an empty assistant message (e.g. status
+        // 5, no text); resuming with that (or with a trailing unanswered `user`
+        // turn) as the parent makes the continue API keep failing with 400000.
+        record_chat_mapping(session_id, &detail.chat.uid);
+        let parent_message_id = detail
+            .messages
+            .iter()
+            .rfind(|message| message.sender == "assistant" && !message.text().is_empty())
+            .map(|message| message.id.to_string());
+        let state = OpenApiAgentSession {
+            acp_session_id: Some(session_id.to_owned()),
+            conversation_id: Some(detail.chat.uid.clone()),
+            parent_message_id,
+            ..Default::default()
+        };
+        // Replay each stored message as a history event: a user message becomes
+        // `UserText`, anything else `Text`. Empty messages are skipped.
+        let events: Vec<Result<AgentEvent<Self::Session>, BackendError>> = detail
+            .messages
+            .into_iter()
+            .filter_map(|message| {
+                let text = message.text();
+                if text.is_empty() {
+                    return None;
+                }
+                Some(Ok(if message.sender == "user" {
+                    AgentEvent::UserText(text)
+                } else {
+                    AgentEvent::Text(text)
+                }))
+            })
+            .collect();
         Ok(LoadedAgentSession {
-            state: stored.state,
-            history: stream::iter(stored.events.into_iter().map(Ok)).boxed(),
+            state,
+            history: stream::iter(events).boxed(),
         })
     }
 
@@ -466,52 +532,48 @@ impl AgentBackend for OpenApiAgent {
         &self,
         session: Self::Session,
         prompt: String,
-        cwd: &Path,
+        _cwd: &Path,
     ) -> Result<BoxStream<'static, Result<AgentEvent<Self::Session>, BackendError>>, BackendError>
     {
-        let original_prompt = prompt.clone();
         let acp_session_id = session.acp_session_id.clone();
-        let cwd = cwd.to_path_buf();
-        let stored = if let Some(session_id) = session
-            .acp_session_id
-            .as_deref()
-            .or(session.conversation_id.as_deref())
-        {
-            self.history
-                .lock()
-                .map_err(|_| std::io::Error::other("session history lock is poisoned"))?
-                .get(session_id)
-        } else {
-            None
-        };
-        let mut captured = stored
-            .as_ref()
-            .map_or_else(Vec::new, |stored| stored.events.clone());
-        captured.push(AgentEvent::UserText(original_prompt));
-        let mut title = stored.and_then(|stored| stored.title);
-        let mut current_state = session.clone();
-        let mut last_checkpoint = Instant::now();
-        let mut visible_checkpointed = false;
-        if let Some(session_id) = current_state
-            .acp_session_id
-            .as_ref()
-            .or(current_state.conversation_id.as_ref())
-        {
-            let mut history = self
-                .history
-                .lock()
-                .map_err(|_| std::io::Error::other("session history lock is poisoned"))?;
-            history.upsert(StoredSession {
-                session_id: session_id.clone(),
-                cwd: cwd.clone(),
-                title: title.clone(),
-                state: current_state.clone(),
-                events: captured.clone(),
-            });
-            self.persist_history(&history);
+        // Rounds may have completed while no stream was attached (the client
+        // was killed or switched away mid-turn, or the user chatted on another
+        // device), leaving our parent id stale. Silently advance the parent to
+        // the server's latest completed round so the new turn continues from
+        // it instead of branching off an older message. Nothing is replayed
+        // into the UI here — the missed content shows up whenever the client
+        // reloads the session.
+        let mut conversation_id = session.conversation_id.clone();
+        let mut parent_message_id = session.parent_message_id.clone();
+        if session.pending_interaction.is_none() {
+            // The chat binding is normally written back to the session by the
+            // turn's `Completed` event. An aborted turn never delivers it, so
+            // the session can be left unbound even though a server chat was
+            // already created — recover the binding from the local index
+            // (written as soon as `chat_started` was observed). Without this,
+            // every prompt after an aborted first turn opens a brand-new chat.
+            if conversation_id.is_none() {
+                if let Some(acp) = acp_session_id.as_deref() {
+                    conversation_id = resolve_chat_uid(acp);
+                }
+            }
+            if let Some(chat_uid) = conversation_id.as_deref() {
+                let known = parent_message_id
+                    .as_deref()
+                    .and_then(|id| id.parse::<i64>().ok())
+                    .unwrap_or(0);
+                if let Ok(detail) = crate::openapi::chats::chat_detail(chat_uid).await {
+                    if let Some(latest) = detail
+                        .messages
+                        .iter()
+                        .rfind(|m| m.id > known && m.sender == "assistant" && !m.text().is_empty())
+                    {
+                        parent_message_id = Some(latest.id.to_string());
+                    }
+                }
+            }
         }
-
-        let stream = if let Some(pending) = &session.pending_interaction {
+        let started = if let Some(pending) = &session.pending_interaction {
             self.context
                 .continue_conversation_streamed(
                     self.agent_id.clone(),
@@ -525,18 +587,38 @@ impl AgentBackend for OpenApiAgent {
                         .ok_or("missing message id")?,
                     answers_for(pending, &prompt)?,
                 )
-                .await?
-                .boxed()
+                .await
+                .map(StreamExt::boxed)
         } else {
-            self.context
-                .conversation_streamed(
-                    self.agent_id.clone(),
-                    prompt,
-                    session.conversation_id,
-                    session.parent_message_id,
-                )
-                .await?
-                .boxed()
+            // Silently retry once if the conversation workflow fails with the
+            // transient 400000 ("Something went wrong. Please try again.").
+            conversation_stream_with_retry(
+                self.context.clone(),
+                self.agent_id.clone(),
+                prompt,
+                conversation_id,
+                parent_message_id,
+            )
+            .await
+        };
+        // A turn that fails to start (e.g. the conversation API returns an auth
+        // error or times out) must not fail the ACP turn or connection: surface
+        // the error to the user as a notice and end the turn gracefully. The ACP
+        // server also guards against this, but degrading here yields a cleaner
+        // message and keeps the session usable.
+        let stream = match started {
+            Ok(stream) => stream,
+            Err(error) => {
+                let notice = AgentEvent::Notice {
+                    session: OpenApiAgentSession {
+                        acp_session_id: acp_session_id.clone(),
+                        ..Default::default()
+                    },
+                    text: format!("This request could not be completed: {error}"),
+                    metadata: None,
+                };
+                return Ok(stream::iter(vec![Ok(notice)]).boxed());
+            }
         };
 
         Ok(stream
@@ -741,10 +823,18 @@ impl AgentBackend for OpenApiAgent {
                             metadata,
                         }))
                     }
-                    Ok(ConversationStreamEvent::ChatStarted(payload)) => Some(Ok(native_event(
-                        "chat_started",
-                        serde_json::to_value(payload).ok()?,
-                    ))),
+                    Ok(ConversationStreamEvent::ChatStarted(payload)) => {
+                        // First time we learn this session's server chat uid:
+                        // bind the ACP session id to it so a later `session/load`
+                        // (which arrives with the ACP id) can find the chat.
+                        if let Some(acp) = acp_session_id.as_deref() {
+                            record_chat_mapping(acp, &payload.chat_uid);
+                        }
+                        Some(Ok(native_event(
+                            "chat_started",
+                            serde_json::to_value(payload).ok()?,
+                        )))
+                    }
                     Ok(ConversationStreamEvent::WorkflowStarted(payload)) => Some(Ok(
                         native_event("workflow_started", serde_json::to_value(payload).ok()?),
                     )),
@@ -880,130 +970,131 @@ impl AgentBackend for OpenApiAgent {
                 }
                 }
             })
-            .map({
-                let history = Arc::clone(&self.history);
-                let history_path = self.history_path.clone();
-                move |result| {
-                    if let Ok(event) = &result {
-                        if let AgentEvent::SessionTitle {
-                            title: new_title, ..
-                        } = event
-                        {
-                            title = Some(new_title.clone());
-                        }
-                        captured.push(event.clone());
-                        if let Some(state) = event_session(event) {
-                            current_state = state.clone();
-                        } else {
-                            update_session_from_event(&mut current_state, event);
-                        }
-                        if let Some(session_id) = current_state
-                            .acp_session_id
-                            .as_ref()
-                            .or(current_state.conversation_id.as_ref())
-                        {
-                            if let Ok(mut history) = history.lock() {
-                                history.upsert(StoredSession {
-                                    session_id: session_id.clone(),
-                                    cwd: cwd.clone(),
-                                    title: title.clone(),
-                                    state: current_state.clone(),
-                                    events: captured.clone(),
-                                });
-                                let visible = is_visible_history_event(event);
-                                let checkpoint = is_history_boundary(event)
-                                    || (visible
-                                        && (!visible_checkpointed
-                                            || last_checkpoint.elapsed()
-                                                >= Duration::from_secs(1)));
-                                if checkpoint {
-                                    if let Some(path) = history_path.as_deref() {
-                                        if let Err(error) = history.save(path) {
-                                            tracing::warn!(
-                                                target: "longbridge::acp",
-                                                %error,
-                                                path = %path.display(),
-                                                "failed to persist ACP session history"
-                                            );
-                                        } else {
-                                            last_checkpoint = Instant::now();
-                                            visible_checkpointed |= visible;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    result
-                }
-            })
             .boxed())
     }
 }
 
-fn event_session(event: &AgentEvent<OpenApiAgentSession>) -> Option<&OpenApiAgentSession> {
-    match event {
-        AgentEvent::NeedsInput { session, .. }
-        | AgentEvent::PermissionRequired { session, .. }
-        | AgentEvent::Notice { session, .. }
-        | AgentEvent::Completed { session, .. }
-        | AgentEvent::Finished(session) => Some(session),
-        _ => None,
-    }
+/// Path of the local ACP session-id → server chat-uid index.
+///
+/// Only this id pointer is persisted locally; chat history itself is always
+/// fetched from the API. A session created via `session/new` is remembered by
+/// the client under a local UUID, while the server stores its conversation
+/// under a chat uid that is only known after the first prompt — this index
+/// bridges the two so the session can be resumed.
+fn chat_index_path() -> Option<PathBuf> {
+    dirs::home_dir().map(|home| {
+        home.join(".longbridge")
+            .join("acp")
+            .join("chat-index.json")
+    })
 }
 
-fn update_session_from_event(
-    state: &mut OpenApiAgentSession,
-    event: &AgentEvent<OpenApiAgentSession>,
-) {
-    let AgentEvent::Extension {
-        event: event_name,
-        data,
-        ..
-    } = event
-    else {
+fn load_chat_index() -> std::collections::HashMap<String, String> {
+    chat_index_path()
+        .and_then(|path| std::fs::read(path).ok())
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+/// Translate an ACP session id to the server chat uid it was bound to, if any.
+fn resolve_chat_uid(acp_session_id: &str) -> Option<String> {
+    load_chat_index().remove(acp_session_id)
+}
+
+/// Bind an ACP session id to its server chat uid (best effort; failures to
+/// persist only cost the ability to resume history, never the live turn).
+fn record_chat_mapping(acp_session_id: &str, chat_uid: &str) {
+    if acp_session_id.is_empty() || chat_uid.is_empty() || acp_session_id == chat_uid {
+        return;
+    }
+    let Some(path) = chat_index_path() else {
         return;
     };
-    if event_name != "chat_started" {
+    let mut index = load_chat_index();
+    if index.get(acp_session_id).map(String::as_str) == Some(chat_uid) {
         return;
     }
-    if let Some(chat_uid) = data
-        .get("chat_uid")
-        .and_then(serde_json::Value::as_str)
-        .filter(|value| !value.is_empty())
-    {
-        state.conversation_id = Some(chat_uid.to_owned());
+    index.insert(acp_session_id.to_owned(), chat_uid.to_owned());
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
     }
-    if let Some(message_id) = data.get("message_id").and_then(|value| {
-        value
-            .as_str()
-            .map(str::to_owned)
-            .or_else(|| value.as_i64().map(|value| value.to_string()))
-    }) {
-        state.parent_message_id = Some(message_id);
+    if let Ok(bytes) = serde_json::to_vec_pretty(&index) {
+        let _ = std::fs::write(&path, bytes);
     }
 }
 
-fn is_visible_history_event(event: &AgentEvent<OpenApiAgentSession>) -> bool {
-    matches!(
-        event,
-        AgentEvent::Text(_)
-            | AgentEvent::Thought(_)
-            | AgentEvent::Content { .. }
-            | AgentEvent::ToolStarted { .. }
-            | AgentEvent::ToolFinished { .. }
-            | AgentEvent::ToolStartedRich { .. }
-            | AgentEvent::ToolFinishedRich { .. }
-            | AgentEvent::ToolProgressRich { .. }
-            | AgentEvent::Plan { .. }
-            | AgentEvent::RichContent(_)
-    )
-}
+/// Start a conversation stream, silently retrying once if the workflow fails
+/// with the transient `400000` ("Something went wrong. Please try again.").
+///
+/// The retry is spliced in at the raw-event level: the failed `workflow_finished`
+/// is swallowed and a fresh attempt's events continue the same ACP turn, so the
+/// caller's event mapping never sees the transient failure. Only the *initial*
+/// start error propagates (so the caller can degrade); a failure to start the
+/// retry is surfaced as a stream error instead.
+async fn conversation_stream_with_retry(
+    context: longbridge::AgentContext,
+    agent_id: String,
+    query: String,
+    chat_uid: Option<String>,
+    parent_message_id: Option<String>,
+) -> Result<BoxStream<'static, Result<ConversationStreamEvent, longbridge::Error>>, longbridge::Error>
+{
+    const RETRYABLE_CODE: i32 = 400_000;
 
-fn is_history_boundary(event: &AgentEvent<OpenApiAgentSession>) -> bool {
-    event_session(event).is_some()
-        || matches!(event, AgentEvent::SessionTitle { .. })
-        || matches!(event, AgentEvent::Extension { event, .. } if event == "chat_started")
+    struct State {
+        context: longbridge::AgentContext,
+        stream: BoxStream<'static, Result<ConversationStreamEvent, longbridge::Error>>,
+        /// The params to restart once; `None` after the retry is spent.
+        retry: Option<(String, String, Option<String>, Option<String>)>,
+    }
+
+    let first = context
+        .conversation_streamed(
+            agent_id.clone(),
+            query.clone(),
+            chat_uid.clone(),
+            parent_message_id.clone(),
+        )
+        .await?;
+
+    let state = State {
+        context,
+        stream: first.boxed(),
+        retry: Some((agent_id, query, chat_uid, parent_message_id)),
+    };
+
+    Ok(stream::unfold(state, |mut state| async move {
+        loop {
+            match state.stream.next().await {
+                Some(Ok(ConversationStreamEvent::WorkflowFinished(response)))
+                    if state.retry.is_some()
+                        && response
+                            .error
+                            .as_ref()
+                            .is_some_and(|error| error.code == RETRYABLE_CODE) =>
+                {
+                    let (agent_id, query, chat_uid, parent_message_id) =
+                        state.retry.take().expect("retry budget checked above");
+                    tracing::warn!(
+                        target: "longbridge::acp",
+                        code = RETRYABLE_CODE,
+                        "conversation workflow failed transiently; retrying once"
+                    );
+                    match state
+                        .context
+                        .conversation_streamed(agent_id, query, chat_uid, parent_message_id)
+                        .await
+                    {
+                        Ok(retry_stream) => state.stream = retry_stream.boxed(),
+                        Err(error) => return Some((Err(error), state)),
+                    }
+                }
+                Some(item) => return Some((item, state)),
+                None => return None,
+            }
+        }
+    })
+    .boxed())
 }
 
 fn plan_entries(outputs: Option<&serde_json::Value>) -> Vec<AgentPlanEntry> {
@@ -1204,106 +1295,6 @@ mod tests {
     }
 
     #[test]
-    fn session_history_lists_newest_first_and_filters_by_cwd() {
-        let mut history = SessionHistory::default();
-        for (session_id, cwd) in [
-            ("first", PathBuf::from("/workspace/a")),
-            ("other", PathBuf::from("/workspace/b")),
-            ("latest", PathBuf::from("/workspace/a")),
-        ] {
-            history.upsert(StoredSession {
-                session_id: session_id.into(),
-                cwd,
-                title: Some(session_id.into()),
-                state: OpenApiAgentSession::default(),
-                events: vec![AgentEvent::UserText(session_id.into())],
-            });
-        }
-
-        let page = history.list(Some(Path::new("/workspace/a")), None);
-        assert_eq!(
-            page.sessions
-                .iter()
-                .map(|session| session.session_id.as_str())
-                .collect::<Vec<_>>(),
-            ["latest", "first"]
-        );
-        assert_eq!(page.next_cursor, None);
-    }
-
-    #[test]
-    fn session_history_upsert_replaces_and_moves_session_to_front() {
-        let mut history = SessionHistory::default();
-        let stored = |title: &str| StoredSession {
-            session_id: "chat-1".into(),
-            cwd: PathBuf::from("/workspace"),
-            title: Some(title.into()),
-            state: OpenApiAgentSession {
-                conversation_id: Some("chat-1".into()),
-                ..Default::default()
-            },
-            events: vec![AgentEvent::Text(title.into())],
-        };
-        history.upsert(stored("old"));
-        history.upsert(stored("new"));
-
-        assert_eq!(history.sessions.len(), 1);
-        let loaded = history.get("chat-1").expect("stored session");
-        assert_eq!(loaded.title.as_deref(), Some("new"));
-        assert_eq!(loaded.events, vec![AgentEvent::Text("new".into())]);
-    }
-
-    #[test]
-    fn session_history_keeps_only_the_latest_two_hundred_sessions() {
-        let mut history = SessionHistory::default();
-        for index in 0..205 {
-            history.upsert(StoredSession {
-                session_id: format!("chat-{index}"),
-                cwd: PathBuf::from("/workspace"),
-                title: None,
-                state: OpenApiAgentSession::default(),
-                events: Vec::new(),
-            });
-        }
-
-        assert_eq!(history.sessions.len(), 200);
-        assert_eq!(history.sessions.first().unwrap().session_id, "chat-5");
-        assert_eq!(history.sessions.last().unwrap().session_id, "chat-204");
-    }
-
-    #[test]
-    fn session_history_round_trips_through_disk() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let path = directory.path().join("sessions.json");
-        let mut history = SessionHistory::default();
-        history.upsert(StoredSession {
-            session_id: "chat-1".into(),
-            cwd: PathBuf::from("/workspace"),
-            title: Some("Saved chat".into()),
-            state: OpenApiAgentSession {
-                acp_session_id: Some("chat-1".into()),
-                conversation_id: Some("conversation-1".into()),
-                parent_message_id: Some("message-1".into()),
-                pending_interaction: None,
-            },
-            events: vec![
-                AgentEvent::UserText("Question".into()),
-                AgentEvent::Text("Answer".into()),
-            ],
-        });
-
-        history.save(&path).expect("save history");
-        let loaded = SessionHistory::load(&path);
-        let session = loaded.get("chat-1").expect("loaded session");
-        assert_eq!(session.title.as_deref(), Some("Saved chat"));
-        assert_eq!(
-            session.state.parent_message_id.as_deref(),
-            Some("message-1")
-        );
-        assert_eq!(session.events.len(), 2);
-    }
-
-    #[test]
     fn new_backend_session_retains_the_acp_session_id() {
         let state = OpenApiAgentSession {
             acp_session_id: Some("acp-session-1".into()),
@@ -1313,43 +1304,4 @@ mod tests {
         assert_eq!(state.acp_session_id.as_deref(), Some("acp-session-1"));
     }
 
-    #[test]
-    fn chat_started_checkpoint_retains_backend_continuation_ids() {
-        let mut state = OpenApiAgentSession {
-            acp_session_id: Some("acp-session-1".into()),
-            ..Default::default()
-        };
-        update_session_from_event(
-            &mut state,
-            &native_event(
-                "chat_started",
-                serde_json::json!({
-                    "chat_uid": "chat-uid-1",
-                    "message_id": 42
-                }),
-            ),
-        );
-
-        assert_eq!(state.acp_session_id.as_deref(), Some("acp-session-1"));
-        assert_eq!(state.conversation_id.as_deref(), Some("chat-uid-1"));
-        assert_eq!(state.parent_message_id.as_deref(), Some("42"));
-    }
-
-    #[test]
-    fn history_checkpoint_classifies_visible_boundaries_and_ignores_ping() {
-        let answer = AgentEvent::Text("partial answer".into());
-        assert!(is_visible_history_event(&answer));
-        assert!(!is_history_boundary(&answer));
-
-        let started = native_event(
-            "chat_started",
-            serde_json::json!({ "chat_uid": "chat-1", "message_id": 1 }),
-        );
-        assert!(!is_visible_history_event(&started));
-        assert!(is_history_boundary(&started));
-
-        let ping = native_event("ping", serde_json::Value::Null);
-        assert!(!is_visible_history_event(&ping));
-        assert!(!is_history_boundary(&ping));
-    }
 }

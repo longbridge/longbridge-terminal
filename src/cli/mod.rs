@@ -2431,6 +2431,33 @@ pub enum AgentCmd {
     /// Example: longbridge agent workspaces --format json
     #[command(alias = "workspace")]
     Workspaces,
+
+    /// List the account's chats (conversations) across agents
+    ///
+    /// Returns each chat's uid, name, owning agent, and timestamps. Use the
+    /// uid with `longbridge agent chat-detail <UID>` to read its messages.
+    /// Example: longbridge agent chats
+    /// Example: longbridge agent chats --exclude-agent-uids dsl_builder
+    Chats {
+        /// Exclude chats owned by these agent UIDs (comma-joined)
+        #[arg(long)]
+        exclude_agent_uids: Option<String>,
+        /// Page number, starts at 1
+        #[arg(long, default_value = "1")]
+        page: u32,
+        /// Page size
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: u32,
+    },
+
+    /// Show a single chat's detail, including its messages
+    ///
+    /// Example: longbridge agent chat-detail qhso2nm42nis6
+    #[command(alias = "chat-messages")]
+    ChatDetail {
+        /// Chat UID (from `longbridge agent chats`)
+        chat_uid: String,
+    },
 }
 
 #[derive(ValueEnum, Clone, Debug)]
