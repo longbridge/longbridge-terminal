@@ -175,6 +175,8 @@ struct Ui {
     /// were built for, so Markdown is not re-parsed every frame.
     transcript_cache: Vec<Line<'static>>,
     cache_sig: u64,
+    /// Live quotes for `x-widget` tickers, fetched after a turn, keyed by symbol.
+    quotes: HashMap<String, crate::cli::agent::render::QuoteCardData>,
     /// Set to break the event loop (via `/exit` or a double Ctrl+C).
     should_quit: bool,
     /// True after one Ctrl+C on an empty prompt; a second one exits.
@@ -207,6 +209,7 @@ impl Ui {
             selected_text: None,
             transcript_cache: Vec::new(),
             cache_sig: 0,
+            quotes: HashMap::new(),
             should_quit: false,
             ctrl_c_armed: false,
             focused: true,
@@ -277,6 +280,8 @@ pub async fn run(agent_uid: String) -> Result<()> {
     let mut turn: Option<JoinHandle<()>> = None;
     let (tx, mut turn_rx) = unbounded_channel::<ChatEvent>();
     let (agents_tx, mut agents_rx) = unbounded_channel::<Vec<AgentInfo>>();
+    let (cards_tx, mut cards_rx) =
+        unbounded_channel::<HashMap<String, crate::cli::agent::render::QuoteCardData>>();
     let mut events = EventStream::new();
     // Drives the marquee of truncated rows; only consulted while `animating`.
     let mut ticker = tokio::time::interval(Duration::from_millis(120));
@@ -319,6 +324,7 @@ pub async fn run(agent_uid: String) -> Result<()> {
                     turn = None;
                     persist(&state);
                     maybe_open_question(&mut ui, &state);
+                    fetch_quote_cards_for(&state, &cards_tx);
                     if !ui.focused {
                         notify(&t!("Ai.NotifyDone"));
                     }
@@ -328,6 +334,10 @@ pub async fn run(agent_uid: String) -> Result<()> {
                 ui.agents = list;
                 ui.agents_loading = false;
                 ui.clamp_sel();
+            }
+            Some(cards) = cards_rx.recv() => {
+                ui.quotes.extend(cards);
+                ui.cache_sig = 0; // force a transcript rebuild so cards appear
             }
         }
         if ui.should_quit {
@@ -343,6 +353,37 @@ pub async fn run(agent_uid: String) -> Result<()> {
         turn.abort();
     }
     Ok(())
+}
+
+/// If the just-finished answer embeds `x-widget` quote tickers, fetch their
+/// live quotes in the background and deliver them on `cards_tx`.
+fn fetch_quote_cards_for(
+    state: &ChatState,
+    cards_tx: &UnboundedSender<HashMap<String, crate::cli::agent::render::QuoteCardData>>,
+) {
+    let Some(answer) = state
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == Role::Assistant)
+        .map(|m| m.text.clone())
+    else {
+        return;
+    };
+    let widgets = crate::cli::agent::events::extract_widgets(&answer);
+    if !widgets
+        .iter()
+        .any(|w| matches!(w, crate::cli::agent::events::Widget::XWidget { .. }))
+    {
+        return;
+    }
+    let cards_tx = cards_tx.clone();
+    tokio::spawn(async move {
+        let cards = crate::cli::agent::chat::fetch_quote_cards(&widgets).await;
+        if !cards.is_empty() {
+            let _ = cards_tx.send(cards);
+        }
+    });
 }
 
 /// Raise a desktop notification via the OSC 9 terminal escape (`iTerm2`,
@@ -1238,7 +1279,7 @@ fn render_chat(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatStat
     if ui.cache_sig != sig {
         let mut cache = Vec::new();
         for m in &state.messages {
-            push_message(&mut cache, m, width);
+            push_message(&mut cache, m, width, &ui.quotes);
         }
         ui.transcript_cache = cache;
         ui.cache_sig = sig;
@@ -1252,6 +1293,7 @@ fn render_chat(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatStat
                 text: text.clone(),
             },
             width,
+            &ui.quotes,
         );
     }
     let cache_len = ui.transcript_cache.len();
@@ -2012,7 +2054,12 @@ fn transcript_sig(state: &ChatState, width: usize) -> u64 {
     h.finish()
 }
 
-fn push_message(lines: &mut Vec<Line<'static>>, message: &Message, width: usize) {
+fn push_message(
+    lines: &mut Vec<Line<'static>>,
+    message: &Message,
+    width: usize,
+    quotes: &HashMap<String, crate::cli::agent::render::QuoteCardData>,
+) {
     let (label, accent) = match message.role {
         Role::User => (t!("Ai.You").to_string(), Color::Cyan),
         Role::Assistant => (t!("Ai.Assistant").to_string(), Color::Green),
@@ -2029,7 +2076,7 @@ fn push_message(lines: &mut Vec<Line<'static>>, message: &Message, width: usize)
         ]));
     }
     if message.role == Role::Assistant {
-        lines.extend(render_answer_lines(&message.text, width));
+        lines.extend(render_answer_lines(&message.text, width, quotes));
     } else {
         let body_style = if message.role == Role::System {
             Style::default().fg(Color::DarkGray)
@@ -2049,7 +2096,11 @@ fn push_message(lines: &mut Vec<Line<'static>>, message: &Message, width: usize)
 /// chart / widget segments, then render Markdown text, draw `vis-chart` blocks
 /// as charts, and reduce `x-widget` tags to a compact reference instead of
 /// dumping raw JSON/markup into the transcript.
-fn render_answer_lines(answer: &str, width: usize) -> Vec<Line<'static>> {
+fn render_answer_lines(
+    answer: &str,
+    width: usize,
+    quotes: &HashMap<String, crate::cli::agent::render::QuoteCardData>,
+) -> Vec<Line<'static>> {
     use crate::cli::agent::render::{
         parse_quote_widget_symbol, render_vis_chart, replace_inline_markers, segment_answer,
         strip_control_chars, Segment,
@@ -2071,18 +2122,54 @@ fn render_answer_lines(answer: &str, width: usize) -> Vec<Line<'static>> {
                 }
             }
             Segment::XWidget(src) => {
-                let label = parse_quote_widget_symbol(&src)
-                    .map_or_else(|| strip_control_chars(&src), |sym| format!("→ {sym}"));
-                out.push(Line::from(Span::styled(
-                    label,
-                    Style::default()
-                        .fg(Color::Blue)
-                        .add_modifier(Modifier::UNDERLINED),
-                )));
+                let sym = parse_quote_widget_symbol(&src);
+                if let Some(card) = sym.as_ref().and_then(|s| quotes.get(s)) {
+                    // Live quote fetched: render an inline quote chip.
+                    out.push(quote_chip(card));
+                } else {
+                    // Pending / non-quote widget: a compact reference.
+                    let label = sym.map_or_else(|| strip_control_chars(&src), |s| format!("→ {s}"));
+                    out.push(Line::from(Span::styled(
+                        label,
+                        Style::default()
+                            .fg(Color::Blue)
+                            .add_modifier(Modifier::UNDERLINED),
+                    )));
+                }
             }
         }
     }
     out
+}
+
+/// A one-line quote chip: `symbol  last  ±change%`, the change tinted by
+/// direction, mirroring the web quote card in a terminal-friendly form.
+fn quote_chip(card: &crate::cli::agent::render::QuoteCardData) -> Line<'static> {
+    let dir = match card.direction {
+        1 => Color::Green,
+        -1 => Color::Red,
+        _ => Color::Gray,
+    };
+    let mut spans = vec![
+        Span::styled(
+            format!("  {} ", card.symbol),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(" {} ", card.last),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(card.change_pct.clone(), Style::default().fg(dir)),
+    ];
+    if !card.name.is_empty() {
+        spans.push(Span::styled(
+            format!("  {}", card.name),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+    Line::from(spans)
 }
 
 /// Wrap `s` to `width` display columns, honoring wide (CJK) glyphs.

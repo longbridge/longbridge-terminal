@@ -789,7 +789,7 @@ async fn render_pretty_answer(outcome: &ChatOutcome, streamed: bool) {
 }
 
 /// Fetch mini quote cards for quote-detail widgets (best effort).
-async fn fetch_quote_cards(widgets: &[Widget]) -> HashMap<String, QuoteCardData> {
+pub(crate) async fn fetch_quote_cards(widgets: &[Widget]) -> HashMap<String, QuoteCardData> {
     // Dedupe: the same ticker can appear in several widgets, and a batched
     // quote request should not carry (or re-look-up) duplicate symbols.
     let mut seen = std::collections::HashSet::new();
