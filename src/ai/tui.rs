@@ -24,7 +24,7 @@ use futures::StreamExt;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Clear, Paragraph};
+use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
 use rust_i18n::t;
 use serde_json::Value;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
@@ -65,9 +65,10 @@ enum Setting {
 const SETTINGS: [Setting; 3] = [Setting::Agent, Setting::NewChat, Setting::ClearHistory];
 
 /// Slash commands: `(name, i18n description key)`.
-const SLASH: [(&str, &str); 6] = [
+const SLASH: [(&str, &str); 7] = [
     ("/new", "Ai.SlashNew"),
     ("/clear", "Ai.SlashClear"),
+    ("/copy", "Ai.SlashCopy"),
     ("/history", "Ai.SlashHistory"),
     ("/settings", "Ai.SlashSettings"),
     ("/agent", "Ai.SlashAgent"),
@@ -392,6 +393,7 @@ fn on_chat_key(
                 return true;
             }
         }
+        KeyCode::Char('y') if ctrl => copy_with_notice(ui, last_answer(state)),
         KeyCode::Enter if newline => editor.insert_newline(),
         KeyCode::Enter if !state.busy => submit(ui, state, editor, turn, tx, agents_tx),
         KeyCode::Backspace | KeyCode::Char('w') if ctrl => editor.delete_word(),
@@ -471,6 +473,10 @@ fn exec_slash(
             session_store::clear();
             ui.sessions.clear();
             ui.notice = Some(t!("Ai.HistoryCleared").to_string());
+        }
+        "copy" => {
+            let text = transcript_text(state);
+            copy_with_notice(ui, Some(text));
         }
         "history" => ui.switch(View::Sessions),
         "settings" => ui.switch(View::Settings),
@@ -742,6 +748,57 @@ fn click_chip(
     }
 }
 
+/// Copy `text` to the system clipboard via the OSC 52 terminal escape, which
+/// works over SSH and inside tmux (with clipboard passthrough) without a
+/// native clipboard dependency. Writing an OSC sequence does not disturb the
+/// ratatui screen, so it is safe to emit mid-render.
+fn copy_to_clipboard(text: &str) -> bool {
+    use base64::Engine;
+    use std::io::Write;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
+    let seq = format!("\x1b]52;c;{encoded}\x07");
+    let mut out = std::io::stdout();
+    out.write_all(seq.as_bytes())
+        .and_then(|()| out.flush())
+        .is_ok()
+}
+
+/// The most recent assistant answer, for the copy shortcut.
+fn last_answer(state: &ChatState) -> Option<String> {
+    state
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == Role::Assistant)
+        .map(|m| m.text.clone())
+}
+
+/// The whole conversation as `Role: text` blocks, for `/copy`.
+fn transcript_text(state: &ChatState) -> String {
+    state
+        .messages
+        .iter()
+        .filter(|m| m.role != Role::System)
+        .map(|m| {
+            let who = if m.role == Role::User {
+                t!("Ai.You")
+            } else {
+                t!("Ai.Assistant")
+            };
+            format!("{who}: {}", m.text)
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+/// Copy `text` and set a status notice reflecting the outcome.
+fn copy_with_notice(ui: &mut Ui, text: Option<String>) {
+    ui.notice = Some(match text {
+        Some(t) if !t.trim().is_empty() && copy_to_clipboard(&t) => t!("Ai.Copied").to_string(),
+        _ => t!("Ai.NothingToCopy").to_string(),
+    });
+}
+
 /// Open a URL with the platform's default handler (best-effort, non-blocking).
 fn open_url(url: &str) {
     let program = if cfg!(target_os = "macos") {
@@ -938,26 +995,29 @@ fn render_tabs(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
     for view in TABS {
         let label = format!(" {} ", tab_label(view));
         let width = label.width() as u16;
+        let rect = Rect {
+            x,
+            y: area.y,
+            width,
+            height: 1,
+        };
         let selected = view == ui.view;
         let style = if selected {
             Style::default()
                 .fg(Color::Black)
                 .bg(Color::Cyan)
                 .add_modifier(Modifier::BOLD)
+        } else if hovering(ui, rect) {
+            // Hover feedback: brighten and underline the tab under the mouse.
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::UNDERLINED)
         } else {
             Style::default().fg(Color::Gray)
         };
         spans.push(Span::styled(label, style));
         spans.push(Span::raw(" "));
-        ui.tabs.push((
-            view,
-            Rect {
-                x,
-                y: area.y,
-                width,
-                height: 1,
-            },
-        ));
+        ui.tabs.push((view, rect));
         x += width + 1;
     }
     f.render_widget(Paragraph::new(Line::from(spans)), area);
@@ -1005,32 +1065,29 @@ fn render_slash_dropdown(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, editor
     for (row, &idx) in matches.iter().enumerate() {
         let (name, desc) = SLASH[idx];
         let selected = row == ui.slash_sel;
+        let rect = Rect {
+            x: box_area.x,
+            y: box_area.y + row as u16,
+            width: box_area.width,
+            height: 1,
+        };
         let line = if selected {
             Line::from(Span::styled(
                 format!("{name}  {}", t!(desc)),
                 row_style(true),
             ))
         } else {
+            let base = row_style_state(false, hovering(ui, rect));
             Line::from(vec![
                 Span::styled(
                     format!("{name} "),
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
+                    base.fg(Color::Cyan).add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(t!(desc).to_string(), Style::default().fg(Color::DarkGray)),
+                Span::styled(t!(desc).to_string(), base.fg(Color::DarkGray)),
             ])
         };
         lines.push(line);
-        ui.slash_rows.push((
-            idx,
-            Rect {
-                x: box_area.x,
-                y: box_area.y + row as u16,
-                width: box_area.width,
-                height: 1,
-            },
-        ));
+        ui.slash_rows.push((idx, rect));
     }
     f.render_widget(Clear, box_area);
     f.render_widget(Paragraph::new(Text::from(lines)), box_area);
@@ -1129,11 +1186,12 @@ fn render_question(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
             width: area.width,
             height: 1,
         };
+        let hovered = hovering(ui, rect);
         let marker = if selected { "› " } else { "  " };
         let text = row_text(ui, option, avail, rect, selected);
         lines.push(Line::from(Span::styled(
             format!("{marker}{text}"),
-            row_style(selected),
+            row_style_state(selected, hovered),
         )));
         ui.rows.push((i, rect));
     }
@@ -1157,11 +1215,12 @@ fn render_rows(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, rows: &[(usize, 
             width: area.width,
             height: 1,
         };
+        let hovered = hovering(ui, rect);
         let marker = if selected { "› " } else { "  " };
         let text = row_text(ui, label, avail, rect, selected);
         lines.push(Line::from(Span::styled(
             format!("{marker}{text}"),
-            row_style(selected),
+            row_style_state(selected, hovered),
         )));
         ui.rows.push((*idx, rect));
     }
@@ -1177,6 +1236,23 @@ fn row_style(selected: bool) -> Style {
     } else {
         Style::default()
     }
+}
+
+/// Row style reflecting both keyboard selection and mouse hover, so pointing at
+/// a clickable row gives immediate visual feedback.
+fn row_style_state(selected: bool, hovered: bool) -> Style {
+    if selected {
+        row_style(true)
+    } else if hovered {
+        Style::default().bg(Color::Rgb(48, 48, 48))
+    } else {
+        Style::default()
+    }
+}
+
+/// Whether the mouse currently rests on `rect`.
+fn hovering(ui: &Ui, rect: Rect) -> bool {
+    ui.hover.is_some_and(|(c, r)| hit(rect, c, r))
 }
 
 /// Number of rows the Chat meta panel needs (references + follow-ups + headers).
@@ -1209,10 +1285,11 @@ fn render_chips(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatSta
             }
             let rect = row_rect(area, y);
             let full = format!("  [{}] {}", r.index, reference_label(r));
+            let hovered = hovering(ui, rect);
             let text = row_text(ui, &full, area.width as usize, rect, false);
             lines.push(Line::from(Span::styled(
                 text,
-                Style::default().fg(Color::Blue),
+                chip_style(Color::Blue, hovered),
             )));
             ui.chips.push((Chip::Reference(i), rect));
             y += 1;
@@ -1230,16 +1307,27 @@ fn render_chips(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatSta
             }
             let rect = row_rect(area, y);
             let full = format!("  › {q}");
+            let hovered = hovering(ui, rect);
             let text = row_text(ui, &full, area.width as usize, rect, false);
             lines.push(Line::from(Span::styled(
                 text,
-                Style::default().fg(Color::Green),
+                chip_style(Color::Green, hovered),
             )));
             ui.chips.push((Chip::Further(i), rect));
             y += 1;
         }
     }
     f.render_widget(Paragraph::new(Text::from(lines)), area);
+}
+
+/// A chip's style: colored, underlined when hovered to signal it is clickable.
+fn chip_style(color: Color, hovered: bool) -> Style {
+    let base = Style::default().fg(color);
+    if hovered {
+        base.add_modifier(Modifier::UNDERLINED | Modifier::BOLD)
+    } else {
+        base
+    }
 }
 
 fn row_rect(area: Rect, y: u16) -> Rect {
@@ -1312,10 +1400,18 @@ fn render_status(f: &mut ratatui::Frame, area: Rect, ui: &Ui, state: &ChatState)
 }
 
 fn render_footer(f: &mut ratatui::Frame, area: Rect, ui: &Ui, editor: &Editor) {
-    let block = Block::bordered();
+    let focused = ui.view == View::Chat;
+    let border = if focused {
+        Color::Cyan
+    } else {
+        Color::DarkGray
+    };
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(border));
     let inner = block.inner(area);
     f.render_widget(block, area);
-    if ui.view != View::Chat {
+    if !focused {
         return;
     }
     let lines: Vec<Line> = editor
@@ -1351,26 +1447,23 @@ fn transcript_lines(state: &ChatState, width: usize) -> Vec<Line<'static>> {
 }
 
 fn push_message(lines: &mut Vec<Line<'static>>, message: &Message, width: usize) {
-    let (label, style) = match message.role {
-        Role::User => (
-            t!("Ai.You").to_string(),
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Role::Assistant => (
-            t!("Ai.Assistant").to_string(),
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Role::System => (String::new(), Style::default().fg(Color::DarkGray)),
+    let (label, accent) = match message.role {
+        Role::User => (t!("Ai.You").to_string(), Color::Cyan),
+        Role::Assistant => (t!("Ai.Assistant").to_string(), Color::Green),
+        Role::System => (String::new(), Color::DarkGray),
     };
     if !label.is_empty() {
-        lines.push(Line::from(Span::styled(label, style)));
+        // A colored accent bar precedes each speaker label for scannability.
+        lines.push(Line::from(vec![
+            Span::styled("▌ ", Style::default().fg(accent)),
+            Span::styled(
+                label,
+                Style::default().fg(accent).add_modifier(Modifier::BOLD),
+            ),
+        ]));
     }
     if message.role == Role::Assistant {
-        lines.extend(markdown::render(&message.text, width));
+        lines.extend(render_answer_lines(&message.text, width));
     } else {
         let body_style = if message.role == Role::System {
             Style::default().fg(Color::DarkGray)
@@ -1384,6 +1477,46 @@ fn push_message(lines: &mut Vec<Line<'static>>, message: &Message, width: usize)
         }
     }
     lines.push(Line::from(""));
+}
+
+/// Render an assistant answer the way `agent chat` does: split into text /
+/// chart / widget segments, then render Markdown text, draw `vis-chart` blocks
+/// as charts, and reduce `x-widget` tags to a compact reference instead of
+/// dumping raw JSON/markup into the transcript.
+fn render_answer_lines(answer: &str, width: usize) -> Vec<Line<'static>> {
+    use crate::cli::agent::render::{
+        parse_quote_widget_symbol, render_vis_chart, replace_inline_markers, segment_answer,
+        strip_control_chars, Segment,
+    };
+    let mut out = Vec::new();
+    for segment in segment_answer(answer) {
+        match segment {
+            Segment::Text(text) => {
+                let text = replace_inline_markers(&text, false);
+                out.extend(markdown::render(&text, width));
+            }
+            Segment::VisChart(spec) => {
+                let chart = render_vis_chart(&spec, width, false);
+                for line in chart.split('\n') {
+                    out.push(Line::from(Span::styled(
+                        strip_control_chars(line),
+                        Style::default().fg(Color::Cyan),
+                    )));
+                }
+            }
+            Segment::XWidget(src) => {
+                let label = parse_quote_widget_symbol(&src)
+                    .map_or_else(|| strip_control_chars(&src), |sym| format!("→ {sym}"));
+                out.push(Line::from(Span::styled(
+                    label,
+                    Style::default()
+                        .fg(Color::Blue)
+                        .add_modifier(Modifier::UNDERLINED),
+                )));
+            }
+        }
+    }
+    out
 }
 
 /// Wrap `s` to `width` display columns, honoring wide (CJK) glyphs.
