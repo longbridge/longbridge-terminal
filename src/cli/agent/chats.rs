@@ -43,7 +43,7 @@ pub async fn cmd_chats(
     Ok(())
 }
 
-/// `agent chat-detail <CHAT_UID>` — GET /v1/ai/chats/{chat_uid}.
+/// `agent chat-detail <CHAT_UID>` — `GET /v1/ai/chats/{chat_uid}`.
 pub async fn cmd_chat_detail(chat_uid: String, format: &OutputFormat, verbose: bool) -> Result<()> {
     if verbose {
         eprintln!("* GET /v1/ai/chats/{chat_uid}");

@@ -289,7 +289,7 @@ impl AgentBackend for OpenApiAgent {
     ) -> Result<BoxStream<'static, Result<AgentEvent<Self::Session>, BackendError>>, BackendError>
     {
         let acp_session_id = session.acp_session_id.clone();
-        let stream = if let Some(pending) = &session.pending_interaction {
+        let started = if let Some(pending) = &session.pending_interaction {
             self.context
                 .continue_conversation_streamed(
                     self.agent_id.clone(),
@@ -303,8 +303,8 @@ impl AgentBackend for OpenApiAgent {
                         .ok_or("missing message id")?,
                     answers_for(pending, &prompt)?,
                 )
-                .await?
-                .boxed()
+                .await
+                .map(StreamExt::boxed)
         } else {
             self.context
                 .conversation_streamed(
@@ -313,8 +313,27 @@ impl AgentBackend for OpenApiAgent {
                     session.conversation_id,
                     session.parent_message_id,
                 )
-                .await?
-                .boxed()
+                .await
+                .map(StreamExt::boxed)
+        };
+        // A turn that fails to start (e.g. the conversation API returns an auth
+        // error or times out) must not fail the ACP turn or connection: surface
+        // the error to the user as a notice and end the turn gracefully. The ACP
+        // server also guards against this, but degrading here yields a cleaner
+        // message and keeps the session usable.
+        let stream = match started {
+            Ok(stream) => stream,
+            Err(error) => {
+                let notice = AgentEvent::Notice {
+                    session: OpenApiAgentSession {
+                        acp_session_id: acp_session_id.clone(),
+                        ..Default::default()
+                    },
+                    text: format!("This request could not be completed: {error}"),
+                    metadata: None,
+                };
+                return Ok(stream::iter(vec![Ok(notice)]).boxed());
+            }
         };
 
         Ok(stream
