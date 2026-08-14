@@ -3107,6 +3107,12 @@ fn user_lines(text: &str, width: usize) -> Vec<Line<'static>> {
     out
 }
 
+/// The `$` before a security, and the security itself. The sigil takes the accent
+/// — it is one column, so it can afford to — and the symbol stays muted: it is a
+/// word in a sentence, not a heading.
+const CASHTAG: Color = Color::Cyan;
+const SYMBOL_FG: Color = Color::Rgb(148, 163, 184);
+
 /// The mark on the reader's own lines, in the transcript and at the prompt: the
 /// line being typed should look like the line it will become.
 const USER_MARKER: &str = "❯ ";
@@ -3124,11 +3130,7 @@ const MARKER_W: u16 = 2;
 /// so it is recognised here by matching what that would have produced. When the
 /// wrap happened to break between a symbol and its chip the chip stays plain —
 /// the information is still right, it just loses its colour.
-fn link_symbols(
-    lines: &mut Vec<Line<'static>>,
-    quotes: &HashMap<String, super::quotes::QuoteCardData>,
-    aliases: &HashMap<String, String>,
-) {
+fn link_symbols(lines: &mut Vec<Line<'static>>, aliases: &HashMap<String, String>) {
     for line in lines.iter_mut() {
         if !line
             .spans
@@ -3146,25 +3148,24 @@ fn link_symbols(
             }
             let text = span.content.to_string();
             let mut at = 0usize;
-            for (range, symbol) in ranges {
-                if range.start > at {
-                    out.push(Span::styled(text[at..range.start].to_string(), span.style));
-                }
-                // Left in the prose's own style. A colour on the symbol fought
-                // with the price beside it — two tints on one short run reads as
-                // noise — so the hover underline is the affordance instead.
-                out.push(Span::styled(text[range.clone()].to_string(), span.style));
-                at = range.end;
-                if let Some(card) = quotes.get(&symbol) {
-                    let chip = price_chip(card);
-                    if text[at..].starts_with(&chip) {
-                        out.push(Span::styled(
-                            chip.clone(),
-                            span.style.fg(change_color(card.direction)),
-                        ));
-                        at += chip.len();
+            for (range, _) in ranges {
+                let mut lead = &text[at..range.start];
+                // The `$` was inserted before wrapping; give it its own span so it
+                // can take the accent while the symbol stays muted.
+                if lead.ends_with('$') {
+                    lead = &lead[..lead.len() - 1];
+                    if !lead.is_empty() {
+                        out.push(Span::styled(lead.to_string(), span.style));
                     }
+                    out.push(Span::styled("$", span.style.fg(CASHTAG)));
+                } else if !lead.is_empty() {
+                    out.push(Span::styled(lead.to_string(), span.style));
                 }
+                out.push(Span::styled(
+                    text[range.clone()].to_string(),
+                    span.style.fg(SYMBOL_FG),
+                ));
+                at = range.end;
             }
             if at < text.len() {
                 out.push(Span::styled(text[at..].to_string(), span.style));
@@ -3191,29 +3192,18 @@ fn price_chip(card: &super::quotes::QuoteCardData) -> String {
     format!(" {} {arrow}{pct}", card.last)
 }
 
-/// Insert each security's price into the answer text, right after the symbol.
+/// Mark each security in the answer text with a `$`, before it is wrapped.
 ///
-/// Done before the Markdown is wrapped, not after: a chip appended to a finished
-/// line either overruns the width or gets dropped, and prose wraps to nearly the
-/// full width, so in practice it was always dropped. Inserted here it takes part
-/// in the wrapping and always fits.
+/// Before, because the sigil takes a column: added after wrapping it would push
+/// the last column of a full line off the screen. Wrapping sees it and accounts
+/// for it.
 ///
-/// Fenced code and table rows are left alone — code is quoted verbatim, and a
-/// table's columns are measured, so a chip would break its alignment.
-fn price_annotated(
-    text: &str,
-    quotes: &HashMap<String, super::quotes::QuoteCardData>,
-    aliases: &HashMap<String, String>,
-) -> String {
-    if quotes.is_empty() {
-        return text.to_string();
-    }
+/// This replaced writing the price inline. The price is on the title-bar ticker,
+/// and putting it in the sentence too meant the prose moved every time a quote
+/// arrived — text that shifts under the reader is worse than text that says less.
+fn cashtag_annotated(text: &str, aliases: &HashMap<String, String>) -> String {
     let mut out = String::with_capacity(text.len());
     let mut fenced = false;
-    // A ticker is mentioned repeatedly in one answer; the price belongs beside the
-    // first mention. Repeating it on every one reads as noise, and every later
-    // mention is still clickable.
-    let mut priced: std::collections::HashSet<String> = std::collections::HashSet::new();
     for (i, line) in text.split('\n').enumerate() {
         if i > 0 {
             out.push('\n');
@@ -3223,26 +3213,31 @@ fn price_annotated(
             out.push_str(line);
             continue;
         }
-        if fenced || line.trim_start().starts_with('|') {
+        // Code is quoted verbatim. Tables are fine: their columns are measured
+        // after this, so the sigil is accounted for.
+        if fenced {
             out.push_str(line);
             continue;
         }
         let mut at = 0usize;
-        for (range, symbol) in super::answer::security_spans(line, aliases) {
-            out.push_str(&line[at..range.end]);
-            at = range.end;
-            if let Some(card) = quotes.get(&symbol) {
-                if priced.insert(symbol) {
-                    out.push_str(&price_chip(card));
-                }
+        for (range, _) in super::answer::security_spans(line, aliases) {
+            if range.start < at {
+                continue;
             }
+            out.push_str(&line[at..range.start]);
+            // Not twice, if the author already wrote the cashtag.
+            if !out.ends_with('$') {
+                out.push('$');
+            }
+            out.push_str(&line[range.clone()]);
+            at = range.end;
         }
         out.push_str(&line[at..]);
     }
     out
 }
 
-/// Record a hit rectangle for every security visible in `window`, underlining the
+/// Record a hit rectangle for every security visible in `window`/// Record a hit rectangle for every security visible in `window`, underlining the
 /// one under the pointer.
 ///
 /// Resolved per frame against what is actually on screen, so scrolling cannot
@@ -3271,8 +3266,7 @@ fn link_visible_symbols(window: &mut [Line<'static>], area: Rect, ui: &mut Ui) {
         for span in &mut line.spans {
             let w = UnicodeWidthStr::width(span.content.as_ref()) as u16;
             // A span that is exactly a security is one `link_symbols` split out:
-            // prose never arrives as a lone ticker. Identified by its text rather
-            // than by a marker colour, now that the symbol carries none.
+            // prose never arrives as a lone ticker.
             let target = resolve(&span.content);
             if let Some(symbol) = target {
                 let rect = Rect {
@@ -3339,7 +3333,7 @@ fn render_answer_lines(
         match segment {
             Segment::Text(text) => {
                 let text = replace_inline_markers(&text, false);
-                let text = price_annotated(&text, quotes, aliases);
+                let text = cashtag_annotated(&text, aliases);
                 out.extend(markdown::render(&text, width));
             }
             // Straight from the chart renderer, which already styles each part
@@ -3358,7 +3352,7 @@ fn render_answer_lines(
             }
         }
     }
-    link_symbols(&mut out, quotes, aliases);
+    link_symbols(&mut out, aliases);
     // A block at the very end leaves a trailing blank the turn separator would
     // double.
     while out
@@ -4549,67 +4543,6 @@ mod tests {
         assert_eq!(state.scroll, 0, "and the transcript stays where it was");
     }
 
-    /// An inline security shows its own price: direction, last and change. The
-    /// chip is inserted before the text is wrapped, so it always fits — appended
-    /// afterwards it would overrun the width and be dropped, which is what
-    /// happens to prose that wraps to nearly the full width.
-    #[test]
-    fn an_inline_security_carries_its_price() {
-        let mut quotes = std::collections::HashMap::new();
-        quotes.insert("700.HK".to_string(), card("700.HK", "512.5", "+1.28%", 1));
-        quotes.insert(
-            "AAPL.US".to_string(),
-            card("AAPL.US", "182.4", "-0.62%", -1),
-        );
-        let answer = "本周 700.HK 走强，而 AAPL.US 回落，关注 700.HK 的成交量。";
-        let lines =
-            super::render_answer_lines(answer, 72, &quotes, &std::collections::HashMap::new());
-        let text: String = lines
-            .iter()
-            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
-            .collect();
-        assert!(text.contains("512.5 ▲1.28%"), "up chip: {text}");
-        assert!(text.contains("182.4 ▼0.62%"), "down chip: {text}");
-        // The price belongs beside the first mention; repeating it on every one
-        // reads as noise.
-        assert_eq!(text.matches("512.5").count(), 1, "priced once: {text}");
-        // Every line still fits, and no line splits a symbol.
-        for line in &lines {
-            let w: usize = line
-                .spans
-                .iter()
-                .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
-                .sum();
-            assert!(w <= 72, "line of {w} columns: {line:?}");
-        }
-        assert!(
-            !text.contains("70\n0.HK"),
-            "a symbol must not be split by the wrap"
-        );
-    }
-
-    /// The chip's colour is the direction, so it has to be its own span.
-    #[test]
-    fn the_price_chip_is_coloured_by_direction() {
-        let mut quotes = std::collections::HashMap::new();
-        quotes.insert(
-            "AAPL.US".to_string(),
-            card("AAPL.US", "182.4", "-0.62%", -1),
-        );
-        let lines = super::render_answer_lines(
-            "AAPL.US fell today.",
-            60,
-            &quotes,
-            &std::collections::HashMap::new(),
-        );
-        let chip = lines
-            .iter()
-            .flat_map(|l| &l.spans)
-            .find(|s| s.content.contains("182.4"))
-            .expect("the chip should be rendered");
-        assert_eq!(chip.style.fg, Some(super::change_color(-1)));
-    }
-
     /// A card is a block the reader aims at, so the whole box opens the panel —
     /// not only the six columns of its ticker.
     #[test]
@@ -4854,11 +4787,11 @@ mod tests {
         );
     }
 
-    /// The symbol carries no colour of its own: with a coloured price beside it,
-    /// two tints on one short run read as noise. The hover underline is the
-    /// affordance, and clicking still resolves the security.
+    /// A security reads as a cashtag: an accented `$` and a muted symbol. No price
+    /// in the sentence — the ticker carries that, and a quote arriving used to
+    /// move the prose under the reader.
     #[test]
-    fn a_security_is_not_tinted() {
+    fn a_security_reads_as_a_cashtag() {
         let mut quotes = std::collections::HashMap::new();
         quotes.insert("700.HK".to_string(), card("700.HK", "512.5", "+1.28%", 1));
         let lines = super::render_answer_lines(
@@ -4868,19 +4801,55 @@ mod tests {
             &std::collections::HashMap::new(),
         );
         let spans: Vec<&ratatui::text::Span> = lines.iter().flat_map(|l| &l.spans).collect();
+        let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.contains("$700.HK"), "the cashtag: {text}");
+        assert!(
+            !text.contains("512.5"),
+            "the price belongs on the ticker, not in the sentence: {text}"
+        );
+        let sigil = spans
+            .iter()
+            .find(|s| s.content.as_ref() == "$")
+            .expect("the sigil should be its own span");
+        assert_eq!(sigil.style.fg, Some(super::CASHTAG));
         let symbol = spans
             .iter()
             .find(|s| s.content.as_ref() == "700.HK")
             .expect("the symbol should be its own span");
-        assert_eq!(symbol.style.fg, None, "no colour of its own");
-        let price = spans
-            .iter()
-            .find(|s| s.content.contains("512.5"))
-            .expect("the price should be there");
-        assert_eq!(
-            price.style.fg,
-            Some(super::change_color(1)),
-            "only the price is tinted"
+        assert_eq!(symbol.style.fg, Some(super::SYMBOL_FG));
+    }
+
+    /// The `$` costs a column, so it goes in before the wrap: added afterwards it
+    /// would push the end of a full line off the screen.
+    #[test]
+    fn the_cashtag_is_inside_the_width() {
+        let width = 40;
+        let answer = "本周 700.HK 与 AAPL.US 同步走强，而 NVDA.US 回落，建议关注成交量变化。";
+        let lines = super::render_answer_lines(
+            answer,
+            width,
+            &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
         );
+        for line in &lines {
+            let w: usize = line
+                .spans
+                .iter()
+                .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
+                .sum();
+            assert!(w <= width, "line of {w} columns: {line:?}");
+        }
+        let text: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert_eq!(text.matches('$').count(), 3, "one per security: {text}");
+    }
+
+    /// A cashtag the author already wrote does not get a second `$`.
+    #[test]
+    fn an_authored_cashtag_is_left_alone() {
+        let out = super::cashtag_annotated("$AAPL.US 与 700.HK", &std::collections::HashMap::new());
+        assert_eq!(out, "$AAPL.US 与 $700.HK");
     }
 }
