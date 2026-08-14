@@ -80,10 +80,57 @@ pub async fn init_contexts() -> Result<(
     bool,
     String,
 )> {
-    let (config_builder, http_client_config, using_api_key) = if let (Ok(config), Ok(http_config)) = (
-        longbridge::Config::from_apikey_env(),
-        longbridge::httpclient::HttpClientConfig::from_apikey_env(),
-    ) {
+    init_contexts_with_auth(true).await
+}
+
+/// Initialize contexts using only credentials saved by `longbridge auth login`.
+pub async fn init_oauth_contexts() -> Result<(
+    impl tokio_stream::Stream<Item = longbridge::quote::PushEvent> + Send + Unpin,
+    bool,
+    String,
+)> {
+    init_contexts_with_auth(false).await
+}
+
+/// Return whether an OAuth token is available without starting an OAuth flow.
+pub fn oauth_credentials_available() -> Result<bool> {
+    let token_path = crate::auth::token_file_path()?;
+    if !token_path.exists() {
+        return Ok(false);
+    }
+    if crate::secure_storage::EncryptedFileTokenStorage::load_full(
+        &crate::auth::effective_client_id(),
+    )
+    .is_none()
+    {
+        return Err(anyhow::anyhow!(
+            "Failed to decrypt auth token. Please run 'longbridge auth login' to re-authenticate."
+        ));
+    }
+    Ok(true)
+}
+
+async fn init_contexts_with_auth(
+    allow_api_key: bool,
+) -> Result<(
+    impl tokio_stream::Stream<Item = longbridge::quote::PushEvent> + Send + Unpin,
+    bool,
+    String,
+)> {
+    let api_key_configs = if allow_api_key {
+        match (
+            longbridge::Config::from_apikey_env(),
+            longbridge::httpclient::HttpClientConfig::from_apikey_env(),
+        ) {
+            (Ok(config), Ok(http_config)) => Some((config, http_config)),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let (config_builder, http_client_config, using_api_key) = if let Some((config, http_config)) =
+        api_key_configs
+    {
         tracing::info!("Using API key authentication (env vars)");
         (
             config
@@ -97,22 +144,9 @@ pub async fn init_contexts() -> Result<(
 
         // If no token file exists, refuse to start a browser/callback-server flow.
         // CLI commands require a stored token; users must run `longbridge auth login` first.
-        let token_path = crate::auth::token_file_path()?;
-        if !token_path.exists() {
+        if !oauth_credentials_available()? {
             return Err(anyhow::anyhow!(
                 "Not authenticated. Please run 'longbridge auth login' first."
-            ));
-        }
-        // If the token file exists but cannot be decrypted (e.g. machine ID
-        // changed), fail fast rather than hanging in the OAuth browser flow.
-        if crate::secure_storage::EncryptedFileTokenStorage::load_full(
-            &crate::auth::effective_client_id(),
-        )
-        .is_none()
-        {
-            return Err(anyhow::anyhow!(
-                "Failed to decrypt auth token. Please run 'longbridge auth login' to \
-                 re-authenticate."
             ));
         }
 
