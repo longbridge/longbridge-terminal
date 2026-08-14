@@ -1053,7 +1053,9 @@ fn on_chat_key(
         // Ctrl+letter, so LF (0x0A) arrives as Ctrl+J — which is the newline the
         // user asked for, not the letter `j` the fallback used to insert.
         KeyCode::Char('j') if ctrl => editor.insert_newline(),
-        KeyCode::Enter if !state.busy => submit(ui, state, editor, turn, tx),
+        // Mid-turn too: `submit` queues it rather than starting a second turn, which
+        // is why this no longer refuses while busy.
+        KeyCode::Enter => submit(ui, state, editor, turn, tx),
         KeyCode::Backspace | KeyCode::Char('w') if ctrl => editor.delete_word(),
         // Emacs-style line editing shortcuts, familiar from the shell.
         KeyCode::Char('a') if ctrl => editor.home(),
@@ -6053,7 +6055,19 @@ mod tests {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let mut turn = None;
         editor.set_text("那 NVDA 呢？");
-        super::submit(&mut ui, &mut state, &mut editor, &mut turn, &tx);
+        // Through the key handler: the guard that dropped Enter while busy lived
+        // there, so a test calling `submit` directly would not have seen it.
+        super::on_key(
+            crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Enter,
+                crossterm::event::KeyModifiers::NONE,
+            ),
+            &mut ui,
+            &mut state,
+            &mut editor,
+            &mut turn,
+            &tx,
+        );
         assert_eq!(state.queued, vec!["那 NVDA 呢？".to_string()]);
         assert!(turn.is_none(), "nothing was sent yet");
         assert!(editor.is_blank(), "and the input is clear for the next one");
