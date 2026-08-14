@@ -137,6 +137,8 @@ struct Ui {
     question: Option<QuestionState>,
     /// Selected row within the active list view.
     sel: usize,
+    /// Highlighted entry in the slash-command palette.
+    slash_sel: usize,
     /// Transient one-line notice shown in the status bar.
     notice: Option<String>,
     /// Last known mouse position, used to marquee the hovered row.
@@ -149,6 +151,8 @@ struct Ui {
     tabs: Vec<(View, Rect)>,
     rows: Vec<(usize, Rect)>,
     chips: Vec<(Chip, Rect)>,
+    /// Slash-palette hit rects: `(SLASH index, rect)` for the visible entries.
+    slash_rows: Vec<(usize, Rect)>,
 }
 
 impl Ui {
@@ -160,6 +164,7 @@ impl Ui {
             agents_loading: false,
             question: None,
             sel: 0,
+            slash_sel: 0,
             notice: None,
             hover: None,
             tick: 0,
@@ -167,6 +172,7 @@ impl Ui {
             tabs: Vec::new(),
             rows: Vec::new(),
             chips: Vec::new(),
+            slash_rows: Vec::new(),
         }
     }
 
@@ -232,7 +238,7 @@ pub async fn run(agent_uid: String) -> Result<()> {
                         }
                     }
                     Some(Ok(Event::Mouse(m))) => {
-                        on_mouse(m, &mut ui, &mut state, &mut turn, &tx, &agents_tx);
+                        on_mouse(m, &mut ui, &mut state, &mut editor, &mut turn, &tx, &agents_tx);
                     }
                     Some(Ok(Event::Paste(text))) => editor.insert_str(&text),
                     Some(Ok(_)) => {}
@@ -316,7 +322,7 @@ fn on_key(
     }
     if key.code == KeyCode::Tab {
         if ui.view == View::Chat && slash_active(editor) {
-            complete_slash(editor);
+            complete_slash(ui, editor);
         } else {
             cycle_view(ui);
         }
@@ -348,6 +354,30 @@ fn on_chat_key(
     let newline = key
         .modifiers
         .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT);
+    // When the slash palette is open, arrows/Enter/Esc drive it instead of the
+    // transcript or history, matching the grok-style command menu.
+    if slash_active(editor) {
+        let count = slash_matches(editor).len();
+        match key.code {
+            KeyCode::Up => {
+                ui.slash_sel = ui.slash_sel.saturating_sub(1);
+                return false;
+            }
+            KeyCode::Down => {
+                ui.slash_sel = (ui.slash_sel + 1).min(count.saturating_sub(1));
+                return false;
+            }
+            KeyCode::Enter if !newline => {
+                run_slash_selected(ui, state, editor, agents_tx);
+                return false;
+            }
+            KeyCode::Esc => {
+                editor.clear();
+                return false;
+            }
+            _ => {}
+        }
+    }
     match key.code {
         KeyCode::Esc => {
             if state.busy {
@@ -381,6 +411,12 @@ fn on_chat_key(
         KeyCode::PageDown => state.scroll = state.scroll.saturating_sub(5),
         KeyCode::Char(c) => editor.insert_char(c),
         _ => {}
+    }
+    // Editing the query re-filters the palette; keep the highlight in range.
+    if slash_active(editor) {
+        ui.slash_sel = ui
+            .slash_sel
+            .min(slash_matches(editor).len().saturating_sub(1));
     }
     false
 }
@@ -487,6 +523,7 @@ fn on_mouse(
     m: crossterm::event::MouseEvent,
     ui: &mut Ui,
     state: &mut ChatState,
+    editor: &mut Editor,
     turn: &mut Option<JoinHandle<()>>,
     tx: &UnboundedSender<ChatEvent>,
     agents_tx: &UnboundedSender<Vec<AgentInfo>>,
@@ -510,7 +547,14 @@ fn on_mouse(
                 return;
             }
             if ui.view == View::Chat {
-                if let Some(chip) = ui
+                if let Some(idx) = ui
+                    .slash_rows
+                    .iter()
+                    .find(|(_, r)| hit(*r, col, row))
+                    .map(|(i, _)| *i)
+                {
+                    run_slash(idx, ui, state, editor, agents_tx);
+                } else if let Some(chip) = ui
                     .chips
                     .iter()
                     .find(|(_, r)| hit(*r, col, row))
@@ -754,12 +798,49 @@ fn slash_active(editor: &Editor) -> bool {
     editor.is_single_line() && editor.text().starts_with('/')
 }
 
-/// Complete the input to the first matching slash command's name.
-fn complete_slash(editor: &mut Editor) {
+/// SLASH indices whose names start with the current input.
+fn slash_matches(editor: &Editor) -> Vec<usize> {
     let prefix = editor.text();
-    if let Some((name, _)) = SLASH.iter().find(|(n, _)| n.starts_with(&prefix)) {
-        editor.set_text(&format!("{name} "));
+    SLASH
+        .iter()
+        .enumerate()
+        .filter(|(_, (name, _))| name.starts_with(&prefix))
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// Complete the input to the highlighted command's name.
+fn complete_slash(ui: &Ui, editor: &mut Editor) {
+    let matches = slash_matches(editor);
+    if let Some(&idx) = matches.get(ui.slash_sel.min(matches.len().saturating_sub(1))) {
+        editor.set_text(&format!("{} ", SLASH[idx].0));
     }
+}
+
+/// Run the highlighted palette command.
+fn run_slash_selected(
+    ui: &mut Ui,
+    state: &mut ChatState,
+    editor: &mut Editor,
+    agents_tx: &UnboundedSender<Vec<AgentInfo>>,
+) {
+    let matches = slash_matches(editor);
+    if let Some(&idx) = matches.get(ui.slash_sel) {
+        run_slash(idx, ui, state, editor, agents_tx);
+    }
+}
+
+/// Clear the input and execute the command at `SLASH[idx]`.
+fn run_slash(
+    idx: usize,
+    ui: &mut Ui,
+    state: &mut ChatState,
+    editor: &mut Editor,
+    agents_tx: &UnboundedSender<Vec<AgentInfo>>,
+) {
+    let name = SLASH[idx].0.trim_start_matches('/');
+    editor.clear();
+    exec_slash(name, ui, state, agents_tx);
 }
 
 // ── rendering ────────────────────────────────────────────────────────────────
@@ -804,11 +885,16 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
     render_title(f, title, state);
     render_tabs(f, tabs, ui);
     match ui.view {
-        View::Chat => render_chat(f, body, state, editor),
+        View::Chat => render_chat(f, body, state),
         View::Sessions => render_sessions(f, body, ui),
         View::Settings => render_settings(f, body, ui, state),
         View::Agents => render_agents(f, body, ui),
         View::Question => render_question(f, body, ui),
+    }
+    if ui.view == View::Chat {
+        render_slash_dropdown(f, body, ui, editor);
+    } else {
+        ui.slash_rows.clear();
     }
     if let Some(meta) = meta {
         render_chips(f, meta, ui, state);
@@ -877,7 +963,7 @@ fn tab_label(view: View) -> String {
     }
 }
 
-fn render_chat(f: &mut ratatui::Frame, area: Rect, state: &ChatState, editor: &Editor) {
+fn render_chat(f: &mut ratatui::Frame, area: Rect, state: &ChatState) {
     let width = area.width.max(1) as usize;
     let mut lines = transcript_lines(state, width);
     let height = area.height as usize;
@@ -886,22 +972,20 @@ fn render_chat(f: &mut ratatui::Frame, area: Rect, state: &ChatState, editor: &E
     let start = bottom.saturating_sub(height);
     let window: Vec<Line> = lines.drain(start..bottom).collect();
     f.render_widget(Paragraph::new(Text::from(window)), area);
-    render_slash_dropdown(f, area, editor);
 }
 
-/// While typing a slash command, show matching commands as a hint box.
-fn render_slash_dropdown(f: &mut ratatui::Frame, area: Rect, editor: &Editor) {
+/// The slash-command palette: a menu of matching commands floating above the
+/// prompt, with the highlighted entry ↑/↓ can move and Enter/click can run.
+fn render_slash_dropdown(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, editor: &Editor) {
+    ui.slash_rows.clear();
     if !slash_active(editor) {
         return;
     }
-    let prefix = editor.text();
-    let matches: Vec<&(&str, &str)> = SLASH
-        .iter()
-        .filter(|(n, _)| n.starts_with(&prefix))
-        .collect();
+    let matches = slash_matches(editor);
     if matches.is_empty() {
         return;
     }
+    ui.slash_sel = ui.slash_sel.min(matches.len() - 1);
     let h = matches.len() as u16;
     let box_area = Rect {
         x: area.x,
@@ -909,9 +993,16 @@ fn render_slash_dropdown(f: &mut ratatui::Frame, area: Rect, editor: &Editor) {
         width: area.width.min(48),
         height: h,
     };
-    let lines: Vec<Line> = matches
-        .iter()
-        .map(|(name, desc)| {
+    let mut lines = Vec::new();
+    for (row, &idx) in matches.iter().enumerate() {
+        let (name, desc) = SLASH[idx];
+        let selected = row == ui.slash_sel;
+        let line = if selected {
+            Line::from(Span::styled(
+                format!("{name}  {}", t!(desc)),
+                row_style(true),
+            ))
+        } else {
             Line::from(vec![
                 Span::styled(
                     format!("{name} "),
@@ -919,10 +1010,20 @@ fn render_slash_dropdown(f: &mut ratatui::Frame, area: Rect, editor: &Editor) {
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(t!(*desc).to_string(), Style::default().fg(Color::DarkGray)),
+                Span::styled(t!(desc).to_string(), Style::default().fg(Color::DarkGray)),
             ])
-        })
-        .collect();
+        };
+        lines.push(line);
+        ui.slash_rows.push((
+            idx,
+            Rect {
+                x: box_area.x,
+                y: box_area.y + row as u16,
+                width: box_area.width,
+                height: 1,
+            },
+        ));
+    }
     f.render_widget(Clear, box_area);
     f.render_widget(Paragraph::new(Text::from(lines)), box_area);
 }
