@@ -17,6 +17,72 @@ const CODE_BG: Color = Color::Rgb(38, 38, 38);
 const CODE_FG: Color = Color::Rgb(220, 220, 220);
 const BORDER: Color = Color::DarkGray;
 
+// Syntax-highlight token colors (language-agnostic).
+const KW: Color = Color::Rgb(86, 156, 214); // keywords
+const STR: Color = Color::Rgb(206, 145, 120); // string literals
+const NUM: Color = Color::Rgb(181, 206, 168); // numbers
+const COMMENT: Color = Color::Rgb(106, 153, 85); // comments
+
+/// Keywords shared across the languages Longbridge AI is likely to emit
+/// (Rust / Python / JS / TS / Go / shell). Matched whole-word only.
+const KEYWORDS: &[&str] = &[
+    "as",
+    "async",
+    "await",
+    "break",
+    "case",
+    "class",
+    "const",
+    "continue",
+    "def",
+    "elif",
+    "else",
+    "enum",
+    "export",
+    "extends",
+    "false",
+    "fn",
+    "for",
+    "from",
+    "func",
+    "function",
+    "if",
+    "impl",
+    "import",
+    "in",
+    "interface",
+    "let",
+    "match",
+    "mod",
+    "mut",
+    "new",
+    "None",
+    "not",
+    "null",
+    "or",
+    "package",
+    "pass",
+    "print",
+    "pub",
+    "raise",
+    "return",
+    "self",
+    "static",
+    "struct",
+    "super",
+    "switch",
+    "trait",
+    "true",
+    "try",
+    "type",
+    "use",
+    "var",
+    "void",
+    "while",
+    "with",
+    "yield",
+];
+
 /// A top-level block of an answer.
 enum Block {
     /// Prose handed to `tui-markdown`.
@@ -136,11 +202,88 @@ fn render_code(lang: &str, lines: &[String], width: usize, out: &mut Vec<Line<'s
         )));
     }
     for line in lines {
-        out.push(Line::from(Span::styled(
-            pad(&format!(" {line}"), box_w),
-            Style::default().fg(CODE_FG).bg(CODE_BG),
-        )));
+        let cells = highlight(&format!(" {line}"));
+        let mut spans = coalesce(&cells).spans;
+        // Extend the shaded background to the full block width.
+        let used: usize = cells
+            .iter()
+            .map(|(c, _)| UnicodeWidthChar::width(*c).unwrap_or(0))
+            .sum();
+        if used < box_w {
+            spans.push(Span::styled(
+                " ".repeat(box_w - used),
+                Style::default().bg(CODE_BG),
+            ));
+        }
+        out.push(Line::from(spans));
     }
+}
+
+/// Classify each char of a code line into a foreground color (over `CODE_BG`),
+/// a small language-agnostic highlighter: comments, strings, numbers, keywords.
+fn highlight(line: &str) -> Vec<(char, Style)> {
+    let chars: Vec<char> = line.chars().collect();
+    let n = chars.len();
+    let mut color = vec![CODE_FG; n];
+    let mut i = 0;
+    while i < n {
+        let c = chars[i];
+        if c == '/' && chars.get(i + 1) == Some(&'/')
+            || c == '#' && chars.get(i + 1).is_none_or(|n| n.is_whitespace())
+        {
+            color[i..].fill(COMMENT);
+            break;
+        }
+        if matches!(c, '"' | '\'' | '`') {
+            if let Some(end) = close_quote(&chars, i) {
+                color[i..=end].fill(STR);
+                i = end + 1;
+                continue;
+            }
+        }
+        if c.is_ascii_digit() {
+            let mut j = i + 1;
+            while j < n && (chars[j].is_ascii_alphanumeric() || matches!(chars[j], '.' | '_')) {
+                j += 1;
+            }
+            color[i..j].fill(NUM);
+            i = j;
+            continue;
+        }
+        if c.is_alphabetic() || c == '_' {
+            let mut j = i + 1;
+            while j < n && (chars[j].is_alphanumeric() || chars[j] == '_') {
+                j += 1;
+            }
+            let word: String = chars[i..j].iter().collect();
+            if KEYWORDS.contains(&word.as_str()) {
+                color[i..j].fill(KW);
+            }
+            i = j;
+            continue;
+        }
+        i += 1;
+    }
+    chars
+        .into_iter()
+        .zip(color)
+        .map(|(ch, fg)| (ch, Style::default().fg(fg).bg(CODE_BG)))
+        .collect()
+}
+
+/// Index of the closing quote matching the one at `start`, honoring `\` escapes,
+/// or `None` if the string is not closed on this line.
+fn close_quote(chars: &[char], start: usize) -> Option<usize> {
+    let quote = chars[start];
+    let mut i = start + 1;
+    while i < chars.len() {
+        match chars[i] {
+            '\\' => i += 2,
+            c if c == quote => return Some(i),
+            _ => i += 1,
+        }
+    }
+    None
 }
 
 /// Draw a pipe table with aligned, box-drawn borders.
@@ -306,5 +449,21 @@ mod tests {
             .flat_map(|l| &l.spans)
             .any(|s| s.style.bg == Some(super::CODE_BG));
         assert!(shaded, "expected a shaded code line");
+    }
+
+    #[test]
+    fn code_keywords_and_strings_are_colored() {
+        let md = "```rust\nlet s = \"hi\";\n```";
+        let spans: Vec<_> = render(md, 80).into_iter().flat_map(|l| l.spans).collect();
+        let kw = spans
+            .iter()
+            .find(|s| s.content == "let")
+            .expect("keyword span");
+        assert_eq!(kw.style.fg, Some(super::KW));
+        let string = spans
+            .iter()
+            .find(|s| s.content.contains("\"hi\""))
+            .expect("string span");
+        assert_eq!(string.style.fg, Some(super::STR));
     }
 }
