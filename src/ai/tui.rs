@@ -56,6 +56,13 @@ const SCROLL_PAGE: u16 = 5;
 /// Braille spinner frames for the "generating" status line.
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
+/// The reader's own turns get a band of their own so a long transcript is
+/// scannable. Foreground is set alongside the background: there is no theme
+/// layer yet, and a background alone would be unreadable against a light
+/// terminal's default dark text.
+const USER_BG: Color = Color::Rgb(38, 45, 60);
+const USER_FG: Color = Color::Rgb(226, 232, 240);
+
 // History list palette: a subtle selected-row background and index badge tints.
 const SEL_BG: Color = Color::Rgb(45, 50, 62);
 const IDX: Color = Color::Rgb(110, 140, 190);
@@ -1336,7 +1343,11 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
     // button cannot be hidden by a notice — and the notice cannot be hidden by
     // it. Only while busy, so idle chrome stays one row on a short terminal.
     let has_turn = is_chat && state.busy;
-    let mut constraints = vec![Constraint::Length(1), Constraint::Min(1)];
+    // The title gets a blank row under it so it reads as chrome rather than as
+    // the transcript's first line. Skipped on a short terminal, where a spare
+    // row is worth more than the separation.
+    let title_h = if area.height >= 12 { 2 } else { 1 };
+    let mut constraints = vec![Constraint::Length(title_h), Constraint::Min(1)];
     if has_meta {
         constraints.push(Constraint::Length(meta_h));
     }
@@ -1398,7 +1409,10 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
 }
 
 fn render_title(f: &mut ratatui::Frame, area: Rect, state: &ChatState) {
-    // Left: brand badge + (bold conversation title once one arrives).
+    // The brand badge, and nothing else by default. The server-generated
+    // conversation title lived here, but it is a label for picking a chat out of
+    // a list — which is where it is shown — not something worth a permanent row
+    // in the chat you are already reading.
     let mut left = vec![Span::styled(
         format!(" {} ", t!("Ai.Title")),
         Style::default()
@@ -1406,14 +1420,6 @@ fn render_title(f: &mut ratatui::Frame, area: Rect, state: &ChatState) {
             .bg(Color::Cyan)
             .add_modifier(Modifier::BOLD),
     )];
-    if let Some(title) = &state.title {
-        left.push(Span::styled(
-            format!("  {title}"),
-            Style::default()
-                .fg(Color::Gray)
-                .add_modifier(Modifier::BOLD),
-        ));
-    }
     // Right: a marker only when the conversation is not with Longbridge AI's own
     // assistant. An agent uid is an internal handle and never goes on screen (see
     // `cli::agent::DEFAULT_AGENT_UID`), so this says *that* a custom agent is in
@@ -2367,14 +2373,25 @@ fn push_message(
     if message.role == Role::Assistant {
         lines.extend(render_answer_lines(&message.text, width, quotes));
     } else {
-        let body_style = if message.role == Role::System {
-            Style::default().fg(Color::DarkGray)
-        } else {
-            Style::default()
+        let user = message.role == Role::User;
+        let body_style = match message.role {
+            Role::System => Style::default().fg(Color::DarkGray),
+            Role::User => Style::default().fg(USER_FG).bg(USER_BG),
+            _ => Style::default(),
         };
         for logical in message.text.split('\n') {
             for wrapped in wrap(logical, width) {
-                lines.push(Line::from(Span::styled(wrapped, body_style)));
+                if user {
+                    // The band has to reach the full width, or it stops at the
+                    // last glyph and reads as a highlight rather than a block.
+                    let pad = width.saturating_sub(UnicodeWidthStr::width(wrapped.as_str()));
+                    lines.push(Line::from(Span::styled(
+                        format!("{wrapped}{}", " ".repeat(pad)),
+                        body_style,
+                    )));
+                } else {
+                    lines.push(Line::from(Span::styled(wrapped, body_style)));
+                }
             }
         }
     }
@@ -2732,5 +2749,70 @@ mod tests {
             handler(shift(KeyCode::Up), &mut ui, &mut state);
             assert_eq!(ui.sel, 0, "Shift+Up should reach the first row");
         }
+    }
+
+    /// The reader's own turns get a band, and it reaches the full width — a
+    /// background that stops at the last glyph reads as a highlight, not a block.
+    #[test]
+    fn user_messages_get_a_full_width_band() {
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        state.apply(super::ChatEvent::UserPrompt("short".into()));
+        let mut lines = Vec::new();
+        let msg = state
+            .messages
+            .iter()
+            .find(|m| m.role == super::Role::User)
+            .expect("a user message");
+        super::push_message(&mut lines, msg, 40, &std::collections::HashMap::new());
+        let banded: Vec<&ratatui::text::Line> = lines
+            .iter()
+            .filter(|l| l.spans.iter().any(|s| s.style.bg == Some(super::USER_BG)))
+            .collect();
+        assert!(!banded.is_empty(), "the user's text should be banded");
+        for line in banded {
+            let w: usize = line
+                .spans
+                .iter()
+                .filter(|s| s.style.bg == Some(super::USER_BG))
+                .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
+                .sum();
+            assert_eq!(w, 40, "the band should span the width");
+        }
+    }
+
+    /// The conversation title belongs to the list you pick a chat from, not to a
+    /// permanent row above the chat you are reading.
+    #[test]
+    fn the_header_does_not_carry_the_conversation_title() {
+        let mut ui = super::Ui::new();
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        state.apply(super::ChatEvent::Title("A very specific chat title".into()));
+        let rows = frame(&mut ui, &state, 70, 14);
+        assert!(
+            !rows
+                .iter()
+                .any(|l| l.contains("A very specific chat title")),
+            "the title should not be in the header:\n{}",
+            rows.join("\n")
+        );
+    }
+
+    /// The title bar needs air under it, or it reads as the transcript's first
+    /// line rather than as chrome.
+    #[test]
+    fn the_title_bar_is_separated_from_the_transcript() {
+        let mut ui = super::Ui::new();
+        let state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let rows = frame(&mut ui, &state, 70, 24);
+        assert!(
+            rows[0].contains("Longbridge AI"),
+            "row 0 is the badge: {:?}",
+            rows[0]
+        );
+        assert!(
+            rows[1].trim().is_empty(),
+            "row 1 should be blank, got {:?}",
+            rows[1]
+        );
     }
 }

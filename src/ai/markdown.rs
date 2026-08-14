@@ -26,6 +26,8 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 const CODE_BG: Color = Color::Rgb(38, 38, 38);
 const CODE_FG: Color = Color::Rgb(220, 220, 220);
 const BORDER: Color = Color::DarkGray;
+/// Section headings, so an answer's structure is visible at a glance.
+const HEADING: Color = Color::Cyan;
 /// Display-math text, dimmer than prose so a formula reads as set apart.
 const MATH_FG: Color = Color::Rgb(180, 190, 205);
 
@@ -110,6 +112,8 @@ enum Block {
     Chart(Value),
     /// A `$$…$$` display-math block, kept as its source lines.
     Math(Vec<String>),
+    /// An ATX heading: `(level, text)` with the hashes stripped.
+    Heading(u8, String),
     /// A `---` thematic break.
     Rule,
 }
@@ -134,6 +138,7 @@ pub fn render(md: &str, width: usize) -> Vec<Line<'static>> {
             Block::Table(rows) => render_table(&rows, width, &mut out),
             Block::Chart(spec) => render_chart(&spec, width, &mut out),
             Block::Math(lines) => render_math(&lines, width, &mut out),
+            Block::Heading(level, text) => render_heading(level, &text, width, &mut out),
             Block::Rule => out.push(Line::from(Span::styled(
                 "─".repeat(width.max(1)),
                 Style::default().fg(BORDER),
@@ -240,6 +245,10 @@ fn split_blocks(md: &str) -> Vec<Block> {
             flush_prose(&mut prose, &mut blocks);
             blocks.push(Block::Rule);
             i += 1;
+        } else if let Some((level, text)) = atx_heading(line) {
+            flush_prose(&mut prose, &mut blocks);
+            blocks.push(Block::Heading(level, text));
+            i += 1;
         } else if is_table_header(&lines, i) {
             flush_prose(&mut prose, &mut blocks);
             let mut rows = Vec::new();
@@ -275,6 +284,61 @@ fn flush_prose(prose: &mut String, blocks: &mut Vec<Block>) {
 fn fence_lang(line: &str) -> Option<String> {
     let t = line.trim_start();
     t.strip_prefix("```").map(|rest| rest.trim().to_string())
+}
+
+/// An ATX heading as `(level, text)`, or `None` if `line` is not one.
+///
+/// `CommonMark` requires a space after the hashes, which is what keeps a `#`
+/// comment or a `#hashtag` from being read as a heading.
+fn atx_heading(line: &str) -> Option<(u8, String)> {
+    let t = line.trim_start();
+    let hashes = t.len() - t.trim_start_matches('#').len();
+    if !(1..=6).contains(&hashes) {
+        return None;
+    }
+    let rest = t[hashes..].strip_prefix(' ')?.trim();
+    if rest.is_empty() {
+        return None;
+    }
+    // A closing run of hashes is decoration, not content.
+    let text = rest.trim_end_matches('#').trim_end();
+    Some((hashes as u8, text.to_string()))
+}
+
+/// Draw a heading as a heading.
+///
+/// `tui-markdown` keeps the literal hashes, so the agent's `##`/`###` section
+/// structure arrived on screen as punctuation. Each level gets its own weight
+/// instead, and the top level gets a rule under it, so a long answer can be
+/// skimmed. The text itself is inline Markdown — headings carry `**bold**` and
+/// `\$` too — so it goes through the same parser as prose.
+fn render_heading(level: u8, text: &str, width: usize, out: &mut Vec<Line<'static>>) {
+    let style = match level {
+        // The top two levels are the ones the agent actually uses to section an
+        // answer, so they share the accent; the rule below h1 separates them.
+        1 | 2 => Style::default().fg(HEADING).add_modifier(Modifier::BOLD),
+        3 => Style::default().add_modifier(Modifier::BOLD),
+        _ => Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD),
+    };
+    // The heading's own emphasis wins over any inline styling inside it, so the
+    // whole line reads as one heading rather than as a sentence with bold words.
+    let chars: Vec<(char, Style)> = inline_chars(text)
+        .into_iter()
+        .map(|(c, _)| (c, style))
+        .collect();
+    let mut wrapped = Vec::new();
+    for part in wrap_chars(&chars, width) {
+        wrapped.push(coalesce(&part));
+    }
+    out.append(&mut wrapped);
+    if level == 1 {
+        out.push(Line::from(Span::styled(
+            "─".repeat(width.max(1)),
+            Style::default().fg(BORDER),
+        )));
+    }
 }
 
 /// Whether `line` opens or closes a `$$` display-math block.
@@ -977,6 +1041,59 @@ mod tests {
         }
         for no in ["", "1", "1.5", "a.", "-x", "1. text", "..", "。"] {
             assert!(!super::is_list_marker(no), "{no:?} should not be a marker");
+        }
+    }
+
+    #[cfg(test)]
+    fn plain(md: &str, w: usize) -> Vec<String> {
+        render(md, w)
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.to_string()).collect())
+            .collect()
+    }
+
+    /// The agent structures long answers with `##`/`###`; the hashes used to be
+    /// printed as punctuation rather than being turned into a heading.
+    #[test]
+    fn headings_drop_their_hashes_and_gain_weight() {
+        use ratatui::style::Modifier;
+        let md = "## 卖 Put 保证金的基本公式\n\n### 盘口关键数据\n\nbody";
+        let rows = plain(md, 60);
+        for row in &rows {
+            assert!(!row.starts_with('#'), "hash survived: {row:?}");
+        }
+        assert!(rows.iter().any(|r| r.contains("卖 Put 保证金的基本公式")));
+        assert!(rows.iter().any(|r| r.contains("盘口关键数据")));
+        let bold = render(md, 60)
+            .iter()
+            .flat_map(|l| l.spans.clone())
+            .filter(|s| s.content.contains("盘口关键数据"))
+            .all(|s| s.style.add_modifier.contains(Modifier::BOLD));
+        assert!(bold, "a heading should read as one");
+    }
+
+    /// A heading carries inline markup too, and it must not survive literally.
+    #[test]
+    fn heading_text_is_inline_markdown() {
+        let rows = plain("## \\$135.50 **支撑位**分析", 60);
+        let joined = rows.join("");
+        assert!(joined.contains("$135.50"), "escape unresolved: {joined:?}");
+        assert!(
+            !joined.contains("**"),
+            "emphasis marks survived: {joined:?}"
+        );
+    }
+
+    /// `#` without a space is not a heading — CommonMark requires it, and code
+    /// comments and hashtags would otherwise vanish into headings.
+    #[test]
+    fn a_hash_without_a_space_is_not_a_heading() {
+        for md in ["#hashtag", "#!/bin/sh", "####### seven hashes"] {
+            let rows = plain(md, 60);
+            assert!(
+                rows.iter().any(|r| r.contains('#')),
+                "{md:?} should stay text, got {rows:?}"
+            );
         }
     }
 }
