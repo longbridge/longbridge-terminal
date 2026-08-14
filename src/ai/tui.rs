@@ -65,7 +65,7 @@ enum Setting {
 const SETTINGS: [Setting; 3] = [Setting::Agent, Setting::NewChat, Setting::ClearHistory];
 
 /// Slash commands: `(name, i18n description key)`.
-const SLASH: [(&str, &str); 7] = [
+const SLASH: [(&str, &str); 8] = [
     ("/new", "Ai.SlashNew"),
     ("/clear", "Ai.SlashClear"),
     ("/copy", "Ai.SlashCopy"),
@@ -73,6 +73,7 @@ const SLASH: [(&str, &str); 7] = [
     ("/settings", "Ai.SlashSettings"),
     ("/agent", "Ai.SlashAgent"),
     ("/help", "Ai.SlashHelp"),
+    ("/exit", "Ai.SlashExit"),
 ];
 
 /// A clickable chip in the Chat meta panel.
@@ -133,6 +134,7 @@ impl QuestionState {
 /// View/navigation state, kept separate from [`ChatState`] so the conversation
 /// model stays about messages, not the UI. Hit-test rectangles are recorded
 /// during each render so mouse clicks can be mapped back to tabs, rows, chips.
+#[allow(clippy::struct_excessive_bools)]
 struct Ui {
     view: View,
     sessions: Vec<SessionSummary>,
@@ -166,6 +168,10 @@ struct Ui {
     selection: Option<((u16, u16), (u16, u16))>,
     /// The text under the current selection, extracted during render.
     selected_text: Option<String>,
+    /// Set to break the event loop (via `/exit` or a double Ctrl+C).
+    should_quit: bool,
+    /// True after one Ctrl+C on an empty prompt; a second one exits.
+    ctrl_c_armed: bool,
 }
 
 impl Ui {
@@ -190,6 +196,8 @@ impl Ui {
             transcript: Rect::default(),
             selection: None,
             selected_text: None,
+            should_quit: false,
+            ctrl_c_armed: false,
         }
     }
 
@@ -251,6 +259,10 @@ pub async fn run(agent_uid: String) -> Result<()> {
     let mut events = EventStream::new();
     // Drives the marquee of truncated rows; only consulted while `animating`.
     let mut ticker = tokio::time::interval(Duration::from_millis(120));
+    // Bracketed paste makes multi-line pastes arrive as one `Event::Paste`
+    // instead of a stream of keystrokes (whose embedded newlines would each
+    // submit the prompt); disabled again on exit.
+    let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableBracketedPaste);
 
     loop {
         terminal.draw(|f| view(f, &mut ui, &state, &editor))?;
@@ -261,9 +273,7 @@ pub async fn run(agent_uid: String) -> Result<()> {
             maybe_event = events.next() => {
                 match maybe_event {
                     Some(Ok(Event::Key(key))) if key.kind != KeyEventKind::Release => {
-                        if on_key(key, &mut ui, &mut state, &mut editor, &mut turn, &tx, &agents_tx) {
-                            break;
-                        }
+                        on_key(key, &mut ui, &mut state, &mut editor, &mut turn, &tx, &agents_tx);
                     }
                     Some(Ok(Event::Mouse(m))) => {
                         on_mouse(m, &mut ui, &mut state, &mut editor, &mut turn, &tx, &agents_tx);
@@ -288,7 +298,11 @@ pub async fn run(agent_uid: String) -> Result<()> {
                 ui.clamp_sel();
             }
         }
+        if ui.should_quit {
+            break;
+        }
     }
+    let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableBracketedPaste);
     if let Some(turn) = turn.take() {
         turn.abort();
     }
@@ -334,7 +348,7 @@ async fn fetch_agents() -> Vec<AgentInfo> {
 
 // ── input ─────────────────────────────────────────────────────────────────────
 
-/// Handle one keypress. Returns `true` to quit.
+/// Handle one keypress. Quitting is signalled via `ui.should_quit`.
 fn on_key(
     key: crossterm::event::KeyEvent,
     ui: &mut Ui,
@@ -343,34 +357,58 @@ fn on_key(
     turn: &mut Option<JoinHandle<()>>,
     tx: &UnboundedSender<ChatEvent>,
     agents_tx: &UnboundedSender<Vec<AgentInfo>>,
-) -> bool {
+) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     if ctrl && key.code == KeyCode::Char('c') {
-        return true;
+        on_ctrl_c(ui, state, editor, turn);
+        return;
     }
+    // Any other key disarms the "press Ctrl+C again to exit" prompt.
+    ui.ctrl_c_armed = false;
     if key.code == KeyCode::Tab {
         if ui.view == View::Chat && slash_active(editor) {
             complete_slash(ui, editor);
         } else {
             cycle_view(ui);
         }
-        return false;
+        return;
     }
     match ui.view {
         View::Chat => on_chat_key(key, ui, state, editor, turn, tx, agents_tx),
-        View::Question => {
-            on_question_key(key, ui, state, turn, tx);
-            false
-        }
-        View::Sessions => {
-            on_sessions_key(key, ui, state, agents_tx);
-            false
-        }
-        _ => {
-            on_list_key(key, ui, state, agents_tx);
-            false
-        }
+        View::Question => on_question_key(key, ui, state, turn, tx),
+        View::Sessions => on_sessions_key(key, ui, state, agents_tx),
+        _ => on_list_key(key, ui, state, agents_tx),
     }
+}
+
+/// Ctrl+C follows Claude's convention: cancel a running turn, else clear the
+/// prompt, else require a second press on an empty prompt to actually exit.
+fn on_ctrl_c(
+    ui: &mut Ui,
+    state: &mut ChatState,
+    editor: &mut Editor,
+    turn: &mut Option<JoinHandle<()>>,
+) {
+    if state.busy {
+        cancel_turn(state, turn);
+        ui.ctrl_c_armed = false;
+    } else if !editor.is_blank() {
+        editor.clear();
+        ui.ctrl_c_armed = false;
+    } else if ui.ctrl_c_armed {
+        ui.should_quit = true;
+    } else {
+        ui.ctrl_c_armed = true;
+        ui.notice = Some(t!("Ai.PressCtrlCAgain").to_string());
+    }
+}
+
+/// Abort the active turn and fold any partial answer into the transcript.
+fn cancel_turn(state: &mut ChatState, turn: &mut Option<JoinHandle<()>>) {
+    if let Some(turn) = turn.take() {
+        turn.abort();
+    }
+    state.cancel(&t!("Ai.Cancelled"));
 }
 
 /// History view: arrows/Enter select and open, Del removes, typing filters.
@@ -427,7 +465,7 @@ fn on_chat_key(
     turn: &mut Option<JoinHandle<()>>,
     tx: &UnboundedSender<ChatEvent>,
     agents_tx: &UnboundedSender<Vec<AgentInfo>>,
-) -> bool {
+) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let newline = key
         .modifiers
@@ -439,32 +477,31 @@ fn on_chat_key(
         match key.code {
             KeyCode::Up => {
                 ui.slash_sel = ui.slash_sel.saturating_sub(1);
-                return false;
+                return;
             }
             KeyCode::Down => {
                 ui.slash_sel = (ui.slash_sel + 1).min(count.saturating_sub(1));
-                return false;
+                return;
             }
             KeyCode::Enter if !newline => {
                 run_slash_selected(ui, state, editor, agents_tx);
-                return false;
+                return;
             }
             KeyCode::Esc => {
                 editor.clear();
-                return false;
+                return;
             }
             _ => {}
         }
     }
     match key.code {
+        // Esc cancels a running turn or clears the prompt — it never quits
+        // (use /exit or double Ctrl+C for that), matching Claude's convention.
         KeyCode::Esc => {
             if state.busy {
-                if let Some(turn) = turn.take() {
-                    turn.abort();
-                }
-                state.cancel(&t!("Ai.Cancelled"));
-            } else {
-                return true;
+                cancel_turn(state, turn);
+            } else if !editor.is_blank() {
+                editor.clear();
             }
         }
         KeyCode::Char('y') if ctrl => copy_with_notice(ui, last_answer(state)),
@@ -497,7 +534,6 @@ fn on_chat_key(
             .slash_sel
             .min(slash_matches(editor).len().saturating_sub(1));
     }
-    false
 }
 
 /// Submit the prompt: run a slash command, or start a conversation turn.
@@ -560,6 +596,7 @@ fn exec_slash(
             role: Role::System,
             text: t!("Ai.HelpText").to_string(),
         }),
+        "exit" | "quit" => ui.should_quit = true,
         _ => {}
     }
 }
