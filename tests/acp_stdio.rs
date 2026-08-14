@@ -85,6 +85,7 @@ async fn unauthenticated_cli_advertises_terminal_login_during_initialize() {
     let response: serde_json::Value = serde_json::from_str(&response).expect("JSON-RPC response");
 
     assert_eq!(response["result"]["authMethods"][0]["type"], "terminal");
+    assert_eq!(response["result"]["agentCapabilities"]["loadSession"], true);
     assert_eq!(
         response["result"]["authMethods"][0]["args"],
         serde_json::json!(["auth", "login"])

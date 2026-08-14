@@ -162,11 +162,81 @@ pub struct OpenApiAgent {
 }
 
 /// ACP backend used before the user completes `longbridge auth login`.
-pub struct AuthenticationRequiredAgent;
+pub struct AuthenticationRequiredAgent {
+    history: Arc<Mutex<SessionHistory>>,
+    history_path: Option<Arc<PathBuf>>,
+}
+
+impl AuthenticationRequiredAgent {
+    pub fn new(agent_id: &str) -> Self {
+        let history_path = session_history_path(agent_id).map(Arc::new);
+        let history = history_path
+            .as_deref()
+            .map_or_else(SessionHistory::default, |path| SessionHistory::load(path));
+        Self {
+            history: Arc::new(Mutex::new(history)),
+            history_path,
+        }
+    }
+
+    fn persist_history(&self, history: &SessionHistory) {
+        persist_session_history(self.history_path.as_deref(), history);
+    }
+}
 
 #[async_trait]
 impl AgentBackend for AuthenticationRequiredAgent {
-    type Session = ();
+    type Session = OpenApiAgentSession;
+    const SESSION_HISTORY: bool = true;
+
+    fn new_session(&self, session_id: &str, cwd: &Path) -> Self::Session {
+        let state = OpenApiAgentSession {
+            acp_session_id: Some(session_id.to_owned()),
+            ..Default::default()
+        };
+        if let Ok(mut history) = self.history.lock() {
+            history.upsert(StoredSession {
+                session_id: session_id.to_owned(),
+                cwd: cwd.to_path_buf(),
+                title: None,
+                state: state.clone(),
+                events: Vec::new(),
+            });
+            self.persist_history(&history);
+        }
+        state
+    }
+
+    async fn list_sessions(
+        &self,
+        cwd: Option<&Path>,
+        cursor: Option<&str>,
+    ) -> Result<AgentSessionPage, BackendError> {
+        Ok(self
+            .history
+            .lock()
+            .map_err(|_| std::io::Error::other("session history lock is poisoned"))?
+            .list(cwd, cursor))
+    }
+
+    async fn load_session(
+        &self,
+        session_id: &str,
+        _cwd: &Path,
+    ) -> Result<LoadedAgentSession<Self::Session>, BackendError> {
+        let stored = self
+            .history
+            .lock()
+            .map_err(|_| std::io::Error::other("session history lock is poisoned"))?
+            .get(session_id)
+            .ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::NotFound, "session not found")
+            })?;
+        Ok(LoadedAgentSession {
+            state: stored.state,
+            history: stream::iter(stored.events.into_iter().map(Ok)).boxed(),
+        })
+    }
 
     async fn prompt(
         &self,
@@ -175,7 +245,10 @@ impl AgentBackend for AuthenticationRequiredAgent {
         _cwd: &Path,
     ) -> Result<BoxStream<'static, Result<AgentEvent<Self::Session>, BackendError>>, BackendError>
     {
-        Err(rust_i18n::t!("ACP.LoginRequired").to_string().into())
+        Ok(stream::iter([Ok(AgentEvent::Text(
+            rust_i18n::t!("ACP.LoginRequired").to_string(),
+        ))])
+        .boxed())
     }
 }
 
@@ -302,15 +375,19 @@ impl OpenApiAgent {
     }
 
     fn persist_history(&self, history: &SessionHistory) {
-        if let Some(path) = self.history_path.as_deref() {
-            if let Err(error) = history.save(path) {
-                tracing::warn!(
-                    target: "longbridge::acp",
-                    %error,
-                    path = %path.display(),
-                    "failed to persist ACP session history"
-                );
-            }
+        persist_session_history(self.history_path.as_deref(), history);
+    }
+}
+
+fn persist_session_history(path: Option<&PathBuf>, history: &SessionHistory) {
+    if let Some(path) = path {
+        if let Err(error) = history.save(path) {
+            tracing::warn!(
+                target: "longbridge::acp",
+                %error,
+                path = %path.display(),
+                "failed to persist ACP session history"
+            );
         }
     }
 }
