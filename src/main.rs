@@ -366,7 +366,7 @@ async fn main() {
                 longbridge_ai_acp::serve_stdio_with_auth_methods(backend, auth_methods).await
             } else {
                 longbridge_ai_acp::serve_stdio_with_auth_methods(
-                    openapi::AuthenticationRequiredAgent,
+                    openapi::AuthenticationRequiredAgent::new(&agent_id),
                     auth_methods,
                 )
                 .await
