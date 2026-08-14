@@ -91,10 +91,15 @@ pub struct ChatDetail {
 }
 
 impl ChatMessage {
-    /// Join the message's text chunks into a single string.
+    /// The message's visible text: only the `text`-type chunks joined together.
+    ///
+    /// A message can also carry `process` (thinking) and `tool_use` chunks whose
+    /// `content` is internal JSON, not display text; those are excluded so the
+    /// rendered message (and any history replay) shows just the answer.
     pub fn text(&self) -> String {
         self.chunks
             .iter()
+            .filter(|c| c.chunk_type == "text")
             .map(|c| c.content.as_str())
             .collect::<Vec<_>>()
             .join("")

@@ -231,7 +231,13 @@ impl AgentBackend for OpenApiAgent {
         // fatal. If the chat can't be fetched (network, auth, not deployed to
         // this environment, or an id that isn't a server chat), resume with an
         // empty history so the user can keep chatting.
-        let detail = match crate::openapi::chats::chat_detail(session_id).await {
+        // The client remembers a session by its ACP id. For a session created
+        // via `session/new` that id is a local UUID, and the server chat it maps
+        // to is only learned after the first prompt — so translate through the
+        // local id index. A session resumed from `session/list` already carries
+        // the server chat uid, which has no index entry and is used as-is.
+        let chat_uid = resolve_chat_uid(session_id).unwrap_or_else(|| session_id.to_owned());
+        let detail = match crate::openapi::chats::chat_detail(&chat_uid).await {
             Ok(detail) => detail,
             Err(error) => {
                 tracing::warn!(
@@ -251,6 +257,7 @@ impl AgentBackend for OpenApiAgent {
         };
         // Resume the server-side chat: the next prompt continues this
         // conversation, appended after its most recent message.
+        record_chat_mapping(session_id, &detail.chat.uid);
         let parent_message_id = detail.messages.last().map(|message| message.id.to_string());
         let state = OpenApiAgentSession {
             acp_session_id: Some(session_id.to_owned()),
@@ -538,10 +545,18 @@ impl AgentBackend for OpenApiAgent {
                             metadata,
                         }))
                     }
-                    Ok(ConversationStreamEvent::ChatStarted(payload)) => Some(Ok(native_event(
-                        "chat_started",
-                        serde_json::to_value(payload).ok()?,
-                    ))),
+                    Ok(ConversationStreamEvent::ChatStarted(payload)) => {
+                        // First time we learn this session's server chat uid:
+                        // bind the ACP session id to it so a later `session/load`
+                        // (which arrives with the ACP id) can find the chat.
+                        if let Some(acp) = acp_session_id.as_deref() {
+                            record_chat_mapping(acp, &payload.chat_uid);
+                        }
+                        Some(Ok(native_event(
+                            "chat_started",
+                            serde_json::to_value(payload).ok()?,
+                        )))
+                    }
                     Ok(ConversationStreamEvent::WorkflowStarted(payload)) => Some(Ok(
                         native_event("workflow_started", serde_json::to_value(payload).ok()?),
                     )),
@@ -678,6 +693,55 @@ impl AgentBackend for OpenApiAgent {
                 }
             })
             .boxed())
+    }
+}
+
+/// Path of the local ACP session-id → server chat-uid index.
+///
+/// Only this id pointer is persisted locally; chat history itself is always
+/// fetched from the API. A session created via `session/new` is remembered by
+/// the client under a local UUID, while the server stores its conversation
+/// under a chat uid that is only known after the first prompt — this index
+/// bridges the two so the session can be resumed.
+fn chat_index_path() -> Option<PathBuf> {
+    dirs::home_dir().map(|home| {
+        home.join(".longbridge")
+            .join("acp")
+            .join("chat-index.json")
+    })
+}
+
+fn load_chat_index() -> std::collections::HashMap<String, String> {
+    chat_index_path()
+        .and_then(|path| std::fs::read(path).ok())
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+/// Translate an ACP session id to the server chat uid it was bound to, if any.
+fn resolve_chat_uid(acp_session_id: &str) -> Option<String> {
+    load_chat_index().remove(acp_session_id)
+}
+
+/// Bind an ACP session id to its server chat uid (best effort; failures to
+/// persist only cost the ability to resume history, never the live turn).
+fn record_chat_mapping(acp_session_id: &str, chat_uid: &str) {
+    if acp_session_id.is_empty() || chat_uid.is_empty() || acp_session_id == chat_uid {
+        return;
+    }
+    let Some(path) = chat_index_path() else {
+        return;
+    };
+    let mut index = load_chat_index();
+    if index.get(acp_session_id).map(String::as_str) == Some(chat_uid) {
+        return;
+    }
+    index.insert(acp_session_id.to_owned(), chat_uid.to_owned());
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(bytes) = serde_json::to_vec_pretty(&index) {
+        let _ = std::fs::write(&path, bytes);
     }
 }
 
