@@ -145,7 +145,7 @@ pub enum Commands {
     /// Serve a Longbridge AI agent over ACP on stdin/stdout
     ///
     /// The process speaks newline-delimited JSON-RPC and is intended to be
-    /// launched by ACP clients such as Zed and Cherry Studio.
+    /// launched by an ACP-compatible AI chat client.
     /// Example: longbridge acp
     Acp {
         /// Longbridge AI agent UID (defaults to the main `chatbot` agent)

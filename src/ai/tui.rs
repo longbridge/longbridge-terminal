@@ -1591,8 +1591,8 @@ fn render_empty_state(f: &mut ratatui::Frame, area: Rect) {
     // useful, so the mark yields to them rather than pushing them off screen. The
     // whole block is centre-aligned, so the mark needs no indent of its own —
     // adding one would offset it twice.
-    let mark_h = usize::from(assets::MARK_HEIGHT);
-    if area.height as usize >= mark_h + content.len() + 2 && area.width >= assets::MARK_WIDTH {
+    let mark_h = usize::from(assets::mark_height());
+    if area.height as usize >= mark_h + content.len() + 2 && area.width >= assets::mark_width() {
         let mut with_logo = assets::logo_mark();
         with_logo.push(Line::from(""));
         with_logo.extend(content);
@@ -3201,7 +3201,7 @@ mod tests {
     /// the point, so a short terminal keeps the text and drops the logo.
     #[test]
     fn the_logo_yields_to_the_welcome_copy_on_a_short_terminal() {
-        let logo_h = usize::from(crate::tui::ui::assets::MARK_HEIGHT);
+        let logo_h = usize::from(crate::tui::ui::assets::mark_height());
         let state = super::ChatState::new("chatbot".into(), "welcome".into());
 
         let mut ui = super::Ui::new();
@@ -3251,7 +3251,7 @@ mod tests {
         let mark = crate::tui::ui::assets::logo_mark();
         assert_eq!(
             u16::try_from(mark.len()).unwrap(),
-            crate::tui::ui::assets::MARK_HEIGHT,
+            crate::tui::ui::assets::mark_height(),
             "one line per mark row"
         );
         for line in &mark {
@@ -3262,16 +3262,15 @@ mod tests {
                 .sum();
             assert_eq!(
                 w,
-                crate::tui::ui::assets::MARK_WIDTH,
+                crate::tui::ui::assets::mark_width(),
                 "ragged mark row: {line:?}"
             );
         }
-        const {
-            assert!(
-                crate::tui::ui::assets::MARK_WIDTH <= 24,
-                "the mark should stay small next to the wordmark"
-            );
-        }
+        let width = crate::tui::ui::assets::mark_width();
+        assert!(
+            width <= 24,
+            "the mark should stay small next to the wordmark, got {width} columns"
+        );
     }
 
     /// The mark is a bar chart, so it must keep its bars *and* the gaps between
