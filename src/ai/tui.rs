@@ -338,6 +338,13 @@ impl Ui {
     fn clamp_sel(&mut self) {
         self.sel = self.sel.min(self.row_count().saturating_sub(1));
     }
+
+    /// Drop render state tied to the previous conversation (cached lines and
+    /// fetched quotes) so a fresh chat doesn't show stale content.
+    fn reset_render(&mut self) {
+        self.quotes.clear();
+        self.cache_sig = 0;
+    }
 }
 
 /// Run the chat TUI until the user quits. The caller has already entered the
@@ -729,6 +736,7 @@ fn exec_slash(name: &str, args: &str, ui: &mut Ui, state: &mut ChatState) {
     match name {
         "new" => {
             state.reset(t!("Ai.Welcome").to_string());
+            ui.reset_render();
             ui.switch(View::Chat);
         }
         "copy" => {
@@ -963,12 +971,14 @@ fn activate(ui: &mut Ui, state: &mut ChatState) {
                 }
             } else {
                 state.reset(t!("Ai.Welcome").to_string());
+                ui.reset_render();
                 ui.switch(View::Chat);
             }
         }
         View::Settings => match SETTINGS.get(ui.sel) {
             Some(Setting::NewChat) => {
                 state.reset(t!("Ai.Welcome").to_string());
+                ui.reset_render();
                 ui.switch(View::Chat);
             }
             None => {}
