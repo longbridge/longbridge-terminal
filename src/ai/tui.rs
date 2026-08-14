@@ -592,6 +592,8 @@ fn on_sessions_key(key: crossterm::event::KeyEvent, ui: &mut Ui, state: &mut Cha
             let last = ui.row_count().saturating_sub(1);
             ui.sel = (ui.sel + 1).min(last);
         }
+        KeyCode::Home => ui.sel = 0,
+        KeyCode::End => ui.sel = ui.row_count().saturating_sub(1),
         KeyCode::Enter => activate(ui, state),
         KeyCode::Backspace => {
             ui.search.pop();
@@ -833,6 +835,8 @@ fn on_list_key(key: crossterm::event::KeyEvent, ui: &mut Ui, state: &mut ChatSta
             let last = ui.row_count().saturating_sub(1);
             ui.sel = (ui.sel + 1).min(last);
         }
+        KeyCode::Home => ui.sel = 0,
+        KeyCode::End => ui.sel = ui.row_count().saturating_sub(1),
         KeyCode::Enter => activate(ui, state),
         _ => {}
     }
