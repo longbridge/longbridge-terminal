@@ -103,7 +103,7 @@ impl Slash {
     }
 }
 
-const SLASH: [Slash; 8] = [
+const SLASH: [Slash; 9] = [
     Slash {
         name: "/new",
         aliases: &["/clear"],
@@ -118,6 +118,11 @@ const SLASH: [Slash; 8] = [
         name: "/export",
         aliases: &[],
         desc: "Ai.SlashExport",
+    },
+    Slash {
+        name: "/quote",
+        aliases: &[],
+        desc: "Ai.SlashQuote",
     },
     Slash {
         name: "/resume",
@@ -654,6 +659,12 @@ fn on_chat_key(
     let newline = key
         .modifiers
         .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT);
+    // The panel floats over the chat, so Esc dismisses it before anything else
+    // reads the key — otherwise the reader would clear their input instead.
+    if ui.quote_panel.is_some() && matches!(key.code, KeyCode::Esc) {
+        ui.quote_panel = None;
+        return;
+    }
     // When the slash palette is open, arrows/Enter/Esc drive it instead of the
     // transcript or history, matching the grok-style command menu.
     if slash_active(editor) {
@@ -797,6 +808,20 @@ fn exec_slash(name: &str, args: &str, ui: &mut Ui, state: &mut ChatState) {
             state.reset(t!("Ai.Welcome").to_string());
             ui.reset_render();
             ui.switch(View::Chat);
+        }
+        // Keyboard route to what a click on a symbol does. With no argument it
+        // opens the security the answer mentioned last, which is usually the one
+        // the reader is looking at.
+        "quote" => {
+            let symbol = if args.is_empty() {
+                last_symbol(state)
+            } else {
+                Some(args.trim().to_uppercase())
+            };
+            match symbol {
+                Some(symbol) => open_quote_panel(ui, symbol),
+                None => ui.notice = Some(t!("Ai.QuoteNoSymbol").to_string()),
+            }
         }
         "copy" => {
             let text = transcript_text(state);
@@ -951,6 +976,13 @@ fn on_mouse(
                     return;
                 }
             }
+            // The panel floats over the transcript, and the symbol hit rects were
+            // recorded from what is underneath it. A click while it is open
+            // dismisses it rather than reaching through to a target the reader
+            // cannot see.
+            if ui.quote_panel.take().is_some() {
+                return;
+            }
             if ui.view == View::Chat {
                 if let Some(idx) = ui
                     .slash_rows
@@ -1058,6 +1090,15 @@ fn activate(ui: &mut Ui, state: &mut ChatState) {
         }
         View::Chat | View::Question => {}
     }
+}
+
+/// The security mentioned most recently in the transcript.
+fn last_symbol(state: &ChatState) -> Option<String> {
+    state.messages.iter().rev().find_map(|m| {
+        super::answer::symbol_spans(&m.text)
+            .last()
+            .map(|r| m.text[r.clone()].to_string())
+    })
 }
 
 /// Open the floating quote panel for `symbol`, fetching its quote if the card is
@@ -1453,6 +1494,53 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
     }
     render_status(f, status, ui, state);
     render_footer(f, footer, ui, editor);
+    // Last, so it floats over whatever is underneath.
+    render_quote_panel(f, body, ui);
+}
+
+/// Draw the floating quote panel, if one is open.
+///
+/// Centred over the transcript and no wider than the card it holds, so the answer
+/// the symbol was read in stays visible around it.
+fn render_quote_panel(f: &mut ratatui::Frame, area: Rect, ui: &Ui) {
+    use ratatui::widgets::{Block, BorderType, Borders, Clear};
+
+    let Some(symbol) = &ui.quote_panel else {
+        return;
+    };
+    let inner_w = 34usize.min(area.width.saturating_sub(4) as usize);
+    let body = match ui.quotes.get(symbol) {
+        Some(card) => card_lines(card, inner_w),
+        None => vec![Line::from(Span::styled(
+            t!("Ai.QuoteLoading").to_string(),
+            Style::default().fg(Color::DarkGray),
+        ))],
+    };
+    let height = (body.len() as u16 + 3).min(area.height);
+    let width = (inner_w as u16 + 4).min(area.width);
+    let rect = Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    };
+    let mut lines = body;
+    lines.push(Line::from(Span::styled(
+        t!("Ai.QuotePanelHint").to_string(),
+        Style::default().fg(Color::DarkGray),
+    )));
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::DarkGray))
+        .title(Span::styled(
+            format!(" {symbol} "),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
+    f.render_widget(Clear, rect);
+    f.render_widget(Paragraph::new(Text::from(lines)).block(block), rect);
 }
 
 fn render_title(f: &mut ratatui::Frame, area: Rect, state: &ChatState) {
@@ -1565,7 +1653,7 @@ fn render_chat(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatStat
     let scroll = (state.scroll).min(ui.max_scroll) as usize;
     let bottom = total.saturating_sub(scroll);
     let start = bottom.saturating_sub(height);
-    let window: Vec<Line> = (start..bottom)
+    let mut window: Vec<Line> = (start..bottom)
         .map(|i| {
             if i < cache_len {
                 ui.transcript_cache[i].clone()
@@ -1581,6 +1669,7 @@ fn render_chat(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatStat
             ui.chips.push((Chip::Reference(i), rect));
         }
     }
+    link_visible_symbols(&mut window, area, ui);
 
     let Some((anchor, cursor)) = ui.selection else {
         ui.selected_text = None;
@@ -2528,6 +2617,81 @@ fn user_lines(text: &str, width: usize) -> Vec<Line<'static>> {
     out
 }
 
+/// Colour of a security the reader can open.
+const SYMBOL_FG: Color = Color::Rgb(122, 196, 255);
+
+/// Split out the securities named in `lines` so each is its own span.
+///
+/// A symbol has to be a span of its own before it can be given a colour, a hover
+/// or a hit rectangle, and Markdown gives us one span per style run — `看 700.HK
+/// 的走势` arrives whole. The original style is kept and only the colour changes,
+/// so a symbol inside a heading stays bold.
+fn link_symbols(lines: &mut Vec<Line<'static>>) {
+    for line in lines.iter_mut() {
+        if !line
+            .spans
+            .iter()
+            .any(|s| !super::answer::symbol_spans(&s.content).is_empty())
+        {
+            continue;
+        }
+        let mut out: Vec<Span<'static>> = Vec::new();
+        for span in line.spans.drain(..) {
+            let ranges = super::answer::symbol_spans(&span.content);
+            if ranges.is_empty() {
+                out.push(span);
+                continue;
+            }
+            let text = span.content.to_string();
+            let mut at = 0usize;
+            for range in ranges {
+                if range.start > at {
+                    out.push(Span::styled(text[at..range.start].to_string(), span.style));
+                }
+                out.push(Span::styled(
+                    text[range.clone()].to_string(),
+                    span.style.fg(SYMBOL_FG),
+                ));
+                at = range.end;
+            }
+            if at < text.len() {
+                out.push(Span::styled(text[at..].to_string(), span.style));
+            }
+        }
+        line.spans = out;
+    }
+}
+
+/// Record a hit rectangle for every security visible in `window`, underlining the
+/// one under the pointer.
+///
+/// Resolved per frame against what is actually on screen, so scrolling cannot
+/// leave a stale target behind — the same reason the reference rows are recorded
+/// during the render rather than cached.
+fn link_visible_symbols(window: &mut [Line<'static>], area: Rect, ui: &mut Ui) {
+    for (i, line) in window.iter_mut().enumerate() {
+        let y = area.y + i as u16;
+        let mut x = area.x;
+        for span in &mut line.spans {
+            let w = UnicodeWidthStr::width(span.content.as_ref()) as u16;
+            if span.style.fg == Some(SYMBOL_FG) && super::answer::is_symbol(&span.content) {
+                let rect = Rect {
+                    x,
+                    y,
+                    width: w,
+                    height: 1,
+                };
+                if hovering(ui, rect) {
+                    span.style = span.style.add_modifier(Modifier::UNDERLINED);
+                }
+                ui.chips
+                    .push((Chip::Symbol(span.content.to_string()), rect));
+            }
+            x = x.saturating_add(w);
+        }
+    }
+}
+
 /// Render an assistant answer the way `agent chat` does: split into text /
 /// chart / widget segments, then render Markdown text, draw `vis-chart` blocks
 /// as charts, and reduce `x-widget` tags to a compact reference instead of
@@ -2570,6 +2734,7 @@ fn render_answer_lines(
             }
         }
     }
+    link_symbols(&mut out);
     // A block at the very end leaves a trailing blank the turn separator would
     // double.
     while out
@@ -2706,6 +2871,52 @@ fn change_color(direction: i8) -> Color {
 /// A boxed card for one security: price and change, then the day's range and
 /// activity — what a trader reads before deciding the reference was worth
 /// following.
+/// The panel's body: one field per row, unboxed — the panel's own frame is the
+/// border, and a dedicated panel has the room the inline card does not.
+fn card_lines(card: &super::quotes::QuoteCardData, width: usize) -> Vec<Line<'static>> {
+    let dim = Style::default().fg(Color::DarkGray);
+    let mut out = Vec::new();
+    if !card.name.is_empty() {
+        out.push(Line::from(Span::styled(
+            truncate_width(&card.name, width),
+            Style::default().fg(Color::Gray),
+        )));
+    }
+    out.push(Line::from(vec![
+        Span::styled(
+            format!("{}  ", card.last),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("{}  {}", card.change, card.change_pct),
+            Style::default().fg(change_color(card.direction)),
+        ),
+    ]));
+    out.push(Line::from(""));
+    // Two labelled columns per row: a panel is read down, not across.
+    let pair = |a: (&str, &str), b: (&str, &str)| {
+        Line::from(vec![
+            Span::styled(format!("{:<5}", a.0), dim),
+            Span::raw(format!("{:<11}", a.1)),
+            Span::styled(format!("{:<5}", b.0), dim),
+            Span::raw(b.1.to_string()),
+        ])
+    };
+    out.push(pair(
+        (&t!("Ai.QuoteOpen"), &card.open),
+        (&t!("Ai.QuoteHigh"), &card.high),
+    ));
+    out.push(pair(
+        (&t!("Ai.QuoteLow"), &card.low),
+        (&t!("Ai.QuoteVolume"), &card.volume),
+    ));
+    out.push(pair(
+        (&t!("Ai.QuoteTurnover"), &card.turnover),
+        ("", &card.at),
+    ));
+    out
+}
+
 fn quote_card(card: &super::quotes::QuoteCardData, width: usize) -> Vec<Line<'static>> {
     let dir = change_color(card.direction);
     let head = if card.name.is_empty() {
@@ -2950,15 +3161,22 @@ mod tests {
     }
 
     /// A prefix that only matches an alias still surfaces its command, so the
-    /// dropdown is never empty while a valid command is being typed.
+    /// dropdown is never empty while a valid command is being typed. `/qu` is
+    /// ambiguous — `/quote` by name and `/exit` by its `/quit` alias — and both
+    /// have to be offered; typing either in full still dispatches exactly.
     #[test]
     fn palette_matches_aliases() {
-        use super::{slash_matches, Editor, SLASH};
+        use super::{slash_lookup, slash_matches, Editor, SLASH};
         let mut e = Editor::new();
         e.set_text("/qu");
-        let matches = slash_matches(&e);
-        assert_eq!(matches.len(), 1);
-        assert_eq!(SLASH[matches[0]].name, "/exit");
+        let names: Vec<&str> = slash_matches(&e)
+            .into_iter()
+            .map(|i| SLASH[i].name)
+            .collect();
+        assert!(names.contains(&"/exit"), "the alias surfaces: {names:?}");
+        assert!(names.contains(&"/quote"), "and the name: {names:?}");
+        assert_eq!(slash_lookup("/quit"), Some("exit"));
+        assert_eq!(slash_lookup("/quote"), Some("quote"));
     }
 
     /// Render the whole view into an in-memory backend and return its text rows.
@@ -3603,5 +3821,68 @@ mod tests {
             !text.windows(3).any(|w| w.iter().all(String::is_empty)),
             "no run of three blank rows: {text:?}"
         );
+    }
+
+    /// A symbol in an answer is something to open, so it has to be its own span,
+    /// in the link colour, with a hit rectangle over exactly its columns.
+    #[test]
+    fn symbols_in_an_answer_are_clickable() {
+        let mut ui = super::Ui::new();
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        state.apply(super::ChatEvent::UserPrompt("compare".into()));
+        state.apply(super::ChatEvent::Delta(
+            "700.HK and AAPL.US both rose.".into(),
+        ));
+        state.apply(super::ChatEvent::TurnFinished { error: None });
+        let _ = frame(&mut ui, &state, 64, 20);
+        let symbols: Vec<(String, u16)> = ui
+            .chips
+            .iter()
+            .filter_map(|(chip, rect)| match chip {
+                super::Chip::Symbol(s) => Some((s.clone(), rect.width)),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            symbols.iter().any(|(s, w)| s == "700.HK" && *w == 6),
+            "700.HK should be clickable over its own six columns: {symbols:?}"
+        );
+        assert!(
+            symbols.iter().any(|(s, w)| s == "AAPL.US" && *w == 7),
+            "AAPL.US should be clickable: {symbols:?}"
+        );
+    }
+
+    /// The panel opens over the transcript and closes on Esc, leaving the reader
+    /// where they were.
+    #[test]
+    fn the_quote_panel_opens_and_closes() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut ui = super::Ui::new();
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        state.apply(super::ChatEvent::UserPrompt("700.HK?".into()));
+        state.apply(super::ChatEvent::Delta("700.HK rose.".into()));
+        state.apply(super::ChatEvent::TurnFinished { error: None });
+        // `/quote` with no argument opens the security the answer mentioned last.
+        super::exec_slash("quote", "", &mut ui, &mut state);
+        assert_eq!(ui.quote_panel.as_deref(), Some("700.HK"));
+        let rows = frame(&mut ui, &state, 64, 20);
+        assert!(
+            rows.iter().any(|r| r.contains("700.HK")),
+            "the panel names the security: {rows:?}"
+        );
+        let mut editor = super::Editor::new();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut turn = None;
+        super::on_chat_key(
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            &mut ui,
+            &mut state,
+            &mut editor,
+            &mut turn,
+            &tx,
+        );
+        assert!(ui.quote_panel.is_none(), "Esc closes the panel");
+        assert_eq!(state.scroll, 0, "and the transcript stays where it was");
     }
 }

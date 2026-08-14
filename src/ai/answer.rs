@@ -211,7 +211,10 @@ pub fn symbol_spans(text: &str) -> Vec<std::ops::Range<usize>> {
         };
         let end = dot + 1 + market.len();
         // The suffix has to end the word, or `AAPL.USA` reads as a US ticker.
-        if bytes.get(end).is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'.') {
+        if bytes
+            .get(end)
+            .is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'.')
+        {
             continue;
         }
         // Walk back over the code, allowing one leading dot for an index.
@@ -246,7 +249,9 @@ pub fn symbol_spans(text: &str) -> Vec<std::ops::Range<usize>> {
 
 /// Whether `text` is exactly one security symbol.
 pub fn is_symbol(text: &str) -> bool {
-    symbol_spans(text).first().is_some_and(|r| *r == (0..text.len()))
+    symbol_spans(text)
+        .first()
+        .is_some_and(|r| *r == (0..text.len()))
 }
 
 /// The symbol of a single-quote widget, or `None` for any other kind.
@@ -816,10 +821,7 @@ mod tests {
     #[test]
     fn symbols_are_found_in_prose_and_nowhere_else() {
         let text = "看 700.HK 和 AAPL.US，还有 .DJI.US；但 AAPL.USA、x700.HK、see.us 不算。";
-        let found: Vec<&str> = symbol_spans(text)
-            .into_iter()
-            .map(|r| &text[r])
-            .collect();
+        let found: Vec<&str> = symbol_spans(text).into_iter().map(|r| &text[r]).collect();
         assert_eq!(found, ["700.HK", "AAPL.US", ".DJI.US"], "in {text:?}");
     }
 
@@ -838,10 +840,7 @@ mod tests {
     #[test]
     fn symbols_are_found_where_answers_put_them() {
         let text = "特斯拉 (TSLA.US) 与 腾讯 (700.HK) 对比";
-        let found: Vec<&str> = symbol_spans(text)
-            .into_iter()
-            .map(|r| &text[r])
-            .collect();
+        let found: Vec<&str> = symbol_spans(text).into_iter().map(|r| &text[r]).collect();
         assert_eq!(found, ["TSLA.US", "700.HK"]);
     }
 }
