@@ -471,9 +471,18 @@ impl AgentBackend for OpenApiAgent {
             }
         };
         // Resume the server-side chat: the next prompt continues this
-        // conversation, appended after its most recent message.
+        // conversation, appended after its most recent *completed* round. The
+        // parent must be the last assistant message that actually produced an
+        // answer — not simply the last message, nor the last assistant message.
+        // A failed/aborted round leaves an empty assistant message (e.g. status
+        // 5, no text); resuming with that (or with a trailing unanswered `user`
+        // turn) as the parent makes the continue API keep failing with 400000.
         record_chat_mapping(session_id, &detail.chat.uid);
-        let parent_message_id = detail.messages.last().map(|message| message.id.to_string());
+        let parent_message_id = detail
+            .messages
+            .iter()
+            .rfind(|message| message.sender == "assistant" && !message.text().is_empty())
+            .map(|message| message.id.to_string());
         let state = OpenApiAgentSession {
             acp_session_id: Some(session_id.to_owned()),
             conversation_id: Some(detail.chat.uid.clone()),
@@ -528,15 +537,16 @@ impl AgentBackend for OpenApiAgent {
                 .await
                 .map(StreamExt::boxed)
         } else {
-            self.context
-                .conversation_streamed(
-                    self.agent_id.clone(),
-                    prompt,
-                    session.conversation_id,
-                    session.parent_message_id,
-                )
-                .await
-                .map(StreamExt::boxed)
+            // Silently retry once if the conversation workflow fails with the
+            // transient 400000 ("Something went wrong. Please try again.").
+            conversation_stream_with_retry(
+                self.context.clone(),
+                self.agent_id.clone(),
+                prompt,
+                session.conversation_id,
+                session.parent_message_id,
+            )
+            .await
         };
         // A turn that fails to start (e.g. the conversation API returns an auth
         // error or times out) must not fail the ACP turn or connection: surface
@@ -958,6 +968,80 @@ fn record_chat_mapping(acp_session_id: &str, chat_uid: &str) {
     if let Ok(bytes) = serde_json::to_vec_pretty(&index) {
         let _ = std::fs::write(&path, bytes);
     }
+}
+
+/// Start a conversation stream, silently retrying once if the workflow fails
+/// with the transient `400000` ("Something went wrong. Please try again.").
+///
+/// The retry is spliced in at the raw-event level: the failed `workflow_finished`
+/// is swallowed and a fresh attempt's events continue the same ACP turn, so the
+/// caller's event mapping never sees the transient failure. Only the *initial*
+/// start error propagates (so the caller can degrade); a failure to start the
+/// retry is surfaced as a stream error instead.
+async fn conversation_stream_with_retry(
+    context: longbridge::AgentContext,
+    agent_id: String,
+    query: String,
+    chat_uid: Option<String>,
+    parent_message_id: Option<String>,
+) -> Result<BoxStream<'static, Result<ConversationStreamEvent, longbridge::Error>>, longbridge::Error>
+{
+    const RETRYABLE_CODE: i32 = 400_000;
+
+    struct State {
+        context: longbridge::AgentContext,
+        stream: BoxStream<'static, Result<ConversationStreamEvent, longbridge::Error>>,
+        /// The params to restart once; `None` after the retry is spent.
+        retry: Option<(String, String, Option<String>, Option<String>)>,
+    }
+
+    let first = context
+        .conversation_streamed(
+            agent_id.clone(),
+            query.clone(),
+            chat_uid.clone(),
+            parent_message_id.clone(),
+        )
+        .await?;
+
+    let state = State {
+        context,
+        stream: first.boxed(),
+        retry: Some((agent_id, query, chat_uid, parent_message_id)),
+    };
+
+    Ok(stream::unfold(state, |mut state| async move {
+        loop {
+            match state.stream.next().await {
+                Some(Ok(ConversationStreamEvent::WorkflowFinished(response)))
+                    if state.retry.is_some()
+                        && response
+                            .error
+                            .as_ref()
+                            .is_some_and(|error| error.code == RETRYABLE_CODE) =>
+                {
+                    let (agent_id, query, chat_uid, parent_message_id) =
+                        state.retry.take().expect("retry budget checked above");
+                    tracing::warn!(
+                        target: "longbridge::acp",
+                        code = RETRYABLE_CODE,
+                        "conversation workflow failed transiently; retrying once"
+                    );
+                    match state
+                        .context
+                        .conversation_streamed(agent_id, query, chat_uid, parent_message_id)
+                        .await
+                    {
+                        Ok(retry_stream) => state.stream = retry_stream.boxed(),
+                        Err(error) => return Some((Err(error), state)),
+                    }
+                }
+                Some(item) => return Some((item, state)),
+                None => return None,
+            }
+        }
+    })
+    .boxed())
 }
 
 fn plan_entries(outputs: Option<&serde_json::Value>) -> Vec<AgentPlanEntry> {
