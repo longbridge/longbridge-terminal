@@ -248,6 +248,11 @@ struct Ui {
     /// Senders for background History fetch / load, set once in `run`.
     history_tx: Option<UnboundedSender<Option<Vec<SessionSummary>>>>,
     load_tx: Option<UnboundedSender<Option<session_store::LoadedChat>>>,
+    /// Hit rect of the running turn's `[stop]` button, recorded during render.
+    stop_button: Option<Rect>,
+    /// When the active turn started, for the elapsed clock. UI state rather than
+    /// chat state: it exists to be displayed, not to be replayed.
+    turn_started: Option<std::time::Instant>,
     /// Set to break the event loop (via `/exit` or a double Ctrl+C).
     should_quit: bool,
     /// True after one Ctrl+C on an empty prompt; a second one exits.
@@ -284,6 +289,8 @@ impl Ui {
             sessions_error: false,
             history_tx: None,
             load_tx: None,
+            stop_button: None,
+            turn_started: None,
             should_quit: false,
             ctrl_c_armed: false,
             focused: true,
@@ -884,6 +891,14 @@ fn on_mouse(
         MouseEventKind::Down(MouseButton::Left) => {
             let (col, row) = (m.column, m.row);
             ui.selection = None;
+            // The running turn's stop button, wherever the current view is.
+            if let Some(rect) = ui.stop_button {
+                if hit(rect, col, row) {
+                    cancel_turn(state, turn);
+                    ui.stop_button = None;
+                    return;
+                }
+            }
             if ui.view == View::Chat {
                 if let Some(idx) = ui
                     .slash_rows
@@ -1279,6 +1294,13 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
     if is_chat && state.busy {
         ui.animating = true;
     }
+    // The elapsed clock is derived from `busy` rather than set by each of the
+    // several places that start or cancel a turn, so it cannot fall out of sync.
+    if state.busy {
+        ui.turn_started.get_or_insert_with(std::time::Instant::now);
+    } else {
+        ui.turn_started = None;
+    }
     let has_meta =
         is_chat && !state.busy && (!state.references.is_empty() || !state.further.is_empty());
     let meta_h = if has_meta { meta_height(state) } else { 0 };
@@ -1288,9 +1310,16 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
         3
     };
 
+    // A running turn gets a row of its own so its spinner, timer and cancel
+    // button cannot be hidden by a notice — and the notice cannot be hidden by
+    // it. Only while busy, so idle chrome stays one row on a short terminal.
+    let has_turn = is_chat && state.busy;
     let mut constraints = vec![Constraint::Length(1), Constraint::Min(1)];
     if has_meta {
         constraints.push(Constraint::Length(meta_h));
+    }
+    if has_turn {
+        constraints.push(Constraint::Length(1));
     }
     constraints.push(Constraint::Length(1));
     constraints.push(Constraint::Length(footer_h));
@@ -1302,6 +1331,11 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
         let m = chunks[idx];
         idx += 1;
         m
+    });
+    let turn_row = has_turn.then(|| {
+        let r = chunks[idx];
+        idx += 1;
+        r
     });
     let status = chunks[idx];
     idx += 1;
@@ -1332,6 +1366,11 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
     } else {
         ui.chips.clear();
     }
+    if let Some(row) = turn_row {
+        render_turn_status(f, row, ui, state);
+    } else {
+        ui.stop_button = None;
+    }
     render_status(f, status, ui, state);
     render_footer(f, footer, ui, editor);
 }
@@ -1353,12 +1392,21 @@ fn render_title(f: &mut ratatui::Frame, area: Rect, state: &ChatState) {
                 .add_modifier(Modifier::BOLD),
         ));
     }
-    // Right: the agent uid, dimmed and right-aligned.
-    let right = format!("{} ", state.agent_uid);
-    let left_w: usize = left.iter().map(|s| s.content.width()).sum();
-    let pad = (area.width as usize).saturating_sub(left_w + right.width());
-    left.push(Span::raw(" ".repeat(pad)));
-    left.push(Span::styled(right, Style::default().fg(Color::DarkGray)));
+    // Right: a marker only when the conversation is not with Longbridge AI's own
+    // assistant. An agent uid is an internal handle and never goes on screen (see
+    // `cli::agent::DEFAULT_AGENT_UID`), so this says *that* a custom agent is in
+    // use without naming it — the badge on the left already names the default.
+    let right = if state.agent_uid == DEFAULT_AGENT_UID {
+        String::new()
+    } else {
+        format!("{} ", t!("Ai.CustomAgent"))
+    };
+    if !right.is_empty() {
+        let left_w: usize = left.iter().map(|s| s.content.width()).sum();
+        let pad = (area.width as usize).saturating_sub(left_w + right.width());
+        left.push(Span::raw(" ".repeat(pad)));
+        left.push(Span::styled(right, Style::default().fg(Color::DarkGray)));
+    }
     f.render_widget(Paragraph::new(Line::from(left)), area);
 }
 
@@ -2100,6 +2148,69 @@ fn reference_url(r: &longbridge::agent::Reference) -> Option<String> {
         .map(ToString::to_string)
 }
 
+/// The running turn's own row: what it is doing, for how long, over how many
+/// tools, and how to stop it.
+///
+/// Cancelling used to require already knowing Esc or Ctrl+C; `[stop]` is the
+/// same action with a visible affordance. The elapsed clock is the difference
+/// between "this is slow" and "this is stuck".
+fn render_turn_status(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatState) {
+    let frame = SPINNER[(ui.tick as usize) % SPINNER.len()];
+    let mut spans = vec![
+        Span::styled(format!("{frame} "), Style::default().fg(Color::Yellow)),
+        Span::styled(state.status.clone(), Style::default().fg(Color::Yellow)),
+    ];
+    let tools = tools_this_turn(state);
+    if tools > 0 {
+        spans.push(Span::styled(
+            format!("   · {}", t!("Ai.ToolCount", count = tools)),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+    if let Some(started) = ui.turn_started {
+        let secs = started.elapsed().as_secs();
+        spans.push(Span::styled(
+            format!("   {}:{:02}", secs / 60, secs % 60),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+    // The button is right-aligned, so its rect is derived from the label width.
+    let label = format!("[{}]", t!("Ai.Stop"));
+    let label_w = UnicodeWidthStr::width(label.as_str()) as u16;
+    let used: u16 = spans
+        .iter()
+        .map(|s| UnicodeWidthStr::width(s.content.as_ref()) as u16)
+        .sum();
+    let rect = (area.width > used + label_w + 1).then(|| Rect {
+        x: area.x + area.width - label_w,
+        y: area.y,
+        width: label_w,
+        height: 1,
+    });
+    ui.stop_button = rect;
+    if let Some(rect) = rect {
+        let gap = area.width - used - label_w;
+        spans.push(Span::raw(" ".repeat(gap as usize)));
+        let hot = hovering(ui, rect);
+        spans.push(Span::styled(
+            label,
+            Style::default().fg(if hot { Color::Red } else { Color::DarkGray }),
+        ));
+    }
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+/// Tool calls made since the user's last prompt.
+fn tools_this_turn(state: &ChatState) -> usize {
+    state
+        .messages
+        .iter()
+        .rev()
+        .take_while(|m| m.role != Role::User)
+        .filter(|m| m.role == Role::Tool)
+        .count()
+}
+
 fn render_status(f: &mut ratatui::Frame, area: Rect, ui: &Ui, state: &ChatState) {
     let (text, style) = if ui.view == View::Chat && state.scroll > 0 {
         // While scrolled up, tell the user how to get back to the latest.
@@ -2109,12 +2220,6 @@ fn render_status(f: &mut ratatui::Frame, area: Rect, ui: &Ui, state: &ChatState)
         )
     } else if let Some(notice) = &ui.notice {
         (notice.clone(), Style::default().fg(Color::Green))
-    } else if state.busy && ui.view == View::Chat {
-        let frame = SPINNER[(ui.tick as usize) % SPINNER.len()];
-        (
-            format!("{frame} {}", state.status),
-            Style::default().fg(Color::Yellow),
-        )
     } else {
         let hint = match ui.view {
             View::Chat => t!("Ai.InputHint"),
@@ -2459,5 +2564,98 @@ mod tests {
         let matches = slash_matches(&e);
         assert_eq!(matches.len(), 1);
         assert_eq!(SLASH[matches[0]].name, "/exit");
+    }
+
+    /// Render the whole view into an in-memory backend and return its text rows.
+    fn frame(ui: &mut super::Ui, state: &super::ChatState, w: u16, h: u16) -> Vec<String> {
+        let backend = ratatui::backend::TestBackend::new(w, h);
+        let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+        let editor = super::Editor::new();
+        terminal
+            .draw(|f| super::view(f, ui, state, &editor))
+            .expect("draw");
+        let buf = terminal.backend().buffer().clone();
+        (0..buf.area.height)
+            .map(|y| {
+                (0..buf.area.width)
+                    .map(|x| buf[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    fn busy_state() -> super::ChatState {
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        state.apply(super::ChatEvent::UserPrompt("what is NVDA doing?".into()));
+        state.apply(super::ChatEvent::ToolStarted("Get Quote".into()));
+        state.apply(super::ChatEvent::Status("Calling Get Quote".into()));
+        state
+    }
+
+    /// A `/copy` confirmation used to take over the one status row and hide the
+    /// spinner, so a running turn looked finished.
+    #[test]
+    fn a_notice_does_not_hide_the_running_turn() {
+        let mut ui = super::Ui::new();
+        ui.notice = Some("Copied to clipboard.".into());
+        let rows = frame(&mut ui, &busy_state(), 70, 16);
+        let screen = rows.join("\n");
+        assert!(
+            screen.contains("Copied to clipboard."),
+            "the notice should still show:\n{screen}"
+        );
+        assert!(
+            super::SPINNER.iter().any(|f| screen.contains(f)),
+            "the spinner must survive alongside it:\n{screen}"
+        );
+        assert!(
+            screen.contains("Calling Get Quote"),
+            "the turn's status text should show:\n{screen}"
+        );
+    }
+
+    /// The turn row carries a cancel affordance, and it is only there while a
+    /// turn is running — idle chrome stays one row.
+    #[test]
+    fn the_turn_row_exists_only_while_busy() {
+        let mut ui = super::Ui::new();
+        let busy = frame(&mut ui, &busy_state(), 70, 16);
+        assert!(
+            busy.iter().any(|l| l.contains("[stop]")),
+            "a running turn should offer [stop]:\n{}",
+            busy.join("\n")
+        );
+        assert!(ui.stop_button.is_some(), "the button needs a hit rect");
+
+        let idle = super::ChatState::new("chatbot".into(), "welcome".into());
+        let mut ui = super::Ui::new();
+        let rows = frame(&mut ui, &idle, 70, 16);
+        assert!(
+            !rows.iter().any(|l| l.contains("[stop]")),
+            "no turn, no stop button:\n{}",
+            rows.join("\n")
+        );
+        assert!(ui.stop_button.is_none());
+    }
+
+    /// The count is per turn, not per conversation.
+    #[test]
+    fn tool_count_covers_only_the_current_turn() {
+        use super::{ChatEvent, ChatState};
+        let mut state = ChatState::new("chatbot".into(), "welcome".into());
+        state.apply(ChatEvent::UserPrompt("first".into()));
+        state.apply(ChatEvent::ToolStarted("A".into()));
+        state.apply(ChatEvent::TurnFinished { error: None });
+        assert_eq!(super::tools_this_turn(&state), 1);
+
+        state.apply(ChatEvent::UserPrompt("second".into()));
+        assert_eq!(
+            super::tools_this_turn(&state),
+            0,
+            "a new turn starts at zero"
+        );
+        state.apply(ChatEvent::ToolStarted("B".into()));
+        state.apply(ChatEvent::ToolStarted("C".into()));
+        assert_eq!(super::tools_this_turn(&state), 2);
     }
 }
