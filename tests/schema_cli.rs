@@ -104,7 +104,7 @@ fn root_schema_reports_no_response_schema() {
     );
 }
 
-// ── A2A command surface: behavior that only shows up in a real process ──────
+// ── Agent command surface: behavior that only shows up in a real process ──────
 //
 // These spawn the binary because the properties under test are process-level:
 // the exit status, which stream output lands on, and the fact that no auth or
@@ -131,7 +131,7 @@ fn run_logged_out(args: &[&str]) -> CliOutput {
 
 #[test]
 fn bare_command_groups_print_help_without_authenticating() {
-    for group in ["agent", "workspace"] {
+    for group in ["agent"] {
         let out = run_logged_out(&[group]);
 
         assert_eq!(

@@ -5,8 +5,7 @@ use std::ffi::OsString;
 
 use super::{
     agent, asset, atm, auth, check, completion, dca, fundamental, init, insider_trades, investors,
-    ipo, news, quote, run_script, screener, sharelist, statement, topic, trade, watchlist,
-    workspace, Cli,
+    ipo, news, quote, run_script, screener, sharelist, statement, topic, trade, watchlist, Cli,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -337,7 +336,6 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<ResponseSchema> {
         "screener" => screener::schema_for_path(path),
         "bank-cards" | "withdrawals" | "deposits" => atm::schema_for_path(path),
         "ipo" => ipo::schema_for_path(path),
-        "workspace" => workspace::schema_for_path(path),
         "agent" => agent::schema_for_path(path),
         _ => None,
     }

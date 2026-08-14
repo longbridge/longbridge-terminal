@@ -29,7 +29,6 @@ pub mod statement;
 pub mod topic;
 pub mod trade;
 pub mod watchlist;
-pub mod workspace;
 
 #[derive(ValueEnum, Clone, Default, Debug)]
 pub enum OutputFormat {
@@ -1431,30 +1430,20 @@ pub enum Commands {
     },
 
     // ── AI Agents ───────────────────────────────────────────────────────
-    /// AI workspaces: list workspaces for the current account
-    ///
-    /// Workspaces contain AI agents; use `longbridge agent list` to see them.
-    /// Returns: id, name, `created_at`, `updated_at`.
-    /// Example: longbridge workspace list
-    /// Example: longbridge workspace list --format json
-    Workspace {
-        #[command(subcommand)]
-        cmd: Option<WorkspaceCmd>,
-    },
-
-    /// AI agents: discover and chat with Longbridge AI agents (A2A)
+    /// AI agents: discover and chat with Longbridge AI agents
     ///
     /// Chat transport is SSE under the hood; agent runs can take 1-2 minutes.
     /// Returns (chat): `chat_uid`, `message_id`, status, answer (markdown), widgets,
     /// references, `further_questions`, `elapsed_time`.
     /// Example: longbridge agent list
+    /// Example: longbridge agent workspaces
     /// Example: longbridge agent chat chatbot "分析一下 TSLA 近一个月走势"
     /// Example: longbridge agent chat chatbot `ct_uid` 12345 "继续深入"
     /// Example: longbridge agent --skill
     Agent {
         #[command(subcommand)]
         cmd: Option<AgentCmd>,
-        /// Print the A2A skill document for AI harnesses and exit
+        /// Print the agent skill document for AI harnesses and exit
         // `--skills` is a silent alias kept for compatibility: the plural form
         // shipped first. Only `--skill` is advertised in `--help`.
         #[arg(long = "skill", alias = "skills")]
@@ -2338,14 +2327,6 @@ pub enum WatchlistCmd {
 }
 
 #[derive(Subcommand)]
-pub enum WorkspaceCmd {
-    /// List AI workspaces for the current account
-    ///
-    /// Example: longbridge workspace list
-    List,
-}
-
-#[derive(Subcommand)]
 // Backticks render literally in `--help`, so the mode names stay bare here.
 #[allow(clippy::doc_markdown)]
 pub enum AgentCmd {
@@ -2441,6 +2422,15 @@ pub enum AgentCmd {
         #[arg(long)]
         interactive: bool,
     },
+
+    /// List AI workspaces for the current account
+    ///
+    /// Workspaces hold the agents `longbridge agent list` enumerates.
+    /// Returns: id, name, `created_at`, `updated_at`.
+    /// Example: longbridge agent workspaces
+    /// Example: longbridge agent workspaces --format json
+    #[command(alias = "workspace")]
+    Workspaces,
 }
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -4085,7 +4075,6 @@ IpoCmd::ProfitLoss { period, page, count } => {
             }
         },
 
-        Commands::Workspace { cmd } => workspace::cmd_workspace(cmd, format, verbose).await,
         Commands::Agent { cmd, skill } => agent::cmd_agent(cmd, skill, format, verbose).await,
 
         Commands::Auth { .. }
@@ -4906,25 +4895,31 @@ mod tests {
         }
     }
 
-    // ─── Workspace / Agent ────────────────────────────────────────────────────
+    // ─── Agent ────────────────────────────────────────────────────────────────
 
     #[test]
-    fn test_workspace_list() {
-        let cli = parse(&["longbridge", "workspace", "list"]).unwrap();
+    fn test_agent_workspaces() {
+        let cli = parse(&["longbridge", "agent", "workspaces"]).unwrap();
         assert!(matches!(
             cli.command,
-            Some(Commands::Workspace {
-                cmd: Some(WorkspaceCmd::List)
+            Some(Commands::Agent {
+                cmd: Some(AgentCmd::Workspaces),
+                ..
             })
         ));
     }
 
+    /// `workspace` was a top-level command before it moved under `agent`;
+    /// the singular alias keeps that spelling working.
     #[test]
-    fn test_workspace_bare_defaults_to_list() {
-        let cli = parse(&["longbridge", "workspace"]).unwrap();
+    fn test_agent_workspace_singular_alias() {
+        let cli = parse(&["longbridge", "agent", "workspace"]).unwrap();
         assert!(matches!(
             cli.command,
-            Some(Commands::Workspace { cmd: None })
+            Some(Commands::Agent {
+                cmd: Some(AgentCmd::Workspaces),
+                ..
+            })
         ));
     }
 
@@ -5180,18 +5175,12 @@ mod tests {
 
     #[test]
     fn bare_group_help_lists_every_subcommand() {
-        // Bare `agent` / `workspace` print this instead of running a command,
-        // so the text must actually name what the user can run next.
+        // Bare `agent` prints this instead of running a command, so the text
+        // must actually name what the user can run next.
         let agent = render_subcommand_help("agent").expect("agent is a subcommand");
-        for sub in ["list", "chat", "continue"] {
+        for sub in ["list", "chat", "continue", "workspaces"] {
             assert!(agent.contains(sub), "agent help must mention `{sub}`");
         }
-
-        let workspace = render_subcommand_help("workspace").expect("workspace is a subcommand");
-        assert!(
-            workspace.contains("list"),
-            "workspace help must mention `list`"
-        );
     }
 
     #[test]

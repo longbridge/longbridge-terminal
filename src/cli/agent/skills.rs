@@ -1,10 +1,10 @@
-//! Static A2A skill document served by `longbridge agent --skill`.
+//! Static skill document served by `longbridge agent --skill`.
 
 use indoc::indoc;
 
 pub fn skills_doc() -> &'static str {
     indoc! {r#"
-        # Longbridge A2A Agent Chat
+        # Longbridge AI Agent Chat
 
         Chat with Longbridge AI agents (investment research, stock analysis,
         screeners, custom workflow agents) from the command line. Designed for

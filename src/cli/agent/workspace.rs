@@ -1,26 +1,13 @@
-//! AI workspace commands (list workspaces for the current account).
+//! `agent workspaces`: list the AI workspaces that hold the account's agents.
 
 use anyhow::Result;
 use serde_json::json;
 
-use super::agent::client::{AgentApi, LbAgentApi, WorkspaceInfo};
-use super::output::{fmt_unix_ts, print_json_value, print_table};
-use super::{OutputFormat, WorkspaceCmd};
+use super::client::{AgentApi, LbAgentApi, WorkspaceInfo};
+use crate::cli::output::{fmt_unix_ts, print_json_value, print_table};
+use crate::cli::OutputFormat;
 
-pub async fn cmd_workspace(
-    cmd: Option<WorkspaceCmd>,
-    format: &OutputFormat,
-    verbose: bool,
-) -> Result<()> {
-    match cmd {
-        // Bare `longbridge workspace`: show what the group offers rather than
-        // guessing a subcommand. See `exit_with_subcommand_help`.
-        None => crate::cli::exit_with_subcommand_help("workspace"),
-        Some(WorkspaceCmd::List) => cmd_list(format, verbose).await,
-    }
-}
-
-async fn cmd_list(format: &OutputFormat, verbose: bool) -> Result<()> {
+pub async fn cmd_workspaces(format: &OutputFormat, verbose: bool) -> Result<()> {
     let api = LbAgentApi { verbose };
     let workspaces = api.list_workspaces().await?;
     match format {
@@ -35,11 +22,11 @@ async fn cmd_list(format: &OutputFormat, verbose: bool) -> Result<()> {
     Ok(())
 }
 
-/// Build the pretty-table rows for `workspace list`. `id` and `name` are
+/// Build the pretty-table rows for `agent workspaces`. `id` and `name` are
 /// server-supplied and printed verbatim, so they are stripped of control
 /// characters first (JSON output stays raw — serde escapes it safely).
 fn workspace_rows(workspaces: &[WorkspaceInfo]) -> Vec<Vec<String>> {
-    use super::agent::render::strip_control_chars;
+    use super::render::strip_control_chars;
     workspaces
         .iter()
         .map(|w| {
@@ -51,18 +38,6 @@ fn workspace_rows(workspaces: &[WorkspaceInfo]) -> Vec<Vec<String>> {
             ]
         })
         .collect()
-}
-
-pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::ResponseSchema> {
-    use super::schema::object;
-
-    match path.join(" ").as_str() {
-        "workspace" | "workspace list" => Some(object(
-            "AI workspaces for the current account",
-            &["workspaces"],
-        )),
-        _ => None,
-    }
 }
 
 #[cfg(test)]

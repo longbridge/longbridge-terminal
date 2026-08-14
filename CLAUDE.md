@@ -261,11 +261,12 @@ Example: `cli: Add statement export command`, `tui: Fix quit confirmation dialog
 When adding, removing, or modifying any CLI command (in `src/cli/`), always update all of the following in the same PR:
 
 1. **`README.md`** — the `<!-- COMMANDS_START -->` / `<!-- COMMANDS_END -->` block
-2. **`../developers/skills/longbridge/`** — all skill files are maintained in the `developers` repo; this repo no longer has its own `skills/` directory:
+2. **`../skills/skills/longbridge/`** — all skill files are maintained in the `skills` repo; this repo no longer has its own `skills/` directory:
    - `SKILL.md` — quick reference, if the command is common enough to mention
    - `references/cli/overview.md` — CLI overview (features, patterns, notable flags)
    - `references/python-sdk/` / `references/rust-sdk/` — corresponding SDK reference
 
 Skill files should stay high-level. Defer to the CLI's built-in `--help` for flag details — do not duplicate help text in skill files.
 
-If `../developers` is not available locally, the repository is https://github.com/longbridge/developers
+If `../skills` is not available locally, the repository is https://github.com/longbridge/skills
+(`../developers` used to hold a copy of these files; it was deleted as a stale duplicate.)
