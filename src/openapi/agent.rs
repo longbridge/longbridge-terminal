@@ -520,6 +520,32 @@ impl AgentBackend for OpenApiAgent {
     ) -> Result<BoxStream<'static, Result<AgentEvent<Self::Session>, BackendError>>, BackendError>
     {
         let acp_session_id = session.acp_session_id.clone();
+        // Rounds may have completed while no stream was attached (the client
+        // was killed or switched away mid-turn, or the user chatted on another
+        // device), leaving our parent id stale. Silently advance the parent to
+        // the server's latest completed round so the new turn continues from
+        // it instead of branching off an older message. Nothing is replayed
+        // into the UI here — the missed content shows up whenever the client
+        // reloads the session.
+        let mut parent_message_id = session.parent_message_id.clone();
+        if session.pending_interaction.is_none() {
+            if let (Some(chat_uid), Some(known)) = (
+                session.conversation_id.as_deref(),
+                parent_message_id
+                    .as_deref()
+                    .and_then(|id| id.parse::<i64>().ok()),
+            ) {
+                if let Ok(detail) = crate::openapi::chats::chat_detail(chat_uid).await {
+                    if let Some(latest) = detail
+                        .messages
+                        .iter()
+                        .rfind(|m| m.id > known && m.sender == "assistant" && !m.text().is_empty())
+                    {
+                        parent_message_id = Some(latest.id.to_string());
+                    }
+                }
+            }
+        }
         let started = if let Some(pending) = &session.pending_interaction {
             self.context
                 .continue_conversation_streamed(
@@ -544,7 +570,7 @@ impl AgentBackend for OpenApiAgent {
                 self.agent_id.clone(),
                 prompt,
                 session.conversation_id,
-                session.parent_message_id,
+                parent_message_id,
             )
             .await
         };
