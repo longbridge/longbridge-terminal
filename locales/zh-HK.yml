@@ -375,6 +375,7 @@ Ai:
   SlashExit: "退出 Longbridge AI"
   CommandsTitle: "命令"
   BackHint: "按 Esc 返回"
+  WindowTooSmall: "終端視窗太小"
   JustNow: "剛剛"
   ScrolledHint: "▲ 已上捲 · PgDn 回到最新"
   NewSessionAction: "新增對話"

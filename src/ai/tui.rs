@@ -1247,6 +1247,16 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
     // Recomputed each frame: set true if any truncated row is scrolling.
     ui.animating = false;
     let area = f.area();
+    // Below this the layout can't fit the header/status/prompt legibly.
+    if area.width < 24 || area.height < 6 {
+        f.render_widget(
+            Paragraph::new(t!("Ai.WindowTooSmall").to_string())
+                .style(Style::default().fg(Color::DarkGray))
+                .alignment(ratatui::layout::Alignment::Center),
+            area,
+        );
+        return;
+    }
     let is_chat = ui.view == View::Chat;
     // Keep the frame timer running while a turn streams so the status spinner
     // animates even between deltas (e.g. during a long tool call).
