@@ -1818,10 +1818,12 @@ fn bg_pad(mut spans: Vec<Span<'static>>, width: usize, bg: Option<Color>) -> Lin
     Line::from(spans)
 }
 
-/// Compact "3m / 2h / 5d" age of an entry, from Unix seconds.
+/// Compact "just now / 3m / 2h / 5d" age of an entry, from Unix seconds.
 fn relative_time(updated: u64, now: u64) -> String {
     let secs = now.saturating_sub(updated);
-    if secs < 3600 {
+    if secs < 60 {
+        t!("Ai.JustNow").to_string()
+    } else if secs < 3600 {
         format!("{}m", secs / 60)
     } else if secs < 86_400 {
         format!("{}h", secs / 3600)
