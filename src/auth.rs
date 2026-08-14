@@ -376,6 +376,10 @@ const DEVICE_LOGIN_REGIONS: [longbridge::DcRegion; 2] =
 struct DeviceAuthorization {
     device_code: String,
     verification_uri_complete: String,
+    /// The short code shown on the authorization page (RFC 8628). The complete
+    /// URL already carries it; it is read out so a UI can show the reader what to
+    /// confirm, and is empty when the server omits it.
+    user_code: String,
     interval: u64,
     expires_in: u64,
 }
@@ -427,6 +431,7 @@ async fn request_device_authorize(
     Ok(DeviceAuthorization {
         device_code,
         verification_uri_complete,
+        user_code: resp["user_code"].as_str().unwrap_or_default().to_owned(),
         expires_in: resp["expires_in"].as_u64().unwrap_or(300),
         interval: resp["interval"].as_u64().unwrap_or(5),
     })
@@ -545,7 +550,30 @@ async fn poll_device_token(
     }
 }
 
-pub async fn device_login(verbose: bool, client_name: Option<String>) -> Result<()> {
+/// A device-code login in progress: what to show the reader, and what to poll.
+///
+/// Split out of [`device_login`] so a UI can own the waiting. The CLI prints the
+/// URL and blocks; the `ai` chat shows this in a panel and polls in the
+/// background, which is the difference between signing in *inside* the chat and
+/// being thrown out of it.
+pub struct DeviceLogin {
+    /// The URL to authorize at, ready to open or paste.
+    pub verification_url: String,
+    /// The short code shown on that page, for the reader to confirm.
+    pub user_code: String,
+    /// Whether a browser was opened for them.
+    pub browser_opened: bool,
+    device_code: String,
+    client_id: String,
+    interval: u64,
+    expires_in: u64,
+}
+
+/// Register, request a device authorization, and open the browser.
+///
+/// Returns as soon as there is something to show; the waiting is
+/// [`device_login_wait`].
+pub async fn device_login_start(verbose: bool, client_name: Option<String>) -> Result<DeviceLogin> {
     let oauth_base = oauth_base_url();
     let http_client = build_http_client()?;
     let invite_code = read_invite_code();
@@ -586,6 +614,26 @@ pub async fn device_login(verbose: bool, client_name: Option<String>) -> Result<
         println!("Waiting for authorization...");
     }
 
+    Ok(DeviceLogin {
+        verification_url: verification_url.to_string(),
+        user_code: auth.user_code.clone(),
+        browser_opened: opened,
+        device_code: auth.device_code.clone(),
+        client_id,
+        interval: auth.interval,
+        expires_in: auth.expires_in,
+    })
+}
+
+/// Poll until the device authorization is granted, then save the token.
+pub async fn device_login_wait(login: &DeviceLogin, verbose: bool) -> Result<()> {
+    let http_client = build_http_client()?;
+    let client_id = login.client_id.clone();
+    let auth = DeviceAuthLike {
+        device_code: login.device_code.clone(),
+        interval: login.interval,
+        expires_in: login.expires_in,
+    };
     // The authorization lands on whichever data center the user logged in to, so
     // poll both DCs in parallel for the shared `device_code`; the first to be
     // authorized wins. The access token carries that DC's `us_`/`ap_` prefix, so
@@ -652,9 +700,33 @@ pub async fn device_login(verbose: bool, client_name: Option<String>) -> Result<
     crate::secure_storage::EncryptedFileTokenStorage
         .save(&token)
         .map_err(|e| anyhow::anyhow!("Failed to save token: {e}"))?;
+    Ok(())
+}
 
-    // Registration was already persisted in get_or_register_client, so there is
-    // nothing more to store here.
+/// The fields [`device_login_wait`] needs from a device authorization, so the
+/// polling code below reads the same whether it came from the request or from a
+/// [`DeviceLogin`] handed back to us.
+struct DeviceAuthLike {
+    device_code: String,
+    interval: u64,
+    expires_in: u64,
+}
+
+/// Sign in with the device flow, printing progress. The CLI's entry point;
+/// in-terminal UIs use [`device_login_start`] and [`device_login_wait`] so they can
+/// draw the wait themselves.
+pub async fn device_login(verbose: bool, client_name: Option<String>) -> Result<()> {
+    let login = device_login_start(verbose, client_name).await?;
+    println!("Open the following URL in your browser to authorize:");
+    println!();
+    println!("{}", login.verification_url);
+    println!();
+    if login.browser_opened {
+        println!("Browser opened. Waiting for authorization...");
+    } else {
+        println!("Waiting for authorization...");
+    }
+    device_login_wait(&login, verbose).await?;
     println!("Successfully authenticated.");
     Ok(())
 }

@@ -31,6 +31,9 @@ pub struct LoadedChat {
 /// List the account's chats, newest first. `None` means the request failed
 /// (as opposed to an account with no conversations).
 pub async fn list_summaries() -> Option<Vec<SessionSummary>> {
+    if !crate::openapi::is_ready() {
+        return None;
+    }
     let resp = crate::openapi::chats::list_chats(1, 50, None).await.ok()?;
     let mut sessions: Vec<SessionSummary> = resp
         .chats
@@ -61,6 +64,9 @@ pub async fn list_summaries() -> Option<Vec<SessionSummary>> {
 
 /// Load one chat's full message history for resuming.
 pub async fn load_detail(uid: &str) -> Option<LoadedChat> {
+    if !crate::openapi::is_ready() {
+        return None;
+    }
     let detail = crate::openapi::chats::chat_detail(uid).await.ok()?;
     let agent_uid = detail
         .messages

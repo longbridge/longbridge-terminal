@@ -105,6 +105,16 @@ enum Pending {
     SignIn,
 }
 
+/// A sign-in waiting on the reader's browser.
+struct LoginPrompt {
+    /// Where to authorize. Copied to the clipboard as well, since a browser that
+    /// did not open leaves the reader with a URL they cannot click.
+    url: String,
+    /// The short code the page asks them to confirm; empty if the server omits it.
+    code: String,
+    browser_opened: bool,
+}
+
 /// One slash command. `aliases` are dispatched and completed but never listed
 /// on their own, so `/exit` and `/quit` are one entry rather than two.
 struct Slash {
@@ -208,6 +218,10 @@ enum Chip {
     Symbol(String),
     /// The title bar's ticker toggle.
     Tape,
+    /// One of the welcome screen's example prompts; sends it.
+    Sample(&'static str),
+    /// The brand badge, which opens Longbridge AI on the web.
+    Brand,
 }
 
 /// State of the structured interrupt answering flow.
@@ -328,6 +342,9 @@ struct Ui {
     tape_ticks: u8,
     /// Work for the async side of the loop: signing in or out.
     pending: Option<Pending>,
+    /// A device-code sign-in in progress, shown as a panel: the reader authorizes
+    /// in a browser while the chat waits, rather than being thrown out to a shell.
+    login: Option<LoginPrompt>,
     /// Sign-out is armed by one Enter and done by the next, so an arrow key and a
     /// stray Return cannot end the session.
     confirm_sign_out: bool,
@@ -383,6 +400,7 @@ impl Ui {
             tape_at: 0,
             tape_ticks: 0,
             pending: None,
+            login: None,
             confirm_sign_out: false,
             exit_note: None,
             load_tx: None,
@@ -477,6 +495,8 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
     // The member id is the one part of the session header that needs a call, so
     // it is fetched once in the background and the header renders without it
     // until it lands.
+    let (login_tx, mut login_rx) = unbounded_channel::<Result<(), String>>();
+    let mut login_task: Option<JoinHandle<()>> = None;
     let (aliases_tx, mut aliases_rx) = unbounded_channel::<HashMap<String, String>>();
     let (session_tx, mut session_rx) = unbounded_channel::<Option<String>>();
     tokio::spawn(async move {
@@ -549,6 +569,34 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
             Some(member_id) = session_rx.recv() => {
                 ui.session.member_id = member_id;
             }
+            Some(result) = login_rx.recv() => {
+                login_task = None;
+                ui.login = None;
+                match result {
+                    Ok(()) => {
+                        ui.session = super::account::local();
+                        // The contexts were never built for a chat that opened
+                        // signed out, so they can be built now and the reader carries
+                        // on here. If they already existed they belong to the old
+                        // credentials, and those are process-wide singletons.
+                        if crate::openapi::is_ready() {
+                            ui.exit_note = Some(t!("Ai.SignedIn").to_string());
+                            ui.should_quit = true;
+                        } else if let Ok((rx, _, _)) = crate::openapi::init_contexts().await {
+                            quotes = Box::pin(rx);
+                            ui.notice = Some(t!("Ai.SignedIn").to_string());
+                            for symbol in ui.tape.clone() {
+                                subscribe_quote(&symbol);
+                            }
+                            fetch_missing_quotes(&ui, &cards_tx);
+                        } else {
+                            ui.exit_note = Some(t!("Ai.SignedIn").to_string());
+                            ui.should_quit = true;
+                        }
+                    }
+                    Err(e) => ui.notice = Some(format!("{}: {e}", t!("Ai.SignInFailed"))),
+                }
+            }
             // Bare tickers the server confirmed: they join the ticker, get a
             // quote, and become links in the transcript.
             Some(resolved) = aliases_rx.recv() => {
@@ -580,6 +628,31 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
                     // Resume failed: stay on History with an error notice.
                     ui.notice = Some(t!("Ai.SessionsError").to_string());
                 }
+            }
+        }
+        if ui.pending == Some(Pending::SignIn) {
+            ui.pending = None;
+            // Signing in happens here, in the chat: the flow only needs a URL on
+            // screen and a poll in the background, and tearing the whole view down
+            // for it was the thing that made signing in feel like leaving.
+            match crate::auth::device_login_start(false, None).await {
+                Ok(login) => {
+                    ui.notice = None;
+                    // A browser that did not open leaves the reader with a URL they
+                    // cannot click, so it goes to the clipboard either way.
+                    copy_to_clipboard(&login.verification_url);
+                    ui.login = Some(LoginPrompt {
+                        url: login.verification_url.clone(),
+                        code: login.user_code.clone(),
+                        browser_opened: login.browser_opened,
+                    });
+                    let tx = login_tx.clone();
+                    login_task = Some(tokio::spawn(async move {
+                        let result = crate::auth::device_login_wait(&login, false).await;
+                        let _ = tx.send(result.map_err(|e| format!("{e:#}")));
+                    }));
+                }
+                Err(e) => ui.notice = Some(format!("{}: {e:#}", t!("Ai.SignInFailed"))),
             }
         }
         if let Some(action) = ui.pending.take() {
@@ -626,6 +699,9 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
     );
     if let Some(turn) = turn.take() {
         turn.abort();
+    }
+    if let Some(task) = login_task.take() {
+        task.abort();
     }
     Ok(ui.exit_note.take())
 }
@@ -879,6 +955,13 @@ fn on_chat_key(
         .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT);
     // The panel floats over the chat, so Esc dismisses it before anything else
     // reads the key — otherwise the reader would clear their input instead.
+    // A sign-in in progress owns Esc: it is a step the reader is in the middle of,
+    // and cancelling it must not also clear their input.
+    if ui.login.is_some() && key.code == KeyCode::Esc {
+        ui.login = None;
+        ui.notice = Some(t!("Ai.LoginCancelled").to_string());
+        return;
+    }
     if let Some(symbol) = ui.quote_panel.clone() {
         match key.code {
             KeyCode::Esc => {
@@ -1244,7 +1327,7 @@ fn on_mouse(
                     .find(|(_, r)| hit(*r, col, row))
                     .map(|(c, _)| c.clone())
                 {
-                    click_chip(chip, ui, state, turn, tx);
+                    click_chip(chip, ui, state, editor, turn, tx);
                 } else if hit(ui.transcript, col, row) {
                     // Begin a text selection in the transcript.
                     ui.selection = Some(((row, col), (row, col)));
@@ -1370,15 +1453,8 @@ async fn run_pending(action: Pending) -> Result<String, String> {
             Ok(()) => Ok(t!("Ai.SignedOut").to_string()),
             Err(e) => Err(format!("{}: {e}", t!("Ai.SignOutFailed"))),
         },
-        Pending::SignIn => {
-            Terminal::exit_full_screen();
-            let result = crate::auth::device_login(false, None).await;
-            Terminal::enter_full_screen();
-            match result {
-                Ok(()) => Ok(t!("Ai.SignedIn").to_string()),
-                Err(e) => Err(format!("{}: {e}", t!("Ai.SignInFailed"))),
-            }
-        }
+        // Handled in the loop, which can hold the panel open while it waits.
+        Pending::SignIn => Err(String::new()),
     }
 }
 
@@ -1441,6 +1517,11 @@ where
 
 /// Open the Conversations view and fetch the account's chats in the background.
 fn open_sessions(ui: &mut Ui) {
+    if !crate::openapi::is_ready() {
+        // The list lives behind the account, so there is nothing to open yet.
+        ui.notice = Some(t!("Ai.SignInToAsk").to_string());
+        return;
+    }
     ui.view = View::Sessions;
     ui.sel = 0;
     ui.search.clear();
@@ -1514,10 +1595,18 @@ fn click_chip(
     chip: Chip,
     ui: &mut Ui,
     state: &mut ChatState,
+    editor: &mut Editor,
     turn: &mut Option<JoinHandle<()>>,
     tx: &UnboundedSender<ChatEvent>,
 ) {
     match chip {
+        // The example is the quickest way in: clicking it sends it, rather than
+        // leaving the reader to retype what is already on screen.
+        Chip::Sample(key) => {
+            editor.set_text(&t!(key));
+            submit(ui, state, editor, turn, tx);
+        }
+        Chip::Brand => open_url(AI_WEB_URL),
         Chip::Reference(i) => {
             if let Some(url) = state.references.get(i).and_then(reference_url) {
                 open_url(&url);
@@ -1534,6 +1623,10 @@ fn click_chip(
         }
         Chip::Further(i) => {
             if state.busy {
+                return;
+            }
+            if !crate::openapi::is_ready() {
+                ui.notice = Some(t!("Ai.SignInToAsk").to_string());
                 return;
             }
             if let Some(query) = state.further.get(i).cloned() {
@@ -1819,14 +1912,94 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
     }
     render_status(f, status, ui, state);
     render_footer(f, footer, ui, editor);
-    // Last, so it floats over whatever is underneath.
+    // Last, so they float over whatever is underneath. The sign-in panel outranks
+    // the quote panel: it is a step the reader is in the middle of.
     render_quote_panel(f, body, ui);
+    if ui.login.is_some() {
+        ui.animating = true;
+        let spin = ui.tick as usize;
+        render_login_panel(f, body, ui, spin);
+    }
 }
 
 /// The live-quote stream, boxed so it can be replaced when the reader signs in
 /// from inside the chat.
 pub type QuoteStream =
     std::pin::Pin<Box<dyn tokio_stream::Stream<Item = longbridge::quote::PushEvent> + Send>>;
+
+/// Draw the sign-in panel while a device authorization is outstanding.
+///
+/// The reader authorizes in a browser and comes back to a chat that is still
+/// here: no torn-down screen, no shell prompt, no relaunch.
+fn render_login_panel(f: &mut ratatui::Frame, area: Rect, ui: &Ui, spin: usize) {
+    use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding};
+
+    let Some(login) = &ui.login else {
+        return;
+    };
+    let dim = Style::default().fg(Color::DarkGray);
+    let inner_w = 64usize.min(area.width.saturating_sub(8) as usize).max(20);
+    let mut body = vec![Line::from(Span::styled(
+        if login.browser_opened {
+            t!("Ai.LoginBrowserOpened").to_string()
+        } else {
+            t!("Ai.LoginOpenUrl").to_string()
+        },
+        Style::default().fg(Color::Gray),
+    ))];
+    body.push(Line::from(""));
+    // The URL is long and the reader may need to type it, so it wraps rather than
+    // being truncated — a clipped URL is useless.
+    for row in wrap(&login.url, inner_w) {
+        body.push(Line::from(Span::styled(
+            row,
+            Style::default().fg(Color::Blue),
+        )));
+    }
+    if !login.code.is_empty() {
+        body.push(Line::from(""));
+        body.push(Line::from(vec![
+            Span::styled(format!("{}  ", t!("Ai.LoginCode")), dim),
+            Span::styled(
+                login.code.clone(),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
+    }
+    body.push(Line::from(""));
+    body.push(Line::from(vec![
+        Span::styled(format!("{} ", SPINNER[spin % SPINNER.len()]), dim),
+        Span::styled(t!("Ai.LoginWaiting").to_string(), dim),
+    ]));
+    let width = (inner_w as u16 + 6).min(area.width);
+    let height = (body.len() as u16 + 2).min(area.height);
+    let rect = Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    };
+    f.render_widget(Clear, rect);
+    blank_straddling_glyphs(f.buffer_mut(), rect, area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Cyan))
+        .padding(Padding::horizontal(2))
+        .title(Line::from(Span::styled(
+            format!(" {} ", t!("Ai.SignIn")),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )))
+        .title_bottom(Line::from(Span::styled(
+            format!(" {} ", t!("Ai.LoginCancel")),
+            dim,
+        )));
+    f.render_widget(Paragraph::new(Text::from(body)).block(block), rect);
+}
 
 /// Draw the floating quote panel, if one is open.
 ///
@@ -1952,6 +2125,10 @@ fn line_width(line: &Line<'_>) -> usize {
         .sum()
 }
 
+/// Longbridge AI on the web. The badge in the title bar opens it — the same
+/// conversations, with the widgets a terminal can only describe.
+const AI_WEB_URL: &str = "https://longbridge.com/ai";
+
 /// The security's page on the web, where the chart and the filings are.
 fn quote_web_url(symbol: &str) -> String {
     format!("https://longbridge.com/quote/{symbol}")
@@ -1980,6 +2157,18 @@ fn render_title(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatSta
         ));
     }
     let left_w: usize = left.iter().map(|s| s.content.width()).sum();
+    // The badge is a link: the same conversations are on the web, with the widgets
+    // a terminal can only describe.
+    let badge_w = left.first().map_or(0, |s| s.content.width()) as u16;
+    ui.chips.push((
+        Chip::Brand,
+        Rect {
+            x: area.x,
+            y: area.y,
+            width: badge_w,
+            height: 1,
+        },
+    ));
 
     // The rest of the row is the ticker: the securities this conversation has
     // mentioned, with their quotes. It is the one row of chrome that was carrying
@@ -2125,7 +2314,7 @@ fn render_chat(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatStat
     // system line, so an empty session doesn't look bare.
     if state.messages.len() <= 1 && state.streaming.is_none() && !state.busy {
         ui.selected_text = None;
-        render_empty_state(f, area);
+        render_empty_state(f, area, ui);
         return;
     }
     let width = area.width.max(1) as usize;
@@ -2237,7 +2426,9 @@ fn render_chat(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatStat
 }
 
 /// A centered welcome shown for a fresh, empty session.
-fn render_empty_state(f: &mut ratatui::Frame, area: Rect) {
+fn render_empty_state(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
+    const SAMPLES: [&str; 3] = ["Ai.Sample1", "Ai.Sample2", "Ai.Sample3"];
+
     let mut content = vec![
         Line::from(Span::styled(
             t!("Ai.Title").to_string(),
@@ -2252,8 +2443,11 @@ fn render_empty_state(f: &mut ratatui::Frame, area: Rect) {
         )),
         Line::from(""),
     ];
-    // A few example prompts to set the tone (inspiration, not clickable).
-    for key in ["Ai.Sample1", "Ai.Sample2", "Ai.Sample3"] {
+    // The examples set the tone, and they are also the quickest way in: each is a
+    // button, so a reader who likes one does not have to retype it.
+    let mut samples: Vec<(&'static str, usize)> = Vec::new();
+    for key in SAMPLES {
+        samples.push((key, content.len()));
         content.push(Line::from(Span::styled(
             format!("“{}”", t!(key)),
             Style::default().fg(Color::DarkGray),
@@ -2270,13 +2464,39 @@ fn render_empty_state(f: &mut ratatui::Frame, area: Rect) {
     // whole block is centre-aligned, so the mark needs no indent of its own —
     // adding one would offset it twice.
     let mark_h = usize::from(assets::mark_height());
+    let mut offset = 0usize;
     if area.height as usize >= mark_h + content.len() + 2 && area.width >= assets::mark_width() {
         let mut with_logo = assets::logo_mark();
         with_logo.push(Line::from(""));
+        offset = with_logo.len();
         with_logo.extend(content);
         content = with_logo;
     }
     let top = (area.height as usize).saturating_sub(content.len()) / 2;
+    // Hit rects follow the same centring the paragraph applies: a click has to land
+    // on the row the reader sees.
+    for (key, row) in samples {
+        let at = offset + row;
+        let y = area.y + (top + at) as u16;
+        if y >= area.y.saturating_add(area.height) {
+            continue;
+        }
+        let w = content.get(at).map_or(0, |l| line_width(l) as u16);
+        let rect = Rect {
+            x: area.x + area.width.saturating_sub(w) / 2,
+            y,
+            width: w,
+            height: 1,
+        };
+        if hovering(ui, rect) {
+            if let Some(line) = content.get_mut(at) {
+                for span in &mut line.spans {
+                    span.style = span.style.add_modifier(Modifier::UNDERLINED);
+                }
+            }
+        }
+        ui.chips.push((Chip::Sample(key), rect));
+    }
     let mut lines = vec![Line::from(""); top];
     lines.extend(content);
     f.render_widget(
@@ -5299,6 +5519,75 @@ mod tests {
         assert!(
             state.messages.iter().all(|m| m.role != super::Role::User),
             "and the prompt was not added to the transcript"
+        );
+    }
+
+    /// Signing in happens in the chat: a panel with the URL and the code, and the
+    /// chat still there behind it. Being thrown out to a shell was the thing that
+    /// made signing in feel like leaving.
+    #[test]
+    fn signing_in_is_shown_in_a_panel() {
+        let mut ui = super::Ui::new();
+        ui.login = Some(super::LoginPrompt {
+            url: "https://longbridge.com/oauth/device?user_code=WDJB-MJHT".into(),
+            code: "WDJB-MJHT".into(),
+            browser_opened: true,
+        });
+        let state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let rows = frame(&mut ui, &state, 84, 20);
+        let text = rows.join("\n");
+        assert!(
+            text.contains("longbridge.com/oauth/device"),
+            "the URL: {text}"
+        );
+        assert!(text.contains("WDJB-MJHT"), "the code: {text}");
+        assert!(text.contains(t!("Ai.LoginWaiting").as_ref()), "{text}");
+        assert!(
+            text.contains(t!("Ai.LoginCancel").as_ref()),
+            "a way out: {text}"
+        );
+        // Esc cancels the sign-in without touching the input.
+        let mut editor = super::Editor::new();
+        editor.set_text("half a question");
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut turn = None;
+        let mut state = state;
+        super::on_chat_key(
+            crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Esc,
+                crossterm::event::KeyModifiers::NONE,
+            ),
+            &mut ui,
+            &mut state,
+            &mut editor,
+            &mut turn,
+            &tx,
+        );
+        assert!(ui.login.is_none(), "cancelled");
+        assert_eq!(editor.text(), "half a question", "the input is untouched");
+    }
+
+    /// The welcome screen's examples are the quickest way in, so they are buttons.
+    #[test]
+    fn a_welcome_example_sends_itself() {
+        let mut ui = super::Ui::new();
+        let state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let _ = frame(&mut ui, &state, 80, 24);
+        let samples: Vec<&'static str> = ui
+            .chips
+            .iter()
+            .filter_map(|(chip, _)| match chip {
+                super::Chip::Sample(key) => Some(*key),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(samples.len(), 3, "every example is clickable: {samples:?}");
+        // And the badge opens Longbridge AI on the web.
+        assert!(
+            ui.chips
+                .iter()
+                .any(|(chip, _)| matches!(chip, super::Chip::Brand)),
+            "the badge should be a link"
         );
     }
 }

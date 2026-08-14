@@ -361,7 +361,7 @@ async fn init_contexts_with_auth(
 /// and offers to sign in — so it asks first.
 #[must_use]
 pub fn is_ready() -> bool {
-    AGENT_CTX.get().is_some() && QUOTE_CTX.get().is_some()
+    AGENT_CTX.get().is_some() && QUOTE_CTX.get().is_some() && HTTP_CLIENT.get().is_some()
 }
 
 pub fn quote() -> &'static longbridge::quote::QuoteContext {

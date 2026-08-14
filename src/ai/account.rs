@@ -47,7 +47,14 @@ pub fn local() -> Session {
 }
 
 /// Fetch the member id. One call, and a failure just leaves the row out.
+///
+/// Signed out there is nobody to ask: the accessors panic when the contexts were
+/// never built, and this runs unconditionally at startup — which is exactly how an
+/// anonymous start used to end.
 pub async fn member_id() -> Option<String> {
+    if !crate::openapi::is_ready() {
+        return None;
+    }
     crate::openapi::quote()
         .member_id()
         .await
