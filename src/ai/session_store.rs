@@ -41,16 +41,21 @@ pub async fn list_summaries() -> Option<Vec<SessionSummary>> {
             } else {
                 c.name
             },
-            agent: if c.agent_name.is_empty() {
-                c.agent_uid.clone()
-            } else {
+            // An agent is shown by name only — its uid is an internal handle
+            // that never surfaces. So an unnamed default agent falls back to
+            // the product name, and any other unnamed one to nothing at all.
+            agent: if !c.agent_name.is_empty() {
                 c.agent_name
+            } else if c.agent_uid == crate::cli::agent::DEFAULT_AGENT_UID {
+                rust_i18n::t!("Ai.Assistant").to_string()
+            } else {
+                String::new()
             },
             updated_at: u64::try_from(c.updated_at).unwrap_or(0),
             id: c.uid,
         })
         .collect();
-    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    sessions.sort_by_key(|s| std::cmp::Reverse(s.updated_at));
     Some(sessions)
 }
 

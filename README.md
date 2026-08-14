@@ -491,10 +491,10 @@ Features: real-time watchlist, candlestick charts, portfolio view, stock search,
 A full-screen chat TUI backed by Longbridge AI:
 
 ```bash
-longbridge ai [--agent chatbot]
+longbridge ai [--agent <agent-id>]
 ```
 
-Features: streaming answers rendered as Markdown with charts, tables, syntax-highlighted code, and inline live-quote chips; a `/` command palette (`/new /copy /export /history /settings /agent /exit /help`); server-synced conversation history (`/v1/ai/chats`) with search; drag-to-select copy (OSC 52) and `/export` to Markdown; multi-line input with paste and prompt history. Type `exit` or press Ctrl+C twice to quit.
+Features: streaming answers rendered as Markdown with charts, tables, syntax-highlighted code, and inline live-quote chips; a `/` command palette (`/new /copy /export /resume /settings /agent /exit /help`); server-synced conversations (`/v1/ai/chats`) reopened with `/resume` and searchable in place; drag-to-select copy (OSC 52) and `/export` to Markdown; multi-line input with paste and prompt history. `/agent <agent-id>` switches agent for a fresh conversation and `/agent reset` returns to the default. Type `exit` or press Ctrl+C twice to quit.
 
 ## ACP agent server
 

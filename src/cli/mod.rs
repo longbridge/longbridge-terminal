@@ -164,8 +164,16 @@ pub enum Commands {
     /// portfolio. Answers stream live; Esc cancels a turn or quits.
     /// Example: longbridge ai
     Ai {
-        /// Longbridge AI agent UID to converse with (from `longbridge agent list`)
-        #[arg(long, default_value = "chatbot")]
+        /// Agent UID to converse with (from `longbridge agent list`); defaults
+        /// to the Longbridge AI assistant
+        ///
+        /// The default agent's UID is an internal handle, so it is not printed
+        /// here — inside the chat, `/agent reset` returns to it by name.
+        #[arg(
+            long,
+            default_value = crate::cli::agent::DEFAULT_AGENT_UID,
+            hide_default_value = true
+        )]
         agent: String,
     },
 

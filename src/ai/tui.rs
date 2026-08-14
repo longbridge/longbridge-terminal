@@ -6,12 +6,12 @@
 //! The chat view is a pure function of [`ChatState`]; all conversation mutation
 //! goes through `state.apply(...)`.
 //!
-//! A clickable tab bar switches between Chat, a History list of saved sessions,
-//! and a Settings panel; Settings opens an Agent picker, and an interrupt that
-//! carries options opens a structured Question view. Every view is mouse-aware
-//! (scroll to browse, click to select/activate). Answers render as Markdown,
-//! and each turn's source references and suggested follow-ups become clickable
-//! chips above the prompt.
+//! Chat is the home view; `/` commands open a Conversations list of the
+//! account's saved chats and a Settings panel, and an interrupt that carries
+//! options opens a structured Question view. Every view is mouse-aware (scroll
+//! to browse, click to select/activate). Answers render as Markdown, and each
+//! turn's source references and suggested follow-ups become clickable chips
+//! above the prompt.
 
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -35,17 +35,17 @@ use super::editor::Editor;
 use super::session_store::{self, SessionSummary};
 use super::state::{ChatEvent, ChatState, Message, Role};
 use super::{markdown, runtime};
-use crate::cli::agent::client::{AgentInfo, ConversationRequest};
+use crate::cli::agent::client::ConversationRequest;
+use crate::cli::agent::DEFAULT_AGENT_UID;
 use crate::tui::widgets::Terminal;
 
-/// Which view is on screen. `Chat`/`Sessions`/`Settings` have tabs; `Agents`
-/// and `Question` are overlays reached from within the app.
+/// Which view is on screen. `Chat` is home; the rest are reached with `/`
+/// commands (or, for `Question`, by an interrupt) and left with Esc.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum View {
     Chat,
     Sessions,
     Settings,
-    Agents,
     Question,
 }
 
@@ -60,23 +60,87 @@ const IDX_SEL: Color = Color::Rgb(240, 150, 90);
 /// Interactive rows in the Settings view, in display order.
 #[derive(Clone, Copy)]
 enum Setting {
-    Agent,
     NewChat,
 }
 
-const SETTINGS: [Setting; 2] = [Setting::Agent, Setting::NewChat];
+const SETTINGS: [Setting; 1] = [Setting::NewChat];
 
-/// Slash commands: `(name, i18n description key)`.
-const SLASH: [(&str, &str); 8] = [
-    ("/new", "Ai.SlashNew"),
-    ("/copy", "Ai.SlashCopy"),
-    ("/export", "Ai.SlashExport"),
-    ("/history", "Ai.SlashHistory"),
-    ("/settings", "Ai.SlashSettings"),
-    ("/agent", "Ai.SlashAgent"),
-    ("/help", "Ai.SlashHelp"),
-    ("/exit", "Ai.SlashExit"),
+/// One slash command. `aliases` are dispatched and completed but never listed
+/// on their own, so `/exit` and `/quit` are one entry rather than two.
+struct Slash {
+    /// Canonical name, with the leading slash.
+    name: &'static str,
+    /// Alternative names, also with leading slashes.
+    aliases: &'static [&'static str],
+    /// i18n key of the one-line description shown in the palette.
+    desc: &'static str,
+}
+
+impl Slash {
+    /// The name `exec_slash` matches on, i.e. the canonical name unslashed.
+    fn key(&self) -> &'static str {
+        self.name.trim_start_matches('/')
+    }
+
+    /// Whether `typed` (a `/name`, canonical or alias) addresses this command.
+    fn answers_to(&self, typed: &str) -> bool {
+        self.name == typed || self.aliases.contains(&typed)
+    }
+
+    /// Whether any of this command's names starts with `prefix`, so the palette
+    /// surfaces `/exit` while the user is still typing `/qu`.
+    fn starts_with(&self, prefix: &str) -> bool {
+        self.name.starts_with(prefix) || self.aliases.iter().any(|a| a.starts_with(prefix))
+    }
+}
+
+const SLASH: [Slash; 8] = [
+    Slash {
+        name: "/new",
+        aliases: &["/clear"],
+        desc: "Ai.SlashNew",
+    },
+    Slash {
+        name: "/copy",
+        aliases: &[],
+        desc: "Ai.SlashCopy",
+    },
+    Slash {
+        name: "/export",
+        aliases: &[],
+        desc: "Ai.SlashExport",
+    },
+    Slash {
+        name: "/resume",
+        aliases: &[],
+        desc: "Ai.SlashResume",
+    },
+    Slash {
+        name: "/settings",
+        aliases: &[],
+        desc: "Ai.SlashSettings",
+    },
+    Slash {
+        name: "/agent",
+        aliases: &[],
+        desc: "Ai.SlashAgent",
+    },
+    Slash {
+        name: "/help",
+        aliases: &[],
+        desc: "Ai.SlashHelp",
+    },
+    Slash {
+        name: "/exit",
+        aliases: &["/quit"],
+        desc: "Ai.SlashExit",
+    },
 ];
+
+/// Resolve a typed `/name` to the canonical key `exec_slash` dispatches on.
+fn slash_lookup(typed: &str) -> Option<&'static str> {
+    SLASH.iter().find(|c| c.answers_to(typed)).map(Slash::key)
+}
 
 /// A clickable chip in the Chat meta panel.
 #[derive(Clone, Copy)]
@@ -140,8 +204,6 @@ impl QuestionState {
 struct Ui {
     view: View,
     sessions: Vec<SessionSummary>,
-    agents: Vec<AgentInfo>,
-    agents_loading: bool,
     question: Option<QuestionState>,
     /// Selected row within the active list view.
     sel: usize,
@@ -196,8 +258,6 @@ impl Ui {
         Self {
             view: View::Chat,
             sessions: Vec::new(),
-            agents: Vec::new(),
-            agents_loading: false,
             question: None,
             sel: 0,
             slash_sel: 0,
@@ -249,7 +309,6 @@ impl Ui {
                 }
             }
             View::Settings => SETTINGS.len(),
-            View::Agents => self.agents.len(),
             View::Question => self
                 .question
                 .as_ref()
@@ -259,8 +318,8 @@ impl Ui {
     }
 
     /// Switch to `view`, dropping any half-answered question and clamping
-    /// selection. (Entering History is done via `open_history`, which also
-    /// kicks off the async fetch.)
+    /// selection. (Entering Conversations is done via `open_sessions`, which
+    /// also kicks off the async fetch.)
     fn switch(&mut self, view: View) {
         self.view = view;
         self.notice = None;
@@ -286,7 +345,6 @@ pub async fn run(agent_uid: String) -> Result<()> {
     let mut editor = Editor::new();
     let mut turn: Option<JoinHandle<()>> = None;
     let (tx, mut turn_rx) = unbounded_channel::<ChatEvent>();
-    let (agents_tx, mut agents_rx) = unbounded_channel::<Vec<AgentInfo>>();
     let (cards_tx, mut cards_rx) =
         unbounded_channel::<HashMap<String, crate::cli::agent::render::QuoteCardData>>();
     let (history_tx, mut history_rx) = unbounded_channel::<Option<Vec<SessionSummary>>>();
@@ -316,10 +374,10 @@ pub async fn run(agent_uid: String) -> Result<()> {
             maybe_event = events.next() => {
                 match maybe_event {
                     Some(Ok(Event::Key(key))) if key.kind != KeyEventKind::Release => {
-                        on_key(key, &mut ui, &mut state, &mut editor, &mut turn, &tx, &agents_tx);
+                        on_key(key, &mut ui, &mut state, &mut editor, &mut turn, &tx);
                     }
                     Some(Ok(Event::Mouse(m))) => {
-                        on_mouse(m, &mut ui, &mut state, &mut editor, &mut turn, &tx, &agents_tx);
+                        on_mouse(m, &mut ui, &mut state, &mut editor, &mut turn, &tx);
                     }
                     Some(Ok(Event::Paste(text))) => editor.insert_str(&text),
                     Some(Ok(Event::FocusGained)) => ui.focused = true,
@@ -339,11 +397,6 @@ pub async fn run(agent_uid: String) -> Result<()> {
                         notify(&t!("Ai.NotifyDone"));
                     }
                 }
-            }
-            Some(list) = agents_rx.recv() => {
-                ui.agents = list;
-                ui.agents_loading = false;
-                ui.clamp_sel();
             }
             Some(cards) = cards_rx.recv() => {
                 ui.quotes.extend(cards);
@@ -444,15 +497,6 @@ fn now_secs() -> u64 {
         .unwrap_or_default()
 }
 
-/// Discover chat-capable agents across every workspace for the picker.
-async fn fetch_agents() -> Vec<AgentInfo> {
-    let api = crate::cli::agent::client::LbAgentApi { verbose: false };
-    crate::cli::agent::collect_agents(&api, None, None, true, false, 1, 100)
-        .await
-        .map(|listing| listing.agents)
-        .unwrap_or_default()
-}
-
 // ── input ─────────────────────────────────────────────────────────────────────
 
 /// Handle one keypress. Quitting is signalled via `ui.should_quit`.
@@ -463,7 +507,6 @@ fn on_key(
     editor: &mut Editor,
     turn: &mut Option<JoinHandle<()>>,
     tx: &UnboundedSender<ChatEvent>,
-    agents_tx: &UnboundedSender<Vec<AgentInfo>>,
 ) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     if ctrl && key.code == KeyCode::Char('c') {
@@ -481,10 +524,10 @@ fn on_key(
         return;
     }
     match ui.view {
-        View::Chat => on_chat_key(key, ui, state, editor, turn, tx, agents_tx),
+        View::Chat => on_chat_key(key, ui, state, editor, turn, tx),
         View::Question => on_question_key(key, ui, state, turn, tx),
-        View::Sessions => on_sessions_key(key, ui, state, agents_tx),
-        _ => on_list_key(key, ui, state, agents_tx),
+        View::Sessions => on_sessions_key(key, ui, state),
+        View::Settings => on_list_key(key, ui, state),
     }
 }
 
@@ -518,13 +561,8 @@ fn cancel_turn(state: &mut ChatState, turn: &mut Option<JoinHandle<()>>) {
     state.cancel(&t!("Ai.Cancelled"));
 }
 
-/// History view: arrows/Enter select and open, Del removes, typing filters.
-fn on_sessions_key(
-    key: crossterm::event::KeyEvent,
-    ui: &mut Ui,
-    state: &mut ChatState,
-    agents_tx: &UnboundedSender<Vec<AgentInfo>>,
-) {
+/// Conversations view: arrows/Enter select and open, Del removes, typing filters.
+fn on_sessions_key(key: crossterm::event::KeyEvent, ui: &mut Ui, state: &mut ChatState) {
     match key.code {
         KeyCode::Esc => {
             if ui.search.is_empty() {
@@ -539,7 +577,7 @@ fn on_sessions_key(
             let last = ui.row_count().saturating_sub(1);
             ui.sel = (ui.sel + 1).min(last);
         }
-        KeyCode::Enter => activate(ui, state, agents_tx),
+        KeyCode::Enter => activate(ui, state),
         KeyCode::Backspace => {
             ui.search.pop();
             ui.clamp_sel();
@@ -559,7 +597,6 @@ fn on_chat_key(
     editor: &mut Editor,
     turn: &mut Option<JoinHandle<()>>,
     tx: &UnboundedSender<ChatEvent>,
-    agents_tx: &UnboundedSender<Vec<AgentInfo>>,
 ) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let newline = key
@@ -579,7 +616,7 @@ fn on_chat_key(
                 return;
             }
             KeyCode::Enter if !newline => {
-                run_slash_selected(ui, state, editor, agents_tx);
+                run_slash_selected(ui, state, editor);
                 return;
             }
             KeyCode::Esc => {
@@ -600,7 +637,7 @@ fn on_chat_key(
             }
         }
         KeyCode::Enter if newline => editor.insert_newline(),
-        KeyCode::Enter if !state.busy => submit(ui, state, editor, turn, tx, agents_tx),
+        KeyCode::Enter if !state.busy => submit(ui, state, editor, turn, tx),
         KeyCode::Backspace | KeyCode::Char('w') if ctrl => editor.delete_word(),
         // Emacs-style line editing shortcuts, familiar from the shell.
         KeyCode::Char('a') if ctrl => editor.home(),
@@ -642,7 +679,6 @@ fn submit(
     editor: &mut Editor,
     turn: &mut Option<JoinHandle<()>>,
     tx: &UnboundedSender<ChatEvent>,
-    agents_tx: &UnboundedSender<Vec<AgentInfo>>,
 ) {
     let text = editor.text();
     let trimmed = text.trim();
@@ -654,11 +690,13 @@ fn submit(
         ui.should_quit = true;
         return;
     }
-    if let Some(cmd) = trimmed.strip_prefix('/') {
-        let name = cmd.split_whitespace().next().unwrap_or("");
-        if SLASH.iter().any(|(n, _)| *n == format!("/{name}")) {
+    // A known `/command` runs locally; anything else starting with `/` is just
+    // a prompt. Everything after the name is the command's argument.
+    if trimmed.starts_with('/') {
+        let (name, args) = split_command(trimmed);
+        if let Some(key) = slash_lookup(name) {
             editor.clear();
-            exec_slash(name, ui, state, agents_tx);
+            exec_slash(key, args, ui, state);
             return;
         }
     }
@@ -673,12 +711,17 @@ fn submit(
     *turn = Some(runtime::spawn_turn(req, tx.clone()));
 }
 
-fn exec_slash(
-    name: &str,
-    ui: &mut Ui,
-    state: &mut ChatState,
-    agents_tx: &UnboundedSender<Vec<AgentInfo>>,
-) {
+/// Split `/name rest` into the `/name` and its trimmed argument string.
+fn split_command(input: &str) -> (&str, &str) {
+    match input.find(char::is_whitespace) {
+        Some(i) => (&input[..i], input[i..].trim()),
+        None => (input, ""),
+    }
+}
+
+/// Run the command named by its canonical [`Slash::key`], with `args` as the
+/// (possibly empty) rest of the line.
+fn exec_slash(name: &str, args: &str, ui: &mut Ui, state: &mut ChatState) {
     match name {
         "new" => {
             state.reset(t!("Ai.Welcome").to_string());
@@ -694,25 +737,79 @@ fn exec_slash(
                 Err(_) => t!("Ai.ExportFailed").to_string(),
             });
         }
-        "history" => open_history(ui),
+        "resume" => open_sessions(ui),
         "settings" => ui.switch(View::Settings),
-        "agent" => open_agents(ui, agents_tx),
+        "agent" => switch_agent(args, ui, state),
         "help" => state.messages.push(Message {
             role: Role::System,
-            text: t!("Ai.HelpText").to_string(),
+            text: help_text(),
         }),
-        "exit" | "quit" => ui.should_quit = true,
+        "exit" => ui.should_quit = true,
         _ => {}
     }
 }
 
-/// Keyboard navigation for the History / Settings / Agents list views.
-fn on_list_key(
-    key: crossterm::event::KeyEvent,
-    ui: &mut Ui,
-    state: &mut ChatState,
-    agents_tx: &UnboundedSender<Vec<AgentInfo>>,
-) {
+/// `/agent <agent-id>` switches agent; `/agent reset` returns to Longbridge
+/// AI's own assistant. There is deliberately no roster to browse — an agent uid
+/// is addressed, never listed — so a bare `/agent` only restates the usage.
+///
+/// The uid is not validated here: only the server knows which agents the
+/// account may drive, so a bad one surfaces as that agent's first-turn error.
+fn switch_agent(args: &str, ui: &mut Ui, state: &mut ChatState) {
+    if args.is_empty() {
+        ui.notice = Some(t!("Ai.AgentUsage").to_string());
+        return;
+    }
+    let reset = args.eq_ignore_ascii_case("reset");
+    let uid = if reset {
+        DEFAULT_AGENT_UID.to_string()
+    } else {
+        args.to_string()
+    };
+    // Already there: say so rather than claiming a switch, and leave the
+    // conversation alone — re-running the command must not discard it.
+    if uid == state.agent_uid {
+        ui.notice = Some(t!("Ai.AgentUnchanged").to_string());
+        return;
+    }
+    let notice = if reset {
+        t!("Ai.AgentReset")
+    } else {
+        t!("Ai.AgentSwitched")
+    }
+    .to_string();
+    // A conversation belongs to its agent server-side, so switching starts a
+    // fresh one rather than continuing this thread under a different agent.
+    state.reset(t!("Ai.Welcome").to_string());
+    state.agent_uid = uid;
+    ui.switch(View::Chat);
+    // `switch` clears the status line, so the confirmation is set after it.
+    ui.notice = Some(notice);
+}
+
+/// The `/help` message: the command list is derived from [`SLASH`] so it cannot
+/// drift out of sync, followed by the key hints.
+fn help_text() -> String {
+    let commands = SLASH
+        .iter()
+        .map(|c| {
+            if c.aliases.is_empty() {
+                c.name.to_string()
+            } else {
+                format!("{} ({})", c.name, c.aliases.join(" "))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" · ");
+    format!(
+        "{} · {}",
+        t!("Ai.HelpCommands", commands = commands),
+        t!("Ai.HelpKeys")
+    )
+}
+
+/// Keyboard navigation for the Settings list view.
+fn on_list_key(key: crossterm::event::KeyEvent, ui: &mut Ui, state: &mut ChatState) {
     match key.code {
         KeyCode::Esc => ui.switch(View::Chat),
         KeyCode::Up | KeyCode::Char('k') => ui.sel = ui.sel.saturating_sub(1),
@@ -720,7 +817,7 @@ fn on_list_key(
             let last = ui.row_count().saturating_sub(1);
             ui.sel = (ui.sel + 1).min(last);
         }
-        KeyCode::Enter => activate(ui, state, agents_tx),
+        KeyCode::Enter => activate(ui, state),
         _ => {}
     }
 }
@@ -752,7 +849,6 @@ fn on_mouse(
     editor: &mut Editor,
     turn: &mut Option<JoinHandle<()>>,
     tx: &UnboundedSender<ChatEvent>,
-    agents_tx: &UnboundedSender<Vec<AgentInfo>>,
 ) {
     if let MouseEventKind::Moved = m.kind {
         ui.hover = Some((m.column, m.row));
@@ -777,7 +873,7 @@ fn on_mouse(
                     .find(|(_, r)| hit(*r, col, row))
                     .map(|(i, _)| *i)
                 {
-                    run_slash(idx, ui, state, editor, agents_tx);
+                    run_slash(idx, ui, state, editor);
                 } else if let Some(chip) = ui
                     .chips
                     .iter()
@@ -799,7 +895,7 @@ fn on_mouse(
                 if ui.view == View::Question {
                     answer_selected(ui, state, turn, tx);
                 } else {
-                    activate(ui, state, agents_tx);
+                    activate(ui, state);
                 }
             }
         }
@@ -847,7 +943,7 @@ fn scroll(ui: &mut Ui, state: &mut ChatState, up: bool) {
 }
 
 /// Run the selected row's action in the active list view.
-fn activate(ui: &mut Ui, state: &mut ChatState, agents_tx: &UnboundedSender<Vec<AgentInfo>>) {
+fn activate(ui: &mut Ui, state: &mut ChatState) {
     match ui.view {
         View::Sessions => {
             // The row past the last session is the "New session" action.
@@ -867,27 +963,18 @@ fn activate(ui: &mut Ui, state: &mut ChatState, agents_tx: &UnboundedSender<Vec<
             }
         }
         View::Settings => match SETTINGS.get(ui.sel) {
-            Some(Setting::Agent) => open_agents(ui, agents_tx),
             Some(Setting::NewChat) => {
                 state.reset(t!("Ai.Welcome").to_string());
                 ui.switch(View::Chat);
             }
             None => {}
         },
-        View::Agents => {
-            if let Some(agent) = ui.agents.get(ui.sel) {
-                let uid = agent.uid.clone();
-                state.reset(t!("Ai.Welcome").to_string());
-                state.agent_uid = uid;
-                ui.switch(View::Chat);
-            }
-        }
         View::Chat | View::Question => {}
     }
 }
 
-/// Open the History view and fetch the account's chats in the background.
-fn open_history(ui: &mut Ui) {
+/// Open the Conversations view and fetch the account's chats in the background.
+fn open_sessions(ui: &mut Ui) {
     ui.view = View::Sessions;
     ui.sel = 0;
     ui.search.clear();
@@ -897,20 +984,6 @@ fn open_history(ui: &mut Ui) {
     if let Some(tx) = ui.history_tx.clone() {
         tokio::spawn(async move {
             let _ = tx.send(session_store::list_summaries().await);
-        });
-    }
-}
-
-/// Open the Agent picker, fetching the list once and caching it.
-fn open_agents(ui: &mut Ui, agents_tx: &UnboundedSender<Vec<AgentInfo>>) {
-    ui.view = View::Agents;
-    ui.sel = 0;
-    ui.question = None;
-    if ui.agents.is_empty() && !ui.agents_loading {
-        ui.agents_loading = true;
-        let tx = agents_tx.clone();
-        tokio::spawn(async move {
-            let _ = tx.send(fetch_agents().await);
         });
     }
 }
@@ -1117,53 +1190,51 @@ fn marquee(text: &str, width: usize, tick: u64) -> String {
     out
 }
 
+/// Whether the command palette owns the input, i.e. the user is still typing a
+/// bare command name. Once an argument is started the palette closes, so Enter
+/// submits `/agent <id>` through [`submit`] instead of re-running the command
+/// with no argument.
 fn slash_active(editor: &Editor) -> bool {
-    editor.is_single_line() && editor.text().starts_with('/')
+    let text = editor.text();
+    editor.is_single_line()
+        && text.starts_with('/')
+        && !text.trim_end().contains(char::is_whitespace)
 }
 
-/// SLASH indices whose names start with the current input.
+/// SLASH indices whose name or an alias starts with the current input.
 fn slash_matches(editor: &Editor) -> Vec<usize> {
     let prefix = editor.text();
+    let prefix = prefix.trim_end();
     SLASH
         .iter()
         .enumerate()
-        .filter(|(_, (name, _))| name.starts_with(&prefix))
+        .filter(|(_, cmd)| cmd.starts_with(prefix))
         .map(|(i, _)| i)
         .collect()
 }
 
-/// Complete the input to the highlighted command's name.
+/// Complete the input to the highlighted command's canonical name.
 fn complete_slash(ui: &Ui, editor: &mut Editor) {
     let matches = slash_matches(editor);
     if let Some(&idx) = matches.get(ui.slash_sel.min(matches.len().saturating_sub(1))) {
-        editor.set_text(&format!("{} ", SLASH[idx].0));
+        editor.set_text(&format!("{} ", SLASH[idx].name));
     }
 }
 
 /// Run the highlighted palette command.
-fn run_slash_selected(
-    ui: &mut Ui,
-    state: &mut ChatState,
-    editor: &mut Editor,
-    agents_tx: &UnboundedSender<Vec<AgentInfo>>,
-) {
+fn run_slash_selected(ui: &mut Ui, state: &mut ChatState, editor: &mut Editor) {
     let matches = slash_matches(editor);
     if let Some(&idx) = matches.get(ui.slash_sel) {
-        run_slash(idx, ui, state, editor, agents_tx);
+        run_slash(idx, ui, state, editor);
     }
 }
 
-/// Clear the input and execute the command at `SLASH[idx]`.
-fn run_slash(
-    idx: usize,
-    ui: &mut Ui,
-    state: &mut ChatState,
-    editor: &mut Editor,
-    agents_tx: &UnboundedSender<Vec<AgentInfo>>,
-) {
-    let name = SLASH[idx].0.trim_start_matches('/');
+/// Clear the input and execute the command at `SLASH[idx]`, with no argument —
+/// the palette only ever holds a bare command name.
+fn run_slash(idx: usize, ui: &mut Ui, state: &mut ChatState, editor: &mut Editor) {
+    let key = SLASH[idx].key();
     editor.clear();
-    exec_slash(name, ui, state, agents_tx);
+    exec_slash(key, "", ui, state);
 }
 
 // ── rendering ────────────────────────────────────────────────────────────────
@@ -1218,11 +1289,7 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
         }
         View::Settings => {
             let inner = render_view_header(f, body, "Ai.TabSettings");
-            render_settings(f, inner, ui, state);
-        }
-        View::Agents => {
-            let inner = render_view_header(f, body, "Ai.SettingAgent");
-            render_agents(f, inner, ui);
+            render_settings(f, inner, ui);
         }
     }
     if ui.view == View::Chat {
@@ -1459,7 +1526,11 @@ fn render_slash_dropdown(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, editor
         return;
     }
     ui.slash_sel = ui.slash_sel.min(matches.len() - 1);
-    let name_w = matches.iter().map(|&i| SLASH[i].0.len()).max().unwrap_or(0);
+    let name_w = matches
+        .iter()
+        .map(|&i| SLASH[i].name.len())
+        .max()
+        .unwrap_or(0);
     let box_h = matches.len() as u16 + 2;
     let box_w = area.width.clamp(24, 56);
     let box_area = Rect {
@@ -1484,8 +1555,8 @@ fn render_slash_dropdown(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, editor
     let iw = inner.width as usize;
     let mut lines = Vec::new();
     for (row, &idx) in matches.iter().enumerate() {
-        let (name, desc) = SLASH[idx];
-        let desc = t!(desc).to_string();
+        let name = SLASH[idx].name;
+        let desc = t!(SLASH[idx].desc).to_string();
         let selected = row == ui.slash_sel;
         let rect = Rect {
             x: inner.x,
@@ -1580,10 +1651,14 @@ fn render_sessions(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
         .visible_sessions()
         .iter()
         .map(|s| {
-            (
-                s.title.clone(),
-                format!("{}  ·  {}", s.agent, relative_time(s.updated_at, now)),
-            )
+            let when = relative_time(s.updated_at, now);
+            // An unnamed agent contributes nothing, so no dangling separator.
+            let sub = if s.agent.is_empty() {
+                when
+            } else {
+                format!("{}  ·  {when}", s.agent)
+            };
+            (s.title.clone(), sub)
         })
         .collect();
     let n = entries.len();
@@ -1607,6 +1682,22 @@ fn render_sessions(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
         );
         return;
     }
+    // An account with no conversations still gets the "New session" row below,
+    // so the empty state is a note above the list rather than a replacement.
+    let list_area = if n == 0 {
+        let [note, rest] =
+            Layout::vertical([Constraint::Length(2), Constraint::Min(0)]).areas(list_area);
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                t!("Ai.SessionsEmpty").to_string(),
+                Style::default().fg(Color::DarkGray),
+            ))),
+            note,
+        );
+        rest
+    } else {
+        list_area
+    };
 
     // Each entry is 3 rows (title, subtitle, gap); the New action is 2. Window
     // in entry units so the selection stays visible.
@@ -1732,39 +1823,16 @@ fn relative_time(updated: u64, now: u64) -> String {
 }
 
 /// Render the Settings panel and record a hit rectangle per row.
-fn render_settings(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatState) {
+fn render_settings(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
     let rows: Vec<(usize, String)> = SETTINGS
         .iter()
         .enumerate()
         .map(|(i, setting)| {
             let label = match setting {
-                Setting::Agent => format!("{}: {}", t!("Ai.SettingAgent"), state.agent_uid),
                 Setting::NewChat => t!("Ai.NewChat").to_string(),
             };
             (i, label)
         })
-        .collect();
-    render_rows(f, area, ui, &rows);
-}
-
-/// Render the Agent picker.
-fn render_agents(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
-    if ui.agents_loading {
-        ui.rows.clear();
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                t!("Ai.AgentsLoading").to_string(),
-                Style::default().fg(Color::DarkGray),
-            ))),
-            area,
-        );
-        return;
-    }
-    let rows: Vec<(usize, String)> = ui
-        .agents
-        .iter()
-        .enumerate()
-        .map(|(i, a)| (i, format!("{}  ({})", a.name, a.uid)))
         .collect();
     render_rows(f, area, ui, &rows);
 }
@@ -2003,7 +2071,6 @@ fn render_status(f: &mut ratatui::Frame, area: Rect, ui: &Ui, state: &ChatState)
             View::Chat => t!("Ai.InputHint"),
             View::Sessions => t!("Ai.SessionsHint"),
             View::Settings => t!("Ai.SettingsHint"),
-            View::Agents => t!("Ai.AgentsHint"),
             View::Question => t!("Ai.QuestionHint"),
         };
         (hint.to_string(), Style::default().fg(Color::DarkGray))
@@ -2254,5 +2321,62 @@ mod tests {
         let line = Line::from("你好");
         let (_, text) = super::select_line(&line, 2, 4);
         assert_eq!(text, "好");
+    }
+
+    /// Every canonical name and alias must resolve, or the command silently
+    /// becomes a prompt sent to the model (which is how `/quit` once behaved).
+    #[test]
+    fn every_name_and_alias_resolves() {
+        use super::{slash_lookup, SLASH};
+        for cmd in &SLASH {
+            assert_eq!(slash_lookup(cmd.name), Some(cmd.key()), "{}", cmd.name);
+            for alias in cmd.aliases {
+                assert_eq!(
+                    slash_lookup(alias),
+                    Some(cmd.key()),
+                    "alias {alias} must dispatch to {}",
+                    cmd.name
+                );
+            }
+        }
+        assert_eq!(slash_lookup("/nope"), None);
+        // Both are advertised in `/help`, so both have to reach a command.
+        assert_eq!(slash_lookup("/quit"), Some("exit"));
+        assert_eq!(slash_lookup("/clear"), Some("new"));
+    }
+
+    #[test]
+    fn split_command_separates_name_from_argument() {
+        use super::split_command;
+        assert_eq!(split_command("/agent"), ("/agent", ""));
+        assert_eq!(split_command("/agent  my-bot "), ("/agent", "my-bot"));
+        assert_eq!(split_command("/agent reset"), ("/agent", "reset"));
+    }
+
+    /// The palette must let go of the input once an argument is being typed,
+    /// otherwise Enter re-runs the bare command and the argument is dropped.
+    #[test]
+    fn palette_closes_once_an_argument_is_typed() {
+        use super::{slash_active, Editor};
+        let mut e = Editor::new();
+        e.set_text("/agent");
+        assert!(slash_active(&e));
+        // Tab-completion leaves a trailing space; the name is still bare.
+        e.set_text("/agent ");
+        assert!(slash_active(&e));
+        e.set_text("/agent my-bot");
+        assert!(!slash_active(&e));
+    }
+
+    /// A prefix that only matches an alias still surfaces its command, so the
+    /// dropdown is never empty while a valid command is being typed.
+    #[test]
+    fn palette_matches_aliases() {
+        use super::{slash_matches, Editor, SLASH};
+        let mut e = Editor::new();
+        e.set_text("/qu");
+        let matches = slash_matches(&e);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(SLASH[matches[0]].name, "/exit");
     }
 }

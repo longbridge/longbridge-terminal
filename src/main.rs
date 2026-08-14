@@ -396,7 +396,7 @@ async fn main() {
         Some(cli::Commands::Acp { agent_id, cmd: _ }) => {
             let agent_id = agent_id
                 .or_else(|| std::env::var("LONGBRIDGE_AGENT_ID").ok())
-                .unwrap_or_else(|| "chatbot".to_string());
+                .unwrap_or_else(|| cli::agent::DEFAULT_AGENT_UID.to_string());
             let auth_methods = vec![longbridge_ai_acp::acp::schema::v1::AuthMethod::Terminal(
                 longbridge_ai_acp::acp::schema::v1::AuthMethodTerminal::new(
                     "longbridge-login",
