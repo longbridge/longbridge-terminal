@@ -246,7 +246,7 @@ struct Ui {
     sessions_error: bool,
     /// Senders for background History fetch / load, set once in `run`.
     history_tx: Option<UnboundedSender<Option<Vec<SessionSummary>>>>,
-    load_tx: Option<UnboundedSender<session_store::LoadedChat>>,
+    load_tx: Option<UnboundedSender<Option<session_store::LoadedChat>>>,
     /// Set to break the event loop (via `/exit` or a double Ctrl+C).
     should_quit: bool,
     /// True after one Ctrl+C on an empty prompt; a second one exits.
@@ -359,7 +359,7 @@ pub async fn run(agent_uid: String) -> Result<()> {
     let (cards_tx, mut cards_rx) =
         unbounded_channel::<HashMap<String, crate::cli::agent::render::QuoteCardData>>();
     let (history_tx, mut history_rx) = unbounded_channel::<Option<Vec<SessionSummary>>>();
-    let (load_tx, mut load_rx) = unbounded_channel::<session_store::LoadedChat>();
+    let (load_tx, mut load_rx) = unbounded_channel::<Option<session_store::LoadedChat>>();
     ui.history_tx = Some(history_tx);
     ui.load_tx = Some(load_tx);
     let mut events = EventStream::new();
@@ -425,10 +425,14 @@ pub async fn run(agent_uid: String) -> Result<()> {
                 ui.clamp_sel();
             }
             Some(loaded) = load_rx.recv() => {
-                session_store::restore(loaded, &mut state);
-                ui.quotes.clear();
-                ui.cache_sig = 0;
-                ui.switch(View::Chat);
+                if let Some(loaded) = loaded {
+                    session_store::restore(loaded, &mut state);
+                    ui.reset_render();
+                    ui.switch(View::Chat);
+                } else {
+                    // Resume failed: stay on History with an error notice.
+                    ui.notice = Some(t!("Ai.SessionsError").to_string());
+                }
             }
         }
         if ui.should_quit {
@@ -964,9 +968,7 @@ fn activate(ui: &mut Ui, state: &mut ChatState) {
                 if let Some(tx) = ui.load_tx.clone() {
                     ui.notice = Some(t!("Ai.SessionLoading").to_string());
                     tokio::spawn(async move {
-                        if let Some(loaded) = session_store::load_detail(&id).await {
-                            let _ = tx.send(loaded);
-                        }
+                        let _ = tx.send(session_store::load_detail(&id).await);
                     });
                 }
             } else {
