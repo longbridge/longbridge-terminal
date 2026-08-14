@@ -18,6 +18,34 @@ pub enum Segment {
     XWidget(String),
 }
 
+/// URL scheme the agent uses to reference an embeddable widget.
+pub(crate) const WIDGET_SCHEME: &str = "widget://";
+
+/// What the answer scanner found next.
+#[derive(PartialEq, Eq, Clone, Copy)]
+enum Marker {
+    /// A ```` ```vis-chart ```` fence.
+    Chart,
+    /// An `<x-widget src="…">` tag.
+    Tag,
+    /// A `widget://…` URL sitting in the prose on its own.
+    BareUrl,
+}
+
+/// Length of the bare `widget://…` URL at the start of `s`.
+///
+/// A tagged widget is delimited by its quotes; a bare one has to be delimited by
+/// hand. It runs to the first whitespace or bracket, less any sentence
+/// punctuation that happened to follow it.
+pub(crate) fn bare_widget_url_end(s: &str) -> usize {
+    let end = s
+        .find(|c: char| {
+            c.is_whitespace() || matches!(c, ')' | ']' | '}' | '>' | '<' | '"' | '\'' | '，' | '。')
+        })
+        .unwrap_or(s.len());
+    s[..end].trim_end_matches(['.', ',', ';', ':']).len()
+}
+
 /// Split an answer into text / chart / widget segments, preserving order.
 /// Malformed vis-chart JSON keeps the fenced block as text so no content
 /// is silently dropped.
@@ -27,18 +55,34 @@ pub fn segment_answer(answer: &str) -> Vec<Segment> {
     let mut rest = answer;
 
     loop {
-        let chart_pos = rest.find("```vis-chart");
-        let widget_pos = rest.find("<x-widget");
-        let (pos, is_chart) = match (chart_pos, widget_pos) {
-            (Some(c), Some(w)) if c <= w => (c, true),
-            (Some(c), None) => (c, true),
-            (_, Some(w)) => (w, false),
-            (None, None) => break,
+        // Whichever marker comes first wins. A tagged widget always starts
+        // before the `widget://` inside it, so the bare-URL scan cannot steal a
+        // tag out from under the tag branch.
+        let found = [
+            (rest.find("```vis-chart"), Marker::Chart),
+            (rest.find("<x-widget"), Marker::Tag),
+            (rest.find(WIDGET_SCHEME), Marker::BareUrl),
+        ];
+        let Some((pos, marker)) = found
+            .into_iter()
+            .filter_map(|(at, m)| at.map(|at| (at, m)))
+            .min_by_key(|(at, _)| *at)
+        else {
+            break;
         };
         text_acc.push_str(&rest[..pos]);
         rest = &rest[pos..];
 
-        if is_chart {
+        if marker == Marker::BareUrl {
+            // Some answers print the reference URL on its own line instead of
+            // wrapping it in an `<x-widget>` tag. It means the same thing, so it
+            // gets the same treatment rather than being left as a raw URL in the
+            // prose.
+            let end = bare_widget_url_end(rest);
+            flush_text(&mut segments, &mut text_acc);
+            segments.push(Segment::XWidget(rest[..end].to_string()));
+            rest = &rest[end..];
+        } else if marker == Marker::Chart {
             let after = &rest["```vis-chart".len()..];
             let Some(end) = after.find("```") else {
                 break; // unterminated fence: emit as text
@@ -674,5 +718,58 @@ mod tests {
             widths.iter().all(|&w| w == widths[0]),
             "CJK card lines have unequal display width: {widths:?}\n{plain}"
         );
+    }
+
+    /// Answers sometimes print the reference URL on its own instead of wrapping
+    /// it in an `<x-widget>` tag. Left unrecognized it showed up as a raw URL in
+    /// the middle of the prose.
+    #[test]
+    fn bare_widget_url_becomes_a_widget_segment() {
+        let md = "## TSLA\n\nwidget://quote/security/detail?symbol=TSLA.US&time_range=1\n\ntail";
+        let segs = segment_answer(md);
+        let widget = segs
+            .iter()
+            .find_map(|s| match s {
+                Segment::XWidget(src) => Some(src.clone()),
+                _ => None,
+            })
+            .expect("the bare URL should become a widget segment");
+        assert_eq!(
+            parse_quote_widget_symbol(&widget).as_deref(),
+            Some("TSLA.US")
+        );
+        // The URL must not also be left behind in the prose.
+        for seg in &segs {
+            if let Segment::Text(t) = seg {
+                assert!(!t.contains("widget://"), "URL leaked into text: {t:?}");
+            }
+        }
+    }
+
+    /// The `widget://` inside a tag must not be picked up a second time.
+    #[test]
+    fn tagged_widget_is_not_double_counted() {
+        let md = "<x-widget src=\"widget://quote/security/detail?symbol=700.HK\"></x-widget>";
+        let widgets = segment_answer(md)
+            .into_iter()
+            .filter(|s| matches!(s, Segment::XWidget(_)))
+            .count();
+        assert_eq!(widgets, 1, "expected one widget segment, got {widgets}");
+        let found = crate::cli::agent::events::extract_widgets(md);
+        assert_eq!(found.len(), 1, "extract_widgets double-counted: {found:?}");
+    }
+
+    /// A URL that ends a sentence keeps the sentence punctuation out of the URL.
+    #[test]
+    fn bare_url_stops_at_punctuation_and_brackets() {
+        for (input, want) in [
+            ("widget://a?b=1 rest", "widget://a?b=1"),
+            ("widget://a?b=1.", "widget://a?b=1"),
+            ("widget://a?b=1)", "widget://a?b=1"),
+            ("widget://a?b=1\nnext", "widget://a?b=1"),
+        ] {
+            let end = bare_widget_url_end(input);
+            assert_eq!(&input[..end], want, "for {input:?}");
+        }
     }
 }

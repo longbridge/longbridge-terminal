@@ -2231,8 +2231,8 @@ fn render_answer_lines(
     quotes: &HashMap<String, crate::cli::agent::render::QuoteCardData>,
 ) -> Vec<Line<'static>> {
     use crate::cli::agent::render::{
-        parse_quote_widget_symbol, render_vis_chart, replace_inline_markers, segment_answer,
-        strip_control_chars, Segment,
+        parse_quote_widget_symbol, replace_inline_markers, segment_answer, strip_control_chars,
+        Segment,
     };
     let mut out = Vec::new();
     for segment in segment_answer(answer) {
@@ -2241,15 +2241,11 @@ fn render_answer_lines(
                 let text = replace_inline_markers(&text, false);
                 out.extend(markdown::render(&text, width));
             }
-            Segment::VisChart(spec) => {
-                let chart = render_vis_chart(&spec, width, false);
-                for line in chart.split('\n') {
-                    out.push(Line::from(Span::styled(
-                        strip_control_chars(line),
-                        Style::default().fg(Color::Cyan),
-                    )));
-                }
-            }
+            // Straight from the chart renderer, which already styles each part
+            // (line, volume, axes) and sizes itself to `width`. Going through
+            // the CLI's ANSI form only to repaint every row one flat color threw
+            // that away.
+            Segment::VisChart(spec) => out.extend(super::chart::render(&spec, width)),
             Segment::XWidget(src) => {
                 let sym = parse_quote_widget_symbol(&src);
                 if let Some(card) = sym.as_ref().and_then(|s| quotes.get(s)) {

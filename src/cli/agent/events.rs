@@ -295,6 +295,21 @@ pub fn extract_widgets(answer: &str) -> Vec<Widget> {
         }
         rest = &after[tag_end..];
     }
+    // Bare `widget://…` URLs, which some answers print instead of a tag. Scanned
+    // over absolute offsets so the copy inside a `src="…"` attribute — already
+    // collected above — can be recognized by what precedes it and skipped.
+    let scheme = super::render::WIDGET_SCHEME;
+    let mut at = 0usize;
+    while let Some(rel) = answer[at..].find(scheme) {
+        let start = at + rel;
+        let len = super::render::bare_widget_url_end(&answer[start..]);
+        if !answer[..start].ends_with("src=\"") {
+            widgets.push(Widget::XWidget {
+                src: answer[start..start + len].to_string(),
+            });
+        }
+        at = start + len.max(1);
+    }
     widgets
 }
 

@@ -126,8 +126,8 @@ pub fn render(md: &str, width: usize) -> Vec<Line<'static>> {
         match block {
             Block::Markdown(text) => {
                 let rendered = tui_markdown::from_str(&text);
-                for line in &rendered.lines {
-                    wrap_line(line, width, &mut out);
+                for line in join_list_markers(&rendered.lines) {
+                    wrap_line(&line, width, &mut out);
                 }
             }
             Block::Code(lang, lines) => render_code(&lang, &lines, width, &mut out),
@@ -151,6 +151,46 @@ pub fn render(md: &str, width: usize) -> Vec<Line<'static>> {
 /// Whether a rendered line has no visible content.
 fn is_blank(line: Option<&Line<'static>>) -> bool {
     line.is_some_and(|l| l.spans.iter().all(|s| s.content.trim().is_empty()))
+}
+
+/// Rejoin a list marker with the item text that belongs to it.
+///
+/// `tui-markdown` renders a *loose* list — one whose items are separated by
+/// blank lines, which is how the agent writes multi-sentence points — by putting
+/// the marker on a line of its own, so `1.` and its sentence land on separate
+/// rows. A tight list is already inline, so only the orphaned markers need
+/// repairing.
+fn join_list_markers<'a>(lines: &[Line<'a>]) -> Vec<Line<'a>> {
+    let mut out: Vec<Line<'a>> = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let text: String = lines[i].spans.iter().map(|s| s.content.as_ref()).collect();
+        if is_list_marker(&text) {
+            if let Some(next) = lines.get(i + 1) {
+                let mut spans = lines[i].spans.clone();
+                spans.extend(next.spans.iter().cloned());
+                out.push(Line::from(spans));
+                i += 2;
+                continue;
+            }
+        }
+        out.push(lines[i].clone());
+        i += 1;
+    }
+    out
+}
+
+/// Whether `text` is nothing but a list marker: `1.`, `2)`, `-`, `*`, `•`.
+fn is_list_marker(text: &str) -> bool {
+    let t = text.trim();
+    if matches!(t, "-" | "*" | "+" | "•") {
+        return true;
+    }
+    // An ordered marker is digits followed by exactly one `.` or `)`.
+    let Some(digits) = t.strip_suffix('.').or_else(|| t.strip_suffix(')')) else {
+        return false;
+    };
+    !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
 }
 
 /// Split an answer into prose / code / table blocks in source order.
@@ -893,6 +933,50 @@ mod tests {
                     .sum();
                 assert!(w <= width, "code line of {w} cols exceeds width {width}");
             }
+        }
+    }
+
+    /// A *loose* list — items separated by blank lines, which is how the agent
+    /// writes multi-sentence points — used to put `1.` on a row of its own with
+    /// the sentence beneath it.
+    #[test]
+    fn loose_list_markers_stay_with_their_text() {
+        for md in [
+            "1. **A**: first\n\n2. **B**: second",
+            "- **A**: first\n\n- **B**: second",
+        ] {
+            let rendered: Vec<String> = render(md, 70)
+                .iter()
+                .map(|l| {
+                    l.spans
+                        .iter()
+                        .map(|s| s.content.to_string())
+                        .collect::<String>()
+                })
+                .filter(|t| !t.trim().is_empty())
+                .collect();
+            for line in &rendered {
+                assert!(
+                    !super::is_list_marker(line),
+                    "a bare marker was left on its own row: {rendered:?}"
+                );
+            }
+            assert!(
+                rendered
+                    .iter()
+                    .any(|l| l.contains("A") && l.contains("first")),
+                "marker and text should share a row: {rendered:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn list_marker_recognition_is_narrow() {
+        for yes in ["1.", "12.", "3)", "-", "*", "•", "  2. "] {
+            assert!(super::is_list_marker(yes), "{yes:?} should be a marker");
+        }
+        for no in ["", "1", "1.5", "a.", "-x", "1. text", "..", "。"] {
+            assert!(!super::is_list_marker(no), "{no:?} should not be a marker");
         }
     }
 }
