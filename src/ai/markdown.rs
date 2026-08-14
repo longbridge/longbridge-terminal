@@ -292,20 +292,26 @@ fn render_code(lang: &str, lines: &[String], width: usize, out: &mut Vec<Line<'s
         )));
     }
     for line in lines {
+        // A code line longer than the box is wrapped, not left to overflow:
+        // the JSON of a rejected chart spec is one very long line, and letting
+        // the terminal fold it breaks out of the shaded block. Code is never
+        // truncated — a clipped command or value is worse than a taller block.
         let cells = highlight(&format!(" {line}"));
-        let mut spans = coalesce(&cells).spans;
-        // Extend the shaded background to the full block width.
-        let used: usize = cells
-            .iter()
-            .map(|(c, _)| UnicodeWidthChar::width(*c).unwrap_or(0))
-            .sum();
-        if used < box_w {
-            spans.push(Span::styled(
-                " ".repeat(box_w - used),
-                Style::default().bg(CODE_BG),
-            ));
+        for part in wrap_chars(&cells, box_w) {
+            let mut spans = coalesce(&part).spans;
+            // Extend the shaded background to the full block width.
+            let used: usize = part
+                .iter()
+                .map(|(c, _)| UnicodeWidthChar::width(*c).unwrap_or(0))
+                .sum();
+            if used < box_w {
+                spans.push(Span::styled(
+                    " ".repeat(box_w - used),
+                    Style::default().bg(CODE_BG),
+                ));
+            }
+            out.push(Line::from(spans));
         }
-        out.push(Line::from(spans));
     }
 }
 
@@ -868,5 +874,25 @@ mod tests {
             matches!((blank, border), (Some(b), Some(t)) if b < t),
             "expected a blank line before the table"
         );
+    }
+
+    /// A long code line is wrapped inside the block, not left to run past the
+    /// width where the terminal would fold it out of the shaded background.
+    /// The JSON of a rejected chart spec arrives as exactly one such line.
+    #[test]
+    fn long_code_lines_wrap_inside_the_block() {
+        let md = format!("```json\n{{\"a\": \"{}\"}}\n```", "x".repeat(200));
+        for width in [30usize, 60, 100] {
+            let lines = render(&md, width);
+            assert!(lines.len() > 2, "expected the line to wrap at {width}");
+            for line in lines {
+                let w: usize = line
+                    .spans
+                    .iter()
+                    .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
+                    .sum();
+                assert!(w <= width, "code line of {w} cols exceeds width {width}");
+            }
+        }
     }
 }
