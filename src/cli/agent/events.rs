@@ -41,6 +41,10 @@ pub enum AgentEvent {
     ChatFinished {
         error_message: String,
     },
+    /// The server auto-generated a short title for the conversation.
+    ChatTitleUpdated {
+        title: String,
+    },
     Unknown {
         event: String,
     },
@@ -126,6 +130,9 @@ pub fn parse_data_line(payload: &str) -> Option<AgentEvent> {
         "human_interaction_required" => AgentEvent::HumanInteractionRequired { interrupt: data },
         "chat_finished" => AgentEvent::ChatFinished {
             error_message: str_field(&data, "error_message"),
+        },
+        "chat_title_updated" => AgentEvent::ChatTitleUpdated {
+            title: str_field(&data, "title"),
         },
         other => AgentEvent::Unknown {
             event: other.to_string(),
@@ -348,16 +355,20 @@ mod tests {
 
     #[test]
     fn unknown_events_are_tolerated() {
-        // `ping` and `chat_title_updated` are real but undocumented events
+        // `ping` is a real but unsurfaced heartbeat event.
         let events = fixture_events();
         assert!(events.iter().any(|e| matches!(
             e,
             AgentEvent::Unknown { event } if event == "ping"
         )));
-        assert!(events.iter().any(|e| matches!(
-            e,
-            AgentEvent::Unknown { event } if event == "chat_title_updated"
-        )));
+    }
+
+    #[test]
+    fn chat_title_updated_is_surfaced() {
+        let events = fixture_events();
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, AgentEvent::ChatTitleUpdated { .. })));
     }
 
     #[test]

@@ -104,6 +104,7 @@ fn map_agent_event(ev: &AgentEvent) -> Vec<ChatEvent> {
         AgentEvent::ChatFinished { error_message } if !error_message.is_empty() => {
             vec![ChatEvent::Delta(format!("\n[error] {error_message}"))]
         }
+        AgentEvent::ChatTitleUpdated { title } => vec![ChatEvent::Title(title.clone())],
         AgentEvent::ThinkingFinished
         | AgentEvent::ChatFinished { .. }
         | AgentEvent::Unknown { .. } => Vec::new(),

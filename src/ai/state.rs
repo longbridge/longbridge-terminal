@@ -39,6 +39,8 @@ pub enum ChatEvent {
     Status(String),
     /// A tool finished; record failures so an empty turn can explain itself.
     ToolFailed(String),
+    /// The server auto-generated a title for this conversation.
+    Title(String),
     /// The agent paused to ask the user something; the next prompt answers it.
     Interrupt(Value),
     /// End-of-turn metadata (source references / suggested follow-ups) rendered
@@ -62,6 +64,8 @@ pub struct ChatState {
     pub busy: bool,
     /// Lines scrolled up from the bottom (0 = pinned to the latest).
     pub scroll: u16,
+    /// Server-generated conversation title, shown in History when present.
+    pub title: Option<String>,
     /// Longbridge conversation IDs of the latest turn (for follow-ups).
     pub chat_uid: Option<String>,
     pub message_id: Option<String>,
@@ -117,6 +121,11 @@ impl ChatState {
             }
             ChatEvent::Status(status) => self.status = status,
             ChatEvent::ToolFailed(name) => self.tool_failures.push(name),
+            ChatEvent::Title(title) => {
+                if !title.trim().is_empty() {
+                    self.title = Some(title);
+                }
+            }
             ChatEvent::Interrupt(interrupt) => self.pending_interrupt = Some(interrupt),
             ChatEvent::Meta {
                 references,
@@ -178,6 +187,7 @@ impl ChatState {
         self.status.clear();
         self.busy = false;
         self.scroll = 0;
+        self.title = None;
         self.chat_uid = None;
         self.message_id = None;
         self.pending_interrupt = None;

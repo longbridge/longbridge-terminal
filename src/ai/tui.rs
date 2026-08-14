@@ -1174,7 +1174,7 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
 }
 
 fn render_title(f: &mut ratatui::Frame, area: Rect, state: &ChatState) {
-    let title_line = Line::from(vec![
+    let mut spans = vec![
         Span::styled(
             format!(" {} ", t!("Ai.Title")),
             Style::default()
@@ -1186,8 +1186,15 @@ fn render_title(f: &mut ratatui::Frame, area: Rect, state: &ChatState) {
             format!("  {}", state.agent_uid),
             Style::default().fg(Color::DarkGray),
         ),
-    ]);
-    f.render_widget(Paragraph::new(title_line), area);
+    ];
+    // Show the server-generated conversation title once one arrives.
+    if let Some(title) = &state.title {
+        spans.push(Span::styled(
+            format!("  ·  {title}"),
+            Style::default().fg(Color::Gray),
+        ));
+    }
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 /// Draw the tab bar and record each tab's hit rectangle for mouse clicks.

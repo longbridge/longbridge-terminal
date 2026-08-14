@@ -33,6 +33,9 @@ pub struct StoredSession {
     /// Seconds since the Unix epoch; used for ordering and display.
     pub updated_at: u64,
     pub agent_uid: String,
+    /// Server-generated conversation title, if one was received.
+    #[serde(default)]
+    pub title: Option<String>,
     pub chat_uid: Option<String>,
     pub message_id: Option<String>,
     messages: Vec<StoredMessage>,
@@ -93,6 +96,7 @@ pub fn save(id: &str, now: u64, state: &ChatState) {
         id: id.to_string(),
         updated_at: now,
         agent_uid: state.agent_uid.clone(),
+        title: state.title.clone(),
         chat_uid: state.chat_uid.clone(),
         message_id: state.message_id.clone(),
         messages: state
@@ -136,6 +140,7 @@ pub fn clear() {
 /// Restore the persisted messages and conversation IDs into `state`.
 pub fn restore(session: StoredSession, state: &mut ChatState) {
     state.agent_uid = session.agent_uid;
+    state.title = session.title;
     state.chat_uid = session.chat_uid;
     state.message_id = session.message_id;
     state.pending_interrupt = None;
@@ -154,8 +159,12 @@ pub fn restore(session: StoredSession, state: &mut ChatState) {
         .collect();
 }
 
-/// A short title from the first user message (or a placeholder).
+/// The conversation's title: the server-generated one if present, otherwise
+/// the first line of the first user message, otherwise a placeholder.
 fn summarize(session: &StoredSession) -> String {
+    if let Some(title) = session.title.as_ref().filter(|t| !t.trim().is_empty()) {
+        return title.clone();
+    }
     session
         .messages
         .iter()

@@ -226,6 +226,9 @@ fn map_event(ev: ConversationStreamEvent) -> Option<AgentEvent> {
         ConversationStreamEvent::ChatFinished(p) => AgentEvent::ChatFinished {
             error_message: p.error_message,
         },
+        ConversationStreamEvent::ChatTitleUpdated(p) => {
+            AgentEvent::ChatTitleUpdated { title: p.title }
+        }
         ConversationStreamEvent::Other { event, .. } => AgentEvent::Unknown { event },
         // Progress-only events the CLI does not display.
         ConversationStreamEvent::Ping
@@ -239,8 +242,7 @@ fn map_event(ev: ConversationStreamEvent) -> Option<AgentEvent> {
         | ConversationStreamEvent::QueryMasked(_)
         | ConversationStreamEvent::PlanChanged(_)
         | ConversationStreamEvent::ContextCompressStarted(_)
-        | ConversationStreamEvent::ContextCompressFinished(_)
-        | ConversationStreamEvent::ChatTitleUpdated(_) => return None,
+        | ConversationStreamEvent::ContextCompressFinished(_) => return None,
     })
 }
 
