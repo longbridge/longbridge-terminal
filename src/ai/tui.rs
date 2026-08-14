@@ -49,8 +49,6 @@ enum View {
     Question,
 }
 
-const TABS: [View; 3] = [View::Chat, View::Sessions, View::Settings];
-
 /// Braille spinner frames for the "generating" status line.
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
@@ -157,7 +155,6 @@ struct Ui {
     /// Set during render when at least one truncated row is scrolling, so the
     /// animation timer only runs while something actually needs it.
     animating: bool,
-    tabs: Vec<(View, Rect)>,
     rows: Vec<(usize, Rect)>,
     chips: Vec<(Chip, Rect)>,
     /// Slash-palette hit rects: `(SLASH index, rect)` for the visible entries.
@@ -193,7 +190,6 @@ impl Ui {
             hover: None,
             tick: 0,
             animating: false,
-            tabs: Vec::new(),
             rows: Vec::new(),
             chips: Vec::new(),
             slash_rows: Vec::new(),
@@ -396,11 +392,11 @@ fn on_key(
     }
     // Any other key disarms the "press Ctrl+C again to exit" prompt.
     ui.ctrl_c_armed = false;
+    // Tab completes the highlighted slash command; it has no other use now that
+    // views are reached via `/` commands rather than a tab bar.
     if key.code == KeyCode::Tab {
         if ui.view == View::Chat && slash_active(editor) {
             complete_slash(ui, editor);
-        } else {
-            cycle_view(ui);
         }
         return;
     }
@@ -535,7 +531,6 @@ fn on_chat_key(
                 editor.clear();
             }
         }
-        KeyCode::Char('y') if ctrl => copy_with_notice(ui, last_answer(state)),
         KeyCode::Enter if newline => editor.insert_newline(),
         KeyCode::Enter if !state.busy => submit(ui, state, editor, turn, tx, agents_tx),
         KeyCode::Backspace | KeyCode::Char('w') if ctrl => editor.delete_word(),
@@ -702,15 +697,6 @@ fn on_mouse(
         MouseEventKind::Down(MouseButton::Left) => {
             let (col, row) = (m.column, m.row);
             ui.selection = None;
-            if let Some(view) = ui
-                .tabs
-                .iter()
-                .find(|(_, r)| hit(*r, col, row))
-                .map(|(v, _)| *v)
-            {
-                ui.switch(view);
-                return;
-            }
             if ui.view == View::Chat {
                 if let Some(idx) = ui
                     .slash_rows
@@ -785,15 +771,6 @@ fn scroll(ui: &mut Ui, state: &mut ChatState, up: bool) {
         let last = ui.row_count().saturating_sub(1);
         ui.sel = (ui.sel + 1).min(last);
     }
-}
-
-fn cycle_view(ui: &mut Ui) {
-    let next = match ui.view {
-        View::Chat => View::Sessions,
-        View::Sessions => View::Settings,
-        _ => View::Chat,
-    };
-    ui.switch(next);
 }
 
 /// Run the selected row's action in the active list view.
@@ -942,16 +919,6 @@ fn copy_to_clipboard(text: &str) -> bool {
     out.write_all(seq.as_bytes())
         .and_then(|()| out.flush())
         .is_ok()
-}
-
-/// The most recent assistant answer, for the copy shortcut.
-fn last_answer(state: &ChatState) -> Option<String> {
-    state
-        .messages
-        .iter()
-        .rev()
-        .find(|m| m.role == Role::Assistant)
-        .map(|m| m.text.clone())
 }
 
 /// The whole conversation as `Role: text` blocks, for `/copy`.
@@ -1127,11 +1094,7 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
         3
     };
 
-    let mut constraints = vec![
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Min(1),
-    ];
+    let mut constraints = vec![Constraint::Length(1), Constraint::Min(1)];
     if has_meta {
         constraints.push(Constraint::Length(meta_h));
     }
@@ -1139,8 +1102,8 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
     constraints.push(Constraint::Length(footer_h));
     let chunks = Layout::vertical(constraints).split(area);
 
-    let (title, tabs, body) = (chunks[0], chunks[1], chunks[2]);
-    let mut idx = 3;
+    let (title, body) = (chunks[0], chunks[1]);
+    let mut idx = 2;
     let meta = has_meta.then(|| {
         let m = chunks[idx];
         idx += 1;
@@ -1151,13 +1114,23 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
     let footer = chunks[idx];
 
     render_title(f, title, state);
-    render_tabs(f, tabs, ui);
+    // The Chat view is chrome-free; other views get a header with the view name
+    // (they are opened via `/` commands and left with Esc).
     match ui.view {
         View::Chat => render_chat(f, body, ui, state),
-        View::Sessions => render_sessions(f, body, ui),
-        View::Settings => render_settings(f, body, ui, state),
-        View::Agents => render_agents(f, body, ui),
         View::Question => render_question(f, body, ui),
+        View::Sessions => {
+            let inner = render_view_header(f, body, "Ai.TabSessions");
+            render_sessions(f, inner, ui);
+        }
+        View::Settings => {
+            let inner = render_view_header(f, body, "Ai.TabSettings");
+            render_settings(f, inner, ui, state);
+        }
+        View::Agents => {
+            let inner = render_view_header(f, body, "Ai.SettingAgent");
+            render_agents(f, inner, ui);
+        }
     }
     if ui.view == View::Chat {
         render_slash_dropdown(f, body, ui, editor);
@@ -1197,48 +1170,25 @@ fn render_title(f: &mut ratatui::Frame, area: Rect, state: &ChatState) {
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-/// Draw the tab bar and record each tab's hit rectangle for mouse clicks.
-fn render_tabs(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
-    ui.tabs.clear();
-    let mut spans = Vec::new();
-    let mut x = area.x;
-    for view in TABS {
-        let label = format!(" {} ", tab_label(view));
-        let width = label.width() as u16;
-        let rect = Rect {
-            x,
-            y: area.y,
-            width,
-            height: 1,
-        };
-        let selected = view == ui.view;
-        let style = if selected {
+/// Header for a `/`-opened view: a bold name badge and an "Esc to go back"
+/// hint. Returns the remaining area below it for the view body.
+fn render_view_header(f: &mut ratatui::Frame, area: Rect, label_key: &str) -> Rect {
+    let [top, rest] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
+    let line = Line::from(vec![
+        Span::styled(
+            format!(" {} ", t!(label_key)),
             Style::default()
                 .fg(Color::Black)
                 .bg(Color::Cyan)
-                .add_modifier(Modifier::BOLD)
-        } else if hovering(ui, rect) {
-            // Hover feedback: brighten and underline the tab under the mouse.
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::UNDERLINED)
-        } else {
-            Style::default().fg(Color::Gray)
-        };
-        spans.push(Span::styled(label, style));
-        spans.push(Span::raw(" "));
-        ui.tabs.push((view, rect));
-        x += width + 1;
-    }
-    f.render_widget(Paragraph::new(Line::from(spans)), area);
-}
-
-fn tab_label(view: View) -> String {
-    match view {
-        View::Chat => t!("Ai.TabChat").to_string(),
-        View::Sessions => t!("Ai.TabSessions").to_string(),
-        _ => t!("Ai.TabSettings").to_string(),
-    }
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("  {}", t!("Ai.BackHint")),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ]);
+    f.render_widget(Paragraph::new(line), top);
+    rest
 }
 
 fn render_chat(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatState) {
@@ -1333,8 +1283,11 @@ fn coalesce_cells(cells: &[(char, Style)]) -> Line<'static> {
     Line::from(spans)
 }
 
-/// The slash-command palette: a menu of matching commands floating above the
-/// prompt, with the highlighted entry ↑/↓ can move and Enter/click can run.
+const HOVER_BG: Color = Color::Rgb(48, 48, 48);
+
+/// The slash-command palette: a rounded, bordered menu of matching commands
+/// floating above the prompt. ↑/↓ move the highlight, Enter/click runs it, and
+/// the command names are column-aligned with dimmed descriptions.
 fn render_slash_dropdown(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, editor: &Editor) {
     ui.slash_rows.clear();
     if !slash_active(editor) {
@@ -1345,43 +1298,85 @@ fn render_slash_dropdown(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, editor
         return;
     }
     ui.slash_sel = ui.slash_sel.min(matches.len() - 1);
-    let h = matches.len() as u16;
+    let name_w = matches.iter().map(|&i| SLASH[i].0.len()).max().unwrap_or(0);
+    let box_h = matches.len() as u16 + 2;
+    let box_w = area.width.clamp(24, 56);
     let box_area = Rect {
         x: area.x,
-        y: area.y + area.height.saturating_sub(h),
-        width: area.width.min(48),
-        height: h,
+        y: area.y + area.height.saturating_sub(box_h),
+        width: box_w,
+        height: box_h,
     };
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(Span::styled(
+            format!(" {} ", t!("Ai.CommandsTitle")),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
+    let inner = block.inner(box_area);
+    f.render_widget(Clear, box_area);
+    f.render_widget(block, box_area);
+
+    let iw = inner.width as usize;
     let mut lines = Vec::new();
     for (row, &idx) in matches.iter().enumerate() {
         let (name, desc) = SLASH[idx];
+        let desc = t!(desc).to_string();
         let selected = row == ui.slash_sel;
         let rect = Rect {
-            x: box_area.x,
-            y: box_area.y + row as u16,
-            width: box_area.width,
+            x: inner.x,
+            y: inner.y + row as u16,
+            width: inner.width,
             height: 1,
         };
+        let content = format!(" {name:<name_w$}   {desc}");
         let line = if selected {
             Line::from(Span::styled(
-                format!("{name}  {}", t!(desc)),
-                row_style(true),
+                pad_to(&content, iw),
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
             ))
         } else {
-            let base = row_style_state(false, hovering(ui, rect));
-            Line::from(vec![
-                Span::styled(
-                    format!("{name} "),
-                    base.fg(Color::Cyan).add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(t!(desc).to_string(), base.fg(Color::DarkGray)),
-            ])
+            let bg = hovering(ui, rect).then_some(HOVER_BG);
+            let mut name_style = Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD);
+            let mut desc_style = Style::default().fg(Color::DarkGray);
+            if let Some(bg) = bg {
+                name_style = name_style.bg(bg);
+                desc_style = desc_style.bg(bg);
+            }
+            let mut spans = vec![
+                Span::styled(format!(" {name:<name_w$}   "), name_style),
+                Span::styled(desc.clone(), desc_style),
+            ];
+            let used = 1 + name_w + 3 + desc.width();
+            if let Some(bg) = bg {
+                if used < iw {
+                    spans.push(Span::styled(" ".repeat(iw - used), Style::default().bg(bg)));
+                }
+            }
+            Line::from(spans)
         };
         lines.push(line);
         ui.slash_rows.push((idx, rect));
     }
-    f.render_widget(Clear, box_area);
-    f.render_widget(Paragraph::new(Text::from(lines)), box_area);
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+/// Pad `s` with spaces to `width` display columns (no truncation).
+fn pad_to(s: &str, width: usize) -> String {
+    let w = s.width();
+    if w >= width {
+        s.to_string()
+    } else {
+        format!("{s}{}", " ".repeat(width - w))
+    }
 }
 
 /// Render the History list: an optional search line, then entries with a
@@ -1575,7 +1570,7 @@ fn row_style_state(selected: bool, hovered: bool) -> Style {
     if selected {
         row_style(true)
     } else if hovered {
-        Style::default().bg(Color::Rgb(48, 48, 48))
+        Style::default().bg(HOVER_BG)
     } else {
         Style::default()
     }
