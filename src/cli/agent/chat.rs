@@ -11,9 +11,11 @@ use serde_json::{json, Value};
 
 use super::client::{stream_conversation, ConversationRequest};
 use super::events::{AgentEvent, ChatAggregator, ChatOutcome, Widget};
-use super::render::{parse_quote_widget_symbol, render_answer, strip_control_chars, QuoteCardData};
+use super::render::render_answer;
 use super::ChatTarget;
+use crate::ai::answer::{parse_quote_widget_symbol, QuoteCardData};
 use crate::cli::OutputFormat;
+use crate::utils::text::strip_control_chars;
 
 /// Single-quote `s` for safe inclusion in a copy-pasteable POSIX shell
 /// command line, escaping embedded single quotes as `'\''`. Used for

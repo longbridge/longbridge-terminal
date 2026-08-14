@@ -277,8 +277,7 @@ pub(crate) async fn collect_agents(
 /// so a hostile value cannot smuggle newlines into the note or flood stderr.
 pub(crate) fn render_mode_label(mode: &str) -> String {
     const MAX: usize = 40;
-    let flat =
-        crate::cli::agent::render::strip_control_chars(mode).replace(['\n', '\r', '\t'], " ");
+    let flat = crate::utils::text::strip_control_chars(mode).replace(['\n', '\r', '\t'], " ");
     let flat = flat.trim();
     if flat.is_empty() {
         return "<empty>".to_string();
@@ -428,7 +427,7 @@ async fn cmd_list(
 /// embedded OSC/SGR sequence could otherwise repaint the table or the title
 /// bar). JSON output is untouched: `serde_json` escapes control characters.
 fn agent_rows(agents: &[AgentInfo]) -> Vec<Vec<String>> {
-    use render::strip_control_chars;
+    use crate::utils::text::strip_control_chars;
     agents
         .iter()
         .map(|a| {

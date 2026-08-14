@@ -34,7 +34,7 @@ fn print_cli_error(e: &anyhow::Error, using_api_key: bool) {
     // Strip terminal control/escape sequences from server-controlled text
     // before it hits stderr, so a hostile API error cannot repaint the
     // terminal. Reuses the shared helper (keeps newlines/tabs).
-    use crate::cli::agent::render::strip_control_chars as sanitize_server_text;
+    use crate::utils::text::strip_control_chars as sanitize_server_text;
 
     if let Some(lb_err) = e.downcast_ref::<LbError>() {
         match lb_err {

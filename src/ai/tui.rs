@@ -250,7 +250,7 @@ struct Ui {
     /// input handlers can clamp and never scroll the view into a blank screen.
     max_scroll: u16,
     /// Live quotes for `x-widget` tickers, fetched after a turn, keyed by symbol.
-    quotes: HashMap<String, crate::cli::agent::render::QuoteCardData>,
+    quotes: HashMap<String, super::answer::QuoteCardData>,
     /// True while the server History list is being fetched.
     sessions_loading: bool,
     /// True when the last History fetch failed (vs. genuinely empty).
@@ -375,7 +375,7 @@ pub async fn run(agent_uid: String) -> Result<()> {
     let mut turn: Option<JoinHandle<()>> = None;
     let (tx, mut turn_rx) = unbounded_channel::<ChatEvent>();
     let (cards_tx, mut cards_rx) =
-        unbounded_channel::<HashMap<String, crate::cli::agent::render::QuoteCardData>>();
+        unbounded_channel::<HashMap<String, super::answer::QuoteCardData>>();
     let (history_tx, mut history_rx) = unbounded_channel::<Option<Vec<SessionSummary>>>();
     let (load_tx, mut load_rx) = unbounded_channel::<Option<session_store::LoadedChat>>();
     ui.history_tx = Some(history_tx);
@@ -472,7 +472,7 @@ pub async fn run(agent_uid: String) -> Result<()> {
 /// live quotes in the background and deliver them on `cards_tx`.
 fn fetch_quote_cards_for(
     state: &ChatState,
-    cards_tx: &UnboundedSender<HashMap<String, crate::cli::agent::render::QuoteCardData>>,
+    cards_tx: &UnboundedSender<HashMap<String, super::answer::QuoteCardData>>,
 ) {
     let Some(answer) = state
         .messages
@@ -2354,7 +2354,7 @@ fn push_message(
     lines: &mut Vec<Line<'static>>,
     message: &Message,
     width: usize,
-    quotes: &HashMap<String, crate::cli::agent::render::QuoteCardData>,
+    quotes: &HashMap<String, super::answer::QuoteCardData>,
 ) {
     // A tool line is one compact row, not a speaker turn: it belongs to the
     // answer around it, so it gets no accent bar and no trailing blank.
@@ -2414,12 +2414,12 @@ fn push_message(
 fn render_answer_lines(
     answer: &str,
     width: usize,
-    quotes: &HashMap<String, crate::cli::agent::render::QuoteCardData>,
+    quotes: &HashMap<String, super::answer::QuoteCardData>,
 ) -> Vec<Line<'static>> {
-    use crate::cli::agent::render::{
-        parse_quote_widget_symbol, replace_inline_markers, segment_answer, strip_control_chars,
-        Segment,
+    use super::answer::{
+        parse_quote_widget_symbol, replace_inline_markers, segment_answer, Segment,
     };
+    use crate::utils::text::strip_control_chars;
     let mut out = Vec::new();
     for segment in segment_answer(answer) {
         match segment {
@@ -2455,7 +2455,7 @@ fn render_answer_lines(
 
 /// A one-line quote chip: `symbol  last  ±change%`, the change tinted by
 /// direction, mirroring the web quote card in a terminal-friendly form.
-fn quote_chip(card: &crate::cli::agent::render::QuoteCardData) -> Line<'static> {
+fn quote_chip(card: &super::answer::QuoteCardData) -> Line<'static> {
     let dir = match card.direction {
         1 => Color::Green,
         -1 => Color::Red,
