@@ -8,6 +8,7 @@ use rust_i18n::t;
 use client::{AgentApi, AgentInfo, LbAgentApi};
 
 pub mod chat;
+pub mod chats;
 pub mod client;
 pub mod events;
 pub mod render;
@@ -362,6 +363,14 @@ pub async fn cmd_agent(
             .await
         }
         Some(AgentCmd::Workspaces) => workspace::cmd_workspaces(format, verbose).await,
+        Some(AgentCmd::Chats {
+            exclude_agent_uids,
+            page,
+            count,
+        }) => chats::cmd_chats(page, count, exclude_agent_uids, format, verbose).await,
+        Some(AgentCmd::ChatDetail { chat_uid }) => {
+            chats::cmd_chat_detail(chat_uid, format, verbose).await
+        }
     }
 }
 
