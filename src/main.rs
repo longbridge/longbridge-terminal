@@ -253,8 +253,8 @@ async fn main() {
         // `longbridge ai`: the interactive Longbridge AI chat TUI. Needs a live
         // context, so a failed init exits (a prompt turn cannot run without it).
         Some(cli::Commands::Ai { agent }) => {
-            let using_api_key = match openapi::init_contexts().await {
-                Ok((_, using_api_key, _)) => using_api_key,
+            let (quote_receiver, using_api_key) = match openapi::init_contexts().await {
+                Ok((rx, using_api_key, _)) => (rx, using_api_key),
                 Err(e) => {
                     eprintln!("Authentication failed: {e}");
                     return;
@@ -272,7 +272,7 @@ async fn main() {
             }));
 
             Terminal::enter_full_screen();
-            let result = ai::run(agent).await;
+            let result = ai::run(agent, quote_receiver).await;
             Terminal::exit_full_screen();
             if let Err(e) = result {
                 eprintln!("Error: {e}");

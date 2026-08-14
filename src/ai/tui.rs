@@ -379,7 +379,10 @@ impl Ui {
 
 /// Run the chat TUI until the user quits. The caller has already entered the
 /// full-screen terminal (with mouse capture) and restores it afterwards.
-pub async fn run(agent_uid: String) -> Result<()> {
+pub async fn run<S>(agent_uid: String, mut quotes: S) -> Result<()>
+where
+    S: tokio_stream::Stream<Item = longbridge::quote::PushEvent> + Send + Unpin,
+{
     let mut terminal = Terminal::default();
     let mut state = ChatState::new(agent_uid, t!("Ai.Welcome").to_string());
     let mut ui = Ui::new();
@@ -443,6 +446,16 @@ pub async fn run(agent_uid: String) -> Result<()> {
             Some(cards) = cards_rx.recv() => {
                 ui.quotes.extend(cards);
                 ui.cache_sig = 0; // force a transcript rebuild so cards appear
+            }
+            // A streamed quote for a security already on screen: fold it in and
+            // let the panel and any card redraw with it.
+            Some(event) = tokio_stream::StreamExt::next(&mut quotes) => {
+                if let longbridge::quote::PushEventDetail::Quote(quote) = &event.detail {
+                    if let Some(card) = ui.quotes.get_mut(&event.symbol) {
+                        card.apply_push(quote);
+                        ui.cache_sig = 0;
+                    }
+                }
             }
             Some(result) = history_rx.recv() => {
                 ui.sessions_loading = false;
@@ -662,7 +675,7 @@ fn on_chat_key(
     // The panel floats over the chat, so Esc dismisses it before anything else
     // reads the key — otherwise the reader would clear their input instead.
     if ui.quote_panel.is_some() && matches!(key.code, KeyCode::Esc) {
-        ui.quote_panel = None;
+        close_quote_panel(ui);
         return;
     }
     // When the slash palette is open, arrows/Enter/Esc drive it instead of the
@@ -980,7 +993,8 @@ fn on_mouse(
             // recorded from what is underneath it. A click while it is open
             // dismisses it rather than reaching through to a target the reader
             // cannot see.
-            if ui.quote_panel.take().is_some() {
+            if ui.quote_panel.is_some() {
+                close_quote_panel(ui);
                 return;
             }
             if ui.view == View::Chat {
@@ -1111,7 +1125,7 @@ fn open_quote_panel(ui: &mut Ui, symbol: String) {
     if !ui.quotes.contains_key(&symbol) {
         if let Some(tx) = ui.cards_tx.clone() {
             let wanted = symbol.clone();
-            tokio::spawn(async move {
+            spawn_bg(async move {
                 let cards = super::quotes::fetch_cards_for(&[wanted]).await;
                 if !cards.is_empty() {
                     let _ = tx.send(cards);
@@ -1119,7 +1133,51 @@ fn open_quote_panel(ui: &mut Ui, symbol: String) {
             });
         }
     }
-    ui.quote_panel = Some(symbol);
+    // The panel shows a price, so the price has to be live. The first fetch
+    // establishes the previous close; the stream keeps the rest current.
+    subscribe_quote(&symbol);
+    if let Some(previous) = ui.quote_panel.replace(symbol) {
+        unsubscribe_quote(&previous);
+    }
+}
+
+/// Close the panel, dropping the subscription with it — a stream nobody is
+/// reading is bandwidth and a rate-limit slot spent on nothing.
+fn close_quote_panel(ui: &mut Ui) {
+    if let Some(symbol) = ui.quote_panel.take() {
+        unsubscribe_quote(&symbol);
+    }
+}
+
+fn subscribe_quote(symbol: &str) {
+    let symbol = symbol.to_string();
+    spawn_bg(async move {
+        let _ = crate::openapi::quote()
+            .subscribe([symbol], longbridge::quote::SubFlags::QUOTE)
+            .await;
+    });
+}
+
+fn unsubscribe_quote(symbol: &str) {
+    let symbol = symbol.to_string();
+    spawn_bg(async move {
+        let _ = crate::openapi::quote()
+            .unsubscribe([symbol], longbridge::quote::SubFlags::QUOTE)
+            .await;
+    });
+}
+
+/// Spawn background work, doing nothing when there is no runtime.
+///
+/// Opening the panel is a UI action and has to stay callable from a render test,
+/// where `tokio::spawn` would panic for want of a reactor.
+fn spawn_bg<F>(task: F)
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        handle.spawn(task);
+    }
 }
 
 /// Open the Conversations view and fetch the account's chats in the background.
@@ -1508,7 +1566,9 @@ fn render_quote_panel(f: &mut ratatui::Frame, area: Rect, ui: &Ui) {
     let Some(symbol) = &ui.quote_panel else {
         return;
     };
-    let inner_w = 34usize.min(area.width.saturating_sub(4) as usize);
+    // Wide enough for two labelled columns with room to breathe: this is the
+    // panel the reader opened to look at a price, not a chip.
+    let inner_w = 52usize.min(area.width.saturating_sub(4) as usize);
     let body = match ui.quotes.get(symbol) {
         Some(card) => card_lines(card, inner_w),
         None => vec![Line::from(Span::styled(
@@ -1516,7 +1576,15 @@ fn render_quote_panel(f: &mut ratatui::Frame, area: Rect, ui: &Ui) {
             Style::default().fg(Color::DarkGray),
         ))],
     };
-    let height = (body.len() as u16 + 3).min(area.height);
+    // Everything the panel shows is assembled before it is measured — sizing off
+    // the body alone clipped the hint that says how to close it.
+    let mut lines = body;
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        t!("Ai.QuotePanelHint").to_string(),
+        Style::default().fg(Color::DarkGray),
+    )));
+    let height = (lines.len() as u16 + 2).min(area.height);
     let width = (inner_w as u16 + 4).min(area.width);
     let rect = Rect {
         x: area.x + area.width.saturating_sub(width) / 2,
@@ -1524,21 +1592,21 @@ fn render_quote_panel(f: &mut ratatui::Frame, area: Rect, ui: &Ui) {
         width,
         height,
     };
-    let mut lines = body;
-    lines.push(Line::from(Span::styled(
-        t!("Ai.QuotePanelHint").to_string(),
-        Style::default().fg(Color::DarkGray),
-    )));
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::DarkGray))
-        .title(Span::styled(
-            format!(" {symbol} "),
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ));
+        .title(Line::from(vec![
+            Span::styled(
+                format!(" {symbol} "),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            // The dot says the number is streaming, so a price that sits still is
+            // a quiet market rather than a stale panel.
+            Span::styled("● ", Style::default().fg(Color::Green)),
+        ]));
     f.render_widget(Clear, rect);
     f.render_widget(Paragraph::new(Text::from(lines)).block(block), rect);
 }
@@ -2620,13 +2688,22 @@ fn user_lines(text: &str, width: usize) -> Vec<Line<'static>> {
 /// Colour of a security the reader can open.
 const SYMBOL_FG: Color = Color::Rgb(122, 196, 255);
 
-/// Split out the securities named in `lines` so each is its own span.
+/// Split out the securities named in `lines` so each is its own span, and colour
+/// the price chip that follows one.
 ///
 /// A symbol has to be a span of its own before it can be given a colour, a hover
 /// or a hit rectangle, and Markdown gives us one span per style run — `看 700.HK
 /// 的走势` arrives whole. The original style is kept and only the colour changes,
 /// so a symbol inside a heading stays bold.
-fn link_symbols(lines: &mut Vec<Line<'static>>) {
+///
+/// The chip was inserted as plain text before wrapping (see [`price_annotated`]),
+/// so it is recognised here by matching what that would have produced. When the
+/// wrap happened to break between a symbol and its chip the chip stays plain —
+/// the information is still right, it just loses its colour.
+fn link_symbols(
+    lines: &mut Vec<Line<'static>>,
+    quotes: &HashMap<String, super::quotes::QuoteCardData>,
+) {
     for line in lines.iter_mut() {
         if !line
             .spans
@@ -2648,11 +2725,19 @@ fn link_symbols(lines: &mut Vec<Line<'static>>) {
                 if range.start > at {
                     out.push(Span::styled(text[at..range.start].to_string(), span.style));
                 }
-                out.push(Span::styled(
-                    text[range.clone()].to_string(),
-                    span.style.fg(SYMBOL_FG),
-                ));
+                let symbol = &text[range.clone()];
+                out.push(Span::styled(symbol.to_string(), span.style.fg(SYMBOL_FG)));
                 at = range.end;
+                if let Some(card) = quotes.get(symbol) {
+                    let chip = price_chip(card);
+                    if text[at..].starts_with(&chip) {
+                        out.push(Span::styled(
+                            chip.clone(),
+                            span.style.fg(change_color(card.direction)),
+                        ));
+                        at += chip.len();
+                    }
+                }
             }
             if at < text.len() {
                 out.push(Span::styled(text[at..].to_string(), span.style));
@@ -2662,6 +2747,69 @@ fn link_symbols(lines: &mut Vec<Line<'static>>) {
     }
 }
 
+/// The price chip that follows a security in the prose.
+///
+/// Built in one place because it is inserted into the text before wrapping and
+/// recognised again after it, and the two have to agree exactly.
+fn price_chip(card: &super::quotes::QuoteCardData) -> String {
+    // The arrow carries the direction, so the percent drops its sign rather than
+    // saying it twice.
+    let (arrow, pct) = match card.direction {
+        1 => ("▲", card.change_pct.trim_start_matches('+')),
+        -1 => ("▼", card.change_pct.trim_start_matches('-')),
+        _ => ("", card.change_pct.as_str()),
+    };
+    format!(" {} {arrow}{pct}", card.last)
+}
+
+/// Insert each security's price into the answer text, right after the symbol.
+///
+/// Done before the Markdown is wrapped, not after: a chip appended to a finished
+/// line either overruns the width or gets dropped, and prose wraps to nearly the
+/// full width, so in practice it was always dropped. Inserted here it takes part
+/// in the wrapping and always fits.
+///
+/// Fenced code and table rows are left alone — code is quoted verbatim, and a
+/// table's columns are measured, so a chip would break its alignment.
+fn price_annotated(text: &str, quotes: &HashMap<String, super::quotes::QuoteCardData>) -> String {
+    if quotes.is_empty() {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut fenced = false;
+    // A ticker is mentioned repeatedly in one answer; the price belongs beside the
+    // first mention. Repeating it on every one reads as noise, and every later
+    // mention is still clickable.
+    let mut priced: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for (i, line) in text.split('\n').enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        if line.trim_start().starts_with("```") {
+            fenced = !fenced;
+            out.push_str(line);
+            continue;
+        }
+        if fenced || line.trim_start().starts_with('|') {
+            out.push_str(line);
+            continue;
+        }
+        let mut at = 0usize;
+        for range in super::answer::symbol_spans(line) {
+            out.push_str(&line[at..range.end]);
+            at = range.end;
+            let symbol = &line[range];
+            if let Some(card) = quotes.get(symbol) {
+                if priced.insert(symbol) {
+                    out.push_str(&price_chip(card));
+                }
+            }
+        }
+        out.push_str(&line[at..]);
+    }
+    out
+}
+
 /// Record a hit rectangle for every security visible in `window`, underlining the
 /// one under the pointer.
 ///
@@ -2669,9 +2817,14 @@ fn link_symbols(lines: &mut Vec<Line<'static>>) {
 /// leave a stale target behind — the same reason the reference rows are recorded
 /// during the render rather than cached.
 fn link_visible_symbols(window: &mut [Line<'static>], area: Rect, ui: &mut Ui) {
+    // A card is a block, and the reader aims at the block rather than at the six
+    // columns of its ticker. Its rows are recognised by the box this module drew,
+    // so anywhere on the card opens the panel.
+    let mut card: Option<(String, u16)> = None;
     for (i, line) in window.iter_mut().enumerate() {
         let y = area.y + i as u16;
         let mut x = area.x;
+        let mut symbol_here: Option<String> = None;
         for span in &mut line.spans {
             let w = UnicodeWidthStr::width(span.content.as_ref()) as u16;
             if span.style.fg == Some(SYMBOL_FG) && super::answer::is_symbol(&span.content) {
@@ -2686,8 +2839,31 @@ fn link_visible_symbols(window: &mut [Line<'static>], area: Rect, ui: &mut Ui) {
                 }
                 ui.chips
                     .push((Chip::Symbol(span.content.to_string()), rect));
+                symbol_here = Some(span.content.to_string());
             }
             x = x.saturating_add(w);
+        }
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        if text.contains('┌') {
+            card = Some((String::new(), y));
+        } else if text.contains('└') {
+            if let Some((symbol, top)) = card.take() {
+                if !symbol.is_empty() {
+                    ui.chips.push((
+                        Chip::Symbol(symbol),
+                        Rect {
+                            x: area.x,
+                            y: top,
+                            width: area.width,
+                            height: y + 1 - top,
+                        },
+                    ));
+                }
+            }
+        } else if let (Some(entry), Some(symbol)) = (card.as_mut(), symbol_here) {
+            if entry.0.is_empty() {
+                entry.0 = symbol;
+            }
         }
     }
 }
@@ -2716,6 +2892,7 @@ fn render_answer_lines(
         match segment {
             Segment::Text(text) => {
                 let text = replace_inline_markers(&text, false);
+                let text = price_annotated(&text, quotes);
                 out.extend(markdown::render(&text, width));
             }
             // Straight from the chart renderer, which already styles each part
@@ -2734,7 +2911,7 @@ fn render_answer_lines(
             }
         }
     }
-    link_symbols(&mut out);
+    link_symbols(&mut out, quotes);
     // A block at the very end leaves a trailing blank the turn separator would
     // double.
     while out
@@ -2875,30 +3052,41 @@ fn change_color(direction: i8) -> Color {
 /// border, and a dedicated panel has the room the inline card does not.
 fn card_lines(card: &super::quotes::QuoteCardData, width: usize) -> Vec<Line<'static>> {
     let dim = Style::default().fg(Color::DarkGray);
+    let dir = change_color(card.direction);
     let mut out = Vec::new();
     if !card.name.is_empty() {
         out.push(Line::from(Span::styled(
             truncate_width(&card.name, width),
             Style::default().fg(Color::Gray),
         )));
+        out.push(Line::from(""));
     }
+    // The price is what the panel is for, so it gets the room: last on its own,
+    // the change beside it in the direction's colour.
     out.push(Line::from(vec![
         Span::styled(
-            format!("{}  ", card.last),
-            Style::default().add_modifier(Modifier::BOLD),
+            card.last.clone(),
+            Style::default().fg(dir).add_modifier(Modifier::BOLD),
         ),
+        Span::raw("   "),
         Span::styled(
             format!("{}  {}", card.change, card.change_pct),
-            Style::default().fg(change_color(card.direction)),
+            Style::default().fg(dir),
         ),
     ]));
     out.push(Line::from(""));
     // Two labelled columns per row: a panel is read down, not across.
+    let col = width / 2;
     let pair = |a: (&str, &str), b: (&str, &str)| {
+        let left = format!("{:<6}{}", a.0, a.1);
         Line::from(vec![
-            Span::styled(format!("{:<5}", a.0), dim),
-            Span::raw(format!("{:<11}", a.1)),
-            Span::styled(format!("{:<5}", b.0), dim),
+            Span::styled(format!("{:<6}", a.0), dim),
+            Span::raw(format!(
+                "{}{}",
+                a.1,
+                " ".repeat(col.saturating_sub(UnicodeWidthStr::width(left.as_str())))
+            )),
+            Span::styled(format!("{:<6}", b.0), dim),
             Span::raw(b.1.to_string()),
         ])
     };
@@ -2908,13 +3096,23 @@ fn card_lines(card: &super::quotes::QuoteCardData, width: usize) -> Vec<Line<'st
     ));
     out.push(pair(
         (&t!("Ai.QuoteLow"), &card.low),
-        (&t!("Ai.QuoteVolume"), &card.volume),
+        (&t!("Ai.QuotePrevClose"), &prev_close(card)),
     ));
     out.push(pair(
+        (&t!("Ai.QuoteVolume"), &card.volume),
         (&t!("Ai.QuoteTurnover"), &card.turnover),
-        ("", &card.at),
     ));
+    out.push(Line::from(""));
+    out.push(Line::from(Span::styled(
+        format!("{} {}", t!("Ai.QuoteAt"), card.at),
+        dim,
+    )));
     out
+}
+
+/// The previous close, formatted like the other prices.
+fn prev_close(card: &super::quotes::QuoteCardData) -> String {
+    card.prev_close.round_dp(3).normalize().to_string()
 }
 
 fn quote_card(card: &super::quotes::QuoteCardData, width: usize) -> Vec<Line<'static>> {
@@ -3532,6 +3730,7 @@ mod tests {
         dir: i8,
     ) -> crate::ai::quotes::QuoteCardData {
         crate::ai::quotes::QuoteCardData {
+            prev_close: rust_decimal_macros::dec!(180.0),
             symbol: symbol.into(),
             name: name.into(),
             last: last.into(),
@@ -3884,5 +4083,111 @@ mod tests {
         );
         assert!(ui.quote_panel.is_none(), "Esc closes the panel");
         assert_eq!(state.scroll, 0, "and the transcript stays where it was");
+    }
+
+    /// An inline security shows its own price: direction, last and change. The
+    /// chip is inserted before the text is wrapped, so it always fits — appended
+    /// afterwards it would overrun the width and be dropped, which is what
+    /// happens to prose that wraps to nearly the full width.
+    #[test]
+    fn an_inline_security_carries_its_price() {
+        let mut quotes = std::collections::HashMap::new();
+        quotes.insert("700.HK".to_string(), card("700.HK", "512.5", "+1.28%", 1));
+        quotes.insert(
+            "AAPL.US".to_string(),
+            card("AAPL.US", "182.4", "-0.62%", -1),
+        );
+        let answer = "本周 700.HK 走强，而 AAPL.US 回落，关注 700.HK 的成交量。";
+        let lines = super::render_answer_lines(answer, 72, &quotes);
+        let text: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(text.contains("512.5 ▲1.28%"), "up chip: {text}");
+        assert!(text.contains("182.4 ▼0.62%"), "down chip: {text}");
+        // The price belongs beside the first mention; repeating it on every one
+        // reads as noise.
+        assert_eq!(text.matches("512.5").count(), 1, "priced once: {text}");
+        // Every line still fits, and no line splits a symbol.
+        for line in &lines {
+            let w: usize = line
+                .spans
+                .iter()
+                .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
+                .sum();
+            assert!(w <= 72, "line of {w} columns: {line:?}");
+        }
+        assert!(
+            !text.contains("70\n0.HK"),
+            "a symbol must not be split by the wrap"
+        );
+    }
+
+    /// The chip's colour is the direction, so it has to be its own span.
+    #[test]
+    fn the_price_chip_is_coloured_by_direction() {
+        let mut quotes = std::collections::HashMap::new();
+        quotes.insert(
+            "AAPL.US".to_string(),
+            card("AAPL.US", "182.4", "-0.62%", -1),
+        );
+        let lines = super::render_answer_lines("AAPL.US fell today.", 60, &quotes);
+        let chip = lines
+            .iter()
+            .flat_map(|l| &l.spans)
+            .find(|s| s.content.contains("182.4"))
+            .expect("the chip should be rendered");
+        assert_eq!(chip.style.fg, Some(super::change_color(-1)));
+    }
+
+    /// A card is a block the reader aims at, so the whole box opens the panel —
+    /// not only the six columns of its ticker.
+    #[test]
+    fn the_whole_quote_card_is_a_click_target() {
+        let mut ui = super::Ui::new();
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        state.apply(super::ChatEvent::UserPrompt("700.HK?".into()));
+        state.apply(super::ChatEvent::Delta(
+            "<x-widget src=\"widget://quote/security/detail?symbol=700.HK\"></x-widget>".into(),
+        ));
+        state.apply(super::ChatEvent::TurnFinished { error: None });
+        ui.quotes
+            .insert("700.HK".to_string(), card("700.HK", "512.5", "+1.28%", 1));
+        let _ = frame(&mut ui, &state, 70, 20);
+        let tall = ui
+            .chips
+            .iter()
+            .filter(|(chip, _)| matches!(chip, super::Chip::Symbol(s) if s == "700.HK"))
+            .map(|(_, rect)| rect.height)
+            .max()
+            .unwrap_or(0);
+        assert!(
+            tall > 1,
+            "the card's rows should all be clickable, got a {tall}-row target"
+        );
+    }
+
+    /// A quote card fixture with the fields a test cares about.
+    fn card(
+        symbol: &str,
+        last: &str,
+        change_pct: &str,
+        direction: i8,
+    ) -> crate::ai::quotes::QuoteCardData {
+        crate::ai::quotes::QuoteCardData {
+            symbol: symbol.into(),
+            name: String::new(),
+            prev_close: rust_decimal_macros::dec!(500),
+            last: last.into(),
+            change: "+6.5".into(),
+            change_pct: change_pct.into(),
+            direction,
+            open: "508".into(),
+            high: "515".into(),
+            low: "506".into(),
+            volume: "18.2M".into(),
+            turnover: "9.3B".into(),
+            at: "16:08".into(),
+        }
     }
 }

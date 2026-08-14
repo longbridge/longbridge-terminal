@@ -417,6 +417,8 @@ Ai:
   QuoteNoSymbol: "No security mentioned yet. Try /quote 700.HK"
   QuoteLoading: "Fetching the quote…"
   QuotePanelHint: "Esc closes"
+  QuotePrevClose: "Prev"
+  QuoteAt: "as of"
   QuoteOpen: "O"
   QuoteHigh: "H"
   QuoteLow: "L"

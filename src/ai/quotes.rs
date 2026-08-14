@@ -23,6 +23,9 @@ use crate::utils::number::format_volume;
 pub struct QuoteCardData {
     pub symbol: String,
     pub name: String,
+    /// Previous close, kept numeric because a streamed push carries only the
+    /// latest price — the change has to be recomputed against this.
+    pub prev_close: Decimal,
     pub last: String,
     /// Absolute change, signed.
     pub change: String,
@@ -59,6 +62,7 @@ impl QuoteCardData {
         Self {
             symbol: quote.symbol.clone(),
             name,
+            prev_close: prev,
             last: price(last),
             change: signed(change),
             change_pct: format!("{}{:.2}%", sign_of(pct), pct),
@@ -74,6 +78,40 @@ impl QuoteCardData {
                 quote.timestamp.minute()
             ),
         }
+    }
+}
+
+impl QuoteCardData {
+    /// Fold a streamed quote into the card.
+    ///
+    /// The push has no previous close, so the change is recomputed against the
+    /// one the first fetch established — which is why it is kept numeric.
+    pub fn apply_push(&mut self, q: &longbridge::quote::PushQuote) {
+        let change = q.last_done - self.prev_close;
+        let pct = if self.prev_close.is_zero() {
+            Decimal::ZERO
+        } else {
+            change / self.prev_close * Decimal::ONE_HUNDRED
+        };
+        self.direction = match q.last_done.cmp(&self.prev_close) {
+            std::cmp::Ordering::Greater => 1,
+            std::cmp::Ordering::Less => -1,
+            std::cmp::Ordering::Equal => 0,
+        };
+        self.last = price(q.last_done);
+        self.change = signed(change);
+        self.change_pct = format!("{}{:.2}%", sign_of(pct), pct);
+        self.open = price(q.open);
+        self.high = price(q.high);
+        self.low = price(q.low);
+        self.volume = format_volume(u64::try_from(q.volume).unwrap_or(0));
+        self.turnover = format_volume(u64::try_from(q.turnover.trunc()).unwrap_or(0));
+        self.at = format!(
+            "{:02}:{:02}:{:02}",
+            q.timestamp.hour(),
+            q.timestamp.minute(),
+            q.timestamp.second()
+        );
     }
 }
 

@@ -743,18 +743,78 @@ fn wrap_line(line: &Line, width: usize, out: &mut Vec<Line<'static>>) {
         return;
     }
     let mut cur: Vec<(char, Style)> = Vec::new();
-    let mut w = 0;
-    for (ch, style) in flat {
-        let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if width > 0 && w + cw > width && !cur.is_empty() {
+    let mut w = 0usize;
+    let mut i = 0usize;
+    while i < flat.len() {
+        // Take a whole token at a time. Breaking per character split `AAPL.US`
+        // across two lines in CJK prose — which reads badly and, for a security,
+        // also loses the click target, since neither half is a symbol any more.
+        let token_end = token_end(&flat, i);
+        let token = &flat[i..token_end];
+        let tw: usize = token
+            .iter()
+            .map(|(c, _)| UnicodeWidthChar::width(*c).unwrap_or(0))
+            .sum();
+        if width > 0 && w + tw > width && !cur.is_empty() {
             out.push(coalesce(&cur));
             cur.clear();
             w = 0;
+            // A break is not an indent: the space that separated the two tokens
+            // belongs to neither line.
+            if token.iter().all(|(c, _)| *c == ' ') {
+                i = token_end;
+                continue;
+            }
         }
-        cur.push((ch, style));
-        w += cw;
+        // A token too long for a line of its own still has to go somewhere, so it
+        // falls back to breaking by character rather than overflowing.
+        if width > 0 && tw > width {
+            for &(ch, style) in token {
+                let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
+                if w + cw > width && !cur.is_empty() {
+                    out.push(coalesce(&cur));
+                    cur.clear();
+                    w = 0;
+                }
+                cur.push((ch, style));
+                w += cw;
+            }
+        } else {
+            cur.extend_from_slice(token);
+            w += tw;
+        }
+        i = token_end;
     }
     out.push(coalesce(&cur));
+}
+
+/// End of the token starting at `i`: a run of word characters, a run of spaces,
+/// or a single character.
+///
+/// Word characters are the ones that make up things a break would damage —
+/// Latin words, numbers, percentages, tickers, URLs. CJK breaks freely, which is
+/// how Chinese is set.
+fn token_end(flat: &[(char, Style)], i: usize) -> usize {
+    let is_word = |c: char| {
+        c.is_ascii_alphanumeric()
+            || matches!(c, '.' | '-' | '_' | '%' | '+' | '/' | ':' | '\'' | '$')
+    };
+    let (first, _) = flat[i];
+    if is_word(first) {
+        let mut j = i;
+        while j < flat.len() && is_word(flat[j].0) {
+            j += 1;
+        }
+        j
+    } else if first == ' ' {
+        let mut j = i;
+        while j < flat.len() && flat[j].0 == ' ' {
+            j += 1;
+        }
+        j
+    } else {
+        i + 1
+    }
 }
 
 /// Merge a run of styled chars into a [`Line`], grouping adjacent equal styles

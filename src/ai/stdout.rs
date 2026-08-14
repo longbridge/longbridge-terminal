@@ -191,6 +191,7 @@ mod tests {
         direction: i8,
     ) -> QuoteCardData {
         QuoteCardData {
+            prev_close: rust_decimal_macros::dec!(180.0),
             symbol: symbol.into(),
             name: name.into(),
             last: last.into(),

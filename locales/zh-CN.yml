@@ -417,6 +417,8 @@ Ai:
   QuoteNoSymbol: "还没有提到标的，试试 /quote 700.HK"
   QuoteLoading: "正在获取行情…"
   QuotePanelHint: "Esc 关闭"
+  QuotePrevClose: "昨收"
+  QuoteAt: "更新于"
   QuoteOpen: "开"
   QuoteHigh: "高"
   QuoteLow: "低"
