@@ -247,11 +247,103 @@ pub fn symbol_spans(text: &str) -> Vec<std::ops::Range<usize>> {
     out
 }
 
+/// Words that look like tickers but are not, in a chat about markets.
+///
+/// Every one of these is either finance jargon or a unit, and several are also
+/// real tickers — `AI`, `ET`, `AM`, `PT` among them. In this context the jargon
+/// reading is the overwhelmingly likely one, and a link that opens the wrong
+/// security's quote is worse than no link at all, so they are never candidates.
+const NOT_TICKERS: [&str; 62] = [
+    "AI", "AM", "PM", "ET", "PT", "UTC", "API", "APP", "CEO", "CFO", "COO", "CTO", "IPO", "ETF",
+    "SEC", "FED", "FOMC", "GDP", "CPI", "PPI", "PMI", "YOY", "QOQ", "MOM", "TTM", "YTD", "MTD",
+    "QTD", "EPS", "PE", "PB", "PS", "PEG", "ROE", "ROA", "ROI", "EBIT", "DCF", "WACC", "NAV",
+    "AUM", "SPAC", "ITM", "OTM", "ATM", "IV", "HV", "OI", "MACD", "RSI", "KDJ", "BOLL", "CCI",
+    "BIAS", "DIF", "DEA", "EMA", "SMA", "VWAP", "GTC", "LO", "MO",
+];
+
+/// Bare tokens in `text` that could be a ticker: `SPCX`, `TSLA`, `9988`.
+///
+/// Candidates only. An answer about options is full of words shaped like tickers
+/// — `ITM`, `MACD`, `BOLL` — so nothing here is linked until something confirms
+/// it is a security: an explicit `[stock …]` marker, a widget, or the server
+/// recognising it (see [`crate::ai::quotes::resolve_symbols`]).
+pub fn ticker_candidates(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for range in token_spans(text) {
+        let token = &text[range];
+        // At least one letter: a bare year or price is not a security.
+        if token.chars().any(char::is_alphabetic)
+            && !NOT_TICKERS.contains(&token)
+            && !out.iter().any(|t| t == token)
+        {
+            out.push(token.to_string());
+        }
+    }
+    out
+}
+
 /// Whether `text` is exactly one security symbol.
 pub fn is_symbol(text: &str) -> bool {
     symbol_spans(text)
         .first()
         .is_some_and(|r| *r == (0..text.len()))
+}
+
+/// Every security named in `text`, as `(range, symbol)` in source order.
+///
+/// A dotted symbol names itself. A bare ticker names whatever `aliases` resolved
+/// it to — and only a resolved one counts, which is what keeps `ITM` and `MACD`
+/// out of the transcript's links.
+pub fn security_spans(
+    text: &str,
+    aliases: &std::collections::HashMap<String, String>,
+) -> Vec<(std::ops::Range<usize>, String)> {
+    let mut out: Vec<(std::ops::Range<usize>, String)> = symbol_spans(text)
+        .into_iter()
+        .map(|r| {
+            let symbol = text[r.clone()].to_string();
+            (r, symbol)
+        })
+        .collect();
+    if !aliases.is_empty() {
+        for range in token_spans(text) {
+            if let Some(symbol) = aliases.get(&text[range.clone()]) {
+                out.push((range, symbol.clone()));
+            }
+        }
+        out.sort_by_key(|(r, _)| r.start);
+    }
+    out
+}
+
+/// Ranges of every bare ticker-shaped token in `text`, in order, repeats included.
+///
+/// Separate from [`ticker_candidates`], which dedupes and drops jargon: this is
+/// for finding the occurrences of a token already known to be a security.
+fn token_spans(text: &str) -> Vec<std::ops::Range<usize>> {
+    let taken = symbol_spans(text);
+    let bytes = text.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i < text.len() {
+        if !text.is_char_boundary(i) || !bytes[i].is_ascii_uppercase() {
+            i += 1;
+            continue;
+        }
+        let mut j = i;
+        while j < text.len() && (bytes[j].is_ascii_uppercase() || bytes[j].is_ascii_digit()) {
+            j += 1;
+        }
+        let bounded = |at: usize| -> bool {
+            at == 0 || at >= text.len() || !bytes[at].is_ascii_alphanumeric()
+        };
+        let inside = taken.iter().any(|r| r.start < j && i < r.end);
+        if (2..=6).contains(&(j - i)) && bounded(i.saturating_sub(1)) && bounded(j) && !inside {
+            out.push(i..j);
+        }
+        i = j.max(i + 1);
+    }
+    out
 }
 
 /// The symbol of a single-quote widget, or `None` for any other kind.
@@ -842,5 +934,59 @@ mod tests {
         let text = "特斯拉 (TSLA.US) 与 腾讯 (700.HK) 对比";
         let found: Vec<&str> = symbol_spans(text).into_iter().map(|r| &text[r]).collect();
         assert_eq!(found, ["TSLA.US", "700.HK"]);
+    }
+
+    /// The transcript this came from mentions `SPCX` eighteen times and never
+    /// once with a market suffix — while also using `ITM`, `MACD`, `BOLL` and
+    /// `AI`, every one of which is shaped like a ticker.
+    #[test]
+    fn candidates_are_tickers_and_not_jargon() {
+        let text = "SPCX 卖 Put 已 ITM，MACD 与 BOLL 显示 TSLA 走弱，UTC 15:09，IV 偏高，AI 概念股";
+        assert_eq!(
+            ticker_candidates(text),
+            vec!["SPCX".to_string(), "TSLA".into()],
+            "only the two that are securities"
+        );
+        // A dotted symbol is already known, so its code is not offered again.
+        assert!(ticker_candidates("AAPL.US 上涨").is_empty());
+        // Numbers alone are not securities.
+        assert!(ticker_candidates("2026 年 135 美元").is_empty());
+    }
+
+    /// Nothing is linked until something confirms it is a security: an unresolved
+    /// candidate stays plain text.
+    #[test]
+    fn only_resolved_tickers_become_securities() {
+        let text = "SPCX 与 ITM";
+        assert!(
+            security_spans(text, &std::collections::HashMap::new()).is_empty(),
+            "unresolved, so nothing is a security"
+        );
+        let mut aliases = std::collections::HashMap::new();
+        aliases.insert("SPCX".to_string(), "SPCX.US".to_string());
+        let found = security_spans(text, &aliases);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(&text[found[0].0.clone()], "SPCX");
+        assert_eq!(found[0].1, "SPCX.US", "the click target is the full symbol");
+    }
+
+    /// Both forms in one line, in source order.
+    #[test]
+    fn dotted_and_bare_securities_are_ordered_together() {
+        let mut aliases = std::collections::HashMap::new();
+        aliases.insert("TSLA".to_string(), "TSLA.US".to_string());
+        let text = "TSLA 对比 700.HK 再看 TSLA";
+        let found: Vec<(&str, String)> = security_spans(text, &aliases)
+            .into_iter()
+            .map(|(r, symbol)| (&text[r], symbol))
+            .collect();
+        assert_eq!(
+            found,
+            vec![
+                ("TSLA", "TSLA.US".to_string()),
+                ("700.HK", "700.HK".into()),
+                ("TSLA", "TSLA.US".into()),
+            ]
+        );
     }
 }

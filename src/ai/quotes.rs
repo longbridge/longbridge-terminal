@@ -181,6 +181,52 @@ pub async fn fetch_cards_for(symbols: &[String]) -> HashMap<String, QuoteCardDat
     cards
 }
 
+/// Resolve bare tickers to real symbols by asking the server which ones exist.
+///
+/// A bare `SPCX` could be any market, or nothing at all — an answer about options
+/// is full of words shaped like tickers. Rather than guess, every candidate is
+/// offered to the static-info endpoint under each market suffix in one batched
+/// call, and only what comes back with a name is a security. The server is the
+/// authority; a candidate it does not know is left as plain text.
+///
+/// US first, then HK, then SG: for a letter ticker the US listing is what an
+/// answer means far more often than not, and a digit code is Hong Kong.
+pub async fn resolve_symbols(candidates: &[String]) -> HashMap<String, String> {
+    let mut resolved = HashMap::new();
+    if candidates.is_empty() {
+        return resolved;
+    }
+    let mut probes: Vec<String> = Vec::new();
+    for candidate in candidates {
+        let markets: &[&str] = if candidate.chars().all(|c| c.is_ascii_digit()) {
+            &["HK", "SH", "SZ"]
+        } else {
+            &["US", "HK", "SG"]
+        };
+        for market in markets {
+            probes.push(format!("{candidate}.{market}"));
+        }
+    }
+    let Ok(infos) = crate::openapi::helpers::get_static_info(probes).await else {
+        return resolved;
+    };
+    for info in infos {
+        // A listing the server knows carries a name; anything else is a miss it
+        // echoed back.
+        if info.name_cn.is_empty() && info.name_en.is_empty() {
+            continue;
+        }
+        let Some((code, _)) = info.symbol.rsplit_once('.') else {
+            continue;
+        };
+        // First market wins, which is the priority order the probes were built in.
+        resolved
+            .entry(code.to_string())
+            .or_insert_with(|| info.symbol.clone());
+    }
+    resolved
+}
+
 /// Every security named by the widgets in `answer`, deduped, in source order.
 ///
 /// Used to decide what to subscribe to for live updates.

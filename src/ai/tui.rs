@@ -315,6 +315,10 @@ struct Ui {
     /// Securities this conversation has mentioned, in the order they appeared.
     /// The title bar's ticker reads from here.
     tape: Vec<String>,
+    /// Bare tickers the server confirmed, mapped to their full symbol: `SPCX` →
+    /// `SPCX.US`. An answer writes tickers without a market far more often than
+    /// with one, and nothing is linked until it is in here.
+    aliases: HashMap<String, String>,
     /// Where the ticker has rotated to, when it is wider than the row.
     tape_at: usize,
     /// Frame counter behind the rotation: the tape steps once a second, while the
@@ -372,6 +376,7 @@ impl Ui {
             quote_panel: None,
             session: super::account::local(),
             tape: Vec::new(),
+            aliases: HashMap::new(),
             tape_at: 0,
             tape_ticks: 0,
             pending: None,
@@ -468,6 +473,7 @@ where
     // The member id is the one part of the session header that needs a call, so
     // it is fetched once in the background and the header renders without it
     // until it lands.
+    let (aliases_tx, mut aliases_rx) = unbounded_channel::<HashMap<String, String>>();
     let (session_tx, mut session_rx) = unbounded_channel::<Option<String>>();
     tokio::spawn(async move {
         let _ = session_tx.send(super::account::member_id().await);
@@ -514,8 +520,9 @@ where
                 if finished {
                     turn = None;
                     maybe_open_question(&mut ui, &state);
+                    resolve_session_tickers(&ui, &state, &aliases_tx);
                     track_session_symbols(&mut ui, &state);
-                    fetch_quote_cards_for(&state, &cards_tx);
+                    fetch_missing_quotes(&ui, &cards_tx);
                     if !ui.focused && super::settings::notify_on_finish() {
                         notify(&t!("Ai.NotifyDone"));
                     }
@@ -538,6 +545,14 @@ where
             Some(member_id) = session_rx.recv() => {
                 ui.session.member_id = member_id;
             }
+            // Bare tickers the server confirmed: they join the ticker, get a
+            // quote, and become links in the transcript.
+            Some(resolved) = aliases_rx.recv() => {
+                ui.aliases.extend(resolved);
+                track_session_symbols(&mut ui, &state);
+                fetch_missing_quotes(&ui, &cards_tx);
+                ui.cache_sig = 0;
+            }
             Some(result) = history_rx.recv() => {
                 ui.sessions_loading = false;
                 if let Some(list) = result {
@@ -553,8 +568,9 @@ where
                 if let Some(loaded) = loaded {
                     session_store::restore(loaded, &mut state);
                     ui.reset_render();
+                    resolve_session_tickers(&ui, &state, &aliases_tx);
                     track_session_symbols(&mut ui, &state);
-                    fetch_quote_cards_for(&state, &cards_tx);
+                    fetch_missing_quotes(&ui, &cards_tx);
                     ui.switch(View::Chat);
                 } else {
                     // Resume failed: stay on History with an error notice.
@@ -603,8 +619,7 @@ fn track_session_symbols(ui: &mut Ui, state: &ChatState) {
         if matches!(message.role, Role::System | Role::Tool) {
             continue;
         }
-        for range in super::answer::symbol_spans(&message.text) {
-            let symbol = message.text[range].to_string();
+        for (_, symbol) in super::answer::security_spans(&message.text, &ui.aliases) {
             if !ui.tape.contains(&symbol) && !fresh.contains(&symbol) {
                 fresh.push(symbol);
             }
@@ -616,34 +631,73 @@ fn track_session_symbols(ui: &mut Ui, state: &ChatState) {
     }
 }
 
-/// If the just-finished answer embeds `x-widget` quote tickers, fetch their
-/// live quotes in the background and deliver them on `cards_tx`.
-fn fetch_quote_cards_for(
+/// Ask the server which of the conversation's bare tickers are real securities.
+///
+/// An answer writes `SPCX`, not `SPCX.US`, and a chat about options is full of
+/// words shaped like tickers — `ITM`, `MACD`, `BOLL`. Guessing from the shape
+/// would litter the transcript with links that answer nothing, so the candidates
+/// go to the server and only what it recognises becomes a link.
+fn resolve_session_tickers(
+    ui: &Ui,
     state: &ChatState,
-    cards_tx: &UnboundedSender<HashMap<String, super::quotes::QuoteCardData>>,
+    tx: &UnboundedSender<HashMap<String, String>>,
 ) {
-    let Some(answer) = state
-        .messages
-        .iter()
-        .rev()
-        .find(|m| m.role == Role::Assistant)
-        .map(|m| m.text.clone())
-    else {
-        return;
-    };
-    if !super::settings::quote_cards() {
+    if !super::settings::quote_cards() && !super::settings::tape() {
         return;
     }
-    let widgets = crate::cli::agent::events::extract_widgets(&answer);
-    if !widgets
+    let mut candidates: Vec<String> = Vec::new();
+    for message in &state.messages {
+        if matches!(message.role, Role::System | Role::Tool) {
+            continue;
+        }
+        for candidate in super::answer::ticker_candidates(&message.text) {
+            // Asked once per session: a token the server did not recognise is not
+            // going to start existing, and one it did is already resolved.
+            if !ui.aliases.contains_key(&candidate) && !candidates.contains(&candidate) {
+                candidates.push(candidate);
+            }
+        }
+    }
+    if candidates.is_empty() {
+        return;
+    }
+    let tx = tx.clone();
+    spawn_bg(async move {
+        let resolved = super::quotes::resolve_symbols(&candidates).await;
+        if !resolved.is_empty() {
+            let _ = tx.send(resolved);
+        }
+    });
+}
+
+/// Fetch a quote for every security on the ticker that has none yet.
+///
+/// Driven by the ticker rather than by the last answer, because a security the
+/// reader named in their own question — "how is SPCX doing tonight?" — is on the
+/// ticker too, and used to sit there without a price forever. It also covers the
+/// securities an answer only mentions in prose, which the old widget-only scan
+/// skipped entirely.
+fn fetch_missing_quotes(
+    ui: &Ui,
+    cards_tx: &UnboundedSender<HashMap<String, super::quotes::QuoteCardData>>,
+) {
+    // The cards and the ticker read the same quotes; either being on is reason
+    // enough to fetch.
+    if !super::settings::quote_cards() && !super::settings::tape() {
+        return;
+    }
+    let wanted: Vec<String> = ui
+        .tape
         .iter()
-        .any(|w| matches!(w, crate::cli::agent::events::Widget::XWidget { .. }))
-    {
+        .filter(|symbol| !ui.quotes.contains_key(*symbol))
+        .cloned()
+        .collect();
+    if wanted.is_empty() {
         return;
     }
     let cards_tx = cards_tx.clone();
-    tokio::spawn(async move {
-        let cards = super::quotes::fetch_cards(&widgets).await;
+    spawn_bg(async move {
+        let cards = super::quotes::fetch_cards_for(&wanted).await;
         if !cards.is_empty() {
             let _ = cards_tx.send(cards);
         }
@@ -1836,15 +1890,18 @@ fn render_title(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatSta
 /// fits, so a short list sits still.
 fn tape_spans(ui: &mut Ui, room: usize) -> Vec<Span<'static>> {
     const GAP: &str = "   ";
-    let entries: Vec<(String, Color)> = ui
+    // The name stays neutral and only the price carries the direction: colouring
+    // the symbol too made the whole row swing red and green with no added meaning.
+    let entries: Vec<(String, String, Color)> = ui
         .tape
         .iter()
         .map(|symbol| match ui.quotes.get(symbol) {
             Some(card) => (
-                format!("{symbol}{}", price_chip(card)),
+                symbol.clone(),
+                price_chip(card),
                 change_color(card.direction),
             ),
-            None => (symbol.clone(), Color::DarkGray),
+            None => (symbol.clone(), String::new(), Color::DarkGray),
         })
         .collect();
     if entries.is_empty() || room == 0 {
@@ -1852,7 +1909,7 @@ fn tape_spans(ui: &mut Ui, room: usize) -> Vec<Span<'static>> {
     }
     let total: usize = entries
         .iter()
-        .map(|(text, _)| text.width() + GAP.width())
+        .map(|(symbol, price, _)| symbol.width() + price.width() + GAP.width())
         .sum();
     let rotating = total > room;
     if !rotating {
@@ -1861,15 +1918,18 @@ fn tape_spans(ui: &mut Ui, room: usize) -> Vec<Span<'static>> {
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut used = 0usize;
     for i in 0..entries.len() {
-        let (text, color) = &entries[(ui.tape_at + i) % entries.len()];
-        let w = text.width() + if used == 0 { 0 } else { GAP.width() };
+        let (symbol, price, color) = &entries[(ui.tape_at + i) % entries.len()];
+        let w = symbol.width() + price.width() + if used == 0 { 0 } else { GAP.width() };
         if used + w > room {
             break;
         }
         if used > 0 {
             spans.push(Span::raw(GAP));
         }
-        spans.push(Span::styled(text.clone(), Style::default().fg(*color)));
+        spans.push(Span::styled(symbol.clone(), Style::default().fg(SYMBOL_FG)));
+        if !price.is_empty() {
+            spans.push(Span::styled(price.clone(), Style::default().fg(*color)));
+        }
         used += w;
     }
     if rotating {
@@ -1924,7 +1984,7 @@ fn render_chat(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatStat
     if ui.cache_sig != sig {
         let mut cache = Vec::new();
         for m in &state.messages {
-            push_message(&mut cache, m, width, &ui.quotes);
+            push_message(&mut cache, m, width, &ui.quotes, &ui.aliases);
         }
         ui.transcript_cache = cache;
         ui.cache_sig = sig;
@@ -1938,6 +1998,7 @@ fn render_chat(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatStat
             &Message::new(Role::Assistant, text.clone()),
             width,
             &ui.quotes,
+            &ui.aliases,
         );
     }
     let cache_len = ui.transcript_cache.len();
@@ -2868,40 +2929,66 @@ fn render_status(f: &mut ratatui::Frame, area: Rect, ui: &Ui, state: &ChatState)
 
 fn render_footer(f: &mut ratatui::Frame, area: Rect, ui: &Ui, editor: &Editor) {
     let focused = ui.view == View::Chat;
-    let border = if focused {
-        Color::Cyan
+    // No box. A rounded cyan frame around the prompt was the loudest thing on the
+    // screen, and the prompt does not need one to be found: the `❯` marks it, the
+    // same mark the reader's own turns carry in the transcript, so the line they
+    // are typing looks like the line it will become.
+    let [_, inner] = Layout::horizontal([Constraint::Length(MARKER_W), Constraint::Min(0)])
+        .areas(Rect { height: 1, ..area });
+    let marker_style = if focused {
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
     } else {
-        Color::DarkGray
+        Style::default().fg(Color::DarkGray)
     };
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(border));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let body = Rect {
+        x: inner.x,
+        y: area.y,
+        width: inner.width,
+        height: area.height,
+    };
     if !focused {
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(USER_MARKER, marker_style))),
+            area,
+        );
         return;
     }
+    let mut lines: Vec<Line> = Vec::new();
     if editor.is_blank() {
         // Dim placeholder when nothing has been typed yet.
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                t!("Ai.Placeholder").to_string(),
-                Style::default().fg(Color::DarkGray),
-            ))),
-            inner,
-        );
+        lines.push(Line::from(Span::styled(
+            t!("Ai.Placeholder").to_string(),
+            Style::default().fg(Color::DarkGray),
+        )));
     } else {
-        let lines: Vec<Line> = editor
-            .lines()
-            .iter()
-            .map(|l| Line::from(l.clone()))
-            .collect();
-        f.render_widget(Paragraph::new(Text::from(lines)), inner);
+        lines.extend(editor.lines().iter().map(|l| Line::from(l.clone())));
     }
+    // The marker leads the first row; the rest are indented under it, so a
+    // multi-line prompt reads as one block.
+    f.render_widget(
+        Paragraph::new(Text::from(
+            (0..lines.len().max(1))
+                .map(|i| {
+                    Line::from(Span::styled(
+                        if i == 0 {
+                            USER_MARKER.to_string()
+                        } else {
+                            " ".repeat(usize::from(MARKER_W))
+                        },
+                        marker_style,
+                    ))
+                })
+                .collect::<Vec<_>>(),
+        )),
+        area,
+    );
+    f.render_widget(Paragraph::new(Text::from(lines)), body);
     let (cy, col) = editor.cursor();
-    let cy = (cy as u16).min(inner.height.saturating_sub(1));
-    let col = (col as u16).min(inner.width.saturating_sub(1));
-    f.set_cursor_position((inner.x + col, inner.y + cy));
+    let cy = (cy as u16).min(body.height.saturating_sub(1));
+    let col = (col as u16).min(body.width.saturating_sub(1));
+    f.set_cursor_position((body.x + col, body.y + cy));
 }
 
 /// A cheap signature of the committed transcript: message count, width, and a
@@ -2952,6 +3039,7 @@ fn push_message(
     message: &Message,
     width: usize,
     quotes: &HashMap<String, super::quotes::QuoteCardData>,
+    aliases: &HashMap<String, String>,
 ) {
     // A tool line is one compact row, not a speaker turn: it belongs to the
     // answer around it, so it gets no accent bar and no trailing blank.
@@ -2975,7 +3063,9 @@ fn push_message(
         // already know and costs a row per turn, so it goes in unannounced —
         // only the reader's own turns are marked, which is what makes a long
         // transcript scannable.
-        Role::Assistant => lines.extend(render_answer_lines(&message.text, width, quotes)),
+        Role::Assistant => {
+            lines.extend(render_answer_lines(&message.text, width, quotes, aliases));
+        }
         Role::User => lines.extend(user_lines(&message.text, width)),
         Role::System | Role::Tool => {
             for logical in message.text.split('\n') {
@@ -2997,15 +3087,14 @@ fn push_message(
 /// quotation, and the band runs the full width — stopping at the last glyph
 /// makes it read as a highlight on the text rather than as the reader's turn.
 fn user_lines(text: &str, width: usize) -> Vec<Line<'static>> {
-    const MARKER: &str = "❯ ";
-    let indent = UnicodeWidthStr::width(MARKER);
+    let indent = usize::from(MARKER_W);
     let body_w = width.saturating_sub(indent).max(1);
     let band = Style::default().fg(USER_FG).bg(USER_BG);
     let mut out = Vec::new();
     for logical in text.split('\n') {
         for wrapped in wrap(logical, body_w) {
             let lead = if out.is_empty() {
-                MARKER.to_string()
+                USER_MARKER.to_string()
             } else {
                 " ".repeat(indent)
             };
@@ -3022,6 +3111,11 @@ fn user_lines(text: &str, width: usize) -> Vec<Line<'static>> {
 /// Colour of a security the reader can open.
 const SYMBOL_FG: Color = Color::Rgb(122, 196, 255);
 
+/// The mark on the reader's own lines, in the transcript and at the prompt: the
+/// line being typed should look like the line it will become.
+const USER_MARKER: &str = "❯ ";
+const MARKER_W: u16 = 2;
+
 /// Split out the securities named in `lines` so each is its own span, and colour
 /// the price chip that follows one.
 ///
@@ -3037,32 +3131,35 @@ const SYMBOL_FG: Color = Color::Rgb(122, 196, 255);
 fn link_symbols(
     lines: &mut Vec<Line<'static>>,
     quotes: &HashMap<String, super::quotes::QuoteCardData>,
+    aliases: &HashMap<String, String>,
 ) {
     for line in lines.iter_mut() {
         if !line
             .spans
             .iter()
-            .any(|s| !super::answer::symbol_spans(&s.content).is_empty())
+            .any(|s| !super::answer::security_spans(&s.content, aliases).is_empty())
         {
             continue;
         }
         let mut out: Vec<Span<'static>> = Vec::new();
         for span in line.spans.drain(..) {
-            let ranges = super::answer::symbol_spans(&span.content);
+            let ranges = super::answer::security_spans(&span.content, aliases);
             if ranges.is_empty() {
                 out.push(span);
                 continue;
             }
             let text = span.content.to_string();
             let mut at = 0usize;
-            for range in ranges {
+            for (range, symbol) in ranges {
                 if range.start > at {
                     out.push(Span::styled(text[at..range.start].to_string(), span.style));
                 }
-                let symbol = &text[range.clone()];
-                out.push(Span::styled(symbol.to_string(), span.style.fg(SYMBOL_FG)));
+                out.push(Span::styled(
+                    text[range.clone()].to_string(),
+                    span.style.fg(SYMBOL_FG),
+                ));
                 at = range.end;
-                if let Some(card) = quotes.get(symbol) {
+                if let Some(card) = quotes.get(&symbol) {
                     let chip = price_chip(card);
                     if text[at..].starts_with(&chip) {
                         out.push(Span::styled(
@@ -3107,7 +3204,11 @@ fn price_chip(card: &super::quotes::QuoteCardData) -> String {
 ///
 /// Fenced code and table rows are left alone — code is quoted verbatim, and a
 /// table's columns are measured, so a chip would break its alignment.
-fn price_annotated(text: &str, quotes: &HashMap<String, super::quotes::QuoteCardData>) -> String {
+fn price_annotated(
+    text: &str,
+    quotes: &HashMap<String, super::quotes::QuoteCardData>,
+    aliases: &HashMap<String, String>,
+) -> String {
     if quotes.is_empty() {
         return text.to_string();
     }
@@ -3116,7 +3217,7 @@ fn price_annotated(text: &str, quotes: &HashMap<String, super::quotes::QuoteCard
     // A ticker is mentioned repeatedly in one answer; the price belongs beside the
     // first mention. Repeating it on every one reads as noise, and every later
     // mention is still clickable.
-    let mut priced: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut priced: std::collections::HashSet<String> = std::collections::HashSet::new();
     for (i, line) in text.split('\n').enumerate() {
         if i > 0 {
             out.push('\n');
@@ -3131,11 +3232,10 @@ fn price_annotated(text: &str, quotes: &HashMap<String, super::quotes::QuoteCard
             continue;
         }
         let mut at = 0usize;
-        for range in super::answer::symbol_spans(line) {
+        for (range, symbol) in super::answer::security_spans(line, aliases) {
             out.push_str(&line[at..range.end]);
             at = range.end;
-            let symbol = &line[range];
-            if let Some(card) = quotes.get(symbol) {
+            if let Some(card) = quotes.get(&symbol) {
                 if priced.insert(symbol) {
                     out.push_str(&price_chip(card));
                 }
@@ -3153,6 +3253,17 @@ fn price_annotated(text: &str, quotes: &HashMap<String, super::quotes::QuoteCard
 /// leave a stale target behind — the same reason the reference rows are recorded
 /// during the render rather than cached.
 fn link_visible_symbols(window: &mut [Line<'static>], area: Rect, ui: &mut Ui) {
+    // A bare ticker's click target is the symbol it resolved to, not the four
+    // letters on screen. Copied out first because the chips are pushed onto `ui`
+    // in the same pass; the map holds a handful of short strings.
+    let aliases = ui.aliases.clone();
+    let resolve = |text: &str| -> Option<String> {
+        if super::answer::is_symbol(text) {
+            Some(text.to_string())
+        } else {
+            aliases.get(text).cloned()
+        }
+    };
     // A card is a block, and the reader aims at the block rather than at the six
     // columns of its ticker. Its rows are recognised by the box this module drew,
     // so anywhere on the card opens the panel.
@@ -3163,7 +3274,10 @@ fn link_visible_symbols(window: &mut [Line<'static>], area: Rect, ui: &mut Ui) {
         let mut symbol_here: Option<String> = None;
         for span in &mut line.spans {
             let w = UnicodeWidthStr::width(span.content.as_ref()) as u16;
-            if span.style.fg == Some(SYMBOL_FG) && super::answer::is_symbol(&span.content) {
+            let target = (span.style.fg == Some(SYMBOL_FG))
+                .then(|| resolve(&span.content))
+                .flatten();
+            if let Some(symbol) = target {
                 let rect = Rect {
                     x,
                     y,
@@ -3173,9 +3287,8 @@ fn link_visible_symbols(window: &mut [Line<'static>], area: Rect, ui: &mut Ui) {
                 if hovering(ui, rect) {
                     span.style = span.style.add_modifier(Modifier::UNDERLINED);
                 }
-                ui.chips
-                    .push((Chip::Symbol(span.content.to_string()), rect));
-                symbol_here = Some(span.content.to_string());
+                ui.chips.push((Chip::Symbol(symbol.clone()), rect));
+                symbol_here = Some(symbol);
             }
             x = x.saturating_add(w);
         }
@@ -3212,6 +3325,7 @@ fn render_answer_lines(
     answer: &str,
     width: usize,
     quotes: &HashMap<String, super::quotes::QuoteCardData>,
+    aliases: &HashMap<String, String>,
 ) -> Vec<Line<'static>> {
     use super::answer::{replace_inline_markers, segment_answer, Segment};
     let mut out: Vec<Line<'static>> = Vec::new();
@@ -3228,7 +3342,7 @@ fn render_answer_lines(
         match segment {
             Segment::Text(text) => {
                 let text = replace_inline_markers(&text, false);
-                let text = price_annotated(&text, quotes);
+                let text = price_annotated(&text, quotes, aliases);
                 out.extend(markdown::render(&text, width));
             }
             // Straight from the chart renderer, which already styles each part
@@ -3247,7 +3361,7 @@ fn render_answer_lines(
             }
         }
     }
-    link_symbols(&mut out, quotes);
+    link_symbols(&mut out, quotes, aliases);
     // A block at the very end leaves a trailing blank the turn separator would
     // double.
     while out
@@ -3476,8 +3590,9 @@ fn quote_card(card: &super::quotes::QuoteCardData, width: usize) -> Vec<Line<'st
         card.turnover,
         card.at
     );
-    // The frame costs 6 columns: two of indent, a bar and a space on each side.
-    let budget = width.saturating_sub(6);
+    // The frame costs 4 columns: a bar and a space on each side. No indent — the
+    // card is a block like a table, and the two lined up against nothing.
+    let budget = width.saturating_sub(4);
     let inner = [&head, &price, &range, &flow]
         .into_iter()
         .map(|s| UnicodeWidthStr::width(s.as_str()))
@@ -3492,13 +3607,13 @@ fn quote_card(card: &super::quotes::QuoteCardData, width: usize) -> Vec<Line<'st
     let flow = truncate_width(&flow, inner);
     let border = |left: &str, right: &str| {
         Line::from(Span::styled(
-            format!("  {left}{}{right}", "─".repeat(inner + 2)),
+            format!("{left}{}{right}", "─".repeat(inner + 2)),
             Style::default().fg(Color::DarkGray),
         ))
     };
     let bar = || Span::styled("│", Style::default().fg(Color::DarkGray));
     let row = |spans: Vec<Span<'static>>, used: usize| {
-        let mut all = vec![Span::raw("  "), bar(), Span::raw(" ")];
+        let mut all = vec![bar(), Span::raw(" ")];
         all.extend(spans);
         all.push(Span::raw(" ".repeat(inner.saturating_sub(used) + 1)));
         all.push(bar());
@@ -3550,7 +3665,6 @@ fn quote_card(card: &super::quotes::QuoteCardData, width: usize) -> Vec<Line<'st
 fn quote_row(card: &super::quotes::QuoteCardData, symbol_w: usize) -> Line<'static> {
     let pad = symbol_w.saturating_sub(UnicodeWidthStr::width(card.symbol.as_str()));
     let mut spans = vec![
-        Span::raw("  "),
         Span::styled(
             format!("{}{}", card.symbol, " ".repeat(pad)),
             Style::default()
@@ -3872,7 +3986,13 @@ mod tests {
             .iter()
             .find(|m| m.role == super::Role::User)
             .expect("a user message");
-        super::push_message(&mut lines, msg, 40, &std::collections::HashMap::new());
+        super::push_message(
+            &mut lines,
+            msg,
+            40,
+            &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
+        );
         let banded: Vec<&ratatui::text::Line> = lines
             .iter()
             .filter(|l| l.spans.iter().any(|s| s.style.bg == Some(super::USER_BG)))
@@ -3902,7 +4022,13 @@ mod tests {
         state.apply(super::ChatEvent::TurnFinished { error: None });
         let mut lines = Vec::new();
         for m in &state.messages {
-            super::push_message(&mut lines, m, 40, &std::collections::HashMap::new());
+            super::push_message(
+                &mut lines,
+                m,
+                40,
+                &std::collections::HashMap::new(),
+                &std::collections::HashMap::new(),
+            );
         }
         let text: Vec<String> = lines
             .iter()
@@ -4318,7 +4444,12 @@ mod tests {
     #[test]
     fn a_drawn_block_gets_a_blank_row_either_side() {
         let answer = "before\n\n```vis-chart\n{\"type\":\"line\",\"data\":[{\"time\":\"1/2\",\"value\":1.0},{\"time\":\"1/9\",\"value\":2.0}]}\n```\n\nafter";
-        let lines = super::render_answer_lines(answer, 50, &std::collections::HashMap::new());
+        let lines = super::render_answer_lines(
+            answer,
+            50,
+            &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
+        );
         let text: Vec<String> = lines
             .iter()
             .map(|l| {
@@ -4434,7 +4565,8 @@ mod tests {
             card("AAPL.US", "182.4", "-0.62%", -1),
         );
         let answer = "本周 700.HK 走强，而 AAPL.US 回落，关注 700.HK 的成交量。";
-        let lines = super::render_answer_lines(answer, 72, &quotes);
+        let lines =
+            super::render_answer_lines(answer, 72, &quotes, &std::collections::HashMap::new());
         let text: String = lines
             .iter()
             .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
@@ -4467,7 +4599,12 @@ mod tests {
             "AAPL.US".to_string(),
             card("AAPL.US", "182.4", "-0.62%", -1),
         );
-        let lines = super::render_answer_lines("AAPL.US fell today.", 60, &quotes);
+        let lines = super::render_answer_lines(
+            "AAPL.US fell today.",
+            60,
+            &quotes,
+            &std::collections::HashMap::new(),
+        );
         let chip = lines
             .iter()
             .flat_map(|l| &l.spans)
@@ -4664,5 +4801,58 @@ mod tests {
         let off = frame(&mut ui, &state, 78, 10)[0].clone();
         assert!(!off.contains("512.5"), "collapsed: {off}");
         crate::ai::settings::set_tape(true);
+    }
+
+    /// A bare ticker the server confirmed is a link, priced like a dotted one,
+    /// and clicking it opens the full symbol.
+    #[test]
+    fn a_confirmed_bare_ticker_behaves_like_a_symbol() {
+        let mut ui = super::Ui::new();
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        state.apply(super::ChatEvent::UserPrompt("查询 SPCX".into()));
+        state.apply(super::ChatEvent::Delta(
+            "SPCX 当前盘中走弱，卖 Put 已 ITM。".into(),
+        ));
+        state.apply(super::ChatEvent::TurnFinished { error: None });
+        ui.aliases.insert("SPCX".into(), "SPCX.US".into());
+        ui.quotes
+            .insert("SPCX.US".into(), card("SPCX.US", "135.995", "-3.75%", -1));
+        super::track_session_symbols(&mut ui, &state);
+        assert_eq!(ui.tape, ["SPCX.US"], "the ticker is tracked by its symbol");
+        let rows = frame(&mut ui, &state, 70, 16);
+        let text = rows.join("\n");
+        assert!(text.contains("135.995 ▼3.75%"), "priced inline: {text}");
+        // Clicking the four letters opens the security they resolve to.
+        let target = ui.chips.iter().find_map(|(chip, _)| match chip {
+            super::Chip::Symbol(s) => Some(s.clone()),
+            _ => None,
+        });
+        assert_eq!(target.as_deref(), Some("SPCX.US"));
+        // And the jargon beside it is left alone.
+        assert!(
+            !ui.chips
+                .iter()
+                .any(|(chip, _)| matches!(chip, super::Chip::Symbol(s) if s.starts_with("ITM"))),
+            "ITM must not become a link"
+        );
+    }
+
+    /// The prompt carries the same mark as the reader's turns, and no box: a
+    /// rounded frame around the input was the loudest thing on screen.
+    #[test]
+    fn the_prompt_is_marked_not_boxed() {
+        let mut ui = super::Ui::new();
+        let state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let rows = frame(&mut ui, &state, 60, 16);
+        let prompt = rows
+            .iter()
+            .rev()
+            .find(|r| r.contains(t!("Ai.Placeholder").as_ref()))
+            .expect("the placeholder should be on screen");
+        assert!(prompt.starts_with("❯ "), "marked: {prompt:?}");
+        assert!(
+            !rows.iter().any(|r| r.contains('╭') || r.contains('╰')),
+            "no box around the input: {rows:?}"
+        );
     }
 }
