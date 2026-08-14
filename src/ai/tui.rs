@@ -224,8 +224,6 @@ enum Chip {
     Brand,
     /// The title bar's control for the account's conversations.
     Sessions,
-    /// A list view's way back to the chat.
-    CloseView,
 }
 
 /// State of the structured interrupt answering flow.
@@ -332,6 +330,10 @@ struct Ui {
     help: Option<u16>,
     /// Where the panel's `WEB` button is, so it can be clicked.
     open_button: Option<Rect>,
+    /// Where the topmost thing's `[Close]` button is. One field rather than one per
+    /// overlay: only ever one is on screen, and the click path then works the same
+    /// in every view.
+    close_button: Option<Rect>,
     /// The day's price path per security, for the panel's sparkline.
     paths: HashMap<String, Vec<f64>>,
     paths_tx: Option<UnboundedSender<(String, Vec<f64>)>>,
@@ -346,9 +348,9 @@ struct Ui {
     aliases: HashMap<String, String>,
     /// Where the ticker has rotated to, when it is wider than the row.
     tape_at: usize,
-    /// Frame counter behind the rotation: the tape steps once a second, while the
-    /// frame timer ticks eight times as often.
-    tape_ticks: u8,
+    /// When the ticker last turned over, so the dwell is wall-clock rather than a
+    /// count of frames.
+    tape_shown_at: Option<std::time::Instant>,
     /// Work for the async side of the loop: signing in or out.
     pending: Option<Pending>,
     /// A device-code sign-in in progress, shown as a panel: the reader authorizes
@@ -404,13 +406,14 @@ impl Ui {
             quote_panel: None,
             help: None,
             open_button: None,
+            close_button: None,
             paths: HashMap::new(),
             paths_tx: None,
             session: super::account::local(),
             tape: Vec::new(),
             aliases: HashMap::new(),
             tape_at: 0,
-            tape_ticks: 0,
+            tape_shown_at: None,
             pending: None,
             login: None,
             confirm_sign_out: false,
@@ -1372,6 +1375,17 @@ fn on_mouse(
                     return;
                 }
             }
+            // Whatever is on top, its `[Close]` closes it — in every view, which a
+            // chip could not do: chips are only consulted in the chat.
+            if ui.close_button.is_some_and(|r| hit(r, col, row)) {
+                close_topmost(ui);
+                return;
+            }
+            // Help is modal: a click anywhere dismisses it, like any key does.
+            if ui.help.is_some() {
+                ui.help = None;
+                return;
+            }
             // The panel floats over the transcript, and the symbol hit rects were
             // recorded from what is underneath it. A click while it is open
             // dismisses it rather than reaching through to a target the reader
@@ -1551,6 +1565,22 @@ fn open_quote_panel(ui: &mut Ui, symbol: String) {
     ui.quote_panel = Some(symbol);
 }
 
+/// Close whatever is on top: the overlays in the order they are drawn in, and
+/// failing that the list view itself, which is the only other thing with a
+/// `[Close]`.
+fn close_topmost(ui: &mut Ui) {
+    if ui.login.is_some() {
+        ui.login = None;
+        ui.notice = Some(t!("Ai.LoginCancelled").to_string());
+    } else if ui.help.is_some() {
+        ui.help = None;
+    } else if ui.quote_panel.is_some() {
+        close_quote_panel(ui);
+    } else {
+        ui.switch(View::Chat);
+    }
+}
+
 /// Close the panel. The subscription stays: the ticker and the inline prices are
 /// reading the same stream, and dropping it here would freeze them.
 fn close_quote_panel(ui: &mut Ui) {
@@ -1675,7 +1705,6 @@ fn click_chip(
         }
         Chip::Brand => open_url(AI_WEB_URL),
         Chip::Sessions => open_sessions(ui),
-        Chip::CloseView => ui.switch(View::Chat),
         Chip::Reference(i) => {
             if let Some(url) = state.references.get(i).and_then(reference_url) {
                 open_url(&url);
@@ -1960,6 +1989,9 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
     // Chips are recorded by both the transcript (references) and the meta panel
     // (follow-ups), so the list is cleared once per frame rather than by each.
     ui.chips.clear();
+    // Re-recorded by whatever draws a `[Close]` this frame; a stale rect would
+    // otherwise swallow clicks where nothing is any more.
+    ui.close_button = None;
     // The Chat view is chrome-free and keeps the title bar. The others carry their
     // own name, so they take the title bar's rows too rather than sitting under a
     // second title.
@@ -2021,7 +2053,7 @@ pub type QuoteStream =
 ///
 /// The reader authorizes in a browser and comes back to a chat that is still
 /// here: no torn-down screen, no shell prompt, no relaunch.
-fn render_login_panel(f: &mut ratatui::Frame, area: Rect, ui: &Ui, spin: usize) {
+fn render_login_panel(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, spin: usize) {
     use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding};
 
     let Some(login) = &ui.login else {
@@ -2084,11 +2116,9 @@ fn render_login_panel(f: &mut ratatui::Frame, area: Rect, ui: &Ui, spin: usize) 
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         )))
-        .title_bottom(Line::from(Span::styled(
-            format!(" {} ", t!("Ai.LoginCancel")),
-            dim,
-        )));
+        .title_bottom(Line::from(Span::styled(close_label(), dim)).right_aligned());
     f.render_widget(Paragraph::new(Text::from(body)).block(block), rect);
+    ui.close_button = Some(close_rect(rect));
 }
 
 /// Draw the floating quote panel, if one is open.
@@ -2137,9 +2167,9 @@ fn render_help(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
                 // `↕` only when there is more than fits, so the reader knows to look
                 // rather than assuming they have seen it all.
                 if rows.len() + 2 > height as usize {
-                    format!(" ↕  {} ", t!("Ai.QuotePanelHint"))
+                    format!(" ↕ {}", close_label())
                 } else {
-                    format!(" {} ", t!("Ai.QuotePanelHint"))
+                    close_label()
                 },
                 Style::default().fg(Color::DarkGray),
             ))
@@ -2152,6 +2182,7 @@ fn render_help(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
     let max_offset = rows.len().saturating_sub(fit) as u16;
     let offset = offset.min(max_offset);
     ui.help = Some(offset);
+    ui.close_button = Some(close_rect(rect));
     let lines: Vec<Line> = rows
         .into_iter()
         .skip(offset as usize)
@@ -2240,11 +2271,15 @@ fn render_quote_panel(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
         )
         // One word, because every overlay here closes the same way and the reader
         // still has to be told once.
-        .title_bottom(Line::from(Span::styled(
-            format!(" {} ", t!("Ai.QuotePanelHint")),
-            Style::default().fg(Color::DarkGray),
-        )));
+        .title_bottom(
+            Line::from(Span::styled(
+                close_label(),
+                Style::default().fg(Color::DarkGray),
+            ))
+            .right_aligned(),
+        );
     f.render_widget(Paragraph::new(Text::from(body)).block(block), rect);
+    ui.close_button = Some(close_rect(rect));
     // The web page has the chart and the filings this panel cannot hold, so the way
     // out to it is a button on the frame rather than a line of instructions.
     ui.open_button = Some(Rect {
@@ -2303,6 +2338,23 @@ const AI_WEB_URL: &str = "https://longbridge.com/ai";
 /// The security's page on the web, where the chart and the filings are.
 fn quote_web_url(symbol: &str) -> String {
     format!("https://longbridge.com/quote/{symbol}")
+}
+
+/// The `[Close]` a panel or a list view carries. Bracketed like the `[stop]`
+/// button, because that is what reads as "click me" in a terminal.
+fn close_label() -> String {
+    format!(" [{}] ", t!("Ai.CloseButton"))
+}
+
+/// Where that button lands on a panel's bottom border, right-aligned.
+fn close_rect(panel: Rect) -> Rect {
+    let w = close_label().width() as u16;
+    Rect {
+        x: panel.x + panel.width.saturating_sub(w + 1),
+        y: panel.y + panel.height.saturating_sub(1),
+        width: w,
+        height: 1,
+    }
 }
 
 fn render_title(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatState) {
@@ -2422,6 +2474,10 @@ fn render_title(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatSta
 /// half a symbol is unreadable, and a trader glancing up needs to take a whole
 /// entry in at once. The rotation advances only when there is more to show than
 /// fits, so a short list sits still.
+/// How long a page of the ticker stays put. Long enough to read a handful of
+/// symbols with their prices, which a step a second was not.
+const TAPE_DWELL: std::time::Duration = std::time::Duration::from_secs(6);
+
 fn tape_spans(ui: &mut Ui, area: Rect, start_x: Option<u16>, room: usize) -> Vec<Span<'static>> {
     const GAP: &str = "   ";
     // The name stays neutral and only the price carries the direction: colouring
@@ -2452,6 +2508,7 @@ fn tape_spans(ui: &mut Ui, area: Rect, start_x: Option<u16>, room: usize) -> Vec
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut hits: Vec<(Chip, Rect)> = Vec::new();
     let mut used = 0usize;
+    let mut drawn = 0usize;
     for i in 0..entries.len() {
         let (symbol, price, color) = &entries[(ui.tape_at + i) % entries.len()];
         let w = symbol.width() + price.width() + if used == 0 { 0 } else { GAP.width() };
@@ -2483,17 +2540,31 @@ fn tape_spans(ui: &mut Ui, area: Rect, start_x: Option<u16>, room: usize) -> Vec
             spans.push(Span::styled(price.clone(), Style::default().fg(*color)));
         }
         used += w;
+        drawn += 1;
     }
     ui.chips.extend(hits);
-    if rotating {
-        // The frame timer has to keep running for the ticker to advance, and the
-        // step is one entry a second — fast enough to get through a long list,
-        // slow enough to read.
+    // The frame timer has to keep running for the ticker to advance. Only the
+    // placing pass may advance it — the measuring pass runs on the same frame.
+    if rotating && start_x.is_some() {
         ui.animating = true;
-        ui.tape_ticks = ui.tape_ticks.wrapping_add(1);
-        if ui.tape_ticks >= 8 {
-            ui.tape_ticks = 0;
-            ui.tape_at = (ui.tape_at + 1) % entries.len();
+        let now = std::time::Instant::now();
+        // A first frame starts the clock rather than advancing: the reader has not
+        // seen this page yet.
+        let due = ui
+            .tape_shown_at
+            .is_some_and(|shown| now.duration_since(shown) >= TAPE_DWELL);
+        ui.tape_shown_at.get_or_insert(now);
+        if due {
+            ui.tape_shown_at = Some(now);
+            // A page at a time, not an entry: a step a second shuffled every symbol
+            // along the row just as the reader started on one. A whole new set, held
+            // long enough to read, is something you can follow.
+            let page = drawn.max(1);
+            ui.tape_at = if ui.tape_at + page >= entries.len() {
+                0
+            } else {
+                ui.tape_at + page
+            };
         }
     }
     spans
@@ -2505,7 +2576,7 @@ fn render_view_header(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, label_key
     let [top, rest] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
     // The way out is a button as well as a key: the view is opened by clicking, so
     // it should be closable the same way.
-    let close = format!(" {} ✕ ", t!("Ai.BackHint"));
+    let close = close_label();
     let close_w = close.width() as u16;
     let close_rect = Rect {
         x: area.x + area.width.saturating_sub(close_w),
@@ -2534,7 +2605,7 @@ fn render_view_header(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, label_key
         ),
     ]);
     f.render_widget(Paragraph::new(line), top);
-    ui.chips.push((Chip::CloseView, close_rect));
+    ui.close_button = Some(close_rect);
     rest
 }
 
@@ -5588,10 +5659,16 @@ mod tests {
             !first.contains("9988.HK"),
             "the row cannot hold them all: {first}"
         );
-        ui.tape_ticks = 7;
+        // Pretend the page has been up for its full dwell. The frame that finds it
+        // due draws the page it is replacing, so the new one lands on the next.
+        ui.tape_shown_at = std::time::Instant::now().checked_sub(super::TAPE_DWELL);
         let _ = frame(&mut ui, &state, 78, 10);
         let rotated = frame(&mut ui, &state, 78, 10)[0].clone();
         assert_ne!(first, rotated, "the ticker should have advanced");
+        assert!(
+            !rotated.contains("700.HK") && !rotated.contains("AAPL.US"),
+            "and by a page, not a symbol, so the whole set turns over: {rotated}"
+        );
     }
 
     /// A ticker that fits sits still, and the toggle turns it off — the row is
@@ -5610,7 +5687,7 @@ mod tests {
         ui.quotes
             .insert("700.HK".into(), card("700.HK", "512.5", "+1.28%", 1));
         let before = frame(&mut ui, &state, 78, 10)[0].clone();
-        ui.tape_ticks = 7;
+        ui.tape_shown_at = std::time::Instant::now().checked_sub(super::TAPE_DWELL);
         let _ = frame(&mut ui, &state, 78, 10);
         assert_eq!(
             before,
@@ -5931,7 +6008,10 @@ mod tests {
         assert!(!framed.is_empty(), "the dialog should be drawn: {rows:?}");
         let text = rows.join("\n");
         assert!(text.contains("$SPCX.US"), "the title: {text}");
-        assert!(text.contains(t!("Ai.QuotePanelHint").as_ref()), "{text}");
+        assert!(
+            text.contains(t!("Ai.CloseButton").as_ref()),
+            "a way out that can be clicked: {text}"
+        );
         // The way out to the web is a button on the frame, not a line of prose.
         assert!(text.contains(t!("Ai.QuoteWeb").as_ref()), "{text}");
         // Content-sized: nowhere near the 100 columns available. Measured on the
@@ -5998,7 +6078,7 @@ mod tests {
         assert!(text.contains("WDJB-MJHT"), "the code: {text}");
         assert!(text.contains(t!("Ai.LoginWaiting").as_ref()), "{text}");
         assert!(
-            text.contains(t!("Ai.LoginCancel").as_ref()),
+            text.contains(t!("Ai.CloseButton").as_ref()),
             "a way out: {text}"
         );
         // Esc cancels the sign-in without touching the input.
@@ -6117,18 +6197,14 @@ mod tests {
         let state = super::ChatState::new("chatbot".into(), "welcome".into());
         ui.view = super::View::Sessions;
         let rows = frame(&mut ui, &state, 64, 12);
-        let (_, rect) = ui
-            .chips
-            .iter()
-            .find(|(chip, _)| matches!(chip, super::Chip::CloseView))
-            .expect("a way out that is not only a key");
+        let rect = ui.close_button.expect("a way out that is not only a key");
         assert_eq!(rect.y, 0, "it sits on the header row");
-        let at = rows[0].find('✕').expect("drawn");
+        let label = format!("[{}]", t!("Ai.CloseButton"));
+        let at = rows[0].find(&label).expect("drawn as a button");
         assert!(
-            (rect.x as usize) <= at,
+            (rect.x as usize) <= at && at < (rect.x + rect.width) as usize,
             "drawn at {at} but targeted at {rect:?}"
         );
-        ui.chips.clear();
         ui.switch(super::View::Chat);
         assert!(ui.view == super::View::Chat, "and it goes back to the chat");
     }
