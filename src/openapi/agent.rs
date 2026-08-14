@@ -186,9 +186,24 @@ impl AgentBackend for OpenApiAgent {
             .and_then(|cursor| cursor.parse::<u32>().ok())
             .unwrap_or(1)
             .max(1);
-        let resp = crate::openapi::chats::list_chats(page, PAGE_SIZE, None)
-            .await
-            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        // `session/list` must never break the ACP flow: an ACP client treats a
+        // failed listing as fatal and then cannot even start a new session. If
+        // the chats API is unreachable (network, auth, or not yet deployed to
+        // this environment), degrade to an empty page instead of erroring.
+        let resp = match crate::openapi::chats::list_chats(page, PAGE_SIZE, None).await {
+            Ok(resp) => resp,
+            Err(error) => {
+                tracing::warn!(
+                    target: "longbridge::acp",
+                    %error,
+                    "failed to list chats for session/list; returning an empty page"
+                );
+                return Ok(AgentSessionPage {
+                    sessions: Vec::new(),
+                    next_cursor: None,
+                });
+            }
+        };
         let has_more = resp.chats.len() as u32 >= PAGE_SIZE;
         let sessions = resp
             .chats
