@@ -3,6 +3,7 @@ use clap::Parser;
 use std::io::Write;
 use std::time::Instant;
 
+pub mod ai;
 pub mod auth;
 pub mod cli;
 pub mod data;

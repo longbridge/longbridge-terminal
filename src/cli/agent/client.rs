@@ -304,7 +304,7 @@ async fn open_conversation_stream(
 pub async fn stream_conversation(
     req: ConversationRequest,
     verbose: bool,
-    on_event: &mut dyn FnMut(AgentEvent),
+    on_event: &mut (dyn FnMut(AgentEvent) + Send),
 ) -> Result<()> {
     ensure_oauth_auth(crate::openapi::using_api_key())?;
     let ctx = crate::openapi::agent();
