@@ -50,6 +50,9 @@ enum View {
     Question,
 }
 
+/// Transcript lines a page-scroll keystroke moves.
+const SCROLL_PAGE: u16 = 5;
+
 /// Braille spinner frames for the "generating" status line.
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
@@ -586,6 +589,7 @@ fn cancel_turn(state: &mut ChatState, turn: &mut Option<JoinHandle<()>>) {
 
 /// Conversations view: arrows/Enter select and open, Del removes, typing filters.
 fn on_sessions_key(key: crossterm::event::KeyEvent, ui: &mut Ui, state: &mut ChatState) {
+    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
     match key.code {
         KeyCode::Esc => {
             if ui.search.is_empty() {
@@ -595,13 +599,17 @@ fn on_sessions_key(key: crossterm::event::KeyEvent, ui: &mut Ui, state: &mut Cha
                 ui.clamp_sel();
             }
         }
+        // Jump to the ends. A MacBook's built-in keyboard reaches Home/End only
+        // through Fn, so Shift+arrows carry the same action.
+        KeyCode::Home => ui.sel = 0,
+        KeyCode::End => ui.sel = ui.row_count().saturating_sub(1),
+        KeyCode::Up if shift => ui.sel = 0,
+        KeyCode::Down if shift => ui.sel = ui.row_count().saturating_sub(1),
         KeyCode::Up => ui.sel = ui.sel.saturating_sub(1),
         KeyCode::Down => {
             let last = ui.row_count().saturating_sub(1);
             ui.sel = (ui.sel + 1).min(last);
         }
-        KeyCode::Home => ui.sel = 0,
-        KeyCode::End => ui.sel = ui.row_count().saturating_sub(1),
         KeyCode::Enter => activate(ui, state),
         KeyCode::Backspace => {
             ui.search.pop();
@@ -624,6 +632,7 @@ fn on_chat_key(
     tx: &UnboundedSender<ChatEvent>,
 ) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
     let newline = key
         .modifiers
         .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT);
@@ -674,6 +683,17 @@ fn on_chat_key(
         KeyCode::Right => editor.right(),
         KeyCode::Home => editor.home(),
         KeyCode::End => editor.end(),
+        // Scrolling the transcript. A MacBook's built-in keyboard has no
+        // PageUp/PageDown key — they need Fn — so Shift+arrows carry the same
+        // action, and the dedicated keys stay as aliases for full keyboards.
+        KeyCode::PageUp => {
+            state.scroll = state.scroll.saturating_add(SCROLL_PAGE).min(ui.max_scroll);
+        }
+        KeyCode::PageDown => state.scroll = state.scroll.saturating_sub(SCROLL_PAGE),
+        KeyCode::Up if shift => {
+            state.scroll = state.scroll.saturating_add(SCROLL_PAGE).min(ui.max_scroll);
+        }
+        KeyCode::Down if shift => state.scroll = state.scroll.saturating_sub(SCROLL_PAGE),
         KeyCode::Up => {
             if !editor.up() {
                 editor.recall_prev();
@@ -684,8 +704,6 @@ fn on_chat_key(
                 editor.recall_next();
             }
         }
-        KeyCode::PageUp => state.scroll = state.scroll.saturating_add(5).min(ui.max_scroll),
-        KeyCode::PageDown => state.scroll = state.scroll.saturating_sub(5),
         KeyCode::Char(c) => editor.insert_char(c),
         _ => {}
     }
@@ -833,15 +851,19 @@ fn help_text() -> String {
 
 /// Keyboard navigation for the Settings list view.
 fn on_list_key(key: crossterm::event::KeyEvent, ui: &mut Ui, state: &mut ChatState) {
+    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
     match key.code {
         KeyCode::Esc => ui.switch(View::Chat),
+        // Jump to the ends; Shift+arrows because Home/End need Fn on a MacBook.
+        KeyCode::Home => ui.sel = 0,
+        KeyCode::End => ui.sel = ui.row_count().saturating_sub(1),
+        KeyCode::Up if shift => ui.sel = 0,
+        KeyCode::Down if shift => ui.sel = ui.row_count().saturating_sub(1),
         KeyCode::Up | KeyCode::Char('k') => ui.sel = ui.sel.saturating_sub(1),
         KeyCode::Down | KeyCode::Char('j') => {
             let last = ui.row_count().saturating_sub(1);
             ui.sel = (ui.sel + 1).min(last);
         }
-        KeyCode::Home => ui.sel = 0,
-        KeyCode::End => ui.sel = ui.row_count().saturating_sub(1),
         KeyCode::Enter => activate(ui, state),
         _ => {}
     }
@@ -2657,5 +2679,58 @@ mod tests {
         state.apply(ChatEvent::ToolStarted("B".into()));
         state.apply(ChatEvent::ToolStarted("C".into()));
         assert_eq!(super::tools_this_turn(&state), 2);
+    }
+
+    /// A MacBook's built-in keyboard has no PageUp/PageDown/Home/End — they need
+    /// Fn — so every action bound to one must also be reachable another way.
+    #[test]
+    fn scrolling_and_jumping_work_without_fn_keys() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let shift = |code| KeyEvent::new(code, KeyModifiers::SHIFT);
+
+        // Chat: Shift+arrows scroll the transcript, like PageUp/PageDown.
+        let mut ui = super::Ui::new();
+        ui.max_scroll = 40;
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let mut editor = super::Editor::new();
+        let mut turn = None;
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        super::on_chat_key(
+            shift(KeyCode::Up),
+            &mut ui,
+            &mut state,
+            &mut editor,
+            &mut turn,
+            &tx,
+        );
+        assert!(state.scroll > 0, "Shift+Up should scroll back");
+        let scrolled = state.scroll;
+        super::on_chat_key(
+            shift(KeyCode::Down),
+            &mut ui,
+            &mut state,
+            &mut editor,
+            &mut turn,
+            &tx,
+        );
+        assert!(state.scroll < scrolled, "Shift+Down should scroll forward");
+
+        // Lists: Shift+arrows jump to the ends, like Home/End.
+        for handler in [
+            super::on_list_key as fn(KeyEvent, &mut super::Ui, &mut super::ChatState),
+            super::on_sessions_key as fn(KeyEvent, &mut super::Ui, &mut super::ChatState),
+        ] {
+            let mut ui = super::Ui::new();
+            ui.view = super::View::Settings;
+            let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+            handler(shift(KeyCode::Down), &mut ui, &mut state);
+            assert_eq!(
+                ui.sel,
+                ui.row_count().saturating_sub(1),
+                "Shift+Down should reach the last row"
+            );
+            handler(shift(KeyCode::Up), &mut ui, &mut state);
+            assert_eq!(ui.sel, 0, "Shift+Up should reach the first row");
+        }
     }
 }
