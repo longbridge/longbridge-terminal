@@ -222,6 +222,8 @@ enum Chip {
     Sample(&'static str),
     /// The brand badge, which opens Longbridge AI on the web.
     Brand,
+    /// The title bar's control for the account's conversations.
+    Sessions,
 }
 
 /// State of the structured interrupt answering flow.
@@ -324,6 +326,8 @@ struct Ui {
     cards_tx: Option<UnboundedSender<HashMap<String, super::quotes::QuoteCardData>>>,
     /// The security whose quote panel is open, if any.
     quote_panel: Option<String>,
+    /// Scroll offset of the help overlay, when it is open.
+    help: Option<u16>,
     /// Where the panel's `WEB` button is, so it can be clicked.
     open_button: Option<Rect>,
     /// The day's price path per security, for the panel's sparkline.
@@ -396,6 +400,7 @@ impl Ui {
             history_tx: None,
             cards_tx: None,
             quote_panel: None,
+            help: None,
             open_button: None,
             paths: HashMap::new(),
             paths_tx: None,
@@ -585,15 +590,14 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
                 match result {
                     Ok(()) => {
                         ui.session = super::account::local();
-                        // The contexts were never built for a chat that opened
-                        // signed out, so they can be built now and the reader carries
-                        // on here. If they already existed they belong to the old
-                        // credentials, and those are process-wide singletons.
-                        if crate::openapi::contexts_built() {
-                            ui.exit_note = Some(t!("Ai.SignedIn").to_string());
-                            ui.should_quit = true;
-                        } else if let Ok((rx, _, _)) = crate::openapi::init_contexts().await {
+                        // Signing in finishes here, in the chat — whether it opened
+                        // signed out or the reader signed out and back in (as a
+                        // different account, usually). The contexts are rebuilt from
+                        // the new credentials and this session carries on with them;
+                        // only a failure to build them is worth leaving for.
+                        if let Ok((rx, _, _)) = crate::openapi::init_contexts().await {
                             quotes = Box::pin(rx);
+                            ui.session = super::account::local();
                             ui.notice = Some(t!("Ai.SignedIn").to_string());
                             for symbol in ui.tape.clone() {
                                 subscribe_quote(&symbol);
@@ -647,7 +651,7 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
             // for it was the thing that made signing in feel like leaving.
             // Named so the authorization page, and the account's list of
             // authorized clients afterwards, say which client is asking.
-            match crate::auth::device_login_start(false, Some(AI_CLIENT_NAME.to_string())).await {
+            match crate::auth::device_login_start(false, None).await {
                 Ok(login) => {
                     ui.notice = None;
                     // A browser that did not open leaves the reader with a URL they
@@ -683,6 +687,14 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
                     // anonymous start looks like: the transcript is still readable,
                     // and asking or quoting anything says to sign in first.
                     crate::openapi::mark_signed_out();
+                    // The conversation stays on screen to read, but not to add to:
+                    // whoever signs in next may be a different account, and this
+                    // thread is not theirs. It is still on the server for the
+                    // account that owns it, one `/resume` away.
+                    state.chat_uid = None;
+                    state.message_id = None;
+                    state.parent_message_id = None;
+                    state.pending_interrupt = None;
                     ui.session = super::account::local();
                     ui.tape.clear();
                     ui.quotes.clear();
@@ -974,6 +986,18 @@ fn on_chat_key(
         close_quote_panel(ui);
         return;
     }
+    // Help is modal, because there is nothing to type at while reading it.
+    if let Some(offset) = ui.help {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => ui.help = Some(offset.saturating_sub(1)),
+            KeyCode::Down | KeyCode::Char('j') => ui.help = Some(offset.saturating_add(1)),
+            KeyCode::PageUp => ui.help = Some(offset.saturating_sub(10)),
+            KeyCode::PageDown => ui.help = Some(offset.saturating_add(10)),
+            KeyCode::Home => ui.help = Some(0),
+            _ => ui.help = None,
+        }
+        return;
+    }
     // When the slash palette is open, arrows/Enter/Esc drive it instead of the
     // transcript or history, matching the grok-style command menu.
     if slash_active(editor) {
@@ -1156,7 +1180,9 @@ fn exec_slash(name: &str, args: &str, ui: &mut Ui, state: &mut ChatState) {
         "resume" => open_sessions(ui),
         "settings" => ui.switch(View::Settings),
         "agent" => switch_agent(args, ui, state),
-        "help" => state.messages.push(Message::new(Role::System, help_text())),
+        // A panel, not a message: help is something you consult and dismiss, and as
+        // a transcript entry it could not be dismissed at all.
+        "help" => ui.help = Some(0),
         "exit" => ui.should_quit = true,
         _ => {}
     }
@@ -1202,23 +1228,34 @@ fn switch_agent(args: &str, ui: &mut Ui, state: &mut ChatState) {
 
 /// The `/help` message: the command list is derived from [`SLASH`] so it cannot
 /// drift out of sync, followed by the key hints.
-fn help_text() -> String {
-    let commands = SLASH
-        .iter()
-        .map(|c| {
-            if c.aliases.is_empty() {
-                c.name.to_string()
-            } else {
-                format!("{} ({})", c.name, c.aliases.join(" "))
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" · ");
-    format!(
-        "{} · {}",
-        t!("Ai.HelpCommands", commands = commands),
-        t!("Ai.HelpKeys")
-    )
+/// The help panel's rows: `(left, right)` pairs, with an empty left column for a
+/// section heading and an empty pair for a blank row.
+fn help_rows() -> Vec<(String, String)> {
+    let mut rows = vec![(String::new(), t!("Ai.HelpCommands").to_string())];
+    for c in &SLASH {
+        let names = if c.aliases.is_empty() {
+            c.name.to_string()
+        } else {
+            format!("{} {}", c.name, c.aliases.join(" "))
+        };
+        rows.push((names, t!(c.desc).to_string()));
+    }
+    rows.push((String::new(), String::new()));
+    rows.push((String::new(), t!("Ai.HelpKeys").to_string()));
+    for (keys, desc) in [
+        ("Enter", "Ai.HelpSend"),
+        ("Shift+Enter", "Ai.HelpNewline"),
+        ("Tab", "Ai.HelpComplete"),
+        ("↑ ↓", "Ai.HelpHistory"),
+        ("Shift+↑↓  PgUp PgDn", "Ai.HelpScroll"),
+        ("Ctrl+A E U K W", "Ai.HelpLineEdit"),
+        ("Esc", "Ai.HelpEscape"),
+        ("drag", "Ai.HelpSelect"),
+        ("Ctrl+C ×2", "Ai.HelpQuit"),
+    ] {
+        rows.push((keys.to_string(), t!(desc).to_string()));
+    }
+    rows
 }
 
 /// Keyboard navigation for the Settings list view.
@@ -1598,6 +1635,7 @@ fn click_chip(
             submit(ui, state, editor, turn, tx);
         }
         Chip::Brand => open_url(AI_WEB_URL),
+        Chip::Sessions => open_sessions(ui),
         Chip::Reference(i) => {
             if let Some(url) = state.references.get(i).and_then(reference_url) {
                 open_url(&url);
@@ -1873,19 +1911,26 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
     // Chips are recorded by both the transcript (references) and the meta panel
     // (follow-ups), so the list is cleared once per frame rather than by each.
     ui.chips.clear();
-    render_title(f, title, ui, state);
-    // The Chat view is chrome-free; other views get a header with the view name
-    // (they are opened via `/` commands and left with Esc).
+    // The Chat view is chrome-free and keeps the title bar. The others carry their
+    // own name, so they take the title bar's rows too rather than sitting under a
+    // second title.
+    let full = Rect {
+        height: title.height + body.height,
+        ..title
+    };
     match ui.view {
         // The Question drawer is an overlay, not a view: the transcript it is
         // asking about stays behind it.
-        View::Chat | View::Question => render_chat(f, body, ui, state),
+        View::Chat | View::Question => {
+            render_title(f, title, ui, state);
+            render_chat(f, body, ui, state);
+        }
         View::Sessions => {
-            let inner = render_view_header(f, body, "Ai.TabSessions");
+            let inner = render_view_header(f, full, "Ai.TabSessions");
             render_sessions(f, inner, ui);
         }
         View::Settings => {
-            let inner = render_view_header(f, body, "Ai.TabSettings");
+            let inner = render_view_header(f, full, "Ai.TabSettings");
             render_settings(f, inner, ui);
         }
     }
@@ -1910,6 +1955,7 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
     // Last, so they float over whatever is underneath. The sign-in panel outranks
     // the quote panel: it is a step the reader is in the middle of.
     render_quote_panel(f, body, ui);
+    render_help(f, body, ui);
     if ui.login.is_some() {
         ui.animating = true;
         let spin = ui.tick as usize;
@@ -2003,6 +2049,86 @@ fn render_login_panel(f: &mut ratatui::Frame, area: Rect, ui: &Ui, spin: usize) 
 /// number. Square corners and a title inset in the top border, after grok-build's
 /// overlays; the chrome is a `WEB` button and nothing else, so every row inside
 /// carries data.
+/// Render the help overlay: the commands and the keys, in two columns.
+///
+/// A panel rather than a message in the transcript, which is what it used to be —
+/// help you cannot dismiss is help that has taken your conversation hostage. It
+/// scrolls when it does not fit, because it is longer than a short terminal.
+fn render_help(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
+    let Some(offset) = ui.help else {
+        return;
+    };
+    let rows = help_rows();
+    let left_w = rows.iter().map(|(l, _)| l.width()).max().unwrap_or(0);
+    let right_w = rows.iter().map(|(_, r)| r.width()).max().unwrap_or(0);
+    let inner_w = left_w + 2 + right_w;
+    let width = (inner_w + 6).min(area.width as usize) as u16;
+    let height = (rows.len() as u16 + 2).min(area.height);
+    let rect = Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    };
+    f.render_widget(Clear, rect);
+    blank_straddling_glyphs(f.buffer_mut(), rect, area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Plain)
+        .border_style(Style::default().fg(Color::DarkGray))
+        .padding(Padding::horizontal(2))
+        .title(Span::styled(
+            format!(" {} ", t!("Ai.Help")),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .title_bottom(
+            Line::from(Span::styled(
+                // `↕` only when there is more than fits, so the reader knows to look
+                // rather than assuming they have seen it all.
+                if rows.len() + 2 > height as usize {
+                    format!(" ↕  {} ", t!("Ai.QuotePanelHint"))
+                } else {
+                    format!(" {} ", t!("Ai.QuotePanelHint"))
+                },
+                Style::default().fg(Color::DarkGray),
+            ))
+            .right_aligned(),
+        );
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+    // Clamp here rather than on the keypress: the height is only known now.
+    let fit = inner.height as usize;
+    let max_offset = rows.len().saturating_sub(fit) as u16;
+    let offset = offset.min(max_offset);
+    ui.help = Some(offset);
+    let lines: Vec<Line> = rows
+        .into_iter()
+        .skip(offset as usize)
+        .take(fit)
+        .map(|(left, right)| {
+            if left.is_empty() {
+                // A heading, or a blank row.
+                Line::from(Span::styled(
+                    right,
+                    Style::default()
+                        .fg(Color::Gray)
+                        .add_modifier(Modifier::BOLD),
+                ))
+            } else {
+                let pad = " ".repeat(left_w + 2 - left.width());
+                Line::from(vec![
+                    Span::styled(left, Style::default().fg(Color::Cyan)),
+                    Span::raw(pad),
+                    Span::styled(right, Style::default().fg(Color::Gray)),
+                ])
+            }
+        })
+        .collect();
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
 fn render_quote_panel(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
     use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding};
 
@@ -2125,10 +2251,6 @@ fn line_width(line: &Line<'_>) -> usize {
 /// conversations, with the widgets a terminal can only describe.
 const AI_WEB_URL: &str = "https://longbridge.com/ai";
 
-/// How this client identifies itself when authorizing: what the reader sees on the
-/// authorization page and in their list of authorized clients.
-const AI_CLIENT_NAME: &str = "Longbridge AI (CLI)";
-
 /// The security's page on the web, where the chart and the filings are.
 fn quote_web_url(symbol: &str) -> String {
     format!("https://longbridge.com/quote/{symbol}")
@@ -2156,6 +2278,21 @@ fn render_title(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatSta
             Style::default().fg(Color::DarkGray),
         ));
     }
+    // Reaching an earlier conversation was `/resume` and nothing else, which only
+    // helps a reader who already knows it exists.
+    let sessions = format!(" {} ", t!("Ai.TabSessions"));
+    let sessions_x = area.x + left.iter().map(|s| s.content.width()).sum::<usize>() as u16;
+    let sessions_rect = Rect {
+        x: sessions_x,
+        y: area.y,
+        width: sessions.width() as u16,
+        height: 1,
+    };
+    left.push(Span::styled(
+        sessions.clone(),
+        chip_style(Color::Gray, hovering(ui, sessions_rect)),
+    ));
+    ui.chips.push((Chip::Sessions, sessions_rect));
     let left_w: usize = left.iter().map(|s| s.content.width()).sum();
     // The badge is a link: the same conversations are on the web, with the widgets
     // a terminal can only describe.
@@ -3357,10 +3494,13 @@ fn render_status(f: &mut ratatui::Frame, area: Rect, ui: &Ui, state: &ChatState)
 
 fn render_footer(f: &mut ratatui::Frame, area: Rect, ui: &Ui, editor: &Editor) {
     let focused = ui.view == View::Chat;
-    // The box stays — it is what separates the prompt from the transcript — but
-    // dim. A rounded cyan frame was the loudest thing on the screen.
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
+    // A rule above and below — enough to separate the prompt from the transcript,
+    // and dim, where a rounded cyan frame was the loudest thing on the screen. No
+    // sides: they cost the prompt a column at each end, which left the `❯` being
+    // typed at one indent and the `❯` of the same words in the transcript at
+    // another.
+    let block = Block::default()
+        .borders(Borders::TOP | Borders::BOTTOM)
         .border_style(Style::default().fg(Color::DarkGray));
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -5432,11 +5572,16 @@ mod tests {
             .rev()
             .find(|r| r.contains(t!("Ai.Placeholder").as_ref()))
             .expect("the placeholder should be on screen");
-        assert!(prompt.contains("❯ "), "marked: {prompt:?}");
-        // The box stays, dim: it is what separates the prompt from the transcript.
+        assert_eq!(prompt.find("❯ "), Some(0), "marked, and flush: {prompt:?}");
+        // A rule above and below, no sides: they cost the prompt the column that
+        // lines it up with the same words once they are in the transcript.
         assert!(
-            rows.iter().any(|r| r.contains('╭')),
-            "the input keeps its frame: {rows:?}"
+            rows.iter().any(|r| r.starts_with("──")),
+            "the input keeps a rule: {rows:?}"
+        );
+        assert!(
+            !rows.iter().any(|r| r.contains('│') || r.contains('╭')),
+            "and no sides: {rows:?}"
         );
     }
 
@@ -5788,6 +5933,97 @@ mod tests {
                 .iter()
                 .any(|(chip, _)| matches!(chip, super::Chip::Brand)),
             "the badge should be a link"
+        );
+    }
+
+    /// A view that carries its own name takes the title bar's rows: two titles, one
+    /// above the other, read as a nesting that is not there.
+    #[test]
+    fn a_list_view_replaces_the_title_bar_rather_than_stacking_under_it() {
+        let mut ui = super::Ui::new();
+        let state = super::ChatState::new("chatbot".into(), "welcome".into());
+        ui.view = super::View::Sessions;
+        let rows = frame(&mut ui, &state, 72, 12);
+        assert!(
+            !rows.join("\n").contains(t!("Ai.Title").as_ref()),
+            "the brand title bar is covered: {rows:?}"
+        );
+        assert!(
+            rows[0]
+                .trim_start()
+                .starts_with(t!("Ai.TabSessions").as_ref()),
+            "and the view's own name is the top row: {:?}",
+            rows[0]
+        );
+    }
+
+    /// Earlier conversations were reachable only by knowing to type `/resume`.
+    #[test]
+    fn the_title_bar_offers_the_conversations() {
+        let mut ui = super::Ui::new();
+        let state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let rows = frame(&mut ui, &state, 76, 12);
+        let (_, rect) = ui
+            .chips
+            .iter()
+            .find(|(chip, _)| matches!(chip, super::Chip::Sessions))
+            .expect("a control for the conversations");
+        assert_eq!(rect.y, 0, "it lives on the title row");
+        let label = t!("Ai.TabSessions").to_string();
+        let at = rows[0].find(&label).expect("labelled, not an icon");
+        assert!(
+            (rect.x as usize) <= at && at < (rect.x + rect.width) as usize,
+            "drawn at {at} but targeted at {rect:?}"
+        );
+    }
+
+    /// `/help` used to append itself to the conversation, where it could not be
+    /// dismissed. It is a panel now, and the transcript is left alone.
+    #[test]
+    fn help_opens_as_a_panel_and_leaves_the_transcript_alone() {
+        let mut ui = super::Ui::new();
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let before = state.messages.len();
+        super::exec_slash("help", "", &mut ui, &mut state);
+        assert_eq!(ui.help, Some(0), "the panel is open");
+        assert_eq!(state.messages.len(), before, "and nothing was written");
+        let text = frame(&mut ui, &state, 80, 30).join("\n");
+        assert!(text.contains(t!("Ai.Help").as_ref()), "{text}");
+        assert!(text.contains("/resume"), "the commands are listed: {text}");
+        assert!(text.contains("Shift+Enter"), "and the keys: {text}");
+    }
+
+    /// Anything that is not scrolling dismisses it — including Esc, which is what a
+    /// reader will reach for.
+    #[test]
+    fn help_scrolls_and_any_other_key_dismisses_it() {
+        let mut ui = super::Ui::new();
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let mut editor = super::Editor::new();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut turn = None;
+        ui.help = Some(0);
+        macro_rules! press {
+            ($code:expr) => {
+                super::on_key(
+                    crossterm::event::KeyEvent::new($code, crossterm::event::KeyModifiers::NONE),
+                    &mut ui,
+                    &mut state,
+                    &mut editor,
+                    &mut turn,
+                    &tx,
+                )
+            };
+        }
+        press!(crossterm::event::KeyCode::Down);
+        assert_eq!(ui.help, Some(1), "scrolled");
+        press!(crossterm::event::KeyCode::Up);
+        assert_eq!(ui.help, Some(0));
+        press!(crossterm::event::KeyCode::Esc);
+        assert_eq!(ui.help, None, "dismissed");
+        assert!(
+            editor.text().is_empty(),
+            "and nothing was typed into the input"
         );
     }
 }
