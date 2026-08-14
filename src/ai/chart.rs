@@ -22,6 +22,25 @@ use crate::utils::text::{display_width, pad_display, strip_control_chars, trunca
 
 /// The price/value line.
 const PLOT: Color = Color::Cyan;
+
+/// One colour per series, in the order the spec lists them.
+///
+/// A comparison chart draws several securities on one canvas, and with a single
+/// colour the curves were indistinguishable — the whole point of the chart is
+/// telling them apart. Cyan stays first so a single-series chart looks unchanged.
+const SERIES_COLORS: [Color; 6] = [
+    PLOT,
+    Color::Yellow,
+    Color::Magenta,
+    Color::Green,
+    Color::Red,
+    Color::Blue,
+];
+
+/// The colour of the `i`th series, cycling if a spec has more than the palette.
+fn series_color(i: usize) -> Color {
+    SERIES_COLORS[i % SERIES_COLORS.len()]
+}
 /// The volume histogram under it.
 const VOLUME: Color = Color::Blue;
 /// Axes, ticks and legend.
@@ -97,9 +116,15 @@ pub(crate) fn chart_series(spec: &Value) -> (Vec<String>, Vec<ChartSeries>) {
                     .and_then(Value::as_str)
                     .unwrap_or("line")
                     .to_string(),
+                // A comparison names each series; `axisYTitle` is the axis's
+                // name and stands in only for a dual-axes spec, which has one
+                // series per axis and no series names. Without this a
+                // multi-series chart drew several colours with nothing to say
+                // which security was which.
                 label: strip_control_chars(
-                    s.get("axisYTitle")
-                        .and_then(Value::as_str)
+                    ["name", "label", "axisYTitle"]
+                        .iter()
+                        .find_map(|k| s.get(*k).and_then(Value::as_str))
                         .unwrap_or_default(),
                 ),
                 values: s
@@ -230,19 +255,21 @@ fn line_chart(categories: &[String], series: &[ChartSeries], width: usize) -> Ve
     if let Some((min, max)) = scale {
         for (r, row) in line_canvas(&lines, min, max, &geo).iter().enumerate() {
             let label = labels.get(r).cloned().unwrap_or_default();
-            out.push(Line::from(vec![
+            let mut spans = vec![
                 Span::styled(format!("{label:>gutter$}"), axis),
                 Span::styled("┤", axis),
-                Span::styled(braille_row(row), Style::default().fg(PLOT)),
-            ]));
+            ];
+            spans.extend(colored_row(row));
+            out.push(Line::from(spans));
         }
     }
-    for s in &columns {
+    for (ci, s) in columns.iter().enumerate() {
+        let color = column_color(lines.len(), ci, columns.len());
         for row in column_canvas(s, &geo) {
             out.push(Line::from(vec![
                 Span::styled(geo.blank_gutter(), axis),
                 Span::styled("┤", axis),
-                Span::styled(braille_row(&row), Style::default().fg(VOLUME)),
+                Span::styled(braille_row(&row), Style::default().fg(color)),
             ]));
         }
     }
@@ -266,6 +293,44 @@ fn line_chart(categories: &[String], series: &[ChartSeries], width: usize) -> Ve
 /// Render one canvas row as braille glyphs.
 fn braille_row(row: &[u8]) -> String {
     row.iter().map(|&bits| braille(bits)).collect()
+}
+
+/// Render one canvas row as braille glyphs, in each cell's owning colour.
+///
+/// Adjacent cells of the same colour are merged, so a row is a handful of spans
+/// rather than one per column.
+fn colored_row(row: &[Cell]) -> Vec<Span<'static>> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    for cell in row {
+        let color = series_color(cell.owner);
+        let glyph = braille(cell.bits);
+        match spans.last_mut() {
+            // A blank cell has no owner worth honouring, so it joins whatever run
+            // it sits in rather than breaking it.
+            Some(last) if cell.bits == 0 || last.style.fg == Some(color) => {
+                let mut content = last.content.to_string();
+                content.push(glyph);
+                last.content = content.into();
+            }
+            _ => spans.push(Span::styled(glyph.to_string(), Style::default().fg(color))),
+        }
+    }
+    spans
+}
+
+/// The colour of a column series.
+///
+/// A lone column series keeps [`VOLUME`]: the overwhelmingly common shape is a
+/// price line over a volume histogram, where blue bars under a cyan line is the
+/// reading every other chart in the terminal uses. Several column series instead
+/// continue the line series' palette, because then telling them apart matters
+/// more than the convention.
+fn column_color(lines: usize, index: usize, columns: usize) -> Color {
+    if columns == 1 {
+        VOLUME
+    } else {
+        series_color(lines + index)
+    }
 }
 
 /// The (min, max) covering every line series.
@@ -301,16 +366,20 @@ fn y_labels(min: f64, max: f64) -> Vec<String> {
 
 /// Plot every line series onto one braille canvas.
 #[allow(clippy::cast_precision_loss, clippy::cast_sign_loss)]
-fn line_canvas(lines: &[&ChartSeries], min: f64, max: f64, geo: &Geometry) -> Vec<Vec<u8>> {
+fn line_canvas(lines: &[&ChartSeries], min: f64, max: f64, geo: &Geometry) -> Vec<Vec<Cell>> {
     let span = if (max - min).abs() < f64::EPSILON {
         1.0
     } else {
         max - min
     };
-    let mut canvas = vec![vec![0u8; geo.plot_w]; LINE_ROWS];
+    let mut canvas = vec![vec![Cell::default(); geo.plot_w]; LINE_ROWS];
     let n = lines.iter().map(|s| s.values.len()).max().unwrap_or(0);
     let last_dot_row = (LINE_ROWS * 4 - 1) as f64;
-    for s in lines {
+    for (si, s) in lines.iter().enumerate() {
+        // Each series is drawn onto its own layer, then merged into the shared
+        // canvas: bits accumulate so no curve disappears where two cross, but the
+        // owner is recorded so the cell can be painted in that series' colour.
+        let mut layer = vec![vec![0u8; geo.plot_w]; LINE_ROWS];
         let mut prev: Option<(usize, usize)> = None;
         for (i, &v) in s.values.iter().enumerate() {
             let x = geo.x_dot(i, n);
@@ -319,13 +388,45 @@ fn line_canvas(lines: &[&ChartSeries], min: f64, max: f64, geo: &Geometry) -> Ve
                 // Draw the actual segment. Filling a single column at the
                 // midpoint left the dot columns between points empty, so a
                 // 22-point series over 80 columns read as scatter, not a trend.
-                Some(from) => plot_segment(&mut canvas, from, (x, y)),
-                None => plot(&mut canvas, x, y),
+                Some(from) => plot_segment(&mut layer, from, (x, y)),
+                None => plot(&mut layer, x, y),
             }
             prev = Some((x, y));
         }
+        for (row, layer_row) in canvas.iter_mut().zip(&layer) {
+            for (cell, &bits) in row.iter_mut().zip(layer_row) {
+                cell.add(bits, si);
+            }
+        }
     }
     canvas
+}
+
+/// One braille cell: which dots are lit, and which series lit the most of them.
+///
+/// Two curves can cross inside one cell, and a cell has one colour. The series
+/// contributing the most dots owns it, earliest series winning a tie — so a
+/// crossing tints toward whichever curve is actually denser there instead of
+/// whichever happened to be drawn last.
+#[derive(Clone, Default)]
+struct Cell {
+    bits: u8,
+    owner: usize,
+    owner_dots: u32,
+}
+
+impl Cell {
+    fn add(&mut self, bits: u8, series: usize) {
+        if bits == 0 {
+            return;
+        }
+        let dots = bits.count_ones();
+        if self.bits == 0 || dots > self.owner_dots {
+            self.owner = series;
+            self.owner_dots = dots;
+        }
+        self.bits |= bits;
+    }
 }
 
 /// Draw one column series as bottom-anchored braille bars on the shared x scale,
@@ -418,10 +519,19 @@ fn legend_lines(
     if avail < 3 {
         return Vec::new();
     }
+    // The legend is the key to the colours, so it has to derive them the same way
+    // the canvas does — index in, index out.
     let items: Vec<(&str, Color, String)> = lines
         .iter()
-        .map(|s| ("⣿", PLOT, s.label.clone()))
-        .chain(columns.iter().map(|s| ("▇", VOLUME, s.label.clone())))
+        .enumerate()
+        .map(|(i, s)| ("⣿", series_color(i), s.label.clone()))
+        .chain(columns.iter().enumerate().map(|(i, s)| {
+            (
+                "▇",
+                column_color(lines.len(), i, columns.len()),
+                s.label.clone(),
+            )
+        }))
         .filter(|(_, _, label)| !label.is_empty())
         .collect();
 
@@ -795,5 +905,70 @@ mod tests {
             rendered.iter().any(|l| l.contains("13:30")),
             "the table should still carry the data: {rendered:?}"
         );
+    }
+
+    /// A comparison draws several securities on one canvas, so each needs its own
+    /// colour and a legend entry naming it — one colour for all of them made the
+    /// curves impossible to tell apart.
+    #[test]
+    fn each_series_gets_its_own_colour_and_legend_entry() {
+        let spec = serde_json::json!({
+            "type": "line",
+            "categories": ["1/2", "1/9", "1/16"],
+            "series": [
+                {"type": "line", "name": "TSLA.US", "data": [100.0, 130.0, 90.0]},
+                {"type": "line", "name": "NVDA.US", "data": [100.0, 90.0, 130.0]},
+                {"type": "line", "name": "AAPL.US", "data": [100.0, 101.0, 102.0]}
+            ]
+        });
+        let lines = render(&spec, 64);
+        let colors: std::collections::HashSet<String> = lines
+            .iter()
+            .flat_map(|l| &l.spans)
+            // Braille cells only: the gutter and axes are always dim.
+            .filter(|s| {
+                s.content
+                    .chars()
+                    .any(|c| ('\u{2801}'..='\u{28FF}').contains(&c))
+            })
+            .map(|s| format!("{:?}", s.style.fg))
+            .collect();
+        assert!(
+            colors.len() >= 3,
+            "three series should draw in three colours, got {colors:?}"
+        );
+        // The legend is the key to those colours, so every series has to be named
+        // in it — the label comes from `name`, not just `axisYTitle`.
+        let text: Vec<String> = lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect();
+        for symbol in ["TSLA.US", "NVDA.US", "AAPL.US"] {
+            assert!(
+                text.iter().any(|l| l.contains(symbol)),
+                "{symbol} missing from the legend: {text:?}"
+            );
+        }
+    }
+
+    /// A price line over a volume histogram is the common shape, and blue bars
+    /// under a cyan line is how every other chart in the terminal reads.
+    #[test]
+    fn a_lone_volume_series_keeps_its_blue() {
+        assert_eq!(super::column_color(1, 0, 1), super::VOLUME);
+        // Several column series need telling apart more than they need the
+        // convention.
+        assert_ne!(super::column_color(1, 0, 2), super::column_color(1, 1, 2));
+    }
+
+    /// Where two curves cross in one cell, both sets of dots survive and the
+    /// denser series owns the colour.
+    #[test]
+    fn a_crossing_keeps_both_curves() {
+        let mut cell = super::Cell::default();
+        cell.add(0b0000_0011, 0);
+        cell.add(0b0001_1100, 1);
+        assert_eq!(cell.bits, 0b0001_1111, "both curves' dots are kept");
+        assert_eq!(cell.owner, 1, "the denser series owns the cell");
     }
 }
