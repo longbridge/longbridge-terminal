@@ -102,9 +102,17 @@ pub struct ChatState {
     pub scroll: u16,
     /// Server-generated conversation title, shown in History when present.
     pub title: Option<String>,
-    /// Longbridge conversation IDs of the latest turn (for follow-ups).
+    /// Longbridge conversation id, kept for the life of the conversation.
     pub chat_uid: Option<String>,
+    /// The message id of the turn in flight — what a resume addresses.
     pub message_id: Option<String>,
+    /// The message a *new* turn is parented to: the last one that completed.
+    ///
+    /// Kept apart from [`Self::message_id`] because a turn that failed or is
+    /// paused awaiting answers cannot be built on. Parenting to it left every
+    /// later message failing too, so one unanswerable interrupt bricked the whole
+    /// conversation.
+    pub parent_message_id: Option<String>,
     /// Set when the last turn ended asking a question; the next prompt answers.
     pub pending_interrupt: Option<Value>,
     /// Tools that failed during the active turn.
@@ -200,6 +208,7 @@ impl ChatState {
     }
 
     fn finish_turn(&mut self, error: Option<String>) {
+        let error_free = error.is_none();
         let produced = self
             .streaming
             .take()
@@ -225,6 +234,17 @@ impl ChatState {
             };
             self.messages.push(Message::new(Role::System, note));
         }
+        // A turn only becomes the parent of the next one if it actually finished:
+        // an errored or paused message is not something the server can continue
+        // from, and treating it as the parent is what bricked the conversation.
+        if error_free && self.pending_interrupt.is_none() {
+            self.parent_message_id = self.message_id.clone();
+        }
+        if !error_free {
+            // A pause that ended in an error cannot be resumed either, so the next
+            // message must not try to answer it.
+            self.pending_interrupt = None;
+        }
         self.busy = false;
         self.status.clear();
     }
@@ -240,6 +260,7 @@ impl ChatState {
         self.title = None;
         self.chat_uid = None;
         self.message_id = None;
+        self.parent_message_id = None;
         self.pending_interrupt = None;
         self.tool_failures.clear();
         self.references.clear();

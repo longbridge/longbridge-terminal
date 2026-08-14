@@ -106,7 +106,10 @@ pub fn restore(loaded: LoadedChat, state: &mut ChatState) {
     }
     state.title = loaded.title;
     state.chat_uid = Some(loaded.chat_uid);
-    state.message_id = loaded.message_id;
+    state.message_id = loaded.message_id.clone();
+    // A conversation loaded from history ended somewhere, so its last message is
+    // what the next turn continues from.
+    state.parent_message_id = loaded.message_id;
     state.pending_interrupt = None;
     state.scroll = 0;
     state.references.clear();

@@ -42,7 +42,9 @@ pub fn build_request(state: &ChatState, query: String) -> ConversationRequest {
             agent_uid: state.agent_uid.clone(),
             query,
             chat_uid: state.chat_uid.clone(),
-            parent_message_id: state.message_id.clone(),
+            // The last message that *completed*, not the one that just failed or
+            // paused — the server cannot build on either.
+            parent_message_id: state.parent_message_id.clone(),
         },
     }
 }
@@ -219,6 +221,7 @@ mod tests {
         let mut state = ChatState::new("chatbot".into(), "welcome".into());
         state.chat_uid = Some("c1".into());
         state.message_id = Some("m1".into());
+        state.parent_message_id = Some("m0".into());
         state.pending_interrupt = Some(interrupt);
         state
     }
@@ -266,7 +269,9 @@ mod tests {
                     assert_eq!(query, "HK");
                     // Same conversation: the agent still sees the reply in context.
                     assert_eq!(chat_uid.as_deref(), Some("c1"));
-                    assert_eq!(parent_message_id.as_deref(), Some("m1"));
+                    // Parented to the last message that completed — not to the
+                    // paused one, which the server cannot build on.
+                    assert_eq!(parent_message_id.as_deref(), Some("m0"));
                 }
                 ConversationRequest::Continue { .. } => {
                     panic!("expected a follow-up for {interrupt}, got a resume")
@@ -287,5 +292,59 @@ mod tests {
         }));
         assert!(text.contains("Which market?"));
         assert!(text.contains(t!("Agent.InterruptedAnswerHint").as_ref()));
+    }
+
+    /// A failed turn must not become the parent of the next one, or every later
+    /// message fails the same way and the conversation is bricked.
+    #[test]
+    fn a_failed_turn_does_not_become_the_parent() {
+        use crate::ai::state::ChatEvent;
+        let mut state = ChatState::new("chatbot".into(), "welcome".into());
+        // One good turn.
+        state.apply(ChatEvent::UserPrompt("hi".into()));
+        state.apply(ChatEvent::TurnStarted {
+            chat_uid: "c1".into(),
+            message_id: "m1".into(),
+        });
+        state.apply(ChatEvent::Delta("hello".into()));
+        state.apply(ChatEvent::TurnFinished { error: None });
+        assert_eq!(state.parent_message_id.as_deref(), Some("m1"));
+        // Then one that fails.
+        state.apply(ChatEvent::UserPrompt("and now?".into()));
+        state.apply(ChatEvent::TurnStarted {
+            chat_uid: "c1".into(),
+            message_id: "m2".into(),
+        });
+        state.apply(ChatEvent::TurnFinished {
+            error: Some("Something went wrong".into()),
+        });
+        assert_eq!(
+            state.parent_message_id.as_deref(),
+            Some("m1"),
+            "the parent stays at the last message that completed"
+        );
+        match build_request(&state, "retry".into()) {
+            ConversationRequest::New {
+                parent_message_id, ..
+            } => assert_eq!(parent_message_id.as_deref(), Some("m1")),
+            ConversationRequest::Continue { .. } => panic!("expected a follow-up"),
+        }
+    }
+
+    /// A paused turn is the same: until it is resumed it cannot be built on.
+    #[test]
+    fn a_paused_turn_does_not_become_the_parent() {
+        use crate::ai::state::ChatEvent;
+        let mut state = ChatState::new("chatbot".into(), "welcome".into());
+        state.apply(ChatEvent::UserPrompt("hi".into()));
+        state.apply(ChatEvent::TurnStarted {
+            chat_uid: "c1".into(),
+            message_id: "m1".into(),
+        });
+        state.apply(ChatEvent::Interrupt(json!({ "tool_call_id": "tc1" })));
+        state.apply(ChatEvent::TurnFinished { error: None });
+        assert_eq!(state.parent_message_id, None);
+        // The paused id is still what a resume would address.
+        assert_eq!(state.message_id.as_deref(), Some("m1"));
     }
 }
