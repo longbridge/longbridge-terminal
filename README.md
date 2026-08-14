@@ -488,7 +488,7 @@ Features: real-time watchlist, candlestick charts, portfolio view, stock search,
 
 ## ACP agent server
 
-Expose the main Longbridge AI agent (`chatbot`) to an ACP client over stdio:
+Expose the main Longbridge AI agent (`chatbot`) to an [ACP](https://agentclientprotocol.com) client over stdio:
 
 ```bash
 longbridge acp
@@ -508,21 +508,6 @@ Zed can register it as a custom external agent:
   }
 }
 ```
-
-Zed is covered by the stdio integration test. Cherry Studio is a target client,
-but its current public documentation does not expose an ACP custom-agent entry;
-do not configure this command as MCP, because ACP and MCP are different
-protocols.
-
-Use `--agent-id <ID>` or `LONGBRIDGE_AGENT_ID` to select a different published
-agent. Without either override, the CLI uses `chatbot`. Rust desktop clients do
-not need to launch the CLI: the [`longbridge-ai-acp`](crates/longbridge-ai-acp)
-crate runs a provider-neutral bridge in-process. Each desktop implements its
-own `AgentBackend` using its private API, endpoint, and authorization flow; the
-crate does not depend on OpenAPI. It can also connect to external ACP agents
-such as Codex and Claude. Those CLIs require their ACP adapters (`codex-acp` and
-`claude-agent-acp`); the native `codex` and `claude` commands are not ACP
-servers.
 
 ## Output Format
 
