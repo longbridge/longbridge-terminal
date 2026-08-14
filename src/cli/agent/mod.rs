@@ -494,6 +494,11 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<crate::cli::schema::Res
         Some("workspaces") => {
             schema::object("AI workspaces for the current account", &["workspaces"])
         }
+        Some("chats") => schema::object("AI chats (conversations) across Agents", &["chats"]),
+        Some("chat-detail") => schema::object(
+            "A chat's detail, including its messages",
+            &["chat", "chat_relation", "messages"],
+        ),
         // Bare `longbridge agent` runs `agent list`, so `agent --schema`
         // must describe the list response instead of falling through to help.
         None | Some("list") => schema::object("AI agents across workspaces", &["agents"]),
