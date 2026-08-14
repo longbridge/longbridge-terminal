@@ -2066,7 +2066,13 @@ fn reference_url(r: &longbridge::agent::Reference) -> Option<String> {
 }
 
 fn render_status(f: &mut ratatui::Frame, area: Rect, ui: &Ui, state: &ChatState) {
-    let (text, style) = if let Some(notice) = &ui.notice {
+    let (text, style) = if ui.view == View::Chat && state.scroll > 0 {
+        // While scrolled up, tell the user how to get back to the latest.
+        (
+            t!("Ai.ScrolledHint").to_string(),
+            Style::default().fg(Color::Yellow),
+        )
+    } else if let Some(notice) = &ui.notice {
         (notice.clone(), Style::default().fg(Color::Green))
     } else if state.busy && ui.view == View::Chat {
         let frame = SPINNER[(ui.tick as usize) % SPINNER.len()];

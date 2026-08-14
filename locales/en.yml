@@ -375,6 +375,7 @@ Ai:
   SlashExit: "Exit Longbridge AI"
   CommandsTitle: "Commands"
   BackHint: "Esc to go back"
+  ScrolledHint: "▲ Scrolled up · PgDn to return to the latest"
   NewSessionAction: "New session"
   SessionsLoading: "Loading conversations…"
   SessionLoading: "Loading conversation…"

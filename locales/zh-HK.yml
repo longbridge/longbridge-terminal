@@ -375,6 +375,7 @@ Ai:
   SlashExit: "退出 Longbridge AI"
   CommandsTitle: "命令"
   BackHint: "按 Esc 返回"
+  ScrolledHint: "▲ 已上捲 · PgDn 回到最新"
   NewSessionAction: "新增對話"
   SessionsLoading: "正在載入對話……"
   SessionLoading: "正在載入對話……"
