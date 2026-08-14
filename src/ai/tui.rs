@@ -556,6 +556,19 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
                 if finished {
                     turn = None;
                     maybe_open_question(&mut ui, &state);
+                    // Whatever the reader typed while waiting goes out now. It
+                    // answers a pending question too, which is what a reply typed
+                    // while the agent was asking is: an answer.
+                    if !state.queued.is_empty() {
+                        let next = state.queued.remove(0);
+                        // The drawer was asking what this message answers, so it
+                        // goes; a reader who has wandered into Settings stays there.
+                        if ui.view == View::Question {
+                            ui.view = View::Chat;
+                        }
+                        ui.question = None;
+                        start_turn(next, &mut state, &mut turn, &tx);
+                    }
                     resolve_session_tickers(&ui, &state, &aliases_tx);
                     track_session_symbols(&mut ui, &state);
                     fetch_missing_quotes(&ui, &cards_tx);
@@ -1114,6 +1127,18 @@ fn submit(
             return;
         }
     }
+    // Mid-turn, the prompt joins the queue instead of starting a second concurrent
+    // turn on the same conversation. It goes out when this one is done — and a turn
+    // is already running, so there is nothing to check about credentials here.
+    if state.busy {
+        let query = trimmed.to_string();
+        editor.push_history(&query);
+        editor.clear();
+        ui.notice = None;
+        ui.selection = None;
+        state.queued.push(query);
+        return;
+    }
     // A turn needs credentials. Signed out the chat is still useful — the reader
     // can read a resumed conversation and reach Settings — so the prompt says what
     // to do rather than the send failing somewhere deeper.
@@ -1126,6 +1151,16 @@ fn submit(
     editor.clear();
     ui.notice = None;
     ui.selection = None;
+    start_turn(query, state, turn, tx);
+}
+
+/// Send `query` as the next turn.
+fn start_turn(
+    query: String,
+    state: &mut ChatState,
+    turn: &mut Option<JoinHandle<()>>,
+    tx: &UnboundedSender<ChatEvent>,
+) {
     let req = runtime::build_request(state, query.clone());
     state.apply(ChatEvent::UserPrompt(query));
     state.pending_interrupt = None;
@@ -1867,10 +1902,11 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
     }
     let has_meta = is_chat && !state.busy && !state.further.is_empty();
     let meta_h = if has_meta { meta_height(state) } else { 0 };
+    // A blank row, then the boxed prompt.
     let footer_h = if is_chat {
-        (editor.lines().len() as u16 + 2).clamp(3, 8)
+        (editor.lines().len() as u16 + 3).clamp(4, 9)
     } else {
-        3
+        4
     };
 
     // A running turn gets a row of its own so its spinner, timer and cancel
@@ -2279,8 +2315,9 @@ fn render_title(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatSta
         ));
     }
     // Reaching an earlier conversation was `/resume` and nothing else, which only
-    // helps a reader who already knows it exists.
-    let sessions = format!(" {} ", t!("Ai.TabSessions"));
+    // helps a reader who already knows it exists. A glyph, not the word: the view it
+    // opens is titled, and the badge beside it is already carrying text.
+    let sessions = "   ☰  ".to_string();
     let sessions_x = area.x + left.iter().map(|s| s.content.width()).sum::<usize>() as u16;
     let sessions_rect = Rect {
         x: sessions_x,
@@ -2290,7 +2327,11 @@ fn render_title(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatSta
     };
     left.push(Span::styled(
         sessions.clone(),
-        chip_style(Color::Gray, hovering(ui, sessions_rect)),
+        if hovering(ui, sessions_rect) {
+            Style::default().fg(Color::White)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        },
     ));
     ui.chips.push((Chip::Sessions, sessions_rect));
     let left_w: usize = left.iter().map(|s| s.content.width()).sum();
@@ -2499,6 +2540,25 @@ fn render_chat(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatStat
             &ui.quotes,
             &ui.aliases,
         );
+    }
+    // Prompts waiting their turn, dim and unbanded: on screen so the reader can see
+    // what they have lined up, but visibly not sent yet.
+    for query in &state.queued {
+        let indent = usize::from(MARKER_W);
+        for (i, wrapped) in wrap(query, width.saturating_sub(indent).max(1))
+            .into_iter()
+            .enumerate()
+        {
+            let lead = if i == 0 {
+                USER_MARKER.to_string()
+            } else {
+                " ".repeat(indent)
+            };
+            tail.push(Line::from(vec![
+                Span::styled(lead, Style::default().fg(Color::DarkGray)),
+                Span::styled(wrapped, Style::default().fg(Color::DarkGray)),
+            ]));
+        }
     }
     let cache_len = ui.transcript_cache.len();
     // Where each reference row lands in the transcript, so a visible one can be
@@ -3494,16 +3554,19 @@ fn render_status(f: &mut ratatui::Frame, area: Rect, ui: &Ui, state: &ChatState)
 
 fn render_footer(f: &mut ratatui::Frame, area: Rect, ui: &Ui, editor: &Editor) {
     let focused = ui.view == View::Chat;
-    // A rule above and below — enough to separate the prompt from the transcript,
-    // and dim, where a rounded cyan frame was the loudest thing on the screen. No
-    // sides: they cost the prompt a column at each end, which left the `❯` being
-    // typed at one indent and the `❯` of the same words in the transcript at
-    // another.
-    let block = Block::default()
-        .borders(Borders::TOP | Borders::BOTTOM)
+    // The box stays — it is what separates the prompt from the transcript — but dim,
+    // where a rounded cyan frame was the loudest thing on the screen. A blank row
+    // above it keeps it off the transcript's last line.
+    let boxed = Rect {
+        y: area.y + 1,
+        height: area.height.saturating_sub(1),
+        ..area
+    };
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::DarkGray));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = block.inner(boxed);
+    f.render_widget(block, boxed);
     let marker_style = if focused {
         Style::default()
             .fg(Color::Cyan)
@@ -3576,6 +3639,16 @@ fn transcript_sig(state: &ChatState, width: usize) -> u64 {
 /// actually read a quote. A pending call is dim, a finished one takes the
 /// accent, and a failure is red and says so — a silently failed tool used to be
 /// invisible unless the whole turn came back empty.
+/// The markers a tool row leads with, so a row can be recognised as one later.
+const TOOL_MARKERS: [&str; 3] = ["  ◌ ", "  ⏺ ", "  ⚠ "];
+
+/// Whether `line` is one of the tool rows.
+fn is_tool_line(line: &Line<'_>) -> bool {
+    line.spans
+        .first()
+        .is_some_and(|s| TOOL_MARKERS.contains(&s.content.as_ref()))
+}
+
 fn tool_line(name: &str, status: ToolStatus, width: usize) -> Line<'static> {
     let (marker, color) = match status {
         ToolStatus::Running => ("◌", Color::DarkGray),
@@ -3607,6 +3680,11 @@ fn push_message(
 ) {
     // A tool line is one compact row, not a speaker turn: it belongs to the
     // answer around it, so it gets no accent bar and no trailing blank.
+    // A run of tool rows is a block, and a block gets air on both sides: the rows
+    // themselves are tight, and the answer that follows them starts after a blank.
+    if message.role != Role::Tool && lines.last().is_some_and(is_tool_line) {
+        lines.push(Line::from(""));
+    }
     if message.role == Role::Tool {
         if let Some(status) = message.tool {
             // A failure changes how much to trust the answer above it; a success
@@ -5572,16 +5650,17 @@ mod tests {
             .rev()
             .find(|r| r.contains(t!("Ai.Placeholder").as_ref()))
             .expect("the placeholder should be on screen");
-        assert_eq!(prompt.find("❯ "), Some(0), "marked, and flush: {prompt:?}");
+        assert!(prompt.contains("❯ "), "marked: {prompt:?}");
         // A rule above and below, no sides: they cost the prompt the column that
         // lines it up with the same words once they are in the transcript.
+        // The box stays, dim, with a blank row between it and the transcript.
+        let top = rows
+            .iter()
+            .position(|r| r.contains('╭'))
+            .expect("the input keeps its frame");
         assert!(
-            rows.iter().any(|r| r.starts_with("──")),
-            "the input keeps a rule: {rows:?}"
-        );
-        assert!(
-            !rows.iter().any(|r| r.contains('│') || r.contains('╭')),
-            "and no sides: {rows:?}"
+            rows[top - 1].trim().is_empty(),
+            "a blank row above it: {rows:?}"
         );
     }
 
@@ -5936,6 +6015,58 @@ mod tests {
         );
     }
 
+    /// Typing while a turn runs used to start a second one on the same conversation.
+    #[test]
+    fn a_prompt_typed_mid_turn_joins_a_queue() {
+        let mut ui = super::Ui::new();
+        let mut state = busy_state();
+        let mut editor = super::Editor::new();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut turn = None;
+        editor.set_text("那 NVDA 呢？");
+        super::submit(&mut ui, &mut state, &mut editor, &mut turn, &tx);
+        assert_eq!(state.queued, vec!["那 NVDA 呢？".to_string()]);
+        assert!(turn.is_none(), "nothing was sent yet");
+        assert!(editor.is_blank(), "and the input is clear for the next one");
+        // On screen, dim, so the reader can see what they have lined up.
+        let text = frame(&mut ui, &state, 60, 16).join("\n");
+        assert!(text.contains("NVDA 呢"), "{text}");
+        // Cancelling means stop, not "stop this one and start the next".
+        state.cancel("(cancelled)");
+        assert!(state.queued.is_empty());
+    }
+
+    /// A run of tool rows is a block, and a block needs air on both sides — the
+    /// answer used to begin on the line straight after the last tool.
+    #[test]
+    fn a_tool_run_is_separated_from_the_answer_below_it() {
+        let mut ui = super::Ui::new();
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        state.apply(super::ChatEvent::UserPrompt("看看 SPCX".into()));
+        for name in ["Get Real Time Quote", "List Ticker News"] {
+            state.apply(super::ChatEvent::ToolStarted(name.into()));
+            state.apply(super::ChatEvent::ToolFinished {
+                name: name.into(),
+                ok: true,
+            });
+        }
+        state.apply(super::ChatEvent::Delta("Answer.".into()));
+        state.apply(super::ChatEvent::TurnFinished { error: None });
+        let rows = frame(&mut ui, &state, 60, 16);
+        let last_tool = rows
+            .iter()
+            .rposition(|r| r.contains("List Ticker News"))
+            .expect("the tools are listed");
+        assert!(
+            rows[last_tool + 1].trim().is_empty(),
+            "a blank row under the block: {rows:?}"
+        );
+        assert!(
+            rows[last_tool - 1].contains("Get Real Time Quote"),
+            "but the rows themselves stay tight: {rows:?}"
+        );
+    }
+
     /// A view that carries its own name takes the title bar's rows: two titles, one
     /// above the other, read as a nesting that is not there.
     #[test]
@@ -5969,8 +6100,7 @@ mod tests {
             .find(|(chip, _)| matches!(chip, super::Chip::Sessions))
             .expect("a control for the conversations");
         assert_eq!(rect.y, 0, "it lives on the title row");
-        let label = t!("Ai.TabSessions").to_string();
-        let at = rows[0].find(&label).expect("labelled, not an icon");
+        let at = rows[0].find('☰').expect("drawn");
         assert!(
             (rect.x as usize) <= at && at < (rect.x + rect.width) as usize,
             "drawn at {at} but targeted at {rect:?}"

@@ -115,6 +115,12 @@ pub struct ChatState {
     pub parent_message_id: Option<String>,
     /// Set when the last turn ended asking a question; the next prompt answers.
     pub pending_interrupt: Option<Value>,
+    /// Prompts typed while a turn was running, sent one at a time as it frees up.
+    ///
+    /// A reader who has thought of the next question should not have to hold it in
+    /// their head until the answer lands — and typing it used to start a second,
+    /// concurrent turn on the same conversation.
+    pub queued: Vec<String>,
     /// Tools that failed during the active turn.
     pub tool_failures: Vec<String>,
     /// Source references from the latest completed turn (rendered as chips).
@@ -262,6 +268,7 @@ impl ChatState {
         self.message_id = None;
         self.parent_message_id = None;
         self.pending_interrupt = None;
+        self.queued.clear();
         self.tool_failures.clear();
         self.references.clear();
         self.further.clear();
@@ -280,6 +287,8 @@ impl ChatState {
         }
         self.busy = false;
         self.status.clear();
+        // Cancelling means stop, not "stop this one and start the next".
+        self.queued.clear();
     }
 }
 
