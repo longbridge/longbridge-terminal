@@ -46,6 +46,7 @@ impl ToolCalls {
 static TOOL_CALLS: AtomicU8 = AtomicU8::new(0);
 static NOTIFY_ON_FINISH: AtomicU8 = AtomicU8::new(1);
 static QUOTE_CARDS: AtomicU8 = AtomicU8::new(1);
+static TAPE: AtomicU8 = AtomicU8::new(1);
 
 pub fn tool_calls() -> ToolCalls {
     ToolCalls::from_u8(TOOL_CALLS.load(Ordering::Relaxed))
@@ -74,6 +75,15 @@ pub fn quote_cards() -> bool {
 
 pub fn set_quote_cards(on: bool) {
     QUOTE_CARDS.store(u8::from(on), Ordering::Relaxed);
+}
+
+/// Whether the title bar carries the session's securities and their quotes.
+pub fn tape() -> bool {
+    TAPE.load(Ordering::Relaxed) == 1
+}
+
+pub fn set_tape(on: bool) {
+    TAPE.store(u8::from(on), Ordering::Relaxed);
 }
 
 #[cfg(test)]

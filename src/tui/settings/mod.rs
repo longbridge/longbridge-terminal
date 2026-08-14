@@ -25,6 +25,7 @@ pub enum SettingId {
     ToolCalls,
     NotifyOnFinish,
     QuoteCards,
+    Tape,
 }
 
 /// Where a setting is offered.
@@ -57,6 +58,7 @@ impl SettingId {
             },
             SettingId::NotifyOnFinish => on_off(chat::notify_on_finish()),
             SettingId::QuoteCards => on_off(chat::quote_cards()),
+            SettingId::Tape => on_off(chat::tape()),
         }
     }
 
@@ -77,6 +79,7 @@ impl SettingId {
             }),
             SettingId::NotifyOnFinish => chat::set_notify_on_finish(canonical == "on"),
             SettingId::QuoteCards => chat::set_quote_cards(canonical == "on"),
+            SettingId::Tape => chat::set_tape(canonical == "on"),
         }
     }
 }
@@ -216,6 +219,15 @@ pub fn all() -> &'static [SettingMeta] {
             scope: Scope::Chat,
         },
         SettingMeta {
+            id: SettingId::Tape,
+            label: "settings.tape.label",
+            description: "settings.tape.description",
+            kind: SettingKind::Enum {
+                choices: ON_OFF_CHOICES,
+            },
+            scope: Scope::Chat,
+        },
+        SettingMeta {
             id: SettingId::QuoteCards,
             label: "settings.quote_cards.label",
             description: "settings.quote_cards.description",
@@ -294,6 +306,7 @@ fn persist() {
         chat_tool_calls: Some(chat::tool_calls()),
         chat_notify_on_finish: Some(chat::notify_on_finish()),
         chat_quote_cards: Some(chat::quote_cards()),
+        chat_tape: Some(chat::tape()),
     };
     store::save(&config);
 }
@@ -313,6 +326,9 @@ pub fn load_and_apply() {
     }
     if let Some(on) = config.chat_quote_cards {
         chat::set_quote_cards(on);
+    }
+    if let Some(on) = config.chat_tape {
+        chat::set_tape(on);
     }
 }
 

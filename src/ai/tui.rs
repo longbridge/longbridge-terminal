@@ -206,6 +206,8 @@ enum Chip {
     Further(usize),
     /// A security named in the transcript; opens its quote.
     Symbol(String),
+    /// The title bar's ticker toggle.
+    Tape,
 }
 
 /// State of the structured interrupt answering flow.
@@ -310,6 +312,14 @@ struct Ui {
     quote_panel: Option<String>,
     /// Who the chat is signed in as, for the Settings header.
     session: super::account::Session,
+    /// Securities this conversation has mentioned, in the order they appeared.
+    /// The title bar's ticker reads from here.
+    tape: Vec<String>,
+    /// Where the ticker has rotated to, when it is wider than the row.
+    tape_at: usize,
+    /// Frame counter behind the rotation: the tape steps once a second, while the
+    /// frame timer ticks eight times as often.
+    tape_ticks: u8,
     /// Work for the async side of the loop: signing in or out.
     pending: Option<Pending>,
     /// Sign-out is armed by one Enter and done by the next, so an arrow key and a
@@ -361,6 +371,9 @@ impl Ui {
             cards_tx: None,
             quote_panel: None,
             session: super::account::local(),
+            tape: Vec::new(),
+            tape_at: 0,
+            tape_ticks: 0,
             pending: None,
             confirm_sign_out: false,
             exit_note: None,
@@ -501,6 +514,7 @@ where
                 if finished {
                     turn = None;
                     maybe_open_question(&mut ui, &state);
+                    track_session_symbols(&mut ui, &state);
                     fetch_quote_cards_for(&state, &cards_tx);
                     if !ui.focused && super::settings::notify_on_finish() {
                         notify(&t!("Ai.NotifyDone"));
@@ -539,6 +553,8 @@ where
                 if let Some(loaded) = loaded {
                     session_store::restore(loaded, &mut state);
                     ui.reset_render();
+                    track_session_symbols(&mut ui, &state);
+                    fetch_quote_cards_for(&state, &cards_tx);
                     ui.switch(View::Chat);
                 } else {
                     // Resume failed: stay on History with an error notice.
@@ -571,6 +587,33 @@ where
         turn.abort();
     }
     Ok(ui.exit_note.take())
+}
+
+/// Add every security the conversation has mentioned to the ticker, and keep its
+/// quote streaming.
+///
+/// Session-scoped and append-only: a security stays on the ticker once mentioned,
+/// because the reader is following the whole conversation, not just its last turn.
+/// The subscription is never dropped either — it is what keeps the ticker, the
+/// inline prices and any card current, and a handful of securities is nothing
+/// against the subscription limit.
+fn track_session_symbols(ui: &mut Ui, state: &ChatState) {
+    let mut fresh = Vec::new();
+    for message in &state.messages {
+        if matches!(message.role, Role::System | Role::Tool) {
+            continue;
+        }
+        for range in super::answer::symbol_spans(&message.text) {
+            let symbol = message.text[range].to_string();
+            if !ui.tape.contains(&symbol) && !fresh.contains(&symbol) {
+                fresh.push(symbol);
+            }
+        }
+    }
+    for symbol in fresh {
+        subscribe_quote(&symbol);
+        ui.tape.push(symbol);
+    }
 }
 
 /// If the just-finished answer embeds `x-widget` quote tickers, fetch their
@@ -1250,20 +1293,18 @@ fn open_quote_panel(ui: &mut Ui, symbol: String) {
             });
         }
     }
-    // The panel shows a price, so the price has to be live. The first fetch
-    // establishes the previous close; the stream keeps the rest current.
+    // The panel shows a price, so the price has to be live. Subscribing here as
+    // well as on the ticker covers a security the reader reached before the
+    // conversation had mentioned it — the SDK folds a repeat subscription into the
+    // existing one.
     subscribe_quote(&symbol);
-    if let Some(previous) = ui.quote_panel.replace(symbol) {
-        unsubscribe_quote(&previous);
-    }
+    ui.quote_panel = Some(symbol);
 }
 
-/// Close the panel, dropping the subscription with it — a stream nobody is
-/// reading is bandwidth and a rate-limit slot spent on nothing.
+/// Close the panel. The subscription stays: the ticker and the inline prices are
+/// reading the same stream, and dropping it here would freeze them.
 fn close_quote_panel(ui: &mut Ui) {
-    if let Some(symbol) = ui.quote_panel.take() {
-        unsubscribe_quote(&symbol);
-    }
+    ui.quote_panel = None;
 }
 
 fn subscribe_quote(symbol: &str) {
@@ -1271,15 +1312,6 @@ fn subscribe_quote(symbol: &str) {
     spawn_bg(async move {
         let _ = crate::openapi::quote()
             .subscribe([symbol], longbridge::quote::SubFlags::QUOTE)
-            .await;
-    });
-}
-
-fn unsubscribe_quote(symbol: &str) {
-    let symbol = symbol.to_string();
-    spawn_bg(async move {
-        let _ = crate::openapi::quote()
-            .unsubscribe([symbol], longbridge::quote::SubFlags::QUOTE)
             .await;
     });
 }
@@ -1382,6 +1414,14 @@ fn click_chip(
             }
         }
         Chip::Symbol(symbol) => open_quote_panel(ui, symbol),
+        Chip::Tape => {
+            let meta = crate::tui::settings::all()
+                .iter()
+                .find(|m| m.id == crate::tui::settings::SettingId::Tape);
+            if let Some(meta) = meta {
+                crate::tui::settings::cycle(meta);
+            }
+        }
         Chip::Further(i) => {
             if state.busy {
                 return;
@@ -1639,7 +1679,7 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
     // Chips are recorded by both the transcript (references) and the meta panel
     // (follow-ups), so the list is cleared once per frame rather than by each.
     ui.chips.clear();
-    render_title(f, title, state);
+    render_title(f, title, ui, state);
     // The Chat view is chrome-free; other views get a header with the view name
     // (they are opened via `/` commands and left with Esc).
     match ui.view {
@@ -1728,7 +1768,7 @@ fn render_quote_panel(f: &mut ratatui::Frame, area: Rect, ui: &Ui) {
     f.render_widget(Paragraph::new(Text::from(lines)).block(block), rect);
 }
 
-fn render_title(f: &mut ratatui::Frame, area: Rect, state: &ChatState) {
+fn render_title(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatState) {
     // The brand badge, and nothing else by default. The server-generated
     // conversation title lived here, but it is a label for picking a chat out of
     // a list — which is where it is shown — not something worth a permanent row
@@ -1740,22 +1780,110 @@ fn render_title(f: &mut ratatui::Frame, area: Rect, state: &ChatState) {
             .bg(Color::Cyan)
             .add_modifier(Modifier::BOLD),
     )];
-    // Right: a marker only when the conversation is not with Longbridge AI's own
+    // A marker only when the conversation is not with Longbridge AI's own
     // assistant. An agent uid is an internal handle and never goes on screen (see
     // `cli::agent::DEFAULT_AGENT_UID`), so this says *that* a custom agent is in
     // use without naming it — the badge on the left already names the default.
-    let right = if state.agent_uid == DEFAULT_AGENT_UID {
-        String::new()
-    } else {
-        format!("{} ", t!("Ai.CustomAgent"))
-    };
-    if !right.is_empty() {
-        let left_w: usize = left.iter().map(|s| s.content.width()).sum();
-        let pad = (area.width as usize).saturating_sub(left_w + right.width());
-        left.push(Span::raw(" ".repeat(pad)));
-        left.push(Span::styled(right, Style::default().fg(Color::DarkGray)));
+    if state.agent_uid != DEFAULT_AGENT_UID {
+        left.push(Span::styled(
+            format!("  {}", t!("Ai.CustomAgent")),
+            Style::default().fg(Color::DarkGray),
+        ));
     }
-    f.render_widget(Paragraph::new(Line::from(left)), area);
+    let left_w: usize = left.iter().map(|s| s.content.width()).sum();
+
+    // The rest of the row is the ticker: the securities this conversation has
+    // mentioned, with their quotes. It is the one row of chrome that was carrying
+    // nothing, and a trader reading about a stock wants its price in view.
+    let toggle = if super::settings::tape() {
+        " ▾ "
+    } else {
+        " ▸ "
+    };
+    let toggle_w = toggle.width();
+    let room = (area.width as usize).saturating_sub(left_w + toggle_w);
+    let tape = if super::settings::tape() && !ui.tape.is_empty() {
+        tape_spans(ui, room)
+    } else {
+        Vec::new()
+    };
+    let tape_w: usize = tape.iter().map(|s| s.content.width()).sum();
+    let mut spans = left;
+    spans.push(Span::raw(" ".repeat(room.saturating_sub(tape_w))));
+    spans.extend(tape);
+    // The toggle sits at the end of the row, where it is out of the ticker's way.
+    let toggle_x = area.x + area.width.saturating_sub(toggle_w as u16);
+    spans.push(Span::styled(toggle, Style::default().fg(Color::DarkGray)));
+    if !ui.tape.is_empty() {
+        ui.chips.push((
+            Chip::Tape,
+            Rect {
+                x: toggle_x,
+                y: area.y,
+                width: toggle_w as u16,
+                height: 1,
+            },
+        ));
+    }
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+/// The ticker's spans, rotated to fit `room` columns.
+///
+/// Rotation is by whole securities rather than by column: a price sliding through
+/// half a symbol is unreadable, and a trader glancing up needs to take a whole
+/// entry in at once. The rotation advances only when there is more to show than
+/// fits, so a short list sits still.
+fn tape_spans(ui: &mut Ui, room: usize) -> Vec<Span<'static>> {
+    const GAP: &str = "   ";
+    let entries: Vec<(String, Color)> = ui
+        .tape
+        .iter()
+        .map(|symbol| match ui.quotes.get(symbol) {
+            Some(card) => (
+                format!("{symbol}{}", price_chip(card)),
+                change_color(card.direction),
+            ),
+            None => (symbol.clone(), Color::DarkGray),
+        })
+        .collect();
+    if entries.is_empty() || room == 0 {
+        return Vec::new();
+    }
+    let total: usize = entries
+        .iter()
+        .map(|(text, _)| text.width() + GAP.width())
+        .sum();
+    let rotating = total > room;
+    if !rotating {
+        ui.tape_at = 0;
+    }
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut used = 0usize;
+    for i in 0..entries.len() {
+        let (text, color) = &entries[(ui.tape_at + i) % entries.len()];
+        let w = text.width() + if used == 0 { 0 } else { GAP.width() };
+        if used + w > room {
+            break;
+        }
+        if used > 0 {
+            spans.push(Span::raw(GAP));
+        }
+        spans.push(Span::styled(text.clone(), Style::default().fg(*color)));
+        used += w;
+    }
+    if rotating {
+        // The frame timer has to keep running for the ticker to advance, and the
+        // step is one entry a second — fast enough to get through a long list,
+        // slow enough to read.
+        ui.animating = true;
+        ui.tape_ticks = ui.tape_ticks.wrapping_add(1);
+        if ui.tape_ticks >= 8 {
+            ui.tape_ticks = 0;
+            ui.tape_at = (ui.tape_at + 1) % entries.len();
+        }
+    }
+    spans
 }
 
 /// Header for a `/`-opened view: a bold name badge and an "Esc to go back"
@@ -2960,9 +3088,11 @@ fn link_symbols(
 fn price_chip(card: &super::quotes::QuoteCardData) -> String {
     // The arrow carries the direction, so the percent drops its sign rather than
     // saying it twice.
+    // Any sign the server sent is dropped rather than only the matching one: a
+    // percent whose sign disagreed with the direction rendered as `▼+1.28%`.
     let (arrow, pct) = match card.direction {
-        1 => ("▲", card.change_pct.trim_start_matches('+')),
-        -1 => ("▼", card.change_pct.trim_start_matches('-')),
+        1 => ("▲", card.change_pct.trim_start_matches(['+', '-'])),
+        -1 => ("▼", card.change_pct.trim_start_matches(['+', '-'])),
         _ => ("", card.change_pct.as_str()),
     };
     format!(" {} {arrow}{pct}", card.last)
@@ -4467,5 +4597,72 @@ mod tests {
         let mut ui = super::Ui::new();
         super::exec_slash("logout", "", &mut ui, &mut state);
         assert_eq!(ui.pending, Some(super::Pending::SignOut));
+    }
+
+    /// The title bar was carrying nothing. It now carries the securities the
+    /// conversation has mentioned, with their quotes, and rotates through them
+    /// when there are more than fit.
+    #[test]
+    fn the_title_bar_carries_the_sessions_securities() {
+        let mut ui = super::Ui::new();
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        state.apply(super::ChatEvent::UserPrompt("对比".into()));
+        state.apply(super::ChatEvent::Delta(
+            "700.HK、AAPL.US、NVDA.US、TSLA.US 与 9988.HK 分化。".into(),
+        ));
+        state.apply(super::ChatEvent::TurnFinished { error: None });
+        super::track_session_symbols(&mut ui, &state);
+        assert_eq!(
+            ui.tape,
+            ["700.HK", "AAPL.US", "NVDA.US", "TSLA.US", "9988.HK"],
+            "every security mentioned, in the order it appeared"
+        );
+        for symbol in ui.tape.clone() {
+            ui.quotes
+                .insert(symbol.clone(), card(&symbol, "512.5", "+1.28%", 1));
+        }
+        let first = frame(&mut ui, &state, 78, 10)[0].clone();
+        assert!(first.contains("700.HK 512.5 ▲1.28%"), "{first}");
+        // More than fits, so the ticker rotates rather than truncating.
+        assert!(
+            !first.contains("9988.HK"),
+            "the row cannot hold them all: {first}"
+        );
+        ui.tape_ticks = 7;
+        let _ = frame(&mut ui, &state, 78, 10);
+        let rotated = frame(&mut ui, &state, 78, 10)[0].clone();
+        assert_ne!(first, rotated, "the ticker should have advanced");
+    }
+
+    /// A ticker that fits sits still, and the toggle turns it off — the row is
+    /// chrome, and chrome that moves for no reason is a distraction.
+    #[test]
+    fn a_short_ticker_does_not_rotate_and_can_be_turned_off() {
+        let mut ui = super::Ui::new();
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        state.apply(super::ChatEvent::UserPrompt("700.HK".into()));
+        state.apply(super::ChatEvent::TurnFinished { error: None });
+        super::track_session_symbols(&mut ui, &state);
+        ui.quotes
+            .insert("700.HK".into(), card("700.HK", "512.5", "+1.28%", 1));
+        let before = frame(&mut ui, &state, 78, 10)[0].clone();
+        ui.tape_ticks = 7;
+        let _ = frame(&mut ui, &state, 78, 10);
+        assert_eq!(
+            before,
+            frame(&mut ui, &state, 78, 10)[0],
+            "one security fits, so nothing moves"
+        );
+        // The toggle is a chip in the row, and clicking it hides the ticker.
+        assert!(
+            ui.chips
+                .iter()
+                .any(|(chip, _)| matches!(chip, super::Chip::Tape)),
+            "the toggle should be clickable"
+        );
+        crate::ai::settings::set_tape(false);
+        let off = frame(&mut ui, &state, 78, 10)[0].clone();
+        assert!(!off.contains("512.5"), "collapsed: {off}");
+        crate::ai::settings::set_tape(true);
     }
 }

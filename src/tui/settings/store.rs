@@ -24,6 +24,8 @@ pub struct Config {
     pub chat_notify_on_finish: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chat_quote_cards: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_tape: Option<bool>,
 }
 
 fn config_path() -> Option<PathBuf> {
@@ -78,6 +80,7 @@ mod tests {
             chat_tool_calls: Some(ToolCalls::Failures),
             chat_notify_on_finish: Some(false),
             chat_quote_cards: Some(true),
+            chat_tape: Some(false),
         };
         let json = serde_json::to_string(&config).unwrap();
         let back: Config = serde_json::from_str(&json).unwrap();
@@ -85,5 +88,6 @@ mod tests {
         assert_eq!(back.chat_tool_calls, Some(ToolCalls::Failures));
         assert_eq!(back.chat_notify_on_finish, Some(false));
         assert_eq!(back.chat_quote_cards, Some(true));
+        assert_eq!(back.chat_tape, Some(false));
     }
 }
