@@ -24,7 +24,7 @@ use futures::StreamExt;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph};
 use rust_i18n::t;
 use serde_json::Value;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
@@ -589,7 +589,7 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
                         // signed out, so they can be built now and the reader carries
                         // on here. If they already existed they belong to the old
                         // credentials, and those are process-wide singletons.
-                        if crate::openapi::is_ready() {
+                        if crate::openapi::contexts_built() {
                             ui.exit_note = Some(t!("Ai.SignedIn").to_string());
                             ui.should_quit = true;
                         } else if let Ok((rx, _, _)) = crate::openapi::init_contexts().await {
@@ -667,37 +667,31 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
                 Err(e) => ui.notice = Some(format!("{}: {e:#}", t!("Ai.SignInFailed"))),
             }
         }
-        if let Some(action) = ui.pending.take() {
-            match run_pending(action).await {
-                Ok(note) => {
-                    // Signing in from a chat that opened signed out finishes here:
-                    // the contexts had never been built, so they can be built now
-                    // and the reader carries on in the same session. Otherwise the
-                    // credentials this process already built its contexts from have
-                    // changed, and those are process-wide singletons — the only
-                    // honest thing then is to leave.
-                    let recovered = action == Pending::SignIn
-                        && !crate::openapi::is_ready()
-                        && match crate::openapi::init_contexts().await {
-                            Ok((rx, _, _)) => {
-                                quotes = Box::pin(rx);
-                                true
-                            }
-                            Err(_) => false,
-                        };
-                    if recovered {
-                        ui.session = super::account::local();
-                        ui.notice = Some(note);
-                        for symbol in ui.tape.clone() {
-                            subscribe_quote(&symbol);
-                        }
-                        fetch_missing_quotes(&ui, &cards_tx);
-                    } else {
-                        ui.exit_note = Some(note);
-                        ui.should_quit = true;
-                    }
+        // Signing out is the only action left to run here; signing in is handled
+        // above, where the panel can stay open while the browser round trip runs.
+        if ui.pending.take() == Some(Pending::SignOut) {
+            // A turn in flight belongs to the credentials being revoked.
+            if let Some(task) = turn.take() {
+                task.abort();
+                state.cancel(&t!("Ai.Cancelled"));
+            }
+            match crate::auth::clear_token().await {
+                Ok(()) => {
+                    // Signing out stays in the chat. The contexts cannot be torn
+                    // down — they are process-wide singletons — so the process is
+                    // marked signed out instead, and the view goes back to what an
+                    // anonymous start looks like: the transcript is still readable,
+                    // and asking or quoting anything says to sign in first.
+                    crate::openapi::mark_signed_out();
+                    ui.session = super::account::local();
+                    ui.tape.clear();
+                    ui.quotes.clear();
+                    ui.paths.clear();
+                    ui.quote_panel = None;
+                    ui.cache_sig = 0;
+                    ui.notice = Some(t!("Ai.SignedOut").to_string());
                 }
-                Err(e) => ui.notice = Some(e),
+                Err(e) => ui.notice = Some(format!("{}: {e}", t!("Ai.SignOutFailed"))),
             }
         }
         if ui.should_quit {
@@ -974,15 +968,11 @@ fn on_chat_key(
         ui.notice = Some(t!("Ai.LoginCancelled").to_string());
         return;
     }
-    if let Some(symbol) = ui.quote_panel.clone() {
-        match key.code {
-            KeyCode::Esc => {
-                close_quote_panel(ui);
-                return;
-            }
-            _ => {}
-        }
-        let _ = &symbol;
+    // The panel takes Esc and nothing else: every other key belongs to the chat
+    // behind it, which stays live while a quote is open.
+    if ui.quote_panel.is_some() && key.code == KeyCode::Esc {
+        close_quote_panel(ui);
+        return;
     }
     // When the slash palette is open, arrows/Enter/Esc drive it instead of the
     // transcript or history, matching the grok-style command menu.
@@ -1447,24 +1437,6 @@ fn last_symbol(state: &ChatState) -> Option<String> {
     })
 }
 
-/// Perform a session action, returning the note to print after the screen is
-/// handed back.
-///
-/// Signing in needs the terminal: the flow prints a URL and waits on a browser
-/// round trip, so the full-screen view is torn down for the duration and restored
-/// afterwards — even on failure, or the reader would be left staring at a raw
-/// shell.
-async fn run_pending(action: Pending) -> Result<String, String> {
-    match action {
-        Pending::SignOut => match crate::auth::clear_token().await {
-            Ok(()) => Ok(t!("Ai.SignedOut").to_string()),
-            Err(e) => Err(format!("{}: {e}", t!("Ai.SignOutFailed"))),
-        },
-        // Handled in the loop, which can hold the panel open while it waits.
-        Pending::SignIn => Err(String::new()),
-    }
-}
-
 /// Open the floating quote panel for `symbol`, fetching its quote if the card is
 /// not already cached.
 ///
@@ -1905,8 +1877,9 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
     // The Chat view is chrome-free; other views get a header with the view name
     // (they are opened via `/` commands and left with Esc).
     match ui.view {
-        View::Chat => render_chat(f, body, ui, state),
-        View::Question => render_question(f, body, ui),
+        // The Question drawer is an overlay, not a view: the transcript it is
+        // asking about stays behind it.
+        View::Chat | View::Question => render_chat(f, body, ui, state),
         View::Sessions => {
             let inner = render_view_header(f, body, "Ai.TabSessions");
             render_sessions(f, inner, ui);
@@ -1915,6 +1888,9 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
             let inner = render_view_header(f, body, "Ai.TabSettings");
             render_settings(f, inner, ui);
         }
+    }
+    if ui.view == View::Question {
+        render_question(f, body, ui);
     }
     if ui.view == View::Chat {
         render_slash_dropdown(f, body, ui, editor);
@@ -2034,7 +2010,7 @@ fn render_quote_panel(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
         ui.open_button = None;
         return;
     };
-    let path = ui.paths.get(&symbol).map(Vec::as_slice).unwrap_or(&[]);
+    let path = ui.paths.get(&symbol).map_or(&[][..], Vec::as_slice);
     let body = match ui.quotes.get(&symbol) {
         Some(card) => card_lines(card, path),
         None => vec![Line::from(Span::styled(
@@ -3062,24 +3038,62 @@ fn session_lines(session: &super::account::Session) -> Vec<Line<'static>> {
     vec![Line::from(first), Line::from(second), Line::from("")]
 }
 
-/// Render the structured Question view: the current question and its options.
+/// Render the Question drawer: the pending interrupt's current question and its
+/// options, as a bordered panel rising from the input.
+///
+/// It is deliberately not a view of its own filling the screen: the reader is
+/// answering a question *about the conversation*, and covering the conversation to
+/// ask it took away the thing they need to answer it. So the transcript stays
+/// visible behind and the drawer takes only the rows it needs.
 fn render_question(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
-    let Some((question, options)) = ui
-        .question
-        .as_ref()
-        .and_then(|q| q.questions.get(q.qi))
-        .map(|(t, o)| (t.clone(), o.clone()))
-    else {
+    let Some((question, options, qi, total)) = ui.question.as_ref().and_then(|q| {
+        q.questions
+            .get(q.qi)
+            .map(|(t, o)| (t.clone(), o.clone(), q.qi, q.questions.len()))
+    }) else {
         ui.rows.clear();
         return;
     };
-    // The question text sits above the option list (which reuses the shared
-    // muted list style), separated by a blank line.
-    let width = area.width.max(1) as usize;
-    let qlines = wrap(&question, width);
-    let header_h = (qlines.len() as u16 + 1).min(area.height.saturating_sub(1));
+    // The question wraps inside the frame, and the options are one row each.
+    let inner_w = area.width.saturating_sub(4).max(1) as usize;
+    let qlines = wrap(&question, inner_w);
+    let want = qlines.len() + 1 + options.len();
+    // At most half the body: an interrupt after a long answer must not push the
+    // answer it is about out of view.
+    let inner_h = want.min((area.height as usize / 2).max(3)) as u16;
+    let height = inner_h + 2;
+    let drawer = Rect {
+        x: area.x,
+        y: area.y + area.height.saturating_sub(height),
+        width: area.width,
+        height: height.min(area.height),
+    };
+    f.render_widget(Clear, drawer);
+    blank_straddling_glyphs(f.buffer_mut(), drawer, area);
+    let mut block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Plain)
+        .border_style(Style::default().fg(Color::DarkGray))
+        .padding(Padding::horizontal(1));
+    if total > 1 {
+        // Only worth a counter when there is more than one to get through.
+        block = block.title_top(
+            Line::from(Span::styled(
+                format!(" {}/{total} ", qi + 1),
+                Style::default().fg(Color::DarkGray),
+            ))
+            .right_aligned(),
+        );
+    }
+    let inner = block.inner(drawer);
+    f.render_widget(block, drawer);
+    if inner.height == 0 {
+        ui.rows.clear();
+        return;
+    }
+    let head_h = (qlines.len() as u16 + 1).min(inner.height.saturating_sub(1));
     let [head, rest] =
-        Layout::vertical([Constraint::Length(header_h), Constraint::Min(0)]).areas(area);
+        Layout::vertical([Constraint::Length(head_h), Constraint::Min(0)]).areas(inner);
     let head_lines: Vec<Line> = qlines
         .into_iter()
         .map(|l| {
@@ -3090,23 +3104,19 @@ fn render_question(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
         })
         .collect();
     f.render_widget(Paragraph::new(Text::from(head_lines)), head);
-    let rows: Vec<(usize, String)> = options
-        .iter()
-        .enumerate()
-        .map(|(i, o)| (i, o.clone()))
-        .collect();
+    let rows: Vec<(usize, String)> = options.into_iter().enumerate().collect();
     render_rows(f, rest, ui, &rows);
 }
 
-/// Shared list renderer (Settings / Agents): spaced rows with a subtle tinted
-/// background on the selected/hovered one and an accent marker, records a hit
-/// rectangle per visible row, and windows around the selection.
+/// The drawer's option list: one row each, a subtle tinted background on the
+/// selected or hovered one and an accent marker, a hit rectangle per visible row,
+/// windowed around the selection.
 fn render_rows(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, rows: &[(usize, String)]) {
     ui.rows.clear();
     ui.clamp_sel();
     let width = area.width as usize;
     let avail = width.saturating_sub(2);
-    let fit = (area.height as usize / 2).max(1);
+    let fit = (area.height as usize).max(1);
     let start = if ui.sel < fit {
         0
     } else {
@@ -3150,7 +3160,6 @@ fn render_rows(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, rows: &[(usize, 
             bg,
         ));
         ui.rows.push((*idx, rect));
-        lines.push(Line::from("")); // spacing between rows
     }
     f.render_widget(Paragraph::new(Text::from(lines)), area);
 }
@@ -3165,12 +3174,12 @@ fn hovering(ui: &Ui, rect: Rect) -> bool {
 /// References are not here — they belong to the answer above them and scroll
 /// with it. Pinning them spent up to eight rows of the transcript on the least
 /// urgent thing in the turn.
+/// How many follow-ups the panel offers. Three is a nudge; a full list of six is a
+/// menu standing between the reader and their own next question.
+const FURTHER_SHOWN: usize = 3;
+
 fn meta_height(state: &ChatState) -> u16 {
-    if state.further.is_empty() {
-        0
-    } else {
-        (1 + state.further.len() as u16).clamp(1, 6)
-    }
+    (state.further.len() as u16).min(FURTHER_SHOWN as u16)
 }
 
 /// Render clickable reference / follow-up chips and record their hit rects.
@@ -3179,12 +3188,9 @@ fn render_chips(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatSta
     let mut y = area.y;
     let bottom = area.y + area.height;
     if !state.further.is_empty() && y < bottom {
-        lines.push(Line::from(Span::styled(
-            format!("{}:", t!("Agent.FurtherQuestions")),
-            Style::default().fg(Color::DarkGray),
-        )));
-        y += 1;
-        for (i, q) in state.further.iter().enumerate() {
+        // No header: the `›` and the colour say what these are, and a label would
+        // cost a row of the reader's screen to say it in words.
+        for (i, q) in state.further.iter().enumerate().take(FURTHER_SHOWN) {
             if y >= bottom {
                 break;
             }
@@ -3332,6 +3338,11 @@ fn render_status(f: &mut ratatui::Frame, area: Rect, ui: &Ui, state: &ChatState)
         )
     } else if let Some(notice) = &ui.notice {
         (notice.clone(), Style::default().fg(Color::Green))
+    } else if ui.view == View::Chat && !state.messages.is_empty() {
+        // Once the reader has sent something they know how to send things. The row
+        // stays (notices and the scrolled-up hint use it) but it stays quiet: a
+        // permanent list of shortcuts a hand's width above the cursor is noise.
+        (String::new(), Style::default())
     } else {
         let hint = match ui.view {
             View::Chat => t!("Ai.InputHint"),
@@ -4007,6 +4018,9 @@ const SPARK_W: usize = 32;
 /// One row, because the panel is a glance and a full chart is a click away on the
 /// web. `None` when there is nothing to draw — a flat or missing path would be a
 /// row of noise.
+/// The tallest block's index in [`BLOCKS`], as a float for the scaling below.
+const TOP_LEVEL: f64 = 7.0;
+
 fn sparkline(path: &[f64], width: usize) -> Option<String> {
     const BLOCKS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
 
@@ -4026,7 +4040,7 @@ fn sparkline(path: &[f64], width: usize) -> Option<String> {
             .map(|i| {
                 let v = path[i * (path.len() - 1) / (take - 1).max(1)];
                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                let level = (((v - lo) / span) * (BLOCKS.len() - 1) as f64).round() as usize;
+                let level = (((v - lo) / span) * TOP_LEVEL).round() as usize;
                 BLOCKS[level.min(BLOCKS.len() - 1)]
             })
             .collect(),
@@ -4385,6 +4399,81 @@ mod tests {
                     .collect::<String>()
             })
             .collect()
+    }
+
+    /// A conversation waiting on a structured question.
+    fn asking() -> (super::Ui, super::ChatState) {
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        state.apply(super::ChatEvent::UserPrompt("compare NVDA and AMD".into()));
+        state.apply(super::ChatEvent::Delta(
+            "I can compare them on a few axes.".into(),
+        ));
+        state.apply(super::ChatEvent::TurnFinished { error: None });
+        let mut ui = super::Ui::new();
+        ui.view = super::View::Question;
+        ui.question = Some(super::QuestionState {
+            tool_call_id: "call_1".into(),
+            questions: vec![(
+                "Which timeframe should the comparison use?".into(),
+                vec![
+                    "Past month".into(),
+                    "Past year".into(),
+                    "Year to date".into(),
+                ],
+            )],
+            qi: 0,
+            answers: std::collections::HashMap::new(),
+        });
+        (ui, state)
+    }
+
+    /// The question is a drawer over the transcript, not a view replacing it: the
+    /// answer it is asking about has to stay readable while the reader answers.
+    #[test]
+    fn a_question_rises_from_the_input_without_covering_the_chat() {
+        let (mut ui, state) = asking();
+        let rows = frame(&mut ui, &state, 72, 22);
+        let text = rows.join("\n");
+        assert!(
+            text.contains("compare NVDA and AMD"),
+            "the transcript is still there: {text}"
+        );
+        assert!(
+            text.contains("Which timeframe"),
+            "and so is the question: {text}"
+        );
+        // Bordered, and only the lower part of the screen.
+        let top = rows
+            .iter()
+            .position(|r| r.contains('┌'))
+            .expect("a framed drawer");
+        assert!(
+            top > 3,
+            "the drawer stays low, opened at row {top} of {}",
+            rows.len()
+        );
+        // Directly above the input, which is the last block on screen.
+        let bottom = rows
+            .iter()
+            .rposition(|r| r.contains('└'))
+            .expect("a closed frame");
+        assert!(
+            bottom < rows.len() - 3,
+            "the drawer sits on the input, not over it: {bottom}"
+        );
+        assert!(
+            bottom - top < rows.len() / 2,
+            "and takes at most half the screen: rows {top}..={bottom}"
+        );
+        // Compact: every option on its own row, no blank rows between them.
+        let first = rows
+            .iter()
+            .position(|r| r.contains("Past month"))
+            .expect("first option");
+        assert!(
+            rows[first + 1].contains("Past year") && rows[first + 2].contains("Year to date"),
+            "options are one per row: {text}"
+        );
     }
 
     fn busy_state() -> super::ChatState {

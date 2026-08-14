@@ -358,7 +358,15 @@ fn append_query_param(url: &str, key: &str, value: &str) -> String {
 
 /// Try to open a URL in the system browser. Returns `true` if launched successfully.
 pub fn open_browser(url: &str) -> bool {
-    open::that(url).is_ok()
+    // Like `open::that`, but with the handler's own output discarded: `xdg-open` and
+    // friends write to stdout/stderr, and inside a full-screen UI that lands in the
+    // middle of the view.
+    open::commands(url).into_iter().any(|mut cmd| {
+        cmd.stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+    })
 }
 
 /// Device Authorization Flow (RFC 8628).
@@ -603,16 +611,10 @@ pub async fn device_login_start(verbose: bool, client_name: Option<String>) -> R
         auth.verification_uri_complete.as_str()
     };
 
+    // Deliberately silent: [`device_login`] prints these lines for the CLI, and a
+    // full-screen UI draws them itself — printing here put four lines of raw stdout
+    // through the middle of the chat's alternate screen.
     let opened = open_browser(verification_url);
-    println!("Open the following URL in your browser to authorize:");
-    println!();
-    println!("{verification_url}");
-    println!();
-    if opened {
-        println!("Browser opened. Waiting for authorization...");
-    } else {
-        println!("Waiting for authorization...");
-    }
 
     Ok(DeviceLogin {
         verification_url: verification_url.to_string(),

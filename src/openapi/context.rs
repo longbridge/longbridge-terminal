@@ -6,6 +6,9 @@ use super::wrapper::{RateLimitedQuoteContext, RateLimitedTradeContext};
 /// Global `QuoteContext`
 pub static QUOTE_CTX: OnceLock<longbridge::quote::QuoteContext> = OnceLock::new();
 
+/// Set by [`mark_signed_out`]; see [`is_ready`].
+static SIGNED_OUT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Global `AssetContext`
 pub static STATEMENT_CTX: OnceLock<longbridge::AssetContext> = OnceLock::new();
 
@@ -361,7 +364,27 @@ async fn init_contexts_with_auth(
 /// and offers to sign in — so it asks first.
 #[must_use]
 pub fn is_ready() -> bool {
+    !SIGNED_OUT.load(std::sync::atomic::Ordering::Relaxed) && contexts_built()
+}
+
+/// Whether the contexts exist at all, sign-out aside.
+///
+/// The difference matters exactly once: deciding whether a sign-in can be picked up
+/// in this process. Contexts are `OnceLock` singletons built from one set of
+/// credentials, so a session that already has them cannot adopt new ones — it has
+/// to be restarted, even though [`is_ready`] says it is signed out.
+pub fn contexts_built() -> bool {
     AGENT_CTX.get().is_some() && QUOTE_CTX.get().is_some() && HTTP_CLIENT.get().is_some()
+}
+
+/// Stop treating this process as signed in.
+///
+/// Called when the reader signs out without leaving: the token on disk is gone, but
+/// the contexts hold a session that would keep working until it expired. Rather
+/// than quietly trading on revoked credentials, everything gated on [`is_ready`]
+/// goes back to behaving as it does before a sign-in.
+pub fn mark_signed_out() {
+    SIGNED_OUT.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
 pub fn quote() -> &'static longbridge::quote::QuoteContext {
