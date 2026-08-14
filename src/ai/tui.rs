@@ -14,7 +14,7 @@
 //! chips above the prompt.
 
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use crossterm::event::{
@@ -139,6 +139,13 @@ struct Ui {
     sel: usize,
     /// Transient one-line notice shown in the status bar.
     notice: Option<String>,
+    /// Last known mouse position, used to marquee the hovered row.
+    hover: Option<(u16, u16)>,
+    /// Frame counter advancing the marquee scroll of truncated rows.
+    tick: u64,
+    /// Set during render when at least one truncated row is scrolling, so the
+    /// animation timer only runs while something actually needs it.
+    animating: bool,
     tabs: Vec<(View, Rect)>,
     rows: Vec<(usize, Rect)>,
     chips: Vec<(Chip, Rect)>,
@@ -154,6 +161,9 @@ impl Ui {
             question: None,
             sel: 0,
             notice: None,
+            hover: None,
+            tick: 0,
+            animating: false,
             tabs: Vec::new(),
             rows: Vec::new(),
             chips: Vec::new(),
@@ -205,10 +215,15 @@ pub async fn run(agent_uid: String) -> Result<()> {
     let (tx, mut turn_rx) = unbounded_channel::<ChatEvent>();
     let (agents_tx, mut agents_rx) = unbounded_channel::<Vec<AgentInfo>>();
     let mut events = EventStream::new();
+    // Drives the marquee of truncated rows; only consulted while `animating`.
+    let mut ticker = tokio::time::interval(Duration::from_millis(120));
 
     loop {
         terminal.draw(|f| view(f, &mut ui, &state, &editor))?;
         tokio::select! {
+            _ = ticker.tick(), if ui.animating => {
+                ui.tick = ui.tick.wrapping_add(1);
+            }
             maybe_event = events.next() => {
                 match maybe_event {
                     Some(Ok(Event::Key(key))) if key.kind != KeyEventKind::Release => {
@@ -476,6 +491,10 @@ fn on_mouse(
     tx: &UnboundedSender<ChatEvent>,
     agents_tx: &UnboundedSender<Vec<AgentInfo>>,
 ) {
+    if let MouseEventKind::Moved = m.kind {
+        ui.hover = Some((m.column, m.row));
+        return;
+    }
     match m.kind {
         MouseEventKind::ScrollUp => scroll(ui, state, true),
         MouseEventKind::ScrollDown => scroll(ui, state, false),
@@ -692,6 +711,45 @@ fn hit(rect: Rect, col: u16, row: u16) -> bool {
     col >= rect.x && col < rect.x + rect.width && row >= rect.y && row < rect.y + rect.height
 }
 
+/// Render `full` for a single-line row that may be wider than `width`. When the
+/// row is truncated *and* focused (hovered or keyboard-selected), it scrolls as
+/// a marquee and the frame is marked `animating`; otherwise the text is returned
+/// as-is and the `Paragraph` clips it.
+fn row_text(ui: &mut Ui, full: &str, width: usize, rect: Rect, selected: bool) -> String {
+    let focused = selected || ui.hover.is_some_and(|(c, r)| hit(rect, c, r));
+    if focused && full.width() > width {
+        ui.animating = true;
+        marquee(full, width, ui.tick)
+    } else {
+        full.to_string()
+    }
+}
+
+/// A window of `width` display columns into `text`, scrolled by `tick` and
+/// wrapping around through a small gap so the text loops continuously.
+fn marquee(text: &str, width: usize, tick: u64) -> String {
+    if width == 0 || text.width() <= width {
+        return text.to_string();
+    }
+    let full: Vec<char> = text.chars().chain("   ".chars()).collect();
+    let n = full.len();
+    let start = (tick as usize) % n;
+    let mut out = String::new();
+    let mut w = 0;
+    let mut i = 0;
+    while w < width && i < n {
+        let ch = full[(start + i) % n];
+        let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if w + cw > width {
+            break;
+        }
+        out.push(ch);
+        w += cw;
+        i += 1;
+    }
+    out
+}
+
 fn slash_active(editor: &Editor) -> bool {
     editor.is_single_line() && editor.text().starts_with('/')
 }
@@ -707,6 +765,8 @@ fn complete_slash(editor: &mut Editor) {
 // ── rendering ────────────────────────────────────────────────────────────────
 
 fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor) {
+    // Recomputed each frame: set true if any truncated row is scrolling.
+    ui.animating = false;
     let area = f.area();
     let is_chat = ui.view == View::Chat;
     let has_meta =
@@ -948,25 +1008,25 @@ fn render_question(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
         Line::from(""),
     ];
     let base = area.y + lines.len() as u16;
+    let avail = (area.width as usize).saturating_sub(2);
     for (i, option) in options.iter().enumerate() {
         if area.y + lines.len() as u16 >= area.y + area.height {
             break;
         }
         let selected = i == ui.sel;
+        let rect = Rect {
+            x: area.x,
+            y: base + i as u16,
+            width: area.width,
+            height: 1,
+        };
         let marker = if selected { "› " } else { "  " };
+        let text = row_text(ui, option, avail, rect, selected);
         lines.push(Line::from(Span::styled(
-            format!("{marker}{option}"),
+            format!("{marker}{text}"),
             row_style(selected),
         )));
-        ui.rows.push((
-            i,
-            Rect {
-                x: area.x,
-                y: base + i as u16,
-                width: area.width,
-                height: 1,
-            },
-        ));
+        ui.rows.push((i, rect));
     }
     f.render_widget(Paragraph::new(Text::from(lines)), area);
 }
@@ -978,23 +1038,23 @@ fn render_rows(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, rows: &[(usize, 
     ui.clamp_sel();
     let height = area.height.max(1) as usize;
     let start = ui.sel.saturating_sub(height.saturating_sub(1));
+    let avail = (area.width as usize).saturating_sub(2);
     let mut lines = Vec::new();
     for (offset, (idx, label)) in rows.iter().skip(start).take(height).enumerate() {
         let selected = *idx == ui.sel;
+        let rect = Rect {
+            x: area.x,
+            y: area.y + offset as u16,
+            width: area.width,
+            height: 1,
+        };
         let marker = if selected { "› " } else { "  " };
+        let text = row_text(ui, label, avail, rect, selected);
         lines.push(Line::from(Span::styled(
-            format!("{marker}{label}"),
+            format!("{marker}{text}"),
             row_style(selected),
         )));
-        ui.rows.push((
-            *idx,
-            Rect {
-                x: area.x,
-                y: area.y + offset as u16,
-                width: area.width,
-                height: 1,
-            },
-        ));
+        ui.rows.push((*idx, rect));
     }
     f.render_widget(Paragraph::new(Text::from(lines)), area);
 }
@@ -1038,11 +1098,14 @@ fn render_chips(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatSta
             if y >= bottom {
                 break;
             }
+            let rect = row_rect(area, y);
+            let full = format!("  [{}] {}", r.index, reference_label(r));
+            let text = row_text(ui, &full, area.width as usize, rect, false);
             lines.push(Line::from(Span::styled(
-                format!("  [{}] {}", r.index, reference_label(r)),
+                text,
                 Style::default().fg(Color::Blue),
             )));
-            ui.chips.push((Chip::Reference(i), row_rect(area, y)));
+            ui.chips.push((Chip::Reference(i), rect));
             y += 1;
         }
     }
@@ -1056,11 +1119,14 @@ fn render_chips(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatSta
             if y >= bottom {
                 break;
             }
+            let rect = row_rect(area, y);
+            let full = format!("  › {q}");
+            let text = row_text(ui, &full, area.width as usize, rect, false);
             lines.push(Line::from(Span::styled(
-                format!("  › {q}"),
+                text,
                 Style::default().fg(Color::Green),
             )));
-            ui.chips.push((Chip::Further(i), row_rect(area, y)));
+            ui.chips.push((Chip::Further(i), rect));
             y += 1;
         }
     }
@@ -1229,4 +1295,33 @@ fn wrap(s: &str, width: usize) -> Vec<String> {
     }
     out.push(cur);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::marquee;
+    use unicode_width::UnicodeWidthStr;
+
+    #[test]
+    fn fits_within_width_is_unchanged() {
+        assert_eq!(marquee("abc", 10, 7), "abc");
+    }
+
+    #[test]
+    fn scrolls_by_one_step_and_stays_within_width() {
+        let (text, width) = ("abcdefgh", 4);
+        let a = marquee(text, width, 0);
+        let b = marquee(text, width, 1);
+        assert_eq!(a, "abcd");
+        assert_ne!(a, b, "advancing the tick should shift the window");
+        assert!(b.width() <= width);
+    }
+
+    #[test]
+    fn window_wraps_around_through_the_gap() {
+        // A tick past the end wraps back to the start, so scrolling loops.
+        let text = "abcd";
+        let n = text.chars().count() + 3; // trailing gap
+        assert_eq!(marquee(text, 2, 0), marquee(text, 2, n as u64));
+    }
 }
