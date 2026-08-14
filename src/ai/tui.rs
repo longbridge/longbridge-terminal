@@ -1340,8 +1340,7 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
     } else {
         ui.turn_started = None;
     }
-    let has_meta =
-        is_chat && !state.busy && (!state.references.is_empty() || !state.further.is_empty());
+    let has_meta = is_chat && !state.busy && !state.further.is_empty();
     let meta_h = if has_meta { meta_height(state) } else { 0 };
     let footer_h = if is_chat {
         (editor.lines().len() as u16 + 2).clamp(3, 8)
@@ -1384,6 +1383,9 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
     idx += 1;
     let footer = chunks[idx];
 
+    // Chips are recorded by both the transcript (references) and the meta panel
+    // (follow-ups), so the list is cleared once per frame rather than by each.
+    ui.chips.clear();
     render_title(f, title, state);
     // The Chat view is chrome-free; other views get a header with the view name
     // (they are opened via `/` commands and left with Esc).
@@ -1406,8 +1408,6 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
     }
     if let Some(meta) = meta {
         render_chips(f, meta, ui, state);
-    } else {
-        ui.chips.clear();
     }
     if let Some(row) = turn_row {
         render_turn_status(f, row, ui, state);
@@ -1491,17 +1491,36 @@ fn render_chat(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatStat
         ui.transcript_cache = cache;
         ui.cache_sig = sig;
     }
-    let mut streaming = Vec::new();
+    // The tail is whatever is not worth caching: the answer still streaming, and
+    // the finished turn's references, which change with every turn.
+    let mut tail = Vec::new();
     if let Some(text) = &state.streaming {
         push_message(
-            &mut streaming,
+            &mut tail,
             &Message::new(Role::Assistant, text.clone()),
             width,
             &ui.quotes,
         );
     }
     let cache_len = ui.transcript_cache.len();
-    let total = cache_len + streaming.len();
+    // Where each reference row lands in the transcript, so a visible one can be
+    // clicked even though it now scrolls with the content.
+    let mut ref_rows: Vec<(usize, usize)> = Vec::new();
+    if !state.busy && !state.references.is_empty() {
+        tail.push(Line::from(Span::styled(
+            format!("{}:", t!("Agent.References")),
+            Style::default().fg(Color::DarkGray),
+        )));
+        for (i, r) in state.references.iter().enumerate() {
+            ref_rows.push((cache_len + tail.len(), i));
+            tail.push(Line::from(Span::styled(
+                truncate_width(&format!("  [{}] {}", r.index, reference_label(r)), width),
+                Style::default().fg(Color::Blue),
+            )));
+        }
+        tail.push(Line::from(""));
+    }
+    let total = cache_len + tail.len();
     let height = area.height as usize;
     // Clamp scroll-back so the view can never be scrolled past the top into a
     // blank screen; the top is reached when `start` hits 0.
@@ -1514,10 +1533,17 @@ fn render_chat(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatStat
             if i < cache_len {
                 ui.transcript_cache[i].clone()
             } else {
-                streaming[i - cache_len].clone()
+                tail[i - cache_len].clone()
             }
         })
         .collect();
+
+    for (row, i) in ref_rows {
+        if (start..bottom).contains(&row) {
+            let rect = row_rect(area, area.y + (row - start) as u16);
+            ui.chips.push((Chip::Reference(i), rect));
+        }
+    }
 
     let Some((anchor, cursor)) = ui.selection else {
         ui.selected_text = None;
@@ -1838,10 +1864,11 @@ fn render_sessions(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
         list_area
     };
 
-    // Each entry is 3 rows (title, subtitle, gap); the New action is 2. Window
-    // in entry units so the selection stays visible.
+    // One row per entry: a conversation is an index, a title and when it was
+    // last touched, all of which fit on a line. Spreading each over three rows
+    // showed four conversations where a screen can hold twenty.
     let total = n + 1;
-    let fit = (list_area.height as usize / 3).max(1);
+    let fit = (list_area.height as usize).max(1);
     let start = if ui.sel < fit {
         0
     } else {
@@ -1850,15 +1877,14 @@ fn render_sessions(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
     let width = list_area.width as usize;
     let mut lines: Vec<Line> = Vec::new();
     for i in start..total {
-        if lines.len() + 2 > list_area.height as usize {
+        if lines.len() >= list_area.height as usize {
             break;
         }
-        let rect_h = if i < n { 2 } else { 1 };
         let rect = Rect {
             x: list_area.x,
             y: list_area.y + lines.len() as u16,
             width: list_area.width,
-            height: rect_h,
+            height: 1,
         };
         let selected = i == ui.sel;
         let bg = if selected {
@@ -1885,7 +1911,6 @@ fn render_sessions(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
             ));
         }
         ui.rows.push((i, rect));
-        lines.push(Line::from("")); // spacing between entries
     }
     f.render_widget(Paragraph::new(Text::from(lines)), list_area);
 }
@@ -1906,22 +1931,24 @@ fn push_session_entry(
     if selected {
         title_style = title_style.add_modifier(Modifier::BOLD);
     }
+    // The subtitle is trailing detail, so it keeps its columns and the title
+    // gives way — a truncated "…" beats a title that pushes the timestamp off
+    // the row.
+    let lead = format!("{number:>2}  ");
+    let lead_w = UnicodeWidthStr::width(lead.as_str());
+    let sub_w = UnicodeWidthStr::width(subtitle);
+    let title_w = width.saturating_sub(lead_w + sub_w + 2);
+    let title = truncate_width(title, title_w);
+    let gap = width.saturating_sub(lead_w + UnicodeWidthStr::width(title.as_str()) + sub_w);
     lines.push(bg_pad(
         vec![
+            Span::styled(lead, with_bg(Style::default().fg(idx_color), bg)),
+            Span::styled(title, with_bg(title_style, bg)),
             Span::styled(
-                format!("{number:>2}  "),
-                with_bg(Style::default().fg(idx_color), bg),
+                format!("{}{subtitle}", " ".repeat(gap)),
+                with_bg(Style::default().fg(Color::DarkGray), bg),
             ),
-            Span::styled(title.to_string(), with_bg(title_style, bg)),
         ],
-        width,
-        bg,
-    ));
-    lines.push(bg_pad(
-        vec![Span::styled(
-            format!("    {subtitle}"),
-            with_bg(Style::default().fg(Color::DarkGray), bg),
-        )],
         width,
         bg,
     ));
@@ -2076,46 +2103,24 @@ fn hovering(ui: &Ui, rect: Rect) -> bool {
     ui.hover.is_some_and(|(c, r)| hit(rect, c, r))
 }
 
-/// Number of rows the Chat meta panel needs (references + follow-ups + headers).
+/// Number of rows the Chat meta panel needs: the follow-up chips and a header.
+///
+/// References are not here — they belong to the answer above them and scroll
+/// with it. Pinning them spent up to eight rows of the transcript on the least
+/// urgent thing in the turn.
 fn meta_height(state: &ChatState) -> u16 {
-    let mut n = 0u16;
-    if !state.references.is_empty() {
-        n += 1 + state.references.len() as u16;
+    if state.further.is_empty() {
+        0
+    } else {
+        (1 + state.further.len() as u16).clamp(1, 6)
     }
-    if !state.further.is_empty() {
-        n += 1 + state.further.len() as u16;
-    }
-    n.clamp(1, 8)
 }
 
 /// Render clickable reference / follow-up chips and record their hit rects.
 fn render_chips(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatState) {
-    ui.chips.clear();
     let mut lines: Vec<Line> = Vec::new();
     let mut y = area.y;
     let bottom = area.y + area.height;
-    if !state.references.is_empty() && y < bottom {
-        lines.push(Line::from(Span::styled(
-            format!("{}:", t!("Agent.References")),
-            Style::default().fg(Color::DarkGray),
-        )));
-        y += 1;
-        for (i, r) in state.references.iter().enumerate() {
-            if y >= bottom {
-                break;
-            }
-            let rect = row_rect(area, y);
-            let full = format!("  [{}] {}", r.index, reference_label(r));
-            let hovered = hovering(ui, rect);
-            let text = row_text(ui, &full, area.width as usize, rect, false);
-            lines.push(Line::from(Span::styled(
-                text,
-                chip_style(Color::Blue, hovered),
-            )));
-            ui.chips.push((Chip::Reference(i), rect));
-            y += 1;
-        }
-    }
     if !state.further.is_empty() && y < bottom {
         lines.push(Line::from(Span::styled(
             format!("{}:", t!("Agent.FurtherQuestions")),
@@ -2377,47 +2382,53 @@ fn push_message(
         }
         return;
     }
-    let (label, accent) = match message.role {
-        Role::User => (t!("Ai.You").to_string(), Color::Cyan),
-        Role::Assistant => (t!("Ai.Assistant").to_string(), Color::Green),
-        Role::System | Role::Tool => (String::new(), Color::DarkGray),
-    };
-    if !label.is_empty() {
-        // A colored accent bar precedes each speaker label for scannability.
-        lines.push(Line::from(vec![
-            Span::styled("▌ ", Style::default().fg(accent)),
-            Span::styled(
-                label,
-                Style::default().fg(accent).add_modifier(Modifier::BOLD),
-            ),
-        ]));
-    }
-    if message.role == Role::Assistant {
-        lines.extend(render_answer_lines(&message.text, width, quotes));
-    } else {
-        let user = message.role == Role::User;
-        let body_style = match message.role {
-            Role::System => Style::default().fg(Color::DarkGray),
-            Role::User => Style::default().fg(USER_FG).bg(USER_BG),
-            _ => Style::default(),
-        };
-        for logical in message.text.split('\n') {
-            for wrapped in wrap(logical, width) {
-                if user {
-                    // The band has to reach the full width, or it stops at the
-                    // last glyph and reads as a highlight rather than a block.
-                    let pad = width.saturating_sub(UnicodeWidthStr::width(wrapped.as_str()));
+    match message.role {
+        // The answer is the page. Labelling it says nothing the reader does not
+        // already know and costs a row per turn, so it goes in unannounced —
+        // only the reader's own turns are marked, which is what makes a long
+        // transcript scannable.
+        Role::Assistant => lines.extend(render_answer_lines(&message.text, width, quotes)),
+        Role::User => lines.extend(user_lines(&message.text, width)),
+        Role::System | Role::Tool => {
+            for logical in message.text.split('\n') {
+                for wrapped in wrap(logical, width) {
                     lines.push(Line::from(Span::styled(
-                        format!("{wrapped}{}", " ".repeat(pad)),
-                        body_style,
+                        wrapped,
+                        Style::default().fg(Color::DarkGray),
                     )));
-                } else {
-                    lines.push(Line::from(Span::styled(wrapped, body_style)));
                 }
             }
         }
     }
     lines.push(Line::from(""));
+}
+
+/// The reader's own message: a quote marker and a band across the transcript.
+///
+/// Wrapped rows are indented under the marker so the block reads as one
+/// quotation, and the band runs the full width — stopping at the last glyph
+/// makes it read as a highlight on the text rather than as the reader's turn.
+fn user_lines(text: &str, width: usize) -> Vec<Line<'static>> {
+    const MARKER: &str = "❯ ";
+    let indent = UnicodeWidthStr::width(MARKER);
+    let body_w = width.saturating_sub(indent).max(1);
+    let band = Style::default().fg(USER_FG).bg(USER_BG);
+    let mut out = Vec::new();
+    for logical in text.split('\n') {
+        for wrapped in wrap(logical, body_w) {
+            let lead = if out.is_empty() {
+                MARKER.to_string()
+            } else {
+                " ".repeat(indent)
+            };
+            let pad = width.saturating_sub(indent + UnicodeWidthStr::width(wrapped.as_str()));
+            out.push(Line::from(vec![
+                Span::styled(lead, band.fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::styled(format!("{wrapped}{}", " ".repeat(pad)), band),
+            ]));
+        }
+    }
+    out
 }
 
 /// Render an assistant answer the way `agent chat` does: split into text /
@@ -2998,6 +3009,83 @@ mod tests {
                 .sum();
             assert_eq!(w, 40, "the band should span the width");
         }
+    }
+
+    /// The answer is the page: labelling it costs a row per turn and says nothing
+    /// the reader does not know. Only the reader's own turns are marked, with a
+    /// quote marker and the band.
+    #[test]
+    fn only_the_readers_turns_are_marked() {
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        state.apply(super::ChatEvent::UserPrompt("查一下我的关注列表".into()));
+        state.apply(super::ChatEvent::Delta(
+            "Your watchlist has 12 names.".into(),
+        ));
+        state.apply(super::ChatEvent::TurnFinished { error: None });
+        let mut lines = Vec::new();
+        for m in &state.messages {
+            super::push_message(&mut lines, m, 40, &std::collections::HashMap::new());
+        }
+        let text: Vec<String> = lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect();
+        for label in [t!("Ai.You"), t!("Ai.Assistant")] {
+            assert!(
+                !text.iter().any(|l| l.trim() == label.as_ref()),
+                "speaker label {label:?} leaked into the transcript: {text:?}"
+            );
+        }
+        assert!(
+            !text.iter().any(|l| l.contains('▌')),
+            "the old speaker accent bar is gone: {text:?}"
+        );
+        assert!(
+            text.iter().any(|l| l.starts_with("❯ 查一下")),
+            "the reader's turn should carry the quote marker: {text:?}"
+        );
+        assert!(
+            text.iter().any(|l| l.contains("watchlist")),
+            "the answer should still be there: {text:?}"
+        );
+    }
+
+    /// A reference belongs to the answer above it, so it scrolls with the
+    /// transcript rather than pinning rows to the bottom.
+    #[test]
+    fn references_scroll_with_the_transcript() {
+        let mut ui = super::Ui::new();
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        state.apply(super::ChatEvent::UserPrompt("news?".into()));
+        state.apply(super::ChatEvent::Delta("Here is the news.".into()));
+        state.apply(super::ChatEvent::TurnFinished { error: None });
+        state.references = vec![longbridge::agent::Reference {
+            index: 1,
+            original_index: 1,
+            ref_type: "NewsArticle".into(),
+            id: "n1".into(),
+            title: "A market note".into(),
+            url: "https://example.com/n1".into(),
+            content: None,
+        }];
+        let rows = frame(&mut ui, &state, 70, 20);
+        let refs_at = rows
+            .iter()
+            .position(|r| r.contains(t!("Agent.References").as_ref()))
+            .expect("the references header should be in the transcript");
+        let answer_at = rows
+            .iter()
+            .position(|r| r.contains("Here is the news"))
+            .expect("the answer should be there");
+        assert!(
+            refs_at > answer_at,
+            "references follow their answer instead of being pinned: {rows:?}"
+        );
+        // Not pinned to the bottom: the footer and status rows are below them.
+        assert!(
+            refs_at < rows.len() - 3,
+            "references should not sit against the footer: {rows:?}"
+        );
     }
 
     /// The conversation title belongs to the list you pick a chat from, not to a
