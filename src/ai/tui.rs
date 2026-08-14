@@ -33,11 +33,12 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::editor::Editor;
 use super::session_store::{self, SessionSummary};
-use super::state::{ChatEvent, ChatState, Message, Role};
+use super::state::{ChatEvent, ChatState, Message, Role, ToolStatus};
 use super::{markdown, runtime};
 use crate::cli::agent::client::ConversationRequest;
 use crate::cli::agent::DEFAULT_AGENT_UID;
 use crate::tui::widgets::Terminal;
+use crate::utils::text::truncate_width;
 
 /// Which view is on screen. `Chat` is home; the rest are reached with `/`
 /// commands (or, for `Question`, by an interrupt) and left with Esc.
@@ -758,10 +759,7 @@ fn exec_slash(name: &str, args: &str, ui: &mut Ui, state: &mut ChatState) {
         "resume" => open_sessions(ui),
         "settings" => ui.switch(View::Settings),
         "agent" => switch_agent(args, ui, state),
-        "help" => state.messages.push(Message {
-            role: Role::System,
-            text: help_text(),
-        }),
+        "help" => state.messages.push(Message::new(Role::System, help_text())),
         "exit" => ui.should_quit = true,
         _ => {}
     }
@@ -1139,7 +1137,9 @@ fn export_conversation(state: &ChatState) -> std::io::Result<std::path::PathBuf>
         let label = match m.role {
             Role::User => t!("Ai.You"),
             Role::Assistant => t!("Ai.Assistant"),
-            Role::System => continue,
+            // Tool lines are UI trace, not conversation; an export is the
+            // conversation.
+            Role::System | Role::Tool => continue,
         };
         let _ = write!(body, "**{label}:**\n\n{}\n\n", m.text);
     }
@@ -1409,10 +1409,7 @@ fn render_chat(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatStat
     if let Some(text) = &state.streaming {
         push_message(
             &mut streaming,
-            &Message {
-                role: Role::Assistant,
-                text: text.clone(),
-            },
+            &Message::new(Role::Assistant, text.clone()),
             width,
             &ui.quotes,
         );
@@ -2183,16 +2180,52 @@ fn transcript_sig(state: &ChatState, width: usize) -> u64 {
     h.finish()
 }
 
+/// One row naming a tool the agent called and how the call went.
+///
+/// The point is traceability: an answer about a stock should show that it
+/// actually read a quote. A pending call is dim, a finished one takes the
+/// accent, and a failure is red and says so — a silently failed tool used to be
+/// invisible unless the whole turn came back empty.
+fn tool_line(name: &str, status: ToolStatus, width: usize) -> Line<'static> {
+    let (marker, color) = match status {
+        ToolStatus::Running => ("◌", Color::DarkGray),
+        ToolStatus::Ok => ("⏺", Color::Green),
+        ToolStatus::Failed => ("⚠", Color::Red),
+    };
+    let mut spans = vec![
+        Span::styled(format!("  {marker} "), Style::default().fg(color)),
+        Span::styled(
+            truncate_width(name, width.saturating_sub(6)),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ];
+    if status == ToolStatus::Failed {
+        spans.push(Span::styled(
+            format!("  {}", t!("Ai.ToolFailed")),
+            Style::default().fg(Color::Red),
+        ));
+    }
+    Line::from(spans)
+}
+
 fn push_message(
     lines: &mut Vec<Line<'static>>,
     message: &Message,
     width: usize,
     quotes: &HashMap<String, crate::cli::agent::render::QuoteCardData>,
 ) {
+    // A tool line is one compact row, not a speaker turn: it belongs to the
+    // answer around it, so it gets no accent bar and no trailing blank.
+    if message.role == Role::Tool {
+        if let Some(status) = message.tool {
+            lines.push(tool_line(&message.text, status, width));
+        }
+        return;
+    }
     let (label, accent) = match message.role {
         Role::User => (t!("Ai.You").to_string(), Color::Cyan),
         Role::Assistant => (t!("Ai.Assistant").to_string(), Color::Green),
-        Role::System => (String::new(), Color::DarkGray),
+        Role::System | Role::Tool => (String::new(), Color::DarkGray),
     };
     if !label.is_empty() {
         // A colored accent bar precedes each speaker label for scannability.

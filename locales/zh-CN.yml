@@ -389,6 +389,7 @@ Ai:
   SlashExport: "导出对话到文件"
   Exported: "已导出到 %{path}"
   ExportFailed: "导出失败。"
+  ToolFailed: "失败"
   Copied: "已复制到剪贴板。"
   NothingToCopy: "暂无可复制的内容。"
   PressCtrlCAgain: "再按一次 Ctrl+C 退出。"

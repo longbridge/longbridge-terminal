@@ -86,7 +86,7 @@ pub async fn load_detail(uid: &str) -> Option<LoadedChat> {
             } else {
                 Role::Assistant
             };
-            Some(Message { role, text })
+            Some(Message::new(role, text))
         })
         .collect();
     let title = (!detail.chat.name.trim().is_empty()).then(|| detail.chat.name.clone());

@@ -389,6 +389,7 @@ Ai:
   SlashExport: "Export the conversation to a file"
   Exported: "Exported to %{path}"
   ExportFailed: "Export failed."
+  ToolFailed: "failed"
   Copied: "Copied to clipboard."
   NothingToCopy: "Nothing to copy yet."
   PressCtrlCAgain: "Press Ctrl+C again to exit."

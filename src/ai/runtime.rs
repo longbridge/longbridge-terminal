@@ -73,16 +73,20 @@ fn map_agent_event(ev: &AgentEvent) -> Vec<ChatEvent> {
             ChatEvent::Status(t!("Agent.Generating").to_string()),
         ],
         AgentEvent::ThinkingStarted => vec![ChatEvent::Status(t!("Agent.Thinking").to_string())],
-        AgentEvent::ToolUseStarted { tool_name } => vec![ChatEvent::Status(
-            t!("Agent.CallingTool", name = tool_name).to_string(),
-        )],
-        AgentEvent::ToolUseFinished { tool_name, status } => {
-            let mut out = vec![ChatEvent::Status(t!("Agent.Generating").to_string())];
-            if tool_failed(status) {
-                out.push(ChatEvent::ToolFailed(tool_name.clone()));
-            }
-            out
-        }
+        // A tool call goes to the transcript as well as the status line: the
+        // status line is overwritten by the next event, and which data an answer
+        // was built from is worth keeping.
+        AgentEvent::ToolUseStarted { tool_name } => vec![
+            ChatEvent::ToolStarted(tool_name.clone()),
+            ChatEvent::Status(t!("Agent.CallingTool", name = tool_name).to_string()),
+        ],
+        AgentEvent::ToolUseFinished { tool_name, status } => vec![
+            ChatEvent::ToolFinished {
+                name: tool_name.clone(),
+                ok: !tool_failed(status),
+            },
+            ChatEvent::Status(t!("Agent.Generating").to_string()),
+        ],
         AgentEvent::WorkflowFinished {
             references,
             further_questions,

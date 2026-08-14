@@ -15,11 +15,44 @@ pub enum Role {
     User,
     Assistant,
     System,
+    /// A tool the agent called, recorded so the answer can be traced back to
+    /// the data it was built from.
+    Tool,
+}
+
+/// How a tool call ended, for the transcript's tool lines.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ToolStatus {
+    Running,
+    Ok,
+    Failed,
 }
 
 pub struct Message {
     pub role: Role,
     pub text: String,
+    /// Set only on [`Role::Tool`] lines.
+    pub tool: Option<ToolStatus>,
+}
+
+impl Message {
+    /// A plain transcript line from `role`.
+    pub fn new(role: Role, text: String) -> Self {
+        Self {
+            role,
+            text,
+            tool: None,
+        }
+    }
+
+    /// A tool line naming the tool and how its call is going.
+    pub fn tool(name: String, status: ToolStatus) -> Self {
+        Self {
+            role: Role::Tool,
+            text: name,
+            tool: Some(status),
+        }
+    }
 }
 
 /// A typed mutation of [`ChatState`], emitted by the running turn (see
@@ -37,8 +70,11 @@ pub enum ChatEvent {
     Delta(String),
     /// A transient status line (thinking, calling a tool, generating).
     Status(String),
-    /// A tool finished; record failures so an empty turn can explain itself.
-    ToolFailed(String),
+    /// The agent started calling a tool; appends a running tool line.
+    ToolStarted(String),
+    /// A tool finished; resolves its line and records failures so an empty turn
+    /// can explain itself.
+    ToolFinished { name: String, ok: bool },
     /// The server auto-generated a title for this conversation.
     Title(String),
     /// The agent paused to ask the user something; the next prompt answers it.
@@ -83,10 +119,7 @@ impl ChatState {
     pub fn new(agent_uid: String, welcome: String) -> Self {
         Self {
             agent_uid,
-            messages: vec![Message {
-                role: Role::System,
-                text: welcome,
-            }],
+            messages: vec![Message::new(Role::System, welcome)],
             ..Self::default()
         }
     }
@@ -96,10 +129,7 @@ impl ChatState {
     pub fn apply(&mut self, event: ChatEvent) {
         match event {
             ChatEvent::UserPrompt(text) => {
-                self.messages.push(Message {
-                    role: Role::User,
-                    text,
-                });
+                self.messages.push(Message::new(Role::User, text));
                 self.scroll = 0;
                 self.busy = true;
                 self.streaming = Some(String::new());
@@ -120,7 +150,38 @@ impl ChatState {
                     .push_str(&text);
             }
             ChatEvent::Status(status) => self.status = status,
-            ChatEvent::ToolFailed(name) => self.tool_failures.push(name),
+            // A tool call is committed to the transcript rather than only
+            // flashing through the status line: for a finance agent, which data
+            // an answer was built from is part of the answer.
+            ChatEvent::ToolStarted(name) => {
+                self.messages.push(Message::tool(name, ToolStatus::Running));
+            }
+            ChatEvent::ToolFinished { name, ok } => {
+                // Resolve the most recent running line for this tool. The agent
+                // may call the same tool more than once in a turn, so match on
+                // name and take the latest still-running one.
+                if let Some(msg) = self.messages.iter_mut().rev().find(|m| {
+                    m.role == Role::Tool && m.text == name && m.tool == Some(ToolStatus::Running)
+                }) {
+                    msg.tool = Some(if ok {
+                        ToolStatus::Ok
+                    } else {
+                        ToolStatus::Failed
+                    });
+                } else {
+                    // No start was seen (a reconnect mid-turn, say); still record
+                    // that the tool ran rather than dropping it.
+                    let status = if ok {
+                        ToolStatus::Ok
+                    } else {
+                        ToolStatus::Failed
+                    };
+                    self.messages.push(Message::tool(name.clone(), status));
+                }
+                if !ok {
+                    self.tool_failures.push(name);
+                }
+            }
             ChatEvent::Title(title) => {
                 if !title.trim().is_empty() {
                     self.title = Some(title);
@@ -144,17 +205,12 @@ impl ChatState {
             .take()
             .filter(|t| !t.trim().is_empty())
             .map(|text| {
-                self.messages.push(Message {
-                    role: Role::Assistant,
-                    text,
-                });
+                self.messages.push(Message::new(Role::Assistant, text));
             })
             .is_some();
         if let Some(err) = error {
-            self.messages.push(Message {
-                role: Role::System,
-                text: format!("[error] {err}"),
-            });
+            self.messages
+                .push(Message::new(Role::System, format!("[error] {err}")));
         } else if !produced {
             // A turn that streamed no answer text — usually because every tool
             // the agent tried failed (e.g. account tools on a paper account).
@@ -167,10 +223,7 @@ impl ChatState {
                 )
                 .to_string()
             };
-            self.messages.push(Message {
-                role: Role::System,
-                text: note,
-            });
+            self.messages.push(Message::new(Role::System, note));
         }
         self.busy = false;
         self.status.clear();
@@ -179,10 +232,7 @@ impl ChatState {
     /// Reset to a fresh conversation, keeping the agent but dropping all
     /// messages and conversation identity. Used by the "new chat" action.
     pub fn reset(&mut self, welcome: String) {
-        self.messages = vec![Message {
-            role: Role::System,
-            text: welcome,
-        }];
+        self.messages = vec![Message::new(Role::System, welcome)];
         self.streaming = None;
         self.status.clear();
         self.busy = false;
@@ -205,10 +255,7 @@ impl ChatState {
                 text.push('\n');
                 text.push_str(cancelled_label);
             }
-            self.messages.push(Message {
-                role: Role::Assistant,
-                text,
-            });
+            self.messages.push(Message::new(Role::Assistant, text));
         }
         self.busy = false;
         self.status.clear();
@@ -217,7 +264,7 @@ impl ChatState {
 
 #[cfg(test)]
 mod tests {
-    use super::{ChatEvent, ChatState, Role};
+    use super::{ChatEvent, ChatState, Role, ToolStatus};
 
     fn state() -> ChatState {
         ChatState::new("chatbot".into(), "welcome".into())
@@ -242,7 +289,10 @@ mod tests {
     fn an_empty_turn_with_failed_tools_explains_itself() {
         let mut s = state();
         s.apply(ChatEvent::UserPrompt("my positions?".into()));
-        s.apply(ChatEvent::ToolFailed("Get Account Info".into()));
+        s.apply(ChatEvent::ToolFinished {
+            name: "Get Account Info".into(),
+            ok: false,
+        });
         s.apply(ChatEvent::TurnFinished { error: None });
         let last = &s.messages.last().unwrap().text;
         assert!(last.contains("Get Account Info"));
@@ -257,5 +307,84 @@ mod tests {
         });
         assert_eq!(s.chat_uid.as_deref(), Some("c1"));
         assert_eq!(s.message_id.as_deref(), Some("m1"));
+    }
+
+    /// Tool calls used to exist only as a status string that the next event
+    /// overwrote, so a turn that read six data sources left no trace of it.
+    #[test]
+    fn tool_calls_are_recorded_in_the_transcript() {
+        let mut s = state();
+        s.apply(ChatEvent::UserPrompt("what is NVDA doing?".into()));
+        s.apply(ChatEvent::ToolStarted("Get Quote".into()));
+        s.apply(ChatEvent::ToolStarted("Get Capital Flow".into()));
+        s.apply(ChatEvent::ToolFinished {
+            name: "Get Quote".into(),
+            ok: true,
+        });
+        s.apply(ChatEvent::ToolFinished {
+            name: "Get Capital Flow".into(),
+            ok: false,
+        });
+        s.apply(ChatEvent::Delta("NVDA closed at 182.40".into()));
+        s.apply(ChatEvent::TurnFinished { error: None });
+
+        let tools: Vec<(&str, Option<ToolStatus>)> = s
+            .messages
+            .iter()
+            .filter(|m| m.role == Role::Tool)
+            .map(|m| (m.text.as_str(), m.tool))
+            .collect();
+        assert_eq!(
+            tools,
+            vec![
+                ("Get Quote", Some(ToolStatus::Ok)),
+                ("Get Capital Flow", Some(ToolStatus::Failed)),
+            ],
+            "both calls should survive the turn with their outcome"
+        );
+        // The answer still lands, after the tools that produced it.
+        assert!(s.messages.last().is_some_and(|m| m.role == Role::Assistant));
+    }
+
+    /// The same tool called twice resolves the right line each time, rather than
+    /// the first call swallowing the second's outcome.
+    #[test]
+    fn repeated_tool_calls_resolve_independently() {
+        let mut s = state();
+        s.apply(ChatEvent::UserPrompt("compare".into()));
+        s.apply(ChatEvent::ToolStarted("Get Quote".into()));
+        s.apply(ChatEvent::ToolFinished {
+            name: "Get Quote".into(),
+            ok: true,
+        });
+        s.apply(ChatEvent::ToolStarted("Get Quote".into()));
+        s.apply(ChatEvent::ToolFinished {
+            name: "Get Quote".into(),
+            ok: false,
+        });
+        let statuses: Vec<Option<ToolStatus>> = s
+            .messages
+            .iter()
+            .filter(|m| m.role == Role::Tool)
+            .map(|m| m.tool)
+            .collect();
+        assert_eq!(
+            statuses,
+            vec![Some(ToolStatus::Ok), Some(ToolStatus::Failed)]
+        );
+    }
+
+    /// A finish with no matching start still records the call.
+    #[test]
+    fn an_unpaired_tool_finish_is_still_recorded() {
+        let mut s = state();
+        s.apply(ChatEvent::ToolFinished {
+            name: "Get Quote".into(),
+            ok: true,
+        });
+        assert!(s
+            .messages
+            .iter()
+            .any(|m| m.role == Role::Tool && m.tool == Some(ToolStatus::Ok)));
     }
 }
