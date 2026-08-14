@@ -590,6 +590,11 @@ fn submit(
     if trimmed.is_empty() {
         return;
     }
+    // A bare `exit` / `quit` also leaves, like a REPL — no leading slash needed.
+    if trimmed.eq_ignore_ascii_case("exit") || trimmed.eq_ignore_ascii_case("quit") {
+        ui.should_quit = true;
+        return;
+    }
     if let Some(cmd) = trimmed.strip_prefix('/') {
         let name = cmd.split_whitespace().next().unwrap_or("");
         if SLASH.iter().any(|(n, _)| *n == format!("/{name}")) {
