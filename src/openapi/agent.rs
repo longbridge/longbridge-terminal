@@ -226,11 +226,36 @@ impl AgentBackend for OpenApiAgent {
         session_id: &str,
         _cwd: &Path,
     ) -> Result<LoadedAgentSession<Self::Session>, BackendError> {
-        let detail = crate::openapi::chats::chat_detail(session_id)
-            .await
-            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        // Like `session/list`, `session/load` must not break the ACP flow: a
+        // client that resumes a remembered session treats a failed load as
+        // fatal. If the chat can't be fetched (network, auth, not deployed to
+        // this environment, or an id that isn't a server chat), resume with an
+        // empty history so the user can keep chatting.
+        let detail = match crate::openapi::chats::chat_detail(session_id).await {
+            Ok(detail) => detail,
+            Err(error) => {
+                tracing::warn!(
+                    target: "longbridge::acp",
+                    %error,
+                    session_id,
+                    "failed to load chat detail; resuming with empty history"
+                );
+                return Ok(LoadedAgentSession {
+                    state: OpenApiAgentSession {
+                        acp_session_id: Some(session_id.to_owned()),
+                        ..Default::default()
+                    },
+                    history: stream::iter(Vec::new()).boxed(),
+                });
+            }
+        };
+        // Resume the server-side chat: the next prompt continues this
+        // conversation, appended after its most recent message.
+        let parent_message_id = detail.messages.last().map(|message| message.id.to_string());
         let state = OpenApiAgentSession {
             acp_session_id: Some(session_id.to_owned()),
+            conversation_id: Some(detail.chat.uid.clone()),
+            parent_message_id,
             ..Default::default()
         };
         // Replay each stored message as a history event: a user message becomes
