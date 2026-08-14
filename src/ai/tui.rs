@@ -1451,7 +1451,7 @@ fn render_chat(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatStat
 
 /// A centered welcome shown for a fresh, empty session.
 fn render_empty_state(f: &mut ratatui::Frame, area: Rect) {
-    let content = [
+    let mut content = vec![
         Line::from(Span::styled(
             t!("Ai.Title").to_string(),
             Style::default()
@@ -1464,11 +1464,19 @@ fn render_empty_state(f: &mut ratatui::Frame, area: Rect) {
             Style::default().fg(Color::Gray),
         )),
         Line::from(""),
-        Line::from(Span::styled(
-            t!("Ai.EmptyHint").to_string(),
-            Style::default().fg(Color::DarkGray),
-        )),
     ];
+    // A few example prompts to set the tone (inspiration, not clickable).
+    for key in ["Ai.Sample1", "Ai.Sample2", "Ai.Sample3"] {
+        content.push(Line::from(Span::styled(
+            format!("“{}”", t!(key)),
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+    content.push(Line::from(""));
+    content.push(Line::from(Span::styled(
+        t!("Ai.EmptyHint").to_string(),
+        Style::default().fg(Color::DarkGray),
+    )));
     let top = (area.height as usize).saturating_sub(content.len()) / 2;
     let mut lines = vec![Line::from(""); top];
     lines.extend(content);
