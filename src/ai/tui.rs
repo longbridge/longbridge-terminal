@@ -1926,7 +1926,10 @@ fn tape_spans(ui: &mut Ui, room: usize) -> Vec<Span<'static>> {
         if used > 0 {
             spans.push(Span::raw(GAP));
         }
-        spans.push(Span::styled(symbol.clone(), Style::default().fg(SYMBOL_FG)));
+        spans.push(Span::styled(
+            symbol.clone(),
+            Style::default().fg(Color::Gray),
+        ));
         if !price.is_empty() {
             spans.push(Span::styled(price.clone(), Style::default().fg(*color)));
         }
@@ -2929,12 +2932,13 @@ fn render_status(f: &mut ratatui::Frame, area: Rect, ui: &Ui, state: &ChatState)
 
 fn render_footer(f: &mut ratatui::Frame, area: Rect, ui: &Ui, editor: &Editor) {
     let focused = ui.view == View::Chat;
-    // No box. A rounded cyan frame around the prompt was the loudest thing on the
-    // screen, and the prompt does not need one to be found: the `❯` marks it, the
-    // same mark the reader's own turns carry in the transcript, so the line they
-    // are typing looks like the line it will become.
-    let [_, inner] = Layout::horizontal([Constraint::Length(MARKER_W), Constraint::Min(0)])
-        .areas(Rect { height: 1, ..area });
+    // The box stays — it is what separates the prompt from the transcript — but
+    // dim. A rounded cyan frame was the loudest thing on the screen.
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::DarkGray));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
     let marker_style = if focused {
         Style::default()
             .fg(Color::Cyan)
@@ -2942,16 +2946,14 @@ fn render_footer(f: &mut ratatui::Frame, area: Rect, ui: &Ui, editor: &Editor) {
     } else {
         Style::default().fg(Color::DarkGray)
     };
-    let body = Rect {
-        x: inner.x,
-        y: area.y,
-        width: inner.width,
-        height: area.height,
-    };
+    // Inside the box, the `❯` the reader's own turns carry in the transcript, so
+    // the line being typed looks like the line it will become.
+    let [marker, body] =
+        Layout::horizontal([Constraint::Length(MARKER_W), Constraint::Min(0)]).areas(inner);
     if !focused {
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(USER_MARKER, marker_style))),
-            area,
+            marker,
         );
         return;
     }
@@ -2965,24 +2967,21 @@ fn render_footer(f: &mut ratatui::Frame, area: Rect, ui: &Ui, editor: &Editor) {
     } else {
         lines.extend(editor.lines().iter().map(|l| Line::from(l.clone())));
     }
-    // The marker leads the first row; the rest are indented under it, so a
-    // multi-line prompt reads as one block.
+    // The marker leads the first row; the rest are blank, so a multi-line prompt
+    // reads as one block indented under it.
     f.render_widget(
         Paragraph::new(Text::from(
             (0..lines.len().max(1))
                 .map(|i| {
-                    Line::from(Span::styled(
-                        if i == 0 {
-                            USER_MARKER.to_string()
-                        } else {
-                            " ".repeat(usize::from(MARKER_W))
-                        },
-                        marker_style,
-                    ))
+                    if i == 0 {
+                        Line::from(Span::styled(USER_MARKER, marker_style))
+                    } else {
+                        Line::from("")
+                    }
                 })
                 .collect::<Vec<_>>(),
         )),
-        area,
+        marker,
     );
     f.render_widget(Paragraph::new(Text::from(lines)), body);
     let (cy, col) = editor.cursor();
@@ -3108,9 +3107,6 @@ fn user_lines(text: &str, width: usize) -> Vec<Line<'static>> {
     out
 }
 
-/// Colour of a security the reader can open.
-const SYMBOL_FG: Color = Color::Rgb(122, 196, 255);
-
 /// The mark on the reader's own lines, in the transcript and at the prompt: the
 /// line being typed should look like the line it will become.
 const USER_MARKER: &str = "❯ ";
@@ -3154,10 +3150,10 @@ fn link_symbols(
                 if range.start > at {
                     out.push(Span::styled(text[at..range.start].to_string(), span.style));
                 }
-                out.push(Span::styled(
-                    text[range.clone()].to_string(),
-                    span.style.fg(SYMBOL_FG),
-                ));
+                // Left in the prose's own style. A colour on the symbol fought
+                // with the price beside it — two tints on one short run reads as
+                // noise — so the hover underline is the affordance instead.
+                out.push(Span::styled(text[range.clone()].to_string(), span.style));
                 at = range.end;
                 if let Some(card) = quotes.get(&symbol) {
                     let chip = price_chip(card);
@@ -3274,9 +3270,10 @@ fn link_visible_symbols(window: &mut [Line<'static>], area: Rect, ui: &mut Ui) {
         let mut symbol_here: Option<String> = None;
         for span in &mut line.spans {
             let w = UnicodeWidthStr::width(span.content.as_ref()) as u16;
-            let target = (span.style.fg == Some(SYMBOL_FG))
-                .then(|| resolve(&span.content))
-                .flatten();
+            // A span that is exactly a security is one `link_symbols` split out:
+            // prose never arrives as a lone ticker. Identified by its text rather
+            // than by a marker colour, now that the symbol carries none.
+            let target = resolve(&span.content);
             if let Some(symbol) = target {
                 let rect = Rect {
                     x,
@@ -4849,10 +4846,41 @@ mod tests {
             .rev()
             .find(|r| r.contains(t!("Ai.Placeholder").as_ref()))
             .expect("the placeholder should be on screen");
-        assert!(prompt.starts_with("❯ "), "marked: {prompt:?}");
+        assert!(prompt.contains("❯ "), "marked: {prompt:?}");
+        // The box stays, dim: it is what separates the prompt from the transcript.
         assert!(
-            !rows.iter().any(|r| r.contains('╭') || r.contains('╰')),
-            "no box around the input: {rows:?}"
+            rows.iter().any(|r| r.contains('╭')),
+            "the input keeps its frame: {rows:?}"
+        );
+    }
+
+    /// The symbol carries no colour of its own: with a coloured price beside it,
+    /// two tints on one short run read as noise. The hover underline is the
+    /// affordance, and clicking still resolves the security.
+    #[test]
+    fn a_security_is_not_tinted() {
+        let mut quotes = std::collections::HashMap::new();
+        quotes.insert("700.HK".to_string(), card("700.HK", "512.5", "+1.28%", 1));
+        let lines = super::render_answer_lines(
+            "700.HK 走强。",
+            60,
+            &quotes,
+            &std::collections::HashMap::new(),
+        );
+        let spans: Vec<&ratatui::text::Span> = lines.iter().flat_map(|l| &l.spans).collect();
+        let symbol = spans
+            .iter()
+            .find(|s| s.content.as_ref() == "700.HK")
+            .expect("the symbol should be its own span");
+        assert_eq!(symbol.style.fg, None, "no colour of its own");
+        let price = spans
+            .iter()
+            .find(|s| s.content.contains("512.5"))
+            .expect("the price should be there");
+        assert_eq!(
+            price.style.fg,
+            Some(super::change_color(1)),
+            "only the price is tinted"
         );
     }
 }
