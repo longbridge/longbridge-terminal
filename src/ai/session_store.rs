@@ -113,6 +113,13 @@ pub fn save(id: &str, now: u64, state: &ChatState) {
     }
 }
 
+/// Delete one saved session by id. Returns whether a file was removed.
+pub fn delete(id: &str) -> bool {
+    dir()
+        .map(|d| d.join(format!("{}.json", sanitize(id))))
+        .is_some_and(|path| std::fs::remove_file(path).is_ok())
+}
+
 /// Delete every saved session. Best-effort: unreadable entries are skipped.
 pub fn clear() {
     let Some(dir) = dir() else { return };

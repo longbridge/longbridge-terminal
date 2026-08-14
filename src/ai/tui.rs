@@ -143,6 +143,8 @@ struct Ui {
     sel: usize,
     /// Highlighted entry in the slash-command palette.
     slash_sel: usize,
+    /// Live filter for the History list (case-insensitive title match).
+    search: String,
     /// Transient one-line notice shown in the status bar.
     notice: Option<String>,
     /// Last known mouse position, used to marquee the hovered row.
@@ -176,6 +178,7 @@ impl Ui {
             question: None,
             sel: 0,
             slash_sel: 0,
+            search: String::new(),
             notice: None,
             hover: None,
             tick: 0,
@@ -190,11 +193,20 @@ impl Ui {
         }
     }
 
+    /// History entries matching the current search, newest first.
+    fn visible_sessions(&self) -> Vec<&SessionSummary> {
+        let needle = self.search.to_lowercase();
+        self.sessions
+            .iter()
+            .filter(|s| needle.is_empty() || s.title.to_lowercase().contains(&needle))
+            .collect()
+    }
+
     /// Number of selectable rows in the active list view.
     fn row_count(&self) -> usize {
         match self.view {
             View::Chat => 0,
-            View::Sessions => self.sessions.len(),
+            View::Sessions => self.visible_sessions().len(),
             View::Settings => SETTINGS.len(),
             View::Agents => self.agents.len(),
             View::Question => self
@@ -212,6 +224,7 @@ impl Ui {
         self.notice = None;
         self.sel = 0;
         self.selection = None;
+        self.search.clear();
         if view != View::Question {
             self.question = None;
         }
@@ -349,11 +362,61 @@ fn on_key(
             on_question_key(key, ui, state, turn, tx);
             false
         }
+        View::Sessions => {
+            on_sessions_key(key, ui, state, agents_tx);
+            false
+        }
         _ => {
             on_list_key(key, ui, state, agents_tx);
             false
         }
     }
+}
+
+/// History view: arrows/Enter select and open, Del removes, typing filters.
+fn on_sessions_key(
+    key: crossterm::event::KeyEvent,
+    ui: &mut Ui,
+    state: &mut ChatState,
+    agents_tx: &UnboundedSender<Vec<AgentInfo>>,
+) {
+    match key.code {
+        KeyCode::Esc => {
+            if ui.search.is_empty() {
+                ui.switch(View::Chat);
+            } else {
+                ui.search.clear();
+                ui.clamp_sel();
+            }
+        }
+        KeyCode::Up => ui.sel = ui.sel.saturating_sub(1),
+        KeyCode::Down => {
+            let last = ui.row_count().saturating_sub(1);
+            ui.sel = (ui.sel + 1).min(last);
+        }
+        KeyCode::Enter => activate(ui, state, agents_tx),
+        KeyCode::Delete => delete_selected_session(ui),
+        KeyCode::Backspace => {
+            ui.search.pop();
+            ui.clamp_sel();
+        }
+        KeyCode::Char(c) => {
+            ui.search.push(c);
+            ui.sel = 0;
+        }
+        _ => {}
+    }
+}
+
+/// Delete the highlighted history entry and refresh the list.
+fn delete_selected_session(ui: &mut Ui) {
+    let Some(id) = ui.visible_sessions().get(ui.sel).map(|s| s.id.clone()) else {
+        return;
+    };
+    session_store::delete(&id);
+    ui.sessions = session_store::list();
+    ui.clamp_sel();
+    ui.notice = Some(t!("Ai.SessionDeleted").to_string());
 }
 
 fn on_chat_key(
@@ -663,11 +726,10 @@ fn cycle_view(ui: &mut Ui) {
 fn activate(ui: &mut Ui, state: &mut ChatState, agents_tx: &UnboundedSender<Vec<AgentInfo>>) {
     match ui.view {
         View::Sessions => {
-            if let Some(summary) = ui.sessions.get(ui.sel) {
-                if let Some(session) = session_store::load(&summary.id) {
-                    session_store::restore(session, state);
-                    ui.switch(View::Chat);
-                }
+            let id = ui.visible_sessions().get(ui.sel).map(|s| s.id.clone());
+            if let Some(session) = id.and_then(|id| session_store::load(&id)) {
+                session_store::restore(session, state);
+                ui.switch(View::Chat);
             }
         }
         View::Settings => match SETTINGS.get(ui.sel) {
@@ -1219,26 +1281,66 @@ fn render_slash_dropdown(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, editor
     f.render_widget(Paragraph::new(Text::from(lines)), box_area);
 }
 
-/// Render the History list and record a hit rectangle per visible row.
+/// Render the History list: an optional search line, then entries with a
+/// relative timestamp, and a hit rectangle per visible row.
 fn render_sessions(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
-    if ui.sessions.is_empty() {
+    // A search line appears above the list only while filtering.
+    let list_area = if ui.search.is_empty() {
+        area
+    } else {
+        let [top, rest] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
+        f.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("/ ", Style::default().fg(Color::Cyan)),
+                Span::raw(ui.search.clone()),
+                Span::styled("▏", Style::default().fg(Color::Cyan)),
+            ])),
+            top,
+        );
+        rest
+    };
+
+    let now = now_secs();
+    let rows: Vec<(usize, String)> = ui
+        .visible_sessions()
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            (
+                i,
+                format!("{}   ·  {}", s.title, relative_time(s.updated_at, now)),
+            )
+        })
+        .collect();
+    if rows.is_empty() {
         ui.rows.clear();
+        let key = if ui.sessions.is_empty() {
+            "Ai.SessionsEmpty"
+        } else {
+            "Ai.SessionsNoMatch"
+        };
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                t!("Ai.SessionsEmpty").to_string(),
+                t!(key).to_string(),
                 Style::default().fg(Color::DarkGray),
             ))),
-            area,
+            list_area,
         );
         return;
     }
-    let rows: Vec<(usize, String)> = ui
-        .sessions
-        .iter()
-        .enumerate()
-        .map(|(i, s)| (i, s.title.clone()))
-        .collect();
-    render_rows(f, area, ui, &rows);
+    render_rows(f, list_area, ui, &rows);
+}
+
+/// Compact "3m / 2h / 5d" age of an entry, from Unix seconds.
+fn relative_time(updated: u64, now: u64) -> String {
+    let secs = now.saturating_sub(updated);
+    if secs < 3600 {
+        format!("{}m", secs / 60)
+    } else if secs < 86_400 {
+        format!("{}h", secs / 3600)
+    } else {
+        format!("{}d", secs / 86_400)
+    }
 }
 
 /// Render the Settings panel and record a hit rectangle per row.
@@ -1692,6 +1794,14 @@ mod tests {
         let text = "abcd";
         let n = text.chars().count() + 3; // trailing gap
         assert_eq!(marquee(text, 2, 0), marquee(text, 2, n as u64));
+    }
+
+    #[test]
+    fn relative_time_buckets_by_unit() {
+        use super::relative_time;
+        assert_eq!(relative_time(0, 120), "2m");
+        assert_eq!(relative_time(0, 7200), "2h");
+        assert_eq!(relative_time(0, 172_800), "2d");
     }
 
     #[test]
