@@ -10,6 +10,8 @@
 //! this reuses the shared streaming in [`crate::cli::agent::client`] and has no
 //! local tool/workspace layer (unlike grok-build, which edits and runs code).
 
+pub mod editor;
+pub mod markdown;
 pub mod runtime;
 pub mod session_store;
 pub mod state;

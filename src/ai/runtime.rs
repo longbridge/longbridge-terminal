@@ -87,9 +87,16 @@ fn map_agent_event(ev: &AgentEvent) -> Vec<ChatEvent> {
             references,
             further_questions,
             ..
-        } => footer(references, further_questions)
-            .map(|text| vec![ChatEvent::Footer(text)])
-            .unwrap_or_default(),
+        } => {
+            if references.is_empty() && further_questions.is_empty() {
+                Vec::new()
+            } else {
+                vec![ChatEvent::Meta {
+                    references: references.clone(),
+                    further: further_questions.clone(),
+                }]
+            }
+        }
         AgentEvent::HumanInteractionRequired { interrupt } => vec![
             ChatEvent::Delta(interrupt_text(interrupt)),
             ChatEvent::Interrupt(interrupt.clone()),
@@ -127,6 +134,17 @@ fn build_answers(interrupt: &Value, answer: &str) -> longbridge::agent::AnswersB
     by_tool_call
 }
 
+/// Wrap per-question answers into the SDK's `{tool_call_id: {question: answer}}`
+/// shape for resuming an interrupted conversation.
+pub fn answers_by_tool_call(
+    tool_call_id: &str,
+    answers: &HashMap<String, String>,
+) -> longbridge::agent::AnswersByToolCall {
+    let mut by_tool_call: longbridge::agent::AnswersByToolCall = HashMap::new();
+    by_tool_call.insert(tool_call_id.to_string(), answers.clone());
+    by_tool_call
+}
+
 fn interrupt_text(interrupt: &Value) -> String {
     let mut out = format!("\n{}", t!("Agent.Interrupted"));
     if let Some(questions) = interrupt.get("questions").and_then(Value::as_array) {
@@ -138,30 +156,4 @@ fn interrupt_text(interrupt: &Value) -> String {
         }
     }
     out
-}
-
-fn footer(references: &[longbridge::agent::Reference], further: &[String]) -> Option<String> {
-    use std::fmt::Write;
-    if references.is_empty() && further.is_empty() {
-        return None;
-    }
-    let mut out = String::new();
-    if !references.is_empty() {
-        let _ = write!(out, "\n\n{}:", t!("Agent.References"));
-        for r in references {
-            let label = if r.title.is_empty() {
-                r.ref_type.clone()
-            } else {
-                r.title.clone()
-            };
-            let _ = write!(out, "\n[{}] {label}", r.index);
-        }
-    }
-    if !further.is_empty() {
-        let _ = write!(out, "\n\n{}:", t!("Agent.FurtherQuestions"));
-        for q in further {
-            let _ = write!(out, "\n- {q}");
-        }
-    }
-    Some(out)
 }

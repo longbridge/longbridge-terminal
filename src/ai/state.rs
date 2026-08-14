@@ -6,6 +6,7 @@
 //! scattered across the UI loop) is what lets the view stay a pure function of
 //! state.
 
+use longbridge::agent::Reference;
 use serde_json::Value;
 
 /// Who authored a transcript line.
@@ -40,8 +41,12 @@ pub enum ChatEvent {
     ToolFailed(String),
     /// The agent paused to ask the user something; the next prompt answers it.
     Interrupt(Value),
-    /// A trailing block (references / suggested follow-ups) to append.
-    Footer(String),
+    /// End-of-turn metadata (source references / suggested follow-ups) rendered
+    /// as interactive chips rather than folded into the answer text.
+    Meta {
+        references: Vec<Reference>,
+        further: Vec<String>,
+    },
     /// The turn ended. Finalizes the streamed answer into a message.
     TurnFinished { error: Option<String> },
 }
@@ -64,6 +69,10 @@ pub struct ChatState {
     pub pending_interrupt: Option<Value>,
     /// Tools that failed during the active turn.
     pub tool_failures: Vec<String>,
+    /// Source references from the latest completed turn (rendered as chips).
+    pub references: Vec<Reference>,
+    /// Suggested follow-up questions from the latest turn (click to send).
+    pub further: Vec<String>,
 }
 
 impl ChatState {
@@ -91,6 +100,8 @@ impl ChatState {
                 self.busy = true;
                 self.streaming = Some(String::new());
                 self.tool_failures.clear();
+                self.references.clear();
+                self.further.clear();
             }
             ChatEvent::TurnStarted {
                 chat_uid,
@@ -107,9 +118,12 @@ impl ChatState {
             ChatEvent::Status(status) => self.status = status,
             ChatEvent::ToolFailed(name) => self.tool_failures.push(name),
             ChatEvent::Interrupt(interrupt) => self.pending_interrupt = Some(interrupt),
-            ChatEvent::Footer(text) => {
-                let buf = self.streaming.get_or_insert_with(String::new);
-                buf.push_str(&text);
+            ChatEvent::Meta {
+                references,
+                further,
+            } => {
+                self.references = references;
+                self.further = further;
             }
             ChatEvent::TurnFinished { error } => self.finish_turn(error),
         }
@@ -168,6 +182,8 @@ impl ChatState {
         self.message_id = None;
         self.pending_interrupt = None;
         self.tool_failures.clear();
+        self.references.clear();
+        self.further.clear();
     }
 
     /// Cancel the active turn, folding any partial answer into the transcript.
