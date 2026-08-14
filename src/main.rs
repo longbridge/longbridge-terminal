@@ -3,6 +3,7 @@ use clap::Parser;
 use std::io::Write;
 use std::time::Instant;
 
+pub mod ai;
 pub mod auth;
 pub mod cli;
 pub mod data;
@@ -33,7 +34,7 @@ fn print_cli_error(e: &anyhow::Error, using_api_key: bool) {
     // Strip terminal control/escape sequences from server-controlled text
     // before it hits stderr, so a hostile API error cannot repaint the
     // terminal. Reuses the shared helper (keeps newlines/tabs).
-    use crate::cli::agent::render::strip_control_chars as sanitize_server_text;
+    use crate::utils::text::strip_control_chars as sanitize_server_text;
 
     if let Some(lb_err) = e.downcast_ref::<LbError>() {
         match lb_err {
@@ -249,6 +250,45 @@ async fn main() {
             return;
         }
 
+        // `longbridge ai`: the interactive Longbridge AI chat TUI. Needs a live
+        // context, so a failed init exits (a prompt turn cannot run without it).
+        Some(cli::Commands::Ai { agent }) => {
+            // The chat opens signed out. Everything that needs credentials is
+            // guarded inside it, and Settings offers to sign in — which then builds
+            // the contexts in place, so the reader carries on in the same session.
+            // Refusing to start was the wrong call: signing in is the one thing you
+            // would come here to do without a token.
+            let quote_receiver: Option<ai::QuoteStream> = match openapi::init_contexts().await {
+                Ok((rx, using_api_key, _)) => {
+                    if let Err(e) = openapi::quote().member_id().await {
+                        print_cli_error(&anyhow::anyhow!(e), using_api_key);
+                        return;
+                    }
+                    Some(Box::pin(rx))
+                }
+                Err(_) => None,
+            };
+
+            let hook = std::panic::take_hook();
+            std::panic::set_hook(Box::new(move |info| {
+                Terminal::exit_full_screen();
+                hook(info);
+            }));
+
+            Terminal::enter_full_screen();
+            let result = ai::run(agent, quote_receiver).await;
+            Terminal::exit_full_screen();
+            match result {
+                // Signing in or out is reported here, outside the alternate
+                // screen — printed inside it, the message would scroll away with
+                // it.
+                Ok(Some(note)) => println!("{note}"),
+                Ok(None) => {}
+                Err(e) => eprintln!("Error: {e}"),
+            }
+            return;
+        }
+
         Some(cli::Commands::Init { invite_code }) => {
             if let Err(e) = cli::init::cmd_init(&invite_code) {
                 eprintln!("Error: {e}");
@@ -365,7 +405,7 @@ async fn main() {
         Some(cli::Commands::Acp { agent_id, cmd: _ }) => {
             let agent_id = agent_id
                 .or_else(|| std::env::var("LONGBRIDGE_AGENT_ID").ok())
-                .unwrap_or_else(|| "chatbot".to_string());
+                .unwrap_or_else(|| cli::agent::DEFAULT_AGENT_UID.to_string());
             let auth_methods = vec![longbridge_ai_acp::acp::schema::v1::AuthMethod::Terminal(
                 longbridge_ai_acp::acp::schema::v1::AuthMethodTerminal::new(
                     "longbridge-login",

@@ -11,9 +11,16 @@ pub mod chat;
 pub mod chats;
 pub mod client;
 pub mod events;
-pub mod render;
 pub mod skills;
 pub mod workspace;
+
+/// Longbridge AI's own assistant — the agent every entry point defaults to.
+///
+/// Agent uids are an implementation detail of the hosted service, not names
+/// users pick from a list, so the `ai` TUI never displays one: it identifies
+/// the default agent as "Longbridge AI" and takes a uid only as an argument to
+/// `/agent`.
+pub const DEFAULT_AGENT_UID: &str = "chatbot";
 
 /// Agent modes `agent chat` can drive. Anything else is hidden from
 /// `agent list` unless `--all` is passed.
@@ -269,8 +276,7 @@ pub(crate) async fn collect_agents(
 /// so a hostile value cannot smuggle newlines into the note or flood stderr.
 pub(crate) fn render_mode_label(mode: &str) -> String {
     const MAX: usize = 40;
-    let flat =
-        crate::cli::agent::render::strip_control_chars(mode).replace(['\n', '\r', '\t'], " ");
+    let flat = crate::utils::text::strip_control_chars(mode).replace(['\n', '\r', '\t'], " ");
     let flat = flat.trim();
     if flat.is_empty() {
         return "<empty>".to_string();
@@ -420,7 +426,7 @@ async fn cmd_list(
 /// embedded OSC/SGR sequence could otherwise repaint the table or the title
 /// bar). JSON output is untouched: `serde_json` escapes control characters.
 fn agent_rows(agents: &[AgentInfo]) -> Vec<Vec<String>> {
-    use render::strip_control_chars;
+    use crate::utils::text::strip_control_chars;
     agents
         .iter()
         .map(|a| {

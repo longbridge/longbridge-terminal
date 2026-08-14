@@ -145,7 +145,7 @@ pub enum Commands {
     /// Serve a Longbridge AI agent over ACP on stdin/stdout
     ///
     /// The process speaks newline-delimited JSON-RPC and is intended to be
-    /// launched by ACP clients such as Zed and Cherry Studio.
+    /// launched by an ACP-compatible AI chat client.
     /// Example: longbridge acp
     Acp {
         /// Longbridge AI agent UID (defaults to the main `chatbot` agent)
@@ -156,6 +156,25 @@ pub enum Commands {
         /// command (see [`AcpCmd`]).
         #[command(subcommand)]
         cmd: Option<AcpCmd>,
+    },
+
+    /// Chat with Longbridge AI in a full-screen TUI
+    ///
+    /// An interactive assistant for markets, quotes, filings, and your
+    /// portfolio. Answers stream live; Esc cancels a turn or quits.
+    /// Example: longbridge ai
+    Ai {
+        /// Agent UID to converse with (from `longbridge agent list`); defaults
+        /// to the Longbridge AI assistant
+        ///
+        /// The default agent's UID is an internal handle, so it is not printed
+        /// here — inside the chat, `/agent reset` returns to it by name.
+        #[arg(
+            long,
+            default_value = crate::cli::agent::DEFAULT_AGENT_UID,
+            hide_default_value = true
+        )]
+        agent: String,
     },
 
     /// Generate shell completion script
@@ -4146,6 +4165,7 @@ IpoCmd::ProfitLoss { period, page, count } => {
 
         Commands::Auth { .. }
         | Commands::Acp { .. }
+        | Commands::Ai { .. }
         | Commands::Tui
         | Commands::Check
         | Commands::Update { .. }

@@ -26,7 +26,7 @@ pub async fn cmd_workspaces(format: &OutputFormat, verbose: bool) -> Result<()> 
 /// server-supplied and printed verbatim, so they are stripped of control
 /// characters first (JSON output stays raw — serde escapes it safely).
 fn workspace_rows(workspaces: &[WorkspaceInfo]) -> Vec<Vec<String>> {
-    use super::render::strip_control_chars;
+    use crate::utils::text::strip_control_chars;
     workspaces
         .iter()
         .map(|w| {

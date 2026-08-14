@@ -226,6 +226,9 @@ fn map_event(ev: ConversationStreamEvent) -> Option<AgentEvent> {
         ConversationStreamEvent::ChatFinished(p) => AgentEvent::ChatFinished {
             error_message: p.error_message,
         },
+        ConversationStreamEvent::ChatTitleUpdated(p) => {
+            AgentEvent::ChatTitleUpdated { title: p.title }
+        }
         ConversationStreamEvent::Other { event, .. } => AgentEvent::Unknown { event },
         // Progress-only events the CLI does not display.
         ConversationStreamEvent::Ping
@@ -239,8 +242,7 @@ fn map_event(ev: ConversationStreamEvent) -> Option<AgentEvent> {
         | ConversationStreamEvent::QueryMasked(_)
         | ConversationStreamEvent::PlanChanged(_)
         | ConversationStreamEvent::ContextCompressStarted(_)
-        | ConversationStreamEvent::ContextCompressFinished(_)
-        | ConversationStreamEvent::ChatTitleUpdated(_) => return None,
+        | ConversationStreamEvent::ContextCompressFinished(_) => return None,
     })
 }
 
@@ -304,7 +306,7 @@ async fn open_conversation_stream(
 pub async fn stream_conversation(
     req: ConversationRequest,
     verbose: bool,
-    on_event: &mut dyn FnMut(AgentEvent),
+    on_event: &mut (dyn FnMut(AgentEvent) + Send),
 ) -> Result<()> {
     ensure_oauth_auth(crate::openapi::using_api_key())?;
     let ctx = crate::openapi::agent();

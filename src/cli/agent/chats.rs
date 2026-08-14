@@ -5,9 +5,9 @@
 
 use anyhow::Result;
 
-use super::render::strip_control_chars;
 use crate::cli::output::{fmt_unix_ts, print_json_value, print_table};
 use crate::cli::OutputFormat;
+use crate::utils::text::strip_control_chars;
 
 /// `agent chats` — GET /v1/ai/chats.
 pub async fn cmd_chats(

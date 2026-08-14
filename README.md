@@ -486,6 +486,16 @@ longbridge tui
 
 Features: real-time watchlist, candlestick charts, portfolio view, stock search, Vim-like keybindings.
 
+## Longbridge AI chat
+
+A full-screen chat TUI backed by Longbridge AI:
+
+```bash
+longbridge ai [--agent <agent-id>]
+```
+
+Features: streaming answers rendered as Markdown with charts, tables, syntax-highlighted code, and live quote cards; click any security an answer mentions (or `/quote 700.HK`) for a floating live quote, with the securities of the session and their quotes on a rotating title-bar ticker; a `/` command palette (`/new /copy /export /quote /resume /settings /agent /login /logout /exit /help`); opens signed out too, with sign-in completed in place; the session and sign in/out under `/settings`, alongside preferences (tool-call detail, done notification, quote cards, title-bar ticker, up/down colours); server-synced conversations (`/v1/ai/chats`) reopened with `/resume` and searchable in place; drag-to-select copy (OSC 52) and `/export` to Markdown; multi-line input with paste and prompt history. `/agent <agent-id>` switches agent for a fresh conversation and `/agent reset` returns to the default. Type `exit` or press Ctrl+C twice to quit.
+
 ## ACP agent server
 
 Expose the main Longbridge AI agent (`chatbot`) to an [ACP](https://agentclientprotocol.com) client over stdio:

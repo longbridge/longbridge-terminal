@@ -10,10 +10,12 @@ A Rust-based CLI (`longbridge`) that wraps every Longbridge OpenAPI endpoint for
 
 ### Tech Stack
 
-- **UI Framework**: Ratatui (v0.24.0) - TUI rendering
-- **Async Runtime**: Tokio (v1.33.0) - Async I/O
+- **UI Framework**: Ratatui (v0.30) - TUI rendering
+- **Async Runtime**: Tokio (v1.33+) - Async I/O
 - **ECS Framework**: Bevy ECS (v0.11) - Entity-Component-System architecture
-- **Market SDK**: longbridge (v4.0.0) - Longbridge OpenAPI Rust SDK (dependency alias: `longbridge-sdk`)
+- **Market SDK**: longbridge - Longbridge OpenAPI Rust SDK, tracked as a git dependency on `longbridge/openapi` `main` (dependency alias: `longbridge-sdk`)
+
+Check `Cargo.toml` / `Cargo.lock` rather than this list before relying on a version.
 - **State Management**: DashMap, Atomic, RwLock - Thread-safe global state
 
 ### Key Modules
@@ -198,7 +200,7 @@ Project uses strict `clippy::pedantic` rules with the following exceptions:
 
 ### Documentation
 
-- Rust SDK (crates.io): longbridge 4.0.0
+- Rust SDK: https://github.com/longbridge/openapi (we track the `main` branch, not a crates.io release)
 - OpenAPI Full Docs: https://open.longbridge.com/llms-full.txt
 - Developer Portal: https://open.longbridge.com
 
