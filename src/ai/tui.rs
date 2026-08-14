@@ -2441,7 +2441,16 @@ fn render_answer_lines(
     quotes: &HashMap<String, super::quotes::QuoteCardData>,
 ) -> Vec<Line<'static>> {
     use super::answer::{replace_inline_markers, segment_answer, Segment};
-    let mut out = Vec::new();
+    let mut out: Vec<Line<'static>> = Vec::new();
+    // A drawn block — a chart, a card, a reference — needs air around it or it
+    // reads as another paragraph of the prose it interrupts. Only one blank row
+    // either side: the block already carries its own shape.
+    let breathe = |out: &mut Vec<Line<'static>>| {
+        let blank = |l: &Line| l.spans.iter().all(|s| s.content.trim().is_empty());
+        if !out.is_empty() && !out.last().is_some_and(blank) {
+            out.push(Line::from(""));
+        }
+    };
     for segment in segment_answer(answer) {
         match segment {
             Segment::Text(text) => {
@@ -2452,9 +2461,25 @@ fn render_answer_lines(
             // (line, volume, axes) and sizes itself to `width`. Going through
             // the CLI's ANSI form only to repaint every row one flat color threw
             // that away.
-            Segment::VisChart(spec) => out.extend(super::chart::render(&spec, width)),
-            Segment::XWidget(src) => out.extend(render_widget(&src, width, quotes)),
+            Segment::VisChart(spec) => {
+                breathe(&mut out);
+                out.extend(super::chart::render(&spec, width));
+                out.push(Line::from(""));
+            }
+            Segment::XWidget(src) => {
+                breathe(&mut out);
+                out.extend(render_widget(&src, width, quotes));
+                out.push(Line::from(""));
+            }
         }
+    }
+    // A block at the very end leaves a trailing blank the turn separator would
+    // double.
+    while out
+        .last()
+        .is_some_and(|l| l.spans.iter().all(|s| s.content.trim().is_empty()) && out.len() > 1)
+    {
+        out.pop();
     }
     out
 }
@@ -3432,5 +3457,50 @@ mod tests {
                 });
         assert!(heights.contains(&mark.len()), "a bar spans every row");
         assert!(heights.contains(&0), "the gaps stay empty top to bottom");
+    }
+
+    /// A drawn block sits in its own air, like a table does: prose, blank, block,
+    /// blank, prose. Without it a chart read as another paragraph.
+    #[test]
+    fn a_drawn_block_gets_a_blank_row_either_side() {
+        let answer = "before\n\n```vis-chart\n{\"type\":\"line\",\"data\":[{\"time\":\"1/2\",\"value\":1.0},{\"time\":\"1/9\",\"value\":2.0}]}\n```\n\nafter";
+        let lines = super::render_answer_lines(answer, 50, &std::collections::HashMap::new());
+        let text: Vec<String> = lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect();
+        let before = text
+            .iter()
+            .position(|l| l.contains("before"))
+            .expect("prose");
+        let after = text
+            .iter()
+            .position(|l| l.contains("after"))
+            .expect("prose");
+        let chart = text
+            .iter()
+            .position(|l| l.chars().any(|c| ('\u{2801}'..='\u{28FF}').contains(&c)))
+            .expect("a drawn chart");
+        assert!(before < chart && chart < after, "{text:?}");
+        assert!(
+            text[chart - 1].is_empty() || text[before + 1].is_empty(),
+            "a blank row above the block: {text:?}"
+        );
+        assert!(
+            text[after - 1].is_empty(),
+            "a blank row below the block: {text:?}"
+        );
+        // And never two blanks where one will do.
+        assert!(
+            !text.windows(3).any(|w| w.iter().all(String::is_empty)),
+            "no run of three blank rows: {text:?}"
+        );
     }
 }

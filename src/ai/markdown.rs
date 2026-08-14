@@ -139,10 +139,10 @@ pub fn render(md: &str, width: usize) -> Vec<Line<'static>> {
             Block::Chart(spec) => render_chart(&spec, width, &mut out),
             Block::Math(lines) => render_math(&lines, width, &mut out),
             Block::Heading(level, text) => render_heading(level, &text, width, &mut out),
-            Block::Rule => out.push(Line::from(Span::styled(
-                "─".repeat(width.max(1)),
-                Style::default().fg(BORDER),
-            ))),
+            // A short dim dash, not a rule across the page: the break is a
+            // pause between sections, and a full-width line plus the blank rows
+            // either side of it shouted louder than the sections it separated.
+            Block::Rule => out.push(Line::from(Span::styled("───", Style::default().fg(BORDER)))),
         }
     }
     // Prose blocks end with their own trailing blank; drop it so the answer
@@ -900,16 +900,21 @@ mod tests {
         }
     }
 
+    /// A section break is a pause, not a divider across the page: a full-width
+    /// rule with blank rows either side outshouted the sections it separated.
     #[test]
-    fn thematic_break_becomes_a_rule() {
-        let lines = render("above\n\n---\n\nbelow", 20);
+    fn thematic_break_is_a_short_dash() {
+        let width = 20;
+        let lines = render("above\n\n---\n\nbelow", width);
+        let rule = lines
+            .iter()
+            .flat_map(|l| &l.spans)
+            .find(|s| s.content.starts_with('─'))
+            .expect("`---` should draw a break");
+        let w = rule.content.chars().count();
         assert!(
-            lines.iter().any(|l| {
-                l.spans
-                    .iter()
-                    .any(|s| s.content.starts_with('─') && s.content.chars().count() == 20)
-            }),
-            "`---` should draw a full-width rule"
+            (2..=4).contains(&w),
+            "the break should be a short dash, got {w} of {width} columns"
         );
     }
 
