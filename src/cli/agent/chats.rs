@@ -1,7 +1,9 @@
 //! `agent chats`: list the account's chats (conversations) across agents.
 //! `agent chat-detail`: fetch one chat's detail, including its messages.
+//!
+//! Both are thin renderers over the shared [`crate::openapi::chats`] client.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use super::render::strip_control_chars;
 use crate::cli::output::{fmt_unix_ts, print_json_value, print_table};
@@ -18,19 +20,7 @@ pub async fn cmd_chats(
     if verbose {
         eprintln!("* GET /v1/ai/chats");
     }
-    let mut opts = longbridge::agent::GetChatsOptions::new()
-        .page(page as i32)
-        .limit(count as i32);
-    if let Some(exclude) = exclude_agent_uids {
-        opts = opts.exclude_agent_uids(exclude);
-    }
-    let resp = crate::openapi::global_rate_limiter()
-        .execute("agent_chats", || {
-            let opts = opts.clone();
-            Box::pin(async move { crate::openapi::agent().chats(opts).await })
-        })
-        .await
-        .context("Failed to list AI chats")?;
+    let resp = crate::openapi::chats::list_chats(page, count, exclude_agent_uids).await?;
 
     match format {
         OutputFormat::Json => print_json_value(&serde_json::to_value(&resp)?, format),
@@ -58,13 +48,7 @@ pub async fn cmd_chat_detail(chat_uid: String, format: &OutputFormat, verbose: b
     if verbose {
         eprintln!("* GET /v1/ai/chats/{chat_uid}");
     }
-    let resp = crate::openapi::global_rate_limiter()
-        .execute("agent_chat_detail", || {
-            let chat_uid = chat_uid.clone();
-            Box::pin(async move { crate::openapi::agent().chat(chat_uid).await })
-        })
-        .await
-        .context("Failed to get AI chat detail")?;
+    let resp = crate::openapi::chats::chat_detail(&chat_uid).await?;
 
     match format {
         OutputFormat::Json => print_json_value(&serde_json::to_value(&resp)?, format),
@@ -78,17 +62,10 @@ pub async fn cmd_chat_detail(chat_uid: String, format: &OutputFormat, verbose: b
                 .messages
                 .iter()
                 .map(|m| {
-                    // Join the text chunks into a single, single-line preview.
-                    let text: String = m
-                        .chunks
-                        .iter()
-                        .map(|ch| ch.content.as_str())
-                        .collect::<Vec<_>>()
-                        .join(" ");
                     vec![
                         m.id.to_string(),
                         strip_control_chars(&m.sender),
-                        strip_control_chars(&text),
+                        strip_control_chars(&m.text()),
                         fmt_unix_ts(m.created_at),
                     ]
                 })

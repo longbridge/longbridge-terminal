@@ -6,14 +6,7 @@ use longbridge_ai_acp::{
     LoadedAgentSession,
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use std::{
-    fmt::Write as _,
-    fs,
-    path::{Path, PathBuf},
-    sync::{Arc, Mutex},
-    time::{Duration, Instant},
-};
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct OpenApiAgentSession {
@@ -157,142 +150,13 @@ fn normalize_answer(question: &PendingQuestion, input: &str) -> Result<String, B
 pub struct OpenApiAgent {
     context: longbridge::AgentContext,
     agent_id: String,
-    history: Arc<Mutex<SessionHistory>>,
-    history_path: Option<Arc<PathBuf>>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-struct StoredSession {
-    session_id: String,
-    cwd: PathBuf,
-    title: Option<String>,
-    state: OpenApiAgentSession,
-    events: Vec<AgentEvent<OpenApiAgentSession>>,
-}
-
-#[derive(Default, Serialize, Deserialize)]
-struct SessionHistory {
-    #[serde(default)]
-    sessions: Vec<StoredSession>,
-}
-
-impl SessionHistory {
-    const PAGE_SIZE: usize = 50;
-    const MAX_SESSIONS: usize = 200;
-
-    fn list(&self, cwd: Option<&Path>, cursor: Option<&str>) -> AgentSessionPage {
-        let offset = cursor
-            .and_then(|cursor| cursor.parse::<usize>().ok())
-            .unwrap_or_default();
-        let matching = self
-            .sessions
-            .iter()
-            .rev()
-            .filter(|session| cwd.is_none_or(|cwd| session.cwd == cwd))
-            .skip(offset)
-            .take(Self::PAGE_SIZE + 1)
-            .collect::<Vec<_>>();
-        let has_more = matching.len() > Self::PAGE_SIZE;
-        let sessions = matching
-            .into_iter()
-            .take(Self::PAGE_SIZE)
-            .map(|session| AgentSessionInfo {
-                session_id: session.session_id.clone(),
-                cwd: session.cwd.clone(),
-                title: session.title.clone(),
-                updated_at: None,
-            })
-            .collect::<Vec<_>>();
-        AgentSessionPage {
-            next_cursor: has_more.then(|| (offset + sessions.len()).to_string()),
-            sessions,
-        }
-    }
-
-    fn get(&self, session_id: &str) -> Option<StoredSession> {
-        self.sessions
-            .iter()
-            .find(|session| session.session_id == session_id)
-            .cloned()
-    }
-
-    fn upsert(&mut self, session: StoredSession) {
-        self.sessions
-            .retain(|existing| existing.session_id != session.session_id);
-        self.sessions.push(session);
-        if self.sessions.len() > Self::MAX_SESSIONS {
-            self.sessions
-                .drain(..self.sessions.len() - Self::MAX_SESSIONS);
-        }
-    }
-
-    fn load(path: &Path) -> Self {
-        fs::read(path)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .unwrap_or_default()
-    }
-
-    fn save(&self, path: &Path) -> Result<(), BackendError> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let temporary = path.with_extension("json.tmp");
-        fs::write(&temporary, serde_json::to_vec(self)?)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-            fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600))?;
-        }
-        #[cfg(windows)]
-        if path.exists() {
-            fs::remove_file(path)?;
-        }
-        fs::rename(temporary, path)?;
-        Ok(())
-    }
-}
-
-fn session_history_path(agent_id: &str) -> Option<PathBuf> {
-    let digest = Sha256::digest(agent_id.as_bytes());
-    let key = digest[..12]
-        .iter()
-        .fold(String::with_capacity(24), |mut key, byte| {
-            let _ = write!(key, "{byte:02x}");
-            key
-        });
-    dirs::home_dir().map(|home| {
-        home.join(".longbridge")
-            .join("acp")
-            .join(format!("sessions-{key}.json"))
-    })
 }
 
 impl OpenApiAgent {
     pub fn new(context: longbridge::AgentContext, agent_id: impl Into<String>) -> Self {
-        let agent_id = agent_id.into();
-        let history_path = session_history_path(&agent_id).map(Arc::new);
-        let history = history_path
-            .as_deref()
-            .map_or_else(SessionHistory::default, |path| SessionHistory::load(path));
         Self {
             context,
-            agent_id,
-            history: Arc::new(Mutex::new(history)),
-            history_path,
-        }
-    }
-
-    fn persist_history(&self, history: &SessionHistory) {
-        if let Some(path) = self.history_path.as_deref() {
-            if let Err(error) = history.save(path) {
-                tracing::warn!(
-                    target: "longbridge::acp",
-                    %error,
-                    path = %path.display(),
-                    "failed to persist ACP session history"
-                );
-            }
+            agent_id: agent_id.into(),
         }
     }
 }
@@ -302,34 +166,44 @@ impl AgentBackend for OpenApiAgent {
     type Session = OpenApiAgentSession;
     const SESSION_HISTORY: bool = true;
 
-    fn new_session(&self, session_id: &str, cwd: &Path) -> Self::Session {
-        let state = OpenApiAgentSession {
+    fn new_session(&self, session_id: &str, _cwd: &Path) -> Self::Session {
+        OpenApiAgentSession {
             acp_session_id: Some(session_id.to_owned()),
             ..Default::default()
-        };
-        if let Ok(mut history) = self.history.lock() {
-            history.upsert(StoredSession {
-                session_id: session_id.to_owned(),
-                cwd: cwd.to_path_buf(),
-                title: None,
-                state: state.clone(),
-                events: Vec::new(),
-            });
-            self.persist_history(&history);
         }
-        state
     }
 
     async fn list_sessions(
         &self,
-        cwd: Option<&Path>,
+        _cwd: Option<&Path>,
         cursor: Option<&str>,
     ) -> Result<AgentSessionPage, BackendError> {
-        Ok(self
-            .history
-            .lock()
-            .map_err(|_| std::io::Error::other("session history lock is poisoned"))?
-            .list(cwd, cursor))
+        const PAGE_SIZE: u32 = 50;
+        // Server chats are account-scoped, not per-directory, so the `cwd`
+        // filter is ignored — every chat is returned. The cursor is the
+        // 1-based page number.
+        let page = cursor
+            .and_then(|cursor| cursor.parse::<u32>().ok())
+            .unwrap_or(1)
+            .max(1);
+        let resp = crate::openapi::chats::list_chats(page, PAGE_SIZE, None)
+            .await
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        let has_more = resp.chats.len() as u32 >= PAGE_SIZE;
+        let sessions = resp
+            .chats
+            .into_iter()
+            .map(|chat| AgentSessionInfo {
+                session_id: chat.uid,
+                cwd: PathBuf::new(),
+                title: (!chat.name.is_empty()).then_some(chat.name),
+                updated_at: (chat.updated_at > 0).then(|| chat.updated_at.to_string()),
+            })
+            .collect();
+        Ok(AgentSessionPage {
+            sessions,
+            next_cursor: has_more.then(|| (page + 1).to_string()),
+        })
     }
 
     async fn load_session(
@@ -337,17 +211,33 @@ impl AgentBackend for OpenApiAgent {
         session_id: &str,
         _cwd: &Path,
     ) -> Result<LoadedAgentSession<Self::Session>, BackendError> {
-        let stored = self
-            .history
-            .lock()
-            .map_err(|_| std::io::Error::other("session history lock is poisoned"))?
-            .get(session_id)
-            .ok_or_else(|| {
-                std::io::Error::new(std::io::ErrorKind::NotFound, "session not found")
-            })?;
+        let detail = crate::openapi::chats::chat_detail(session_id)
+            .await
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        let state = OpenApiAgentSession {
+            acp_session_id: Some(session_id.to_owned()),
+            ..Default::default()
+        };
+        // Replay each stored message as a history event: a user message becomes
+        // `UserText`, anything else `Text`. Empty messages are skipped.
+        let events: Vec<Result<AgentEvent<Self::Session>, BackendError>> = detail
+            .messages
+            .into_iter()
+            .filter_map(|message| {
+                let text = message.text();
+                if text.is_empty() {
+                    return None;
+                }
+                Some(Ok(if message.sender == "user" {
+                    AgentEvent::UserText(text)
+                } else {
+                    AgentEvent::Text(text)
+                }))
+            })
+            .collect();
         Ok(LoadedAgentSession {
-            state: stored.state,
-            history: stream::iter(stored.events.into_iter().map(Ok)).boxed(),
+            state,
+            history: stream::iter(events).boxed(),
         })
     }
 
@@ -355,51 +245,10 @@ impl AgentBackend for OpenApiAgent {
         &self,
         session: Self::Session,
         prompt: String,
-        cwd: &Path,
+        _cwd: &Path,
     ) -> Result<BoxStream<'static, Result<AgentEvent<Self::Session>, BackendError>>, BackendError>
     {
-        let original_prompt = prompt.clone();
         let acp_session_id = session.acp_session_id.clone();
-        let cwd = cwd.to_path_buf();
-        let stored = if let Some(session_id) = session
-            .acp_session_id
-            .as_deref()
-            .or(session.conversation_id.as_deref())
-        {
-            self.history
-                .lock()
-                .map_err(|_| std::io::Error::other("session history lock is poisoned"))?
-                .get(session_id)
-        } else {
-            None
-        };
-        let mut captured = stored
-            .as_ref()
-            .map_or_else(Vec::new, |stored| stored.events.clone());
-        captured.push(AgentEvent::UserText(original_prompt));
-        let mut title = stored.and_then(|stored| stored.title);
-        let mut current_state = session.clone();
-        let mut last_checkpoint = Instant::now();
-        let mut visible_checkpointed = false;
-        if let Some(session_id) = current_state
-            .acp_session_id
-            .as_ref()
-            .or(current_state.conversation_id.as_ref())
-        {
-            let mut history = self
-                .history
-                .lock()
-                .map_err(|_| std::io::Error::other("session history lock is poisoned"))?;
-            history.upsert(StoredSession {
-                session_id: session_id.clone(),
-                cwd: cwd.clone(),
-                title: title.clone(),
-                state: current_state.clone(),
-                events: captured.clone(),
-            });
-            self.persist_history(&history);
-        }
-
         let stream = if let Some(pending) = &session.pending_interaction {
             self.context
                 .continue_conversation_streamed(
@@ -769,130 +618,8 @@ impl AgentBackend for OpenApiAgent {
                 }
                 }
             })
-            .map({
-                let history = Arc::clone(&self.history);
-                let history_path = self.history_path.clone();
-                move |result| {
-                    if let Ok(event) = &result {
-                        if let AgentEvent::SessionTitle {
-                            title: new_title, ..
-                        } = event
-                        {
-                            title = Some(new_title.clone());
-                        }
-                        captured.push(event.clone());
-                        if let Some(state) = event_session(event) {
-                            current_state = state.clone();
-                        } else {
-                            update_session_from_event(&mut current_state, event);
-                        }
-                        if let Some(session_id) = current_state
-                            .acp_session_id
-                            .as_ref()
-                            .or(current_state.conversation_id.as_ref())
-                        {
-                            if let Ok(mut history) = history.lock() {
-                                history.upsert(StoredSession {
-                                    session_id: session_id.clone(),
-                                    cwd: cwd.clone(),
-                                    title: title.clone(),
-                                    state: current_state.clone(),
-                                    events: captured.clone(),
-                                });
-                                let visible = is_visible_history_event(event);
-                                let checkpoint = is_history_boundary(event)
-                                    || (visible
-                                        && (!visible_checkpointed
-                                            || last_checkpoint.elapsed()
-                                                >= Duration::from_secs(1)));
-                                if checkpoint {
-                                    if let Some(path) = history_path.as_deref() {
-                                        if let Err(error) = history.save(path) {
-                                            tracing::warn!(
-                                                target: "longbridge::acp",
-                                                %error,
-                                                path = %path.display(),
-                                                "failed to persist ACP session history"
-                                            );
-                                        } else {
-                                            last_checkpoint = Instant::now();
-                                            visible_checkpointed |= visible;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    result
-                }
-            })
             .boxed())
     }
-}
-
-fn event_session(event: &AgentEvent<OpenApiAgentSession>) -> Option<&OpenApiAgentSession> {
-    match event {
-        AgentEvent::NeedsInput { session, .. }
-        | AgentEvent::PermissionRequired { session, .. }
-        | AgentEvent::Notice { session, .. }
-        | AgentEvent::Completed { session, .. }
-        | AgentEvent::Finished(session) => Some(session),
-        _ => None,
-    }
-}
-
-fn update_session_from_event(
-    state: &mut OpenApiAgentSession,
-    event: &AgentEvent<OpenApiAgentSession>,
-) {
-    let AgentEvent::Extension {
-        event: event_name,
-        data,
-        ..
-    } = event
-    else {
-        return;
-    };
-    if event_name != "chat_started" {
-        return;
-    }
-    if let Some(chat_uid) = data
-        .get("chat_uid")
-        .and_then(serde_json::Value::as_str)
-        .filter(|value| !value.is_empty())
-    {
-        state.conversation_id = Some(chat_uid.to_owned());
-    }
-    if let Some(message_id) = data.get("message_id").and_then(|value| {
-        value
-            .as_str()
-            .map(str::to_owned)
-            .or_else(|| value.as_i64().map(|value| value.to_string()))
-    }) {
-        state.parent_message_id = Some(message_id);
-    }
-}
-
-fn is_visible_history_event(event: &AgentEvent<OpenApiAgentSession>) -> bool {
-    matches!(
-        event,
-        AgentEvent::Text(_)
-            | AgentEvent::Thought(_)
-            | AgentEvent::Content { .. }
-            | AgentEvent::ToolStarted { .. }
-            | AgentEvent::ToolFinished { .. }
-            | AgentEvent::ToolStartedRich { .. }
-            | AgentEvent::ToolFinishedRich { .. }
-            | AgentEvent::ToolProgressRich { .. }
-            | AgentEvent::Plan { .. }
-            | AgentEvent::RichContent(_)
-    )
-}
-
-fn is_history_boundary(event: &AgentEvent<OpenApiAgentSession>) -> bool {
-    event_session(event).is_some()
-        || matches!(event, AgentEvent::SessionTitle { .. })
-        || matches!(event, AgentEvent::Extension { event, .. } if event == "chat_started")
 }
 
 fn plan_entries(outputs: Option<&serde_json::Value>) -> Vec<AgentPlanEntry> {
@@ -1093,106 +820,6 @@ mod tests {
     }
 
     #[test]
-    fn session_history_lists_newest_first_and_filters_by_cwd() {
-        let mut history = SessionHistory::default();
-        for (session_id, cwd) in [
-            ("first", PathBuf::from("/workspace/a")),
-            ("other", PathBuf::from("/workspace/b")),
-            ("latest", PathBuf::from("/workspace/a")),
-        ] {
-            history.upsert(StoredSession {
-                session_id: session_id.into(),
-                cwd,
-                title: Some(session_id.into()),
-                state: OpenApiAgentSession::default(),
-                events: vec![AgentEvent::UserText(session_id.into())],
-            });
-        }
-
-        let page = history.list(Some(Path::new("/workspace/a")), None);
-        assert_eq!(
-            page.sessions
-                .iter()
-                .map(|session| session.session_id.as_str())
-                .collect::<Vec<_>>(),
-            ["latest", "first"]
-        );
-        assert_eq!(page.next_cursor, None);
-    }
-
-    #[test]
-    fn session_history_upsert_replaces_and_moves_session_to_front() {
-        let mut history = SessionHistory::default();
-        let stored = |title: &str| StoredSession {
-            session_id: "chat-1".into(),
-            cwd: PathBuf::from("/workspace"),
-            title: Some(title.into()),
-            state: OpenApiAgentSession {
-                conversation_id: Some("chat-1".into()),
-                ..Default::default()
-            },
-            events: vec![AgentEvent::Text(title.into())],
-        };
-        history.upsert(stored("old"));
-        history.upsert(stored("new"));
-
-        assert_eq!(history.sessions.len(), 1);
-        let loaded = history.get("chat-1").expect("stored session");
-        assert_eq!(loaded.title.as_deref(), Some("new"));
-        assert_eq!(loaded.events, vec![AgentEvent::Text("new".into())]);
-    }
-
-    #[test]
-    fn session_history_keeps_only_the_latest_two_hundred_sessions() {
-        let mut history = SessionHistory::default();
-        for index in 0..205 {
-            history.upsert(StoredSession {
-                session_id: format!("chat-{index}"),
-                cwd: PathBuf::from("/workspace"),
-                title: None,
-                state: OpenApiAgentSession::default(),
-                events: Vec::new(),
-            });
-        }
-
-        assert_eq!(history.sessions.len(), 200);
-        assert_eq!(history.sessions.first().unwrap().session_id, "chat-5");
-        assert_eq!(history.sessions.last().unwrap().session_id, "chat-204");
-    }
-
-    #[test]
-    fn session_history_round_trips_through_disk() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let path = directory.path().join("sessions.json");
-        let mut history = SessionHistory::default();
-        history.upsert(StoredSession {
-            session_id: "chat-1".into(),
-            cwd: PathBuf::from("/workspace"),
-            title: Some("Saved chat".into()),
-            state: OpenApiAgentSession {
-                acp_session_id: Some("chat-1".into()),
-                conversation_id: Some("conversation-1".into()),
-                parent_message_id: Some("message-1".into()),
-                pending_interaction: None,
-            },
-            events: vec![
-                AgentEvent::UserText("Question".into()),
-                AgentEvent::Text("Answer".into()),
-            ],
-        });
-
-        history.save(&path).expect("save history");
-        let loaded = SessionHistory::load(&path);
-        let session = loaded.get("chat-1").expect("loaded session");
-        assert_eq!(session.title.as_deref(), Some("Saved chat"));
-        assert_eq!(
-            session.state.parent_message_id.as_deref(),
-            Some("message-1")
-        );
-        assert_eq!(session.events.len(), 2);
-    }
-
-    #[test]
     fn new_backend_session_retains_the_acp_session_id() {
         let state = OpenApiAgentSession {
             acp_session_id: Some("acp-session-1".into()),
@@ -1202,43 +829,4 @@ mod tests {
         assert_eq!(state.acp_session_id.as_deref(), Some("acp-session-1"));
     }
 
-    #[test]
-    fn chat_started_checkpoint_retains_backend_continuation_ids() {
-        let mut state = OpenApiAgentSession {
-            acp_session_id: Some("acp-session-1".into()),
-            ..Default::default()
-        };
-        update_session_from_event(
-            &mut state,
-            &native_event(
-                "chat_started",
-                serde_json::json!({
-                    "chat_uid": "chat-uid-1",
-                    "message_id": 42
-                }),
-            ),
-        );
-
-        assert_eq!(state.acp_session_id.as_deref(), Some("acp-session-1"));
-        assert_eq!(state.conversation_id.as_deref(), Some("chat-uid-1"));
-        assert_eq!(state.parent_message_id.as_deref(), Some("42"));
-    }
-
-    #[test]
-    fn history_checkpoint_classifies_visible_boundaries_and_ignores_ping() {
-        let answer = AgentEvent::Text("partial answer".into());
-        assert!(is_visible_history_event(&answer));
-        assert!(!is_history_boundary(&answer));
-
-        let started = native_event(
-            "chat_started",
-            serde_json::json!({ "chat_uid": "chat-1", "message_id": 1 }),
-        );
-        assert!(!is_visible_history_event(&started));
-        assert!(is_history_boundary(&started));
-
-        let ping = native_event("ping", serde_json::Value::Null);
-        assert!(!is_visible_history_event(&ping));
-        assert!(!is_history_boundary(&ping));
-    }
 }
