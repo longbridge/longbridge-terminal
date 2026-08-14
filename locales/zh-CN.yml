@@ -341,6 +341,8 @@ Agent:
   References: "参考来源"
   FurtherQuestions: "推荐追问"
   Interrupted: "Agent 需要补充信息："
+  InterruptedAnswerHint: "在下方输入你的回答以继续。"
+  InterruptedUnreadable: "Agent 没有说明需要什么信息。你的下一条消息将继续这个对话。"
   ContinueWith: "续答命令："
   FollowUpWith: "续聊命令："
   Elapsed: "耗时 %{secs}s"

@@ -19,9 +19,16 @@ use crate::cli::agent::events::AgentEvent;
 
 /// Build the conversation request for the current input: a fresh chat, a
 /// follow-up, or an answer to a pending clarifying question.
+///
+/// Resuming a paused run needs a question to key the answer under, so an
+/// interrupt that named none cannot be answered — the request would carry an
+/// empty answer map and the run would stay paused, which is how an interrupted
+/// turn ended up looking like a dead conversation. That case falls through to a
+/// follow-up in the same conversation instead: the agent gets the reply, just as
+/// a new message rather than as a resumption.
 pub fn build_request(state: &ChatState, query: String) -> ConversationRequest {
     match (
-        state.pending_interrupt.as_ref(),
+        state.pending_interrupt.as_ref().filter(is_answerable),
         &state.chat_uid,
         &state.message_id,
     ) {
@@ -150,15 +157,135 @@ pub fn answers_by_tool_call(
     by_tool_call
 }
 
+/// Whether the interrupt can be answered by resuming the paused run.
+///
+/// The resume body is `{tool_call_id: {question: answer}}`, so both a tool call
+/// id and at least one question text are required. Without them there is nothing
+/// to key an answer under.
+pub fn is_answerable(interrupt: &&Value) -> bool {
+    let has_tool_call = interrupt
+        .get("tool_call_id")
+        .and_then(Value::as_str)
+        .is_some_and(|id| !id.is_empty());
+    has_tool_call && !interrupt_questions(interrupt).is_empty()
+}
+
+/// The interrupt's question texts, in order.
+fn interrupt_questions(interrupt: &Value) -> Vec<&str> {
+    interrupt
+        .get("questions")
+        .and_then(Value::as_array)
+        .map(|qs| {
+            qs.iter()
+                .filter_map(|q| q.get("question").and_then(Value::as_str))
+                .filter(|q| !q.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn interrupt_text(interrupt: &Value) -> String {
     let mut out = format!("\n{}", t!("Agent.Interrupted"));
-    if let Some(questions) = interrupt.get("questions").and_then(Value::as_array) {
-        for q in questions {
-            if let Some(text) = q.get("question").and_then(Value::as_str) {
-                out.push_str("\n- ");
-                out.push_str(text);
+    let questions = interrupt_questions(interrupt);
+    for text in &questions {
+        out.push_str("\n- ");
+        out.push_str(text);
+    }
+    // An interrupt with nothing answerable in it used to render as a bare header
+    // and no way forward. Say what happened and that the conversation continues,
+    // and log the payload — the shape is the server's, and this is the only
+    // record of one we could not read.
+    if questions.is_empty() {
+        tracing::warn!(
+            interrupt = %interrupt,
+            "interrupt carried no answerable question"
+        );
+        out.push_str("\n\n");
+        out.push_str(&t!("Agent.InterruptedUnreadable"));
+    } else {
+        out.push_str("\n\n");
+        out.push_str(&t!("Agent.InterruptedAnswerHint"));
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ai::state::ChatState;
+    use serde_json::json;
+
+    fn interrupted(interrupt: Value) -> ChatState {
+        let mut state = ChatState::new("chatbot".into(), "welcome".into());
+        state.chat_uid = Some("c1".into());
+        state.message_id = Some("m1".into());
+        state.pending_interrupt = Some(interrupt);
+        state
+    }
+
+    /// A clarifying question is answered by resuming the paused run, with the
+    /// answer keyed by the question the agent asked.
+    #[test]
+    fn an_answerable_interrupt_resumes_the_paused_run() {
+        let state = interrupted(json!({
+            "tool_call_id": "tc1",
+            "questions": [{ "question": "Which market?" }]
+        }));
+        match build_request(&state, "HK".into()) {
+            ConversationRequest::Continue {
+                message_id,
+                answers,
+                ..
+            } => {
+                assert_eq!(message_id, "m1");
+                assert_eq!(answers["tc1"]["Which market?"], "HK");
+            }
+            ConversationRequest::New { .. } => panic!("expected a resume, got a new turn"),
+        }
+    }
+
+    /// An interrupt with nothing to key an answer under would resume with an
+    /// empty answer map and leave the run paused — a dead conversation. The reply
+    /// goes through as a follow-up instead.
+    #[test]
+    fn an_unanswerable_interrupt_falls_back_to_a_follow_up() {
+        for interrupt in [
+            json!({ "tool_call_id": "tc1", "questions": [] }),
+            json!({ "tool_call_id": "tc1" }),
+            json!({ "tool_call_id": "tc1", "questions": [{ "options": [] }] }),
+            json!({ "questions": [{ "question": "Which market?" }] }),
+        ] {
+            let state = interrupted(interrupt.clone());
+            match build_request(&state, "HK".into()) {
+                ConversationRequest::New {
+                    query,
+                    chat_uid,
+                    parent_message_id,
+                    ..
+                } => {
+                    assert_eq!(query, "HK");
+                    // Same conversation: the agent still sees the reply in context.
+                    assert_eq!(chat_uid.as_deref(), Some("c1"));
+                    assert_eq!(parent_message_id.as_deref(), Some("m1"));
+                }
+                ConversationRequest::Continue { .. } => {
+                    panic!("expected a follow-up for {interrupt}, got a resume")
+                }
             }
         }
     }
-    out
+
+    /// An unreadable interrupt has to say so: a bare header with no question and
+    /// no instruction is where the conversation looked dead.
+    #[test]
+    fn an_unreadable_interrupt_says_what_to_do() {
+        let text = interrupt_text(&json!({ "tool_call_id": "tc1" }));
+        assert!(text.contains(t!("Agent.InterruptedUnreadable").as_ref()));
+        let text = interrupt_text(&json!({
+            "tool_call_id": "tc1",
+            "questions": [{ "question": "Which market?" }]
+        }));
+        assert!(text.contains("Which market?"));
+        assert!(text.contains(t!("Agent.InterruptedAnswerHint").as_ref()));
+    }
 }
