@@ -163,6 +163,8 @@ pub struct OpenApiAgent {
 
 /// ACP backend used before the user completes `longbridge auth login`.
 pub struct AuthenticationRequiredAgent {
+    agent_id: String,
+    authenticated: tokio::sync::OnceCell<OpenApiAgent>,
     history: Arc<Mutex<SessionHistory>>,
     history_path: Option<Arc<PathBuf>>,
 }
@@ -174,6 +176,8 @@ impl AuthenticationRequiredAgent {
             .as_deref()
             .map_or_else(SessionHistory::default, |path| SessionHistory::load(path));
         Self {
+            agent_id: agent_id.to_owned(),
+            authenticated: tokio::sync::OnceCell::new(),
             history: Arc::new(Mutex::new(history)),
             history_path,
         }
@@ -240,15 +244,27 @@ impl AgentBackend for AuthenticationRequiredAgent {
 
     async fn prompt(
         &self,
-        _session: Self::Session,
-        _prompt: String,
-        _cwd: &Path,
+        session: Self::Session,
+        prompt: String,
+        cwd: &Path,
     ) -> Result<BoxStream<'static, Result<AgentEvent<Self::Session>, BackendError>>, BackendError>
     {
-        Ok(stream::iter([Ok(AgentEvent::Text(
-            rust_i18n::t!("ACP.LoginRequired").to_string(),
-        ))])
-        .boxed())
+        if !super::oauth_credentials_available()? {
+            return Ok(stream::iter([Ok(AgentEvent::Text(
+                rust_i18n::t!("ACP.LoginRequired").to_string(),
+            ))])
+            .boxed());
+        }
+
+        let agent_id = self.agent_id.clone();
+        let backend = self
+            .authenticated
+            .get_or_try_init(|| async move {
+                let _ = super::init_oauth_contexts().await?;
+                Ok::<_, BackendError>(OpenApiAgent::new(super::agent().clone(), agent_id))
+            })
+            .await?;
+        backend.prompt(session, prompt, cwd).await
     }
 }
 
