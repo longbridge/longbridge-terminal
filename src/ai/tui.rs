@@ -324,8 +324,11 @@ struct Ui {
     cards_tx: Option<UnboundedSender<HashMap<String, super::quotes::QuoteCardData>>>,
     /// The security whose quote panel is open, if any.
     quote_panel: Option<String>,
-    /// Where the panel's "open on the web" hint is, so it can be clicked.
+    /// Where the panel's `WEB` button is, so it can be clicked.
     open_button: Option<Rect>,
+    /// The day's price path per security, for the panel's sparkline.
+    paths: HashMap<String, Vec<f64>>,
+    paths_tx: Option<UnboundedSender<(String, Vec<f64>)>>,
     /// Who the chat is signed in as, for the Settings header.
     session: super::account::Session,
     /// Securities this conversation has mentioned, in the order they appeared.
@@ -394,6 +397,8 @@ impl Ui {
             cards_tx: None,
             quote_panel: None,
             open_button: None,
+            paths: HashMap::new(),
+            paths_tx: None,
             session: super::account::local(),
             tape: Vec::new(),
             aliases: HashMap::new(),
@@ -495,6 +500,8 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
     // The member id is the one part of the session header that needs a call, so
     // it is fetched once in the background and the header renders without it
     // until it lands.
+    let (paths_tx, mut paths_rx) = unbounded_channel::<(String, Vec<f64>)>();
+    ui.paths_tx = Some(paths_tx);
     let (login_tx, mut login_rx) = unbounded_channel::<Result<(), String>>();
     let mut login_task: Option<JoinHandle<()>> = None;
     let (aliases_tx, mut aliases_rx) = unbounded_channel::<HashMap<String, String>>();
@@ -566,6 +573,9 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
                     }
                 }
             }
+            Some((symbol, path)) = paths_rx.recv() => {
+                ui.paths.insert(symbol, path);
+            }
             Some(member_id) = session_rx.recv() => {
                 ui.session.member_id = member_id;
             }
@@ -635,7 +645,9 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
             // Signing in happens here, in the chat: the flow only needs a URL on
             // screen and a poll in the background, and tearing the whole view down
             // for it was the thing that made signing in feel like leaving.
-            match crate::auth::device_login_start(false, None).await {
+            // Named so the authorization page, and the account's list of
+            // authorized clients afterwards, say which client is asking.
+            match crate::auth::device_login_start(false, Some(AI_CLIENT_NAME.to_string())).await {
                 Ok(login) => {
                     ui.notice = None;
                     // A browser that did not open leaves the reader with a URL they
@@ -968,14 +980,9 @@ fn on_chat_key(
                 close_quote_panel(ui);
                 return;
             }
-            // Enter follows the panel's own hint out to the web page, which has the
-            // chart and the filings the panel cannot hold.
-            KeyCode::Enter => {
-                open_url(&quote_web_url(&symbol));
-                return;
-            }
             _ => {}
         }
+        let _ = &symbol;
     }
     // When the slash palette is open, arrows/Enter/Esc drive it instead of the
     // transcript or history, matching the grok-style command menu.
@@ -1481,6 +1488,18 @@ fn open_quote_panel(ui: &mut Ui, symbol: String) {
     // conversation had mentioned it — the SDK folds a repeat subscription into the
     // existing one.
     subscribe_quote(&symbol);
+    // And the session's shape, fetched once per security per session.
+    if !ui.paths.contains_key(&symbol) && crate::openapi::is_ready() {
+        if let Some(tx) = ui.paths_tx.clone() {
+            let wanted = symbol.clone();
+            spawn_bg(async move {
+                let path = super::quotes::intraday_path(&wanted, SPARK_W).await;
+                if !path.is_empty() {
+                    let _ = tx.send((wanted, path));
+                }
+            });
+        }
+    }
     ui.quote_panel = Some(symbol);
 }
 
@@ -2005,8 +2024,9 @@ fn render_login_panel(f: &mut ratatui::Frame, area: Rect, ui: &Ui, spin: usize) 
 ///
 /// Sized to its content and centred over the transcript: the reader clicked a
 /// symbol inside a sentence, and the answer around it is the context for the
-/// number. The title, the live dot and the two hints live in the border, so every
-/// row inside carries data.
+/// number. Square corners and a title inset in the top border, after grok-build's
+/// overlays; the chrome is a `WEB` button and nothing else, so every row inside
+/// carries data.
 fn render_quote_panel(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
     use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding};
 
@@ -2014,22 +2034,19 @@ fn render_quote_panel(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
         ui.open_button = None;
         return;
     };
+    let path = ui.paths.get(&symbol).map(Vec::as_slice).unwrap_or(&[]);
     let body = match ui.quotes.get(&symbol) {
-        Some(card) => card_lines(card),
+        Some(card) => card_lines(card, path),
         None => vec![Line::from(Span::styled(
             t!("Ai.QuoteLoading").to_string(),
             Style::default().fg(Color::DarkGray),
         ))],
     };
     let title = format!(" ${symbol} ");
-    let hint = format!(" {} ", t!("Ai.QuotePanelHint"));
-    let open = format!(" {} ", t!("Ai.QuoteOpenWeb"));
+    let web = format!(" {} ", t!("Ai.QuoteWeb"));
     let content_w = body.iter().map(line_width).max().unwrap_or(0);
-    // Border, two columns of padding each side, and room for whichever piece of
-    // chrome is widest — the title with its dot, or the two bottom hints.
-    let chrome = (UnicodeWidthStr::width(title.as_str()) + 2)
-        .max(UnicodeWidthStr::width(hint.as_str()) + UnicodeWidthStr::width(open.as_str()) + 2);
-    let width = (content_w + 6).max(chrome + 2).min(area.width as usize) as u16;
+    let chrome = UnicodeWidthStr::width(title.as_str()) + UnicodeWidthStr::width(web.as_str()) + 4;
+    let width = (content_w + 6).max(chrome).min(area.width as usize) as u16;
     let height = (body.len() as u16 + 2).min(area.height);
     let rect = Rect {
         x: area.x + area.width.saturating_sub(width) / 2,
@@ -2043,9 +2060,11 @@ fn render_quote_panel(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
     // the terminal drawing the whole glyph across the frame, which is what made
     // the border look broken. The cell outside has to go too.
     blank_straddling_glyphs(f.buffer_mut(), rect, area);
+    // The button's geometry comes first so the live dot cannot collide with it.
+    let web_w = UnicodeWidthStr::width(web.as_str()) as u16;
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
+        .border_type(BorderType::Plain)
         .border_style(Style::default().fg(Color::DarkGray))
         .padding(Padding::horizontal(2))
         .title(Line::from(vec![
@@ -2057,29 +2076,30 @@ fn render_quote_panel(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
             ),
             // The dot says the number is streaming, so a price that sits still is a
             // quiet market rather than a stale panel.
-            Span::styled("● ", Style::default().fg(Color::Green)),
+            Span::styled("●", Style::default().fg(Color::Green)),
         ]))
-        .title_bottom(Line::from(Span::styled(
-            hint,
-            Style::default().fg(Color::DarkGray),
-        )))
-        .title_bottom(
+        .title_top(
             Line::from(Span::styled(
-                open.clone(),
+                web,
                 Style::default()
                     .fg(Color::Blue)
                     .add_modifier(Modifier::BOLD),
             ))
             .right_aligned(),
-        );
+        )
+        // One word, because every overlay here closes the same way and the reader
+        // still has to be told once.
+        .title_bottom(Line::from(Span::styled(
+            format!(" {} ", t!("Ai.QuotePanelHint")),
+            Style::default().fg(Color::DarkGray),
+        )));
     f.render_widget(Paragraph::new(Text::from(body)).block(block), rect);
-    // The web page has the chart and the filings this panel cannot hold, so the
-    // way out to it is part of the panel rather than something to remember.
-    let open_w = UnicodeWidthStr::width(open.as_str()) as u16;
+    // The web page has the chart and the filings this panel cannot hold, so the way
+    // out to it is a button on the frame rather than a line of instructions.
     ui.open_button = Some(Rect {
-        x: rect.x + rect.width.saturating_sub(open_w + 1),
-        y: rect.y + rect.height.saturating_sub(1),
-        width: open_w,
+        x: rect.x + rect.width.saturating_sub(web_w + 1),
+        y: rect.y,
+        width: web_w,
         height: 1,
     });
 }
@@ -2129,6 +2149,10 @@ fn line_width(line: &Line<'_>) -> usize {
 /// conversations, with the widgets a terminal can only describe.
 const AI_WEB_URL: &str = "https://longbridge.com/ai";
 
+/// How this client identifies itself when authorizing: what the reader sees on the
+/// authorization page and in their list of authorized clients.
+const AI_CLIENT_NAME: &str = "Longbridge AI (CLI)";
+
 /// The security's page on the web, where the chart and the filings are.
 fn quote_web_url(symbol: &str) -> String {
     format!("https://longbridge.com/quote/{symbol}")
@@ -2173,20 +2197,25 @@ fn render_title(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatSta
     // The rest of the row is the ticker: the securities this conversation has
     // mentioned, with their quotes. It is the one row of chrome that was carrying
     // nothing, and a trader reading about a stock wants its price in view.
-    // A labelled control, not a lone chevron: collapsed, a bare `▸` said nothing
-    // about what it would bring back, and either glyph was too small to aim at.
-    // It appears only when there is something to collapse.
+    // Open, the quotes speak for themselves and the control is just a way out —
+    // `✕` pushes them off. Collapsed, it is the only thing saying they exist, so it
+    // says so: `QUOTES +`. No brackets either way; the row is too valuable.
     let toggle = if ui.tape.is_empty() {
         String::new()
     } else if super::settings::tape() {
-        format!(" [{} ×] ", t!("Ai.TapeToggle"))
+        " ✕ ".to_string()
     } else {
-        format!(" [{} +] ", t!("Ai.TapeToggle"))
+        format!(" {} + ", t!("Ai.TapeToggle"))
     };
     let toggle_w = toggle.width();
     let room = (area.width as usize).saturating_sub(left_w + toggle_w);
+    // The ticker is right-aligned against the control, so its first column depends
+    // on how wide it turns out to be: measured first, then placed.
     let tape = if super::settings::tape() && !ui.tape.is_empty() {
-        tape_spans(ui, room)
+        let measured = tape_spans(ui, area, None, room);
+        let w: usize = measured.iter().map(|s| s.content.width()).sum();
+        let x = area.x + (left_w + room.saturating_sub(w)) as u16;
+        tape_spans(ui, area, Some(x), room)
     } else {
         Vec::new()
     };
@@ -2226,7 +2255,7 @@ fn render_title(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatSta
 /// half a symbol is unreadable, and a trader glancing up needs to take a whole
 /// entry in at once. The rotation advances only when there is more to show than
 /// fits, so a short list sits still.
-fn tape_spans(ui: &mut Ui, room: usize) -> Vec<Span<'static>> {
+fn tape_spans(ui: &mut Ui, area: Rect, start_x: Option<u16>, room: usize) -> Vec<Span<'static>> {
     const GAP: &str = "   ";
     // The name stays neutral and only the price carries the direction: colouring
     // the symbol too made the whole row swing red and green with no added meaning.
@@ -2254,6 +2283,7 @@ fn tape_spans(ui: &mut Ui, room: usize) -> Vec<Span<'static>> {
         ui.tape_at = 0;
     }
     let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut hits: Vec<(Chip, Rect)> = Vec::new();
     let mut used = 0usize;
     for i in 0..entries.len() {
         let (symbol, price, color) = &entries[(ui.tape_at + i) % entries.len()];
@@ -2264,6 +2294,20 @@ fn tape_spans(ui: &mut Ui, room: usize) -> Vec<Span<'static>> {
         if used > 0 {
             spans.push(Span::raw(GAP));
         }
+        // Every entry is a button. `None` is the measuring pass: the ticker is
+        // right-aligned, so its first column is not known until its width is.
+        if let Some(x) = start_x {
+            let gap = if used == 0 { 0 } else { GAP.width() };
+            hits.push((
+                Chip::Symbol(symbol.clone()),
+                Rect {
+                    x: x.saturating_add((used + gap) as u16),
+                    y: area.y,
+                    width: (symbol.width() + price.width()) as u16,
+                    height: 1,
+                },
+            ));
+        }
         spans.push(Span::styled(
             symbol.clone(),
             Style::default().fg(Color::Gray),
@@ -2273,6 +2317,7 @@ fn tape_spans(ui: &mut Ui, room: usize) -> Vec<Span<'static>> {
         }
         used += w;
     }
+    ui.chips.extend(hits);
     if rotating {
         // The frame timer has to keep running for the ticker to advance, and the
         // step is one entry a second — fast enough to get through a long list,
@@ -3889,7 +3934,7 @@ fn framed(rows: Vec<(Vec<Span<'static>>, usize)>, inner: usize) -> Vec<Line<'sta
 
 /// The panel's body: one field per row, unboxed — the panel's own frame is the
 /// border, and a dedicated panel has the room the inline card does not.
-fn card_lines(card: &super::quotes::QuoteCardData) -> Vec<Line<'static>> {
+fn card_lines(card: &super::quotes::QuoteCardData, path: &[f64]) -> Vec<Line<'static>> {
     let dim = Style::default().fg(Color::DarkGray);
     let dir = change_color(card.direction);
     let mut out = Vec::new();
@@ -3898,10 +3943,9 @@ fn card_lines(card: &super::quotes::QuoteCardData) -> Vec<Line<'static>> {
             card.name.clone(),
             Style::default().fg(Color::Gray),
         )));
-        out.push(Line::from(""));
     }
-    // The price is what the panel is for, so it gets the room: last on its own,
-    // the change beside it in the direction's colour.
+    // The price is what the panel is for, so it leads: last, then the change in the
+    // direction's colour.
     out.push(Line::from(vec![
         Span::styled(
             card.last.clone(),
@@ -3913,10 +3957,13 @@ fn card_lines(card: &super::quotes::QuoteCardData) -> Vec<Line<'static>> {
             Style::default().fg(dir),
         ),
     ]));
+    // The session's shape, which no single number can show.
+    if let Some(spark) = sparkline(path, SPARK_W) {
+        out.push(Line::from(Span::styled(spark, Style::default().fg(dir))));
+    }
     out.push(Line::from(""));
-    // Two labelled columns per row: a panel is read down, not across. The first
-    // column is as wide as its longest value plus the label, so the second lines
-    // up whatever the numbers are.
+    // Two labelled columns, measured from the values so they line up whatever the
+    // numbers are. Only the six a glance actually uses: the rest was chrome.
     let col = 6
         + [&card.open, &card.low, &card.turnover]
             .into_iter()
@@ -3949,12 +3996,41 @@ fn card_lines(card: &super::quotes::QuoteCardData) -> Vec<Line<'static>> {
         (&t!("Ai.QuoteVolume"), &card.volume),
         (&t!("Ai.QuoteTurnover"), &card.turnover),
     ));
-    out.push(Line::from(""));
-    out.push(Line::from(Span::styled(
-        format!("{} {}", t!("Ai.QuoteAt"), card.at),
-        dim,
-    )));
     out
+}
+
+/// Columns the panel's sparkline occupies.
+const SPARK_W: usize = 32;
+
+/// The day's price path as one row of eighth blocks.
+///
+/// One row, because the panel is a glance and a full chart is a click away on the
+/// web. `None` when there is nothing to draw — a flat or missing path would be a
+/// row of noise.
+fn sparkline(path: &[f64], width: usize) -> Option<String> {
+    const BLOCKS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+
+    if path.len() < 2 || width == 0 {
+        return None;
+    }
+    let (lo, hi) = path
+        .iter()
+        .fold((f64::MAX, f64::MIN), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
+    let span = hi - lo;
+    if span <= f64::EPSILON {
+        return None;
+    }
+    let take = path.len().min(width);
+    Some(
+        (0..take)
+            .map(|i| {
+                let v = path[i * (path.len() - 1) / (take - 1).max(1)];
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let level = (((v - lo) / span) * (BLOCKS.len() - 1) as f64).round() as usize;
+                BLOCKS[level.min(BLOCKS.len() - 1)]
+            })
+            .collect(),
+    )
 }
 
 /// The previous close, formatted like the other prices.
@@ -5430,10 +5506,10 @@ mod tests {
         assert_eq!(out, "看 $TSLA.US 和 $700.HK");
     }
 
-    /// The ticker's control says what it does. A lone chevron said nothing about
-    /// what collapsing had hidden, and was too small to aim at.
+    /// Collapsed, the control is the only thing saying the ticker exists, so it is
+    /// labelled; open, the quotes speak for themselves and it is only a way out.
     #[test]
-    fn the_ticker_control_is_labelled() {
+    fn the_ticker_control_is_labelled_only_when_collapsed() {
         let _guard = TAPE_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -5448,7 +5524,11 @@ mod tests {
         );
         ui.tape.push("700.HK".into());
         let open = frame(&mut ui, &state, 72, 12)[0].clone();
-        assert!(open.contains(t!("Ai.TapeToggle").as_ref()), "{open:?}");
+        assert!(
+            !open.contains(t!("Ai.TapeToggle").as_ref()),
+            "open, the label is dead weight: {open:?}"
+        );
+        assert!(!open.contains('['), "and no brackets: {open:?}");
         crate::ai::settings::set_tape(false);
         let shut = frame(&mut ui, &state, 72, 12)[0].clone();
         assert!(
@@ -5460,6 +5540,36 @@ mod tests {
             "and the quotes are gone: {shut:?}"
         );
         crate::ai::settings::set_tape(true);
+    }
+
+    /// Every ticker entry is a button: the row is how a reader reaches a security
+    /// they are not currently reading about.
+    #[test]
+    fn ticker_entries_open_their_security() {
+        let _guard = TAPE_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        crate::ai::settings::set_tape(true);
+        let mut ui = super::Ui::new();
+        let state = super::ChatState::new("chatbot".into(), "welcome".into());
+        for symbol in ["700.HK", "TSLA.US"] {
+            ui.tape.push(symbol.into());
+        }
+        let rows = frame(&mut ui, &state, 72, 12);
+        for symbol in ["700.HK", "TSLA.US"] {
+            let (_, rect) = ui
+                .chips
+                .iter()
+                .find(|(chip, _)| matches!(chip, super::Chip::Symbol(s) if s == symbol))
+                .unwrap_or_else(|| panic!("no click target for {symbol}"));
+            assert_eq!(rect.y, 0, "the ticker lives on the title row");
+            // The rect covers the symbol where it was actually drawn.
+            let at = rows[0].find(symbol).expect("drawn");
+            assert!(
+                (rect.x as usize) <= at && at < (rect.x + rect.width) as usize,
+                "{symbol} drawn at {at} but targeted at {rect:?}"
+            );
+        }
     }
 
     /// The dialog is sized to its content, with the title, the live dot and both
@@ -5478,14 +5588,15 @@ mod tests {
         let text = rows.join("\n");
         assert!(text.contains("$SPCX.US"), "the title: {text}");
         assert!(text.contains(t!("Ai.QuotePanelHint").as_ref()), "{text}");
-        assert!(text.contains(t!("Ai.QuoteOpenWeb").as_ref()), "{text}");
+        // The way out to the web is a button on the frame, not a line of prose.
+        assert!(text.contains(t!("Ai.QuoteWeb").as_ref()), "{text}");
         // Content-sized: nowhere near the 100 columns available. Measured on the
-        // dialog's own bottom border, since the prompt's frame spans the width.
-        let bottom = rows
+        // dialog's own top border, since the prompt's frame spans the width.
+        let top = rows
             .iter()
-            .find(|r| r.contains(t!("Ai.QuoteOpenWeb").as_ref()))
-            .expect("the bottom border carries the link");
-        let widest = unicode_width::UnicodeWidthStr::width(bottom.trim_end());
+            .find(|r| r.contains(t!("Ai.QuoteWeb").as_ref()))
+            .expect("the top border carries the button");
+        let widest = unicode_width::UnicodeWidthStr::width(top.trim_end());
         assert!(widest < 80, "sized to content, got {widest} of 100");
         // The web link is a button, positioned on the bottom border.
         let button = ui.open_button.expect("the link should be clickable");

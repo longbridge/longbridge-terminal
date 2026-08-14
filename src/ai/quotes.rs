@@ -9,6 +9,7 @@
 use std::collections::{HashMap, HashSet};
 
 use longbridge::quote::SecurityQuote;
+use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 
 use super::answer::parse_widget;
@@ -225,6 +226,39 @@ pub async fn resolve_symbols(candidates: &[String]) -> HashMap<String, String> {
             .or_insert_with(|| info.symbol.clone());
     }
     resolved
+}
+
+/// The day's price path for `symbol`, thinned to at most `points` values.
+///
+/// For the panel's sparkline: the shape of the session is most of what a glance at
+/// a quote is for, and a number alone cannot show it. Failure is not an error —
+/// the panel simply shows no sparkline.
+pub async fn intraday_path(symbol: &str, points: usize) -> Vec<f64> {
+    if !crate::openapi::is_ready() || points == 0 {
+        return Vec::new();
+    }
+    let Ok(lines) = crate::openapi::quote()
+        .intraday(
+            symbol.to_string(),
+            longbridge::quote::TradeSessions::Intraday,
+        )
+        .await
+    else {
+        return Vec::new();
+    };
+    let prices: Vec<f64> = lines
+        .iter()
+        .filter_map(|l| l.price.to_f64())
+        .filter(|p| *p > 0.0)
+        .collect();
+    if prices.len() <= points {
+        return prices;
+    }
+    // Evenly sampled rather than tail-sliced: the sparkline is the whole session,
+    // and the last N minutes of it would be a different chart.
+    (0..points)
+        .map(|i| prices[i * (prices.len() - 1) / (points - 1).max(1)])
+        .collect()
 }
 
 /// Every security named by the widgets in `answer`, deduped, in source order.
