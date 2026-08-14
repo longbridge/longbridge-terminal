@@ -527,14 +527,25 @@ impl AgentBackend for OpenApiAgent {
         // it instead of branching off an older message. Nothing is replayed
         // into the UI here — the missed content shows up whenever the client
         // reloads the session.
+        let mut conversation_id = session.conversation_id.clone();
         let mut parent_message_id = session.parent_message_id.clone();
         if session.pending_interaction.is_none() {
-            if let (Some(chat_uid), Some(known)) = (
-                session.conversation_id.as_deref(),
-                parent_message_id
+            // The chat binding is normally written back to the session by the
+            // turn's `Completed` event. An aborted turn never delivers it, so
+            // the session can be left unbound even though a server chat was
+            // already created — recover the binding from the local index
+            // (written as soon as `chat_started` was observed). Without this,
+            // every prompt after an aborted first turn opens a brand-new chat.
+            if conversation_id.is_none() {
+                if let Some(acp) = acp_session_id.as_deref() {
+                    conversation_id = resolve_chat_uid(acp);
+                }
+            }
+            if let Some(chat_uid) = conversation_id.as_deref() {
+                let known = parent_message_id
                     .as_deref()
-                    .and_then(|id| id.parse::<i64>().ok()),
-            ) {
+                    .and_then(|id| id.parse::<i64>().ok())
+                    .unwrap_or(0);
                 if let Ok(detail) = crate::openapi::chats::chat_detail(chat_uid).await {
                     if let Some(latest) = detail
                         .messages
@@ -569,7 +580,7 @@ impl AgentBackend for OpenApiAgent {
                 self.context.clone(),
                 self.agent_id.clone(),
                 prompt,
-                session.conversation_id,
+                conversation_id,
                 parent_message_id,
             )
             .await
