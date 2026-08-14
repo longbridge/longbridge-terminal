@@ -1688,31 +1688,59 @@ fn render_question(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
     f.render_widget(Paragraph::new(Text::from(lines)), area);
 }
 
-/// Shared list renderer: draws `rows` with the selected one highlighted and
-/// records a hit rectangle per visible row. Windows around the selection.
+/// Shared list renderer (Settings / Agents): spaced rows with a subtle tinted
+/// background on the selected/hovered one and an accent marker, records a hit
+/// rectangle per visible row, and windows around the selection.
 fn render_rows(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, rows: &[(usize, String)]) {
     ui.rows.clear();
     ui.clamp_sel();
-    let height = area.height.max(1) as usize;
-    let start = ui.sel.saturating_sub(height.saturating_sub(1));
-    let avail = (area.width as usize).saturating_sub(2);
+    let width = area.width as usize;
+    let avail = width.saturating_sub(2);
+    let fit = (area.height as usize / 2).max(1);
+    let start = if ui.sel < fit {
+        0
+    } else {
+        (ui.sel + 1 - fit).min(rows.len().saturating_sub(fit))
+    };
     let mut lines = Vec::new();
-    for (offset, (idx, label)) in rows.iter().skip(start).take(height).enumerate() {
-        let selected = *idx == ui.sel;
+    for (idx, label) in rows.iter().skip(start).take(fit) {
+        if lines.len() >= area.height as usize {
+            break;
+        }
         let rect = Rect {
             x: area.x,
-            y: area.y + offset as u16,
+            y: area.y + lines.len() as u16,
             width: area.width,
             height: 1,
         };
+        let selected = *idx == ui.sel;
         let hovered = hovering(ui, rect);
-        let marker = if selected { "› " } else { "  " };
+        let bg = if selected {
+            Some(SEL_BG)
+        } else if hovered {
+            Some(HOVER_BG)
+        } else {
+            None
+        };
+        let marker_color = if selected { IDX_SEL } else { Color::DarkGray };
+        let mut text_style = Style::default().fg(if selected { Color::White } else { Color::Gray });
+        if selected {
+            text_style = text_style.add_modifier(Modifier::BOLD);
+        }
         let text = row_text(ui, label, avail, rect, selected);
-        lines.push(Line::from(Span::styled(
-            format!("{marker}{text}"),
-            row_style_state(selected, hovered),
-        )));
+        lines.push(bg_pad(
+            vec![
+                Span::styled(
+                    if selected { "▸ " } else { "  " },
+                    with_bg(Style::default().fg(marker_color), bg),
+                ),
+                Span::styled(text, with_bg(text_style, bg)),
+            ],
+            width,
+            bg,
+        ));
         ui.rows.push((*idx, rect));
+        lines.push(Line::from("")); // spacing between rows
     }
     f.render_widget(Paragraph::new(Text::from(lines)), area);
 }
