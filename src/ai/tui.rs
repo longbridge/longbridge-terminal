@@ -65,10 +65,11 @@ enum Setting {
 const SETTINGS: [Setting; 3] = [Setting::Agent, Setting::NewChat, Setting::ClearHistory];
 
 /// Slash commands: `(name, i18n description key)`.
-const SLASH: [(&str, &str); 8] = [
+const SLASH: [(&str, &str); 9] = [
     ("/new", "Ai.SlashNew"),
     ("/clear", "Ai.SlashClear"),
     ("/copy", "Ai.SlashCopy"),
+    ("/export", "Ai.SlashExport"),
     ("/history", "Ai.SlashHistory"),
     ("/settings", "Ai.SlashSettings"),
     ("/agent", "Ai.SlashAgent"),
@@ -619,6 +620,12 @@ fn exec_slash(
             let text = transcript_text(state);
             copy_with_notice(ui, Some(text));
         }
+        "export" => {
+            ui.notice = Some(match export_conversation(state) {
+                Ok(path) => t!("Ai.Exported", path = path.display().to_string()).to_string(),
+                Err(_) => t!("Ai.ExportFailed").to_string(),
+            });
+        }
         "history" => ui.switch(View::Sessions),
         "settings" => ui.switch(View::Settings),
         "agent" => open_agents(ui, agents_tx),
@@ -963,6 +970,28 @@ fn transcript_text(state: &ChatState) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n\n")
+}
+
+/// Write the conversation to a timestamped Markdown file (in the user's
+/// Downloads dir, falling back to home then the temp dir) and return its path.
+/// Assistant text is already Markdown, so it is written through verbatim.
+fn export_conversation(state: &ChatState) -> std::io::Result<std::path::PathBuf> {
+    use std::fmt::Write;
+    let dir = dirs::download_dir()
+        .or_else(dirs::home_dir)
+        .unwrap_or_else(std::env::temp_dir);
+    let path = dir.join(format!("longbridge-ai-{}.md", now_secs()));
+    let mut body = format!("# {}\n\n", t!("Ai.Title"));
+    for m in &state.messages {
+        let label = match m.role {
+            Role::User => t!("Ai.You"),
+            Role::Assistant => t!("Ai.Assistant"),
+            Role::System => continue,
+        };
+        let _ = write!(body, "**{label}:**\n\n{}\n\n", m.text);
+    }
+    std::fs::write(&path, body)?;
+    Ok(path)
 }
 
 /// Copy `text` and set a status notice reflecting the outcome.
