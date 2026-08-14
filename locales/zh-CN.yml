@@ -382,4 +382,5 @@ Ai:
   Copied: "已复制到剪贴板。"
   NothingToCopy: "暂无可复制的内容。"
   PressCtrlCAgain: "再按一次 Ctrl+C 退出。"
+  NotifyDone: "Longbridge AI 已回复完成"
   HelpText: "命令：/new /clear /copy /history /settings /agent /exit /help · Enter 发送，Shift+Enter 换行 · Esc 取消生成或清空输入 · Ctrl+Y 复制最近回答 · 拖拽可选中并复制 · Tab 切换视图 · /exit 或连按两次 Ctrl+C 退出"

@@ -172,6 +172,9 @@ struct Ui {
     should_quit: bool,
     /// True after one Ctrl+C on an empty prompt; a second one exits.
     ctrl_c_armed: bool,
+    /// Whether the terminal window currently has focus; a turn that finishes
+    /// while unfocused raises a desktop notification.
+    focused: bool,
 }
 
 impl Ui {
@@ -198,6 +201,7 @@ impl Ui {
             selected_text: None,
             should_quit: false,
             ctrl_c_armed: false,
+            focused: true,
         }
     }
 
@@ -261,8 +265,14 @@ pub async fn run(agent_uid: String) -> Result<()> {
     let mut ticker = tokio::time::interval(Duration::from_millis(120));
     // Bracketed paste makes multi-line pastes arrive as one `Event::Paste`
     // instead of a stream of keystrokes (whose embedded newlines would each
-    // submit the prompt); disabled again on exit.
-    let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableBracketedPaste);
+    // submit the prompt). Focus tracking lets a turn that finishes while the
+    // window is in the background raise a desktop notification. Both are
+    // disabled again on exit.
+    let _ = crossterm::execute!(
+        std::io::stdout(),
+        crossterm::event::EnableBracketedPaste,
+        crossterm::event::EnableFocusChange,
+    );
 
     loop {
         terminal.draw(|f| view(f, &mut ui, &state, &editor))?;
@@ -279,6 +289,8 @@ pub async fn run(agent_uid: String) -> Result<()> {
                         on_mouse(m, &mut ui, &mut state, &mut editor, &mut turn, &tx, &agents_tx);
                     }
                     Some(Ok(Event::Paste(text))) => editor.insert_str(&text),
+                    Some(Ok(Event::FocusGained)) => ui.focused = true,
+                    Some(Ok(Event::FocusLost)) => ui.focused = false,
                     Some(Ok(_)) => {}
                     Some(Err(_)) | None => break,
                 }
@@ -290,6 +302,9 @@ pub async fn run(agent_uid: String) -> Result<()> {
                     turn = None;
                     persist(&state);
                     maybe_open_question(&mut ui, &state);
+                    if !ui.focused {
+                        notify(&t!("Ai.NotifyDone"));
+                    }
                 }
             }
             Some(list) = agents_rx.recv() => {
@@ -302,11 +317,26 @@ pub async fn run(agent_uid: String) -> Result<()> {
             break;
         }
     }
-    let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableBracketedPaste);
+    let _ = crossterm::execute!(
+        std::io::stdout(),
+        crossterm::event::DisableBracketedPaste,
+        crossterm::event::DisableFocusChange,
+    );
     if let Some(turn) = turn.take() {
         turn.abort();
     }
     Ok(())
+}
+
+/// Raise a desktop notification via the OSC 9 terminal escape (`iTerm2`,
+/// `WezTerm`, kitty, …), plus a bell so terminals without OSC 9 still flag the
+/// tab. Safe to emit while ratatui owns the screen — it never moves the cursor.
+fn notify(message: &str) {
+    use std::io::Write;
+    let seq = format!("\x1b]9;{message}\x07\x07");
+    let mut out = std::io::stdout();
+    let _ = out.write_all(seq.as_bytes());
+    let _ = out.flush();
 }
 
 /// Persist the current conversation under its server chat id, so History can

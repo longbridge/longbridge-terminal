@@ -382,4 +382,5 @@ Ai:
   Copied: "Copied to clipboard."
   NothingToCopy: "Nothing to copy yet."
   PressCtrlCAgain: "Press Ctrl+C again to exit."
+  NotifyDone: "Longbridge AI finished responding"
   HelpText: "Commands: /new /clear /copy /history /settings /agent /exit /help · Enter sends, Shift+Enter adds a newline · Esc cancels a running answer or clears the input · Ctrl+Y copies the last answer · drag to select and copy · Tab switches view · /exit or double Ctrl+C quits"
