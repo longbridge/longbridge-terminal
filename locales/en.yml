@@ -398,4 +398,4 @@ Ai:
   AgentUnchanged: "No change — already using this agent."
   AgentReset: "Switched back to Longbridge AI."
   HelpCommands: "Commands (type /): %{commands}"
-  HelpKeys: "Enter sends, Shift+Enter adds a newline · Tab completes a command · Esc cancels a running answer or clears the input · drag to select and copy · /exit or double Ctrl+C quits"
+  HelpKeys: "Enter sends, Shift+Enter adds a newline · Tab completes a command · ↑↓ history · Ctrl+A/E/U/K line edit · Esc cancels a running answer or clears the input · drag to select and copy · /exit or double Ctrl+C quits"

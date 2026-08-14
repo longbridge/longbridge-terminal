@@ -398,4 +398,4 @@ Ai:
   AgentUnchanged: "无变化 —— 当前已在使用该智能体。"
   AgentReset: "已切回 Longbridge AI。"
   HelpCommands: "命令（输入 /）：%{commands}"
-  HelpKeys: "Enter 发送，Shift+Enter 换行 · Tab 补全命令 · Esc 取消生成或清空输入 · 拖拽可选中并复制 · /exit 或连按两次 Ctrl+C 退出"
+  HelpKeys: "Enter 发送，Shift+Enter 换行 · Tab 补全命令 · ↑↓ 历史 · Ctrl+A/E/U/K 行编辑 · Esc 取消生成或清空输入 · 拖拽可选中并复制 · /exit 或连按两次 Ctrl+C 退出"
