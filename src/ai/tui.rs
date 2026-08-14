@@ -235,6 +235,9 @@ struct Ui {
     /// were built for, so Markdown is not re-parsed every frame.
     transcript_cache: Vec<Line<'static>>,
     cache_sig: u64,
+    /// Max scroll-back for the current transcript (recorded during render), so
+    /// input handlers can clamp and never scroll the view into a blank screen.
+    max_scroll: u16,
     /// Live quotes for `x-widget` tickers, fetched after a turn, keyed by symbol.
     quotes: HashMap<String, crate::cli::agent::render::QuoteCardData>,
     /// True while the server History list is being fetched.
@@ -274,6 +277,7 @@ impl Ui {
             selected_text: None,
             transcript_cache: Vec::new(),
             cache_sig: 0,
+            max_scroll: 0,
             quotes: HashMap::new(),
             sessions_loading: false,
             sessions_error: false,
@@ -659,7 +663,7 @@ fn on_chat_key(
                 editor.recall_next();
             }
         }
-        KeyCode::PageUp => state.scroll = state.scroll.saturating_add(5),
+        KeyCode::PageUp => state.scroll = state.scroll.saturating_add(5).min(ui.max_scroll),
         KeyCode::PageDown => state.scroll = state.scroll.saturating_sub(5),
         KeyCode::Char(c) => editor.insert_char(c),
         _ => {}
@@ -930,7 +934,7 @@ fn clamp_to(rect: Rect, col: u16, row: u16) -> (u16, u16) {
 fn scroll(ui: &mut Ui, state: &mut ChatState, up: bool) {
     if ui.view == View::Chat {
         state.scroll = if up {
-            state.scroll.saturating_add(3)
+            state.scroll.saturating_add(3).min(ui.max_scroll)
         } else {
             state.scroll.saturating_sub(3)
         };
@@ -1388,7 +1392,11 @@ fn render_chat(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatStat
     let cache_len = ui.transcript_cache.len();
     let total = cache_len + streaming.len();
     let height = area.height as usize;
-    let bottom = total.saturating_sub(state.scroll as usize);
+    // Clamp scroll-back so the view can never be scrolled past the top into a
+    // blank screen; the top is reached when `start` hits 0.
+    ui.max_scroll = u16::try_from(total.saturating_sub(height)).unwrap_or(u16::MAX);
+    let scroll = (state.scroll).min(ui.max_scroll) as usize;
+    let bottom = total.saturating_sub(scroll);
     let start = bottom.saturating_sub(height);
     let window: Vec<Line> = (start..bottom)
         .map(|i| {
