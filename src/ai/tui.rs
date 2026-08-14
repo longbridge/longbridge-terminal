@@ -593,6 +593,11 @@ fn on_chat_key(
         KeyCode::Enter if newline => editor.insert_newline(),
         KeyCode::Enter if !state.busy => submit(ui, state, editor, turn, tx, agents_tx),
         KeyCode::Backspace | KeyCode::Char('w') if ctrl => editor.delete_word(),
+        // Emacs-style line editing shortcuts, familiar from the shell.
+        KeyCode::Char('a') if ctrl => editor.home(),
+        KeyCode::Char('e') if ctrl => editor.end(),
+        KeyCode::Char('u') if ctrl => editor.clear(),
+        KeyCode::Char('k') if ctrl => editor.kill_to_end(),
         KeyCode::Backspace => editor.backspace(),
         KeyCode::Left => editor.left(),
         KeyCode::Right => editor.right(),

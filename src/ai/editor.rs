@@ -159,6 +159,12 @@ impl Editor {
         self.cx = char_len(&self.lines[self.cy]);
     }
 
+    /// Delete from the cursor to the end of the current line (Ctrl+K).
+    pub fn kill_to_end(&mut self) {
+        let at = byte_at(&self.lines[self.cy], self.cx);
+        self.lines[self.cy].truncate(at);
+    }
+
     /// Move up a line if possible; returns `false` if already on the first line
     /// (so the caller can fall back to history recall).
     pub fn up(&mut self) -> bool {
@@ -292,6 +298,16 @@ mod tests {
         assert_eq!(e.text(), "first");
         e.recall_next();
         assert_eq!(e.text(), "second");
+    }
+
+    #[test]
+    fn kill_to_end_truncates_at_cursor() {
+        let mut e = typed("hello world");
+        for _ in 0..5 {
+            e.left(); // cursor before "world"
+        }
+        e.kill_to_end();
+        assert_eq!(e.text(), "hello ");
     }
 
     #[test]
