@@ -3220,7 +3220,7 @@ fn cashtag_annotated(text: &str, aliases: &HashMap<String, String>) -> String {
             continue;
         }
         let mut at = 0usize;
-        for (range, _) in super::answer::security_spans(line, aliases) {
+        for (range, symbol) in super::answer::security_spans(line, aliases) {
             if range.start < at {
                 continue;
             }
@@ -3229,7 +3229,11 @@ fn cashtag_annotated(text: &str, aliases: &HashMap<String, String>) -> String {
             if !out.ends_with('$') {
                 out.push('$');
             }
-            out.push_str(&line[range.clone()]);
+            // The full symbol, market and all: an answer writes `TSLA` where it
+            // means `TSLA.US`, and half a symbol is ambiguous — the same four
+            // letters list in more than one market. Widening it here rather than at
+            // render time keeps the wrapping honest.
+            out.push_str(&symbol);
             at = range.end;
         }
         out.push_str(&line[at..]);
@@ -3395,26 +3399,9 @@ fn render_widget(
             } else {
                 t!("Ai.WidgetStockList")
             };
-            let mut out = vec![Line::from(Span::styled(
-                format!("  {header}"),
-                Style::default().fg(Color::DarkGray),
-            ))];
-            // One row per security, columns aligned so the set can be compared
-            // down the page — which is the whole point of the widget.
-            let name_w = symbols
-                .iter()
-                .map(|s| UnicodeWidthStr::width(s.as_str()))
-                .max()
-                .unwrap_or(0);
-            for symbol in symbols {
-                out.push(match quotes.get(symbol) {
-                    Some(card) => quote_row(card, name_w),
-                    None => pending_ref(symbol),
-                });
-            }
-            out
+            comparison_card(&header, symbols, width, quotes)
         }
-        // The CTA kinds are a closed set, so each gets a real label; an
+        // The CTA kinds are a closed set, so each gets a real label; an        // The CTA kinds are a closed set, so each gets a real label; an
         // unrecognized one names itself rather than showing an i18n key.
         WidgetRef::Cta { action } => {
             let label = match action.as_str() {
@@ -3489,6 +3476,48 @@ fn change_color(direction: i8) -> Color {
 /// A boxed card for one security: price and change, then the day's range and
 /// activity — what a trader reads before deciding the reference was worth
 /// following.
+/// A security's cell: the accented `$`, then the symbol on its own.
+///
+/// Its own span for two reasons: the sigil takes a different colour, and the hit
+/// test recognises a span whose content is *exactly* a symbol. Bundling the name
+/// in with it — as the card used to — quietly cost the card its click target
+/// whenever the name was non-empty.
+fn symbol_cell(symbol: &str) -> Vec<Span<'static>> {
+    vec![
+        Span::styled("$", Style::default().fg(CASHTAG)),
+        Span::styled(
+            symbol.to_string(),
+            Style::default().fg(SYMBOL_FG).add_modifier(Modifier::BOLD),
+        ),
+    ]
+}
+
+/// Frame `rows` in a box, padding each to the same inner width.
+///
+/// One helper for both card kinds so a comparison cannot drift from a single
+/// quote: same border, same padding, same alignment. Each row arrives as its
+/// spans plus the display width they occupy — measuring inside would mean
+/// re-measuring every span, and a wrong count shows up as a ragged border.
+fn framed(rows: Vec<(Vec<Span<'static>>, usize)>, inner: usize) -> Vec<Line<'static>> {
+    let dim = Style::default().fg(Color::DarkGray);
+    let border = |left: &str, right: &str| {
+        Line::from(Span::styled(
+            format!("{left}{}{right}", "─".repeat(inner + 2)),
+            dim,
+        ))
+    };
+    let mut out = vec![border("┌", "┐")];
+    for (spans, used) in rows {
+        let mut all = vec![Span::styled("│", dim), Span::raw(" ")];
+        all.extend(spans);
+        all.push(Span::raw(" ".repeat(inner.saturating_sub(used) + 1)));
+        all.push(Span::styled("│", dim));
+        out.push(Line::from(all));
+    }
+    out.push(border("└", "┘"));
+    out
+}
+
 /// The panel's body: one field per row, unboxed — the panel's own frame is the
 /// border, and a dedicated panel has the room the inline card does not.
 fn card_lines(card: &super::quotes::QuoteCardData, width: usize) -> Vec<Line<'static>> {
@@ -3558,10 +3587,11 @@ fn prev_close(card: &super::quotes::QuoteCardData) -> String {
 
 fn quote_card(card: &super::quotes::QuoteCardData, width: usize) -> Vec<Line<'static>> {
     let dir = change_color(card.direction);
+    // Measured with the `$` and the two-space gap the header renders with.
     let head = if card.name.is_empty() {
-        card.symbol.clone()
+        format!("${}", card.symbol)
     } else {
-        format!("{}  {}", card.symbol, card.name)
+        format!("${}  {}", card.symbol, card.name)
     };
     let price = format!("{}  {}  {}", card.last, card.change, card.change_pct);
     let range = format!(
@@ -3613,12 +3643,18 @@ fn quote_card(card: &super::quotes::QuoteCardData, width: usize) -> Vec<Line<'st
     vec![
         border("┌", "┐"),
         row(
-            vec![Span::styled(
-                head.clone(),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )],
+            {
+                let mut spans = symbol_cell(&card.symbol);
+                if !card.name.is_empty() {
+                    let room =
+                        inner.saturating_sub(UnicodeWidthStr::width(card.symbol.as_str()) + 3);
+                    spans.push(Span::styled(
+                        format!("  {}", truncate_width(&card.name, room)),
+                        Style::default().fg(Color::DarkGray),
+                    ));
+                }
+                spans
+            },
             UnicodeWidthStr::width(head.as_str()),
         ),
         row(
@@ -3653,31 +3689,86 @@ fn quote_card(card: &super::quotes::QuoteCardData, width: usize) -> Vec<Line<'st
 }
 
 /// One security as a single aligned row, for a comparison or a list.
-fn quote_row(card: &super::quotes::QuoteCardData, symbol_w: usize) -> Line<'static> {
-    let pad = symbol_w.saturating_sub(UnicodeWidthStr::width(card.symbol.as_str()));
-    let mut spans = vec![
-        Span::styled(
-            format!("{}{}", card.symbol, " ".repeat(pad)),
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!("  {:>10}", card.last),
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!("  {:>9}", card.change_pct),
-            Style::default().fg(change_color(card.direction)),
-        ),
-    ];
-    if !card.name.is_empty() {
-        spans.push(Span::styled(
-            format!("  {}", card.name),
+fn comparison_card(
+    header: &str,
+    symbols: &[String],
+    width: usize,
+    quotes: &HashMap<String, super::quotes::QuoteCardData>,
+) -> Vec<Line<'static>> {
+    // Columns are measured across the whole set, which is the point of the
+    // widget: the prices have to line up or they cannot be compared down the page.
+    // The old rendering left them to `{:>10}` and put the header at a different
+    // indent from the rows, so nothing lined up with anything.
+    let w = |s: &str| UnicodeWidthStr::width(s);
+    let cell = |symbol: &String| quotes.get(symbol);
+    // One column wider than the longest symbol: the `$` rides in front of it.
+    let sym_w = symbols.iter().map(|s| w(s)).max().unwrap_or(0) + 1;
+    let last_w = symbols
+        .iter()
+        .filter_map(cell)
+        .map(|c| w(&c.last))
+        .max()
+        .unwrap_or(0);
+    let pct_w = symbols
+        .iter()
+        .filter_map(cell)
+        .map(|c| w(&c.change_pct))
+        .max()
+        .unwrap_or(0);
+    // Frame plus gaps: bar, space, columns, space, bar.
+    let fixed = sym_w + 2 + last_w + 2 + pct_w;
+    let budget = width.saturating_sub(4);
+    let name_w = budget.saturating_sub(fixed + 2);
+    let name_w = symbols
+        .iter()
+        .filter_map(cell)
+        .map(|c| w(&c.name))
+        .max()
+        .unwrap_or(0)
+        .min(name_w);
+    let inner = (fixed + if name_w > 0 { name_w + 2 } else { 0 }).min(budget);
+
+    let mut rows: Vec<(Vec<Span<'static>>, usize)> = vec![(
+        vec![Span::styled(
+            header.to_string(),
             Style::default().fg(Color::DarkGray),
-        ));
+        )],
+        w(header),
+    )];
+    for symbol in symbols {
+        let mut spans = symbol_cell(symbol);
+        spans.push(Span::raw(" ".repeat(sym_w.saturating_sub(w(symbol) + 1))));
+        let mut used = sym_w;
+        if let Some(card) = cell(symbol) {
+            spans.push(Span::styled(
+                format!("  {:>last_w$}", card.last),
+                Style::default().add_modifier(Modifier::BOLD),
+            ));
+            spans.push(Span::styled(
+                format!("  {:>pct_w$}", card.change_pct),
+                Style::default().fg(change_color(card.direction)),
+            ));
+            used += 2 + last_w + 2 + pct_w;
+            if name_w > 0 && !card.name.is_empty() {
+                let name = truncate_width(&card.name, name_w);
+                used += 2 + w(&name);
+                spans.push(Span::styled(
+                    format!("  {name}"),
+                    Style::default().fg(Color::DarkGray),
+                ));
+            }
+        } else {
+            // No quote yet: the row keeps its place in the column so the card does
+            // not jump when the quote lands.
+            spans.push(Span::styled(
+                format!("  {:>last_w$}", "…"),
+                Style::default().fg(Color::DarkGray),
+            ));
+            used += 2 + last_w;
+        }
+        rows.push((spans, used));
     }
-    Line::from(spans)
+    framed(rows, inner)
 }
 
 /// Wrap `s` to `width` display columns, honoring wide (CJK) glyphs.
@@ -4851,5 +4942,94 @@ mod tests {
     fn an_authored_cashtag_is_left_alone() {
         let out = super::cashtag_annotated("$AAPL.US 与 700.HK", &std::collections::HashMap::new());
         assert_eq!(out, "$AAPL.US 与 $700.HK");
+    }
+
+    /// A comparison is a card, and its columns line up: reading a set of prices
+    /// down the page is the whole point of the widget. It used to be a header at
+    /// one indent and rows at another, with the prices left to a fixed `{:>10}`.
+    #[test]
+    fn a_comparison_is_a_framed_card_with_aligned_columns() {
+        let mut quotes = std::collections::HashMap::new();
+        for (symbol, name, last, pct) in [
+            ("QQQ.US", "纳指 100 ETF - Invesco", "729.615", "-0.33%"),
+            ("SPY.US", "标普 500 ETF - SPDR", "776.085", "-0.23%"),
+        ] {
+            let mut c = card(symbol, last, pct, -1);
+            c.name = name.to_string();
+            quotes.insert(symbol.to_string(), c);
+        }
+        let lines = super::comparison_card(
+            "Comparison",
+            &["QQQ.US".to_string(), "SPY.US".into(), "IWM.US".into()],
+            72,
+            &quotes,
+        );
+        let widths: Vec<usize> = lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
+                    .sum()
+            })
+            .collect();
+        assert!(
+            widths.windows(2).all(|w| w[0] == w[1]),
+            "every row of the frame is the same width: {widths:?}"
+        );
+        assert!(widths[0] <= 72, "and inside the pane: {widths:?}");
+        let text: Vec<String> = lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect();
+        assert!(text[0].starts_with('┌'), "framed: {text:?}");
+        // The prices start at the same column on every row.
+        let at = |row: &str, needle: &str| row.find(needle).map(|i| row[..i].chars().count());
+        assert_eq!(
+            at(&text[2], "729.615"),
+            at(&text[3], "776.085"),
+            "prices share a column: {text:?}"
+        );
+        // A security with no quote yet keeps its place rather than moving the card
+        // when the quote lands.
+        assert!(text[4].contains("$IWM.US"), "{text:?}");
+    }
+
+    /// The card's symbol is its own span, so it is a click target even when the
+    /// security has a name — bundling the two cost the card its target.
+    #[test]
+    fn a_named_card_is_still_a_click_target() {
+        let mut ui = super::Ui::new();
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        state.apply(super::ChatEvent::UserPrompt("700.HK?".into()));
+        state.apply(super::ChatEvent::Delta(
+            "<x-widget src=\"widget://quote/security/detail?symbol=700.HK\"></x-widget>".into(),
+        ));
+        state.apply(super::ChatEvent::TurnFinished { error: None });
+        let mut c = card("700.HK", "512.5", "+1.28%", 1);
+        c.name = "腾讯控股".into();
+        ui.quotes.insert("700.HK".into(), c);
+        let _ = frame(&mut ui, &state, 70, 20);
+        let tall = ui
+            .chips
+            .iter()
+            .filter(|(chip, _)| matches!(chip, super::Chip::Symbol(s) if s == "700.HK"))
+            .map(|(_, rect)| rect.height)
+            .max()
+            .unwrap_or(0);
+        assert!(
+            tall > 1,
+            "the whole card should be clickable, got {tall} rows"
+        );
+    }
+
+    /// The prose carries the full symbol, market and all: the same four letters
+    /// list in more than one market, so half a symbol is ambiguous.
+    #[test]
+    fn the_prose_widens_a_bare_ticker_to_its_full_symbol() {
+        let mut aliases = std::collections::HashMap::new();
+        aliases.insert("TSLA".to_string(), "TSLA.US".to_string());
+        let out = super::cashtag_annotated("看 TSLA 和 700.HK", &aliases);
+        assert_eq!(out, "看 $TSLA.US 和 $700.HK");
     }
 }
