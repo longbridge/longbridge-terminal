@@ -24,6 +24,8 @@ pub struct LoadedChat {
     pub agent_uid: String,
     pub chat_uid: String,
     pub message_id: Option<String>,
+    /// The last message the server can build on — see [`continuable_parent`].
+    pub parent_message_id: Option<String>,
     pub title: Option<String>,
     pub messages: Vec<Message>,
 }
@@ -79,6 +81,7 @@ pub async fn load_detail(uid: &str) -> Option<LoadedChat> {
         .last()
         .filter(|m| m.id != 0)
         .map(|m| m.id.to_string());
+    let parent_message_id = continuable_parent(&detail.messages);
     let messages = detail
         .messages
         .iter()
@@ -100,9 +103,32 @@ pub async fn load_detail(uid: &str) -> Option<LoadedChat> {
         agent_uid,
         chat_uid: uid.to_string(),
         message_id,
+        parent_message_id,
         title,
         messages,
     })
+}
+
+/// The last message a new turn can be parented on: the most recent one the
+/// server marked *finished*.
+///
+/// A message left waiting for the reader to answer a clarifying question, or one
+/// that errored, is not a valid parent — the server rejects the request with a bare
+/// "Something went wrong. Please try again.". That is what bricked a conversation
+/// the reader quit while it was asking something: on resume every later message was
+/// parented on the paused one and failed, forever. Branching from the last finished
+/// message instead continues the conversation (verified against the API), and the
+/// question is simply re-asked if the agent still needs it.
+fn continuable_parent(messages: &[crate::openapi::chats::ChatMessage]) -> Option<String> {
+    /// The server's message status for a run that completed. The other observed
+    /// values are 4 (failed, with `error_code` set) and 5 (interrupted, waiting for
+    /// human input); neither can be continued from.
+    const FINISHED: i32 = 1;
+    messages
+        .iter()
+        .rev()
+        .find(|m| m.id != 0 && m.status == FINISHED)
+        .map(|m| m.id.to_string())
 }
 
 /// Restore a loaded conversation into `state`, ready for follow-ups.
@@ -112,13 +138,59 @@ pub fn restore(loaded: LoadedChat, state: &mut ChatState) {
     }
     state.title = loaded.title;
     state.chat_uid = Some(loaded.chat_uid);
-    state.message_id = loaded.message_id.clone();
-    // A conversation loaded from history ended somewhere, so its last message is
-    // what the next turn continues from.
-    state.parent_message_id = loaded.message_id;
+    state.message_id = loaded.message_id;
+    // Not necessarily the last message: a conversation can end paused or failed,
+    // and neither is something the server will build on.
+    state.parent_message_id = loaded.parent_message_id;
     state.pending_interrupt = None;
     state.scroll = 0;
     state.references.clear();
     state.further.clear();
     state.messages = loaded.messages;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::openapi::chats::ChatMessage;
+
+    fn msg(id: i64, status: i32) -> ChatMessage {
+        ChatMessage {
+            id,
+            status,
+            ..ChatMessage::default()
+        }
+    }
+
+    /// The bug this exists for: a conversation the reader quit while the agent was
+    /// asking them something ends on a paused message, and parenting the next turn
+    /// on it fails with a bare "Something went wrong" — every time, forever.
+    #[test]
+    fn a_paused_last_message_is_not_a_parent() {
+        // 1 finished, 5 interrupted.
+        let messages = [msg(10, 1), msg(11, 1), msg(12, 5)];
+        assert_eq!(continuable_parent(&messages).as_deref(), Some("11"));
+    }
+
+    #[test]
+    fn a_failed_last_message_is_not_a_parent_either() {
+        let messages = [msg(10, 1), msg(11, 4)];
+        assert_eq!(continuable_parent(&messages).as_deref(), Some("10"));
+    }
+
+    #[test]
+    fn an_ordinary_conversation_continues_from_its_last_message() {
+        let messages = [msg(10, 1), msg(11, 1)];
+        assert_eq!(continuable_parent(&messages).as_deref(), Some("11"));
+    }
+
+    /// Nothing to build on: the request goes out without a parent rather than with
+    /// one the server will reject.
+    #[test]
+    fn nothing_continuable_means_no_parent() {
+        assert_eq!(continuable_parent(&[]), None);
+        assert_eq!(continuable_parent(&[msg(10, 5)]), None);
+        // An id of 0 is a placeholder, not a message.
+        assert_eq!(continuable_parent(&[msg(0, 1)]), None);
+    }
 }
