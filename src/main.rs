@@ -301,23 +301,47 @@ async fn main() {
             }
         }
 
-        Some(cli::Commands::Auth {
-            cmd:
-                cli::AuthCmd::Login {
-                    auth_code: None,
-                    client_name,
-                    verbose,
-                },
-        }) => {
+        // ACP clients start terminal auth by re-running the launch command with
+        // the auth method's args appended, i.e. `longbridge acp auth login`.
+        // That alias lands here and behaves like a plain `longbridge auth login`.
+        Some(
+            cli::Commands::Auth {
+                cmd:
+                    cli::AuthCmd::Login {
+                        auth_code: None,
+                        client_name,
+                        verbose,
+                    },
+            }
+            | cli::Commands::Acp {
+                cmd:
+                    Some(cli::AcpCmd::Auth {
+                        action: cli::AcpAuthAction::Login,
+                        client_name,
+                        verbose,
+                    }),
+                ..
+            },
+        ) => {
             if let Err(e) = auth::device_login(verbose, client_name).await {
                 eprintln!("Authentication failed: {e:#}");
                 std::process::exit(1);
             }
         }
 
-        Some(cli::Commands::Auth {
-            cmd: cli::AuthCmd::Logout,
-        }) => match auth::clear_token().await {
+        Some(
+            cli::Commands::Auth {
+                cmd: cli::AuthCmd::Logout,
+            }
+            | cli::Commands::Acp {
+                cmd:
+                    Some(cli::AcpCmd::Auth {
+                        action: cli::AcpAuthAction::Logout,
+                        ..
+                    }),
+                ..
+            },
+        ) => match auth::clear_token().await {
             Ok(()) => println!("Successfully logged out."),
             Err(e) => {
                 eprintln!("Failed to clear credentials: {e}");
@@ -338,7 +362,7 @@ async fn main() {
             cli::completion::cmd_completion(shell);
         }
 
-        Some(cli::Commands::Acp { agent_id }) => {
+        Some(cli::Commands::Acp { agent_id, cmd: _ }) => {
             let agent_id = agent_id
                 .or_else(|| std::env::var("LONGBRIDGE_AGENT_ID").ok())
                 .unwrap_or_else(|| "chatbot".to_string());
