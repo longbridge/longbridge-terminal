@@ -62,15 +62,13 @@ const IDX_SEL: Color = Color::Rgb(240, 150, 90);
 enum Setting {
     Agent,
     NewChat,
-    ClearHistory,
 }
 
-const SETTINGS: [Setting; 3] = [Setting::Agent, Setting::NewChat, Setting::ClearHistory];
+const SETTINGS: [Setting; 2] = [Setting::Agent, Setting::NewChat];
 
 /// Slash commands: `(name, i18n description key)`.
-const SLASH: [(&str, &str); 9] = [
+const SLASH: [(&str, &str); 8] = [
     ("/new", "Ai.SlashNew"),
-    ("/clear", "Ai.SlashClear"),
     ("/copy", "Ai.SlashCopy"),
     ("/export", "Ai.SlashExport"),
     ("/history", "Ai.SlashHistory"),
@@ -177,6 +175,11 @@ struct Ui {
     cache_sig: u64,
     /// Live quotes for `x-widget` tickers, fetched after a turn, keyed by symbol.
     quotes: HashMap<String, crate::cli::agent::render::QuoteCardData>,
+    /// True while the server History list is being fetched.
+    sessions_loading: bool,
+    /// Senders for background History fetch / load, set once in `run`.
+    history_tx: Option<UnboundedSender<Vec<SessionSummary>>>,
+    load_tx: Option<UnboundedSender<session_store::LoadedChat>>,
     /// Set to break the event loop (via `/exit` or a double Ctrl+C).
     should_quit: bool,
     /// True after one Ctrl+C on an empty prompt; a second one exits.
@@ -210,6 +213,9 @@ impl Ui {
             transcript_cache: Vec::new(),
             cache_sig: 0,
             quotes: HashMap::new(),
+            sessions_loading: false,
+            history_tx: None,
+            load_tx: None,
             should_quit: false,
             ctrl_c_armed: false,
             focused: true,
@@ -249,8 +255,9 @@ impl Ui {
         }
     }
 
-    /// Switch to `view`, refreshing the History list, dropping any half-answered
-    /// question, and clamping selection.
+    /// Switch to `view`, dropping any half-answered question and clamping
+    /// selection. (Entering History is done via `open_history`, which also
+    /// kicks off the async fetch.)
     fn switch(&mut self, view: View) {
         self.view = view;
         self.notice = None;
@@ -259,9 +266,6 @@ impl Ui {
         self.search.clear();
         if view != View::Question {
             self.question = None;
-        }
-        if view == View::Sessions {
-            self.sessions = session_store::list();
         }
     }
 
@@ -282,6 +286,10 @@ pub async fn run(agent_uid: String) -> Result<()> {
     let (agents_tx, mut agents_rx) = unbounded_channel::<Vec<AgentInfo>>();
     let (cards_tx, mut cards_rx) =
         unbounded_channel::<HashMap<String, crate::cli::agent::render::QuoteCardData>>();
+    let (history_tx, mut history_rx) = unbounded_channel::<Vec<SessionSummary>>();
+    let (load_tx, mut load_rx) = unbounded_channel::<session_store::LoadedChat>();
+    ui.history_tx = Some(history_tx);
+    ui.load_tx = Some(load_tx);
     let mut events = EventStream::new();
     // Drives the marquee of truncated rows; only consulted while `animating`.
     let mut ticker = tokio::time::interval(Duration::from_millis(120));
@@ -322,7 +330,6 @@ pub async fn run(agent_uid: String) -> Result<()> {
                 state.apply(event);
                 if finished {
                     turn = None;
-                    persist(&state);
                     maybe_open_question(&mut ui, &state);
                     fetch_quote_cards_for(&state, &cards_tx);
                     if !ui.focused {
@@ -338,6 +345,17 @@ pub async fn run(agent_uid: String) -> Result<()> {
             Some(cards) = cards_rx.recv() => {
                 ui.quotes.extend(cards);
                 ui.cache_sig = 0; // force a transcript rebuild so cards appear
+            }
+            Some(list) = history_rx.recv() => {
+                ui.sessions = list;
+                ui.sessions_loading = false;
+                ui.clamp_sel();
+            }
+            Some(loaded) = load_rx.recv() => {
+                session_store::restore(loaded, &mut state);
+                ui.quotes.clear();
+                ui.cache_sig = 0;
+                ui.switch(View::Chat);
             }
         }
         if ui.should_quit {
@@ -395,14 +413,6 @@ fn notify(message: &str) {
     let mut out = std::io::stdout();
     let _ = out.write_all(seq.as_bytes());
     let _ = out.flush();
-}
-
-/// Persist the current conversation under its server chat id, so History can
-/// list and resume it. No id yet means the turn never started; nothing to save.
-fn persist(state: &ChatState) {
-    if let Some(id) = state.chat_uid.clone() {
-        session_store::save(&id, now_secs(), state);
-    }
 }
 
 /// After a turn, open the structured Question view if the interrupt is fully
@@ -521,7 +531,6 @@ fn on_sessions_key(
             ui.sel = (ui.sel + 1).min(last);
         }
         KeyCode::Enter => activate(ui, state, agents_tx),
-        KeyCode::Delete => delete_selected_session(ui),
         KeyCode::Backspace => {
             ui.search.pop();
             ui.clamp_sel();
@@ -532,17 +541,6 @@ fn on_sessions_key(
         }
         _ => {}
     }
-}
-
-/// Delete the highlighted history entry and refresh the list.
-fn delete_selected_session(ui: &mut Ui) {
-    let Some(id) = ui.visible_sessions().get(ui.sel).map(|s| s.id.clone()) else {
-        return;
-    };
-    session_store::delete(&id);
-    ui.sessions = session_store::list();
-    ui.clamp_sel();
-    ui.notice = Some(t!("Ai.SessionDeleted").to_string());
 }
 
 fn on_chat_key(
@@ -672,11 +670,6 @@ fn exec_slash(
             state.reset(t!("Ai.Welcome").to_string());
             ui.switch(View::Chat);
         }
-        "clear" => {
-            session_store::clear();
-            ui.sessions.clear();
-            ui.notice = Some(t!("Ai.HistoryCleared").to_string());
-        }
         "copy" => {
             let text = transcript_text(state);
             copy_with_notice(ui, Some(text));
@@ -687,7 +680,7 @@ fn exec_slash(
                 Err(_) => t!("Ai.ExportFailed").to_string(),
             });
         }
-        "history" => ui.switch(View::Sessions),
+        "history" => open_history(ui),
         "settings" => ui.switch(View::Settings),
         "agent" => open_agents(ui, agents_tx),
         "help" => state.messages.push(Message {
@@ -845,9 +838,14 @@ fn activate(ui: &mut Ui, state: &mut ChatState, agents_tx: &UnboundedSender<Vec<
         View::Sessions => {
             // The row past the last session is the "New session" action.
             if let Some(id) = ui.visible_sessions().get(ui.sel).map(|s| s.id.clone()) {
-                if let Some(session) = session_store::load(&id) {
-                    session_store::restore(session, state);
-                    ui.switch(View::Chat);
+                // Fetch the full conversation in the background, then restore.
+                if let Some(tx) = ui.load_tx.clone() {
+                    ui.notice = Some(t!("Ai.SessionLoading").to_string());
+                    tokio::spawn(async move {
+                        if let Some(loaded) = session_store::load_detail(&id).await {
+                            let _ = tx.send(loaded);
+                        }
+                    });
                 }
             } else {
                 state.reset(t!("Ai.Welcome").to_string());
@@ -860,11 +858,6 @@ fn activate(ui: &mut Ui, state: &mut ChatState, agents_tx: &UnboundedSender<Vec<
                 state.reset(t!("Ai.Welcome").to_string());
                 ui.switch(View::Chat);
             }
-            Some(Setting::ClearHistory) => {
-                session_store::clear();
-                ui.sessions.clear();
-                ui.notice = Some(t!("Ai.HistoryCleared").to_string());
-            }
             None => {}
         },
         View::Agents => {
@@ -876,6 +869,20 @@ fn activate(ui: &mut Ui, state: &mut ChatState, agents_tx: &UnboundedSender<Vec<
             }
         }
         View::Chat | View::Question => {}
+    }
+}
+
+/// Open the History view and fetch the account's chats in the background.
+fn open_history(ui: &mut Ui) {
+    ui.view = View::Sessions;
+    ui.sel = 0;
+    ui.search.clear();
+    ui.question = None;
+    ui.sessions_loading = true;
+    if let Some(tx) = ui.history_tx.clone() {
+        tokio::spawn(async move {
+            let _ = tx.send(session_store::list_summaries().await);
+        });
     }
 }
 
@@ -1526,6 +1533,16 @@ fn pad_to(s: &str, width: usize) -> String {
 #[allow(clippy::needless_range_loop)]
 fn render_sessions(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
     ui.rows.clear();
+    if ui.sessions_loading && ui.sessions.is_empty() {
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                t!("Ai.SessionsLoading").to_string(),
+                Style::default().fg(Color::DarkGray),
+            ))),
+            area,
+        );
+        return;
+    }
     ui.clamp_sel();
     // A search line appears above the list only while filtering.
     let list_area = if ui.search.is_empty() {
@@ -1698,7 +1715,6 @@ fn render_settings(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &Chat
             let label = match setting {
                 Setting::Agent => format!("{}: {}", t!("Ai.SettingAgent"), state.agent_uid),
                 Setting::NewChat => t!("Ai.NewChat").to_string(),
-                Setting::ClearHistory => t!("Ai.ClearHistory").to_string(),
             };
             (i, label)
         })

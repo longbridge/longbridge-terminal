@@ -1,193 +1,111 @@
-//! On-disk history for `longbridge ai` chat sessions.
+//! History for `longbridge ai` chats, backed by the account's server-side
+//! conversations.
 //!
-//! A lightweight analog of grok-build's `xai-chat-state::persistence`: each
-//! conversation is saved as one JSON file under the user's config directory, so
-//! the Sessions view can list past chats and resume them. The `ai` TUI drives
-//! the A2A streaming path directly, so it owns this history rather than reusing
-//! the ACP backend's store.
-
-use std::path::PathBuf;
-
-use serde::{Deserialize, Serialize};
+//! Rather than a local file store, this reads the shared `/v1/ai/chats`
+//! endpoints (via [`crate::openapi::chats`]) so History shows the same
+//! conversations as the web and other clients, and resuming one continues the
+//! server's thread. Both operations are network calls; the TUI runs them off
+//! the event loop and delivers the results over a channel.
 
 use super::state::{ChatState, Message, Role};
 
-/// One persisted message (role + text), independent of the in-memory `Message`.
-#[derive(Serialize, Deserialize)]
-struct StoredMessage {
-    role: StoredRole,
-    text: String,
-}
-
-#[derive(Clone, Copy, Serialize, Deserialize)]
-enum StoredRole {
-    User,
-    Assistant,
-    System,
-}
-
-/// A full saved conversation.
-#[derive(Serialize, Deserialize)]
-pub struct StoredSession {
-    pub id: String,
-    /// Seconds since the Unix epoch; used for ordering and display.
-    pub updated_at: u64,
-    pub agent_uid: String,
-    /// Server-generated conversation title, if one was received.
-    #[serde(default)]
-    pub title: Option<String>,
-    pub chat_uid: Option<String>,
-    pub message_id: Option<String>,
-    messages: Vec<StoredMessage>,
-}
-
-/// A one-line summary for the Sessions list.
+/// A one-line summary for the History list.
 pub struct SessionSummary {
+    /// Server chat uid.
     pub id: String,
+    /// Seconds since the Unix epoch; used for ordering and the age subtitle.
     pub updated_at: u64,
     pub title: String,
     pub agent: String,
 }
 
-fn dir() -> Option<PathBuf> {
-    dirs::config_dir().map(|d| d.join("longbridge").join("ai-sessions"))
+/// A fully loaded conversation, ready to restore into [`ChatState`].
+pub struct LoadedChat {
+    pub agent_uid: String,
+    pub chat_uid: String,
+    pub message_id: Option<String>,
+    pub title: Option<String>,
+    pub messages: Vec<Message>,
 }
 
-/// List saved sessions, newest first.
-#[must_use]
-pub fn list() -> Vec<SessionSummary> {
-    let Some(dir) = dir() else {
+/// List the account's chats, newest first.
+pub async fn list_summaries() -> Vec<SessionSummary> {
+    let Ok(resp) = crate::openapi::chats::list_chats(1, 50, None).await else {
         return Vec::new();
     };
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return Vec::new();
-    };
-    let mut sessions: Vec<SessionSummary> = entries
-        .filter_map(Result::ok)
-        .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
-        .filter_map(|e| std::fs::read(e.path()).ok())
-        .filter_map(|bytes| serde_json::from_slice::<StoredSession>(&bytes).ok())
-        .map(|s| SessionSummary {
-            title: summarize(&s),
-            agent: s.agent_uid,
-            id: s.id,
-            updated_at: s.updated_at,
+    let mut sessions: Vec<SessionSummary> = resp
+        .chats
+        .into_iter()
+        .map(|c| SessionSummary {
+            title: if c.name.trim().is_empty() {
+                rust_i18n::t!("Ai.UntitledSession").to_string()
+            } else {
+                c.name
+            },
+            agent: if c.agent_name.is_empty() {
+                c.agent_uid.clone()
+            } else {
+                c.agent_name
+            },
+            updated_at: u64::try_from(c.updated_at).unwrap_or(0),
+            id: c.uid,
         })
         .collect();
     sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     sessions
 }
 
-/// Load one session by id.
-#[must_use]
-pub fn load(id: &str) -> Option<StoredSession> {
-    let path = dir()?.join(format!("{}.json", sanitize(id)));
-    let bytes = std::fs::read(path).ok()?;
-    serde_json::from_slice(&bytes).ok()
-}
-
-/// Persist the current chat state under its session id (creating the directory
-/// on first save). A best-effort operation — failures are ignored so the UI
-/// never blocks on disk.
-pub fn save(id: &str, now: u64, state: &ChatState) {
-    let Some(dir) = dir() else { return };
-    if std::fs::create_dir_all(&dir).is_err() {
-        return;
-    }
-    let stored = StoredSession {
-        id: id.to_string(),
-        updated_at: now,
-        agent_uid: state.agent_uid.clone(),
-        title: state.title.clone(),
-        chat_uid: state.chat_uid.clone(),
-        message_id: state.message_id.clone(),
-        messages: state
-            .messages
-            .iter()
-            .map(|m| StoredMessage {
-                role: match m.role {
-                    Role::User => StoredRole::User,
-                    Role::Assistant => StoredRole::Assistant,
-                    Role::System => StoredRole::System,
-                },
-                text: m.text.clone(),
-            })
-            .collect(),
-    };
-    if let Ok(bytes) = serde_json::to_vec_pretty(&stored) {
-        let _ = std::fs::write(dir.join(format!("{}.json", sanitize(id))), bytes);
-    }
-}
-
-/// Delete one saved session by id. Returns whether a file was removed.
-pub fn delete(id: &str) -> bool {
-    dir()
-        .map(|d| d.join(format!("{}.json", sanitize(id))))
-        .is_some_and(|path| std::fs::remove_file(path).is_ok())
-}
-
-/// Delete every saved session. Best-effort: unreadable entries are skipped.
-pub fn clear() {
-    let Some(dir) = dir() else { return };
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return;
-    };
-    for entry in entries.filter_map(Result::ok) {
-        if entry.path().extension().is_some_and(|x| x == "json") {
-            let _ = std::fs::remove_file(entry.path());
-        }
-    }
-}
-
-/// Restore the persisted messages and conversation IDs into `state`.
-pub fn restore(session: StoredSession, state: &mut ChatState) {
-    state.agent_uid = session.agent_uid;
-    state.title = session.title;
-    state.chat_uid = session.chat_uid;
-    state.message_id = session.message_id;
-    state.pending_interrupt = None;
-    state.scroll = 0;
-    state.messages = session
-        .messages
-        .into_iter()
-        .map(|m| Message {
-            role: match m.role {
-                StoredRole::User => Role::User,
-                StoredRole::Assistant => Role::Assistant,
-                StoredRole::System => Role::System,
-            },
-            text: m.text,
-        })
-        .collect();
-}
-
-/// The conversation's title: the server-generated one if present, otherwise
-/// the first line of the first user message, otherwise a placeholder.
-fn summarize(session: &StoredSession) -> String {
-    if let Some(title) = session.title.as_ref().filter(|t| !t.trim().is_empty()) {
-        return title.clone();
-    }
-    session
+/// Load one chat's full message history for resuming.
+pub async fn load_detail(uid: &str) -> Option<LoadedChat> {
+    let detail = crate::openapi::chats::chat_detail(uid).await.ok()?;
+    let agent_uid = detail
         .messages
         .iter()
-        .find(|m| matches!(m.role, StoredRole::User))
-        .map(|m| {
-            let line = m.text.lines().next().unwrap_or_default();
-            line.chars().take(60).collect::<String>()
+        .map(|m| m.agent_uid.clone())
+        .find(|a| !a.is_empty())
+        .unwrap_or_default();
+    let message_id = detail
+        .messages
+        .last()
+        .filter(|m| m.id != 0)
+        .map(|m| m.id.to_string());
+    let messages = detail
+        .messages
+        .iter()
+        .filter_map(|m| {
+            let text = m.text();
+            if text.trim().is_empty() {
+                return None;
+            }
+            let role = if m.sender == "user" {
+                Role::User
+            } else {
+                Role::Assistant
+            };
+            Some(Message { role, text })
         })
-        .filter(|t| !t.is_empty())
-        .unwrap_or_else(|| rust_i18n::t!("Ai.UntitledSession").to_string())
+        .collect();
+    let title = (!detail.chat.name.trim().is_empty()).then(|| detail.chat.name.clone());
+    Some(LoadedChat {
+        agent_uid,
+        chat_uid: uid.to_string(),
+        message_id,
+        title,
+        messages,
+    })
 }
 
-/// Keep a session id safe as a filename component.
-fn sanitize(id: &str) -> String {
-    id.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
+/// Restore a loaded conversation into `state`, ready for follow-ups.
+pub fn restore(loaded: LoadedChat, state: &mut ChatState) {
+    if !loaded.agent_uid.is_empty() {
+        state.agent_uid = loaded.agent_uid;
+    }
+    state.title = loaded.title;
+    state.chat_uid = Some(loaded.chat_uid);
+    state.message_id = loaded.message_id;
+    state.pending_interrupt = None;
+    state.scroll = 0;
+    state.references.clear();
+    state.further.clear();
+    state.messages = loaded.messages;
 }
