@@ -1,20 +1,22 @@
-//! Stdout rendering of an agent answer, for `longbridge agent chat`.
+//! Rendering an answer to stdout, as ANSI text.
 //!
-//! What an answer *is* — its segments, widget references and inline markers —
-//! lives in [`crate::ai::answer`], and charts are drawn by
-//! [`crate::ai::chart`]; this module only turns those into the ANSI text the CLI
-//! prints. The `ai` TUI renders the same model into ratatui lines instead.
+//! The counterpart of [`crate::ai::tui`]'s renderer: both consume the same
+//! answer model ([`crate::ai::answer`]) and the same chart drawing
+//! ([`crate::ai::chart`]), one producing ratatui lines and this one producing
+//! ANSI text for `longbridge agent chat`. It lives here, with the rest of the
+//! answer rendering, rather than under the `agent` command that happens to be
+//! its only caller — `src/cli/agent` is that command's own plumbing.
 
 use serde_json::Value;
 use std::fmt::Write;
 
 use ratatui::style::Color;
 
-use crate::ai::answer::{
+use super::answer::{
     parse_quote_widget_symbol, parse_widget, replace_inline_markers, segment_answer, Segment,
     WidgetRef,
 };
-use crate::ai::quotes::QuoteCardData;
+use super::quotes::QuoteCardData;
 use crate::utils::text::{display_width, pad_display, strip_control_chars};
 
 /// Render a vis-chart spec for stdout.
@@ -24,7 +26,7 @@ use crate::utils::text::{display_width, pad_display, strip_control_chars};
 /// once, in one place, so `agent chat` and the `ai` TUI cannot drift apart.
 pub fn render_vis_chart(spec: &Value, width: usize, color: bool) -> String {
     let mut out = String::new();
-    for line in crate::ai::chart::render(spec, width) {
+    for line in super::chart::render(spec, width) {
         for span in &line.spans {
             match span.style.fg.filter(|_| color) {
                 Some(fg) => {

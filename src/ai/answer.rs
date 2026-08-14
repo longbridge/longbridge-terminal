@@ -183,6 +183,72 @@ fn query_values(query: &str, key: &str) -> Vec<String> {
         .collect()
 }
 
+/// Market suffixes a symbol may carry.
+///
+/// Deliberately the closed set the platform trades rather than "two or three
+/// capitals": the scanner runs over prose, and every false positive turns an
+/// ordinary word into something that looks clickable and answers nothing.
+const MARKETS: [&str; 5] = ["HK", "US", "SG", "SH", "SZ"];
+
+/// Byte ranges of the securities named in `text`, in order.
+///
+/// A symbol is `CODE.MARKET` — `700.HK`, `AAPL.US`, and the leading-dot index
+/// form `.DJI.US` — bounded by non-alphanumerics so `AAPL.USA` and `x700.HK` are
+/// not matches.
+pub fn symbol_spans(text: &str) -> Vec<std::ops::Range<usize>> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::new();
+    let mut at = 0usize;
+    while let Some(dot) = text[at..].find('.') {
+        let dot = at + dot;
+        at = dot + 1;
+        let Some(market) = MARKETS
+            .iter()
+            .find(|m| text[dot + 1..].starts_with(**m))
+            .copied()
+        else {
+            continue;
+        };
+        let end = dot + 1 + market.len();
+        // The suffix has to end the word, or `AAPL.USA` reads as a US ticker.
+        if bytes.get(end).is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'.') {
+            continue;
+        }
+        // Walk back over the code, allowing one leading dot for an index.
+        let mut start = dot;
+        while start > 0 && bytes[start - 1].is_ascii_alphanumeric() {
+            start -= 1;
+        }
+        if start == dot {
+            continue; // a bare `.HK`
+        }
+        if start > 0 && bytes[start - 1] == b'.' {
+            start -= 1;
+        }
+        // And the whole thing has to start a word.
+        if start > 0 && (bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'.') {
+            continue;
+        }
+        // A code is short and upper-case: prose like `see.US` should not match.
+        let code = &text[start..dot];
+        let plausible = code.len() <= 8
+            && !code.is_empty()
+            && code
+                .chars()
+                .all(|c| c.is_ascii_digit() || c.is_ascii_uppercase() || c == '.');
+        if plausible {
+            out.push(start..end);
+            at = end;
+        }
+    }
+    out
+}
+
+/// Whether `text` is exactly one security symbol.
+pub fn is_symbol(text: &str) -> bool {
+    symbol_spans(text).first().is_some_and(|r| *r == (0..text.len()))
+}
+
 /// The symbol of a single-quote widget, or `None` for any other kind.
 pub fn parse_quote_widget_symbol(src: &str) -> Option<String> {
     match parse_widget(src)? {
@@ -743,5 +809,39 @@ mod tests {
             let end = bare_widget_url_end(input);
             assert_eq!(&input[..end], want, "for {input:?}");
         }
+    }
+
+    /// The scanner runs over prose, so a false positive turns an ordinary word
+    /// into something that looks clickable and answers nothing.
+    #[test]
+    fn symbols_are_found_in_prose_and_nowhere_else() {
+        let text = "看 700.HK 和 AAPL.US，还有 .DJI.US；但 AAPL.USA、x700.HK、see.us 不算。";
+        let found: Vec<&str> = symbol_spans(text)
+            .into_iter()
+            .map(|r| &text[r])
+            .collect();
+        assert_eq!(found, ["700.HK", "AAPL.US", ".DJI.US"], "in {text:?}");
+    }
+
+    #[test]
+    fn a_symbol_on_its_own_is_recognised() {
+        for yes in ["700.HK", "AAPL.US", "9988.HK", "600519.SH", ".DJI.US"] {
+            assert!(is_symbol(yes), "{yes} should be a symbol");
+        }
+        for no in ["AAPL", "AAPL.USA", "HK", "", "hello.us", "AAPL.US extra"] {
+            assert!(!is_symbol(no), "{no:?} should not be a symbol");
+        }
+    }
+
+    /// The scanner is what makes a symbol clickable, so it has to find the ones
+    /// answers actually contain — including inside the link form's parentheses.
+    #[test]
+    fn symbols_are_found_where_answers_put_them() {
+        let text = "特斯拉 (TSLA.US) 与 腾讯 (700.HK) 对比";
+        let found: Vec<&str> = symbol_spans(text)
+            .into_iter()
+            .map(|r| &text[r])
+            .collect();
+        assert_eq!(found, ["TSLA.US", "700.HK"]);
     }
 }

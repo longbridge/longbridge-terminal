@@ -11,7 +11,6 @@ pub mod chat;
 pub mod chats;
 pub mod client;
 pub mod events;
-pub mod render;
 pub mod skills;
 pub mod workspace;
 

@@ -1,7 +1,7 @@
 //! Chart drawing for `vis-chart` specs, the agent's own answer dialect.
 //!
 //! This is the single place charts are drawn. It produces `Vec<Line<'static>>`
-//! for the TUI, and [`crate::cli::agent::render::render_vis_chart`] flattens
+//! for the TUI, and [`crate::ai::stdout::render_vis_chart`] flattens
 //! those lines to ANSI for `agent chat`'s stdout — that direction is lossless,
 //! whereas emitting ANSI and parsing it back would throw styling away and then
 //! guess it again.

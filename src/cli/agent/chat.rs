@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 
 use super::client::{stream_conversation, ConversationRequest};
 use super::events::{AgentEvent, ChatAggregator, ChatOutcome};
-use super::render::render_answer;
+use crate::ai::stdout::render_answer;
 use super::ChatTarget;
 use crate::cli::OutputFormat;
 use crate::utils::text::strip_control_chars;

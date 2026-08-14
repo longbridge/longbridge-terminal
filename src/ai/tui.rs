@@ -152,12 +152,14 @@ fn slash_lookup(typed: &str) -> Option<&'static str> {
 }
 
 /// A clickable chip in the Chat meta panel.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Chip {
     /// Index into `state.references`.
     Reference(usize),
     /// Index into `state.further`.
     Further(usize),
+    /// A security named in the transcript; opens its quote.
+    Symbol(String),
 }
 
 /// State of the structured interrupt answering flow.
@@ -255,6 +257,11 @@ struct Ui {
     sessions_error: bool,
     /// Senders for background History fetch / load, set once in `run`.
     history_tx: Option<UnboundedSender<Option<Vec<SessionSummary>>>>,
+    /// Sender for background quote fetches, so a clicked symbol can ask for its
+    /// own quote the same way a finished turn asks for its cards.
+    cards_tx: Option<UnboundedSender<HashMap<String, super::quotes::QuoteCardData>>>,
+    /// The security whose quote panel is open, if any.
+    quote_panel: Option<String>,
     load_tx: Option<UnboundedSender<Option<session_store::LoadedChat>>>,
     /// Hit rect of the running turn's `[stop]` button, recorded during render.
     stop_button: Option<Rect>,
@@ -296,6 +303,8 @@ impl Ui {
             sessions_loading: false,
             sessions_error: false,
             history_tx: None,
+            cards_tx: None,
+            quote_panel: None,
             load_tx: None,
             stop_button: None,
             turn_started: None,
@@ -377,6 +386,7 @@ pub async fn run(agent_uid: String) -> Result<()> {
     let (history_tx, mut history_rx) = unbounded_channel::<Option<Vec<SessionSummary>>>();
     let (load_tx, mut load_rx) = unbounded_channel::<Option<session_store::LoadedChat>>();
     ui.history_tx = Some(history_tx);
+    ui.cards_tx = Some(cards_tx.clone());
     ui.load_tx = Some(load_tx);
     let mut events = EventStream::new();
     // Drives the marquee of truncated rows; only consulted while `animating`.
@@ -953,7 +963,7 @@ fn on_mouse(
                     .chips
                     .iter()
                     .find(|(_, r)| hit(*r, col, row))
-                    .map(|(c, _)| *c)
+                    .map(|(c, _)| c.clone())
                 {
                     click_chip(chip, ui, state, turn, tx);
                 } else if hit(ui.transcript, col, row) {
@@ -1050,6 +1060,27 @@ fn activate(ui: &mut Ui, state: &mut ChatState) {
     }
 }
 
+/// Open the floating quote panel for `symbol`, fetching its quote if the card is
+/// not already cached.
+///
+/// The panel floats over the transcript rather than replacing it: the reader
+/// clicked a symbol inside a sentence they were reading, and the answer around it
+/// is the context for the number.
+fn open_quote_panel(ui: &mut Ui, symbol: String) {
+    if !ui.quotes.contains_key(&symbol) {
+        if let Some(tx) = ui.cards_tx.clone() {
+            let wanted = symbol.clone();
+            tokio::spawn(async move {
+                let cards = super::quotes::fetch_cards_for(&[wanted]).await;
+                if !cards.is_empty() {
+                    let _ = tx.send(cards);
+                }
+            });
+        }
+    }
+    ui.quote_panel = Some(symbol);
+}
+
 /// Open the Conversations view and fetch the account's chats in the background.
 fn open_sessions(ui: &mut Ui) {
     ui.view = View::Sessions;
@@ -1134,6 +1165,7 @@ fn click_chip(
                 open_url(&url);
             }
         }
+        Chip::Symbol(symbol) => open_quote_panel(ui, symbol),
         Chip::Further(i) => {
             if state.busy {
                 return;

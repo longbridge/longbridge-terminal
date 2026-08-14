@@ -22,6 +22,7 @@ pub mod runtime;
 pub mod session_store;
 pub mod settings;
 pub mod state;
+pub mod stdout;
 pub mod tui;
 
 pub use tui::run;
