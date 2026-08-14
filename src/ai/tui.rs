@@ -38,7 +38,7 @@ use super::{markdown, runtime};
 use crate::cli::agent::client::ConversationRequest;
 use crate::cli::agent::DEFAULT_AGENT_UID;
 use crate::tui::widgets::Terminal;
-use crate::utils::text::truncate_width;
+use crate::utils::text::{strip_control_chars, truncate_width};
 
 /// Which view is on screen. `Chat` is home; the rest are reached with `/`
 /// commands (or, for `Question`, by an interrupt) and left with Esc.
@@ -250,7 +250,7 @@ struct Ui {
     /// input handlers can clamp and never scroll the view into a blank screen.
     max_scroll: u16,
     /// Live quotes for `x-widget` tickers, fetched after a turn, keyed by symbol.
-    quotes: HashMap<String, super::answer::QuoteCardData>,
+    quotes: HashMap<String, super::quotes::QuoteCardData>,
     /// True while the server History list is being fetched.
     sessions_loading: bool,
     /// True when the last History fetch failed (vs. genuinely empty).
@@ -375,7 +375,7 @@ pub async fn run(agent_uid: String) -> Result<()> {
     let mut turn: Option<JoinHandle<()>> = None;
     let (tx, mut turn_rx) = unbounded_channel::<ChatEvent>();
     let (cards_tx, mut cards_rx) =
-        unbounded_channel::<HashMap<String, super::answer::QuoteCardData>>();
+        unbounded_channel::<HashMap<String, super::quotes::QuoteCardData>>();
     let (history_tx, mut history_rx) = unbounded_channel::<Option<Vec<SessionSummary>>>();
     let (load_tx, mut load_rx) = unbounded_channel::<Option<session_store::LoadedChat>>();
     ui.history_tx = Some(history_tx);
@@ -472,7 +472,7 @@ pub async fn run(agent_uid: String) -> Result<()> {
 /// live quotes in the background and deliver them on `cards_tx`.
 fn fetch_quote_cards_for(
     state: &ChatState,
-    cards_tx: &UnboundedSender<HashMap<String, super::answer::QuoteCardData>>,
+    cards_tx: &UnboundedSender<HashMap<String, super::quotes::QuoteCardData>>,
 ) {
     let Some(answer) = state
         .messages
@@ -492,7 +492,7 @@ fn fetch_quote_cards_for(
     }
     let cards_tx = cards_tx.clone();
     tokio::spawn(async move {
-        let cards = crate::cli::agent::chat::fetch_quote_cards(&widgets).await;
+        let cards = super::quotes::fetch_cards(&widgets).await;
         if !cards.is_empty() {
             let _ = cards_tx.send(cards);
         }
@@ -2354,7 +2354,7 @@ fn push_message(
     lines: &mut Vec<Line<'static>>,
     message: &Message,
     width: usize,
-    quotes: &HashMap<String, super::answer::QuoteCardData>,
+    quotes: &HashMap<String, super::quotes::QuoteCardData>,
 ) {
     // A tool line is one compact row, not a speaker turn: it belongs to the
     // answer around it, so it gets no accent bar and no trailing blank.
@@ -2414,12 +2414,9 @@ fn push_message(
 fn render_answer_lines(
     answer: &str,
     width: usize,
-    quotes: &HashMap<String, super::answer::QuoteCardData>,
+    quotes: &HashMap<String, super::quotes::QuoteCardData>,
 ) -> Vec<Line<'static>> {
-    use super::answer::{
-        parse_quote_widget_symbol, replace_inline_markers, segment_answer, Segment,
-    };
-    use crate::utils::text::strip_control_chars;
+    use super::answer::{replace_inline_markers, segment_answer, Segment};
     let mut out = Vec::new();
     for segment in segment_answer(answer) {
         match segment {
@@ -2432,30 +2429,230 @@ fn render_answer_lines(
             // the CLI's ANSI form only to repaint every row one flat color threw
             // that away.
             Segment::VisChart(spec) => out.extend(super::chart::render(&spec, width)),
-            Segment::XWidget(src) => {
-                let sym = parse_quote_widget_symbol(&src);
-                if let Some(card) = sym.as_ref().and_then(|s| quotes.get(s)) {
-                    // Live quote fetched: render an inline quote chip.
-                    out.push(quote_chip(card));
-                } else {
-                    // Pending / non-quote widget: a compact reference.
-                    let label = sym.map_or_else(|| strip_control_chars(&src), |s| format!("→ {s}"));
-                    out.push(Line::from(Span::styled(
-                        label,
-                        Style::default()
-                            .fg(Color::Blue)
-                            .add_modifier(Modifier::UNDERLINED),
-                    )));
-                }
-            }
+            Segment::XWidget(src) => out.extend(render_widget(&src, width, quotes)),
         }
     }
     out
 }
 
+/// Render a widget reference as what it is about.
+///
+/// The web client draws a chart here. A terminal cannot, but the CLI already
+/// speaks to the quote API, so the honest terminal equivalent is the live quote
+/// behind the reference: a card for one security, an aligned row per security for
+/// a comparison or a list. Anything else is named, never shown as a URL.
+fn render_widget(
+    src: &str,
+    width: usize,
+    quotes: &HashMap<String, super::quotes::QuoteCardData>,
+) -> Vec<Line<'static>> {
+    use super::answer::{parse_widget, WidgetRef};
+
+    let Some(widget) = parse_widget(src) else {
+        // Not a widget URL at all; show the text rather than dropping it.
+        return vec![Line::from(Span::styled(
+            strip_control_chars(src),
+            Style::default().fg(Color::DarkGray),
+        ))];
+    };
+    match &widget {
+        WidgetRef::Quote { symbol } => match quotes.get(symbol) {
+            Some(card) => quote_card(card, width),
+            None => vec![pending_ref(symbol)],
+        },
+        WidgetRef::Comparison { symbols } | WidgetRef::StockList { symbols } => {
+            let header = if matches!(widget, WidgetRef::Comparison { .. }) {
+                t!("Ai.WidgetComparison")
+            } else {
+                t!("Ai.WidgetStockList")
+            };
+            let mut out = vec![Line::from(Span::styled(
+                format!("  {header}"),
+                Style::default().fg(Color::DarkGray),
+            ))];
+            // One row per security, columns aligned so the set can be compared
+            // down the page — which is the whole point of the widget.
+            let name_w = symbols
+                .iter()
+                .map(|s| UnicodeWidthStr::width(s.as_str()))
+                .max()
+                .unwrap_or(0);
+            for symbol in symbols {
+                out.push(match quotes.get(symbol) {
+                    Some(card) => quote_row(card, name_w),
+                    None => pending_ref(symbol),
+                });
+            }
+            out
+        }
+        // The CTA kinds are a closed set, so each gets a real label; an
+        // unrecognized one names itself rather than showing an i18n key.
+        WidgetRef::Cta { action } => {
+            let label = match action.as_str() {
+                "open_account" => t!("Ai.WidgetCta.open_account").to_string(),
+                "fund_account" => t!("Ai.WidgetCta.fund_account").to_string(),
+                "complete_profile" => t!("Ai.WidgetCta.complete_profile").to_string(),
+                other => other.replace('_', " "),
+            };
+            vec![Line::from(Span::styled(
+                format!("  → {label}"),
+                Style::default().fg(Color::Blue),
+            ))]
+        }
+        WidgetRef::Other { path } => vec![Line::from(Span::styled(
+            format!("  → {path}"),
+            Style::default().fg(Color::DarkGray),
+        ))],
+    }
+}
+
+/// A reference whose quote has not arrived (or will not): name the security.
+fn pending_ref(symbol: &str) -> Line<'static> {
+    Line::from(Span::styled(
+        format!("  → {symbol}"),
+        Style::default().fg(Color::Blue),
+    ))
+}
+
+/// The color a change should be tinted, honoring the up/down color preference.
+fn change_color(direction: i8) -> Color {
+    match direction {
+        1 => Color::Green,
+        -1 => Color::Red,
+        _ => Color::Gray,
+    }
+}
+
+/// A boxed card for one security: price and change, then the day's range and
+/// activity — what a trader reads before deciding the reference was worth
+/// following.
+fn quote_card(card: &super::quotes::QuoteCardData, width: usize) -> Vec<Line<'static>> {
+    let dir = change_color(card.direction);
+    let head = if card.name.is_empty() {
+        card.symbol.clone()
+    } else {
+        format!("{}  {}", card.symbol, card.name)
+    };
+    let price = format!("{}  {}  {}", card.last, card.change, card.change_pct);
+    let range = format!(
+        "{} {}   {} {}   {} {}",
+        t!("Ai.QuoteOpen"),
+        card.open,
+        t!("Ai.QuoteHigh"),
+        card.high,
+        t!("Ai.QuoteLow"),
+        card.low
+    );
+    let flow = format!(
+        "{} {}   {} {}   {}",
+        t!("Ai.QuoteVolume"),
+        card.volume,
+        t!("Ai.QuoteTurnover"),
+        card.turnover,
+        card.at
+    );
+    // The frame costs 6 columns: two of indent, a bar and a space on each side.
+    let budget = width.saturating_sub(6);
+    let inner = [&head, &price, &range, &flow]
+        .into_iter()
+        .map(|s| UnicodeWidthStr::width(s.as_str()))
+        .max()
+        .unwrap_or(0)
+        .min(budget);
+    // Content is clipped to the box, not just measured against it — a long name
+    // or a wide CJK label would otherwise push the right border off the line.
+    let head = truncate_width(&head, inner);
+    let price = truncate_width(&price, inner);
+    let range = truncate_width(&range, inner);
+    let flow = truncate_width(&flow, inner);
+    let border = |left: &str, right: &str| {
+        Line::from(Span::styled(
+            format!("  {left}{}{right}", "─".repeat(inner + 2)),
+            Style::default().fg(Color::DarkGray),
+        ))
+    };
+    let bar = || Span::styled("│", Style::default().fg(Color::DarkGray));
+    let row = |spans: Vec<Span<'static>>, used: usize| {
+        let mut all = vec![Span::raw("  "), bar(), Span::raw(" ")];
+        all.extend(spans);
+        all.push(Span::raw(" ".repeat(inner.saturating_sub(used) + 1)));
+        all.push(bar());
+        Line::from(all)
+    };
+    vec![
+        border("┌", "┐"),
+        row(
+            vec![Span::styled(
+                head.clone(),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )],
+            UnicodeWidthStr::width(head.as_str()),
+        ),
+        row(
+            vec![
+                Span::styled(
+                    format!("{}  ", card.last),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("{}  {}", card.change, card.change_pct),
+                    Style::default().fg(dir),
+                ),
+            ],
+            UnicodeWidthStr::width(price.as_str()),
+        ),
+        row(
+            vec![Span::styled(
+                range.clone(),
+                Style::default().fg(Color::DarkGray),
+            )],
+            UnicodeWidthStr::width(range.as_str()),
+        ),
+        row(
+            vec![Span::styled(
+                flow.clone(),
+                Style::default().fg(Color::DarkGray),
+            )],
+            UnicodeWidthStr::width(flow.as_str()),
+        ),
+        border("└", "┘"),
+    ]
+}
+
+/// One security as a single aligned row, for a comparison or a list.
+fn quote_row(card: &super::quotes::QuoteCardData, symbol_w: usize) -> Line<'static> {
+    let pad = symbol_w.saturating_sub(UnicodeWidthStr::width(card.symbol.as_str()));
+    let mut spans = vec![
+        Span::raw("  "),
+        Span::styled(
+            format!("{}{}", card.symbol, " ".repeat(pad)),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("  {:>10}", card.last),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("  {:>9}", card.change_pct),
+            Style::default().fg(change_color(card.direction)),
+        ),
+    ];
+    if !card.name.is_empty() {
+        spans.push(Span::styled(
+            format!("  {}", card.name),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+    Line::from(spans)
+}
+
 /// A one-line quote chip: `symbol  last  ±change%`, the change tinted by
 /// direction, mirroring the web quote card in a terminal-friendly form.
-fn quote_chip(card: &super::answer::QuoteCardData) -> Line<'static> {
+fn quote_chip(card: &super::quotes::QuoteCardData) -> Line<'static> {
     let dir = match card.direction {
         1 => Color::Green,
         -1 => Color::Red,
@@ -2878,5 +3075,141 @@ mod tests {
             "",
             "unbound Ctrl keys leaked into the prompt"
         );
+    }
+
+    fn sample_card(
+        symbol: &str,
+        name: &str,
+        last: &str,
+        chg: &str,
+        pct: &str,
+        dir: i8,
+    ) -> crate::ai::quotes::QuoteCardData {
+        crate::ai::quotes::QuoteCardData {
+            symbol: symbol.into(),
+            name: name.into(),
+            last: last.into(),
+            change: chg.into(),
+            change_pct: pct.into(),
+            direction: dir,
+            open: "179.2".into(),
+            high: "183.5".into(),
+            low: "178.9".into(),
+            volume: "4212万".into(),
+            turnover: "58.3亿".into(),
+            at: "15:09".into(),
+        }
+    }
+
+    fn cards() -> std::collections::HashMap<String, crate::ai::quotes::QuoteCardData> {
+        let mut q = std::collections::HashMap::new();
+        q.insert(
+            "NVDA.US".to_string(),
+            sample_card("NVDA.US", "英伟达", "182.4", "+3.75", "+2.10%", 1),
+        );
+        q.insert(
+            "TSLA.US".to_string(),
+            sample_card("TSLA.US", "特斯拉", "327.29", "-5.29", "-1.59%", -1),
+        );
+        q
+    }
+
+    fn text_of(lines: &[ratatui::text::Line<'static>]) -> String {
+        lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// A single-quote reference becomes a card carrying the live quote — the
+    /// terminal's honest stand-in for the chart the web client draws.
+    #[test]
+    fn a_quote_widget_becomes_a_card() {
+        let out = super::render_widget(
+            "widget://quote/security/detail?symbol=NVDA.US&time_range=1",
+            72,
+            &cards(),
+        );
+        let text = text_of(&out);
+        assert!(text.contains("NVDA.US") && text.contains("英伟达"));
+        assert!(text.contains("182.4") && text.contains("+2.10%"));
+        assert!(
+            text.contains("179.2"),
+            "the day's range belongs on the card"
+        );
+        assert!(text.contains('┌') && text.contains('└'), "it is a box");
+        assert!(!text.contains("widget://"), "never show the URL");
+    }
+
+    /// A comparison names every security, one aligned row each, so the set can
+    /// be read down the page.
+    #[test]
+    fn a_comparison_lists_every_security() {
+        let out = super::render_widget(
+            "widget://quote/security/comparison?symbols=TSLA.US&symbols=NVDA.US&time_range=3",
+            72,
+            &cards(),
+        );
+        let text = text_of(&out);
+        assert!(text.contains("TSLA.US") && text.contains("NVDA.US"));
+        assert!(text.contains("-1.59%") && text.contains("+2.10%"));
+        assert!(!text.contains("widget://"));
+    }
+
+    /// A security with no quote yet is still named, not dropped and not shown as
+    /// a URL.
+    #[test]
+    fn a_security_without_a_quote_is_still_named() {
+        let out = super::render_widget(
+            "widget://stock/list?symbols=NVDA.US&symbols=AAPL.US",
+            72,
+            &cards(),
+        );
+        let text = text_of(&out);
+        assert!(text.contains("AAPL.US"), "the pending symbol should show");
+        assert!(!text.contains("widget://"));
+    }
+
+    /// Widgets that name no security get a label, and an unknown kind names its
+    /// path — in no case does a URL reach the transcript.
+    #[test]
+    fn non_security_widgets_are_labelled_not_urled() {
+        for src in [
+            "widget://cta/open_account",
+            "widget://cta/fund_account",
+            "widget://ipo/list",
+            "widget://quant/backtest_result?backtest_uuid=abc123",
+        ] {
+            let text = text_of(&super::render_widget(src, 72, &cards()));
+            assert!(!text.contains("widget://"), "{src} leaked its URL: {text}");
+            assert!(!text.trim().is_empty(), "{src} rendered nothing");
+        }
+    }
+
+    /// The card is a block inside a scrolling transcript, so it must respect the
+    /// width it is given.
+    #[test]
+    fn a_quote_card_fits_the_width() {
+        for width in [30usize, 50, 72] {
+            let out = super::render_widget(
+                "widget://quote/security/detail?symbol=NVDA.US",
+                width,
+                &cards(),
+            );
+            for line in out {
+                let w: usize = line
+                    .spans
+                    .iter()
+                    .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
+                    .sum();
+                assert!(w <= width, "card line of {w} cols exceeds width {width}");
+            }
+        }
     }
 }

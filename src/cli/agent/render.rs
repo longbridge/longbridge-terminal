@@ -11,8 +11,9 @@ use std::fmt::Write;
 use ratatui::style::Color;
 
 use crate::ai::answer::{
-    parse_quote_widget_symbol, replace_inline_markers, segment_answer, QuoteCardData, Segment,
+    parse_quote_widget_symbol, replace_inline_markers, segment_answer, Segment,
 };
+use crate::ai::quotes::QuoteCardData;
 use crate::utils::text::{display_width, pad_display, strip_control_chars};
 
 /// Render a vis-chart spec for stdout.
@@ -128,6 +129,31 @@ pub fn render_answer(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A card with every field filled, so a test can override just the one it
+    /// cares about rather than restating the whole quote.
+    fn card(
+        symbol: &str,
+        name: &str,
+        last: &str,
+        change_pct: &str,
+        direction: i8,
+    ) -> QuoteCardData {
+        QuoteCardData {
+            symbol: symbol.into(),
+            name: name.into(),
+            last: last.into(),
+            change: "+1.00".into(),
+            change_pct: change_pct.into(),
+            direction,
+            open: "179.2".into(),
+            high: "183.5".into(),
+            low: "178.9".into(),
+            volume: "4212万".into(),
+            turnover: "58.3亿".into(),
+            at: "15:09".into(),
+        }
+    }
     use unicode_width::UnicodeWidthStr;
 
     fn dual_axes_spec() -> serde_json::Value {
@@ -207,13 +233,7 @@ mod tests {
 
     #[test]
     fn quote_card_renders_box() {
-        let card = QuoteCardData {
-            symbol: "TSLA.US".into(),
-            name: "Tesla".into(),
-            last: "328.58".into(),
-            change_pct: "+2.83%".into(),
-            direction: 1,
-        };
+        let card = card("TSLA.US", "Tesla", "328.58", "+2.83%", 1);
         let plain = render_quote_card(&card, false);
         assert!(plain.contains("TSLA.US") && plain.contains("Tesla"));
         assert!(plain.contains("328.58") && plain.contains("+2.83%"));
@@ -228,13 +248,7 @@ mod tests {
         let mut quotes = std::collections::HashMap::new();
         quotes.insert(
             "TSLA.US".to_string(),
-            QuoteCardData {
-                symbol: "TSLA.US".into(),
-                name: "Tesla".into(),
-                last: "328.58".into(),
-                change_pct: "+2.83%".into(),
-                direction: 1,
-            },
+            card("TSLA.US", "Tesla", "328.58", "+2.83%", 1),
         );
         let out = render_answer(md, &quotes, 60, false);
         assert!(out.contains("Tesla")); // marker replaced + card
@@ -249,13 +263,7 @@ mod tests {
 
     #[test]
     fn quote_card_lines_have_equal_char_count() {
-        let card = QuoteCardData {
-            symbol: "TSLA.US".into(),
-            name: "Tesla".into(),
-            last: "328.58".into(),
-            change_pct: "+2.83%".into(),
-            direction: 1,
-        };
+        let card = card("TSLA.US", "Tesla", "328.58", "+2.83%", 1);
         let plain = render_quote_card(&card, false);
         let lens: Vec<usize> = plain.lines().map(|l| l.chars().count()).collect();
         assert!(!lens.is_empty());
@@ -389,13 +397,7 @@ mod tests {
 
     #[test]
     fn quote_card_fields_are_sanitized_and_stay_aligned() {
-        let card = QuoteCardData {
-            symbol: "700\x1b[31m.HK".into(),
-            name: "Ten\x07cent".into(),
-            last: "320.00".into(),
-            change_pct: "-1.20%".into(),
-            direction: -1,
-        };
+        let card = card("700\x1b[31m.HK", "Ten\x07cent", "320.00", "-1.20%", -1);
         let plain = render_quote_card(&card, false);
         assert!(
             !plain.contains('\x1b') && !plain.contains('\x07'),
@@ -410,13 +412,7 @@ mod tests {
 
     #[test]
     fn quote_card_aligns_with_cjk_name() {
-        let card = QuoteCardData {
-            symbol: "700.HK".into(),
-            name: "腾讯控股".into(),
-            last: "320.00".into(),
-            change_pct: "-1.20%".into(),
-            direction: -1,
-        };
+        let card = card("700.HK", "腾讯控股", "320.00", "-1.20%", -1);
         let plain = render_quote_card(&card, false);
         let widths: Vec<usize> = plain.lines().map(UnicodeWidthStr::width).collect();
         assert!(!widths.is_empty());

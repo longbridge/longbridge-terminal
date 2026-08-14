@@ -4,6 +4,7 @@
 //! chat agent:
 //! - [`answer`]  — what an answer is made of (segments, widgets, markers)
 //! - [`chart`]   — `vis-chart` specs drawn as braille plots
+//! - [`quotes`]  — live quotes for the securities an answer references
 //! - [`state`]   — the chat state snapshot + event model (grok's `xai-chat-state`)
 //! - [`runtime`] — the agent-runtime seam that streams a turn (grok's `xai-grok-shell`)
 //! - [`tui`]     — the full-screen pager/view (grok's `xai-grok-pager`)
@@ -16,6 +17,7 @@ pub mod answer;
 pub mod chart;
 pub mod editor;
 pub mod markdown;
+pub mod quotes;
 pub mod runtime;
 pub mod session_store;
 pub mod state;

@@ -272,16 +272,6 @@ pub fn replace_inline_markers(text: &str, color: bool) -> String {
     out
 }
 
-/// A security's live quote, for the chip an answer's quote widget becomes.
-pub struct QuoteCardData {
-    pub symbol: String,
-    pub name: String,
-    pub last: String,
-    pub change_pct: String,
-    /// 1 = up, -1 = down, 0 = flat.
-    pub direction: i8,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
