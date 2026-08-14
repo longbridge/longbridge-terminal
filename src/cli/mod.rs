@@ -151,6 +151,11 @@ pub enum Commands {
         /// Longbridge AI agent UID (defaults to the main `chatbot` agent)
         #[arg(long)]
         agent_id: Option<String>,
+
+        /// Alias for top-level commands that ACP clients append to the launch
+        /// command (see [`AcpCmd`]).
+        #[command(subcommand)]
+        cmd: Option<AcpCmd>,
     },
 
     /// Generate shell completion script
@@ -3263,6 +3268,41 @@ pub enum AuthCmd {
     },
 }
 
+/// Aliases accepted after `acp` so ACP clients can run terminal authentication.
+///
+/// A client launches the agent as `longbridge acp`, then starts terminal auth by
+/// re-running that same command with the auth method's `args` appended, which
+/// yields `longbridge acp auth login`. Accepting the alias here makes that
+/// invocation behave exactly like `longbridge auth login`.
+#[derive(Subcommand, Debug, Clone)]
+pub enum AcpCmd {
+    /// Alias for `longbridge auth login` / `longbridge auth logout`
+    Auth {
+        /// `login` or `logout`.
+        #[arg(value_enum)]
+        action: AcpAuthAction,
+
+        /// Client name to register with the OAuth server (see `auth login`).
+        /// Ignored by `logout`.
+        #[arg(long, value_name = "NAME")]
+        client_name: Option<String>,
+
+        /// Print request/response details for each OAuth step.
+        /// Ignored by `logout`.
+        #[arg(short, long)]
+        verbose: bool,
+    },
+}
+
+/// The actions `longbridge acp auth` accepts.
+#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AcpAuthAction {
+    /// Authenticate via the Device Authorization Flow.
+    Login,
+    /// Clear the locally stored OAuth token.
+    Logout,
+}
+
 /// Render a top-level subcommand group's help text, e.g. `agent` or `workspace`.
 ///
 /// Returns `None` only when `name` is not a top-level subcommand, which would
@@ -4147,7 +4187,10 @@ mod tests {
         let cli = parse(&["longbridge", "acp"]).unwrap();
         assert!(matches!(
             cli.command,
-            Some(Commands::Acp { agent_id: None })
+            Some(Commands::Acp {
+                agent_id: None,
+                cmd: None
+            })
         ));
     }
 
@@ -4156,8 +4199,47 @@ mod tests {
         let cli = parse(&["longbridge", "acp", "--agent-id", "custom-agent"]).unwrap();
         assert!(matches!(
             cli.command,
-            Some(Commands::Acp { agent_id: Some(agent_id) }) if agent_id == "custom-agent"
+            Some(Commands::Acp { agent_id: Some(agent_id), .. }) if agent_id == "custom-agent"
         ));
+    }
+
+    #[test]
+    fn test_acp_auth_login_alias() {
+        // ACP clients append the terminal auth method's args to the launch
+        // command, producing `longbridge acp auth login`.
+        let cli = parse(&["longbridge", "acp", "auth", "login"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Acp {
+                cmd: Some(AcpCmd::Auth {
+                    action: AcpAuthAction::Login,
+                    client_name: None,
+                    verbose: false,
+                }),
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn test_acp_auth_logout_alias() {
+        let cli = parse(&["longbridge", "acp", "auth", "logout"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Acp {
+                cmd: Some(AcpCmd::Auth {
+                    action: AcpAuthAction::Logout,
+                    ..
+                }),
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn test_acp_rejects_unknown_alias() {
+        assert!(parse(&["longbridge", "acp", "auth", "status"]).is_err());
+        assert!(parse(&["longbridge", "acp", "logout"]).is_err());
     }
 
     // ─── Quote commands ───────────────────────────────────────────────────────
