@@ -6,9 +6,12 @@
 //! take an answer apart; both the `ai` TUI and `agent chat`'s stdout renderer
 //! consume the result rather than each re-scanning the text.
 //!
-//! Widget kinds are taken from the web client's own registry
-//! (`portai/frontend/web/src/features/x-widget/index.tsx` `COMPONENTS_MAP`),
-//! which is the authority on what the agent may emit.
+//! The authority on what the agent may emit is the server's allowlist
+//! (`portai/backend/config/default/mcp_resources.yaml`), which is what fills the
+//! `{widget_templates}` slot in its prompt — not the web client's `COMPONENTS_MAP`
+//! registry, which both lacks kinds the model is offered (`trade/order/*`) and
+//! keeps kinds no server serves. Where the two disagree, follow the allowlist:
+//! anything the model can emit has to render as something.
 
 use serde_json::Value;
 
@@ -52,9 +55,32 @@ pub enum WidgetRef {
     /// A prompt to open an account, fund it, or complete a profile — actionable
     /// in the app, only nameable here.
     Cta { action: String },
+    /// A pre-filled order ticket. Actionable in the app; here it is read out so
+    /// the reader can see what the agent proposed.
+    OrderTicket(OrderTicket),
+    /// A reference to one of the reader's own orders.
+    OrderDetail { order_id: String },
     /// A kind we have no special rendering for; carries its path so the
     /// reference is still named rather than shown as a URL.
     Other { path: String },
+}
+
+/// The fields of an order ticket worth reading back.
+///
+/// A ticket carries fifteen parameters; these are the ones that say what the
+/// order *is*. The rest (trigger price, trailing offsets, expiry, remark) qualify
+/// it and are left to the app, which can actually place it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct OrderTicket {
+    /// For a multi-leg order this is the underlying, not a leg of its own.
+    pub symbol: String,
+    /// `Buy` / `Sell`, or empty when the value is not one we recognize — a
+    /// direction is the one field it would be dangerous to guess at.
+    pub side: String,
+    /// `LO`, `MO`, … as the agent wrote it.
+    pub order_type: String,
+    pub quantity: String,
+    pub price: String,
 }
 
 impl WidgetRef {
@@ -63,7 +89,8 @@ impl WidgetRef {
         match self {
             WidgetRef::Comparison { symbols } | WidgetRef::StockList { symbols } => symbols,
             WidgetRef::Quote { symbol } => std::slice::from_ref(symbol),
-            WidgetRef::Cta { .. } | WidgetRef::Other { .. } => &[],
+            WidgetRef::OrderTicket(ticket) => std::slice::from_ref(&ticket.symbol),
+            WidgetRef::Cta { .. } | WidgetRef::OrderDetail { .. } | WidgetRef::Other { .. } => &[],
         }
     }
 }
@@ -80,7 +107,11 @@ pub fn parse_widget(src: &str) -> Option<WidgetRef> {
     // value and turns `AAPL.US` into `AAPL.US#widget`.
     let rest = rest.split('#').next().unwrap_or(rest);
     let (path, query) = rest.split_once('?').unwrap_or((rest, ""));
-    let path = path.trim_end_matches('/');
+    // The path is answer markup and an unrecognized one is echoed back to name
+    // the reference, so it is sanitized here — the same as the query values —
+    // rather than at each of the two renderers.
+    let path = strip_control_chars(path.trim_end_matches('/'));
+    let path = path.as_str();
     let symbols = query_values(query, "symbols");
     let symbol = query_values(query, "symbol").into_iter().next();
     Some(match path {
@@ -94,6 +125,16 @@ pub fn parse_widget(src: &str) -> Option<WidgetRef> {
         }
         "quote/security/comparison" => WidgetRef::Comparison { symbols },
         "stock/list" => WidgetRef::StockList { symbols },
+        "trade/order/submit" => WidgetRef::OrderTicket(OrderTicket {
+            symbol: symbol.unwrap_or_default(),
+            side: order_side(&query_values(query, "side")),
+            order_type: first(query, "order_type"),
+            quantity: first(query, "submitted_quantity"),
+            price: first(query, "submitted_price"),
+        }),
+        "trade/order/detail" => WidgetRef::OrderDetail {
+            order_id: first(query, "order_id"),
+        },
         _ => match path.strip_prefix("cta/") {
             Some(action) => WidgetRef::Cta {
                 action: action.to_string(),
@@ -103,6 +144,29 @@ pub fn parse_widget(src: &str) -> Option<WidgetRef> {
             },
         },
     })
+}
+
+/// The order's direction, or empty when the value is not one we recognize.
+///
+/// The parameter is numeric where the trading API is textual. `1` is `Buy` in
+/// every captured ticket, and the SDK's `OrderSide` is declared `Unknown, Buy,
+/// Sell`, which fixes `2` as `Sell`. Anything else is left blank: showing no
+/// direction costs the reader a detail, showing the wrong one could cost them
+/// money.
+fn order_side(values: &[String]) -> String {
+    match values.first().map(String::as_str) {
+        Some("1") => "Buy".to_string(),
+        Some("2") => "Sell".to_string(),
+        _ => String::new(),
+    }
+}
+
+/// The first value of `key`, or empty.
+fn first(query: &str, key: &str) -> String {
+    query_values(query, key)
+        .into_iter()
+        .next()
+        .unwrap_or_default()
 }
 
 /// Every value of `key` in a query string, in order.
@@ -238,6 +302,16 @@ fn flush_text(segments: &mut Vec<Segment>, acc: &mut String) {
 }
 
 /// Replace `[stock Name]` and `[citation N]` inline markers.
+///
+/// The grammar follows the server's, which is looser than the web client's
+/// regex: the keyword is case-insensitive and the separator may be a space, a
+/// colon, or a full-width colon. Markers the server emits but the web client
+/// fails to linkify still read correctly here.
+///
+/// A footnote-style `[^1]` is the same thing as `[citation 1]`, so it gets the
+/// same treatment. A bare `[1]` is already in the form a citation renders as, so
+/// it is left alone — rewriting it would also catch any bracketed number in the
+/// prose.
 pub fn replace_inline_markers(text: &str, color: bool) -> String {
     use std::fmt::Write;
 
@@ -251,13 +325,28 @@ pub fn replace_inline_markers(text: &str, color: bool) -> String {
             return out;
         };
         let inner = &after[1..end];
-        if let Some(name) = inner.strip_prefix("stock ") {
+        let mut consumed = end + 1;
+        if let Some(name) = marker_body(inner, "stock") {
+            // `[stock 特斯拉](TSLA.US)` is common enough that the web client
+            // handles it specially — and throws the symbol away. A terminal
+            // reader wants the ticker, so it is kept, set apart from the name.
+            let symbol = link_target(&after[end + 1..]);
+            if let Some(symbol) = &symbol {
+                consumed += symbol.len() + 2;
+            }
             if color {
                 let _ = write!(out, "\x1b[36m{name}\x1b[0m");
             } else {
                 out.push_str(name);
             }
-        } else if let Some(n) = inner.strip_prefix("citation ") {
+            if let Some(symbol) = symbol {
+                if color {
+                    let _ = write!(out, " \x1b[2m({symbol})\x1b[0m");
+                } else {
+                    let _ = write!(out, " ({symbol})");
+                }
+            }
+        } else if let Some(n) = marker_body(inner, "citation").or_else(|| inner.strip_prefix('^')) {
             if color {
                 let _ = write!(out, "\x1b[2m[{n}]\x1b[0m");
             } else {
@@ -266,10 +355,39 @@ pub fn replace_inline_markers(text: &str, color: bool) -> String {
         } else {
             out.push_str(&after[..=end]);
         }
-        rest = &after[end + 1..];
+        rest = &after[consumed..];
     }
     out.push_str(rest);
     out
+}
+
+/// The body of a `[keyword<sep>body]` marker, or `None` if `inner` is not one.
+///
+/// Separator and case follow the server's parser: `stock`, `STOCK`, `stock:` and
+/// `stock：` all count. The length cap is the server's too, and keeps a long
+/// bracketed passage that merely starts with the word from being swallowed.
+fn marker_body<'a>(inner: &'a str, keyword: &str) -> Option<&'a str> {
+    let (head, body) = inner.split_at_checked(keyword.len())?;
+    if !head.eq_ignore_ascii_case(keyword) {
+        return None;
+    }
+    let body = body
+        .strip_prefix([' ', ':', '：'])
+        .map(str::trim)
+        .filter(|b| !b.is_empty() && b.chars().count() <= 100)?;
+    Some(body)
+}
+
+/// The target of a Markdown link that immediately follows a marker: the `X` of
+/// `](X)`, if `s` starts with one and it looks like a symbol rather than prose.
+fn link_target(s: &str) -> Option<&str> {
+    let inner = s.strip_prefix('(')?.split_once(')')?.0;
+    let plausible = !inner.is_empty()
+        && inner.len() <= 24
+        && inner
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'));
+    plausible.then_some(inner)
 }
 
 #[cfg(test)]
@@ -314,6 +432,52 @@ mod tests {
             })
         );
         assert_eq!(parse_widget("https://example.com"), None);
+    }
+
+    /// An order ticket is allowlisted to the model, so it can appear in an
+    /// answer. Falling through to "named path" would throw away the one thing
+    /// the reader needs: what the order actually is.
+    #[test]
+    fn an_order_ticket_is_read_back() {
+        assert_eq!(
+            parse_widget(
+                "widget://trade/order/submit?symbol=AAPL.US&order_type=LO&side=1\
+                 &submitted_price=83.50&submitted_quantity=100&time_in_force=0&outside_rth=0"
+            ),
+            Some(WidgetRef::OrderTicket(OrderTicket {
+                symbol: "AAPL.US".into(),
+                side: "Buy".into(),
+                order_type: "LO".into(),
+                quantity: "100".into(),
+                price: "83.50".into(),
+            }))
+        );
+        // The ticket's security is worth a live quote.
+        assert_eq!(
+            parse_widget("widget://trade/order/submit?symbol=700.HK&side=2")
+                .unwrap()
+                .symbols(),
+            ["700.HK".to_string()]
+        );
+        assert_eq!(
+            parse_widget("widget://trade/order/detail?order_id=901234567"),
+            Some(WidgetRef::OrderDetail {
+                order_id: "901234567".into()
+            })
+        );
+    }
+
+    /// A direction is the one field that must never be guessed: an unrecognized
+    /// value leaves it blank rather than defaulting to Buy.
+    #[test]
+    fn an_unknown_order_side_is_left_blank() {
+        for (side, want) in [("1", "Buy"), ("2", "Sell"), ("7", ""), ("", "")] {
+            let src = format!("widget://trade/order/submit?symbol=A&side={side}");
+            let Some(WidgetRef::OrderTicket(ticket)) = parse_widget(&src) else {
+                panic!("not a ticket: {src}");
+            };
+            assert_eq!(ticket.side, want, "for side={side:?}");
+        }
     }
 
     /// A repeated key is how a list is passed; taking only the first value would
@@ -415,6 +579,57 @@ mod tests {
         assert_eq!(plain, "as reported [3].");
         let colored = replace_inline_markers("as reported [citation 3].", true);
         assert!(colored.contains("\x1b[2m[3]\x1b[0m"));
+    }
+
+    /// The server's marker grammar is looser than the web client's regex: the
+    /// keyword is case-insensitive and the separator may be a colon, full-width
+    /// or not. Markers the web app fails to linkify still read correctly here.
+    #[test]
+    fn marker_grammar_follows_the_server_not_the_web_regex() {
+        for input in [
+            "[stock:腾讯]",
+            "[STOCK 腾讯]",
+            "[stock：腾讯]",
+            "[Stock 腾讯]",
+        ] {
+            assert_eq!(
+                replace_inline_markers(input, false),
+                "腾讯",
+                "for {input:?}"
+            );
+        }
+        assert_eq!(replace_inline_markers("[citation:3]", false), "[3]");
+        // A footnote is the same thing as a citation.
+        assert_eq!(
+            replace_inline_markers("as reported[^12].", false),
+            "as reported[12]."
+        );
+        // A bare bracketed number already reads as a citation, so it is left be.
+        assert_eq!(
+            replace_inline_markers("see [1] and [2]", false),
+            "see [1] and [2]"
+        );
+        // Bracketed prose that merely starts with the word is not a marker.
+        assert_eq!(
+            replace_inline_markers("[stockholders meeting]", false),
+            "[stockholders meeting]"
+        );
+        assert_eq!(replace_inline_markers("[stock]", false), "[stock]");
+    }
+
+    /// The link form is common, and the web client discards the target. In a
+    /// terminal the ticker is worth keeping.
+    #[test]
+    fn the_link_form_keeps_the_symbol() {
+        assert_eq!(
+            replace_inline_markers("看 [stock 特斯拉](TSLA.US) 的走势", false),
+            "看 特斯拉 (TSLA.US) 的走势"
+        );
+        // A following parenthesis that is ordinary prose stays where it is.
+        assert_eq!(
+            replace_inline_markers("[stock 特斯拉](见下文) 的走势", false),
+            "特斯拉(见下文) 的走势"
+        );
     }
 
     #[test]

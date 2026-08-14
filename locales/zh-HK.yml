@@ -395,6 +395,8 @@ Ai:
   CustomAgent: "自訂智能體"
   WidgetComparison: "對比"
   WidgetStockList: "標的"
+  WidgetOrderTicket: "委託單"
+  WidgetOrderDetail: "委託編號"
   WidgetCta:
     open_account: "開戶"
     fund_account: "入金"

@@ -2512,6 +2512,36 @@ fn render_widget(
                 Style::default().fg(Color::Blue),
             ))]
         }
+        // An order ticket is actionable in the app and only readable here, so it
+        // is read back rather than named: what the agent proposed is the most
+        // consequential thing it can put in an answer.
+        WidgetRef::OrderTicket(ticket) => {
+            let mut parts = vec![ticket.side.clone(), ticket.quantity.clone()];
+            parts.push(ticket.symbol.clone());
+            parts.push(ticket.order_type.clone());
+            if !ticket.price.is_empty() {
+                parts.push(format!("@ {}", ticket.price));
+            }
+            let summary = parts
+                .into_iter()
+                .filter(|p| !p.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ");
+            vec![Line::from(vec![
+                Span::styled(
+                    format!("  {}  ", t!("Ai.WidgetOrderTicket")),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::styled(summary, Style::default().add_modifier(Modifier::BOLD)),
+            ])]
+        }
+        WidgetRef::OrderDetail { order_id } => vec![Line::from(vec![
+            Span::styled(
+                format!("  {}  ", t!("Ai.WidgetOrderDetail")),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::raw(order_id.clone()),
+        ])],
         WidgetRef::Other { path } => vec![Line::from(Span::styled(
             format!("  → {path}"),
             Style::default().fg(Color::DarkGray),

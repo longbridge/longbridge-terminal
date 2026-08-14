@@ -11,7 +11,8 @@ use std::fmt::Write;
 use ratatui::style::Color;
 
 use crate::ai::answer::{
-    parse_quote_widget_symbol, replace_inline_markers, segment_answer, Segment,
+    parse_quote_widget_symbol, parse_widget, replace_inline_markers, segment_answer, Segment,
+    WidgetRef,
 };
 use crate::ai::quotes::QuoteCardData;
 use crate::utils::text::{display_width, pad_display, strip_control_chars};
@@ -86,6 +87,47 @@ pub fn render_quote_card(card: &QuoteCardData, color: bool) -> String {
     format!("┌─{border}─┐\n│ {head_line} │\n│ {colored_body}{body_pad} │\n└─{border}─┘\n")
 }
 
+/// A widget reference as one line of text.
+///
+/// The terminal cannot embed the widget, so it says what the reference is about.
+/// An order ticket is read back in full — it is the most consequential thing an
+/// answer can carry — while the rest name themselves.
+fn widget_summary(widget: &WidgetRef) -> String {
+    match widget {
+        WidgetRef::Quote { symbol } => symbol.clone(),
+        WidgetRef::Comparison { symbols } => {
+            format!("{}: {}", t!("Ai.WidgetComparison"), symbols.join(", "))
+        }
+        WidgetRef::StockList { symbols } => {
+            format!("{}: {}", t!("Ai.WidgetStockList"), symbols.join(", "))
+        }
+        WidgetRef::Cta { action } => match action.as_str() {
+            "open_account" => t!("Ai.WidgetCta.open_account").to_string(),
+            "fund_account" => t!("Ai.WidgetCta.fund_account").to_string(),
+            "complete_profile" => t!("Ai.WidgetCta.complete_profile").to_string(),
+            other => other.replace('_', " "),
+        },
+        WidgetRef::OrderTicket(ticket) => {
+            let mut parts = vec![
+                ticket.side.as_str(),
+                ticket.quantity.as_str(),
+                ticket.symbol.as_str(),
+                ticket.order_type.as_str(),
+            ];
+            parts.retain(|p| !p.is_empty());
+            let mut summary = format!("{}  {}", t!("Ai.WidgetOrderTicket"), parts.join(" "));
+            if !ticket.price.is_empty() {
+                let _ = write!(summary, " @ {}", ticket.price);
+            }
+            summary
+        }
+        WidgetRef::OrderDetail { order_id } => {
+            format!("{}  {order_id}", t!("Ai.WidgetOrderDetail"))
+        }
+        WidgetRef::Other { path } => path.clone(),
+    }
+}
+
 /// Full answer rendering pipeline for pretty output.
 pub fn render_answer(
     answer: &str,
@@ -114,10 +156,17 @@ pub fn render_answer(
             Segment::XWidget(src) => {
                 match parse_quote_widget_symbol(&src).and_then(|sym| quotes.get(&sym)) {
                     Some(card) => out.push_str(&render_quote_card(card, color)),
-                    None => {
-                        // `src` is raw answer markup: sanitize before echoing.
-                        let _ = writeln!(out, "→ {}", strip_control_chars(&src));
-                    }
+                    // Naming the reference beats echoing its URL. Only something
+                    // that is not a widget URL at all falls through to the raw
+                    // text, and that is sanitized first — `src` is answer markup.
+                    None => match parse_widget(&src) {
+                        Some(widget) => {
+                            let _ = writeln!(out, "→ {}", widget_summary(&widget));
+                        }
+                        None => {
+                            let _ = writeln!(out, "→ {}", strip_control_chars(&src));
+                        }
+                    },
                 }
                 out.push('\n');
             }
@@ -254,7 +303,9 @@ mod tests {
         assert!(out.contains("Tesla")); // marker replaced + card
         assert!(out.contains("100.0%")); // pie rendered
         assert!(out.contains("328.58")); // quote card
-        assert!(out.contains("widget://unknown/thing")); // unknown widget hint
+                                         // An unknown widget names its path; the URL itself is never echoed.
+        assert!(out.contains("unknown/thing"));
+        assert!(!out.contains("widget://"));
         assert!(!out.contains("[stock")); // no raw markers survive
         assert!(!out.contains("vis-chart")); // no raw fences survive
     }
@@ -380,11 +431,16 @@ mod tests {
         assert!(!out.contains('\x1b') && !out.contains('\x07'), "{out:?}");
     }
 
+    /// An unrecognized widget is named by its path, and that path is answer
+    /// markup: it must not carry an escape sequence to the terminal.
     #[test]
     fn unknown_widget_hint_is_sanitized() {
         let md = "<x-widget src=\"widget://evil\x1b]0;pwn\x07/thing\"></x-widget>";
         let out = render_answer(md, &std::collections::HashMap::new(), 60, false);
-        assert!(out.contains("widget://evil"));
+        assert!(
+            out.contains("evil"),
+            "the reference is still named: {out:?}"
+        );
         assert!(
             !out.contains('\x1b'),
             "ESC survived in widget hint: {out:?}"

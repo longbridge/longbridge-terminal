@@ -395,6 +395,8 @@ Ai:
   CustomAgent: "自定义智能体"
   WidgetComparison: "对比"
   WidgetStockList: "标的"
+  WidgetOrderTicket: "委托单"
+  WidgetOrderDetail: "委托编号"
   WidgetCta:
     open_account: "开户"
     fund_account: "入金"

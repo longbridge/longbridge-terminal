@@ -395,6 +395,8 @@ Ai:
   CustomAgent: "custom agent"
   WidgetComparison: "Comparison"
   WidgetStockList: "Securities"
+  WidgetOrderTicket: "Order"
+  WidgetOrderDetail: "Order ref"
   WidgetCta:
     open_account: "Open an account"
     fund_account: "Deposit funds"
