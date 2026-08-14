@@ -331,6 +331,7 @@ ReplaceOrder.OrderId: "委托号"
 ReplaceOrder.NewQty: "新数量"
 ReplaceOrder.NewPrice: "新价格"
 ACP.AuthenticationFailed: "认证失败"
+ACP.LoginRequired: "需要认证。请运行 `longbridge auth login`，然后重启 ACP agent。"
 Agent:
   Thinking: "思考中…"
   CallingTool: "调用工具：%{name}"

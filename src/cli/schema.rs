@@ -285,7 +285,13 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<ResponseSchema> {
         "update" => crate::update::schema_for_path(path),
         "tui" => crate::tui::schema_for_path(path),
         "completion" => completion::schema_for_path(path),
-        "acp" => (path == ["acp"]).then(|| text("ACP JSON-RPC session over stdio")),
+        "acp" => match path {
+            [_] => Some(text("ACP JSON-RPC session over stdio")),
+            // `acp auth login` / `acp auth logout`: aliases ACP clients reach by
+            // appending the terminal auth method's args to the launch command.
+            [_, sub] if sub == "auth" => Some(text("OAuth login/logout flow status messages")),
+            _ => None,
+        },
         "ai" => (path == ["ai"]).then(|| text("Interactive Longbridge AI chat TUI")),
         "quote" | "depth" | "brokers" | "trades" | "intraday" | "kline" | "static"
         | "calc-index" | "capital" | "market-temp" | "trading" | "security-list"
@@ -525,7 +531,7 @@ mod tests {
                 let paths = real_leaf_paths(&root);
                 assert_eq!(
                     paths.len(),
-                    148,
+                    150,
                     "real command count changed; review schema coverage"
                 );
 

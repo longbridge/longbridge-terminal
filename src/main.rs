@@ -332,23 +332,47 @@ async fn main() {
             }
         }
 
-        Some(cli::Commands::Auth {
-            cmd:
-                cli::AuthCmd::Login {
-                    auth_code: None,
-                    client_name,
-                    verbose,
-                },
-        }) => {
+        // ACP clients start terminal auth by re-running the launch command with
+        // the auth method's args appended, i.e. `longbridge acp auth login`.
+        // That alias lands here and behaves like a plain `longbridge auth login`.
+        Some(
+            cli::Commands::Auth {
+                cmd:
+                    cli::AuthCmd::Login {
+                        auth_code: None,
+                        client_name,
+                        verbose,
+                    },
+            }
+            | cli::Commands::Acp {
+                cmd:
+                    Some(cli::AcpCmd::Auth {
+                        action: cli::AcpAuthAction::Login,
+                        client_name,
+                        verbose,
+                    }),
+                ..
+            },
+        ) => {
             if let Err(e) = auth::device_login(verbose, client_name).await {
                 eprintln!("Authentication failed: {e:#}");
                 std::process::exit(1);
             }
         }
 
-        Some(cli::Commands::Auth {
-            cmd: cli::AuthCmd::Logout,
-        }) => match auth::clear_token().await {
+        Some(
+            cli::Commands::Auth {
+                cmd: cli::AuthCmd::Logout,
+            }
+            | cli::Commands::Acp {
+                cmd:
+                    Some(cli::AcpCmd::Auth {
+                        action: cli::AcpAuthAction::Logout,
+                        ..
+                    }),
+                ..
+            },
+        ) => match auth::clear_token().await {
             Ok(()) => println!("Successfully logged out."),
             Err(e) => {
                 eprintln!("Failed to clear credentials: {e}");
@@ -369,20 +393,25 @@ async fn main() {
             cli::completion::cmd_completion(shell);
         }
 
-        Some(cli::Commands::Acp { agent_id }) => {
+        Some(cli::Commands::Acp { agent_id, cmd: _ }) => {
             let agent_id = agent_id
                 .or_else(|| std::env::var("LONGBRIDGE_AGENT_ID").ok())
                 .unwrap_or_else(|| "chatbot".to_string());
-            let using_api_key = match openapi::init_contexts().await {
-                Ok((_, using_api_key, _)) => using_api_key,
-                Err(e) => {
-                    eprintln!("{}: {e}", t!("ACP.AuthenticationFailed"));
-                    std::process::exit(1);
-                }
-            };
-            let backend = openapi::OpenApiAgent::new(openapi::agent().clone(), agent_id);
-            if let Err(e) = longbridge_ai_acp::serve_stdio(backend).await {
-                print_cli_error(&anyhow::anyhow!(e), using_api_key);
+            let auth_methods = vec![longbridge_ai_acp::acp::schema::v1::AuthMethod::Terminal(
+                longbridge_ai_acp::acp::schema::v1::AuthMethodTerminal::new(
+                    "longbridge-login",
+                    "Log in to Longbridge",
+                )
+                .description("Authenticate with Longbridge OAuth in an interactive terminal")
+                .args(vec!["auth".into(), "login".into()]),
+            )];
+            let result = longbridge_ai_acp::serve_stdio_with_auth_methods(
+                openapi::AuthenticationRequiredAgent::new(&agent_id),
+                auth_methods,
+            )
+            .await;
+            if let Err(e) = result {
+                print_cli_error(&anyhow::anyhow!(e), false);
                 std::process::exit(1);
             }
         }
