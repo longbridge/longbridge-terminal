@@ -1311,27 +1311,29 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
 }
 
 fn render_title(f: &mut ratatui::Frame, area: Rect, state: &ChatState) {
-    let mut spans = vec![
-        Span::styled(
-            format!(" {} ", t!("Ai.Title")),
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!("  {}", state.agent_uid),
-            Style::default().fg(Color::DarkGray),
-        ),
-    ];
-    // Show the server-generated conversation title once one arrives.
+    // Left: brand badge + (bold conversation title once one arrives).
+    let mut left = vec![Span::styled(
+        format!(" {} ", t!("Ai.Title")),
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    )];
     if let Some(title) = &state.title {
-        spans.push(Span::styled(
-            format!("  ·  {title}"),
-            Style::default().fg(Color::Gray),
+        left.push(Span::styled(
+            format!("  {title}"),
+            Style::default()
+                .fg(Color::Gray)
+                .add_modifier(Modifier::BOLD),
         ));
     }
-    f.render_widget(Paragraph::new(Line::from(spans)), area);
+    // Right: the agent uid, dimmed and right-aligned.
+    let right = format!("{} ", state.agent_uid);
+    let left_w: usize = left.iter().map(|s| s.content.width()).sum();
+    let pad = (area.width as usize).saturating_sub(left_w + right.width());
+    left.push(Span::raw(" ".repeat(pad)));
+    left.push(Span::styled(right, Style::default().fg(Color::DarkGray)));
+    f.render_widget(Paragraph::new(Line::from(left)), area);
 }
 
 /// Header for a `/`-opened view: a bold name badge and an "Esc to go back"
