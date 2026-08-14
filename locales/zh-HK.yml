@@ -378,4 +378,4 @@ Ai:
   SlashCopy: "複製整段對話"
   Copied: "已複製到剪貼簿。"
   NothingToCopy: "暫無可複製的內容。"
-  HelpText: "命令：/new /clear /copy /history /settings /agent /help · Ctrl+Y 複製最近回答 · 按住 Option/Shift 拖曳可用終端原生選擇 · Tab 切換檢視 · Shift+Enter 換行"
+  HelpText: "命令：/new /clear /copy /history /settings /agent /help · Ctrl+Y 複製最近回答 · 拖曳可選取並複製 · Tab 切換檢視 · Shift+Enter 換行"

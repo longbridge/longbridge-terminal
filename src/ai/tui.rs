@@ -157,6 +157,13 @@ struct Ui {
     chips: Vec<(Chip, Rect)>,
     /// Slash-palette hit rects: `(SLASH index, rect)` for the visible entries.
     slash_rows: Vec<(usize, Rect)>,
+    /// The transcript area, recorded so a drag there starts a text selection.
+    transcript: Rect,
+    /// Active drag selection as `(anchor, cursor)` in absolute `(row, col)`
+    /// screen cells; `None` when nothing is selected.
+    selection: Option<((u16, u16), (u16, u16))>,
+    /// The text under the current selection, extracted during render.
+    selected_text: Option<String>,
 }
 
 impl Ui {
@@ -177,6 +184,9 @@ impl Ui {
             rows: Vec::new(),
             chips: Vec::new(),
             slash_rows: Vec::new(),
+            transcript: Rect::default(),
+            selection: None,
+            selected_text: None,
         }
     }
 
@@ -201,6 +211,7 @@ impl Ui {
         self.view = view;
         self.notice = None;
         self.sel = 0;
+        self.selection = None;
         if view != View::Question {
             self.question = None;
         }
@@ -452,6 +463,7 @@ fn submit(
     editor.push_history(&query);
     editor.clear();
     ui.notice = None;
+    ui.selection = None;
     let req = runtime::build_request(state, query.clone());
     state.apply(ChatEvent::UserPrompt(query));
     state.pending_interrupt = None;
@@ -542,10 +554,17 @@ fn on_mouse(
         return;
     }
     match m.kind {
-        MouseEventKind::ScrollUp => scroll(ui, state, true),
-        MouseEventKind::ScrollDown => scroll(ui, state, false),
+        MouseEventKind::ScrollUp => {
+            ui.selection = None;
+            scroll(ui, state, true);
+        }
+        MouseEventKind::ScrollDown => {
+            ui.selection = None;
+            scroll(ui, state, false);
+        }
         MouseEventKind::Down(MouseButton::Left) => {
             let (col, row) = (m.column, m.row);
+            ui.selection = None;
             if let Some(view) = ui
                 .tabs
                 .iter()
@@ -570,6 +589,9 @@ fn on_mouse(
                     .map(|(c, _)| *c)
                 {
                     click_chip(chip, ui, state, turn, tx);
+                } else if hit(ui.transcript, col, row) {
+                    // Begin a text selection in the transcript.
+                    ui.selection = Some(((row, col), (row, col)));
                 }
             } else if let Some(idx) = ui
                 .rows
@@ -585,8 +607,31 @@ fn on_mouse(
                 }
             }
         }
+        MouseEventKind::Drag(MouseButton::Left) => {
+            if let Some((anchor, _)) = ui.selection {
+                let pos = clamp_to(ui.transcript, m.column, m.row);
+                ui.selection = Some((anchor, pos));
+            }
+        }
+        MouseEventKind::Up(MouseButton::Left) => {
+            if let Some((anchor, cursor)) = ui.selection {
+                if anchor == cursor {
+                    // A click with no drag is not a selection.
+                    ui.selection = None;
+                } else if let Some(text) = ui.selected_text.clone() {
+                    copy_with_notice(ui, Some(text));
+                }
+            }
+        }
         _ => {}
     }
+}
+
+/// Clamp a screen cell to lie within `rect` (used while dragging a selection).
+fn clamp_to(rect: Rect, col: u16, row: u16) -> (u16, u16) {
+    let r = row.clamp(rect.y, rect.y + rect.height.saturating_sub(1));
+    let c = col.clamp(rect.x, rect.x + rect.width.saturating_sub(1));
+    (r, c)
 }
 
 /// Scroll wheel: pans the transcript in Chat, moves the selection in a list.
@@ -950,7 +995,7 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
     render_title(f, title, state);
     render_tabs(f, tabs, ui);
     match ui.view {
-        View::Chat => render_chat(f, body, state),
+        View::Chat => render_chat(f, body, ui, state),
         View::Sessions => render_sessions(f, body, ui),
         View::Settings => render_settings(f, body, ui, state),
         View::Agents => render_agents(f, body, ui),
@@ -1031,7 +1076,8 @@ fn tab_label(view: View) -> String {
     }
 }
 
-fn render_chat(f: &mut ratatui::Frame, area: Rect, state: &ChatState) {
+fn render_chat(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatState) {
+    ui.transcript = area;
     let width = area.width.max(1) as usize;
     let mut lines = transcript_lines(state, width);
     let height = area.height as usize;
@@ -1039,7 +1085,87 @@ fn render_chat(f: &mut ratatui::Frame, area: Rect, state: &ChatState) {
     let bottom = total.saturating_sub(state.scroll as usize);
     let start = bottom.saturating_sub(height);
     let window: Vec<Line> = lines.drain(start..bottom).collect();
-    f.render_widget(Paragraph::new(Text::from(window)), area);
+
+    let Some((anchor, cursor)) = ui.selection else {
+        ui.selected_text = None;
+        f.render_widget(Paragraph::new(Text::from(window)), area);
+        return;
+    };
+    // Highlight the selected span on each row and gather its text.
+    let (top, end) = if anchor <= cursor {
+        (anchor, cursor)
+    } else {
+        (cursor, anchor)
+    };
+    let mut out = Vec::with_capacity(window.len());
+    let mut picked: Vec<String> = Vec::new();
+    for (i, line) in window.into_iter().enumerate() {
+        let row = area.y + i as u16;
+        if row < top.0 || row > end.0 {
+            out.push(line);
+            continue;
+        }
+        let from = if row == top.0 {
+            top.1.saturating_sub(area.x) as usize
+        } else {
+            0
+        };
+        let to = if row == end.0 {
+            end.1.saturating_sub(area.x) as usize
+        } else {
+            usize::MAX
+        };
+        let (highlighted, text) = select_line(&line, from, to);
+        if !text.is_empty() {
+            picked.push(text);
+        }
+        out.push(highlighted);
+    }
+    ui.selected_text = (!picked.is_empty()).then(|| picked.join("\n"));
+    f.render_widget(Paragraph::new(Text::from(out)), area);
+}
+
+/// Reverse-video the display columns `[from, to)` of `line`, returning the
+/// restyled line and the plain text of the selected span.
+fn select_line(line: &Line, from: usize, to: usize) -> (Line<'static>, String) {
+    let mut cells: Vec<(char, Style)> = Vec::new();
+    let mut picked = String::new();
+    let mut col = 0usize;
+    for span in &line.spans {
+        for ch in span.content.chars() {
+            let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
+            let selected = cw > 0 && col >= from && col < to;
+            let style = if selected {
+                picked.push(ch);
+                span.style.add_modifier(Modifier::REVERSED)
+            } else {
+                span.style
+            };
+            cells.push((ch, style));
+            col += cw;
+        }
+    }
+    (coalesce_cells(&cells), picked)
+}
+
+/// Merge a run of styled chars into a [`Line`], grouping equal styles.
+fn coalesce_cells(cells: &[(char, Style)]) -> Line<'static> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut buf = String::new();
+    let mut current: Option<Style> = None;
+    for (ch, style) in cells {
+        if current != Some(*style) {
+            if let Some(prev) = current {
+                spans.push(Span::styled(std::mem::take(&mut buf), prev));
+            }
+            current = Some(*style);
+        }
+        buf.push(*ch);
+    }
+    if let Some(prev) = current {
+        spans.push(Span::styled(buf, prev));
+    }
+    Line::from(spans)
 }
 
 /// The slash-command palette: a menu of matching commands floating above the
@@ -1566,5 +1692,22 @@ mod tests {
         let text = "abcd";
         let n = text.chars().count() + 3; // trailing gap
         assert_eq!(marquee(text, 2, 0), marquee(text, 2, n as u64));
+    }
+
+    #[test]
+    fn select_line_extracts_column_range() {
+        use ratatui::text::Line;
+        let line = Line::from("hello world");
+        let (_, text) = super::select_line(&line, 6, 11);
+        assert_eq!(text, "world");
+    }
+
+    #[test]
+    fn select_line_counts_wide_glyphs_by_column() {
+        use ratatui::text::Line;
+        // "你好" spans columns 0..4; selecting [2,4) yields the second glyph.
+        let line = Line::from("你好");
+        let (_, text) = super::select_line(&line, 2, 4);
+        assert_eq!(text, "好");
     }
 }

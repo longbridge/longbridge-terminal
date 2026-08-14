@@ -378,4 +378,4 @@ Ai:
   SlashCopy: "Copy the conversation"
   Copied: "Copied to clipboard."
   NothingToCopy: "Nothing to copy yet."
-  HelpText: "Commands: /new /clear /copy /history /settings /agent /help · Ctrl+Y copies the last answer · drag with Option/Shift to select natively · Tab switches view · Shift+Enter inserts a newline"
+  HelpText: "Commands: /new /clear /copy /history /settings /agent /help · Ctrl+Y copies the last answer · drag to select and copy · Tab switches view · Shift+Enter inserts a newline"
