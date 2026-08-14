@@ -381,6 +381,8 @@ Ai:
   SlashExit: "Exit Longbridge AI"
   CommandsTitle: "Commands"
   BackHint: "Esc to go back"
+  EmptyHint: "Type a question to begin, or press / for commands"
+  Placeholder: "Ask anything — press / for commands"
   SlashExport: "Export the conversation to a file"
   Exported: "Exported to %{path}"
   ExportFailed: "Export failed."

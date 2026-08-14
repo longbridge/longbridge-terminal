@@ -381,6 +381,8 @@ Ai:
   SlashExit: "退出 Longbridge AI"
   CommandsTitle: "命令"
   BackHint: "按 Esc 返回"
+  EmptyHint: "輸入問題開始，或按 / 查看命令"
+  Placeholder: "問點什麼，或按 / 喚出命令"
   SlashExport: "匯出對話到檔案"
   Exported: "已匯出到 %{path}"
   ExportFailed: "匯出失敗。"

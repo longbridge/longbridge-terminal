@@ -1193,6 +1193,13 @@ fn render_view_header(f: &mut ratatui::Frame, area: Rect, label_key: &str) -> Re
 
 fn render_chat(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatState) {
     ui.transcript = area;
+    // Before the first exchange, show a centered welcome instead of the lone
+    // system line, so an empty session doesn't look bare.
+    if state.messages.len() <= 1 && state.streaming.is_none() && !state.busy {
+        ui.selected_text = None;
+        render_empty_state(f, area);
+        return;
+    }
     let width = area.width.max(1) as usize;
     let mut lines = transcript_lines(state, width);
     let height = area.height as usize;
@@ -1238,6 +1245,35 @@ fn render_chat(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatStat
     }
     ui.selected_text = (!picked.is_empty()).then(|| picked.join("\n"));
     f.render_widget(Paragraph::new(Text::from(out)), area);
+}
+
+/// A centered welcome shown for a fresh, empty session.
+fn render_empty_state(f: &mut ratatui::Frame, area: Rect) {
+    let content = [
+        Line::from(Span::styled(
+            t!("Ai.Title").to_string(),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            t!("Ai.Welcome").to_string(),
+            Style::default().fg(Color::Gray),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            t!("Ai.EmptyHint").to_string(),
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
+    let top = (area.height as usize).saturating_sub(content.len()) / 2;
+    let mut lines = vec![Line::from(""); top];
+    lines.extend(content);
+    f.render_widget(
+        Paragraph::new(Text::from(lines)).alignment(ratatui::layout::Alignment::Center),
+        area,
+    );
 }
 
 /// Reverse-video the display columns `[from, to)` of `line`, returning the
@@ -1740,12 +1776,23 @@ fn render_footer(f: &mut ratatui::Frame, area: Rect, ui: &Ui, editor: &Editor) {
     if !focused {
         return;
     }
-    let lines: Vec<Line> = editor
-        .lines()
-        .iter()
-        .map(|l| Line::from(l.clone()))
-        .collect();
-    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+    if editor.is_blank() {
+        // Dim placeholder when nothing has been typed yet.
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                t!("Ai.Placeholder").to_string(),
+                Style::default().fg(Color::DarkGray),
+            ))),
+            inner,
+        );
+    } else {
+        let lines: Vec<Line> = editor
+            .lines()
+            .iter()
+            .map(|l| Line::from(l.clone()))
+            .collect();
+        f.render_widget(Paragraph::new(Text::from(lines)), inner);
+    }
     let (cy, col) = editor.cursor();
     let cy = (cy as u16).min(inner.height.saturating_sub(1));
     let col = (col as u16).min(inner.width.saturating_sub(1));
