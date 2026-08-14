@@ -139,11 +139,7 @@ pub fn render(md: &str, width: usize) -> Vec<Line<'static>> {
             Block::Chart(spec) => render_chart(&spec, width, &mut out),
             Block::Math(lines) => render_math(&lines, width, &mut out),
             Block::Heading(level, text) => render_heading(level, &text, width, &mut out),
-            // The break as the author wrote it: a dim `---`. It used to draw a
-            // rule across the full width, three rows shouting louder than the
-            // sections it separates, and box-drawing dashes still read as a rule
-            // rather than as the mark itself.
-            Block::Rule => out.push(Line::from(Span::styled("---", Style::default().fg(BORDER)))),
+            Block::Rule => render_rule(width, &mut out),
         }
     }
     // Prose blocks end with their own trailing blank; drop it so the answer
@@ -152,6 +148,21 @@ pub fn render(md: &str, width: usize) -> Vec<Line<'static>> {
         out.pop();
     }
     out
+}
+
+/// A section break: a short dim rule, centred.
+///
+/// It has been three things. A rule across the full width shouted louder than the
+/// sections it separated; a left-aligned `---` read as leftover markup. Centred and
+/// short, it reads as deliberate typography and gets out of the way.
+fn render_rule(width: usize, out: &mut Vec<Line<'static>>) {
+    const RULE: usize = 10;
+    let rule = "─".repeat(RULE.min(width.max(1)));
+    let pad = width.saturating_sub(UnicodeWidthStr::width(rule.as_str())) / 2;
+    out.push(Line::from(Span::styled(
+        format!("{}{rule}", " ".repeat(pad)),
+        Style::default().fg(BORDER),
+    )));
 }
 
 /// Whether a rendered line has no visible content.
@@ -961,18 +972,25 @@ mod tests {
         }
     }
 
-    /// A section break shows as the mark the author typed. It used to be a rule
-    /// across the full width, which outshouted the sections it separated.
+    /// A section break is short, dim and centred: a full-width rule outshouted the
+    /// sections it separated, and a left-aligned `---` read as leftover markup.
     #[test]
-    fn thematic_break_shows_as_three_hyphens() {
-        let lines = render("above\n\n---\n\nbelow", 20);
-        let rule = lines
-            .iter()
-            .flat_map(|l| &l.spans)
-            .find(|s| s.content.contains('-'))
-            .expect("`---` should draw a break");
-        assert_eq!(rule.content.as_ref(), "---");
-        assert_eq!(rule.style.fg, Some(super::BORDER), "and it stays dim");
+    fn thematic_break_is_a_centred_short_rule() {
+        for width in [20usize, 40, 80] {
+            let lines = render("above\n\n---\n\nbelow", width);
+            let rule = lines
+                .iter()
+                .flat_map(|l| &l.spans)
+                .find(|s| s.content.contains('─'))
+                .unwrap_or_else(|| panic!("no break at width {width}"));
+            assert_eq!(rule.style.fg, Some(super::BORDER), "it stays dim");
+            let dashes = rule.content.chars().filter(|c| *c == '─').count();
+            assert!(dashes <= 10 && dashes > 0, "short: {dashes} at {width}");
+            // Centred: the leading pad matches the trailing space.
+            let lead = rule.content.chars().take_while(|c| *c == ' ').count();
+            let expected = (width - dashes) / 2;
+            assert_eq!(lead, expected, "centred at width {width}");
+        }
     }
 
     /// A chart spec is drawn, not dumped: the JSON keys must not reach the
