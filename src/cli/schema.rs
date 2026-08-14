@@ -530,7 +530,7 @@ mod tests {
                 let paths = real_leaf_paths(&root);
                 assert_eq!(
                     paths.len(),
-                    147,
+                    149,
                     "real command count changed; review schema coverage"
                 );
 

@@ -1,5 +1,6 @@
 pub mod account;
 pub mod agent;
+pub mod chats;
 pub mod context;
 pub mod helpers;
 pub mod login;

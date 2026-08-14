@@ -408,7 +408,10 @@ pub(crate) fn ensure_interactive_supported_for(
     use crate::cli::AgentCmd;
     let interactive = match cmd {
         AgentCmd::Chat { interactive, .. } | AgentCmd::Continue { interactive, .. } => *interactive,
-        AgentCmd::List { .. } | AgentCmd::Workspaces => false,
+        AgentCmd::List { .. }
+        | AgentCmd::Workspaces
+        | AgentCmd::Chats { .. }
+        | AgentCmd::ChatDetail { .. } => false,
     };
     ensure_interactive_supported(interactive, format)
 }
