@@ -1028,7 +1028,7 @@ mod tests {
             assert!(
                 rendered
                     .iter()
-                    .any(|l| l.contains("A") && l.contains("first")),
+                    .any(|l| l.contains('A') && l.contains("first")),
                 "marker and text should share a row: {rendered:?}"
             );
         }
@@ -1084,7 +1084,7 @@ mod tests {
         );
     }
 
-    /// `#` without a space is not a heading — CommonMark requires it, and code
+    /// `#` without a space is not a heading — `CommonMark` requires it, and code
     /// comments and hashtags would otherwise vanish into headings.
     #[test]
     fn a_hash_without_a_space_is_not_a_heading() {

@@ -37,6 +37,7 @@ use super::state::{ChatEvent, ChatState, Message, Role, ToolStatus};
 use super::{markdown, runtime};
 use crate::cli::agent::client::ConversationRequest;
 use crate::cli::agent::DEFAULT_AGENT_UID;
+use crate::tui::ui::assets;
 use crate::tui::widgets::Terminal;
 use crate::utils::text::{strip_control_chars, truncate_width};
 
@@ -1585,6 +1586,18 @@ fn render_empty_state(f: &mut ratatui::Frame, area: Rect) {
         t!("Ai.EmptyHint").to_string(),
         Style::default().fg(Color::DarkGray),
     )));
+    // The brand mark goes above the copy, but only when the area can hold both:
+    // the welcome text and the example prompts are what make the empty state
+    // useful, so the mark yields to them rather than pushing them off screen. The
+    // whole block is centre-aligned, so the mark needs no indent of its own —
+    // adding one would offset it twice.
+    let mark_h = usize::from(assets::MARK_HEIGHT);
+    if area.height as usize >= mark_h + content.len() + 2 && area.width >= assets::MARK_WIDTH {
+        let mut with_logo = assets::logo_mark();
+        with_logo.push(Line::from(""));
+        with_logo.extend(content);
+        content = with_logo;
+    }
     let top = (area.height as usize).saturating_sub(content.len()) / 2;
     let mut lines = vec![Line::from(""); top];
     lines.extend(content);
@@ -2650,36 +2663,6 @@ fn quote_row(card: &super::quotes::QuoteCardData, symbol_w: usize) -> Line<'stat
     Line::from(spans)
 }
 
-/// A one-line quote chip: `symbol  last  ±change%`, the change tinted by
-/// direction, mirroring the web quote card in a terminal-friendly form.
-fn quote_chip(card: &super::quotes::QuoteCardData) -> Line<'static> {
-    let dir = match card.direction {
-        1 => Color::Green,
-        -1 => Color::Red,
-        _ => Color::Gray,
-    };
-    let mut spans = vec![
-        Span::styled(
-            format!("  {} ", card.symbol),
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!(" {} ", card.last),
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(card.change_pct.clone(), Style::default().fg(dir)),
-    ];
-    if !card.name.is_empty() {
-        spans.push(Span::styled(
-            format!("  {}", card.name),
-            Style::default().fg(Color::DarkGray),
-        ));
-    }
-    Line::from(spans)
-}
-
 /// Wrap `s` to `width` display columns, honoring wide (CJK) glyphs.
 fn wrap(s: &str, width: usize) -> Vec<String> {
     if width == 0 || s.is_empty() {
@@ -2904,8 +2887,9 @@ mod tests {
         assert_eq!(super::tools_this_turn(&state), 2);
     }
 
-    /// A MacBook's built-in keyboard has no PageUp/PageDown/Home/End — they need
-    /// Fn — so every action bound to one must also be reachable another way.
+    /// A `MacBook`'s built-in keyboard has no `PageUp`/`PageDown`/`Home`/`End` —
+    /// they need Fn — so every action bound to one must also be reachable
+    /// another way.
     #[test]
     fn scrolling_and_jumping_work_without_fn_keys() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -3211,5 +3195,125 @@ mod tests {
                 assert!(w <= width, "card line of {w} cols exceeds width {width}");
             }
         }
+    }
+
+    /// The mark is a nice-to-have; the welcome copy and the example prompts are
+    /// the point, so a short terminal keeps the text and drops the logo.
+    #[test]
+    fn the_logo_yields_to_the_welcome_copy_on_a_short_terminal() {
+        let logo_h = usize::from(crate::tui::ui::assets::MARK_HEIGHT);
+        let state = super::ChatState::new("chatbot".into(), "welcome".into());
+
+        let mut ui = super::Ui::new();
+        let tall = frame(&mut ui, &state, 80, (logo_h + 20) as u16);
+        assert!(
+            tall.iter().any(|l| l.contains('█')),
+            "a tall terminal should show the mark:\n{}",
+            tall.join("\n")
+        );
+
+        let mut ui = super::Ui::new();
+        let short = frame(&mut ui, &state, 80, 14);
+        assert!(
+            !short.iter().any(|l| l.contains('█')),
+            "a short terminal should drop it:\n{}",
+            short.join("\n")
+        );
+        // The copy is the localized welcome, not the message text passed in.
+        let welcome = rust_i18n::t!("Ai.Welcome").to_string();
+        let head: String = welcome.chars().take(12).collect();
+        assert!(
+            short.iter().any(|l| l.contains(&head)),
+            "and keep the copy:\n{}",
+            short.join("\n")
+        );
+    }
+
+    /// Nothing in the welcome state may exceed the width, logo included.
+    #[test]
+    fn the_welcome_state_fits_the_width() {
+        let state = super::ChatState::new("chatbot".into(), "welcome".into());
+        for width in [40u16, 60, 80, 120] {
+            let mut ui = super::Ui::new();
+            for line in frame(&mut ui, &state, width, 40) {
+                assert!(
+                    unicode_width::UnicodeWidthStr::width(line.trim_end()) <= width as usize,
+                    "welcome line exceeds {width}: {line:?}"
+                );
+            }
+        }
+    }
+
+    /// The mark stays small enough to sit above the wordmark, and every row is
+    /// the same width or the bars would not line up.
+    #[test]
+    fn the_mark_is_wordmark_sized() {
+        let mark = crate::tui::ui::assets::logo_mark();
+        assert_eq!(
+            u16::try_from(mark.len()).unwrap(),
+            crate::tui::ui::assets::MARK_HEIGHT,
+            "one line per mark row"
+        );
+        for line in &mark {
+            let w: u16 = line
+                .spans
+                .iter()
+                .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()) as u16)
+                .sum();
+            assert_eq!(
+                w,
+                crate::tui::ui::assets::MARK_WIDTH,
+                "ragged mark row: {line:?}"
+            );
+        }
+        const {
+            assert!(
+                crate::tui::ui::assets::MARK_WIDTH <= 24,
+                "the mark should stay small next to the wordmark"
+            );
+        }
+    }
+
+    /// The mark is a bar chart, so it must keep its bars *and* the gaps between
+    /// them: the tall bars reach the top row, the short ones do not, and the
+    /// bottom row is not one solid run.
+    #[test]
+    fn the_mark_keeps_the_original_proportions() {
+        let mark = crate::tui::ui::assets::logo_mark();
+        let row = |i: usize| -> String {
+            mark[i]
+                .spans
+                .iter()
+                .map(|s| s.content.to_string())
+                .collect()
+        };
+        let (top, bottom) = (row(0), row(mark.len() - 1));
+        assert!(
+            top.starts_with("▄ ▄▄"),
+            "the two tall bars end half way into the top row, got {top:?}"
+        );
+        assert!(
+            top.trim_end().len() < bottom.trim_end().len(),
+            "the short bars must leave the top row empty"
+        );
+        assert!(
+            bottom.contains(' '),
+            "the bottom row keeps the gaps between bars, got {bottom:?}"
+        );
+        // Rows covered per column, counting a half block as a covered row: the
+        // tall bars reach every row and the gaps reach none.
+        let heights: Vec<usize> =
+            (0..mark.len())
+                .map(row)
+                .fold(vec![0; bottom.chars().count()], |mut acc, line| {
+                    for (i, c) in line.chars().enumerate() {
+                        if c == '█' || c == '▄' {
+                            acc[i] += 1;
+                        }
+                    }
+                    acc
+                });
+        assert!(heights.contains(&mark.len()), "a bar spans every row");
+        assert!(heights.contains(&0), "the gaps stay empty top to bottom");
     }
 }
