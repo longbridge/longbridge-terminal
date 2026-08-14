@@ -30,6 +30,8 @@ static USING_API_KEY: OnceLock<bool> = OnceLock::new();
 /// Global `HttpClient` for making authenticated requests to the Longbridge `OpenAPI`
 pub static HTTP_CLIENT: OnceLock<longbridge::httpclient::HttpClient> = OnceLock::new();
 
+const CLI_APP_ID: &str = "longbridge-cli";
+
 /// Global rate-limited `QuoteContext` wrapper
 pub static RATE_LIMITED_QUOTE_CTX: OnceLock<RateLimitedQuoteContext> = OnceLock::new();
 
@@ -241,7 +243,9 @@ pub async fn init_contexts() -> Result<(
     let user_agent = concat!("longbridge-cli/", env!("CARGO_PKG_VERSION"));
 
     // Inject into Config so headers appear in WebSocket upgrade requests too.
-    config_builder = config_builder.header("user-agent", user_agent);
+    config_builder = config_builder
+        .header("user-agent", user_agent)
+        .header("x-app-id", CLI_APP_ID);
     if !cli_cmd.is_empty() {
         config_builder = config_builder.header("x-cli-cmd", &cli_cmd);
     }
@@ -277,7 +281,9 @@ pub async fn init_contexts() -> Result<(
 
     // Also inject into the standalone HttpClient used for direct REST calls.
     let mut http_client = longbridge::httpclient::HttpClient::new(http_client_config);
-    http_client = http_client.header("user-agent", user_agent);
+    http_client = http_client
+        .header("user-agent", user_agent)
+        .header("x-app-id", CLI_APP_ID);
     if !cli_cmd.is_empty() {
         http_client = http_client.header("x-cli-cmd", cli_cmd.as_str());
     }
@@ -466,7 +472,7 @@ pub fn statement() -> &'static longbridge::AssetContext {
 
 #[cfg(test)]
 mod quote_cmd_tests {
-    use super::{send_quote_cmd, QUOTE_CMD_PATH};
+    use super::{send_quote_cmd, CLI_APP_ID, QUOTE_CMD_PATH};
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -514,6 +520,7 @@ mod quote_cmd_tests {
             .http_url(format!("http://127.0.0.1:{port}"));
         let client = longbridge::httpclient::HttpClient::new(config)
             .header("user-agent", "longbridge-cli/test")
+            .header("x-app-id", CLI_APP_ID)
             .header("x-cli-cmd", "quote");
 
         send_quote_cmd(&client).await;
@@ -537,6 +544,10 @@ mod quote_cmd_tests {
         assert!(
             lower.contains("x-cli-cmd: quote"),
             "x-cli-cmd tracking header missing; request was:\n{request}"
+        );
+        assert!(
+            lower.contains("x-app-id: longbridge-cli"),
+            "x-app-id attribution header missing; request was:\n{request}"
         );
     }
 

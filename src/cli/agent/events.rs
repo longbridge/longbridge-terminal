@@ -236,10 +236,12 @@ impl ChatAggregator {
                 self.outcome.references.clone_from(references);
                 self.outcome.further_questions.clone_from(further_questions);
             }
-            AgentEvent::ChatFinished { error_message } => {
-                if !error_message.is_empty() && self.outcome.error_message.is_empty() {
-                    self.outcome.error_message.clone_from(error_message);
-                }
+            // Never blank an existing message: a preceding event may already
+            // have carried the real cause while this one's field is empty.
+            AgentEvent::ChatFinished { error_message }
+                if !error_message.is_empty() && self.outcome.error_message.is_empty() =>
+            {
+                self.outcome.error_message.clone_from(error_message);
             }
             _ => {}
         }
