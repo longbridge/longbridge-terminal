@@ -464,7 +464,7 @@ longbridge tui
 
 ## ACP Agent 服务
 
-通过 stdio 将 Longbridge AI 主 Agent（`chatbot`）提供给 ACP 客户端：
+通过 stdio 将 Longbridge AI 主 Agent（`chatbot`）提供给 [ACP](https://agentclientprotocol.com) 客户端：
 
 ```bash
 longbridge acp
