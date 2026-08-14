@@ -345,3 +345,13 @@ Agent:
   Elapsed: "elapsed %{secs}s"
   PartialAnswer: "Warning: stream dropped; showing partial answer"
   StreamDropped: "Agent run interrupted: the stream dropped before the run completed"
+
+Ai:
+  Title: "Longbridge AI"
+  You: "You"
+  Assistant: "Longbridge AI"
+  Welcome: "Ask Longbridge AI about markets, quotes, filings, or your portfolio."
+  InputHint: "Enter: send · Esc: cancel / quit · PgUp/PgDn: scroll"
+  Cancelled: "(cancelled)"
+  NoAnswer: "(the agent returned no answer)"
+  NoAnswerToolsFailed: "(no answer — these tools failed: %{tools})"

@@ -345,3 +345,13 @@ Agent:
   Elapsed: "耗时 %{secs}s"
   PartialAnswer: "警告：流中断，以下为已接收的部分回答"
   StreamDropped: "Agent 运行中断：流在运行完成前断开"
+
+Ai:
+  Title: "Longbridge AI"
+  You: "你"
+  Assistant: "Longbridge AI"
+  Welcome: "向 Longbridge AI 提问：行情、报价、财报或你的持仓。"
+  InputHint: "Enter：发送 · Esc：取消 / 退出 · PgUp/PgDn：滚动"
+  Cancelled: "（已取消）"
+  NoAnswer: "（智能体未返回答案）"
+  NoAnswerToolsFailed: "（无答案 —— 以下工具调用失败：%{tools}）"

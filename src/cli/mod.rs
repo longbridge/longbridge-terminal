@@ -153,6 +153,17 @@ pub enum Commands {
         agent_id: Option<String>,
     },
 
+    /// Chat with Longbridge AI in a full-screen TUI
+    ///
+    /// An interactive assistant for markets, quotes, filings, and your
+    /// portfolio. Answers stream live; Esc cancels a turn or quits.
+    /// Example: longbridge ai
+    Ai {
+        /// Longbridge AI agent UID to converse with (from `longbridge agent list`)
+        #[arg(long, default_value = "chatbot")]
+        agent: String,
+    },
+
     /// Generate shell completion script
     ///
     /// Prints a shell completion script to stdout.
@@ -4079,6 +4090,7 @@ IpoCmd::ProfitLoss { period, page, count } => {
 
         Commands::Auth { .. }
         | Commands::Acp { .. }
+        | Commands::Ai { .. }
         | Commands::Tui
         | Commands::Check
         | Commands::Update { .. }

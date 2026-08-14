@@ -286,6 +286,7 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<ResponseSchema> {
         "tui" => crate::tui::schema_for_path(path),
         "completion" => completion::schema_for_path(path),
         "acp" => (path == ["acp"]).then(|| text("ACP JSON-RPC session over stdio")),
+        "ai" => (path == ["ai"]).then(|| text("Interactive Longbridge AI chat TUI")),
         "quote" | "depth" | "brokers" | "trades" | "intraday" | "kline" | "static"
         | "calc-index" | "capital" | "market-temp" | "trading" | "security-list"
         | "participants" | "subscriptions" | "option" | "warrant" | "constituent"
@@ -524,7 +525,7 @@ mod tests {
                 let paths = real_leaf_paths(&root);
                 assert_eq!(
                     paths.len(),
-                    147,
+                    148,
                     "real command count changed; review schema coverage"
                 );
 

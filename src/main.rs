@@ -250,6 +250,36 @@ async fn main() {
             return;
         }
 
+        // `longbridge ai`: the interactive Longbridge AI chat TUI. Needs a live
+        // context, so a failed init exits (a prompt turn cannot run without it).
+        Some(cli::Commands::Ai { agent }) => {
+            let using_api_key = match openapi::init_contexts().await {
+                Ok((_, using_api_key, _)) => using_api_key,
+                Err(e) => {
+                    eprintln!("Authentication failed: {e}");
+                    return;
+                }
+            };
+            if let Err(e) = openapi::quote().member_id().await {
+                print_cli_error(&anyhow::anyhow!(e), using_api_key);
+                return;
+            }
+
+            let hook = std::panic::take_hook();
+            std::panic::set_hook(Box::new(move |info| {
+                Terminal::exit_full_screen();
+                hook(info);
+            }));
+
+            Terminal::enter_full_screen();
+            let result = ai::run(agent).await;
+            Terminal::exit_full_screen();
+            if let Err(e) = result {
+                eprintln!("Error: {e}");
+            }
+            return;
+        }
+
         Some(cli::Commands::Init { invite_code }) => {
             if let Err(e) = cli::init::cmd_init(&invite_code) {
                 eprintln!("Error: {e}");
