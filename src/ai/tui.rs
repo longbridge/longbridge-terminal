@@ -224,6 +224,8 @@ enum Chip {
     Brand,
     /// The title bar's control for the account's conversations.
     Sessions,
+    /// A list view's way back to the chat.
+    CloseView,
 }
 
 /// State of the structured interrupt answering flow.
@@ -1671,6 +1673,7 @@ fn click_chip(
         }
         Chip::Brand => open_url(AI_WEB_URL),
         Chip::Sessions => open_sessions(ui),
+        Chip::CloseView => ui.switch(View::Chat),
         Chip::Reference(i) => {
             if let Some(url) = state.references.get(i).and_then(reference_url) {
                 open_url(&url);
@@ -1924,6 +1927,11 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
     if has_turn {
         constraints.push(Constraint::Length(1));
     }
+    // A list view's hint gets a blank row above it, so it does not read as one more
+    // row of the list.
+    if !is_chat {
+        constraints.push(Constraint::Length(1));
+    }
     constraints.push(Constraint::Length(1));
     constraints.push(Constraint::Length(footer_h));
     let chunks = Layout::vertical(constraints).split(area);
@@ -1940,6 +1948,9 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
         idx += 1;
         r
     });
+    if !is_chat {
+        idx += 1; // the spacer
+    }
     let status = chunks[idx];
     idx += 1;
     let footer = chunks[idx];
@@ -1962,11 +1973,11 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
             render_chat(f, body, ui, state);
         }
         View::Sessions => {
-            let inner = render_view_header(f, full, "Ai.TabSessions");
+            let inner = render_view_header(f, full, ui, "Ai.TabSessions");
             render_sessions(f, inner, ui);
         }
         View::Settings => {
-            let inner = render_view_header(f, full, "Ai.TabSettings");
+            let inner = render_view_header(f, full, ui, "Ai.TabSettings");
             render_settings(f, inner, ui);
         }
     }
@@ -2317,7 +2328,7 @@ fn render_title(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatSta
     // Reaching an earlier conversation was `/resume` and nothing else, which only
     // helps a reader who already knows it exists. A glyph, not the word: the view it
     // opens is titled, and the badge beside it is already carrying text.
-    let sessions = "   ☰  ".to_string();
+    let sessions = format!("   {} ", t!("Ai.ChatsButton"));
     let sessions_x = area.x + left.iter().map(|s| s.content.width()).sum::<usize>() as u16;
     let sessions_rect = Rect {
         x: sessions_x,
@@ -2488,8 +2499,18 @@ fn tape_spans(ui: &mut Ui, area: Rect, start_x: Option<u16>, room: usize) -> Vec
 
 /// Header for a `/`-opened view: a bold name badge and an "Esc to go back"
 /// hint. Returns the remaining area below it for the view body.
-fn render_view_header(f: &mut ratatui::Frame, area: Rect, label_key: &str) -> Rect {
+fn render_view_header(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, label_key: &str) -> Rect {
     let [top, rest] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
+    // The way out is a button as well as a key: the view is opened by clicking, so
+    // it should be closable the same way.
+    let close = format!(" {} ✕ ", t!("Ai.BackHint"));
+    let close_w = close.width() as u16;
+    let close_rect = Rect {
+        x: area.x + area.width.saturating_sub(close_w),
+        y: area.y,
+        width: close_w,
+        height: 1,
+    };
     let line = Line::from(vec![
         Span::styled(
             format!(" {} ", t!(label_key)),
@@ -2498,12 +2519,20 @@ fn render_view_header(f: &mut ratatui::Frame, area: Rect, label_key: &str) -> Re
                 .bg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
+        Span::raw(" ".repeat(
+            (area.width.saturating_sub(close_w) as usize).saturating_sub(t!(label_key).width() + 2),
+        )),
         Span::styled(
-            format!("  {}", t!("Ai.BackHint")),
-            Style::default().fg(Color::DarkGray),
+            close,
+            if hovering(ui, close_rect) {
+                Style::default().fg(Color::White)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            },
         ),
     ]);
     f.render_widget(Paragraph::new(line), top);
+    ui.chips.push((Chip::CloseView, close_rect));
     rest
 }
 
@@ -6067,6 +6096,58 @@ mod tests {
         );
     }
 
+    /// A view opened by clicking should close by clicking too.
+    #[test]
+    fn a_list_view_closes_from_its_header() {
+        let mut ui = super::Ui::new();
+        let state = super::ChatState::new("chatbot".into(), "welcome".into());
+        ui.view = super::View::Sessions;
+        let rows = frame(&mut ui, &state, 64, 12);
+        let (_, rect) = ui
+            .chips
+            .iter()
+            .find(|(chip, _)| matches!(chip, super::Chip::CloseView))
+            .expect("a way out that is not only a key");
+        assert_eq!(rect.y, 0, "it sits on the header row");
+        let at = rows[0].find('✕').expect("drawn");
+        assert!(
+            (rect.x as usize) <= at,
+            "drawn at {at} but targeted at {rect:?}"
+        );
+        ui.chips.clear();
+        ui.switch(super::View::Chat);
+        assert!(ui.view == super::View::Chat, "and it goes back to the chat");
+    }
+
+    /// The hint under a list is not one more row of the list.
+    #[test]
+    fn a_list_views_hint_stands_off_the_rows() {
+        let mut ui = super::Ui::new();
+        let state = super::ChatState::new("chatbot".into(), "welcome".into());
+        ui.view = super::View::Sessions;
+        ui.sessions = (0..9)
+            .map(|i| super::SessionSummary {
+                id: format!("s{i}"),
+                updated_at: 1_786_700_000,
+                title: format!("chat {i}"),
+                agent: String::new(),
+            })
+            .collect();
+        let rows = frame(&mut ui, &state, 64, 12);
+        let hint = rows
+            .iter()
+            .position(|r| r.contains(t!("Ai.SessionsHint").split(' ').next().unwrap()))
+            .expect("the hint is on screen");
+        assert!(
+            rows[hint - 1].trim().is_empty(),
+            "a blank row above it: {rows:?}"
+        );
+        assert!(
+            rows[hint - 2].contains("chat"),
+            "and the list right above that: {rows:?}"
+        );
+    }
+
     /// A view that carries its own name takes the title bar's rows: two titles, one
     /// above the other, read as a nesting that is not there.
     #[test]
@@ -6100,7 +6181,7 @@ mod tests {
             .find(|(chip, _)| matches!(chip, super::Chip::Sessions))
             .expect("a control for the conversations");
         assert_eq!(rect.y, 0, "it lives on the title row");
-        let at = rows[0].find('☰').expect("drawn");
+        let at = rows[0].find(t!("Ai.ChatsButton").as_ref()).expect("drawn");
         assert!(
             (rect.x as usize) <= at && at < (rect.x + rect.width) as usize,
             "drawn at {at} but targeted at {rect:?}"

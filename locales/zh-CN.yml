@@ -388,6 +388,7 @@ Ai:
   SlashCopy: "复制整段对话"
   SlashExit: "退出 Longbridge AI"
   CommandsTitle: "命令"
+  ChatsButton: "历史"
   BackHint: "按 Esc 返回"
   WindowTooSmall: "终端窗口太小"
   JustNow: "刚刚"

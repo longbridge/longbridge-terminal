@@ -388,6 +388,7 @@ Ai:
   SlashCopy: "Copy the conversation"
   SlashExit: "Exit Longbridge AI"
   CommandsTitle: "Commands"
+  ChatsButton: "CHATS"
   BackHint: "Esc to go back"
   WindowTooSmall: "Terminal too small"
   JustNow: "just now"
