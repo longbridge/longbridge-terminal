@@ -6,7 +6,11 @@ use longbridge_ai_acp::{
     LoadedAgentSession,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::fmt::Write as _;
+use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct OpenApiAgentSession {
@@ -152,11 +156,222 @@ pub struct OpenApiAgent {
     agent_id: String,
 }
 
+/// ACP backend used before the user completes `longbridge auth login`.
+pub struct AuthenticationRequiredAgent {
+    history: Arc<Mutex<SessionHistory>>,
+    history_path: Option<Arc<PathBuf>>,
+}
+
+impl AuthenticationRequiredAgent {
+    pub fn new(agent_id: &str) -> Self {
+        let history_path = session_history_path(agent_id).map(Arc::new);
+        let history = history_path
+            .as_deref()
+            .map_or_else(SessionHistory::default, |path| SessionHistory::load(path));
+        Self {
+            history: Arc::new(Mutex::new(history)),
+            history_path,
+        }
+    }
+
+    fn persist_history(&self, history: &SessionHistory) {
+        persist_session_history(self.history_path.as_deref(), history);
+    }
+}
+
+#[async_trait]
+impl AgentBackend for AuthenticationRequiredAgent {
+    type Session = OpenApiAgentSession;
+    const SESSION_HISTORY: bool = true;
+
+    fn new_session(&self, session_id: &str, cwd: &Path) -> Self::Session {
+        let state = OpenApiAgentSession {
+            acp_session_id: Some(session_id.to_owned()),
+            ..Default::default()
+        };
+        if let Ok(mut history) = self.history.lock() {
+            history.upsert(StoredSession {
+                session_id: session_id.to_owned(),
+                cwd: cwd.to_path_buf(),
+                title: None,
+                state: state.clone(),
+                events: Vec::new(),
+            });
+            self.persist_history(&history);
+        }
+        state
+    }
+
+    async fn list_sessions(
+        &self,
+        cwd: Option<&Path>,
+        cursor: Option<&str>,
+    ) -> Result<AgentSessionPage, BackendError> {
+        Ok(self
+            .history
+            .lock()
+            .map_err(|_| std::io::Error::other("session history lock is poisoned"))?
+            .list(cwd, cursor))
+    }
+
+    async fn load_session(
+        &self,
+        session_id: &str,
+        _cwd: &Path,
+    ) -> Result<LoadedAgentSession<Self::Session>, BackendError> {
+        let stored = self
+            .history
+            .lock()
+            .map_err(|_| std::io::Error::other("session history lock is poisoned"))?
+            .get(session_id)
+            .ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::NotFound, "session not found")
+            })?;
+        Ok(LoadedAgentSession {
+            state: stored.state,
+            history: stream::iter(stored.events.into_iter().map(Ok)).boxed(),
+        })
+    }
+
+    async fn prompt(
+        &self,
+        _session: Self::Session,
+        _prompt: String,
+        _cwd: &Path,
+    ) -> Result<BoxStream<'static, Result<AgentEvent<Self::Session>, BackendError>>, BackendError>
+    {
+        Ok(stream::iter([Ok(AgentEvent::Text(
+            rust_i18n::t!("ACP.LoginRequired").to_string(),
+        ))])
+        .boxed())
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct StoredSession {
+    session_id: String,
+    cwd: PathBuf,
+    title: Option<String>,
+    state: OpenApiAgentSession,
+    events: Vec<AgentEvent<OpenApiAgentSession>>,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+struct SessionHistory {
+    #[serde(default)]
+    sessions: Vec<StoredSession>,
+}
+
+impl SessionHistory {
+    const PAGE_SIZE: usize = 50;
+    const MAX_SESSIONS: usize = 200;
+
+    fn list(&self, cwd: Option<&Path>, cursor: Option<&str>) -> AgentSessionPage {
+        let offset = cursor
+            .and_then(|cursor| cursor.parse::<usize>().ok())
+            .unwrap_or_default();
+        let matching = self
+            .sessions
+            .iter()
+            .rev()
+            .filter(|session| cwd.is_none_or(|cwd| session.cwd == cwd))
+            .skip(offset)
+            .take(Self::PAGE_SIZE + 1)
+            .collect::<Vec<_>>();
+        let has_more = matching.len() > Self::PAGE_SIZE;
+        let sessions = matching
+            .into_iter()
+            .take(Self::PAGE_SIZE)
+            .map(|session| AgentSessionInfo {
+                session_id: session.session_id.clone(),
+                cwd: session.cwd.clone(),
+                title: session.title.clone(),
+                updated_at: None,
+            })
+            .collect::<Vec<_>>();
+        AgentSessionPage {
+            next_cursor: has_more.then(|| (offset + sessions.len()).to_string()),
+            sessions,
+        }
+    }
+
+    fn get(&self, session_id: &str) -> Option<StoredSession> {
+        self.sessions
+            .iter()
+            .find(|session| session.session_id == session_id)
+            .cloned()
+    }
+
+    fn upsert(&mut self, session: StoredSession) {
+        self.sessions
+            .retain(|existing| existing.session_id != session.session_id);
+        self.sessions.push(session);
+        if self.sessions.len() > Self::MAX_SESSIONS {
+            self.sessions
+                .drain(..self.sessions.len() - Self::MAX_SESSIONS);
+        }
+    }
+
+    fn load(path: &Path) -> Self {
+        fs::read(path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default()
+    }
+
+    fn save(&self, path: &Path) -> Result<(), BackendError> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let temporary = path.with_extension("json.tmp");
+        fs::write(&temporary, serde_json::to_vec(self)?)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600))?;
+        }
+        #[cfg(windows)]
+        if path.exists() {
+            fs::remove_file(path)?;
+        }
+        fs::rename(temporary, path)?;
+        Ok(())
+    }
+}
+
+fn session_history_path(agent_id: &str) -> Option<PathBuf> {
+    let digest = Sha256::digest(agent_id.as_bytes());
+    let key = digest[..12]
+        .iter()
+        .fold(String::with_capacity(24), |mut key, byte| {
+            let _ = write!(key, "{byte:02x}");
+            key
+        });
+    dirs::home_dir().map(|home| {
+        home.join(".longbridge")
+            .join("acp")
+            .join(format!("sessions-{key}.json"))
+    })
+}
+
 impl OpenApiAgent {
     pub fn new(context: longbridge::AgentContext, agent_id: impl Into<String>) -> Self {
         Self {
             context,
             agent_id: agent_id.into(),
+        }
+    }
+}
+
+fn persist_session_history(path: Option<&PathBuf>, history: &SessionHistory) {
+    if let Some(path) = path {
+        if let Err(error) = history.save(path) {
+            tracing::warn!(
+                target: "longbridge::acp",
+                %error,
+                path = %path.display(),
+                "failed to persist ACP session history"
+            );
         }
     }
 }

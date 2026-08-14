@@ -27,7 +27,9 @@
       "WebFetch(domain:stockcircle.com)",
       "WebFetch(domain:fred.stlouisfed.org)",
       "WebFetch(domain:api.stlouisfed.org)",
-      "WebFetch(domain:open.longbridge.cn)"
+      "WebFetch(domain:open.longbridge.cn)",
+      "Bash(cargo run *)",
+      "Bash(find /Users/hogan/.cargo/git/checkouts/openapi-09ec44ae5d74eba6/1edabc1 -path *rust*/agent/context.rs -o -path */rust/src/agent*)"
     ]
   }
 }

@@ -342,16 +342,37 @@ async fn main() {
             let agent_id = agent_id
                 .or_else(|| std::env::var("LONGBRIDGE_AGENT_ID").ok())
                 .unwrap_or_else(|| "chatbot".to_string());
-            let using_api_key = match openapi::init_contexts().await {
-                Ok((_, using_api_key, _)) => using_api_key,
+            let auth_methods = vec![longbridge_ai_acp::acp::schema::v1::AuthMethod::Terminal(
+                longbridge_ai_acp::acp::schema::v1::AuthMethodTerminal::new(
+                    "longbridge-login",
+                    "Log in to Longbridge",
+                )
+                .description("Authenticate with Longbridge OAuth in an interactive terminal")
+                .args(vec!["auth".into(), "login".into()]),
+            )];
+            let has_oauth = match openapi::oauth_credentials_available() {
+                Ok(available) => available,
                 Err(e) => {
                     eprintln!("{}: {e}", t!("ACP.AuthenticationFailed"));
                     std::process::exit(1);
                 }
             };
-            let backend = openapi::OpenApiAgent::new(openapi::agent().clone(), agent_id);
-            if let Err(e) = longbridge_ai_acp::serve_stdio(backend).await {
-                print_cli_error(&anyhow::anyhow!(e), using_api_key);
+            let result = if has_oauth {
+                if let Err(e) = openapi::init_oauth_contexts().await {
+                    eprintln!("{}: {e}", t!("ACP.AuthenticationFailed"));
+                    std::process::exit(1);
+                }
+                let backend = openapi::OpenApiAgent::new(openapi::agent().clone(), agent_id);
+                longbridge_ai_acp::serve_stdio_with_auth_methods(backend, auth_methods).await
+            } else {
+                longbridge_ai_acp::serve_stdio_with_auth_methods(
+                    openapi::AuthenticationRequiredAgent::new(&agent_id),
+                    auth_methods,
+                )
+                .await
+            };
+            if let Err(e) = result {
+                print_cli_error(&anyhow::anyhow!(e), false);
                 std::process::exit(1);
             }
         }
