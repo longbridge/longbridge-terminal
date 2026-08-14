@@ -46,6 +46,7 @@ pub struct SessionSummary {
     pub id: String,
     pub updated_at: u64,
     pub title: String,
+    pub agent: String,
 }
 
 fn dir() -> Option<PathBuf> {
@@ -68,6 +69,7 @@ pub fn list() -> Vec<SessionSummary> {
         .filter_map(|bytes| serde_json::from_slice::<StoredSession>(&bytes).ok())
         .map(|s| SessionSummary {
             title: summarize(&s),
+            agent: s.agent_uid,
             id: s.id,
             updated_at: s.updated_at,
         })

@@ -52,6 +52,11 @@ enum View {
 /// Braille spinner frames for the "generating" status line.
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
+// History list palette: a subtle selected-row background and index badge tints.
+const SEL_BG: Color = Color::Rgb(45, 50, 62);
+const IDX: Color = Color::Rgb(110, 140, 190);
+const IDX_SEL: Color = Color::Rgb(240, 150, 90);
+
 /// Interactive rows in the Settings view, in display order.
 #[derive(Clone, Copy)]
 enum Setting {
@@ -215,7 +220,16 @@ impl Ui {
     fn row_count(&self) -> usize {
         match self.view {
             View::Chat => 0,
-            View::Sessions => self.visible_sessions().len(),
+            // Visible sessions plus the trailing "New session" action; but no
+            // action row when a search yields nothing.
+            View::Sessions => {
+                let v = self.visible_sessions().len();
+                if v == 0 && !self.search.is_empty() {
+                    0
+                } else {
+                    v + 1
+                }
+            }
             View::Settings => SETTINGS.len(),
             View::Agents => self.agents.len(),
             View::Question => self
@@ -777,9 +791,14 @@ fn scroll(ui: &mut Ui, state: &mut ChatState, up: bool) {
 fn activate(ui: &mut Ui, state: &mut ChatState, agents_tx: &UnboundedSender<Vec<AgentInfo>>) {
     match ui.view {
         View::Sessions => {
-            let id = ui.visible_sessions().get(ui.sel).map(|s| s.id.clone());
-            if let Some(session) = id.and_then(|id| session_store::load(&id)) {
-                session_store::restore(session, state);
+            // The row past the last session is the "New session" action.
+            if let Some(id) = ui.visible_sessions().get(ui.sel).map(|s| s.id.clone()) {
+                if let Some(session) = session_store::load(&id) {
+                    session_store::restore(session, state);
+                    ui.switch(View::Chat);
+                }
+            } else {
+                state.reset(t!("Ai.Welcome").to_string());
                 ui.switch(View::Chat);
             }
         }
@@ -1415,9 +1434,15 @@ fn pad_to(s: &str, width: usize) -> String {
     }
 }
 
-/// Render the History list: an optional search line, then entries with a
-/// relative timestamp, and a hit rectangle per visible row.
+/// Render the History list as spaced, two-line entries — a numbered badge, the
+/// title, and a dimmed `agent · age` subtitle — with a trailing "New session"
+/// action, an optional search line, and a hit rectangle per entry.
+// The loop index spans past `entries` into the trailing New-session row, so it
+// cannot be a plain iterator over `entries`.
+#[allow(clippy::needless_range_loop)]
 fn render_sessions(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
+    ui.rows.clear();
+    ui.clamp_sel();
     // A search line appears above the list only while filtering.
     let list_area = if ui.search.is_empty() {
         area
@@ -1435,34 +1460,137 @@ fn render_sessions(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
     };
 
     let now = now_secs();
-    let rows: Vec<(usize, String)> = ui
+    let entries: Vec<(String, String)> = ui
         .visible_sessions()
         .iter()
-        .enumerate()
-        .map(|(i, s)| {
+        .map(|s| {
             (
-                i,
-                format!("{}   ·  {}", s.title, relative_time(s.updated_at, now)),
+                s.title.clone(),
+                format!("{}  ·  {}", s.agent, relative_time(s.updated_at, now)),
             )
         })
         .collect();
-    if rows.is_empty() {
-        ui.rows.clear();
-        let key = if ui.sessions.is_empty() {
-            "Ai.SessionsEmpty"
-        } else {
-            "Ai.SessionsNoMatch"
-        };
+    let n = entries.len();
+    if n == 0 && !ui.search.is_empty() {
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                t!(key).to_string(),
+                t!("Ai.SessionsNoMatch").to_string(),
                 Style::default().fg(Color::DarkGray),
             ))),
             list_area,
         );
         return;
     }
-    render_rows(f, list_area, ui, &rows);
+
+    // Each entry is 3 rows (title, subtitle, gap); the New action is 2. Window
+    // in entry units so the selection stays visible.
+    let total = n + 1;
+    let fit = (list_area.height as usize / 3).max(1);
+    let start = if ui.sel < fit {
+        0
+    } else {
+        (ui.sel + 1 - fit).min(total.saturating_sub(fit))
+    };
+    let width = list_area.width as usize;
+    let mut lines: Vec<Line> = Vec::new();
+    for i in start..total {
+        if lines.len() + 2 > list_area.height as usize {
+            break;
+        }
+        let rect_h = if i < n { 2 } else { 1 };
+        let rect = Rect {
+            x: list_area.x,
+            y: list_area.y + lines.len() as u16,
+            width: list_area.width,
+            height: rect_h,
+        };
+        let selected = i == ui.sel;
+        let bg = if selected {
+            Some(SEL_BG)
+        } else if hovering(ui, rect) {
+            Some(HOVER_BG)
+        } else {
+            None
+        };
+        if i < n {
+            let (title, subtitle) = &entries[i];
+            push_session_entry(&mut lines, i + 1, title, subtitle, width, selected, bg);
+        } else {
+            lines.push(bg_pad(
+                vec![
+                    Span::styled(" +  ", with_bg(Style::default().fg(IDX), bg)),
+                    Span::styled(
+                        t!("Ai.NewSessionAction").to_string(),
+                        with_bg(Style::default().fg(Color::Gray), bg),
+                    ),
+                ],
+                width,
+                bg,
+            ));
+        }
+        ui.rows.push((i, rect));
+        lines.push(Line::from("")); // spacing between entries
+    }
+    f.render_widget(Paragraph::new(Text::from(lines)), list_area);
+}
+
+/// Push a two-line History entry: `NN  Title` then an indented dimmed subtitle,
+/// both tinted with the row background when selected/hovered.
+fn push_session_entry(
+    lines: &mut Vec<Line<'static>>,
+    number: usize,
+    title: &str,
+    subtitle: &str,
+    width: usize,
+    selected: bool,
+    bg: Option<Color>,
+) {
+    let idx_color = if selected { IDX_SEL } else { IDX };
+    let mut title_style = Style::default().fg(if selected { Color::White } else { Color::Gray });
+    if selected {
+        title_style = title_style.add_modifier(Modifier::BOLD);
+    }
+    lines.push(bg_pad(
+        vec![
+            Span::styled(
+                format!("{number:>2}  "),
+                with_bg(Style::default().fg(idx_color), bg),
+            ),
+            Span::styled(title.to_string(), with_bg(title_style, bg)),
+        ],
+        width,
+        bg,
+    ));
+    lines.push(bg_pad(
+        vec![Span::styled(
+            format!("    {subtitle}"),
+            with_bg(Style::default().fg(Color::DarkGray), bg),
+        )],
+        width,
+        bg,
+    ));
+}
+
+/// Apply `bg` to `style` when present.
+fn with_bg(style: Style, bg: Option<Color>) -> Style {
+    match bg {
+        Some(c) => style.bg(c),
+        None => style,
+    }
+}
+
+/// Extend a row's background to the full width by padding with a trailing span.
+fn bg_pad(mut spans: Vec<Span<'static>>, width: usize, bg: Option<Color>) -> Line<'static> {
+    if let Some(bg) = bg {
+        let used: usize = spans.iter().map(|s| s.content.width()).sum();
+        if used < width {
+            spans.push(Span::styled(
+                " ".repeat(width - used),
+                Style::default().bg(bg),
+            ));
+        }
+    }
+    Line::from(spans)
 }
 
 /// Compact "3m / 2h / 5d" age of an entry, from Unix seconds.
