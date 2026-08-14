@@ -139,10 +139,11 @@ pub fn render(md: &str, width: usize) -> Vec<Line<'static>> {
             Block::Chart(spec) => render_chart(&spec, width, &mut out),
             Block::Math(lines) => render_math(&lines, width, &mut out),
             Block::Heading(level, text) => render_heading(level, &text, width, &mut out),
-            // A short dim dash, not a rule across the page: the break is a
-            // pause between sections, and a full-width line plus the blank rows
-            // either side of it shouted louder than the sections it separated.
-            Block::Rule => out.push(Line::from(Span::styled("───", Style::default().fg(BORDER)))),
+            // The break as the author wrote it: a dim `---`. It used to draw a
+            // rule across the full width, three rows shouting louder than the
+            // sections it separates, and box-drawing dashes still read as a rule
+            // rather than as the mark itself.
+            Block::Rule => out.push(Line::from(Span::styled("---", Style::default().fg(BORDER)))),
         }
     }
     // Prose blocks end with their own trailing blank; drop it so the answer
@@ -960,22 +961,18 @@ mod tests {
         }
     }
 
-    /// A section break is a pause, not a divider across the page: a full-width
-    /// rule with blank rows either side outshouted the sections it separated.
+    /// A section break shows as the mark the author typed. It used to be a rule
+    /// across the full width, which outshouted the sections it separated.
     #[test]
-    fn thematic_break_is_a_short_dash() {
-        let width = 20;
-        let lines = render("above\n\n---\n\nbelow", width);
+    fn thematic_break_shows_as_three_hyphens() {
+        let lines = render("above\n\n---\n\nbelow", 20);
         let rule = lines
             .iter()
             .flat_map(|l| &l.spans)
-            .find(|s| s.content.starts_with('─'))
+            .find(|s| s.content.contains('-'))
             .expect("`---` should draw a break");
-        let w = rule.content.chars().count();
-        assert!(
-            (2..=4).contains(&w),
-            "the break should be a short dash, got {w} of {width} columns"
-        );
+        assert_eq!(rule.content.as_ref(), "---");
+        assert_eq!(rule.style.fg, Some(super::BORDER), "and it stays dim");
     }
 
     /// A chart spec is drawn, not dumped: the JSON keys must not reach the
