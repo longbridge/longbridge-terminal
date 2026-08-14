@@ -104,7 +104,7 @@ pub fn oauth_credentials_available() -> Result<bool> {
     .is_none()
     {
         return Err(anyhow::anyhow!(
-            "Failed to decrypt auth token. Please run 'longbridge auth login' to re-authenticate."
+            "Failed to decrypt auth token. Please run `longbridge auth login` to re-authenticate."
         ));
     }
     Ok(true)
@@ -146,7 +146,7 @@ async fn init_contexts_with_auth(
         // CLI commands require a stored token; users must run `longbridge auth login` first.
         if !oauth_credentials_available()? {
             return Err(anyhow::anyhow!(
-                "Not authenticated. Please run 'longbridge auth login' first."
+                "Not authenticated. Please run `longbridge auth login` first."
             ));
         }
 

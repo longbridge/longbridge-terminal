@@ -350,27 +350,11 @@ async fn main() {
                 .description("Authenticate with Longbridge OAuth in an interactive terminal")
                 .args(vec!["auth".into(), "login".into()]),
             )];
-            let has_oauth = match openapi::oauth_credentials_available() {
-                Ok(available) => available,
-                Err(e) => {
-                    eprintln!("{}: {e}", t!("ACP.AuthenticationFailed"));
-                    std::process::exit(1);
-                }
-            };
-            let result = if has_oauth {
-                if let Err(e) = openapi::init_oauth_contexts().await {
-                    eprintln!("{}: {e}", t!("ACP.AuthenticationFailed"));
-                    std::process::exit(1);
-                }
-                let backend = openapi::OpenApiAgent::new(openapi::agent().clone(), agent_id);
-                longbridge_ai_acp::serve_stdio_with_auth_methods(backend, auth_methods).await
-            } else {
-                longbridge_ai_acp::serve_stdio_with_auth_methods(
-                    openapi::AuthenticationRequiredAgent::new(&agent_id),
-                    auth_methods,
-                )
-                .await
-            };
+            let result = longbridge_ai_acp::serve_stdio_with_auth_methods(
+                openapi::AuthenticationRequiredAgent::new(&agent_id),
+                auth_methods,
+            )
+            .await;
             if let Err(e) = result {
                 print_cli_error(&anyhow::anyhow!(e), false);
                 std::process::exit(1);

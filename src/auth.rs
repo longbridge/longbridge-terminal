@@ -693,7 +693,7 @@ pub async fn refresh_if_expired() -> Result<()> {
         .map(str::to_owned)
     else {
         return Err(anyhow::anyhow!(
-            "No refresh token found. Please run 'longbridge auth login' to re-authenticate."
+            "No refresh token found. Please run `longbridge auth login` to re-authenticate."
         ));
     };
 
@@ -760,7 +760,7 @@ pub async fn refresh_if_expired() -> Result<()> {
 
     if error == "invalid_grant" {
         return Err(anyhow::anyhow!(
-            "Refresh token has expired. Please run 'longbridge auth login' to re-authenticate."
+            "Refresh token has expired. Please run `longbridge auth login` to re-authenticate."
         ));
     }
 
