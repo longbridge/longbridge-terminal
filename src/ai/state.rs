@@ -28,7 +28,10 @@ pub enum ChatEvent {
     UserPrompt(String),
     /// Conversation identity from the first stream event, used to thread
     /// follow-ups.
-    TurnStarted { chat_uid: String, message_id: String },
+    TurnStarted {
+        chat_uid: String,
+        message_id: String,
+    },
     /// An incremental chunk of the assistant's answer.
     Delta(String),
     /// A transient status line (thinking, calling a tool, generating).
@@ -97,7 +100,9 @@ impl ChatState {
                 self.message_id = Some(message_id);
             }
             ChatEvent::Delta(text) => {
-                self.streaming.get_or_insert_with(String::new).push_str(&text);
+                self.streaming
+                    .get_or_insert_with(String::new)
+                    .push_str(&text);
             }
             ChatEvent::Status(status) => self.status = status,
             ChatEvent::ToolFailed(name) => self.tool_failures.push(name),
@@ -133,8 +138,11 @@ impl ChatState {
             let note = if self.tool_failures.is_empty() {
                 rust_i18n::t!("Ai.NoAnswer").to_string()
             } else {
-                rust_i18n::t!("Ai.NoAnswerToolsFailed", tools = self.tool_failures.join(", "))
-                    .to_string()
+                rust_i18n::t!(
+                    "Ai.NoAnswerToolsFailed",
+                    tools = self.tool_failures.join(", ")
+                )
+                .to_string()
             };
             self.messages.push(Message {
                 role: Role::System,
@@ -143,6 +151,23 @@ impl ChatState {
         }
         self.busy = false;
         self.status.clear();
+    }
+
+    /// Reset to a fresh conversation, keeping the agent but dropping all
+    /// messages and conversation identity. Used by the "new chat" action.
+    pub fn reset(&mut self, welcome: String) {
+        self.messages = vec![Message {
+            role: Role::System,
+            text: welcome,
+        }];
+        self.streaming = None;
+        self.status.clear();
+        self.busy = false;
+        self.scroll = 0;
+        self.chat_uid = None;
+        self.message_id = None;
+        self.pending_interrupt = None;
+        self.tool_failures.clear();
     }
 
     /// Cancel the active turn, folding any partial answer into the transcript.

@@ -11,6 +11,7 @@
 //! local tool/workspace layer (unlike grok-build, which edits and runs code).
 
 pub mod runtime;
+pub mod session_store;
 pub mod state;
 pub mod tui;
 
