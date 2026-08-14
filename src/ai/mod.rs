@@ -26,4 +26,4 @@ pub mod state;
 pub mod stdout;
 pub mod tui;
 
-pub use tui::run;
+pub use tui::{run, QuoteStream};

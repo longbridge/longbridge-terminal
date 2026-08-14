@@ -11,8 +11,8 @@ pub mod wrapper;
 
 pub use agent::{AuthenticationRequiredAgent, OpenApiAgent};
 pub use context::{
-    agent, content, fundamental, http_client, init_contexts, init_oauth_contexts, is_us_account,
-    oauth_credentials_available, quote, quote_cmd, quote_limited, statement, track_quote_cmd,
-    trade, trade_limited, using_api_key,
+    agent, content, fundamental, http_client, init_contexts, init_oauth_contexts, is_ready,
+    is_us_account, oauth_credentials_available, quote, quote_cmd, quote_limited, statement,
+    track_quote_cmd, trade, trade_limited, using_api_key,
 };
 pub use rate_limiter::global_rate_limiter;

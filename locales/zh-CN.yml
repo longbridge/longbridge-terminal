@@ -430,6 +430,7 @@ Ai:
   SignOutConfirm: "再按一次 Enter 确认退出登录。"
   SignIn: "登录"
   SignInHint: "打开浏览器授权此终端。"
+  SignInToAsk: "登录后即可提问 —— 输入 /login，或打开 /settings"
   SignedOut: "已退出登录。运行 `longbridge ai` 可重新登录。"
   SignedIn: "已登录。运行 `longbridge ai` 开始对话。"
   SignOutFailed: "退出登录失败"

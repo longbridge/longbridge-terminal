@@ -354,6 +354,16 @@ async fn init_contexts_with_auth(
 }
 
 /// Get global `QuoteContext`
+/// Whether the contexts have been built, i.e. whether the process is signed in.
+///
+/// The accessors below panic when they have not: they are written for commands
+/// that cannot run without credentials. The `ai` chat can — it opens signed out
+/// and offers to sign in — so it asks first.
+#[must_use]
+pub fn is_ready() -> bool {
+    AGENT_CTX.get().is_some() && QUOTE_CTX.get().is_some()
+}
+
 pub fn quote() -> &'static longbridge::quote::QuoteContext {
     QUOTE_CTX
         .get()

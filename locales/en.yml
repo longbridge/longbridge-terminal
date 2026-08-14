@@ -430,6 +430,7 @@ Ai:
   SignOutConfirm: "Press Enter again to sign out."
   SignIn: "Sign in"
   SignInHint: "Opens the browser to authorize this terminal."
+  SignInToAsk: "Sign in to ask — press / then login, or open /settings"
   SignedOut: "Signed out. Run `longbridge ai` to sign in again."
   SignedIn: "Signed in. Run `longbridge ai` to start a chat."
   SignOutFailed: "Could not sign out"

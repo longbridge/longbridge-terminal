@@ -430,6 +430,7 @@ Ai:
   SignOutConfirm: "再按一次 Enter 確認登出。"
   SignIn: "登入"
   SignInHint: "開啟瀏覽器授權此終端。"
+  SignInToAsk: "登入後即可提問 —— 輸入 /login，或開啟 /settings"
   SignedOut: "已登出。執行 `longbridge ai` 可重新登入。"
   SignedIn: "已登入。執行 `longbridge ai` 開始對話。"
   SignOutFailed: "登出失敗"

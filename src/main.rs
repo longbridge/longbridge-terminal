@@ -253,17 +253,21 @@ async fn main() {
         // `longbridge ai`: the interactive Longbridge AI chat TUI. Needs a live
         // context, so a failed init exits (a prompt turn cannot run without it).
         Some(cli::Commands::Ai { agent }) => {
-            let (quote_receiver, using_api_key) = match openapi::init_contexts().await {
-                Ok((rx, using_api_key, _)) => (rx, using_api_key),
-                Err(e) => {
-                    eprintln!("Authentication failed: {e}");
-                    return;
+            // The chat opens signed out. Everything that needs credentials is
+            // guarded inside it, and Settings offers to sign in — which then builds
+            // the contexts in place, so the reader carries on in the same session.
+            // Refusing to start was the wrong call: signing in is the one thing you
+            // would come here to do without a token.
+            let quote_receiver: Option<ai::QuoteStream> = match openapi::init_contexts().await {
+                Ok((rx, using_api_key, _)) => {
+                    if let Err(e) = openapi::quote().member_id().await {
+                        print_cli_error(&anyhow::anyhow!(e), using_api_key);
+                        return;
+                    }
+                    Some(Box::pin(rx))
                 }
+                Err(_) => None,
             };
-            if let Err(e) = openapi::quote().member_id().await {
-                print_cli_error(&anyhow::anyhow!(e), using_api_key);
-                return;
-            }
 
             let hook = std::panic::take_hook();
             std::panic::set_hook(Box::new(move |info| {

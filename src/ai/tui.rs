@@ -457,10 +457,11 @@ impl Ui {
 /// Run the chat. Returns a note to print once the full-screen view is gone —
 /// signing in or out has to be reported outside the alternate screen, or the
 /// message scrolls away with it.
-pub async fn run<S>(agent_uid: String, mut quotes: S) -> Result<Option<String>>
-where
-    S: tokio_stream::Stream<Item = longbridge::quote::PushEvent> + Send + Unpin,
-{
+pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Option<String>> {
+    // Boxed and swappable: opened signed out there is no stream at all, and a
+    // sign-in from inside the chat produces one. `pending()` stands in for "none"
+    // so the select arm below needs no special case.
+    let mut quotes: QuoteStream = quotes.unwrap_or_else(|| Box::pin(tokio_stream::pending()));
     let mut terminal = Terminal::default();
     let mut state = ChatState::new(agent_uid, t!("Ai.Welcome").to_string());
     let mut ui = Ui::new();
@@ -584,11 +585,32 @@ where
         if let Some(action) = ui.pending.take() {
             match run_pending(action).await {
                 Ok(note) => {
-                    // Both actions replace the credentials this process built its
-                    // contexts from, and those are process-wide singletons, so the
-                    // only honest thing after either is to leave.
-                    ui.exit_note = Some(note);
-                    ui.should_quit = true;
+                    // Signing in from a chat that opened signed out finishes here:
+                    // the contexts had never been built, so they can be built now
+                    // and the reader carries on in the same session. Otherwise the
+                    // credentials this process already built its contexts from have
+                    // changed, and those are process-wide singletons — the only
+                    // honest thing then is to leave.
+                    let recovered = action == Pending::SignIn
+                        && !crate::openapi::is_ready()
+                        && match crate::openapi::init_contexts().await {
+                            Ok((rx, _, _)) => {
+                                quotes = Box::pin(rx);
+                                true
+                            }
+                            Err(_) => false,
+                        };
+                    if recovered {
+                        ui.session = super::account::local();
+                        ui.notice = Some(note);
+                        for symbol in ui.tape.clone() {
+                            subscribe_quote(&symbol);
+                        }
+                        fetch_missing_quotes(&ui, &cards_tx);
+                    } else {
+                        ui.exit_note = Some(note);
+                        ui.should_quit = true;
+                    }
                 }
                 Err(e) => ui.notice = Some(e),
             }
@@ -645,7 +667,10 @@ fn resolve_session_tickers(
     state: &ChatState,
     tx: &UnboundedSender<HashMap<String, String>>,
 ) {
-    if !super::settings::quote_cards() && !super::settings::tape() {
+    // Signed out there is nothing to ask: the chat opens anyway and offers to
+    // sign in, and every quote path stays quiet until it has credentials.
+    if !crate::openapi::is_ready() || (!super::settings::quote_cards() && !super::settings::tape())
+    {
         return;
     }
     let mut candidates: Vec<String> = Vec::new();
@@ -685,8 +710,9 @@ fn fetch_missing_quotes(
     cards_tx: &UnboundedSender<HashMap<String, super::quotes::QuoteCardData>>,
 ) {
     // The cards and the ticker read the same quotes; either being on is reason
-    // enough to fetch.
-    if !super::settings::quote_cards() && !super::settings::tape() {
+    // enough to fetch. Signed out, neither can be.
+    if !crate::openapi::is_ready() || (!super::settings::quote_cards() && !super::settings::tape())
+    {
         return;
     }
     let wanted: Vec<String> = ui
@@ -983,6 +1009,13 @@ fn submit(
             exec_slash(key, args, ui, state);
             return;
         }
+    }
+    // A turn needs credentials. Signed out the chat is still useful — the reader
+    // can read a resumed conversation and reach Settings — so the prompt says what
+    // to do rather than the send failing somewhere deeper.
+    if !crate::openapi::is_ready() {
+        ui.notice = Some(t!("Ai.SignInToAsk").to_string());
+        return;
     }
     let query = trimmed.to_string();
     editor.push_history(&query);
@@ -1356,7 +1389,7 @@ async fn run_pending(action: Pending) -> Result<String, String> {
 /// clicked a symbol inside a sentence they were reading, and the answer around it
 /// is the context for the number.
 fn open_quote_panel(ui: &mut Ui, symbol: String) {
-    if !ui.quotes.contains_key(&symbol) {
+    if !ui.quotes.contains_key(&symbol) && crate::openapi::is_ready() {
         if let Some(tx) = ui.cards_tx.clone() {
             let wanted = symbol.clone();
             spawn_bg(async move {
@@ -1382,6 +1415,9 @@ fn close_quote_panel(ui: &mut Ui) {
 }
 
 fn subscribe_quote(symbol: &str) {
+    if !crate::openapi::is_ready() {
+        return;
+    }
     let symbol = symbol.to_string();
     spawn_bg(async move {
         let _ = crate::openapi::quote()
@@ -1786,6 +1822,11 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
     // Last, so it floats over whatever is underneath.
     render_quote_panel(f, body, ui);
 }
+
+/// The live-quote stream, boxed so it can be replaced when the reader signs in
+/// from inside the chat.
+pub type QuoteStream =
+    std::pin::Pin<Box<dyn tokio_stream::Stream<Item = longbridge::quote::PushEvent> + Send>>;
 
 /// Draw the floating quote panel, if one is open.
 ///
@@ -4959,6 +5000,11 @@ mod tests {
     /// and clicking it opens the full symbol.
     #[test]
     fn a_confirmed_bare_ticker_behaves_like_a_symbol() {
+        // Its price is read off the ticker, which another test toggles.
+        let _guard = TAPE_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        crate::ai::settings::set_tape(true);
         let mut ui = super::Ui::new();
         let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
         state.apply(super::ChatEvent::UserPrompt("查询 SPCX".into()));
@@ -5232,6 +5278,27 @@ mod tests {
         assert_eq!(
             super::quote_web_url("700.HK"),
             "https://longbridge.com/quote/700.HK"
+        );
+    }
+
+    /// The chat opens signed out — signing in is the one thing you would come here
+    /// to do without a token — so a prompt says what to do instead of the send
+    /// failing somewhere deeper.
+    #[test]
+    fn a_signed_out_chat_asks_you_to_sign_in_instead_of_sending() {
+        let mut ui = super::Ui::new();
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let mut editor = super::Editor::new();
+        editor.set_text("700.HK 怎么样");
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut turn = None;
+        super::submit(&mut ui, &mut state, &mut editor, &mut turn, &tx);
+        // No credentials in a test process, so the turn must not have been spawned.
+        assert!(turn.is_none(), "nothing was sent");
+        assert_eq!(ui.notice.as_deref(), Some(t!("Ai.SignInToAsk").as_ref()));
+        assert!(
+            state.messages.iter().all(|m| m.role != super::Role::User),
+            "and the prompt was not added to the transcript"
         );
     }
 }
