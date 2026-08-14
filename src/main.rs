@@ -274,8 +274,13 @@ async fn main() {
             Terminal::enter_full_screen();
             let result = ai::run(agent, quote_receiver).await;
             Terminal::exit_full_screen();
-            if let Err(e) = result {
-                eprintln!("Error: {e}");
+            match result {
+                // Signing in or out is reported here, outside the alternate
+                // screen — printed inside it, the message would scroll away with
+                // it.
+                Ok(Some(note)) => println!("{note}"),
+                Ok(None) => {}
+                Err(e) => eprintln!("Error: {e}"),
             }
             return;
         }

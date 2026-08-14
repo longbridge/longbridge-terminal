@@ -69,9 +69,40 @@ const SEL_BG: Color = Color::Rgb(45, 50, 62);
 const IDX: Color = Color::Rgb(110, 140, 190);
 const IDX_SEL: Color = Color::Rgb(240, 150, 90);
 
-/// The chat's preference rows, off the shared registry.
-fn settings_rows() -> Vec<&'static crate::tui::settings::SettingMeta> {
-    crate::tui::settings::in_scope(crate::tui::settings::Scope::Chat)
+/// One row of the Settings view: a preference, or something to do.
+enum SettingsRow {
+    Setting(&'static crate::tui::settings::SettingMeta),
+    /// Sign out, then leave — the contexts this process built are bound to the
+    /// credentials it started with.
+    SignOut,
+    /// Sign in, for a session whose token has expired or been cleared.
+    SignIn,
+}
+
+/// The Settings view's rows: the chat's preferences off the shared registry,
+/// then the session actions.
+fn settings_rows(session: &super::account::Session) -> Vec<SettingsRow> {
+    let mut rows: Vec<SettingsRow> =
+        crate::tui::settings::in_scope(crate::tui::settings::Scope::Chat)
+            .into_iter()
+            .map(SettingsRow::Setting)
+            .collect();
+    // Only the action that applies: offering "sign in" to someone already signed
+    // in is a trap, and offering "sign out" to someone who is not does nothing.
+    rows.push(if session.signed_in() {
+        SettingsRow::SignOut
+    } else {
+        SettingsRow::SignIn
+    });
+    rows
+}
+
+/// Work that has to happen on the async side of the loop, asked for by a key or
+/// a click.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Pending {
+    SignOut,
+    SignIn,
 }
 
 /// One slash command. `aliases` are dispatched and completed but never listed
@@ -103,7 +134,7 @@ impl Slash {
     }
 }
 
-const SLASH: [Slash; 9] = [
+const SLASH: [Slash; 11] = [
     Slash {
         name: "/new",
         aliases: &["/clear"],
@@ -138,6 +169,16 @@ const SLASH: [Slash; 9] = [
         name: "/agent",
         aliases: &[],
         desc: "Ai.SlashAgent",
+    },
+    Slash {
+        name: "/login",
+        aliases: &[],
+        desc: "Ai.SlashLogin",
+    },
+    Slash {
+        name: "/logout",
+        aliases: &[],
+        desc: "Ai.SlashLogout",
     },
     Slash {
         name: "/help",
@@ -267,6 +308,15 @@ struct Ui {
     cards_tx: Option<UnboundedSender<HashMap<String, super::quotes::QuoteCardData>>>,
     /// The security whose quote panel is open, if any.
     quote_panel: Option<String>,
+    /// Who the chat is signed in as, for the Settings header.
+    session: super::account::Session,
+    /// Work for the async side of the loop: signing in or out.
+    pending: Option<Pending>,
+    /// Sign-out is armed by one Enter and done by the next, so an arrow key and a
+    /// stray Return cannot end the session.
+    confirm_sign_out: bool,
+    /// What to tell the reader once the full-screen view is gone.
+    exit_note: Option<String>,
     load_tx: Option<UnboundedSender<Option<session_store::LoadedChat>>>,
     /// Hit rect of the running turn's `[stop]` button, recorded during render.
     stop_button: Option<Rect>,
@@ -310,6 +360,10 @@ impl Ui {
             history_tx: None,
             cards_tx: None,
             quote_panel: None,
+            session: super::account::local(),
+            pending: None,
+            confirm_sign_out: false,
+            exit_note: None,
             load_tx: None,
             stop_button: None,
             turn_started: None,
@@ -342,7 +396,7 @@ impl Ui {
                     v + 1
                 }
             }
-            View::Settings => settings_rows().len(),
+            View::Settings => settings_rows(&self.session).len(),
             View::Question => self
                 .question
                 .as_ref()
@@ -379,7 +433,10 @@ impl Ui {
 
 /// Run the chat TUI until the user quits. The caller has already entered the
 /// full-screen terminal (with mouse capture) and restores it afterwards.
-pub async fn run<S>(agent_uid: String, mut quotes: S) -> Result<()>
+/// Run the chat. Returns a note to print once the full-screen view is gone —
+/// signing in or out has to be reported outside the alternate screen, or the
+/// message scrolls away with it.
+pub async fn run<S>(agent_uid: String, mut quotes: S) -> Result<Option<String>>
 where
     S: tokio_stream::Stream<Item = longbridge::quote::PushEvent> + Send + Unpin,
 {
@@ -395,6 +452,13 @@ where
     let (load_tx, mut load_rx) = unbounded_channel::<Option<session_store::LoadedChat>>();
     ui.history_tx = Some(history_tx);
     ui.cards_tx = Some(cards_tx.clone());
+    // The member id is the one part of the session header that needs a call, so
+    // it is fetched once in the background and the header renders without it
+    // until it lands.
+    let (session_tx, mut session_rx) = unbounded_channel::<Option<String>>();
+    tokio::spawn(async move {
+        let _ = session_tx.send(super::account::member_id().await);
+    });
     ui.load_tx = Some(load_tx);
     let mut events = EventStream::new();
     // Drives the marquee of truncated rows; only consulted while `animating`.
@@ -457,6 +521,9 @@ where
                     }
                 }
             }
+            Some(member_id) = session_rx.recv() => {
+                ui.session.member_id = member_id;
+            }
             Some(result) = history_rx.recv() => {
                 ui.sessions_loading = false;
                 if let Some(list) = result {
@@ -479,6 +546,18 @@ where
                 }
             }
         }
+        if let Some(action) = ui.pending.take() {
+            match run_pending(action).await {
+                Ok(note) => {
+                    // Both actions replace the credentials this process built its
+                    // contexts from, and those are process-wide singletons, so the
+                    // only honest thing after either is to leave.
+                    ui.exit_note = Some(note);
+                    ui.should_quit = true;
+                }
+                Err(e) => ui.notice = Some(e),
+            }
+        }
         if ui.should_quit {
             break;
         }
@@ -491,7 +570,7 @@ where
     if let Some(turn) = turn.take() {
         turn.abort();
     }
-    Ok(())
+    Ok(ui.exit_note.take())
 }
 
 /// If the just-finished answer embeds `x-widget` quote tickers, fetch their
@@ -836,6 +915,10 @@ fn exec_slash(name: &str, args: &str, ui: &mut Ui, state: &mut ChatState) {
                 None => ui.notice = Some(t!("Ai.QuoteNoSymbol").to_string()),
             }
         }
+        // Typed deliberately, so no second keypress to confirm — the row in
+        // Settings is the one that can be hit by accident.
+        "logout" => ui.pending = Some(Pending::SignOut),
+        "login" => ui.pending = Some(Pending::SignIn),
         "copy" => {
             let text = transcript_text(state);
             copy_with_notice(ui, Some(text));
@@ -1095,13 +1178,22 @@ fn activate(ui: &mut Ui, state: &mut ChatState) {
         // A preference changes in place and stays on the list: the reader is here
         // to set several, and a row that navigated away was a command wearing a
         // setting's clothes.
-        View::Settings => {
-            if let Some(meta) = settings_rows().get(ui.sel) {
+        View::Settings => match settings_rows(&ui.session).get(ui.sel) {
+            Some(SettingsRow::Setting(meta)) => {
                 crate::tui::settings::cycle(meta);
                 // A colour or card change alters every rendered answer.
                 ui.cache_sig = 0;
+                ui.confirm_sign_out = false;
             }
-        }
+            Some(SettingsRow::SignOut) => {
+                if std::mem::replace(&mut ui.confirm_sign_out, true) {
+                    ui.confirm_sign_out = false;
+                    ui.pending = Some(Pending::SignOut);
+                }
+            }
+            Some(SettingsRow::SignIn) => ui.pending = Some(Pending::SignIn),
+            None => {}
+        },
         View::Chat | View::Question => {}
     }
 }
@@ -1113,6 +1205,31 @@ fn last_symbol(state: &ChatState) -> Option<String> {
             .last()
             .map(|r| m.text[r.clone()].to_string())
     })
+}
+
+/// Perform a session action, returning the note to print after the screen is
+/// handed back.
+///
+/// Signing in needs the terminal: the flow prints a URL and waits on a browser
+/// round trip, so the full-screen view is torn down for the duration and restored
+/// afterwards — even on failure, or the reader would be left staring at a raw
+/// shell.
+async fn run_pending(action: Pending) -> Result<String, String> {
+    match action {
+        Pending::SignOut => match crate::auth::clear_token().await {
+            Ok(()) => Ok(t!("Ai.SignedOut").to_string()),
+            Err(e) => Err(format!("{}: {e}", t!("Ai.SignOutFailed"))),
+        },
+        Pending::SignIn => {
+            Terminal::exit_full_screen();
+            let result = crate::auth::device_login(false, None).await;
+            Terminal::enter_full_screen();
+            match result {
+                Ok(()) => Ok(t!("Ai.SignedIn").to_string()),
+                Err(e) => Err(format!("{}: {e}", t!("Ai.SignInFailed"))),
+            }
+        }
+    }
 }
 
 /// Open the floating quote panel for `symbol`, fetching its quote if the card is
@@ -2190,64 +2307,153 @@ fn render_settings(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
 
     ui.rows.clear();
     ui.clamp_sel();
-    let rows = settings_rows();
-    let width = area.width as usize;
+    // The session goes above the preferences: "which account am I asking about my
+    // portfolio?" has no other answer from inside the chat.
+    let header = session_lines(&ui.session);
+    let header_h = (header.len() as u16).min(area.height);
+    let [head, list_area] =
+        Layout::vertical([Constraint::Length(header_h), Constraint::Min(0)]).areas(area);
+    f.render_widget(Paragraph::new(Text::from(header)), head);
+
+    let rows = settings_rows(&ui.session);
+    let width = list_area.width as usize;
     let items: Vec<ListItem> = rows
         .iter()
-        .map(|meta| {
-            let label = t!(meta.label).to_string();
-            let value = t!(meta.value_label()).to_string();
-            // The value is right-aligned so a column of them reads down the page,
-            // and the label gives way when the row is tight — a setting you
-            // cannot read the value of is not set.
-            let gap = width
-                .saturating_sub(2 + UnicodeWidthStr::width(label.as_str()))
-                .saturating_sub(UnicodeWidthStr::width(value.as_str()) + 2);
-            ListItem::new(vec![
-                Line::from(vec![
-                    Span::styled(format!("  {label}"), Style::default().fg(Color::Gray)),
-                    Span::raw(" ".repeat(gap)),
-                    Span::styled(
-                        value,
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ]),
-                Line::from(Span::styled(
-                    truncate_width(&format!("  {}", t!(meta.description)), width),
-                    Style::default().fg(Color::DarkGray),
-                )),
-                Line::from(""),
-            ])
+        .map(|row| match row {
+            SettingsRow::Setting(meta) => {
+                let label = t!(meta.label).to_string();
+                let value = t!(meta.value_label()).to_string();
+                // The value is right-aligned so a column of them reads down the
+                // page, and the label gives way when the row is tight — a setting
+                // you cannot read the value of is not set.
+                let gap = width
+                    .saturating_sub(2 + UnicodeWidthStr::width(label.as_str()))
+                    .saturating_sub(UnicodeWidthStr::width(value.as_str()) + 2);
+                ListItem::new(vec![
+                    Line::from(vec![
+                        Span::styled(format!("  {label}"), Style::default().fg(Color::Gray)),
+                        Span::raw(" ".repeat(gap)),
+                        Span::styled(
+                            value,
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                    ]),
+                    Line::from(Span::styled(
+                        truncate_width(&format!("  {}", t!(meta.description)), width),
+                        Style::default().fg(Color::DarkGray),
+                    )),
+                ])
+            }
+            SettingsRow::SignOut => action_item(
+                &t!("Ai.SignOut"),
+                &if ui.confirm_sign_out {
+                    t!("Ai.SignOutConfirm").to_string()
+                } else {
+                    t!("Ai.SignOutHint").to_string()
+                },
+                if ui.confirm_sign_out {
+                    Color::Red
+                } else {
+                    Color::Gray
+                },
+                width,
+            ),
+            SettingsRow::SignIn => {
+                action_item(&t!("Ai.SignIn"), &t!("Ai.SignInHint"), Color::Green, width)
+            }
         })
         .collect();
     let mut list_state = ListState::default().with_selected(Some(ui.sel));
     f.render_stateful_widget(
         List::new(items).highlight_style(Style::default().bg(SEL_BG)),
-        area,
+        list_area,
         &mut list_state,
     );
     // Hit rects come after the render, because the widget is what decides where
     // the list scrolled to — computing them from the selection alone would map a
-    // click to the wrong row once the list is longer than the pane. Each item is
-    // three rows tall and the third is its spacer, so a rect covers the first two.
+    // click to the wrong row once the list is longer than the pane. Two rows per
+    // item: the setting and what it does. A blank row between them cost a fifth of
+    // the pane, and the highlight already marks the selection.
     let offset = list_state.offset();
     for i in offset..rows.len() {
-        let y = area.y + ((i - offset) as u16) * 3;
-        let Some(height) = (area.y + area.height).checked_sub(y).filter(|h| *h > 0) else {
+        let y = list_area.y + ((i - offset) as u16) * 2;
+        let Some(height) = (list_area.y + list_area.height)
+            .checked_sub(y)
+            .filter(|h| *h > 0)
+        else {
             break;
         };
         ui.rows.push((
             i,
             Rect {
-                x: area.x,
+                x: list_area.x,
                 y,
-                width: area.width,
+                width: list_area.width,
                 height: height.min(2),
             },
         ));
     }
+}
+
+/// One action row, shaped like a setting row so the list reads evenly.
+fn action_item<'a>(
+    label: &str,
+    hint: &str,
+    color: Color,
+    width: usize,
+) -> ratatui::widgets::ListItem<'a> {
+    ratatui::widgets::ListItem::new(vec![
+        Line::from(Span::styled(
+            format!("  {label}"),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            truncate_width(&format!("  {hint}"), width),
+            Style::default().fg(Color::DarkGray),
+        )),
+    ])
+}
+
+/// The session header: who, where, and how long the credentials last.
+fn session_lines(session: &super::account::Session) -> Vec<Line<'static>> {
+    let dim = Style::default().fg(Color::DarkGray);
+    let (status, color) = match session.status {
+        "valid" | "present" => (t!("Ai.SessionValid").to_string(), Color::Green),
+        "refresh_pending" => (t!("Ai.SessionRefreshing").to_string(), Color::Yellow),
+        "expired" => (t!("Ai.SessionExpired").to_string(), Color::Red),
+        "decrypt_failed" => (t!("Ai.SessionUnreadable").to_string(), Color::Red),
+        _ => (t!("Ai.SessionNone").to_string(), Color::Red),
+    };
+    let mut first = vec![
+        Span::styled(format!("  {}  ", t!("Ai.Account")), dim),
+        Span::styled(status, Style::default().fg(color)),
+    ];
+    if let Some(id) = &session.member_id {
+        first.push(Span::styled(
+            format!("   #{id}"),
+            Style::default().fg(Color::Gray),
+        ));
+    }
+    let mut second = vec![Span::styled(
+        format!("  {}", session.access_point.trim_start_matches("https://")),
+        dim,
+    )];
+    if let Some(dc) = session.dc_region {
+        second.push(Span::styled(format!("  ·  {}", dc.to_uppercase()), dim));
+    }
+    if let Some(exp) = session.expires_at {
+        second.push(Span::styled(
+            format!(
+                "  ·  {} {}",
+                t!("Ai.SessionExpires"),
+                relative_time(exp, now_secs())
+            ),
+            dim,
+        ));
+    }
+    vec![Line::from(first), Line::from(second), Line::from("")]
 }
 
 /// Render the structured Question view: the current question and its options.
@@ -4189,5 +4395,77 @@ mod tests {
             turnover: "9.3B".into(),
             at: "16:08".into(),
         }
+    }
+
+    /// The Settings view answers "which account is this?" — there is no other way
+    /// to check from inside the chat — and offers the action that applies.
+    #[test]
+    fn settings_shows_the_session_and_one_action() {
+        let mut ui = super::Ui::new();
+        ui.view = super::View::Settings;
+        ui.session = crate::ai::account::Session {
+            status: "valid",
+            dc_region: Some("ap"),
+            access_point: "https://openapi.longbridge.com".into(),
+            logged_in_at: None,
+            expires_at: None,
+            member_id: Some("123456".into()),
+        };
+        let state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let rows = frame(&mut ui, &state, 74, 24);
+        let text = rows.join("\n");
+        assert!(text.contains(t!("Ai.Account").as_ref()), "{text}");
+        assert!(text.contains("#123456"), "the member id: {text}");
+        assert!(
+            text.contains("openapi.longbridge.com"),
+            "the access point: {text}"
+        );
+        assert!(text.contains("AP"), "the data centre: {text}");
+        assert!(
+            text.contains(t!("Ai.SignOut").as_ref()),
+            "sign out is offered"
+        );
+        assert!(
+            !text.contains(t!("Ai.SignIn").as_ref()),
+            "and signing in is not, to someone already signed in: {text}"
+        );
+    }
+
+    /// Someone whose token has expired needs the other action.
+    #[test]
+    fn a_signed_out_session_is_offered_sign_in() {
+        let mut ui = super::Ui::new();
+        ui.view = super::View::Settings;
+        ui.session = crate::ai::account::Session {
+            status: "expired",
+            ..Default::default()
+        };
+        let state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let text = frame(&mut ui, &state, 74, 24).join("\n");
+        assert!(text.contains(t!("Ai.SessionExpired").as_ref()), "{text}");
+        assert!(text.contains(t!("Ai.SignIn").as_ref()), "{text}");
+    }
+
+    /// Ending the session takes two keypresses from a list row: an arrow key and a
+    /// stray Return must not sign the reader out.
+    #[test]
+    fn signing_out_from_the_row_takes_a_confirmation() {
+        let mut ui = super::Ui::new();
+        ui.view = super::View::Settings;
+        ui.session = crate::ai::account::Session {
+            status: "valid",
+            ..Default::default()
+        };
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        ui.sel = super::settings_rows(&ui.session).len() - 1;
+        super::activate(&mut ui, &mut state);
+        assert!(ui.pending.is_none(), "the first Enter only arms it");
+        assert!(ui.confirm_sign_out);
+        super::activate(&mut ui, &mut state);
+        assert_eq!(ui.pending, Some(super::Pending::SignOut));
+        // Typed deliberately, `/logout` needs no confirmation.
+        let mut ui = super::Ui::new();
+        super::exec_slash("logout", "", &mut ui, &mut state);
+        assert_eq!(ui.pending, Some(super::Pending::SignOut));
     }
 }

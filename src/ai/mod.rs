@@ -13,6 +13,7 @@
 //! this reuses the shared streaming in [`crate::cli::agent::client`] and has no
 //! local tool/workspace layer (unlike grok-build, which edits and runs code).
 
+pub mod account;
 pub mod answer;
 pub mod chart;
 pub mod editor;
