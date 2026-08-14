@@ -678,6 +678,11 @@ fn on_chat_key(
             }
         }
         KeyCode::Enter if newline => editor.insert_newline(),
+        // Most terminals cannot distinguish Shift+Enter from Enter and send a
+        // bare LF instead. crossterm decodes control bytes 0x01..=0x1A as
+        // Ctrl+letter, so LF (0x0A) arrives as Ctrl+J — which is the newline the
+        // user asked for, not the letter `j` the fallback used to insert.
+        KeyCode::Char('j') if ctrl => editor.insert_newline(),
         KeyCode::Enter if !state.busy => submit(ui, state, editor, turn, tx),
         KeyCode::Backspace | KeyCode::Char('w') if ctrl => editor.delete_word(),
         // Emacs-style line editing shortcuts, familiar from the shell.
@@ -711,6 +716,10 @@ fn on_chat_key(
                 editor.recall_next();
             }
         }
+        // An unhandled Ctrl combination is swallowed. Without this the fallback
+        // below types its letter, so every unbound Ctrl+key silently inserted
+        // text.
+        KeyCode::Char(_) if ctrl => {}
         KeyCode::Char(c) => editor.insert_char(c),
         _ => {}
     }
@@ -2813,6 +2822,61 @@ mod tests {
             rows[1].trim().is_empty(),
             "row 1 should be blank, got {:?}",
             rows[1]
+        );
+    }
+
+    /// Terminals that cannot distinguish Shift+Enter from Enter send a bare LF,
+    /// which crossterm reports as Ctrl+J. That used to fall through to the
+    /// insert-a-character arm and type a literal `j` into the prompt.
+    #[test]
+    fn shift_enter_as_ctrl_j_inserts_a_newline() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut ui = super::Ui::new();
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let mut editor = super::Editor::new();
+        let mut turn = None;
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        editor.insert_str("first");
+        super::on_chat_key(
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL),
+            &mut ui,
+            &mut state,
+            &mut editor,
+            &mut turn,
+            &tx,
+        );
+        editor.insert_str("second");
+        assert_eq!(
+            editor.text(),
+            "first\nsecond",
+            "expected a newline, not a `j`"
+        );
+    }
+
+    /// A Ctrl combination we do not bind must do nothing, rather than typing its
+    /// letter into the prompt.
+    #[test]
+    fn an_unbound_ctrl_key_types_nothing() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut ui = super::Ui::new();
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let mut editor = super::Editor::new();
+        let mut turn = None;
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        for c in ['g', 'o', 'p', 'z'] {
+            super::on_chat_key(
+                KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL),
+                &mut ui,
+                &mut state,
+                &mut editor,
+                &mut turn,
+                &tx,
+            );
+        }
+        assert_eq!(
+            editor.text(),
+            "",
+            "unbound Ctrl keys leaked into the prompt"
         );
     }
 }
