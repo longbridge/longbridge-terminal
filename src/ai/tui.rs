@@ -51,6 +51,9 @@ enum View {
 
 const TABS: [View; 3] = [View::Chat, View::Sessions, View::Settings];
 
+/// Braille spinner frames for the "generating" status line.
+const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
 /// Interactive rows in the Settings view, in display order.
 #[derive(Clone, Copy)]
 enum Setting {
@@ -850,6 +853,11 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
     ui.animating = false;
     let area = f.area();
     let is_chat = ui.view == View::Chat;
+    // Keep the frame timer running while a turn streams so the status spinner
+    // animates even between deltas (e.g. during a long tool call).
+    if is_chat && state.busy {
+        ui.animating = true;
+    }
     let has_meta =
         is_chat && !state.busy && (!state.references.is_empty() || !state.further.is_empty());
     let meta_h = if has_meta { meta_height(state) } else { 0 };
@@ -1285,8 +1293,9 @@ fn render_status(f: &mut ratatui::Frame, area: Rect, ui: &Ui, state: &ChatState)
     let (text, style) = if let Some(notice) = &ui.notice {
         (notice.clone(), Style::default().fg(Color::Green))
     } else if state.busy && ui.view == View::Chat {
+        let frame = SPINNER[(ui.tick as usize) % SPINNER.len()];
         (
-            format!("● {}", state.status),
+            format!("{frame} {}", state.status),
             Style::default().fg(Color::Yellow),
         )
     } else {
