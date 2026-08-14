@@ -1755,37 +1755,29 @@ fn render_question(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
         ui.rows.clear();
         return;
     };
-    ui.rows.clear();
-    let mut lines = vec![
-        Line::from(Span::styled(
-            question,
-            Style::default().add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-    ];
-    let base = area.y + lines.len() as u16;
-    let avail = (area.width as usize).saturating_sub(2);
-    for (i, option) in options.iter().enumerate() {
-        if area.y + lines.len() as u16 >= area.y + area.height {
-            break;
-        }
-        let selected = i == ui.sel;
-        let rect = Rect {
-            x: area.x,
-            y: base + i as u16,
-            width: area.width,
-            height: 1,
-        };
-        let hovered = hovering(ui, rect);
-        let marker = if selected { "› " } else { "  " };
-        let text = row_text(ui, option, avail, rect, selected);
-        lines.push(Line::from(Span::styled(
-            format!("{marker}{text}"),
-            row_style_state(selected, hovered),
-        )));
-        ui.rows.push((i, rect));
-    }
-    f.render_widget(Paragraph::new(Text::from(lines)), area);
+    // The question text sits above the option list (which reuses the shared
+    // muted list style), separated by a blank line.
+    let width = area.width.max(1) as usize;
+    let qlines = wrap(&question, width);
+    let header_h = (qlines.len() as u16 + 1).min(area.height.saturating_sub(1));
+    let [head, rest] =
+        Layout::vertical([Constraint::Length(header_h), Constraint::Min(0)]).areas(area);
+    let head_lines: Vec<Line> = qlines
+        .into_iter()
+        .map(|l| {
+            Line::from(Span::styled(
+                l,
+                Style::default().add_modifier(Modifier::BOLD),
+            ))
+        })
+        .collect();
+    f.render_widget(Paragraph::new(Text::from(head_lines)), head);
+    let rows: Vec<(usize, String)> = options
+        .iter()
+        .enumerate()
+        .map(|(i, o)| (i, o.clone()))
+        .collect();
+    render_rows(f, rest, ui, &rows);
 }
 
 /// Shared list renderer (Settings / Agents): spaced rows with a subtle tinted
@@ -1843,29 +1835,6 @@ fn render_rows(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, rows: &[(usize, 
         lines.push(Line::from("")); // spacing between rows
     }
     f.render_widget(Paragraph::new(Text::from(lines)), area);
-}
-
-fn row_style(selected: bool) -> Style {
-    if selected {
-        Style::default()
-            .fg(Color::Black)
-            .bg(Color::Cyan)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default()
-    }
-}
-
-/// Row style reflecting both keyboard selection and mouse hover, so pointing at
-/// a clickable row gives immediate visual feedback.
-fn row_style_state(selected: bool, hovered: bool) -> Style {
-    if selected {
-        row_style(true)
-    } else if hovered {
-        Style::default().bg(HOVER_BG)
-    } else {
-        Style::default()
-    }
 }
 
 /// Whether the mouse currently rests on `rect`.
