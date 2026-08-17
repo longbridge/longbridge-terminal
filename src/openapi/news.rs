@@ -17,11 +17,17 @@ fn i64_lenient<'de, D: Deserializer<'de>>(deserializer: D) -> Result<i64, D::Err
     #[serde(untagged)]
     enum Value {
         Number(i64),
+        Float(f64),
         String(String),
         Null,
     }
     match Value::deserialize(deserializer)? {
         Value::Number(value) => Ok(value),
+        Value::Float(value) => Err(serde::de::Error::custom(format!(
+            "expected an integer, got {value}"
+        ))),
+        // Gateways may encode an absent int64 as "" — treat like null.
+        Value::String(value) if value.trim().is_empty() => Ok(0),
         Value::String(value) => value.parse().map_err(serde::de::Error::custom),
         Value::Null => Ok(0),
     }

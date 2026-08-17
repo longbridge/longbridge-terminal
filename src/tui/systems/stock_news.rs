@@ -206,7 +206,12 @@ pub fn fetch_news_detail(id: String, tx: mpsc::UnboundedSender<CommandQueue>) {
                 } else {
                     &item.body
                 };
-                let text = format!("# {}\n\n{}\n\n{body}", item.title, meta.join(" · "));
+                let title = if item.title.is_empty() {
+                    crate::cli::news::truncate_display(&item.description, 70)
+                } else {
+                    item.title.clone()
+                };
+                let text = format!("# {title}\n\n{}\n\n{body}", meta.join(" · "));
                 if let Ok(mut content) = NEWS_DETAIL_CONTENT.lock() {
                     *content = prepare_article(&text);
                 }

@@ -326,21 +326,30 @@ pub async fn cmd_news_detail(id: String, format: &OutputFormat, verbose: bool) -
     }
     let item = crate::openapi::news::news_detail(id).await?;
     // A 200 with an empty/absent `item` means the article doesn't exist —
-    // don't print an empty shell with exit code 0.
-    if item.id == 0 && item.title.is_empty() && item.body.is_empty() {
+    // don't print an empty shell with exit code 0. (Some gateways echo the
+    // requested id back in an otherwise-empty object, so don't rely on id.)
+    if item.id == 0
+        || (item.title.is_empty() && item.body.is_empty() && item.description.is_empty())
+    {
         bail!("News article {id} not found");
     }
 
     // RFC3339, matching the `news` list output (which an agent chains from).
-    let published_at = time::OffsetDateTime::from_unix_timestamp(item.published_at)
-        .map(fmt_rfc3339)
-        .unwrap_or_default();
+    // A missing/invalid timestamp is treated as absent, not 1970-01-01.
+    let published_at = (item.published_at > 0)
+        .then(|| {
+            time::OffsetDateTime::from_unix_timestamp(item.published_at)
+                .map(fmt_rfc3339)
+                .ok()
+        })
+        .flatten();
 
     if matches!(format, OutputFormat::Json) {
         // Same field representations as the `news` list: string id, RFC3339
         // timestamp — so list → detail chaining needs no type juggling.
         let record = serde_json::json!({
             "id": item.id.to_string(),
+            "published_at": published_at,
             "title": item.title,
             "description": item.description,
             "body": item.body,
@@ -354,7 +363,6 @@ pub async fn cmd_news_detail(id: String, format: &OutputFormat, verbose: bool) -
             "comments_count": item.comments_count,
             "likes_count": item.likes_count,
             "shares_count": item.shares_count,
-            "published_at": published_at,
             "tickers": item.tickers,
         });
         println!("{}", serde_json::to_string_pretty(&record)?);
@@ -367,7 +375,10 @@ pub async fn cmd_news_detail(id: String, format: &OutputFormat, verbose: bool) -
         item.title.clone()
     };
     println!("# {title}");
-    let mut meta = vec![published_at];
+    let mut meta = Vec::new();
+    if let Some(published_at) = &published_at {
+        meta.push(published_at.clone());
+    }
     if !item.author.name.is_empty() {
         meta.push(item.author.name.clone());
     }
@@ -417,7 +428,11 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
                 super::schema::field("comments_count", "number", "Comments count"),
                 super::schema::field("likes_count", "number", "Likes count"),
                 super::schema::field("shares_count", "number", "Shares count"),
-                super::schema::field("published_at", "string", "Published time (RFC3339)"),
+                super::schema::field(
+                    "published_at",
+                    "string | null",
+                    "Published time (RFC3339); null when absent",
+                ),
                 super::schema::field(
                     "tickers",
                     "string[]",
