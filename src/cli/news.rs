@@ -3,8 +3,6 @@ use anyhow::{bail, Result};
 use super::{output::print_table, OutputFormat};
 use crate::utils::datetime::fmt_rfc3339;
 
-const NEWS_DETAIL_HOST: &str = "https://longbridge.com";
-
 /// Return `s` truncated to `max` chars with a trailing `…`, or the original if it fits.
 pub(crate) fn truncate_display(s: &str, max: usize) -> String {
     if s.chars().count() > max {
@@ -318,38 +316,36 @@ pub async fn cmd_topic_detail(id: String) -> Result<()> {
     Ok(())
 }
 
-/// Build the news detail URL for the given id.
-///
-/// Always uses longbridge.com as host.
-/// Language prefix is determined by the global content language (`crate::locale::get()`).
-fn news_detail_url(id: &str) -> String {
-    match crate::locale::get() {
-        "zh-CN" => format!("{NEWS_DETAIL_HOST}/zh-CN/news/{id}.md"),
-        "zh-HK" => format!("{NEWS_DETAIL_HOST}/zh-HK/news/{id}.md"),
-        _ => format!("{NEWS_DETAIL_HOST}/news/{id}.md"),
-    }
-}
+/// Fetch one news article's full detail: `GET /v1/content/news/{id}`.
+pub async fn cmd_news_detail(id: String, format: &OutputFormat) -> Result<()> {
+    let id: i64 = id
+        .parse()
+        .map_err(|_| anyhow::anyhow!("Invalid news id: {id} (expected a numeric article ID)"))?;
+    let item = crate::openapi::news::news_detail(id).await?;
 
-/// Fetch full news article as Markdown.
-///
-/// URL pattern:
-/// - English: `https://longbridge.com/news/{id}.md`
-/// - Chinese: `https://longbridge.com/zh-CN/news/{id}.md`
-pub async fn cmd_news_detail(id: String) -> Result<()> {
-    let url = news_detail_url(&id);
-    let client = reqwest::Client::new();
-    let resp = client
-        .get(&url)
-        .header("User-Agent", "Mozilla/5.0")
-        .send()
-        .await?;
-
-    if !resp.status().is_success() {
-        bail!("Failed to fetch news detail: HTTP {}", resp.status());
+    if matches!(format, OutputFormat::Json) {
+        println!("{}", serde_json::to_string_pretty(&item)?);
+        return Ok(());
     }
 
-    let content = resp.text().await?;
-    print!("{content}");
+    println!("# {}", item.title);
+    let mut meta = vec![super::output::fmt_unix_ts(item.published_at)];
+    if !item.author.name.is_empty() {
+        meta.push(item.author.name.clone());
+    }
+    if !item.tickers.is_empty() {
+        meta.push(item.tickers.join(" "));
+    }
+    println!("{}", meta.join(" · "));
+    if !item.url.is_empty() {
+        println!("{}", item.url);
+    }
+    println!();
+    if item.body.is_empty() {
+        println!("{}", item.description);
+    } else {
+        println!("{}", item.body);
+    }
     Ok(())
 }
 
@@ -369,7 +365,23 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
                 "comments_count",
             ],
         ),
-        "news detail" => text("Full news article Markdown content"),
+        "news detail" => super::schema::object(
+            "Full news article detail",
+            &[
+                "id",
+                "title",
+                "description",
+                "body",
+                "url",
+                "author",
+                "images",
+                "comments_count",
+                "likes_count",
+                "shares_count",
+                "published_at",
+                "tickers",
+            ],
+        ),
         "news search" => array(
             "News search results",
             &["id", "title", "url", "source_name", "time", "excerpt"],

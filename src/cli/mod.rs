@@ -3650,7 +3650,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             }
         }
         Commands::News { symbol, count, cmd } => match cmd {
-            Some(NewsCmd::Detail { id }) => news::cmd_news_detail(id).await,
+            Some(NewsCmd::Detail { id }) => news::cmd_news_detail(id, format).await,
             Some(NewsCmd::Search { keyword, count }) => {
                 search::cmd_search(keyword, "news", count, format, verbose).await
             }
