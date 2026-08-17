@@ -328,10 +328,14 @@ async fn init_contexts_with_auth(
     AGENT_CTX.set(agent_ctx);
 
     // Also inject into the standalone HttpClient used for direct REST calls.
+    // Unlike the SDK contexts (whose config carries `.language(...)`), the raw
+    // client has no language field — forward the effective content language
+    // ourselves so `--lang` keeps working on raw endpoints.
     let mut http_client = longbridge::httpclient::HttpClient::new(http_client_config);
     http_client = http_client
         .header("user-agent", user_agent)
-        .header("x-app-id", CLI_APP_ID);
+        .header("x-app-id", CLI_APP_ID)
+        .header("accept-language", crate::locale::get());
     if !cli_cmd.is_empty() {
         http_client = http_client.header("x-cli-cmd", cli_cmd.as_str());
     }

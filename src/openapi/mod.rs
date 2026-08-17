@@ -4,6 +4,7 @@ pub mod chats;
 pub mod context;
 pub mod helpers;
 pub mod login;
+pub mod news;
 pub mod quote;
 pub mod rate_limiter;
 pub mod search;
