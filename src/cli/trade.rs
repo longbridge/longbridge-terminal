@@ -28,7 +28,7 @@ fn risk_level_name(level: i32) -> &'static str {
     }
 }
 
-fn parse_order_type(s: &str) -> Result<OrderType> {
+pub fn parse_order_type(s: &str) -> Result<OrderType> {
     match s.to_uppercase().as_str() {
         "LO" => Ok(OrderType::LO),
         "MO" => Ok(OrderType::MO),
@@ -47,7 +47,7 @@ fn parse_order_type(s: &str) -> Result<OrderType> {
     }
 }
 
-fn parse_tif(s: &str) -> Result<TimeInForceType> {
+pub fn parse_tif(s: &str) -> Result<TimeInForceType> {
     match s.to_lowercase().as_str() {
         "day" => Ok(TimeInForceType::Day),
         "gtc" | "goodtilcanceled" => Ok(TimeInForceType::GoodTilCanceled),
@@ -625,7 +625,7 @@ pub async fn cmd_executions(
     Ok(())
 }
 
-fn parse_outside_rth(s: &str) -> Result<OutsideRTH> {
+pub fn parse_outside_rth(s: &str) -> Result<OutsideRTH> {
     match s.to_uppercase().as_str() {
         "RTH_ONLY" => Ok(OutsideRTH::RTHOnly),
         "ANY_TIME" => Ok(OutsideRTH::AnyTime),

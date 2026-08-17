@@ -29,7 +29,7 @@ fn locale_name<'a>(en: &'a str, zh: &'a str) -> &'a str {
     }
 }
 
-fn parse_period(s: &str) -> Result<Period> {
+pub fn parse_period(s: &str) -> Result<Period> {
     match s {
         "1m" | "minute" => Ok(Period::OneMinute),
         "5m" => Ok(Period::FiveMinute),
@@ -44,7 +44,7 @@ fn parse_period(s: &str) -> Result<Period> {
     }
 }
 
-fn parse_adjust(s: &str) -> Result<AdjustType> {
+pub fn parse_adjust(s: &str) -> Result<AdjustType> {
     match s {
         "none" | "no_adjust" => Ok(AdjustType::NoAdjust),
         "forward" | "forward_adjust" => Ok(AdjustType::ForwardAdjust),
@@ -82,6 +82,30 @@ fn change_pct(last: rust_decimal::Decimal, prev_close: rust_decimal::Decimal) ->
 fn change_val(last: rust_decimal::Decimal, prev_close: rust_decimal::Decimal) -> String {
     let val = last - prev_close;
     format!("{val:+}")
+}
+
+/// Render one real-time quote as the JSON object that `quote --format json`
+/// emits.
+fn quote_to_json(q: &longbridge::quote::SecurityQuote) -> serde_json::Value {
+    serde_json::json!({
+        "symbol": q.symbol,
+        "last": q.last_done.to_string(),
+        "change_value": (q.last_done - q.prev_close).to_string(),
+        "change_percentage": if q.prev_close.is_zero() { None } else {
+            let pct = (q.last_done - q.prev_close) / q.prev_close * rust_decimal::Decimal::ONE_HUNDRED;
+            Some(pct.round_dp(2).to_string())
+        },
+        "prev_close": q.prev_close.to_string(),
+        "open": q.open.to_string(),
+        "high": q.high.to_string(),
+        "low": q.low.to_string(),
+        "volume": q.volume,
+        "turnover": q.turnover.to_string(),
+        "status": format!("{:?}", q.trade_status),
+        "post_market": q.post_market_quote.as_ref().filter(|p| pre_post_has_data(p)).map(pre_post_quote_to_json),
+        "overnight": q.overnight_quote.as_ref().filter(|p| pre_post_has_data(p)).map(pre_post_quote_to_json),
+        "pre_market": q.pre_market_quote.as_ref().filter(|p| pre_post_has_data(p)).map(pre_post_quote_to_json),
+    })
 }
 
 fn pre_post_quote_to_json(q: &PrePostQuote) -> serde_json::Value {
@@ -175,7 +199,7 @@ fn calc_index_column(key: &str) -> Option<(&'static str, CalcIndexExtractor)> {
     }
 }
 
-fn parse_calc_indexes(indexes: &[String]) -> Vec<CalcIndex> {
+pub fn parse_calc_indexes(indexes: &[String]) -> Vec<CalcIndex> {
     indexes
         .iter()
         .filter_map(|s| match s.as_str() {
@@ -224,7 +248,7 @@ fn parse_calc_indexes(indexes: &[String]) -> Vec<CalcIndex> {
         .collect()
 }
 
-fn parse_market(s: &str) -> Result<longbridge::Market> {
+pub fn parse_market(s: &str) -> Result<longbridge::Market> {
     match s.to_uppercase().as_str() {
         "HK" => Ok(longbridge::Market::HK),
         "US" => Ok(longbridge::Market::US),
@@ -249,30 +273,7 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
 
     match format {
         OutputFormat::Json => {
-            let records: Vec<serde_json::Value> = quotes
-                .iter()
-                .map(|q| {
-                    serde_json::json!({
-                        "symbol": q.symbol,
-                        "last": q.last_done.to_string(),
-                        "change_value": (q.last_done - q.prev_close).to_string(),
-                        "change_percentage": if q.prev_close.is_zero() { None } else {
-                            let pct = (q.last_done - q.prev_close) / q.prev_close * rust_decimal::Decimal::ONE_HUNDRED;
-                            Some(pct.round_dp(2).to_string())
-                        },
-                        "prev_close": q.prev_close.to_string(),
-                        "open": q.open.to_string(),
-                        "high": q.high.to_string(),
-                        "low": q.low.to_string(),
-                        "volume": q.volume,
-                        "turnover": q.turnover.to_string(),
-                        "status": format!("{:?}", q.trade_status),
-                        "post_market": q.post_market_quote.as_ref().filter(|p| pre_post_has_data(p)).map(pre_post_quote_to_json),
-                        "overnight": q.overnight_quote.as_ref().filter(|p| pre_post_has_data(p)).map(pre_post_quote_to_json),
-                        "pre_market": q.pre_market_quote.as_ref().filter(|p| pre_post_has_data(p)).map(pre_post_quote_to_json),
-                    })
-                })
-                .collect();
+            let records: Vec<serde_json::Value> = quotes.iter().map(quote_to_json).collect();
             println!("{}", serde_json::to_string_pretty(&records)?);
         }
         OutputFormat::Pretty => {

@@ -157,6 +157,19 @@ Requirements:
 RUST_LOG=debug cargo run
 ```
 
+## Convention Over Configuration
+
+**Never introduce a new environment variable, CLI flag, or config option without the user's explicit approval.** This holds even when the option looks obviously useful, is opt-in, or defaults to today's behavior.
+
+This project follows convention over configuration: choose the behavior that is right and implement only that. A knob is a permanent widening of the contract — it has to be named, documented, tested, and kept working, and every later change has to keep working across all of its states.
+
+When a change seems to call for a switch:
+
+1. Pick the behavior that is correct for the common case, implement only it, and say in the PR why that default is the right one.
+2. If two behaviors are genuinely both required, stop and ask before adding the option — do not add it and let review decide.
+
+Environment variables are the strictest case: they do not appear in `--help`, cannot be discovered from the CLI surface, and produce configuration only its author knows about. Do not add one.
+
 ## Code Style
 
 ### Clippy Rules
