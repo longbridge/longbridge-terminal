@@ -185,36 +185,31 @@ pub fn fetch_news_detail(id: String, tx: mpsc::UnboundedSender<CommandQueue>) {
     }
 
     RT.get().unwrap().spawn(async move {
-        let url = match crate::locale::get() {
-            "zh-CN" => format!("https://longbridge.com/zh-CN/news/{id}.md"),
-            "zh-HK" => format!("https://longbridge.com/zh-HK/news/{id}.md"),
-            _ => format!("https://longbridge.com/news/{id}.md"),
+        // Same source as `longbridge news detail`: GET /v1/content/news/{id}
+        // via the signed OpenAPI client (the old longbridge.com/news/{id}.md
+        // scrape is gone).
+        let result = match id.parse::<i64>() {
+            Ok(id) => crate::openapi::news::news_detail(id).await,
+            Err(_) => Err(anyhow::anyhow!("invalid news id: {id}")),
         };
-        let client = reqwest::Client::new();
-        let result = client
-            .get(&url)
-            .header("User-Agent", "Mozilla/5.0")
-            .send()
-            .await;
         match result {
-            Ok(resp) if resp.status().is_success() => match resp.text().await {
-                Ok(text) => {
-                    if let Ok(mut content) = NEWS_DETAIL_CONTENT.lock() {
-                        *content = prepare_article(&text);
-                    }
+            Ok(item) => {
+                let mut text = format!("# {}\n", item.title);
+                let mut meta = vec![crate::cli::output::fmt_unix_ts(item.published_at)];
+                if !item.author.name.is_empty() {
+                    meta.push(item.author.name.clone());
                 }
-                Err(e) => {
-                    tracing::error!("Failed to read news detail body: {e}");
-                    if let Ok(mut content) = NEWS_DETAIL_CONTENT.lock() {
-                        *content = t!("News.ErrorContent", error = e.to_string()).to_string();
-                    }
+                if !item.tickers.is_empty() {
+                    meta.push(item.tickers.join(" "));
                 }
-            },
-            Ok(resp) => {
-                let status = resp.status();
-                tracing::error!("Failed to fetch news detail: HTTP {status}");
+                text.push_str(&format!("\n{}\n\n", meta.join(" · ")));
+                text.push_str(if item.body.is_empty() {
+                    &item.description
+                } else {
+                    &item.body
+                });
                 if let Ok(mut content) = NEWS_DETAIL_CONTENT.lock() {
-                    *content = t!("News.ErrorHttp", status = status.to_string()).to_string();
+                    *content = prepare_article(&text);
                 }
             }
             Err(e) => {
