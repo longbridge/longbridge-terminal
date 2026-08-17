@@ -31,7 +31,7 @@ use anyhow::{bail, Result};
 use longbridge::quote::{PushEvent, PushEventDetail, SubFlags};
 use serde_json::{json, Value};
 
-use super::params::Params;
+use super::params::{bail_param, param_err, Params};
 use super::protocol::{Message, PROTOCOL_VERSION};
 use crate::cli::api::{QuoteApi, TradeApi};
 
@@ -143,12 +143,6 @@ pub fn is_known(method: &str) -> bool {
             .is_some_and(|n| TRADE_METHODS.contains(&n))
 }
 
-/// The `initialize` method list, so a client discovers the surface in-band
-/// rather than hard-coding it.
-fn method_catalog() -> Vec<String> {
-    all_methods()
-}
-
 /// Run one method. Errors surface as JSON-RPC errors and never end the
 /// session: one bad symbol must not take down a client's live feed.
 pub async fn call(method: &str, params: Option<Value>) -> Result<Value> {
@@ -156,13 +150,15 @@ pub async fn call(method: &str, params: Option<Value>) -> Result<Value> {
 
     match method {
         // ── Session ──────────────────────────────────────────────────────
+        // Reports the surface rather than negotiating it: a client may call
+        // any method without calling this first.
         "initialize" => Ok(json!({
             "protocolVersion": PROTOCOL_VERSION,
             "serverInfo": { "name": "longbridge", "version": env!("CARGO_PKG_VERSION") },
             "capabilities": {
                 "subscribe": ["quote", "depth", "brokers", "trades"],
             },
-            "methods": method_catalog(),
+            "methods": all_methods(),
         })),
         // Handled by the run loop; listed so `is_known` accepts it.
         "shutdown" => Ok(Value::Null),
@@ -193,12 +189,29 @@ pub async fn call(method: &str, params: Option<Value>) -> Result<Value> {
         "quote.subscribe" => {
             let symbols = p.strs("symbols")?;
             let flags = parse_fields(p)?;
-            // Subscribing starts the feed; it does not replay the current
-            // value. Clients paint the initial screen with `quote.quote`,
-            // which they call anyway to render the list.
             let ctx = crate::openapi::quote_cmd();
             ctx.subscribe(&symbols, flags).await?;
-            active_subscriptions(ctx).await
+
+            // The feed itself does not replay the current value, so the result
+            // carries a snapshot to paint the first screen with. Taken *after*
+            // subscribing, which is the ordering that loses nothing: every
+            // change from here on is guaranteed to arrive as a push. A push
+            // that raced ahead of the snapshot can still be the older of the
+            // two, so a client keeps whichever `timestamp` is newer — the same
+            // rule it needs for out-of-order responses anyway.
+            let mut result = active_subscriptions(ctx).await?;
+            match quote_api().quote(symbols).await {
+                Ok(quotes) => {
+                    result["quotes"] = serde_json::to_value(quotes)?;
+                }
+                // The subscription is live either way, and reporting it as a
+                // failure would leave the client believing otherwise while
+                // pushes arrive. Omitting the field says the snapshot is the
+                // part that did not happen; a client falls back to
+                // `quote.quote`.
+                Err(e) => tracing::warn!("quote.subscribe: snapshot failed: {e}"),
+            }
+            Ok(result)
         }
         "quote.unsubscribe" => {
             let symbols = p.strs("symbols")?;
@@ -430,7 +443,7 @@ fn parse_side(s: &str) -> Result<longbridge::trade::OrderSide> {
     match s.to_lowercase().as_str() {
         "buy" => Ok(longbridge::trade::OrderSide::Buy),
         "sell" => Ok(longbridge::trade::OrderSide::Sell),
-        other => bail!("`side` must be buy or sell, got `{other}`"),
+        other => bail_param!("`side` must be buy or sell, got `{other}`"),
     }
 }
 
@@ -439,7 +452,7 @@ fn parse_side(s: &str) -> Result<longbridge::trade::OrderSide> {
 fn decimal(raw: &str, field: &str) -> Result<rust_decimal::Decimal> {
     use std::str::FromStr;
     rust_decimal::Decimal::from_str(raw)
-        .map_err(|_| anyhow::anyhow!("`{field}` must be a decimal string, got `{raw}`"))
+        .map_err(|_| param_err(format!("`{field}` must be a decimal string, got `{raw}`")))
 }
 
 fn update_group_request(p: Params<'_>) -> Result<longbridge::quote::RequestUpdateWatchlistGroup> {
@@ -448,7 +461,7 @@ fn update_group_request(p: Params<'_>) -> Result<longbridge::quote::RequestUpdat
         None | Some("add") => SecuritiesUpdateMode::Add,
         Some("remove") => SecuritiesUpdateMode::Remove,
         Some("replace") => SecuritiesUpdateMode::Replace,
-        Some(other) => bail!("`mode` must be add, remove or replace, got `{other}`"),
+        Some(other) => bail_param!("`mode` must be add, remove or replace, got `{other}`"),
     };
     let securities = p.strs_opt("securities")?;
     Ok(longbridge::quote::RequestUpdateWatchlistGroup {
@@ -471,9 +484,9 @@ fn parse_fields(p: Params<'_>) -> Result<SubFlags> {
             "depth" => SubFlags::DEPTH,
             "brokers" => SubFlags::BROKER,
             "trades" => SubFlags::TRADE,
-            other => {
-                bail!("`fields`: unknown field `{other}`; expected quote, depth, brokers or trades")
-            }
+            other => bail_param!(
+                "`fields`: unknown field `{other}`; expected quote, depth, brokers or trades"
+            ),
         };
     }
     Ok(flags)

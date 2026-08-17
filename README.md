@@ -543,9 +543,11 @@ on, so a client needs only a JSON parser and a line splitter, no protocol librar
 → {"jsonrpc":"2.0","id":1,"method":"quote.quote","params":{"symbols":["700.HK"]}}
 ← {"jsonrpc":"2.0","id":1,"result":[{"symbol":"700.HK","last_done":"445.600", ...}]}
 → {"jsonrpc":"2.0","id":2,"method":"quote.subscribe","params":{"symbols":["700.HK"]}}
-← {"jsonrpc":"2.0","id":2,"result":{"subscribed":[{"symbol":"700.HK","fields":["quote"]}]}}
+← {"jsonrpc":"2.0","id":2,"result":{"subscribed":[{"symbol":"700.HK","fields":["quote"]}],"quotes":[…]}}
 ← {"jsonrpc":"2.0","method":"quote.updated","params":{"symbol":"700.HK","last_done":"446.000", ...}}
 ```
+
+One request per line: batches (a JSON array) are not accepted, as in LSP and MCP.
 
 ### Raw payloads, on purpose
 
@@ -564,7 +566,7 @@ whole command surface without a parallel implementation:
 | `quote.*` | Every `QuoteApi` call — `quote.quote`, `quote.depth`, `quote.candlesticks`, `quote.watchlist`, `quote.option_chain_info_by_date`, … |
 | `trade.*` | Every `TradeApi` call — `trade.stock_positions`, `trade.account_balance`, `trade.today_orders`, `trade.submit_order`, … |
 | `api.get` / `api.post` | Raw passthrough to any REST endpoint, e.g. `{"path":"/v1/quote/dividends","query":{"symbol":"AAPL.US"}}`. This is how the fundamentals, screener, IPO and news commands reach their data. |
-| `quote.subscribe` / `quote.unsubscribe` | Live feed; `fields` is any of `quote`, `depth`, `brokers`, `trades` (default `quote`). No one-shot CLI equivalent. |
+| `quote.subscribe` / `quote.unsubscribe` | Live feed; `fields` is any of `quote`, `depth`, `brokers`, `trades` (default `quote`). `subscribe` also returns a `quotes` snapshot to paint the first screen from. No one-shot CLI equivalent. |
 | `initialize` / `shutdown` | Session control. `initialize` returns the full method list, so clients discover the surface rather than hard-coding it. |
 
 `longbridge serve -h` prints the protocol, the full method list and a worked exchange —
@@ -573,6 +575,9 @@ there. Params and results follow the Longbridge OpenAPI shapes for the same call
 a method up under its own name at <https://open.longbridge.com/docs> for its fields.
 
 Server notifications: `quote.updated`, `quote.depth`, `quote.brokers`, `quote.trades`.
+`quote.updated` is a tick rather than a full quote, and a push that raced ahead of
+`subscribe`'s snapshot can still be the older of the two, so keep whichever `timestamp` is
+newer.
 
 A test asserts every `QuoteApi`/`TradeApi` method is reachable over RPC, so adding one
 without exposing it fails the build — `serve` cannot drift behind the CLI.
@@ -583,8 +588,11 @@ positions and FX rates) are deliberately not methods: a client composes them fro
 our arithmetic.
 
 Requests are answered concurrently — a slow `trade.stock_positions` never stalls the quote
-feed — so responses may arrive out of order; correlate them by `id`. The process exits when
-stdin closes, so it cannot outlive the client that spawned it.
+feed — so responses may arrive out of order; correlate them by `id`. Up to 8 run upstream
+at once and the rest queue, so a burst is paced rather than dropped. An error code says
+whether a retry can help: `-32602` names the parameter at fault and will fail the same way
+again, `-32000` came from Longbridge and may not. The process exits when stdin closes, so
+it cannot outlive the client that spawned it.
 
 ## Output Format
 

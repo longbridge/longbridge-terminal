@@ -1,12 +1,46 @@
 //! Typed extraction of JSON-RPC `params` fields.
 //!
 //! Every accessor names the offending field in its error so a client gets a
-//! message it can act on rather than a bare "invalid params". Errors start
-//! with a backtick or a known prefix; `serve::error_code_for` keys off that to
-//! return `INVALID_PARAMS` instead of `API_ERROR`.
+//! message it can act on rather than a bare "invalid params", and every such
+//! error is a [`ParamError`] so `serve::error_code_for` can classify it by
+//! type.
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use serde_json::Value;
+
+/// A parameter the client got wrong, as opposed to a failure that came back
+/// from Longbridge.
+///
+/// The distinction decides the JSON-RPC code, and a client keys its retry
+/// logic off that code: `INVALID_PARAMS` means retrying the same request is
+/// pointless, `API_ERROR` means it may not be. Carrying the distinction in the
+/// type rather than in the wording of the message is what keeps an upstream
+/// failure phrased like a parameter complaint from being blamed on the client.
+#[derive(Debug)]
+pub struct ParamError(String);
+
+impl std::fmt::Display for ParamError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for ParamError {}
+
+/// Build a [`ParamError`] as an `anyhow::Error`, ready to `?` or return.
+pub fn param_err(message: impl Into<String>) -> anyhow::Error {
+    anyhow::Error::new(ParamError(message.into()))
+}
+
+/// `bail!` for parameter mistakes: same ergonomics, but the error keeps its
+/// type so it cannot be mistaken for an upstream failure.
+macro_rules! bail_param {
+    ($($arg:tt)*) => {
+        return ::std::result::Result::Err($crate::cli::serve::params::param_err(format!($($arg)*)))
+    };
+}
+
+pub(crate) use bail_param;
 
 /// Borrowed view over a request's `params` object.
 #[derive(Clone, Copy)]
@@ -20,8 +54,8 @@ impl<'a> Params<'a> {
     pub fn str(self, key: &str) -> Result<String> {
         match self.get(key) {
             Some(Value::String(s)) => Ok(s.clone()),
-            Some(_) => bail!("`{key}` must be a string"),
-            None => bail!("missing required parameter `{key}`"),
+            Some(_) => bail_param!("`{key}` must be a string"),
+            None => bail_param!("missing required parameter `{key}`"),
         }
     }
 
@@ -29,26 +63,26 @@ impl<'a> Params<'a> {
         match self.get(key) {
             None | Some(Value::Null) => Ok(None),
             Some(Value::String(s)) => Ok(Some(s.clone())),
-            Some(_) => bail!("`{key}` must be a string"),
+            Some(_) => bail_param!("`{key}` must be a string"),
         }
     }
 
     pub fn strs(self, key: &str) -> Result<Vec<String>> {
         let Some(value) = self.get(key) else {
-            bail!("missing required parameter `{key}`");
+            bail_param!("missing required parameter `{key}`");
         };
         let Some(list) = value.as_array() else {
-            bail!("`{key}` must be an array of strings");
+            bail_param!("`{key}` must be an array of strings");
         };
         let mut out = Vec::with_capacity(list.len());
         for item in list {
             let Some(s) = item.as_str() else {
-                bail!("`{key}` must be an array of strings");
+                bail_param!("`{key}` must be an array of strings");
             };
             out.push(s.to_string());
         }
         if out.is_empty() {
-            bail!("`{key}` must not be empty");
+            bail_param!("`{key}` must not be empty");
         }
         Ok(out)
     }
@@ -66,8 +100,8 @@ impl<'a> Params<'a> {
         match self.get(key) {
             Some(v) => v
                 .as_i64()
-                .ok_or_else(|| anyhow::anyhow!("`{key}` must be an integer")),
-            None => bail!("missing required parameter `{key}`"),
+                .ok_or_else(|| param_err(format!("`{key}` must be an integer"))),
+            None => bail_param!("missing required parameter `{key}`"),
         }
     }
 
@@ -77,32 +111,29 @@ impl<'a> Params<'a> {
             Some(v) => {
                 let n = v
                     .as_u64()
-                    .ok_or_else(|| anyhow::anyhow!("`{key}` must be a non-negative integer"))?;
+                    .ok_or_else(|| param_err(format!("`{key}` must be a non-negative integer")))?;
                 Ok(usize::try_from(n).unwrap_or(usize::MAX))
             }
-        }
-    }
-
-    pub fn bool_or(self, key: &str, default: bool) -> Result<bool> {
-        match self.get(key) {
-            None | Some(Value::Null) => Ok(default),
-            Some(Value::Bool(b)) => Ok(*b),
-            Some(_) => bail!("`{key}` must be a boolean"),
         }
     }
 
     /// A `YYYY-MM-DD` date, parsed by the same helper the CLI flags use.
     pub fn date(self, key: &str) -> Result<time::Date> {
         let raw = self.str(key)?;
-        crate::cli::output::parse_date(&raw)
-            .map_err(|_| anyhow::anyhow!("`{key}` must be a date in YYYY-MM-DD form, got `{raw}`"))
+        crate::cli::output::parse_date(&raw).map_err(|_| {
+            param_err(format!(
+                "`{key}` must be a date in YYYY-MM-DD form, got `{raw}`"
+            ))
+        })
     }
 
     pub fn date_opt(self, key: &str) -> Result<Option<time::Date>> {
         match self.str_opt(key)? {
             None => Ok(None),
             Some(raw) => crate::cli::output::parse_date(&raw).map(Some).map_err(|_| {
-                anyhow::anyhow!("`{key}` must be a date in YYYY-MM-DD form, got `{raw}`")
+                param_err(format!(
+                    "`{key}` must be a date in YYYY-MM-DD form, got `{raw}`"
+                ))
             }),
         }
     }
@@ -111,21 +142,20 @@ impl<'a> Params<'a> {
     /// `CN`/`SH`/`SZ`, `SG`).
     pub fn market(self, key: &str) -> Result<longbridge::Market> {
         let raw = self.str(key)?;
-        crate::cli::quote::parse_market(&raw).map_err(|e| anyhow::anyhow!("`{key}`: {e}"))
+        crate::cli::quote::parse_market(&raw).map_err(|e| param_err(format!("`{key}`: {e}")))
     }
 
     pub fn period(self, key: &str) -> Result<longbridge::quote::Period> {
         let raw = self.str(key)?;
-        crate::cli::quote::parse_period(&raw).map_err(|e| anyhow::anyhow!("`{key}`: {e}"))
+        crate::cli::quote::parse_period(&raw).map_err(|e| param_err(format!("`{key}`: {e}")))
     }
 
     /// Adjustment type; defaults to `none`, matching `kline --adjust`.
     pub fn adjust(self, key: &str) -> Result<longbridge::quote::AdjustType> {
         match self.str_opt(key)? {
             None => Ok(longbridge::quote::AdjustType::NoAdjust),
-            Some(raw) => {
-                crate::cli::quote::parse_adjust(&raw).map_err(|e| anyhow::anyhow!("`{key}`: {e}"))
-            }
+            Some(raw) => crate::cli::quote::parse_adjust(&raw)
+                .map_err(|e| param_err(format!("`{key}`: {e}"))),
         }
     }
 
@@ -139,13 +169,15 @@ impl<'a> Params<'a> {
             return Ok(Vec::new());
         }
         let Some(map) = value.as_object() else {
-            bail!("`{key}` must be an object of string values");
+            bail_param!("`{key}` must be an object of string values");
         };
         map.iter()
             .map(|(k, v)| match v {
                 Value::String(s) => Ok((k.clone(), s.clone())),
                 Value::Bool(_) | Value::Number(_) => Ok((k.clone(), v.to_string())),
-                _ => bail!("`{key}.{k}` must be a string, number or boolean"),
+                _ => Err(param_err(format!(
+                    "`{key}.{k}` must be a string, number or boolean"
+                ))),
             })
             .collect()
     }
@@ -175,7 +207,7 @@ mod tests {
 
     #[test]
     fn a_wrong_type_is_named_in_the_error() {
-        let v = json!({"symbol": 7, "symbols": "700.HK", "flag": "yes"});
+        let v = json!({"symbol": 7, "symbols": "700.HK"});
         assert_eq!(
             p(&v).str("symbol").unwrap_err().to_string(),
             "`symbol` must be a string"
@@ -184,10 +216,34 @@ mod tests {
             p(&v).strs("symbols").unwrap_err().to_string(),
             "`symbols` must be an array of strings"
         );
-        assert_eq!(
-            p(&v).bool_or("flag", false).unwrap_err().to_string(),
-            "`flag` must be a boolean"
-        );
+    }
+
+    /// Every rejection here is the client's fault, and the code that says so
+    /// downcasts rather than reading the message — so the type, not the
+    /// wording, is what the test pins.
+    #[test]
+    fn every_rejection_carries_the_param_error_type() {
+        let v = json!({"symbol": 7, "market": "MARS", "start": "07/01/2026", "id": "x", "q": {"bad": []}});
+        let errors = [
+            p(&v).str("missing").unwrap_err(),
+            p(&v).str("symbol").unwrap_err(),
+            p(&v).strs("missing").unwrap_err(),
+            p(&json!({"symbols": []})).strs("symbols").unwrap_err(),
+            p(&v).i64("id").unwrap_err(),
+            p(&v).usize_or("market", 1).unwrap_err(),
+            p(&v).date("start").unwrap_err(),
+            p(&v).date_opt("start").unwrap_err(),
+            p(&v).market("market").unwrap_err(),
+            p(&v).period("market").unwrap_err(),
+            p(&v).adjust("market").unwrap_err(),
+            p(&v).query("q").unwrap_err(),
+        ];
+        for err in &errors {
+            assert!(
+                err.downcast_ref::<ParamError>().is_some(),
+                "not a ParamError: {err}"
+            );
+        }
     }
 
     #[test]
@@ -196,7 +252,6 @@ mod tests {
         assert_eq!(p(&v).str_opt("x").unwrap(), None);
         assert_eq!(p(&v).strs_opt("x").unwrap(), Vec::<String>::new());
         assert_eq!(p(&v).usize_or("count", 20).unwrap(), 20);
-        assert!(p(&v).bool_or("flag", true).unwrap());
         assert_eq!(p(&v).date_opt("start").unwrap(), None);
         assert_eq!(
             p(&v).adjust("adjust").unwrap(),
