@@ -55,6 +55,58 @@ const EXTRA_METHODS: &[&str] = &[
     "quote.unsubscribe",
 ];
 
+/// The `QuoteApi` methods exposed, in trait declaration order.
+const QUOTE_METHODS: &[&str] = &[
+    "quote",
+    "depth",
+    "brokers",
+    "trades",
+    "intraday",
+    "candlesticks",
+    "history_candlesticks_by_date",
+    "history_candlesticks_by_offset",
+    "static_info",
+    "us_crypto_overview",
+    "calc_indexes",
+    "capital_flow",
+    "capital_distribution",
+    "market_temperature",
+    "history_market_temperature",
+    "trading_session",
+    "trading_days",
+    "security_list",
+    "participants",
+    "subscriptions",
+    "option_quote",
+    "option_chain_expiry_date_list",
+    "option_chain_info_by_date",
+    "warrant_quote",
+    "warrant_list",
+    "warrant_issuers",
+    "watchlist",
+    "create_watchlist_group",
+    "delete_watchlist_group",
+    "update_watchlist_group",
+];
+
+/// The `TradeApi` methods exposed, in trait declaration order.
+const TRADE_METHODS: &[&str] = &[
+    "today_orders",
+    "history_orders",
+    "order_detail",
+    "today_executions",
+    "history_executions",
+    "submit_order",
+    "cancel_order",
+    "replace_order",
+    "account_balance",
+    "cash_flow",
+    "stock_positions",
+    "fund_positions",
+    "margin_ratio",
+    "estimate_max_purchase_quantity",
+];
+
 fn quote_api() -> crate::cli::api::LbQuoteApi {
     crate::cli::api::LbQuoteApi::new(crate::openapi::quote_cmd())
 }
@@ -68,86 +120,33 @@ fn ok<T: serde::Serialize>(value: T) -> Result<Value> {
     Ok(serde_json::to_value(value)?)
 }
 
-pub fn is_known(method: &str) -> bool {
-    EXTRA_METHODS.contains(&method)
-        || quote_method_names().contains(&method.trim_start_matches(QUOTE_PREFIX))
-            && method.starts_with(QUOTE_PREFIX)
-        || trade_method_names().contains(&method.trim_start_matches(TRADE_PREFIX))
-            && method.starts_with(TRADE_PREFIX)
-}
-
-/// The `QuoteApi` methods exposed, in trait declaration order.
-fn quote_method_names() -> &'static [&'static str] {
-    &[
-        "quote",
-        "depth",
-        "brokers",
-        "trades",
-        "intraday",
-        "candlesticks",
-        "history_candlesticks_by_date",
-        "history_candlesticks_by_offset",
-        "static_info",
-        "us_crypto_overview",
-        "calc_indexes",
-        "capital_flow",
-        "capital_distribution",
-        "market_temperature",
-        "history_market_temperature",
-        "trading_session",
-        "trading_days",
-        "security_list",
-        "participants",
-        "subscriptions",
-        "option_quote",
-        "option_chain_expiry_date_list",
-        "option_chain_info_by_date",
-        "warrant_quote",
-        "warrant_list",
-        "warrant_issuers",
-        "watchlist",
-        "create_watchlist_group",
-        "delete_watchlist_group",
-        "update_watchlist_group",
-    ]
-}
-
-/// The `TradeApi` methods exposed, in trait declaration order.
-fn trade_method_names() -> &'static [&'static str] {
-    &[
-        "today_orders",
-        "history_orders",
-        "order_detail",
-        "today_executions",
-        "history_executions",
-        "submit_order",
-        "cancel_order",
-        "replace_order",
-        "account_balance",
-        "cash_flow",
-        "stock_positions",
-        "fund_positions",
-        "margin_ratio",
-        "estimate_max_purchase_quantity",
-    ]
-}
-
-/// A method list for `initialize`, so a client can discover the surface
-/// without out-of-band documentation.
-fn method_catalog() -> Vec<String> {
+/// Every method name with its namespace applied, sorted.
+///
+/// Derived from the same tables [`is_known`] routes on, so the list printed by
+/// `serve -h` and returned by `initialize` cannot describe a surface the
+/// dispatcher does not have.
+pub fn all_methods() -> Vec<String> {
     let mut all: Vec<String> = EXTRA_METHODS.iter().map(|m| (*m).to_string()).collect();
-    all.extend(
-        quote_method_names()
-            .iter()
-            .map(|m| format!("{QUOTE_PREFIX}{m}")),
-    );
-    all.extend(
-        trade_method_names()
-            .iter()
-            .map(|m| format!("{TRADE_PREFIX}{m}")),
-    );
+    all.extend(QUOTE_METHODS.iter().map(|m| format!("{QUOTE_PREFIX}{m}")));
+    all.extend(TRADE_METHODS.iter().map(|m| format!("{TRADE_PREFIX}{m}")));
     all.sort();
     all
+}
+
+pub fn is_known(method: &str) -> bool {
+    EXTRA_METHODS.contains(&method)
+        || method
+            .strip_prefix(QUOTE_PREFIX)
+            .is_some_and(|n| QUOTE_METHODS.contains(&n))
+        || method
+            .strip_prefix(TRADE_PREFIX)
+            .is_some_and(|n| TRADE_METHODS.contains(&n))
+}
+
+/// The `initialize` method list, so a client discovers the surface in-band
+/// rather than hard-coding it.
+fn method_catalog() -> Vec<String> {
+    all_methods()
 }
 
 /// Run one method. Errors surface as JSON-RPC errors and never end the
@@ -587,8 +586,8 @@ mod tests {
     #[test]
     fn serve_exposes_every_api_trait_method() {
         for (trait_name, prefix, exposed) in [
-            ("QuoteApi", QUOTE_PREFIX, quote_method_names()),
-            ("TradeApi", TRADE_PREFIX, trade_method_names()),
+            ("QuoteApi", QUOTE_PREFIX, QUOTE_METHODS),
+            ("TradeApi", TRADE_PREFIX, TRADE_METHODS),
         ] {
             let declared = trait_methods(trait_name);
             assert!(
@@ -619,7 +618,7 @@ mod tests {
 
     #[test]
     fn every_advertised_method_is_routable() {
-        let catalog = method_catalog();
+        let catalog = all_methods();
         for method in &catalog {
             assert!(is_known(method), "{method} advertised but not routable");
         }

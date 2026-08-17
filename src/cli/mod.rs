@@ -188,6 +188,11 @@ pub enum Commands {
     ///
     /// Example: longbridge serve
     /// Example: echo '{"jsonrpc":"2.0","id":1,"method":"quote.watchlist"}' | longbridge serve
+    // The protocol and method list are appended to the help rather than kept
+    // as a separate `--list-methods` flag: this is the reference someone reads
+    // while writing a client, and `-h` is where they will look for it.
+    // `after_help` (not `after_long_help`) so the short form carries it too.
+    #[command(after_help = crate::cli::serve::method_reference())]
     Serve,
 
     /// Chat with Longbridge AI in a full-screen TUI

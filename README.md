@@ -567,6 +567,11 @@ whole command surface without a parallel implementation:
 | `quote.subscribe` / `quote.unsubscribe` | Live feed; `fields` is any of `quote`, `depth`, `brokers`, `trades` (default `quote`). No one-shot CLI equivalent. |
 | `initialize` / `shutdown` | Session control. `initialize` returns the full method list, so clients discover the surface rather than hard-coding it. |
 
+`longbridge serve -h` prints the protocol, the full method list and a worked exchange —
+generated from the routing tables, so the help cannot advertise a method that is not
+there. Params and results follow the Longbridge OpenAPI shapes for the same call, so look
+a method up under its own name at <https://open.longbridge.com/docs> for its fields.
+
 Server notifications: `quote.updated`, `quote.depth`, `quote.brokers`, `quote.trades`.
 
 A test asserts every `QuoteApi`/`TradeApi` method is reachable over RPC, so adding one

@@ -46,6 +46,63 @@ use protocol::{
     Message, API_ERROR, INVALID_PARAMS, INVALID_REQUEST, METHOD_NOT_FOUND, PARSE_ERROR,
 };
 
+/// The method list appended to `serve -h`.
+///
+/// Generated from the [`methods`] routing tables, not written out a second
+/// time, so the help cannot advertise a surface the dispatcher does not have.
+/// Only names: parameters follow the Longbridge `OpenAPI` request for the same
+/// call, and a second hand-maintained copy of them here would be one more
+/// thing to drift.
+pub fn method_reference() -> String {
+    use std::fmt::Write;
+
+    let mut out = String::from(
+        "PROTOCOL\n\
+         \x20 Newline-delimited JSON-RPC 2.0 on stdin/stdout: one compact JSON object per\n\
+         \x20 line, UTF-8.\n\n\
+         \x20 request       {\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"<method>\",\"params\":{…}}\n\
+         \x20 response      {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":…}\n\
+         \x20 error         {\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32602,\"message\":\"…\"}}\n\
+         \x20 notification  {\"jsonrpc\":\"2.0\",\"method\":\"quote.updated\",\"params\":{…}}\n\n\
+         \x20 Requests are answered concurrently, so responses may arrive out of order —\n\
+         \x20 correlate them by id. Codes follow JSON-RPC: -32700 parse, -32600 invalid\n\
+         \x20 request, -32601 unknown method, -32602 bad params, -32000 upstream failure.\n\
+         \x20 A -32602 message names the offending field. The process exits on stdin EOF.\n\n\
+         PARAMS AND RESULTS\n\
+         \x20 Both are the raw Longbridge OpenAPI shapes for the same call, not the\n\
+         \x20 reshaped JSON the equivalent CLI command prints. Look a method up under its\n\
+         \x20 own name at https://open.longbridge.com/docs for its fields; quote.* and\n\
+         \x20 trade.* are named after the SDK calls they forward to.\n\n\
+         NOTIFICATIONS\n\
+         \x20 quote.updated, quote.depth, quote.brokers, quote.trades — delivered for the\n\
+         \x20 securities and fields named in quote.subscribe, each carrying its symbol.\n\n\
+         METHODS\n",
+    );
+
+    // Two per line: 50 names down a single column would bury the sections
+    // above it in scrollback.
+    let names = methods::all_methods();
+    for pair in names.chunks(2) {
+        let _ = match pair {
+            [a, b] => writeln!(out, "  {a:<38}{b}"),
+            [a] => writeln!(out, "  {a}"),
+            _ => Ok(()),
+        };
+    }
+
+    out.push_str(
+        "\n\x20 `initialize` returns this same list, so a client can discover it in-band.\n\n\
+         EXAMPLE\n\
+         \x20 $ longbridge serve\n\
+         \x20 → {\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"quote.quote\",\"params\":{\"symbols\":[\"700.HK\"]}}\n\
+         \x20 ← {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":[{\"symbol\":\"700.HK\",\"last_done\":\"445.600\",…}]}\n\
+         \x20 → {\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"quote.subscribe\",\"params\":{\"symbols\":[\"700.HK\"]}}\n\
+         \x20 ← {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"subscribed\":[{\"symbol\":\"700.HK\",\"fields\":[\"quote\"]}]}}\n\
+         \x20 ← {\"jsonrpc\":\"2.0\",\"method\":\"quote.updated\",\"params\":{\"symbol\":\"700.HK\",\"last_done\":\"446.000\",…}}\n",
+    );
+    out
+}
+
 /// Classify a handler error into a JSON-RPC code.
 ///
 /// Parameter validation is the caller's fault (`INVALID_PARAMS`); anything else
