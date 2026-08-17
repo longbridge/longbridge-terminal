@@ -194,7 +194,6 @@ pub fn fetch_news_detail(id: String, tx: mpsc::UnboundedSender<CommandQueue>) {
         };
         match result {
             Ok(item) => {
-                let mut text = format!("# {}\n", item.title);
                 let mut meta = vec![crate::cli::output::fmt_unix_ts(item.published_at)];
                 if !item.author.name.is_empty() {
                     meta.push(item.author.name.clone());
@@ -202,12 +201,12 @@ pub fn fetch_news_detail(id: String, tx: mpsc::UnboundedSender<CommandQueue>) {
                 if !item.tickers.is_empty() {
                     meta.push(item.tickers.join(" "));
                 }
-                text.push_str(&format!("\n{}\n\n", meta.join(" · ")));
-                text.push_str(if item.body.is_empty() {
+                let body = if item.body.is_empty() {
                     &item.description
                 } else {
                     &item.body
-                });
+                };
+                let text = format!("# {}\n\n{}\n\n{body}", item.title, meta.join(" · "));
                 if let Ok(mut content) = NEWS_DETAIL_CONTENT.lock() {
                     *content = prepare_article(&text);
                 }
