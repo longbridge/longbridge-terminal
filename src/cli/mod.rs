@@ -2969,14 +2969,16 @@ pub enum OrderCmd {
 
 #[derive(Subcommand)]
 pub enum NewsCmd {
-    /// Full Markdown content of a news article
+    /// Full detail of a news article (Markdown body)
     ///
-    /// Fetches the article from longbridge.com (or longbridge.cn for CN region).
-    /// Use the global --lang flag to select language (zh-CN or en).
+    /// Fetches `GET /v1/content/news/{id}`. Prints the title,
+    /// published time, author, related tickers, URL, and the Markdown body.
+    /// With --format json: the full item (id, title, description, body, url,
+    /// author, images, counters, `published_at`, tickers).
     /// Example: longbridge news detail 12345678
-    /// Example: longbridge --lang zh-CN news detail 12345678
+    /// Example: longbridge news detail 12345678 --format json
     Detail {
-        /// News article ID (from `longbridge news <SYMBOL>`)
+        /// News article ID (from `longbridge news <SYMBOL>` or `news search`)
         id: String,
     },
 
