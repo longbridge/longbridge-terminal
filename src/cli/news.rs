@@ -317,19 +317,57 @@ pub async fn cmd_topic_detail(id: String) -> Result<()> {
 }
 
 /// Fetch one news article's full detail: `GET /v1/content/news/{id}`.
-pub async fn cmd_news_detail(id: String, format: &OutputFormat) -> Result<()> {
+pub async fn cmd_news_detail(id: String, format: &OutputFormat, verbose: bool) -> Result<()> {
     let id: i64 = id
         .parse()
         .map_err(|_| anyhow::anyhow!("Invalid news id: {id} (expected a numeric article ID)"))?;
+    if verbose {
+        eprintln!("* GET /v1/content/news/{id}");
+    }
     let item = crate::openapi::news::news_detail(id).await?;
+    // A 200 with an empty/absent `item` means the article doesn't exist —
+    // don't print an empty shell with exit code 0.
+    if item.id == 0 && item.title.is_empty() && item.body.is_empty() {
+        bail!("News article {id} not found");
+    }
+
+    // RFC3339, matching the `news` list output (which an agent chains from).
+    let published_at = time::OffsetDateTime::from_unix_timestamp(item.published_at)
+        .map(fmt_rfc3339)
+        .unwrap_or_default();
 
     if matches!(format, OutputFormat::Json) {
-        println!("{}", serde_json::to_string_pretty(&item)?);
+        // Same field representations as the `news` list: string id, RFC3339
+        // timestamp — so list → detail chaining needs no type juggling.
+        let record = serde_json::json!({
+            "id": item.id.to_string(),
+            "title": item.title,
+            "description": item.description,
+            "body": item.body,
+            "url": item.url,
+            "author": {
+                "id": item.author.id.to_string(),
+                "name": item.author.name,
+                "avatar": item.author.avatar,
+            },
+            "images": item.images,
+            "comments_count": item.comments_count,
+            "likes_count": item.likes_count,
+            "shares_count": item.shares_count,
+            "published_at": published_at,
+            "tickers": item.tickers,
+        });
+        println!("{}", serde_json::to_string_pretty(&record)?);
         return Ok(());
     }
 
-    println!("# {}", item.title);
-    let mut meta = vec![super::output::fmt_unix_ts(item.published_at)];
+    let title = if item.title.is_empty() {
+        truncate_display(&item.description, 70)
+    } else {
+        item.title.clone()
+    };
+    println!("# {title}");
+    let mut meta = vec![published_at];
     if !item.author.name.is_empty() {
         meta.push(item.author.name.clone());
     }
@@ -365,21 +403,26 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
                 "comments_count",
             ],
         ),
-        "news detail" => super::schema::object(
+        "news detail" => super::schema::schema(
             "Full news article detail",
-            &[
-                "id",
-                "title",
-                "description",
-                "body",
-                "url",
-                "author",
-                "images",
-                "comments_count",
-                "likes_count",
-                "shares_count",
-                "published_at",
-                "tickers",
+            super::schema::RootKind::Object,
+            vec![
+                super::schema::field("id", "string", "News article ID (numeric string)"),
+                super::schema::field("title", "string", "Title"),
+                super::schema::field("description", "string", "Plain-text excerpt, no HTML"),
+                super::schema::field("body", "string", "Markdown content"),
+                super::schema::field("url", "string", "Full article page URL"),
+                super::schema::field("author", "object", "{id, name, avatar}"),
+                super::schema::field("images", "object[]", "{url, width, height}"),
+                super::schema::field("comments_count", "number", "Comments count"),
+                super::schema::field("likes_count", "number", "Likes count"),
+                super::schema::field("shares_count", "number", "Shares count"),
+                super::schema::field("published_at", "string", "Published time (RFC3339)"),
+                super::schema::field(
+                    "tickers",
+                    "string[]",
+                    "Related tickers, {symbol}.{market} e.g. [\"AAPL.US\", \"700.HK\"]",
+                ),
             ],
         ),
         "news search" => array(

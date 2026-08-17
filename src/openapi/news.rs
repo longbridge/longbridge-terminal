@@ -9,18 +9,22 @@ use anyhow::{Context, Result};
 use longbridge::httpclient::{Json, Method};
 use serde::{Deserialize, Deserializer, Serialize};
 
-/// proto3 JSON encodes `int64` as a string — accept both forms.
+/// proto3 JSON encodes `int64` as a string — accept both forms (and `null`,
+/// which `#[serde(default)]` alone does not cover). A malformed string is a
+/// hard error rather than silently becoming `0`.
 fn i64_lenient<'de, D: Deserializer<'de>>(deserializer: D) -> Result<i64, D::Error> {
     #[derive(Deserialize)]
     #[serde(untagged)]
     enum Value {
         Number(i64),
         String(String),
+        Null,
     }
-    Ok(match Value::deserialize(deserializer)? {
-        Value::Number(value) => value,
-        Value::String(value) => value.parse().unwrap_or_default(),
-    })
+    match Value::deserialize(deserializer)? {
+        Value::Number(value) => Ok(value),
+        Value::String(value) => value.parse().map_err(serde::de::Error::custom),
+        Value::Null => Ok(0),
+    }
 }
 
 /// Author of a [`NewsDetail`] article.
