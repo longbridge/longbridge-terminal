@@ -24,6 +24,7 @@ pub mod schema;
 pub mod screener;
 pub mod search;
 pub mod sec_edgar;
+pub mod serve;
 pub mod sharelist;
 pub mod statement;
 pub mod topic;
@@ -157,6 +158,37 @@ pub enum Commands {
         #[command(subcommand)]
         cmd: Option<AcpCmd>,
     },
+
+    /// Serve the Longbridge API over JSON-RPC on stdin/stdout, with live quote push
+    ///
+    /// A stable, long-lived data source for third-party clients — desktop
+    /// widgets, bar plugins, dashboards. The process authenticates and opens
+    /// the market WebSocket once, then answers newline-delimited JSON-RPC 2.0
+    /// requests and pushes real-time updates as server notifications. Clients
+    /// need only a JSON parser and a line splitter, no protocol library.
+    ///
+    /// Results are the raw Longbridge `OpenAPI` payloads, NOT the reshaped
+    /// `--format json` output the CLI prints: that output is tuned for AI
+    /// consumption and may change, whereas this is an API contract.
+    ///
+    /// Method surface (call `initialize` for the full list):
+    ///   `quote.*` — every `QuoteApi` call, e.g. `quote.quote`,
+    ///               `quote.candlesticks`, `quote.watchlist`
+    ///   `trade.*` — every `TradeApi` call, e.g. `trade.stock_positions`,
+    ///               `trade.account_balance`, `trade.submit_order`
+    ///   `api.get` / `api.post` — raw passthrough to any REST endpoint, which
+    ///               is how the fundamentals, screener, IPO and news commands
+    ///               reach their data
+    ///   `quote.subscribe` / `quote.unsubscribe` — live feed, no CLI equivalent
+    ///
+    /// Notifications: `quote.updated`, `quote.depth`, `quote.brokers`,
+    /// `quote.trades`.
+    ///
+    /// Exits when stdin closes, so it cannot outlive the client that spawned it.
+    ///
+    /// Example: longbridge serve
+    /// Example: echo '{"jsonrpc":"2.0","id":1,"method":"quote.watchlist"}' | longbridge serve
+    Serve,
 
     /// Chat with Longbridge AI in a full-screen TUI
     ///
@@ -4166,6 +4198,7 @@ IpoCmd::ProfitLoss { period, page, count } => {
         Commands::Auth { .. }
         | Commands::Acp { .. }
         | Commands::Ai { .. }
+        | Commands::Serve
         | Commands::Tui
         | Commands::Check
         | Commands::Update { .. }

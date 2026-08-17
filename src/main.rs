@@ -289,6 +289,27 @@ async fn main() {
             return;
         }
 
+        // `serve` is the only command that keeps the market WebSocket: every
+        // other one discards the push stream after `init_contexts`.
+        Some(cli::Commands::Serve) => {
+            let (quote_receiver, using_api_key, _) = match openapi::init_contexts().await {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Authentication failed: {e}");
+                    std::process::exit(1);
+                }
+            };
+            if let Err(e) = openapi::quote().member_id().await {
+                print_cli_error(&anyhow::anyhow!(e), using_api_key);
+                std::process::exit(1);
+            }
+            if let Err(e) = cli::serve::run(quote_receiver).await {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+            return;
+        }
+
         Some(cli::Commands::Init { invite_code }) => {
             if let Err(e) = cli::init::cmd_init(&invite_code) {
                 eprintln!("Error: {e}");

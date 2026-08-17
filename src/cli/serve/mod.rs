@@ -1,0 +1,186 @@
+//! `longbridge serve` — a long-lived JSON-RPC 2.0 endpoint for third-party
+//! clients (desktop widgets, bar plugins, scripts).
+//!
+//! # Why this exists
+//!
+//! Without it, a client polls by spawning `longbridge <cmd> --format json` on a
+//! timer. Every spawn re-does region detection, token load, WebSocket connect,
+//! one request, exit — so the cost dominates, and the client is stuck at
+//! poll-interval latency with no way to see a tick.
+//!
+//! `serve` pays that cost once and keeps the connection. Quotes then arrive as
+//! server-initiated notifications at WebSocket speed.
+//!
+//! # Wire format
+//!
+//! Newline-delimited JSON-RPC 2.0 over stdio: one compact JSON object per
+//! line. This is the base protocol LSP, MCP and ACP share, so a client needs
+//! only a JSON parser and a line splitter — no protocol library.
+//!
+//! Requests are handled concurrently: a slow `trade.stock_positions` must not
+//! stall the quote feed, so each one runs in its own task and every writer
+//! funnels through a single channel that owns stdout. Responses may therefore
+//! arrive out of order — correlate them by `id`, as JSON-RPC intends.
+//!
+//! ```text
+//! → {"jsonrpc":"2.0","id":1,"method":"quote.quote","params":{"symbols":["700.HK"]}}
+//! ← {"jsonrpc":"2.0","id":1,"result":[{"symbol":"700.HK","last_done":"320.000",...}]}
+//! → {"jsonrpc":"2.0","id":2,"method":"quote.subscribe","params":{"symbols":["700.HK"]}}
+//! ← {"jsonrpc":"2.0","id":2,"result":{"subscribed":[{"symbol":"700.HK","fields":["quote"]}]}}
+//! ← {"jsonrpc":"2.0","method":"quote.updated","params":{"symbol":"700.HK","last_done":"320.200",...}}
+//! ```
+//!
+//! See [`methods`] for where the method surface comes from and why its payloads
+//! are the raw upstream shapes rather than the CLI's `--format json` output.
+
+pub mod methods;
+pub mod params;
+pub mod protocol;
+
+use anyhow::Result;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::sync::mpsc;
+use tokio_stream::{Stream, StreamExt};
+
+use protocol::{
+    Message, API_ERROR, INVALID_PARAMS, INVALID_REQUEST, METHOD_NOT_FOUND, PARSE_ERROR,
+};
+
+/// Classify a handler error into a JSON-RPC code.
+///
+/// Parameter validation is the caller's fault (`INVALID_PARAMS`); anything else
+/// came back from Longbridge and is ours or the network's (`API_ERROR`).
+/// The distinction matters to a client deciding whether a retry can help.
+fn error_code_for(err: &anyhow::Error) -> i32 {
+    let msg = err.to_string();
+    if msg.starts_with("missing required parameter")
+        || msg.starts_with('`')
+        || msg.starts_with("unknown field")
+    {
+        INVALID_PARAMS
+    } else {
+        API_ERROR
+    }
+}
+
+/// Serve until stdin closes or the client calls `shutdown`.
+///
+/// `quote_stream` is the WebSocket push feed from `openapi::init_contexts`,
+/// which every other CLI command discards.
+pub async fn run(
+    quote_stream: impl Stream<Item = longbridge::quote::PushEvent> + Send + Unpin + 'static,
+) -> Result<()> {
+    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+
+    // Sole owner of stdout. Serializing writes through one task is what keeps
+    // concurrent handlers and the push feed from interleaving mid-line.
+    let writer = tokio::spawn(async move {
+        let mut out = tokio::io::stdout();
+        while let Some(line) = rx.recv().await {
+            if out.write_all(line.as_bytes()).await.is_err()
+                || out.write_all(b"\n").await.is_err()
+                || out.flush().await.is_err()
+            {
+                // The client is gone; further writes cannot succeed either.
+                break;
+            }
+        }
+    });
+
+    let push_tx = tx.clone();
+    let pusher = tokio::spawn(async move {
+        let mut quote_stream = quote_stream;
+        while let Some(event) = quote_stream.next().await {
+            if let Some(message) = methods::push_to_notification(event) {
+                if push_tx.send(message.to_line()).is_err() {
+                    break;
+                }
+            }
+        }
+    });
+
+    let mut lines = BufReader::new(tokio::io::stdin()).lines();
+    // EOF on stdin means the client exited: shut down rather than linger as an
+    // orphan holding a WebSocket open.
+    while let Some(line) = lines.next_line().await? {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        let request: protocol::Request = match serde_json::from_str(line) {
+            Ok(request) => request,
+            Err(e) => {
+                let code = if serde_json::from_str::<serde_json::Value>(line).is_ok() {
+                    // Valid JSON, wrong shape (e.g. no `method`).
+                    INVALID_REQUEST
+                } else {
+                    PARSE_ERROR
+                };
+                let _ = tx.send(Message::error(None, code, e.to_string()).to_line());
+                continue;
+            }
+        };
+
+        if request.method == "shutdown" {
+            if let Some(id) = request.id {
+                let _ = tx.send(Message::result(id, serde_json::Value::Null).to_line());
+            }
+            break;
+        }
+
+        if !methods::is_known(&request.method) {
+            // Unknown notifications are silently ignored, as JSON-RPC requires.
+            if let Some(id) = request.id {
+                let message = format!("unknown method `{}`", request.method);
+                let _ = tx.send(Message::error(Some(id), METHOD_NOT_FOUND, message).to_line());
+            }
+            continue;
+        }
+
+        // One task per request so a slow call cannot block the read loop —
+        // that is the whole point of holding the connection open.
+        let reply_tx = tx.clone();
+        tokio::spawn(async move {
+            let outcome = methods::call(&request.method, request.params).await;
+            // A notification (no `id`) still runs; it just owes no reply.
+            let Some(id) = request.id else { return };
+            let message = match outcome {
+                Ok(result) => Message::result(id, result),
+                Err(e) => Message::error(Some(id), error_code_for(&e), e.to_string()),
+            };
+            let _ = reply_tx.send(message.to_line());
+        });
+    }
+
+    // Drop the last sender so the writer drains what is queued and stops.
+    drop(tx);
+    pusher.abort();
+    let _ = writer.await;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parameter_mistakes_and_upstream_failures_get_different_codes() {
+        assert_eq!(
+            error_code_for(&anyhow::anyhow!("missing required parameter `symbols`")),
+            INVALID_PARAMS
+        );
+        assert_eq!(
+            error_code_for(&anyhow::anyhow!("`symbols` must not be empty")),
+            INVALID_PARAMS
+        );
+        assert_eq!(
+            error_code_for(&anyhow::anyhow!("unknown field `candles`; expected quote")),
+            INVALID_PARAMS
+        );
+        assert_eq!(
+            error_code_for(&anyhow::anyhow!("connection reset by peer")),
+            API_ERROR
+        );
+    }
+}
