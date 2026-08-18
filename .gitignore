@@ -5,3 +5,6 @@
 docs/
 .claude/
 .worktrees/
+
+# superpowers scratch/specs — never commit
+docs/superpowers/

@@ -17,6 +17,7 @@ pub mod account;
 pub mod answer;
 pub mod chart;
 pub mod editor;
+pub mod history;
 pub mod markdown;
 pub mod quotes;
 pub mod runtime;

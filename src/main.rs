@@ -253,24 +253,32 @@ async fn main() {
         // `longbridge ai`: the interactive Longbridge AI chat TUI. Needs a live
         // context, so a failed init exits (a prompt turn cannot run without it).
         Some(cli::Commands::Ai { agent }) => {
+            // Hydrate the persisted chat preferences (tool-call display, quote
+            // cards, notifications, the ticker tape). The market TUI does this on
+            // startup; `longbridge ai` launches on its own, so without this the
+            // Settings view would forget every change on the next launch.
+            crate::tui::settings::load_and_apply();
             // The chat opens signed out. Everything that needs credentials is
             // guarded inside it, and Settings offers to sign in — which then builds
             // the contexts in place, so the reader carries on in the same session.
             // Refusing to start was the wrong call: signing in is the one thing you
             // would come here to do without a token.
             let quote_receiver: Option<ai::QuoteStream> = match openapi::init_contexts().await {
-                Ok((rx, using_api_key, _)) => {
-                    if let Err(e) = openapi::quote().member_id().await {
-                        print_cli_error(&anyhow::anyhow!(e), using_api_key);
-                        return;
-                    }
-                    Some(Box::pin(rx))
-                }
+                Ok((rx, _, _)) => Some(Box::pin(rx)),
                 Err(_) => None,
             };
 
             let hook = std::panic::take_hook();
             std::panic::set_hook(Box::new(move |info| {
+                // `ai::run` also turns on bracketed paste and focus reporting;
+                // `exit_full_screen` only undoes the alternate screen and mouse
+                // capture, so disable them here too or a panic leaves the
+                // terminal echoing paste brackets and focus escapes.
+                let _ = crossterm::execute!(
+                    std::io::stdout(),
+                    crossterm::event::DisableBracketedPaste,
+                    crossterm::event::DisableFocusChange,
+                );
                 Terminal::exit_full_screen();
                 hook(info);
             }));

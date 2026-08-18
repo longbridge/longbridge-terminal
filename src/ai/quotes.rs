@@ -107,18 +107,113 @@ impl QuoteCardData {
         self.low = price(q.low);
         self.volume = format_volume(u64::try_from(q.volume).unwrap_or(0));
         self.turnover = format_volume(u64::try_from(q.turnover.trunc()).unwrap_or(0));
-        self.at = format!(
-            "{:02}:{:02}:{:02}",
-            q.timestamp.hour(),
-            q.timestamp.minute(),
-            q.timestamp.second()
-        );
+        // HH:MM, matching `from_quote`, so the displayed time keeps one format
+        // rather than gaining seconds the moment the first live push lands.
+        self.at = format!("{:02}:{:02}", q.timestamp.hour(), q.timestamp.minute());
     }
+}
+
+/// The richer, slower-moving figures the expanded panel shows below the price.
+///
+/// Fetched on panel open (a calc-index and a static-info call) rather than folded
+/// into [`QuoteCardData`], because the compact ticker cards do not want the two
+/// extra requests. Every field is optional: the endpoints return only what a
+/// security's market has, and a figure that is missing is simply not drawn.
+#[derive(Default)]
+pub struct QuoteDetail {
+    /// Average traded price, `turnover / volume`.
+    pub avg: Option<String>,
+    /// Amplitude, as a percentage.
+    pub amplitude: Option<String>,
+    /// Turnover rate, as a percentage.
+    pub turnover_rate: Option<String>,
+    /// Volume ratio against the recent average.
+    pub volume_ratio: Option<String>,
+    /// Price/earnings, trailing twelve months.
+    pub pe_ttm: Option<String>,
+    /// Price/book.
+    pub pb: Option<String>,
+    /// Total market value, abbreviated.
+    pub market_cap: Option<String>,
+    /// Earnings per share, trailing twelve months.
+    pub eps_ttm: Option<String>,
+    /// Net assets per share.
+    pub bps: Option<String>,
+}
+
+/// Fetch the panel's extra figures for one security.
+///
+/// Two calls: calc-index for the market-derived ratios and the average price, and
+/// static-info for the per-share figures. Either can fail independently — the
+/// panel shows whatever came back, so a partial answer still enriches it.
+pub async fn fetch_detail(symbol: &str) -> Option<QuoteDetail> {
+    use longbridge::quote::CalcIndex;
+
+    if !crate::openapi::is_ready() {
+        return None;
+    }
+    let indexes = vec![
+        CalcIndex::Amplitude,
+        CalcIndex::TurnoverRate,
+        CalcIndex::VolumeRatio,
+        CalcIndex::PeTtmRatio,
+        CalcIndex::PbRatio,
+        CalcIndex::TotalMarketValue,
+        CalcIndex::Volume,
+        CalcIndex::Turnover,
+    ];
+    let calc = crate::openapi::quote()
+        .calc_indexes(vec![symbol.to_string()], indexes)
+        .await
+        .ok()
+        .and_then(|mut rows| rows.pop());
+    let info = crate::openapi::helpers::get_static_info([symbol])
+        .await
+        .ok()
+        .and_then(|mut rows| rows.pop());
+    if calc.is_none() && info.is_none() {
+        return None;
+    }
+
+    let mut detail = QuoteDetail::default();
+    if let Some(c) = calc {
+        // Average price is derivable but not returned, so it is computed from the
+        // two figures that are: a session's turnover over its volume.
+        detail.avg = match (c.turnover, c.volume) {
+            (Some(t), Some(v)) if v > 0 => Some(price(t / Decimal::from(v))),
+            _ => None,
+        };
+        detail.amplitude = c.amplitude.map(percent);
+        detail.turnover_rate = c.turnover_rate.map(percent);
+        detail.volume_ratio = c.volume_ratio.map(ratio);
+        detail.pe_ttm = c.pe_ttm_ratio.map(ratio);
+        detail.pb = c.pb_ratio.map(ratio);
+        detail.market_cap = c
+            .total_market_value
+            .filter(|v| !v.is_zero())
+            .and_then(|v| v.trunc().to_u64())
+            .map(format_volume);
+    }
+    if let Some(i) = info {
+        detail.eps_ttm = (!i.eps_ttm.is_zero()).then(|| ratio(i.eps_ttm));
+        detail.bps = (!i.bps.is_zero()).then(|| ratio(i.bps));
+    }
+    Some(detail)
 }
 
 /// A price, trimmed of trailing zeros so `182.400` reads as `182.4`.
 fn price(value: Decimal) -> String {
     value.round_dp(3).normalize().to_string()
+}
+
+/// A ratio (PE, PB, EPS…) to two places, trailing zeros trimmed.
+fn ratio(value: Decimal) -> String {
+    value.round_dp(2).normalize().to_string()
+}
+
+/// A figure the endpoint already scaled to a percentage, given its sign.
+fn percent(value: Decimal) -> String {
+    format!("{}%", ratio(value))
 }
 
 /// A change, always carrying its sign so a gain is unambiguous.
@@ -164,13 +259,18 @@ pub async fn fetch_cards_for(symbols: &[String]) -> HashMap<String, QuoteCardDat
         return cards;
     };
     // Names come from a second batched call. A card without one is still useful,
-    // so a failure here degrades the card rather than losing it.
+    // so a failure here degrades the card rather than losing it. The name follows
+    // the reader's locale (Chinese for zh, English otherwise), matching the CLI.
+    let zh = matches!(crate::locale::get(), "zh-CN" | "zh-HK");
     let names: HashMap<String, String> = crate::openapi::helpers::get_static_info(symbols.to_vec())
         .await
         .map(|infos| {
             infos
                 .into_iter()
-                .map(|i| (i.symbol, i.name_cn))
+                .map(|i| {
+                    let name = if zh { i.name_cn } else { i.name_en };
+                    (i.symbol, name)
+                })
                 .filter(|(_, name)| !name.is_empty())
                 .collect()
         })

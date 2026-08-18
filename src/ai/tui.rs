@@ -17,10 +17,7 @@ use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
-use crossterm::event::{
-    Event, EventStream, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
-};
-use futures::StreamExt;
+use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
@@ -53,6 +50,8 @@ enum View {
 
 /// Transcript lines a page-scroll keystroke moves.
 const SCROLL_PAGE: u16 = 5;
+/// Rows a PageUp/PageDown moves the selection in a list view.
+const LIST_PAGE: usize = 8;
 
 /// Braille spinner frames for the "generating" status line.
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -144,11 +143,16 @@ impl Slash {
     }
 }
 
-const SLASH: [Slash; 11] = [
+const SLASH: [Slash; 12] = [
     Slash {
         name: "/new",
         aliases: &["/clear"],
         desc: "Ai.SlashNew",
+    },
+    Slash {
+        name: "/retry",
+        aliases: &["/regenerate"],
+        desc: "Ai.SlashRetry",
     },
     Slash {
         name: "/copy",
@@ -237,6 +241,40 @@ struct QuestionState {
     answers: HashMap<String, String>,
 }
 
+/// In-transcript search (Ctrl+F): a query and which of its matches is focused.
+///
+/// The matches themselves are recomputed each render from the transcript cache
+/// rather than stored, so they stay correct as the conversation grows.
+#[derive(Default)]
+struct FindState {
+    query: String,
+    /// Index of the focused match within the current match list.
+    current: usize,
+}
+
+/// Content-line indices whose text contains `query`, case-insensitively, in order.
+fn find_matches(lines: &[String], query: &str) -> Vec<usize> {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return Vec::new();
+    }
+    lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.to_lowercase().contains(&q))
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// The scroll-back (lines from the bottom) that brings content `line` into view,
+/// a couple of rows below the top so the reader sees some context above it.
+fn scroll_to_line(total: usize, height: usize, max_scroll: u16, line: usize) -> u16 {
+    let start = line.saturating_sub(2);
+    let bottom = (start + height).min(total);
+    let scroll = total.saturating_sub(bottom);
+    u16::try_from(scroll).unwrap_or(u16::MAX).min(max_scroll)
+}
+
 impl QuestionState {
     fn from_interrupt(interrupt: &Value) -> Self {
         let tool_call_id = interrupt
@@ -301,18 +339,51 @@ struct Ui {
     slash_rows: Vec<(usize, Rect)>,
     /// The transcript area, recorded so a drag there starts a text selection.
     transcript: Rect,
-    /// Active drag selection as `(anchor, cursor)` in absolute `(row, col)`
-    /// screen cells; `None` when nothing is selected.
-    selection: Option<((u16, u16), (u16, u16))>,
+    /// Active selection as `(anchor, cursor)`, each `(content-line, display-col)`
+    /// in *content* coordinates — the line's index into the whole transcript, not
+    /// a screen row. Content coordinates are what let a selection survive scrolling
+    /// (and be dragged past the visible edge): the same line keeps the same index
+    /// as the view moves under it. `None` when nothing is selected.
+    selection: Option<((usize, u16), (usize, u16))>,
+    /// Content index of the first visible transcript row, and how many rows are
+    /// visible, recorded during render so a mouse cell can be mapped to a content
+    /// line (and back) while dragging a selection.
+    view_start: usize,
+    view_rows: usize,
+    /// Total transcript rows at the last render, for clamping a drag to content.
+    view_total: usize,
     /// The text under the current selection, extracted during render.
     selected_text: Option<String>,
     /// Cached rendered lines of the committed transcript and the signature they
     /// were built for, so Markdown is not re-parsed every frame.
     transcript_cache: Vec<Line<'static>>,
+    /// Plain text per cached line, rebuilt alongside `transcript_cache`, so
+    /// in-transcript search does not re-flatten every span each keystroke.
+    cache_text: Vec<String>,
     cache_sig: u64,
+    /// A live quote arrived but the transcript was not rebuilt for it (the reader
+    /// was scrolled up, or a rebuild just happened), so the inline price cards are
+    /// a tick stale. Flushed when the reader returns to the bottom.
+    cards_dirty: bool,
+    /// When the transcript was last rebuilt for a live quote, so a burst of pushes
+    /// refreshes the cards a few times a second rather than re-rendering every
+    /// chart on every tick — which is what made a chart-heavy scroll stutter.
+    cards_synced_at: Option<std::time::Instant>,
+    /// In-transcript search state (Ctrl+F), `None` when the find bar is closed.
+    find: Option<FindState>,
     /// Max scroll-back for the current transcript (recorded during render), so
     /// input handlers can clamp and never scroll the view into a blank screen.
     max_scroll: u16,
+    /// Total transcript rows at the previous render, so that while the reader is
+    /// scrolled up a streaming answer keeps their view anchored to the same
+    /// content instead of drifting as new lines are appended below.
+    prev_total: usize,
+    /// Plain text of each visible transcript row, recorded during render so a
+    /// double-click can find the word under the pointer.
+    visible_text: Vec<String>,
+    /// The previous left-click's time, cell, and consecutive-click count, for
+    /// double- (word) and triple-click (line) selection.
+    last_click: Option<(std::time::Instant, u16, u16, u8)>,
     /// Live quotes for `x-widget` tickers, fetched after a turn, keyed by symbol.
     quotes: HashMap<String, super::quotes::QuoteCardData>,
     /// True while the server History list is being fetched.
@@ -330,6 +401,14 @@ struct Ui {
     help: Option<u16>,
     /// Where the panel's `WEB` button is, so it can be clicked.
     open_button: Option<Rect>,
+    /// Where the panel's `‹` / `›` arrows are, when the conversation named more
+    /// than one security, so a click can step to the previous / next one.
+    prev_button: Option<Rect>,
+    next_button: Option<Rect>,
+    /// The column a clicked security sat at, so the drawer opens directly beneath
+    /// it rather than in the corner. `None` for a keyboard/command open, which has
+    /// no on-screen anchor and falls back to the right edge.
+    quote_anchor_x: Option<u16>,
     /// Where the topmost thing's `[Close]` button is. One field rather than one per
     /// overlay: only ever one is on screen, and the click path then works the same
     /// in every view.
@@ -337,6 +416,9 @@ struct Ui {
     /// The day's price path per security, for the panel's sparkline.
     paths: HashMap<String, Vec<f64>>,
     paths_tx: Option<UnboundedSender<(String, Vec<f64>)>>,
+    /// The panel's richer figures per security, fetched lazily on open.
+    details: HashMap<String, super::quotes::QuoteDetail>,
+    details_tx: Option<UnboundedSender<(String, super::quotes::QuoteDetail)>>,
     /// Who the chat is signed in as, for the Settings header.
     session: super::account::Session,
     /// Securities this conversation has mentioned, in the order they appeared.
@@ -348,6 +430,9 @@ struct Ui {
     aliases: HashMap<String, String>,
     /// Where the ticker has rotated to, when it is wider than the row.
     tape_at: usize,
+    /// How many entries the ticker drew last frame, so stepping the open drawer
+    /// knows which securities are on screen and pages only when the next one is not.
+    tape_drawn: usize,
     /// When the ticker last turned over, so the dwell is wall-clock rather than a
     /// count of frames.
     tape_shown_at: Option<std::time::Instant>,
@@ -370,7 +455,9 @@ struct Ui {
     /// Set to break the event loop (via `/exit` or a double Ctrl+C).
     should_quit: bool,
     /// True after one Ctrl+C on an empty prompt; a second one exits.
-    ctrl_c_armed: bool,
+    /// When the last Ctrl+C on an empty prompt was pressed; a second within
+    /// [`CTRL_C_WINDOW`] exits, but the armed state expires so it never lingers.
+    ctrl_c_armed: Option<std::time::Instant>,
     /// Whether the terminal window currently has focus; a turn that finishes
     /// while unfocused raises a desktop notification.
     focused: bool,
@@ -394,10 +481,20 @@ impl Ui {
             slash_rows: Vec::new(),
             transcript: Rect::default(),
             selection: None,
+            view_start: 0,
+            view_rows: 0,
+            view_total: 0,
             selected_text: None,
             transcript_cache: Vec::new(),
+            cache_text: Vec::new(),
             cache_sig: 0,
+            cards_dirty: false,
+            cards_synced_at: None,
+            find: None,
             max_scroll: 0,
+            prev_total: 0,
+            visible_text: Vec::new(),
+            last_click: None,
             quotes: HashMap::new(),
             sessions_loading: false,
             sessions_error: false,
@@ -406,13 +503,19 @@ impl Ui {
             quote_panel: None,
             help: None,
             open_button: None,
+            prev_button: None,
+            next_button: None,
+            quote_anchor_x: None,
             close_button: None,
             paths: HashMap::new(),
             paths_tx: None,
+            details: HashMap::new(),
+            details_tx: None,
             session: super::account::local(),
             tape: Vec::new(),
             aliases: HashMap::new(),
             tape_at: 0,
+            tape_drawn: 0,
             tape_shown_at: None,
             pending: None,
             login: None,
@@ -422,7 +525,7 @@ impl Ui {
             stop_button: None,
             turn_started: None,
             should_quit: false,
-            ctrl_c_armed: false,
+            ctrl_c_armed: None,
             focused: true,
         }
     }
@@ -471,6 +574,12 @@ impl Ui {
         if view != View::Question {
             self.question = None;
         }
+        // The quote panel overlays the chat; only Esc *in Chat* closes it. Leaving
+        // another view means it would float over that view with no way to dismiss
+        // it there, so a switch away from Chat takes it down.
+        if view != View::Chat {
+            self.quote_panel = None;
+        }
     }
 
     fn clamp_sel(&mut self) {
@@ -482,6 +591,18 @@ impl Ui {
     fn reset_render(&mut self) {
         self.quotes.clear();
         self.cache_sig = 0;
+        // The title ticker is the conversation's securities, so a fresh chat
+        // starts with an empty tape rather than the last chat's tickers.
+        self.tape.clear();
+        self.tape_at = 0;
+        // These are all keyed to the previous conversation too. Leaving the panel
+        // open would strand it — its quote was just cleared, so it would render a
+        // "loading" placeholder forever with nothing to refetch it — and leaving
+        // the sparkline paths or the confirmed-ticker aliases would show one
+        // conversation's securities in the next.
+        self.quote_panel = None;
+        self.paths.clear();
+        self.aliases.clear();
     }
 }
 
@@ -499,6 +620,9 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
     let mut state = ChatState::new(agent_uid, t!("Ai.Welcome").to_string());
     let mut ui = Ui::new();
     let mut editor = Editor::new();
+    // Seed the prompt history from disk so ↑/↓ recalls prompts from previous
+    // sessions, the way a shell does.
+    editor.seed_history(super::history::load());
     let mut turn: Option<JoinHandle<()>> = None;
     let (tx, mut turn_rx) = unbounded_channel::<ChatEvent>();
     let (cards_tx, mut cards_rx) =
@@ -512,6 +636,8 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
     // until it lands.
     let (paths_tx, mut paths_rx) = unbounded_channel::<(String, Vec<f64>)>();
     ui.paths_tx = Some(paths_tx);
+    let (details_tx, mut details_rx) = unbounded_channel::<(String, super::quotes::QuoteDetail)>();
+    ui.details_tx = Some(details_tx);
     let (login_tx, mut login_rx) = unbounded_channel::<Result<(), String>>();
     let mut login_task: Option<JoinHandle<()>> = None;
     let (aliases_tx, mut aliases_rx) = unbounded_channel::<HashMap<String, String>>();
@@ -520,7 +646,6 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
         let _ = session_tx.send(super::account::member_id().await);
     });
     ui.load_tx = Some(load_tx);
-    let mut events = EventStream::new();
     // Drives the marquee of truncated rows; only consulted while `animating`.
     let mut ticker = tokio::time::interval(Duration::from_millis(120));
     // Bracketed paste makes multi-line pastes arrive as one `Event::Paste`
@@ -533,26 +658,40 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
         crossterm::event::EnableBracketedPaste,
         crossterm::event::EnableFocusChange,
     );
+    // Read terminal events on a blocking thread into a channel we own. Unlike
+    // crossterm's async `EventStream`, a tokio receiver can be drained with
+    // `try_recv`, so a fast wheel-scroll's burst is coalesced into one redraw
+    // instead of one redraw per tick — which let the view fall behind the wheel.
+    let (event_tx, mut event_rx) = unbounded_channel::<Event>();
+    std::thread::spawn(move || {
+        while let Ok(event) = crossterm::event::read() {
+            if event_tx.send(event).is_err() {
+                break;
+            }
+        }
+    });
 
     loop {
-        terminal.draw(|f| view(f, &mut ui, &state, &editor))?;
+        terminal.draw(|f| view(f, &mut ui, &mut state, &editor))?;
         tokio::select! {
             _ = ticker.tick(), if ui.animating => {
                 ui.tick = ui.tick.wrapping_add(1);
             }
-            maybe_event = events.next() => {
-                match maybe_event {
-                    Some(Ok(Event::Key(key))) if key.kind != KeyEventKind::Release => {
-                        on_key(key, &mut ui, &mut state, &mut editor, &mut turn, &tx);
+            maybe_event = event_rx.recv() => {
+                let Some(ev) = maybe_event else { break };
+                dispatch_event(ev, &mut ui, &mut state, &mut editor, &mut turn, &tx);
+                // Drain the rest of a buffered burst before drawing, so a fast
+                // wheel-scroll coalesces into a single frame and reversing direction
+                // takes effect at once. Bounded so a flood still yields to a redraw.
+                let mut budget = 256;
+                while budget > 0 {
+                    match event_rx.try_recv() {
+                        Ok(ev) => {
+                            dispatch_event(ev, &mut ui, &mut state, &mut editor, &mut turn, &tx);
+                            budget -= 1;
+                        }
+                        Err(_) => break,
                     }
-                    Some(Ok(Event::Mouse(m))) => {
-                        on_mouse(m, &mut ui, &mut state, &mut editor, &mut turn, &tx);
-                    }
-                    Some(Ok(Event::Paste(text))) => editor.insert_str(&text),
-                    Some(Ok(Event::FocusGained)) => ui.focused = true,
-                    Some(Ok(Event::FocusLost)) => ui.focused = false,
-                    Some(Ok(_)) => {}
-                    Some(Err(_)) | None => break,
                 }
             }
             Some(event) = turn_rx.recv() => {
@@ -592,12 +731,31 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
                 if let longbridge::quote::PushEventDetail::Quote(quote) = &event.detail {
                     if let Some(card) = ui.quotes.get_mut(&event.symbol) {
                         card.apply_push(quote);
-                        ui.cache_sig = 0;
+                        // A price tick changes the inline quote cards, not the
+                        // charts, but the transcript is cached as one unit — so
+                        // rebuilding it re-renders every chart. Only do that while
+                        // the reader is at the bottom watching the price, and then
+                        // only a few times a second; scrolled up through a
+                        // chart-heavy history it would just make scrolling stutter.
+                        let now = std::time::Instant::now();
+                        let due = ui
+                            .cards_synced_at
+                            .is_none_or(|t| now.duration_since(t) >= CARD_REFRESH);
+                        if state.scroll == 0 && due {
+                            ui.cache_sig = 0;
+                            ui.cards_synced_at = Some(now);
+                            ui.cards_dirty = false;
+                        } else {
+                            ui.cards_dirty = true;
+                        }
                     }
                 }
             }
             Some((symbol, path)) = paths_rx.recv() => {
                 ui.paths.insert(symbol, path);
+            }
+            Some((symbol, detail)) = details_rx.recv() => {
+                ui.details.insert(symbol, detail);
             }
             Some(member_id) = session_rx.recv() => {
                 ui.session.member_id = member_id;
@@ -878,6 +1036,38 @@ fn now_secs() -> u64 {
 
 // ── input ─────────────────────────────────────────────────────────────────────
 
+/// Route one terminal event to its handler. Split out of the loop so a burst of
+/// buffered events can be drained through it before a single redraw.
+fn dispatch_event(
+    event: Event,
+    ui: &mut Ui,
+    state: &mut ChatState,
+    editor: &mut Editor,
+    turn: &mut Option<JoinHandle<()>>,
+    tx: &UnboundedSender<ChatEvent>,
+) {
+    match event {
+        Event::Key(key) if key.kind != KeyEventKind::Release => {
+            on_key(key, ui, state, editor, turn, tx);
+        }
+        Event::Mouse(m) => on_mouse(m, ui, state, editor, turn, tx),
+        // Paste only when the prompt is on screen. In a list view the editor is
+        // hidden, so a paste there would silently fill an invisible input; route it
+        // to the History search instead.
+        Event::Paste(text) => match ui.view {
+            View::Chat => editor.paste(&text),
+            View::Sessions => {
+                ui.search.push_str(text.trim());
+                ui.sel = 0;
+            }
+            _ => {}
+        },
+        Event::FocusGained => ui.focused = true,
+        Event::FocusLost => ui.focused = false,
+        _ => {}
+    }
+}
+
 /// Handle one keypress. Quitting is signalled via `ui.should_quit`.
 fn on_key(
     key: crossterm::event::KeyEvent,
@@ -893,7 +1083,7 @@ fn on_key(
         return;
     }
     // Any other key disarms the "press Ctrl+C again to exit" prompt.
-    ui.ctrl_c_armed = false;
+    ui.ctrl_c_armed = None;
     // Tab completes the highlighted slash command; it has no other use now that
     // views are reached via `/` commands rather than a tab bar.
     if key.code == KeyCode::Tab {
@@ -920,14 +1110,14 @@ fn on_ctrl_c(
 ) {
     if state.busy {
         cancel_turn(state, turn);
-        ui.ctrl_c_armed = false;
+        ui.ctrl_c_armed = None;
     } else if !editor.is_blank() {
         editor.clear();
-        ui.ctrl_c_armed = false;
-    } else if ui.ctrl_c_armed {
+        ui.ctrl_c_armed = None;
+    } else if ui.ctrl_c_armed.is_some_and(|t| t.elapsed() < CTRL_C_WINDOW) {
         ui.should_quit = true;
     } else {
-        ui.ctrl_c_armed = true;
+        ui.ctrl_c_armed = Some(std::time::Instant::now());
         ui.notice = Some(t!("Ai.PressCtrlCAgain").to_string());
     }
 }
@@ -963,6 +1153,11 @@ fn on_sessions_key(key: crossterm::event::KeyEvent, ui: &mut Ui, state: &mut Cha
             let last = ui.row_count().saturating_sub(1);
             ui.sel = (ui.sel + 1).min(last);
         }
+        KeyCode::PageUp => ui.sel = ui.sel.saturating_sub(LIST_PAGE),
+        KeyCode::PageDown => {
+            let last = ui.row_count().saturating_sub(1);
+            ui.sel = (ui.sel + LIST_PAGE).min(last);
+        }
         KeyCode::Enter => activate(ui, state),
         KeyCode::Backspace => {
             ui.search.pop();
@@ -986,6 +1181,7 @@ fn on_chat_key(
 ) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
     let newline = key
         .modifiers
         .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT);
@@ -1004,6 +1200,22 @@ fn on_chat_key(
         close_quote_panel(ui);
         return;
     }
+    // While the panel is open the arrows walk the conversation's securities in
+    // place, so the reader flips through them without closing and reopening. Only
+    // the bare arrows — a modified one still belongs to the chat behind it.
+    if ui.quote_panel.is_some() && !ctrl && !shift && !alt {
+        match key.code {
+            KeyCode::Left => {
+                step_quote_panel(ui, -1);
+                return;
+            }
+            KeyCode::Right => {
+                step_quote_panel(ui, 1);
+                return;
+            }
+            _ => {}
+        }
+    }
     // Help is modal, because there is nothing to type at while reading it.
     if let Some(offset) = ui.help {
         match key.code {
@@ -1012,21 +1224,66 @@ fn on_chat_key(
             KeyCode::PageUp => ui.help = Some(offset.saturating_sub(10)),
             KeyCode::PageDown => ui.help = Some(offset.saturating_add(10)),
             KeyCode::Home => ui.help = Some(0),
+            // A large offset the render clamps to the last page.
+            KeyCode::End => ui.help = Some(u16::MAX),
             _ => ui.help = None,
         }
         return;
     }
-    // When the slash palette is open, arrows/Enter/Esc drive it instead of the
-    // transcript or history, matching the grok-style command menu.
-    if slash_active(editor) {
-        let count = slash_matches(editor).len();
+    // The find bar owns the keyboard while open: it is a small query field over
+    // the transcript, so a keystroke searches rather than composing a prompt.
+    if let Some(mut find) = ui.find.take() {
+        let count = find_matches(&ui.cache_text, &find.query).len();
+        match key.code {
+            KeyCode::Esc => return, // leave it closed
+            // Enter / ↓ walk forward through hits, ↑ walks back, both wrapping.
+            KeyCode::Enter | KeyCode::Down if count > 0 => {
+                find.current = (find.current + 1) % count;
+            }
+            KeyCode::Up if count > 0 => {
+                find.current = (find.current + count - 1) % count;
+            }
+            KeyCode::Backspace => {
+                find.query.pop();
+                find.current = 0;
+            }
+            KeyCode::Char(c) if !ctrl && !alt => {
+                find.query.push(c);
+                find.current = 0;
+            }
+            _ => {}
+        }
+        // Scroll the focused hit into view.
+        let matches = find_matches(&ui.cache_text, &find.query);
+        if let Some(&line) = matches.get(find.current) {
+            state.scroll = scroll_to_line(
+                ui.view_total,
+                ui.transcript.height as usize,
+                ui.max_scroll,
+                line,
+            );
+        }
+        ui.find = Some(find);
+        return;
+    }
+    // When the slash palette is open — a `/` prefix that still matches a command —
+    // arrows/Enter/Esc drive it instead of the transcript or history. Once the
+    // input no longer matches any command (e.g. "/why is …"), the palette is not
+    // shown and these keys fall through, so a prompt that merely starts with `/`
+    // can still be sent rather than having its Enter swallowed.
+    let count = slash_matches(editor).len();
+    if slash_active(editor) && count > 0 {
+        // The selection wraps, so ↑ past the top lands on the last command and ↓
+        // past the bottom on the first — a short list is quicker to reach either
+        // way round than to walk back through.
+        let cur = ui.slash_sel.min(count - 1);
         match key.code {
             KeyCode::Up => {
-                ui.slash_sel = ui.slash_sel.saturating_sub(1);
+                ui.slash_sel = if cur == 0 { count - 1 } else { cur - 1 };
                 return;
             }
             KeyCode::Down => {
-                ui.slash_sel = (ui.slash_sel + 1).min(count.saturating_sub(1));
+                ui.slash_sel = if cur + 1 >= count { 0 } else { cur + 1 };
                 return;
             }
             KeyCode::Enter if !newline => {
@@ -1065,9 +1322,27 @@ fn on_chat_key(
         KeyCode::Char('e') if ctrl => editor.end(),
         KeyCode::Char('u') if ctrl => editor.clear(),
         KeyCode::Char('k') if ctrl => editor.kill_to_end(),
+        // Ctrl+P/Ctrl+N walk prompt history, the shell/emacs reflex — an
+        // always-available alias for ↑/↓ that never collides with cursor movement.
+        KeyCode::Char('p') if ctrl => editor.recall_prev(),
+        KeyCode::Char('n') if ctrl => editor.recall_next(),
+        // Ctrl+Z undoes the last edit to the prompt; Ctrl+Y replays it.
+        KeyCode::Char('z') if ctrl => editor.undo(),
+        KeyCode::Char('y') if ctrl => editor.redo(),
+        // Ctrl+F opens the in-transcript find bar.
+        KeyCode::Char('f') if ctrl => ui.find = Some(FindState::default()),
+        // Ctrl+R opens saved conversations, the shell's reverse-history reflex.
+        KeyCode::Char('r') if ctrl => open_sessions(ui),
         KeyCode::Backspace => editor.backspace(),
+        // Word-wise movement with Alt/Ctrl held, char-wise otherwise.
+        KeyCode::Left if ctrl || alt => editor.word_left(),
+        KeyCode::Right if ctrl || alt => editor.word_right(),
         KeyCode::Left => editor.left(),
         KeyCode::Right => editor.right(),
+        // Ctrl+Home/End jump the transcript to the top / bottom (latest); plain
+        // Home/End stay with the input line.
+        KeyCode::Home if ctrl => state.scroll = ui.max_scroll,
+        KeyCode::End if ctrl => state.scroll = 0,
         KeyCode::Home => editor.home(),
         KeyCode::End => editor.end(),
         // Scrolling the transcript. A MacBook's built-in keyboard has no
@@ -1091,11 +1366,25 @@ fn on_chat_key(
                 editor.recall_next();
             }
         }
+        // Alt+1..9 sends the Nth suggested follow-up without reaching for the
+        // mouse — the keyboard route to what clicking a green chip does.
+        KeyCode::Char(d @ '1'..='9') if alt => {
+            let idx = (d as usize) - ('1' as usize);
+            if idx < state.further.len().min(FURTHER_SHOWN) {
+                click_chip(Chip::Further(idx), ui, state, editor, turn, tx);
+            }
+        }
         // An unhandled Ctrl combination is swallowed. Without this the fallback
         // below types its letter, so every unbound Ctrl+key silently inserted
         // text.
         KeyCode::Char(_) if ctrl => {}
-        KeyCode::Char(c) => editor.insert_char(c),
+        KeyCode::Char(c) => {
+            // Starting to type the next message clears a stale one-off notice
+            // ("Copied to clipboard", "Exported to …") that would otherwise hang
+            // above the prompt.
+            ui.notice = None;
+            editor.insert_char(c);
+        }
         _ => {}
     }
     // Editing the query re-filters the palette; keep the highlight in range.
@@ -1114,32 +1403,52 @@ fn submit(
     turn: &mut Option<JoinHandle<()>>,
     tx: &UnboundedSender<ChatEvent>,
 ) {
-    let text = editor.text();
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
+    if editor.is_blank() {
         return;
     }
-    // A bare `exit` / `quit` also leaves, like a REPL — no leading slash needed.
-    if trimmed.eq_ignore_ascii_case("exit") || trimmed.eq_ignore_ascii_case("quit") {
-        ui.should_quit = true;
-        return;
-    }
-    // A known `/command` runs locally; anything else starting with `/` is just
-    // a prompt. Everything after the name is the command's argument.
-    if trimmed.starts_with('/') {
-        let (name, args) = split_command(trimmed);
-        if let Some(key) = slash_lookup(name) {
-            editor.clear();
-            exec_slash(key, args, ui, state);
+    let typed = editor.text();
+    let trimmed = typed.trim();
+    // A command is the typed text alone — a folded paste is content, never a
+    // command — so `exit`/`/…` are only interpreted when nothing is attached.
+    if editor.attachments().is_empty() {
+        // A bare `exit` / `quit` leaves, like a REPL — no leading slash needed.
+        if trimmed.eq_ignore_ascii_case("exit") || trimmed.eq_ignore_ascii_case("quit") {
+            ui.should_quit = true;
             return;
         }
+        // A known `/command` runs locally; anything else starting with `/` is
+        // just a prompt. Everything after the name is the command's argument.
+        if trimmed.starts_with('/') {
+            let (name, args) = split_command(trimmed);
+            if let Some(key) = slash_lookup(name) {
+                editor.clear();
+                // Retry starts a turn, so it needs the turn/sender the other
+                // commands do not — handle it here rather than in `exec_slash`.
+                if key == "retry" {
+                    retry_last(ui, state, turn, tx);
+                } else {
+                    exec_slash(key, args, ui, state);
+                }
+                return;
+            }
+        }
     }
+    // The sent prompt folds the pasted blocks back in; history keeps only the
+    // typed part, so ↑ recalls the question, not a wall of pasted log.
+    let query = editor.submission_text();
+    let remember = || {
+        if !trimmed.is_empty() {
+            super::history::append(trimmed);
+        }
+    };
     // Mid-turn, the prompt joins the queue instead of starting a second concurrent
     // turn on the same conversation. It goes out when this one is done — and a turn
     // is already running, so there is nothing to check about credentials here.
     if state.busy {
-        let query = trimmed.to_string();
-        editor.push_history(&query);
+        if !trimmed.is_empty() {
+            editor.push_history(trimmed);
+        }
+        remember();
         editor.clear();
         ui.notice = None;
         ui.selection = None;
@@ -1153,8 +1462,10 @@ fn submit(
         ui.notice = Some(t!("Ai.SignInToAsk").to_string());
         return;
     }
-    let query = trimmed.to_string();
-    editor.push_history(&query);
+    if !trimmed.is_empty() {
+        editor.push_history(trimmed);
+    }
+    remember();
     editor.clear();
     ui.notice = None;
     ui.selection = None;
@@ -1162,6 +1473,40 @@ fn submit(
 }
 
 /// Send `query` as the next turn.
+/// Re-ask the last question for a fresh answer (`/retry`).
+///
+/// Re-sends the most recent user prompt as a new turn — the honest reading of a
+/// server that threads by message: it asks again rather than editing the answer
+/// in place. Refuses while a turn is running or signed out, and says why.
+fn retry_last(
+    ui: &mut Ui,
+    state: &mut ChatState,
+    turn: &mut Option<JoinHandle<()>>,
+    tx: &UnboundedSender<ChatEvent>,
+) {
+    if state.busy {
+        ui.notice = Some(t!("Ai.RetryBusy").to_string());
+        return;
+    }
+    if !crate::openapi::is_ready() {
+        ui.notice = Some(t!("Ai.SignInToAsk").to_string());
+        return;
+    }
+    let Some(last) = state
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == Role::User)
+        .map(|m| m.text.clone())
+    else {
+        ui.notice = Some(t!("Ai.NothingToRetry").to_string());
+        return;
+    };
+    ui.notice = None;
+    ui.selection = None;
+    start_turn(last, state, turn, tx);
+}
+
 fn start_turn(
     query: String,
     state: &mut ChatState,
@@ -1195,14 +1540,23 @@ fn exec_slash(name: &str, args: &str, ui: &mut Ui, state: &mut ChatState) {
         // opens the security the answer mentioned last, which is usually the one
         // the reader is looking at.
         "quote" => {
-            let symbol = if args.is_empty() {
-                last_symbol(state)
+            // A keyboard open has no on-screen anchor, so the drawer falls back to
+            // the right edge under the ticker.
+            ui.quote_anchor_x = None;
+            if args.is_empty() {
+                match last_symbol(state) {
+                    Some(symbol) => open_quote_panel(ui, symbol),
+                    None => ui.notice = Some(t!("Ai.QuoteNoSymbol").to_string()),
+                }
             } else {
-                Some(args.trim().to_uppercase())
-            };
-            match symbol {
-                Some(symbol) => open_quote_panel(ui, symbol),
-                None => ui.notice = Some(t!("Ai.QuoteNoSymbol").to_string()),
+                let symbol = args.trim().to_uppercase();
+                // A bare ticker (no `.MARKET`) can't be looked up unambiguously,
+                // so guide the reader rather than opening an empty panel.
+                if super::answer::is_symbol(&symbol) {
+                    open_quote_panel(ui, symbol);
+                } else {
+                    ui.notice = Some(t!("Ai.QuoteBadSymbol").to_string());
+                }
             }
         }
         // Typed deliberately, so no second keypress to confirm — the row in
@@ -1210,10 +1564,20 @@ fn exec_slash(name: &str, args: &str, ui: &mut Ui, state: &mut ChatState) {
         "logout" => ui.pending = Some(Pending::SignOut),
         "login" => ui.pending = Some(Pending::SignIn),
         "copy" => {
-            let text = transcript_text(state);
-            copy_with_notice(ui, Some(text));
+            // In a chat, "copy" means the answer, not the whole log — that is what
+            // `/export` is for. Copy the latest assistant answer; select-drag still
+            // copies any span, and `/export` still writes the conversation.
+            match last_answer(state) {
+                Some(answer) => copy_with_notice(ui, Some(answer)),
+                None => ui.notice = Some(t!("Ai.NothingToCopy").to_string()),
+            }
         }
         "export" => {
+            // Nothing said yet: don't drop an empty file in Downloads.
+            if transcript_text(state).trim().is_empty() {
+                ui.notice = Some(t!("Ai.NothingToExport").to_string());
+                return;
+            }
             ui.notice = Some(match export_conversation(state) {
                 Ok(path) => t!("Ai.Exported", path = path.display().to_string()).to_string(),
                 Err(_) => t!("Ai.ExportFailed").to_string(),
@@ -1263,6 +1627,7 @@ fn switch_agent(args: &str, ui: &mut Ui, state: &mut ChatState) {
     // fresh one rather than continuing this thread under a different agent.
     state.reset(t!("Ai.Welcome").to_string());
     state.agent_uid = uid;
+    ui.reset_render();
     ui.switch(View::Chat);
     // `switch` clears the status line, so the confirmation is set after it.
     ui.notice = Some(notice);
@@ -1288,11 +1653,17 @@ fn help_rows() -> Vec<(String, String)> {
         ("Enter", "Ai.HelpSend"),
         ("Shift+Enter", "Ai.HelpNewline"),
         ("Tab", "Ai.HelpComplete"),
-        ("↑ ↓", "Ai.HelpHistory"),
+        ("↑ ↓  Ctrl+P N", "Ai.HelpHistory"),
+        ("Ctrl+Z Y", "Ai.HelpUndo"),
         ("Shift+↑↓  PgUp PgDn", "Ai.HelpScroll"),
+        ("Ctrl+Home End", "Ai.HelpJump"),
+        ("Alt+← →", "Ai.HelpWordMove"),
         ("Ctrl+A E U K W", "Ai.HelpLineEdit"),
+        ("Alt+1..9", "Ai.HelpFollowUp"),
+        ("Ctrl+F", "Ai.HelpFind"),
+        ("Ctrl+R", "Ai.HelpResume"),
         ("Esc", "Ai.HelpEscape"),
-        ("drag", "Ai.HelpSelect"),
+        ("drag / 2×3× click", "Ai.HelpSelect"),
         ("Ctrl+C ×2", "Ai.HelpQuit"),
     ] {
         rows.push((keys.to_string(), t!(desc).to_string()));
@@ -1303,6 +1674,14 @@ fn help_rows() -> Vec<(String, String)> {
 /// Keyboard navigation for the Settings list view.
 fn on_list_key(key: crossterm::event::KeyEvent, ui: &mut Ui, state: &mut ChatState) {
     let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+    // Moving the selection disarms a pending sign-out, so the row does not keep
+    // its red "confirm" look after the reader has stepped off it.
+    if matches!(
+        key.code,
+        KeyCode::Up | KeyCode::Down | KeyCode::Home | KeyCode::End | KeyCode::Char('j' | 'k')
+    ) {
+        ui.confirm_sign_out = false;
+    }
     match key.code {
         KeyCode::Esc => ui.switch(View::Chat),
         // Jump to the ends; Shift+arrows because Home/End need Fn on a MacBook.
@@ -1338,6 +1717,8 @@ fn on_question_key(
             let last = ui.row_count().saturating_sub(1);
             ui.sel = (ui.sel + 1).min(last);
         }
+        KeyCode::Home => ui.sel = 0,
+        KeyCode::End => ui.sel = ui.row_count().saturating_sub(1),
         KeyCode::Enter => answer_selected(ui, state, turn, tx),
         _ => {}
     }
@@ -1356,12 +1737,12 @@ fn on_mouse(
         return;
     }
     match m.kind {
+        // The selection is in content coordinates, so wheel-scrolling no longer
+        // moves it off its text — it stays put, as it would in any editor.
         MouseEventKind::ScrollUp => {
-            ui.selection = None;
             scroll(ui, state, true);
         }
         MouseEventKind::ScrollDown => {
-            ui.selection = None;
             scroll(ui, state, false);
         }
         MouseEventKind::Down(MouseButton::Left) => {
@@ -1391,9 +1772,14 @@ fn on_mouse(
             // dismisses it rather than reaching through to a target the reader
             // cannot see.
             if let Some(symbol) = ui.quote_panel.clone() {
-                // The hint at the panel's foot is a button; anywhere else dismisses
-                // the panel rather than reaching through to what it covers.
-                if ui.open_button.is_some_and(|r| hit(r, col, row)) {
+                // The arrows on the frame step to the neighbouring security; the WEB
+                // hint opens the web page; anywhere else dismisses the panel rather
+                // than reaching through to what it covers.
+                if ui.prev_button.is_some_and(|r| hit(r, col, row)) {
+                    step_quote_panel(ui, -1);
+                } else if ui.next_button.is_some_and(|r| hit(r, col, row)) {
+                    step_quote_panel(ui, 1);
+                } else if ui.open_button.is_some_and(|r| hit(r, col, row)) {
                     open_url(&quote_web_url(&symbol));
                 } else {
                     close_quote_panel(ui);
@@ -1408,16 +1794,39 @@ fn on_mouse(
                     .map(|(i, _)| *i)
                 {
                     run_slash(idx, ui, state, editor);
-                } else if let Some(chip) = ui
+                } else if let Some((chip, rect)) = ui
                     .chips
                     .iter()
                     .find(|(_, r)| hit(*r, col, row))
-                    .map(|(c, _)| c.clone())
+                    .map(|(c, r)| (c.clone(), *r))
                 {
+                    // A clicked security drops its drawer directly beneath it, so
+                    // remember the column it sat at; the panel reads it when placing
+                    // itself. Other chips leave the anchor alone.
+                    if matches!(chip, Chip::Symbol(_)) {
+                        ui.quote_anchor_x = Some(rect.x);
+                    }
                     click_chip(chip, ui, state, editor, turn, tx);
                 } else if hit(ui.transcript, col, row) {
-                    // Begin a text selection in the transcript.
-                    ui.selection = Some(((row, col), (row, col)));
+                    // Count consecutive clicks on the same cell: 1 begins a drag
+                    // selection, 2 selects the word, 3 the whole line.
+                    let count = match ui.last_click {
+                        Some((when, pcol, prow, prev))
+                            if pcol == col && prow == row && when.elapsed() < DOUBLE_CLICK =>
+                        {
+                            prev + 1
+                        }
+                        _ => 1,
+                    };
+                    match count {
+                        2 => select_word_at(ui, col, row),
+                        n if n >= 3 => select_line_at(ui, row),
+                        _ => {
+                            let pos = content_at(ui, col, row);
+                            ui.selection = Some((pos, pos));
+                        }
+                    }
+                    ui.last_click = Some((std::time::Instant::now(), col, row, count));
                 }
             } else if let Some(idx) = ui
                 .rows
@@ -1435,7 +1844,9 @@ fn on_mouse(
         }
         MouseEventKind::Drag(MouseButton::Left) => {
             if let Some((anchor, _)) = ui.selection {
-                let pos = clamp_to(ui.transcript, m.column, m.row);
+                // Dragging past the top or bottom edge auto-scrolls the transcript,
+                // so a selection can run beyond the visible page.
+                let pos = drag_to_content(ui, state, m.column, m.row);
                 ui.selection = Some((anchor, pos));
             }
         }
@@ -1453,21 +1864,141 @@ fn on_mouse(
     }
 }
 
-/// Clamp a screen cell to lie within `rect` (used while dragging a selection).
-fn clamp_to(rect: Rect, col: u16, row: u16) -> (u16, u16) {
-    let r = row.clamp(rect.y, rect.y + rect.height.saturating_sub(1));
-    let c = col.clamp(rect.x, rect.x + rect.width.saturating_sub(1));
-    (r, c)
+/// How often, at most, a burst of live quotes rebuilds the transcript to refresh
+/// the inline price cards. Faster than the eye needs, and it spares a chart-heavy
+/// transcript from re-rendering every chart on every tick.
+const CARD_REFRESH: std::time::Duration = std::time::Duration::from_millis(400);
+
+/// Two clicks within this window on the same cell count as a double-click.
+const DOUBLE_CLICK: std::time::Duration = std::time::Duration::from_millis(400);
+
+/// A second Ctrl+C within this window exits; after it, the first press is
+/// forgotten so an idle armed state never turns a lone Ctrl+C into a quit.
+const CTRL_C_WINDOW: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Select the whitespace-delimited word under `(col, row)` in the transcript, so
+/// the release copies it — the terminal's usual double-click-to-select.
+fn select_word_at(ui: &mut Ui, col: u16, row: u16) {
+    let ri = row.saturating_sub(ui.transcript.y) as usize;
+    let Some(text) = ui.visible_text.get(ri) else {
+        return;
+    };
+    let target = col.saturating_sub(ui.transcript.x) as usize;
+    let chars: Vec<char> = text.chars().collect();
+    // Display start column of each char.
+    let mut starts = Vec::with_capacity(chars.len());
+    let mut c = 0usize;
+    for &ch in &chars {
+        starts.push(c);
+        c += UnicodeWidthChar::width(ch).unwrap_or(0);
+    }
+    let Some(idx) = (0..chars.len()).find(|&k| {
+        let w = UnicodeWidthChar::width(chars[k]).unwrap_or(0);
+        starts[k] <= target && target < starts[k] + w.max(1)
+    }) else {
+        return;
+    };
+    if chars[idx].is_whitespace() {
+        return;
+    }
+    let mut a = idx;
+    while a > 0 && !chars[a - 1].is_whitespace() {
+        a -= 1;
+    }
+    let mut b = idx;
+    while b + 1 < chars.len() && !chars[b + 1].is_whitespace() {
+        b += 1;
+    }
+    let ws = starts[a];
+    let we = starts[b] + UnicodeWidthChar::width(chars[b]).unwrap_or(1);
+    let line = ui.view_start + ri;
+    ui.selection = Some((
+        (line, u16::try_from(ws).unwrap_or(0)),
+        (line, u16::try_from(we).unwrap_or(0)),
+    ));
+}
+
+/// Select the whole visible transcript row (a triple-click).
+fn select_line_at(ui: &mut Ui, row: u16) {
+    let ri = row.saturating_sub(ui.transcript.y) as usize;
+    let Some(text) = ui.visible_text.get(ri) else {
+        return;
+    };
+    let w = UnicodeWidthStr::width(text.as_str());
+    if w == 0 {
+        ui.selection = None;
+        return;
+    }
+    let line = ui.view_start + ri;
+    ui.selection = Some(((line, 0), (line, u16::try_from(w).unwrap_or(u16::MAX))));
+}
+
+/// Map a mouse cell to a `(content-line, display-col)` position within the
+/// transcript, using the view offset recorded at the last render.
+fn content_at(ui: &Ui, col: u16, row: u16) -> (usize, u16) {
+    let vis_row = row.saturating_sub(ui.transcript.y) as usize;
+    let line = (ui.view_start + vis_row).min(ui.view_total.saturating_sub(1));
+    (line, col.saturating_sub(ui.transcript.x))
+}
+
+/// Like [`content_at`], but for a drag: a pointer past the top or bottom edge
+/// scrolls the transcript toward it, so the selection can extend beyond the page.
+/// The view start is recomputed against the new scroll so the mapping is right
+/// this frame rather than one behind.
+fn drag_to_content(ui: &mut Ui, state: &mut ChatState, col: u16, row: u16) -> (usize, u16) {
+    // No visible transcript to drag over (a fresh welcome screen never runs
+    // `render_chat`, so `view_rows` stays 0): map without scrolling. Without this
+    // the `clamp(top, top - 1)` below would panic (min > max).
+    if ui.view_rows == 0 {
+        return content_at(ui, col, row);
+    }
+    let tr = ui.transcript;
+    let top = tr.y;
+    let bottom = top + u16::try_from(ui.view_rows).unwrap_or(0);
+    if row < top {
+        state.scroll = state.scroll.saturating_add(top - row).min(ui.max_scroll);
+    } else if row >= bottom {
+        state.scroll = state.scroll.saturating_sub(row - bottom + 1);
+    }
+    let height = tr.height as usize;
+    let scroll = state.scroll.min(ui.max_scroll) as usize;
+    let start = ui.view_total.saturating_sub(scroll).saturating_sub(height);
+    let vis_row = row.clamp(top, bottom.saturating_sub(1)).saturating_sub(top) as usize;
+    let line = (start + vis_row).min(ui.view_total.saturating_sub(1));
+    (line, col.saturating_sub(tr.x))
 }
 
 /// Scroll wheel: pans the transcript in Chat, moves the selection in a list.
 fn scroll(ui: &mut Ui, state: &mut ChatState, up: bool) {
+    // The help overlay scrolls itself when open, rather than the transcript
+    // behind it.
+    if let Some(offset) = ui.help {
+        ui.help = Some(if up {
+            offset.saturating_sub(1)
+        } else {
+            offset.saturating_add(1)
+        });
+        return;
+    }
+    // The quote panel and the sign-in panel are fixed overlays; scrolling should
+    // not move the transcript hidden behind them.
+    if ui.quote_panel.is_some() || ui.login.is_some() {
+        return;
+    }
     if ui.view == View::Chat {
         state.scroll = if up {
             state.scroll.saturating_add(3).min(ui.max_scroll)
         } else {
             state.scroll.saturating_sub(3)
         };
+        // Back at the bottom, catch the inline cards up to any live quotes that
+        // arrived while scrolled up (their rebuilds were suppressed to keep the
+        // scroll smooth).
+        if state.scroll == 0 && ui.cards_dirty {
+            ui.cache_sig = 0;
+            ui.cards_dirty = false;
+            ui.cards_synced_at = Some(std::time::Instant::now());
+        }
     } else if up {
         ui.sel = ui.sel.saturating_sub(1);
     } else {
@@ -1550,14 +2081,28 @@ fn open_quote_panel(ui: &mut Ui, symbol: String) {
     // conversation had mentioned it — the SDK folds a repeat subscription into the
     // existing one.
     subscribe_quote(&symbol);
-    // And the session's shape, fetched once per security per session.
-    if !ui.paths.contains_key(&symbol) && crate::openapi::is_ready() {
+    // And the session's shape. Refetched every open: the sparkline is the session
+    // *so far*, so a path cached at first open would freeze the morning's shape
+    // into the afternoon. The cached one still renders immediately; the fresh one
+    // overwrites it when it lands.
+    if crate::openapi::is_ready() {
         if let Some(tx) = ui.paths_tx.clone() {
             let wanted = symbol.clone();
             spawn_bg(async move {
                 let path = super::quotes::intraday_path(&wanted, SPARK_W).await;
                 if !path.is_empty() {
                     let _ = tx.send((wanted, path));
+                }
+            });
+        }
+        // The panel's richer figures (valuation, per-share, amplitude…). Refetched
+        // every open like the sparkline: they move through the session, and the
+        // panel is only ever showing one security's worth at a time.
+        if let Some(tx) = ui.details_tx.clone() {
+            let wanted = symbol.clone();
+            spawn_bg(async move {
+                if let Some(detail) = super::quotes::fetch_detail(&wanted).await {
+                    let _ = tx.send((wanted, detail));
                 }
             });
         }
@@ -1585,6 +2130,37 @@ fn close_topmost(ui: &mut Ui) {
 /// reading the same stream, and dropping it here would freeze them.
 fn close_quote_panel(ui: &mut Ui) {
     ui.quote_panel = None;
+}
+
+/// Step the open panel to the previous (`-1`) or next (`+1`) security the
+/// conversation named.
+///
+/// The tape is that ordered list, so the reader flips through the same securities
+/// the ticker rotates. The walk wraps at the ends. A no-op when the current one is
+/// not on the tape — a bare `/quote` for something never mentioned — or there is
+/// nothing else to move to.
+fn step_quote_panel(ui: &mut Ui, delta: isize) {
+    let Some(current) = ui.quote_panel.clone() else {
+        return;
+    };
+    let Some(pos) = ui.tape.iter().position(|s| *s == current) else {
+        return;
+    };
+    let len = ui.tape.len();
+    if len < 2 {
+        return;
+    }
+    #[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
+    let next = (pos as isize + delta).rem_euclid(len as isize) as usize;
+    // Page the ticker only when the next security is off screen, so it stays put
+    // while stepping between two entries already in view and slides just enough to
+    // bring the next one on — where the drawer then anchors under it.
+    let visible = (0..ui.tape_drawn).any(|k| (ui.tape_at + k) % len == next);
+    if !visible {
+        ui.tape_at = next;
+    }
+    let symbol = ui.tape[next].clone();
+    open_quote_panel(ui, symbol);
 }
 
 fn subscribe_quote(symbol: &str) {
@@ -1653,20 +2229,29 @@ fn answer_selected(
     ui.sel = 0;
     if q.qi >= q.questions.len() {
         let qs = ui.question.take().expect("question present");
-        submit_answers(&qs, state, turn, tx);
+        // Answering resumes the paused run, which needs credentials. Signed out
+        // (sign-out clears the ids the resume addresses) the send would drop
+        // silently and the conversation would stall with no explanation, so say
+        // what to do — as the free-text prompt path does.
+        if !submit_answers(&qs, state, turn, tx) {
+            ui.notice = Some(t!("Ai.SignInToAsk").to_string());
+        }
         ui.view = View::Chat;
     }
 }
 
+/// Returns whether the answers were dispatched; `false` means the paused run
+/// could not be addressed (no credentials / conversation id), so the caller can
+/// tell the reader rather than dropping the answers on the floor.
 fn submit_answers(
     qs: &QuestionState,
     state: &mut ChatState,
     turn: &mut Option<JoinHandle<()>>,
     tx: &UnboundedSender<ChatEvent>,
-) {
+) -> bool {
     let (Some(chat_uid), Some(message_id)) = (state.chat_uid.clone(), state.message_id.clone())
     else {
-        return;
+        return false;
     };
     let answers = runtime::answers_by_tool_call(&qs.tool_call_id, &qs.answers);
     let summary = qs
@@ -1684,6 +2269,7 @@ fn submit_answers(
     state.apply(ChatEvent::UserPrompt(summary));
     state.pending_interrupt = None;
     *turn = Some(runtime::spawn_turn(req, tx.clone()));
+    true
 }
 
 /// Handle a click on a Chat meta chip: open a reference URL, or send a
@@ -1754,11 +2340,24 @@ fn copy_to_clipboard(text: &str) -> bool {
 }
 
 /// The whole conversation as `Role: text` blocks, for `/copy`.
+/// The most recent assistant answer, for `/copy`. `None` before the first one.
+fn last_answer(state: &ChatState) -> Option<String> {
+    state
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == Role::Assistant)
+        .map(|m| m.text.clone())
+}
+
 fn transcript_text(state: &ChatState) -> String {
     state
         .messages
         .iter()
-        .filter(|m| m.role != Role::System)
+        // Only the conversation itself: system notices and tool-trace lines are
+        // UI, not something to copy (a tool line is a name, not a message, and
+        // would otherwise be labelled as if the assistant had said it).
+        .filter(|m| matches!(m.role, Role::User | Role::Assistant))
         .map(|m| {
             let who = if m.role == Role::User {
                 t!("Ai.You")
@@ -1779,8 +2378,23 @@ fn export_conversation(state: &ChatState) -> std::io::Result<std::path::PathBuf>
     let dir = dirs::download_dir()
         .or_else(dirs::home_dir)
         .unwrap_or_else(std::env::temp_dir);
-    let path = dir.join(format!("longbridge-ai-{}.md", now_secs()));
-    let mut body = format!("# {}\n\n", t!("Ai.Title"));
+    // A title slug makes the file findable in Downloads; the timestamp keeps two
+    // exports of the same conversation from colliding.
+    let slug = state
+        .title
+        .as_deref()
+        .map(export_slug)
+        .filter(|s| !s.is_empty());
+    let name = match &slug {
+        Some(slug) => format!("longbridge-ai-{slug}-{}.md", now_secs()),
+        None => format!("longbridge-ai-{}.md", now_secs()),
+    };
+    let path = dir.join(name);
+    let heading = state
+        .title
+        .clone()
+        .unwrap_or_else(|| t!("Ai.Title").to_string());
+    let mut body = format!("# {heading}\n\n");
     for m in &state.messages {
         let label = match m.role {
             Role::User => t!("Ai.You"),
@@ -1795,12 +2409,40 @@ fn export_conversation(state: &ChatState) -> std::io::Result<std::path::PathBuf>
     Ok(path)
 }
 
+/// A filesystem-safe slug from a conversation title: lowercase ASCII words
+/// joined by `-`, capped so the filename stays reasonable.
+fn export_slug(title: &str) -> String {
+    let mut out = String::new();
+    for ch in title.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.extend(ch.to_lowercase());
+        } else if !out.ends_with('-') {
+            out.push('-');
+        }
+        if out.len() >= 40 {
+            break;
+        }
+    }
+    out.trim_matches('-').to_string()
+}
+
 /// Copy `text` and set a status notice reflecting the outcome.
 fn copy_with_notice(ui: &mut Ui, text: Option<String>) {
-    ui.notice = Some(match text {
-        Some(t) if !t.trim().is_empty() && copy_to_clipboard(&t) => t!("Ai.Copied").to_string(),
-        _ => t!("Ai.NothingToCopy").to_string(),
-    });
+    ui.notice = Some(
+        match text {
+            // Distinguish "nothing selected" from a clipboard write that failed —
+            // the second is not the reader's doing and a different message.
+            Some(t) if !t.trim().is_empty() => {
+                if copy_to_clipboard(&t) {
+                    t!("Ai.Copied")
+                } else {
+                    t!("Ai.CopyFailed")
+                }
+            }
+            _ => t!("Ai.NothingToCopy"),
+        }
+        .to_string(),
+    );
 }
 
 /// Open a URL with the platform's default handler (best-effort, non-blocking).
@@ -1907,7 +2549,7 @@ fn run_slash(idx: usize, ui: &mut Ui, state: &mut ChatState, editor: &mut Editor
 
 // ── rendering ────────────────────────────────────────────────────────────────
 
-fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor) {
+fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &mut ChatState, editor: &Editor) {
     // Recomputed each frame: set true if any truncated row is scrolling.
     ui.animating = false;
     let area = f.area();
@@ -1936,17 +2578,20 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
     }
     let has_meta = is_chat && !state.busy && !state.further.is_empty();
     let meta_h = if has_meta { meta_height(state) } else { 0 };
-    // A blank row, then the boxed prompt.
-    let footer_h = if is_chat {
-        (editor.lines().len() as u16 + 3).clamp(4, 9)
-    } else {
-        4
-    };
-
     // A running turn gets a row of its own so its spinner, timer and cancel
     // button cannot be hidden by a notice — and the notice cannot be hidden by
     // it. Only while busy, so idle chrome stays one row on a short terminal.
     let has_turn = is_chat && state.busy;
+    // Idle, a blank row sits above the boxed prompt to lift it off the
+    // transcript's last line. While a turn runs, the status row already separates
+    // them, so the box drops that blank and hugs the status — the extra gap read
+    // as too much empty space between the spinner and the prompt.
+    let footer_h = if is_chat {
+        let extra = if has_turn { 2 } else { 3 };
+        (editor.lines().len() as u16 + extra).clamp(if has_turn { 3 } else { 4 }, 9)
+    } else {
+        4
+    };
     // The title gets a blank row under it so it reads as chrome rather than as
     // the transcript's first line. Skipped on a short terminal, where a spare
     // row is worth more than the separation.
@@ -2018,11 +2663,6 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
     if ui.view == View::Question {
         render_question(f, body, ui);
     }
-    if ui.view == View::Chat {
-        render_slash_dropdown(f, body, ui, editor);
-    } else {
-        ui.slash_rows.clear();
-    }
     if let Some(meta) = meta {
         render_chips(f, meta, ui, state);
     }
@@ -2031,8 +2671,16 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &ChatState, editor: &Editor)
     } else {
         ui.stop_button = None;
     }
-    render_status(f, status, ui, state);
-    render_footer(f, footer, ui, editor);
+    render_status(f, status, ui, state, editor);
+    render_footer(f, footer, ui, editor, has_turn);
+    // The command palette hangs directly off the prompt box, drawn last so it
+    // floats over the status row and any chrome between the transcript and the
+    // prompt rather than being anchored to the transcript's foot with a gap.
+    if ui.view == View::Chat {
+        render_slash_dropdown(f, body, footer, ui, editor);
+    } else {
+        ui.slash_rows.clear();
+    }
     // Last, so they float over whatever is underneath. The sign-in panel outranks
     // the quote panel: it is a step the reader is in the middle of.
     render_quote_panel(f, body, ui);
@@ -2121,13 +2769,6 @@ fn render_login_panel(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, spin: usi
     ui.close_button = Some(close_rect(rect));
 }
 
-/// Draw the floating quote panel, if one is open.
-///
-/// Sized to its content and centred over the transcript: the reader clicked a
-/// symbol inside a sentence, and the answer around it is the context for the
-/// number. Square corners and a title inset in the top border, after grok-build's
-/// overlays; the chrome is a `WEB` button and nothing else, so every row inside
-/// carries data.
 /// Render the help overlay: the commands and the keys, in two columns.
 ///
 /// A panel rather than a message in the transcript, which is what it used to be —
@@ -2209,30 +2850,72 @@ fn render_help(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
 }
 
+/// Draw the quote panel, if one is open.
+///
+/// A drawer, not a centred popup: it hangs from the top of the transcript, under
+/// the ticker the securities live in, and drops down only as far as its content —
+/// the reader clicked a stock up there and its detail slides down from the same
+/// place, leaving the sentence they were reading in view below. Right-aligned to
+/// sit under the ticker. Square corners and a title inset in the top border, after
+/// grok-build's overlays; the chrome is a `WEB` button and nothing else, so every
+/// row inside carries data.
 fn render_quote_panel(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
     use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding};
 
+    // The tallest the drawer's content gets — name, price, sparkline, the six core
+    // figures and the detail block — so it opens at full height and fills in rather
+    // than growing (and flashing) as the quote and its detail arrive.
+    const DRAWER_INNER: usize = 13;
+
     let Some(symbol) = ui.quote_panel.clone() else {
         ui.open_button = None;
+        ui.prev_button = None;
+        ui.next_button = None;
         return;
     };
     let path = ui.paths.get(&symbol).map_or(&[][..], Vec::as_slice);
-    let body = match ui.quotes.get(&symbol) {
-        Some(card) => card_lines(card, path),
+    let detail = ui.details.get(&symbol);
+    let mut body = match ui.quotes.get(&symbol) {
+        Some(card) => card_lines(card, path, detail),
         None => vec![Line::from(Span::styled(
             t!("Ai.QuoteLoading").to_string(),
             Style::default().fg(Color::DarkGray),
         ))],
     };
     let title = format!(" ${symbol} ");
-    let web = format!(" {} ", t!("Ai.QuoteWeb"));
+    let web = format!(" {WEB_ICON} ");
     let content_w = body.iter().map(line_width).max().unwrap_or(0);
     let chrome = UnicodeWidthStr::width(title.as_str()) + UnicodeWidthStr::width(web.as_str()) + 4;
     let width = (content_w + 6).max(chrome).min(area.width as usize) as u16;
+    // Open at the reserved height and pad to it, rather than growing from a short
+    // "loading" box to a tall one as the quote and then its detail land — the
+    // resize flashed; a fixed frame that fills in does not.
+    let inner_h = DRAWER_INNER.min((area.height as usize).saturating_sub(2));
+    while body.len() < inner_h {
+        body.push(Line::from(""));
+    }
     let height = (body.len() as u16 + 2).min(area.height);
+    // A drawer: it drops from the top of the transcript rather than floating in the
+    // middle over the answer. It anchors under the security's own ticker entry —
+    // found among this frame's chips, topmost occurrence so the ticker wins over an
+    // inline mention — which keeps the drawer and its highlighted tab lined up as
+    // the reader steps through. Failing that (rotated out, or a keyboard open), the
+    // remembered click column, then the right edge. Clamped so it never spills off.
+    let right_edge = area.x + area.width.saturating_sub(width);
+    let anchor = ui
+        .chips
+        .iter()
+        .filter_map(|(c, r)| match c {
+            Chip::Symbol(s) if s == &symbol => Some(*r),
+            _ => None,
+        })
+        .min_by_key(|r| r.y)
+        .map(|r| r.x)
+        .or(ui.quote_anchor_x);
+    let x = anchor.map_or(right_edge, |ax| ax.min(right_edge));
     let rect = Rect {
-        x: area.x + area.width.saturating_sub(width) / 2,
-        y: area.y + area.height.saturating_sub(height) / 2,
+        x,
+        y: area.y,
         width,
         height,
     };
@@ -2242,8 +2925,20 @@ fn render_quote_panel(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
     // the terminal drawing the whole glyph across the frame, which is what made
     // the border look broken. The cell outside has to go too.
     blank_straddling_glyphs(f.buffer_mut(), rect, area);
-    // The button's geometry comes first so the live dot cannot collide with it.
+    // The button's geometry comes first so the live dot cannot collide with it, and
+    // so the icon can brighten under the pointer.
     let web_w = UnicodeWidthStr::width(web.as_str()) as u16;
+    let open_rect = Rect {
+        x: rect.x + rect.width.saturating_sub(web_w + 1),
+        y: rect.y,
+        width: web_w,
+        height: 1,
+    };
+    let web_fg = if hovering(ui, open_rect) {
+        Color::White
+    } else {
+        Color::Blue
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
@@ -2263,31 +2958,53 @@ fn render_quote_panel(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
         .title_top(
             Line::from(Span::styled(
                 web,
-                Style::default()
-                    .fg(Color::Blue)
-                    .add_modifier(Modifier::BOLD),
-            ))
-            .right_aligned(),
-        )
-        // One word, because every overlay here closes the same way and the reader
-        // still has to be told once.
-        .title_bottom(
-            Line::from(Span::styled(
-                close_label(),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(web_fg).add_modifier(Modifier::BOLD),
             ))
             .right_aligned(),
         );
     f.render_widget(Paragraph::new(Text::from(body)).block(block), rect);
-    ui.close_button = Some(close_rect(rect));
+    // No `[Close]` label: a click anywhere outside the panel (or Esc) dismisses it,
+    // so the button was clutter. The whole-view close handler reads `quote_panel`
+    // directly, not this rect.
+    ui.close_button = None;
     // The web page has the chart and the filings this panel cannot hold, so the way
     // out to it is a button on the frame rather than a line of instructions.
-    ui.open_button = Some(Rect {
-        x: rect.x + rect.width.saturating_sub(web_w + 1),
-        y: rect.y,
-        width: web_w,
-        height: 1,
-    });
+    ui.open_button = Some(open_rect);
+    // When the conversation named more than one security, `‹`/`›` on the side
+    // borders step through them without leaving the panel — the click twin of the
+    // arrow keys. Drawn only then, and only when this security is on the tape, so
+    // the arrows never promise a move that goes nowhere.
+    let steppable = ui.tape.len() > 1 && ui.tape.contains(&symbol);
+    if steppable && rect.height >= 3 {
+        let mid_y = rect.y + rect.height / 2;
+        let arrow = |buf: &mut ratatui::buffer::Buffer, x: u16, glyph: &str, hovered: bool| {
+            if let Some(cell) = buf.cell_mut(ratatui::layout::Position::new(x, mid_y)) {
+                cell.set_symbol(glyph);
+                let fg = if hovered { Color::White } else { Color::Cyan };
+                cell.set_style(Style::default().fg(fg).add_modifier(Modifier::BOLD));
+            }
+        };
+        let right_x = rect.x + rect.width.saturating_sub(1);
+        let prev_rect = Rect {
+            x: rect.x,
+            y: mid_y,
+            width: 1,
+            height: 1,
+        };
+        let next_rect = Rect {
+            x: right_x,
+            y: mid_y,
+            width: 1,
+            height: 1,
+        };
+        arrow(f.buffer_mut(), rect.x, "‹", hovering(ui, prev_rect));
+        arrow(f.buffer_mut(), right_x, "›", hovering(ui, next_rect));
+        ui.prev_button = Some(prev_rect);
+        ui.next_button = Some(next_rect);
+    } else {
+        ui.prev_button = None;
+        ui.next_button = None;
+    }
 }
 
 /// Blank any double-width glyph that straddles `rect`'s left or right edge.
@@ -2340,6 +3057,11 @@ fn quote_web_url(symbol: &str) -> String {
     format!("https://longbridge.com/quote/{symbol}")
 }
 
+/// The "open on the web" affordance on the quote drawer's frame. An outward arrow
+/// rather than the word `WEB`: it reads as "this takes you out" in any locale and
+/// costs one column instead of five on a drawer whose every row is data.
+const WEB_ICON: &str = "↗";
+
 /// The `[Close]` a panel or a list view carries. Bracketed like the `[stop]`
 /// button, because that is what reads as "click me" in a terminal.
 fn close_label() -> String {
@@ -2362,13 +3084,23 @@ fn render_title(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatSta
     // conversation title lived here, but it is a label for picking a chat out of
     // a list — which is where it is shown — not something worth a permanent row
     // in the chat you are already reading.
-    let mut left = vec![Span::styled(
-        format!(" {} ", t!("Ai.Title")),
-        Style::default()
-            .fg(Color::Black)
-            .bg(Color::Cyan)
-            .add_modifier(Modifier::BOLD),
-    )];
+    let badge = format!(" {} ", t!("Ai.Title"));
+    let badge_rect = Rect {
+        x: area.x,
+        y: area.y,
+        width: badge.width() as u16,
+        height: 1,
+    };
+    let mut badge_style = Style::default()
+        .fg(Color::Black)
+        .bg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
+    // The badge is a link out to the web; underline it under the pointer, the one
+    // hover cue a cell already filled with a background can still show.
+    if hovering(ui, badge_rect) {
+        badge_style = badge_style.add_modifier(Modifier::UNDERLINED);
+    }
+    let mut left = vec![Span::styled(badge, badge_style)];
     // A marker only when the conversation is not with Longbridge AI's own
     // assistant. An agent uid is an internal handle and never goes on screen (see
     // `cli::agent::DEFAULT_AGENT_UID`), so this says *that* a custom agent is in
@@ -2429,12 +3161,19 @@ fn render_title(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatSta
     let toggle_w = toggle.width();
     let room = (area.width as usize).saturating_sub(left_w + toggle_w);
     // The ticker is right-aligned against the control, so its first column depends
-    // on how wide it turns out to be: measured first, then placed.
+    // on how wide it turns out to be: measured first, then placed. Its span is
+    // capped to about three-fifths of the row, though — a long watchlist otherwise
+    // sprawled left across most of the title bar. The cap only bites when there is
+    // width to spare: its floor holds a page of a couple of entries, so a narrow
+    // terminal keeps near-full room and only a wide one is trimmed. Beyond the cap
+    // the ticker rotates; the spacer below still uses the full room, so the toggle
+    // stays pinned to the right.
+    let cap = room.min((area.width as usize * 3 / 5).max(48));
     let tape = if super::settings::tape() && !ui.tape.is_empty() {
-        let measured = tape_spans(ui, area, None, room);
+        let measured = tape_spans(ui, area, None, cap);
         let w: usize = measured.iter().map(|s| s.content.width()).sum();
         let x = area.x + (left_w + room.saturating_sub(w)) as u16;
-        tape_spans(ui, area, Some(x), room)
+        tape_spans(ui, area, Some(x), cap)
     } else {
         Vec::new()
     };
@@ -2444,26 +3183,24 @@ fn render_title(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatSta
     spans.extend(tape);
     // The toggle sits at the end of the row, where it is out of the ticker's way.
     let toggle_x = area.x + area.width.saturating_sub(toggle_w as u16);
-    spans.push(Span::styled(
-        toggle,
-        if super::settings::tape() {
-            Style::default().fg(Color::DarkGray)
-        } else {
-            // Collapsed, it is the only thing saying the ticker is there at all, so
-            // it is not dim.
-            Style::default().fg(Color::Gray)
-        },
-    ));
+    let toggle_rect = Rect {
+        x: toggle_x,
+        y: area.y,
+        width: toggle_w as u16,
+        height: 1,
+    };
+    let toggle_style = if !ui.tape.is_empty() && hovering(ui, toggle_rect) {
+        Style::default().fg(Color::White)
+    } else if super::settings::tape() {
+        Style::default().fg(Color::DarkGray)
+    } else {
+        // Collapsed, it is the only thing saying the ticker is there at all, so it
+        // is not dim.
+        Style::default().fg(Color::Gray)
+    };
+    spans.push(Span::styled(toggle, toggle_style));
     if !ui.tape.is_empty() {
-        ui.chips.push((
-            Chip::Tape,
-            Rect {
-                x: toggle_x,
-                y: area.y,
-                width: toggle_w as u16,
-                height: 1,
-            },
-        ));
+        ui.chips.push((Chip::Tape, toggle_rect));
     }
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
@@ -2479,7 +3216,9 @@ fn render_title(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatSta
 const TAPE_DWELL: std::time::Duration = std::time::Duration::from_secs(6);
 
 fn tape_spans(ui: &mut Ui, area: Rect, start_x: Option<u16>, room: usize) -> Vec<Span<'static>> {
-    const GAP: &str = "   ";
+    // A dim middle dot separates entries: it reads as a deliberate ticker rather
+    // than a sparse run of blanks, and packs the row tighter than the old wide gap.
+    const GAP: &str = " · ";
     // The name stays neutral and only the price carries the direction: colouring
     // the symbol too made the whole row swing red and green with no added meaning.
     let entries: Vec<(String, String, Color)> = ui
@@ -2516,36 +3255,60 @@ fn tape_spans(ui: &mut Ui, area: Rect, start_x: Option<u16>, room: usize) -> Vec
             break;
         }
         if used > 0 {
-            spans.push(Span::raw(GAP));
+            spans.push(Span::styled(GAP, Style::default().fg(Color::DarkGray)));
         }
         // Every entry is a button. `None` is the measuring pass: the ticker is
         // right-aligned, so its first column is not known until its width is.
-        if let Some(x) = start_x {
+        let rect = start_x.map(|x| {
             let gap = if used == 0 { 0 } else { GAP.width() };
-            hits.push((
-                Chip::Symbol(symbol.clone()),
-                Rect {
-                    x: x.saturating_add((used + gap) as u16),
-                    y: area.y,
-                    width: (symbol.width() + price.width()) as u16,
-                    height: 1,
-                },
-            ));
+            Rect {
+                x: x.saturating_add((used + gap) as u16),
+                y: area.y,
+                width: (symbol.width() + price.width()) as u16,
+                height: 1,
+            }
+        });
+        if let Some(rect) = rect {
+            hits.push((Chip::Symbol(symbol.clone()), rect));
         }
-        spans.push(Span::styled(
-            symbol.clone(),
-            Style::default().fg(Color::Gray),
-        ));
+        // The entry the drawer is showing reads as a selected tab; a hovered one
+        // gets the lighter cue every clickable does. Selected wins over hover.
+        let selected = ui.quote_panel.as_deref() == Some(symbol.as_str());
+        let bg = if selected {
+            Some(TAB_BG)
+        } else if rect.is_some_and(|r| hovering(ui, r)) {
+            Some(HOVER_BG)
+        } else {
+            None
+        };
+        let mut symbol_style =
+            Style::default().fg(if selected { Color::White } else { Color::Gray });
+        if selected {
+            symbol_style = symbol_style.add_modifier(Modifier::BOLD);
+        }
+        if let Some(bg) = bg {
+            symbol_style = symbol_style.bg(bg);
+        }
+        spans.push(Span::styled(symbol.clone(), symbol_style));
         if !price.is_empty() {
-            spans.push(Span::styled(price.clone(), Style::default().fg(*color)));
+            let mut price_style = Style::default().fg(*color);
+            if let Some(bg) = bg {
+                price_style = price_style.bg(bg);
+            }
+            spans.push(Span::styled(price.clone(), price_style));
         }
         used += w;
         drawn += 1;
     }
     ui.chips.extend(hits);
+    if start_x.is_some() {
+        ui.tape_drawn = drawn;
+    }
     // The frame timer has to keep running for the ticker to advance. Only the
-    // placing pass may advance it — the measuring pass runs on the same frame.
-    if rotating && start_x.is_some() {
+    // placing pass may advance it — the measuring pass runs on the same frame. And
+    // not while the drawer is open: it is anchored to one entry and the reader is
+    // stepping through them by hand, so a rotation underneath would fight that.
+    if rotating && start_x.is_some() && ui.quote_panel.is_none() {
         ui.animating = true;
         let now = std::time::Instant::now();
         // A first frame starts the clock rather than advancing: the reader has not
@@ -2576,44 +3339,47 @@ fn render_view_header(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, label_key
     let [top, rest] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
     // The way out is a button as well as a key: the view is opened by clicking, so
     // it should be closable the same way.
-    let close = close_label();
+    let close = format!("[{}]", t!("Ai.CloseButton"));
     let close_w = close.width() as u16;
-    let close_rect = Rect {
-        x: area.x + area.width.saturating_sub(close_w),
-        y: area.y,
-        width: close_w,
-        height: 1,
-    };
-    let line = Line::from(vec![
-        Span::styled(
+    let [title_rect, close_rect] =
+        Layout::horizontal([Constraint::Min(0), Constraint::Length(close_w)]).areas(top);
+    f.render_widget(
+        Paragraph::new(Span::styled(
             format!(" {} ", t!(label_key)),
             Style::default()
                 .fg(Color::Black)
                 .bg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" ".repeat(
-            (area.width.saturating_sub(close_w) as usize).saturating_sub(t!(label_key).width() + 2),
         )),
-        Span::styled(
+        title_rect,
+    );
+    f.render_widget(
+        Paragraph::new(Span::styled(
             close,
             if hovering(ui, close_rect) {
                 Style::default().fg(Color::White)
             } else {
                 Style::default().fg(Color::DarkGray)
             },
-        ),
-    ]);
-    f.render_widget(Paragraph::new(line), top);
+        )),
+        close_rect,
+    );
     ui.close_button = Some(close_rect);
     rest
 }
 
-fn render_chat(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatState) {
+fn render_chat(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &mut ChatState) {
     ui.transcript = area;
     // Before the first exchange, show a centered welcome instead of the lone
-    // system line, so an empty session doesn't look bare.
-    if state.messages.len() <= 1 && state.streaming.is_none() && !state.busy {
+    // system line. Only when that lone line is the welcome, though: a resumed
+    // conversation of one message has a real message there, not a welcome, and
+    // must render it rather than the empty state.
+    let only_welcome = match state.messages.as_slice() {
+        [] => true,
+        [m] => m.role == Role::System,
+        _ => false,
+    };
+    if only_welcome && state.streaming.is_none() && !state.busy {
         ui.selected_text = None;
         render_empty_state(f, area, ui);
         return;
@@ -2628,6 +3394,10 @@ fn render_chat(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatStat
         for m in &state.messages {
             push_message(&mut cache, m, width, &ui.quotes, &ui.aliases);
         }
+        ui.cache_text = cache
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect();
         ui.transcript_cache = cache;
         ui.cache_sig = sig;
     }
@@ -2685,6 +3455,17 @@ fn render_chat(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatStat
     // Clamp scroll-back so the view can never be scrolled past the top into a
     // blank screen; the top is reached when `start` hits 0.
     ui.max_scroll = u16::try_from(total.saturating_sub(height)).unwrap_or(u16::MAX);
+    // While the reader is scrolled up, keep their view anchored to the same
+    // content as a streaming answer appends lines below — bump scroll by the
+    // growth so the visible window doesn't drift downward under them.
+    if state.scroll > 0 && total > ui.prev_total {
+        // Keep the scrolled-up view anchored as a streaming answer appends lines.
+        // The selection is in content coordinates, so it needs no adjustment — the
+        // lines it names keep their indices however the view moves.
+        let grew = u16::try_from(total - ui.prev_total).unwrap_or(u16::MAX);
+        state.scroll = state.scroll.saturating_add(grew).min(ui.max_scroll);
+    }
+    ui.prev_total = total;
     let scroll = (state.scroll).min(ui.max_scroll) as usize;
     let bottom = total.saturating_sub(scroll);
     let start = bottom.saturating_sub(height);
@@ -2705,44 +3486,106 @@ fn render_chat(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatStat
         }
     }
     link_visible_symbols(&mut window, area, ui);
+    // Plain text per visible row, for double-click word selection.
+    ui.visible_text = window
+        .iter()
+        .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+        .collect();
+    // Record where the view sits in the transcript so the mouse handlers can map a
+    // cell to a content line (and back) while selecting.
+    ui.view_start = start;
+    ui.view_rows = bottom - start;
+    ui.view_total = total;
 
-    let Some((anchor, cursor)) = ui.selection else {
-        ui.selected_text = None;
-        f.render_widget(Paragraph::new(Text::from(window)), area);
-        return;
-    };
-    // Highlight the selected span on each row and gather its text.
-    let (top, end) = if anchor <= cursor {
-        (anchor, cursor)
+    // Build the lines to render: with the selection highlighted where there is
+    // one, plain otherwise.
+    let mut rendered: Vec<Line> = if let Some((anchor, cursor)) = ui.selection {
+        // Selection is in content coordinates: order the endpoints by (line, col).
+        let (sel_top, sel_end) = if anchor <= cursor {
+            (anchor, cursor)
+        } else {
+            (cursor, anchor)
+        };
+        let mut out = Vec::with_capacity(window.len());
+        for (i, line) in window.into_iter().enumerate() {
+            let ci = start + i;
+            if ci < sel_top.0 || ci > sel_end.0 {
+                out.push(line);
+                continue;
+            }
+            let from = if ci == sel_top.0 {
+                sel_top.1 as usize
+            } else {
+                0
+            };
+            let to = if ci == sel_end.0 {
+                sel_end.1 as usize
+            } else {
+                usize::MAX
+            };
+            let (highlighted, _) = select_line(&line, from, to);
+            out.push(highlighted);
+        }
+        // Gather the selected text across the whole range — including lines
+        // scrolled off screen — so a drag spanning several pages copies
+        // everything, not just what happens to be visible at release.
+        let mut picked: Vec<String> = Vec::new();
+        for ci in sel_top.0..=sel_end.0.min(total.saturating_sub(1)) {
+            let line = if ci < cache_len {
+                &ui.transcript_cache[ci]
+            } else {
+                &tail[ci - cache_len]
+            };
+            let from = if ci == sel_top.0 {
+                sel_top.1 as usize
+            } else {
+                0
+            };
+            let to = if ci == sel_end.0 {
+                sel_end.1 as usize
+            } else {
+                usize::MAX
+            };
+            let (_, text) = select_line(line, from, to);
+            if !text.is_empty() {
+                picked.push(text);
+            }
+        }
+        ui.selected_text = (!picked.is_empty()).then(|| picked.join("\n"));
+        out
     } else {
-        (cursor, anchor)
+        ui.selected_text = None;
+        window
     };
-    let mut out = Vec::with_capacity(window.len());
-    let mut picked: Vec<String> = Vec::new();
-    for (i, line) in window.into_iter().enumerate() {
-        let row = area.y + i as u16;
-        if row < top.0 || row > end.0 {
-            out.push(line);
-            continue;
+    // Mark the focused search hit so the eye lands on it after a scroll-to-match.
+    if let Some(find) = &ui.find {
+        let matches = find_matches(&ui.cache_text, &find.query);
+        if let Some(&line) = matches.get(find.current) {
+            if (start..bottom).contains(&line) {
+                if let Some(row) = rendered.get_mut(line - start) {
+                    *row = highlight_find_row(row);
+                }
+            }
         }
-        let from = if row == top.0 {
-            top.1.saturating_sub(area.x) as usize
-        } else {
-            0
-        };
-        let to = if row == end.0 {
-            end.1.saturating_sub(area.x) as usize
-        } else {
-            usize::MAX
-        };
-        let (highlighted, text) = select_line(&line, from, to);
-        if !text.is_empty() {
-            picked.push(text);
-        }
-        out.push(highlighted);
     }
-    ui.selected_text = (!picked.is_empty()).then(|| picked.join("\n"));
-    f.render_widget(Paragraph::new(Text::from(out)), area);
+    f.render_widget(Paragraph::new(Text::from(rendered)), area);
+}
+
+/// Re-style a whole transcript row as the focused search hit: a warm background
+/// and bold, so it stands out after the view scrolls to it.
+fn highlight_find_row(line: &Line<'static>) -> Line<'static> {
+    let bg = Color::Rgb(64, 56, 20);
+    Line::from(
+        line.spans
+            .iter()
+            .map(|s| {
+                Span::styled(
+                    s.content.to_string(),
+                    s.style.bg(bg).add_modifier(Modifier::BOLD),
+                )
+            })
+            .collect::<Vec<_>>(),
+    )
 }
 
 /// A centered welcome shown for a fresh, empty session.
@@ -2768,10 +3611,13 @@ fn render_empty_state(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
     let mut samples: Vec<(&'static str, usize)> = Vec::new();
     for key in SAMPLES {
         samples.push((key, content.len()));
-        content.push(Line::from(Span::styled(
-            format!("“{}”", t!(key)),
-            Style::default().fg(Color::DarkGray),
-        )));
+        // A cyan chevron (the same sigil a sent prompt carries) marks each sample
+        // as something to click or type, and the brighter text reads as an
+        // invitation rather than fine print.
+        content.push(Line::from(vec![
+            Span::styled("❯ ", Style::default().fg(Color::Cyan)),
+            Span::styled(t!(key).to_string(), Style::default().fg(Color::Gray)),
+        ]));
     }
     content.push(Line::from(""));
     content.push(Line::from(Span::styled(
@@ -2869,11 +3715,20 @@ fn coalesce_cells(cells: &[(char, Style)]) -> Line<'static> {
 }
 
 const HOVER_BG: Color = Color::Rgb(48, 48, 48);
+/// The ground under the ticker entry whose drawer is open — a selected-tab tint,
+/// lifted toward the accent so it reads as chosen rather than merely hovered.
+const TAB_BG: Color = Color::Rgb(30, 58, 66);
 
 /// The slash-command palette: a rounded, bordered menu of matching commands
 /// floating above the prompt. ↑/↓ move the highlight, Enter/click runs it, and
 /// the command names are column-aligned with dimmed descriptions.
-fn render_slash_dropdown(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, editor: &Editor) {
+fn render_slash_dropdown(
+    f: &mut ratatui::Frame,
+    area: Rect,
+    prompt: Rect,
+    ui: &mut Ui,
+    editor: &Editor,
+) {
     ui.slash_rows.clear();
     if !slash_active(editor) {
         return;
@@ -2890,9 +3745,12 @@ fn render_slash_dropdown(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, editor
         .unwrap_or(0);
     let box_h = matches.len() as u16 + 2;
     let box_w = area.width.clamp(24, 56);
+    // The prompt box's top border sits one row into the footer (a blank row above
+    // it). Hang the palette's bottom edge off that border so the two are flush,
+    // instead of anchoring to the transcript's foot with the status row between.
     let box_area = Rect {
         x: area.x,
-        y: area.y + area.height.saturating_sub(box_h),
+        y: (prompt.y + 1).saturating_sub(box_h),
         width: box_w,
         height: box_h,
     };
@@ -2968,9 +3826,9 @@ fn pad_to(s: &str, width: usize) -> String {
     }
 }
 
-/// Render the History list as spaced, two-line entries — a numbered badge, the
-/// title, and a dimmed `agent · age` subtitle — with a trailing "New session"
-/// action, an optional search line, and a hit rectangle per entry.
+/// Render the History list as one-line entries — a numbered badge, the title,
+/// and a dimmed relative age — with a trailing "New session" action, an
+/// optional search line, and a hit rectangle per entry.
 // The loop index spans past `entries` into the trailing New-session row, so it
 // cannot be a plain iterator over `entries`.
 #[allow(clippy::needless_range_loop)]
@@ -3007,23 +3865,21 @@ fn render_sessions(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
     let entries: Vec<(String, String)> = ui
         .visible_sessions()
         .iter()
-        .map(|s| {
-            let when = relative_time(s.updated_at, now);
-            // An unnamed agent contributes nothing, so no dangling separator.
-            let sub = if s.agent.is_empty() {
-                when
-            } else {
-                format!("{}  ·  {when}", s.agent)
-            };
-            (s.title.clone(), sub)
-        })
+        .map(|s| (s.title.clone(), session_time_label(s.updated_at, now)))
         .collect();
     let n = entries.len();
     if ui.sessions_error && n == 0 {
+        // Signed out is not a failure to distrust: there is simply nobody to ask.
+        // Say to sign in rather than showing a connection error.
+        let (msg, color) = if crate::openapi::is_ready() {
+            (t!("Ai.SessionsError"), Color::Red)
+        } else {
+            (t!("Ai.SessionsSignedOut"), Color::DarkGray)
+        };
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                t!("Ai.SessionsError").to_string(),
-                Style::default().fg(Color::Red),
+                msg.to_string(),
+                Style::default().fg(color),
             ))),
             list_area,
         );
@@ -3107,7 +3963,7 @@ fn render_sessions(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
     f.render_widget(Paragraph::new(Text::from(lines)), list_area);
 }
 
-/// Push a two-line History entry: `NN  Title` then an indented dimmed subtitle,
+/// Push a one-line History entry: `NN  Title` with a right-aligned dimmed age,
 /// both tinted with the row background when selected/hovered.
 fn push_session_entry(
     lines: &mut Vec<Line<'static>>,
@@ -3177,9 +4033,53 @@ fn relative_time(updated: u64, now: u64) -> String {
         format!("{}m", secs / 60)
     } else if secs < 86_400 {
         format!("{}h", secs / 3600)
-    } else {
+    } else if secs < 7 * 86_400 {
         format!("{}d", secs / 86_400)
+    } else if secs < 365 * 86_400 {
+        // Beyond a week, days stop being useful; weeks and years read cleaner
+        // than an ever-growing day count.
+        format!("{}w", secs / (7 * 86_400))
+    } else {
+        format!("{}y", secs / (365 * 86_400))
     }
+}
+
+/// Relative age for recent conversations, then a local-calendar date once a
+/// relative day count stops being useful.
+fn session_time_label(updated: u64, now: u64) -> String {
+    let offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
+    session_time_label_at(updated, now, offset)
+}
+
+fn session_time_label_at(updated: u64, now: u64, offset: time::UtcOffset) -> String {
+    const THREE_DAYS: u64 = 3 * 86_400;
+    if now.saturating_sub(updated) < THREE_DAYS {
+        return relative_time(updated, now);
+    }
+    let Some(updated_dt) = i64::try_from(updated)
+        .ok()
+        .and_then(|ts| time::OffsetDateTime::from_unix_timestamp(ts).ok())
+    else {
+        return relative_time(updated, now);
+    };
+    let Some(now_dt) = i64::try_from(now)
+        .ok()
+        .and_then(|ts| time::OffsetDateTime::from_unix_timestamp(ts).ok())
+    else {
+        return relative_time(updated, now);
+    };
+    let updated_dt = updated_dt.to_offset(offset);
+    let now_dt = now_dt.to_offset(offset);
+    let formatted = if updated_dt.year() == now_dt.year() {
+        updated_dt.format(time::macros::format_description!(
+            "[month repr:short] [day padding:none]"
+        ))
+    } else {
+        updated_dt.format(time::macros::format_description!(
+            "[month repr:short] [day padding:none], [year]"
+        ))
+    };
+    formatted.unwrap_or_else(|_| relative_time(updated, now))
 }
 
 /// Render the Settings panel and record a hit rectangle per row.
@@ -3325,11 +4225,14 @@ fn session_lines(session: &super::account::Session) -> Vec<Line<'static>> {
         second.push(Span::styled(format!("  ·  {}", dc.to_uppercase()), dim));
     }
     if let Some(exp) = session.expires_at {
+        // Time *until* expiry: relative_time(now, exp) counts forward, where the
+        // arguments the other way round always read "just now" for a token that
+        // has not expired yet.
         second.push(Span::styled(
             format!(
                 "  ·  {} {}",
                 t!("Ai.SessionExpires"),
-                relative_time(exp, now_secs())
+                relative_time(now_secs(), exp)
             ),
             dim,
         ));
@@ -3494,7 +4397,8 @@ fn render_chips(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatSta
                 break;
             }
             let rect = row_rect(area, y);
-            let full = format!("  › {q}");
+            // A dim leading index doubles as the Alt+N shortcut label.
+            let full = format!("  {} › {q}", i + 1);
             let hovered = hovering(ui, rect);
             let text = row_text(ui, &full, area.width as usize, rect, false);
             lines.push(Line::from(Span::styled(
@@ -3628,7 +4532,55 @@ fn tools_this_turn(state: &ChatState) -> usize {
         .count()
 }
 
-fn render_status(f: &mut ratatui::Frame, area: Rect, ui: &Ui, state: &ChatState) {
+fn render_status(f: &mut ratatui::Frame, area: Rect, ui: &Ui, state: &ChatState, editor: &Editor) {
+    // Folded pastes are announced here, above the input, so a big paste is a
+    // compact chip instead of a wall of text filling the box.
+    let attachments = editor.attachments();
+    if ui.view == View::Chat && ui.find.is_none() && !attachments.is_empty() {
+        let total_lines: usize = attachments.iter().map(|a| a.split('\n').count()).sum();
+        let label = if attachments.len() == 1 {
+            t!("Ai.PastedOne", lines = total_lines).to_string()
+        } else {
+            t!(
+                "Ai.PastedMany",
+                count = attachments.len(),
+                lines = total_lines
+            )
+            .to_string()
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                format!("⎘ {label}"),
+                Style::default().fg(Color::Cyan),
+            ))),
+            area,
+        );
+        return;
+    }
+    // The find bar owns this row while open: the query, and where the reader is
+    // among its matches.
+    if let Some(find) = &ui.find {
+        let count = find_matches(&ui.cache_text, &find.query).len();
+        let counter = if find.query.trim().is_empty() {
+            String::new()
+        } else if count == 0 {
+            format!("  {}", t!("Ai.FindNone"))
+        } else {
+            // Clamp the index: matches are recomputed each render, so if the
+            // transcript shrank while streaming, a stale `current` must not show a
+            // nonsensical `5/2`.
+            format!("  {}/{count}", find.current.min(count - 1) + 1)
+        };
+        let text = format!("{}: {}{counter}", t!("Ai.FindLabel"), find.query);
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                text,
+                Style::default().fg(Color::Yellow),
+            ))),
+            area,
+        );
+        return;
+    }
     let (text, style) = if ui.view == View::Chat && state.scroll > 0 {
         // While scrolled up, tell the user how to get back to the latest.
         (
@@ -3654,14 +4606,16 @@ fn render_status(f: &mut ratatui::Frame, area: Rect, ui: &Ui, state: &ChatState)
     f.render_widget(Paragraph::new(Line::from(Span::styled(text, style))), area);
 }
 
-fn render_footer(f: &mut ratatui::Frame, area: Rect, ui: &Ui, editor: &Editor) {
+fn render_footer(f: &mut ratatui::Frame, area: Rect, ui: &Ui, editor: &Editor, hug: bool) {
     let focused = ui.view == View::Chat;
     // The box stays — it is what separates the prompt from the transcript — but dim,
     // where a rounded cyan frame was the loudest thing on the screen. A blank row
-    // above it keeps it off the transcript's last line.
+    // above it keeps it off the transcript's last line; while a turn runs the status
+    // row already does that, so the box hugs it instead of adding a second gap.
+    let blank_above = u16::from(!hug);
     let boxed = Rect {
-        y: area.y + 1,
-        height: area.height.saturating_sub(1),
+        y: area.y + blank_above,
+        height: area.height.saturating_sub(blank_above),
         ..area
     };
     let block = Block::bordered()
@@ -3697,14 +4651,21 @@ fn render_footer(f: &mut ratatui::Frame, area: Rect, ui: &Ui, editor: &Editor) {
     } else {
         lines.extend(editor.lines().iter().map(|l| Line::from(l.clone())));
     }
-    // The marker leads the first row; the rest are blank, so a multi-line prompt
-    // reads as one block indented under it.
+    // A tall prompt (a long paste) can exceed the box, so scroll it to keep the
+    // cursor line visible instead of clipping the bottom the reader is typing.
+    let visible = body.height.max(1) as usize;
+    let (cy, col) = editor.cursor();
+    let top = if cy >= visible { cy + 1 - visible } else { 0 };
+    // The marker leads the first line; when scrolled past it, a `⋯` says there is
+    // more above.
     f.render_widget(
         Paragraph::new(Text::from(
-            (0..lines.len().max(1))
+            (0..visible)
                 .map(|i| {
-                    if i == 0 {
+                    if i == 0 && top == 0 {
                         Line::from(Span::styled(USER_MARKER, marker_style))
+                    } else if i == 0 {
+                        Line::from(Span::styled(" ⋯ ", Style::default().fg(Color::DarkGray)))
                     } else {
                         Line::from("")
                     }
@@ -3713,10 +4674,17 @@ fn render_footer(f: &mut ratatui::Frame, area: Rect, ui: &Ui, editor: &Editor) {
         )),
         marker,
     );
-    f.render_widget(Paragraph::new(Text::from(lines)), body);
-    let (cy, col) = editor.cursor();
-    let cy = (cy as u16).min(body.height.saturating_sub(1));
-    let col = (col as u16).min(body.width.saturating_sub(1));
+    let shown: Vec<Line> = lines.into_iter().skip(top).take(visible).collect();
+    // Follow the caret horizontally: a long line with no newlines would otherwise
+    // be clipped at the right border and the cursor would freeze there, hiding
+    // what is being typed. Scroll the body so the caret stays one column inside
+    // the right edge.
+    let left = (col as u16).saturating_sub(body.width.saturating_sub(1));
+    f.render_widget(Paragraph::new(Text::from(shown)).scroll((0, left)), body);
+    let cy = (cy - top) as u16;
+    let col = (col as u16)
+        .saturating_sub(left)
+        .min(body.width.saturating_sub(1));
     f.set_cursor_position((body.x + col, body.y + cy));
 }
 
@@ -3964,9 +4932,17 @@ fn cashtag_annotated(text: &str, aliases: &HashMap<String, String>) -> String {
             out.push_str(line);
             continue;
         }
+        // A ticker inside an inline `code` span is already set apart and must stay
+        // verbatim — a `$` in the middle of it is markup the reader did not write.
+        let code = inline_code_ranges(line);
         let mut at = 0usize;
         for (range, symbol) in super::answer::security_spans(line, aliases) {
             if range.start < at {
+                continue;
+            }
+            if code.iter().any(|r| r.contains(&range.start)) {
+                out.push_str(&line[at..range.end]);
+                at = range.end;
                 continue;
             }
             out.push_str(&line[at..range.start]);
@@ -3986,7 +4962,25 @@ fn cashtag_annotated(text: &str, aliases: &HashMap<String, String>) -> String {
     out
 }
 
-/// Record a hit rectangle for every security visible in `window`/// Record a hit rectangle for every security visible in `window`, underlining the
+/// Byte ranges of single-backtick inline-code spans on one line.
+fn inline_code_ranges(line: &str) -> Vec<std::ops::Range<usize>> {
+    let mut ranges = Vec::new();
+    let mut open: Option<usize> = None;
+    for (i, b) in line.bytes().enumerate() {
+        if b == b'`' {
+            match open {
+                None => open = Some(i),
+                Some(start) => {
+                    ranges.push(start..i + 1);
+                    open = None;
+                }
+            }
+        }
+    }
+    ranges
+}
+
+/// Record a hit rectangle for every security visible in `window`, underlining the
 /// one under the pointer.
 ///
 /// Resolved per frame against what is actually on screen, so scrolling cannot
@@ -4033,9 +5027,11 @@ fn link_visible_symbols(window: &mut [Line<'static>], area: Rect, ui: &mut Ui) {
             x = x.saturating_add(w);
         }
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-        if text.contains('┌') {
+        // Cards top with either a sharp or a rounded corner; recognise both so the
+        // whole box stays one click target whichever style it uses.
+        if text.contains('┌') || text.contains('╭') {
             card = Some((String::new(), y));
-        } else if text.contains('└') {
+        } else if text.contains('└') || text.contains('╰') {
             if let Some((symbol, top)) = card.take() {
                 if !symbol.is_empty() {
                     ui.chips.push((
@@ -4146,7 +5142,7 @@ fn render_widget(
             };
             comparison_card(&header, symbols, width, quotes)
         }
-        // The CTA kinds are a closed set, so each gets a real label; an        // The CTA kinds are a closed set, so each gets a real label; an
+        // The CTA kinds are a closed set, so each gets a real label; an
         // unrecognized one names itself rather than showing an i18n key.
         WidgetRef::Cta { action } => {
             let label = match action.as_str() {
@@ -4164,24 +5160,48 @@ fn render_widget(
         // is read back rather than named: what the agent proposed is the most
         // consequential thing it can put in an answer.
         WidgetRef::OrderTicket(ticket) => {
-            let mut parts = vec![ticket.side.clone(), ticket.quantity.clone()];
-            parts.push(ticket.symbol.clone());
-            parts.push(ticket.order_type.clone());
+            let mut rest = vec![ticket.quantity.clone()];
+            rest.push(ticket.symbol.clone());
+            rest.push(ticket.order_type.clone());
             if !ticket.price.is_empty() {
-                parts.push(format!("@ {}", ticket.price));
+                rest.push(format!("@ {}", ticket.price));
             }
-            let summary = parts
+            let rest = rest
                 .into_iter()
                 .filter(|p| !p.is_empty())
                 .collect::<Vec<_>>()
                 .join(" ");
-            vec![Line::from(vec![
-                Span::styled(
-                    format!("  {}  ", t!("Ai.WidgetOrderTicket")),
-                    Style::default().fg(Color::DarkGray),
-                ),
-                Span::styled(summary, Style::default().add_modifier(Modifier::BOLD)),
-            ])]
+            // The side is the ticket's most consequential field, so it takes the
+            // buy/sell colour (respecting red-up/green-up) rather than reading like
+            // the rest of the line. `order_side` produces exactly these localized
+            // strings, so the comparison is reliable.
+            let mut spans = vec![Span::styled(
+                format!("  {}  ", t!("Ai.WidgetOrderTicket")),
+                Style::default().fg(Color::DarkGray),
+            )];
+            if !ticket.side.is_empty() {
+                let ordering = if ticket.side == t!("Trade.Buy") {
+                    std::cmp::Ordering::Greater
+                } else if ticket.side == t!("Trade.Sell") {
+                    std::cmp::Ordering::Less
+                } else {
+                    std::cmp::Ordering::Equal
+                };
+                let color = change_color(match ordering {
+                    std::cmp::Ordering::Greater => 1,
+                    std::cmp::Ordering::Less => -1,
+                    std::cmp::Ordering::Equal => 0,
+                });
+                spans.push(Span::styled(
+                    format!("{} ", ticket.side),
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                ));
+            }
+            spans.push(Span::styled(
+                rest,
+                Style::default().add_modifier(Modifier::BOLD),
+            ));
+            vec![Line::from(spans)]
         }
         WidgetRef::OrderDetail { order_id } => vec![Line::from(vec![
             Span::styled(
@@ -4251,7 +5271,7 @@ fn framed(rows: Vec<(Vec<Span<'static>>, usize)>, inner: usize) -> Vec<Line<'sta
             dim,
         ))
     };
-    let mut out = vec![border("┌", "┐")];
+    let mut out = vec![border("╭", "╮")];
     for (spans, used) in rows {
         let mut all = vec![Span::styled("│", dim), Span::raw(" ")];
         all.extend(spans);
@@ -4259,13 +5279,17 @@ fn framed(rows: Vec<(Vec<Span<'static>>, usize)>, inner: usize) -> Vec<Line<'sta
         all.push(Span::styled("│", dim));
         out.push(Line::from(all));
     }
-    out.push(border("└", "┘"));
+    out.push(border("╰", "╯"));
     out
 }
 
 /// The panel's body: one field per row, unboxed — the panel's own frame is the
 /// border, and a dedicated panel has the room the inline card does not.
-fn card_lines(card: &super::quotes::QuoteCardData, path: &[f64]) -> Vec<Line<'static>> {
+fn card_lines(
+    card: &super::quotes::QuoteCardData,
+    path: &[f64],
+    detail: Option<&super::quotes::QuoteDetail>,
+) -> Vec<Line<'static>> {
     let dim = Style::default().fg(Color::DarkGray);
     let dir = change_color(card.direction);
     let mut out = Vec::new();
@@ -4327,6 +5351,58 @@ fn card_lines(card: &super::quotes::QuoteCardData, path: &[f64]) -> Vec<Line<'st
         (&t!("Ai.QuoteVolume"), &card.volume),
         (&t!("Ai.QuoteTurnover"), &card.turnover),
     ));
+    // The richer figures, once they have arrived: valuation, per-share and the
+    // session's shape numbers the six above cannot carry. Their own aligned block,
+    // because the labels and values are a different width from the core prices, and
+    // every field is optional — a market that returns none simply adds no rows.
+    if let Some(d) = detail {
+        let fields: [(std::borrow::Cow<'_, str>, &Option<String>); 9] = [
+            (t!("Ai.QuoteAvg"), &d.avg),
+            (t!("Ai.QuoteAmplitude"), &d.amplitude),
+            (t!("Ai.QuoteTurnoverRate"), &d.turnover_rate),
+            (t!("Ai.QuoteVolumeRatio"), &d.volume_ratio),
+            (t!("Ai.QuotePeTtm"), &d.pe_ttm),
+            (t!("Ai.QuotePb"), &d.pb),
+            (t!("Ai.QuoteMarketCap"), &d.market_cap),
+            (t!("Ai.QuoteEps"), &d.eps_ttm),
+            (t!("Ai.QuoteBps"), &d.bps),
+        ];
+        let present: Vec<(String, String)> = fields
+            .iter()
+            .filter_map(|(label, value)| value.as_ref().map(|v| (label.to_string(), v.clone())))
+            .collect();
+        if !present.is_empty() {
+            out.push(Line::from(""));
+            let label_w = present
+                .iter()
+                .map(|(l, _)| UnicodeWidthStr::width(l.as_str()))
+                .max()
+                .unwrap_or(0);
+            let val_w = present
+                .iter()
+                .map(|(_, v)| UnicodeWidthStr::width(v.as_str()))
+                .max()
+                .unwrap_or(0);
+            let cell = |spans: &mut Vec<Span<'static>>, label: &str, value: &str, last: bool| {
+                let lpad = " ".repeat(label_w.saturating_sub(UnicodeWidthStr::width(label)) + 1);
+                spans.push(Span::styled(format!("{label}{lpad}"), dim));
+                if last {
+                    spans.push(Span::raw(value.to_string()));
+                } else {
+                    let vpad = " ".repeat(val_w.saturating_sub(UnicodeWidthStr::width(value)) + 3);
+                    spans.push(Span::raw(format!("{value}{vpad}")));
+                }
+            };
+            for pair in present.chunks(2) {
+                let mut spans = Vec::new();
+                cell(&mut spans, &pair[0].0, &pair[0].1, pair.len() == 1);
+                if let Some(second) = pair.get(1) {
+                    cell(&mut spans, &second.0, &second.1, true);
+                }
+                out.push(Line::from(spans));
+            }
+        }
+    }
     out
 }
 
@@ -4380,7 +5456,15 @@ fn quote_card(card: &super::quotes::QuoteCardData, width: usize) -> Vec<Line<'st
     } else {
         format!("${}  {}", card.symbol, card.name)
     };
-    let price = format!("{}  {}  {}", card.last, card.change, card.change_pct);
+    // The change carries a direction arrow, so the percent drops its sign rather
+    // than stating it twice. Computed once so the box-width measurement and the
+    // rendered row agree.
+    let (arrow, pct) = match card.direction {
+        1 => ("▲ ", card.change_pct.trim_start_matches(['+', '-'])),
+        -1 => ("▼ ", card.change_pct.trim_start_matches(['+', '-'])),
+        _ => ("", card.change_pct.as_str()),
+    };
+    let price = format!("{}  {arrow}{}  {pct}", card.last, card.change);
     let range = format!(
         "{} {}   {} {}   {} {}",
         t!("Ai.QuoteOpen"),
@@ -4428,7 +5512,7 @@ fn quote_card(card: &super::quotes::QuoteCardData, width: usize) -> Vec<Line<'st
         Line::from(all)
     };
     vec![
-        border("┌", "┐"),
+        border("╭", "╮"),
         row(
             {
                 let mut spans = symbol_cell(&card.symbol);
@@ -4444,14 +5528,17 @@ fn quote_card(card: &super::quotes::QuoteCardData, width: usize) -> Vec<Line<'st
             },
             UnicodeWidthStr::width(head.as_str()),
         ),
+        // The price leads in its direction's colour, with the arrow carrying the
+        // direction so the change reads at a glance — the same treatment the
+        // floating panel gives it.
         row(
             vec![
                 Span::styled(
                     format!("{}  ", card.last),
-                    Style::default().add_modifier(Modifier::BOLD),
+                    Style::default().fg(dir).add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
-                    format!("{}  {}", card.change, card.change_pct),
+                    format!("{arrow}{}  {pct}", card.change),
                     Style::default().fg(dir),
                 ),
             ],
@@ -4471,7 +5558,7 @@ fn quote_card(card: &super::quotes::QuoteCardData, width: usize) -> Vec<Line<'st
             )],
             UnicodeWidthStr::width(flow.as_str()),
         ),
-        border("└", "┘"),
+        border("╰", "╯"),
     ]
 }
 
@@ -4531,8 +5618,14 @@ fn comparison_card(
                 format!("  {:>last_w$}", card.last),
                 Style::default().add_modifier(Modifier::BOLD),
             ));
+            // The arrow replaces the percent's sign — same width, more legible.
+            let (arrow, pct) = match card.direction {
+                1 => ("▲", card.change_pct.trim_start_matches(['+', '-'])),
+                -1 => ("▼", card.change_pct.trim_start_matches(['+', '-'])),
+                _ => ("", card.change_pct.as_str()),
+            };
             spans.push(Span::styled(
-                format!("  {:>pct_w$}", card.change_pct),
+                format!("  {:>pct_w$}", format!("{arrow}{pct}")),
                 Style::default().fg(change_color(card.direction)),
             ));
             used += 2 + last_w + 2 + pct_w;
@@ -4563,19 +5656,41 @@ fn wrap(s: &str, width: usize) -> Vec<String> {
     if width == 0 || s.is_empty() {
         return vec![s.to_string()];
     }
+    let chars: Vec<char> = s.chars().collect();
     let mut out = Vec::new();
-    let mut cur = String::new();
-    let mut w = 0;
-    for ch in s.chars() {
-        let cw = ch.width().unwrap_or(0);
-        if w + cw > width && !cur.is_empty() {
-            out.push(std::mem::take(&mut cur));
+    let mut line_start = 0usize;
+    let mut i = 0usize;
+    let mut w = 0usize;
+    // The most recent space on the current line, so a word never splits mid-token
+    // unless it is itself longer than the width (or is CJK, which has no spaces).
+    let mut last_space: Option<usize> = None;
+    while i < chars.len() {
+        let cw = chars[i].width().unwrap_or(0);
+        if w + cw > width && i > line_start {
+            let brk = match last_space {
+                Some(sp) if sp > line_start => sp + 1,
+                _ => i,
+            };
+            out.push(
+                chars[line_start..brk]
+                    .iter()
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string(),
+            );
+            line_start = brk;
+            i = brk;
             w = 0;
+            last_space = None;
+            continue;
         }
-        cur.push(ch);
+        if chars[i] == ' ' {
+            last_space = Some(i);
+        }
         w += cw;
+        i += 1;
     }
-    out.push(cur);
+    out.push(chars[line_start..].iter().collect());
     out
 }
 
@@ -4583,6 +5698,335 @@ fn wrap(s: &str, width: usize) -> Vec<String> {
 mod tests {
     use super::marquee;
     use unicode_width::UnicodeWidthStr;
+
+    #[test]
+    fn a_question_with_options_is_fully_selectable() {
+        let interrupt = serde_json::json!({
+            "tool_call_id": "call_1",
+            "questions": [
+                {"question": "Which market?", "choices": ["HK", "US"]},
+                {"question": "Which period?", "choices": ["1d", "1w"]},
+            ],
+        });
+        let qs = super::QuestionState::from_interrupt(&interrupt);
+        assert_eq!(qs.tool_call_id, "call_1");
+        assert_eq!(qs.questions.len(), 2);
+        assert!(qs.fully_selectable());
+    }
+
+    #[test]
+    fn a_free_text_question_is_not_fully_selectable() {
+        // One question has no options, so the option overlay cannot answer it.
+        let interrupt = serde_json::json!({
+            "tool_call_id": "call_2",
+            "questions": [
+                {"question": "Which market?", "choices": ["HK", "US"]},
+                {"question": "Anything else?"},
+            ],
+        });
+        let qs = super::QuestionState::from_interrupt(&interrupt);
+        assert!(!qs.fully_selectable());
+    }
+
+    #[test]
+    fn copy_excludes_tool_and_system_lines() {
+        use super::transcript_text;
+        use crate::ai::state::{ChatState, Message, Role, ToolStatus};
+        let mut state = ChatState::new("chatbot".into(), "welcome".into());
+        state.messages.push(Message::new(Role::User, "hi".into()));
+        state
+            .messages
+            .push(Message::tool("get_quote".into(), ToolStatus::Ok));
+        state
+            .messages
+            .push(Message::new(Role::Assistant, "hello".into()));
+        let copied = transcript_text(&state);
+        assert!(copied.contains("hi") && copied.contains("hello"));
+        assert!(
+            !copied.contains("get_quote") && !copied.contains("welcome"),
+            "tool and system lines must not be copied: {copied}"
+        );
+    }
+
+    /// `/copy` grabs the latest answer (what "copy" means in a chat), and says so
+    /// when there is not one yet.
+    #[test]
+    fn copy_takes_the_last_answer_or_reports_none() {
+        use crate::ai::state::{ChatState, Message, Role};
+        let mut ui = super::Ui::new();
+        let mut state = ChatState::new("chatbot".into(), "welcome".into());
+        super::exec_slash("copy", "", &mut ui, &mut state);
+        assert_eq!(ui.notice.as_deref(), Some(t!("Ai.NothingToCopy").as_ref()));
+        state.messages.push(Message::new(Role::User, "hi".into()));
+        state
+            .messages
+            .push(Message::new(Role::Assistant, "the answer".into()));
+        assert_eq!(super::last_answer(&state).as_deref(), Some("the answer"));
+    }
+
+    /// The command palette hangs directly off the prompt box: its bottom border
+    /// sits on the row immediately above the prompt box's top border, rather than
+    /// being anchored to the transcript's foot with the status row in between.
+    #[test]
+    fn the_command_palette_sits_on_the_prompt_box() {
+        let mut ui = super::Ui::new();
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let mut editor = super::Editor::new();
+        editor.set_text("/");
+        let backend = ratatui::backend::TestBackend::new(60, 20);
+        let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|f| super::view(f, &mut ui, &mut state, &editor))
+            .expect("draw");
+        let buf = terminal.backend().buffer().clone();
+        let rows: Vec<String> = (0..buf.area.height)
+            .map(|y| {
+                (0..buf.area.width)
+                    .map(|x| buf[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect();
+        // A bottom border (the palette's) with a top border (the prompt box's) on
+        // the very next row proves the two are flush.
+        let flush = rows
+            .iter()
+            .zip(rows.iter().skip(1))
+            .any(|(a, b)| a.contains('╰') && b.contains('╭'));
+        assert!(
+            flush,
+            "the palette should rest on the prompt box:\n{}",
+            rows.join("\n")
+        );
+    }
+
+    #[test]
+    fn a_non_command_slash_prompt_has_no_palette_matches() {
+        // A prompt that merely starts with `/` (not a command) must not match any
+        // command, so the palette does not capture its Enter — the fix that lets
+        // it be sent to the agent rather than swallowed.
+        let mut e = super::Editor::new();
+        e.set_text("/why does TSLA trade at a premium");
+        assert!(super::slash_matches(&e).is_empty());
+        // A real command prefix still matches.
+        e.set_text("/ne");
+        assert!(!super::slash_matches(&e).is_empty());
+    }
+
+    #[test]
+    fn export_slug_is_filesystem_safe() {
+        use super::export_slug;
+        assert_eq!(
+            export_slug("Tesla stock performance"),
+            "tesla-stock-performance"
+        );
+        assert_eq!(export_slug("特斯拉 TSLA?"), "tsla");
+        assert!(export_slug("  ").is_empty());
+        // Capped and trimmed of trailing separators so the filename stays sane.
+        let long = export_slug(&"word ".repeat(20));
+        assert!(long.len() <= 40, "slug too long: {long}");
+        assert!(
+            !long.ends_with('-'),
+            "slug has a trailing separator: {long}"
+        );
+    }
+
+    #[test]
+    fn double_click_selects_the_word_under_it() {
+        let mut ui = super::Ui::new();
+        ui.transcript = super::Rect {
+            x: 0,
+            y: 0,
+            width: 40,
+            height: 5,
+        };
+        ui.visible_text = vec!["hello world foo".to_string()];
+        // Click within "world" (columns 6..11).
+        super::select_word_at(&mut ui, 8, 0);
+        let (anchor, cursor) = ui.selection.expect("a word was selected");
+        assert_eq!(anchor, (0, 6));
+        assert_eq!(cursor, (0, 11));
+    }
+
+    #[test]
+    fn sparkline_handles_degenerate_inputs() {
+        use super::sparkline;
+        // Fewer than two points, or a flat series, has no shape to draw.
+        assert_eq!(sparkline(&[], 8), None);
+        assert_eq!(sparkline(&[1.0], 8), None);
+        assert_eq!(sparkline(&[5.0, 5.0, 5.0], 8), None);
+        // A real series renders one block per sampled point, low to high.
+        let s = sparkline(&[1.0, 2.0, 3.0, 4.0], 4).expect("a sparkline");
+        assert_eq!(s.chars().count(), 4);
+        assert!(s.starts_with('▁') && s.ends_with('█'));
+    }
+
+    #[test]
+    fn reference_url_prefers_top_level_then_content() {
+        use super::reference_url;
+        use longbridge::agent::Reference;
+        let make = |v: serde_json::Value| -> Reference { serde_json::from_value(v).unwrap() };
+        // Top-level url wins over content's source_url.
+        let r = make(serde_json::json!({
+            "url": "https://a.example",
+            "content": {"source_url": "https://b.example"},
+        }));
+        assert_eq!(reference_url(&r).as_deref(), Some("https://a.example"));
+        // Falls back to content's url when the top level is empty.
+        let r2 = make(serde_json::json!({"content": {"url": "https://c.example"}}));
+        assert_eq!(reference_url(&r2).as_deref(), Some("https://c.example"));
+        // Nothing to open.
+        assert_eq!(reference_url(&make(serde_json::json!({}))), None);
+    }
+
+    #[test]
+    fn triple_click_selects_the_whole_line() {
+        let mut ui = super::Ui::new();
+        ui.transcript = super::Rect {
+            x: 2,
+            y: 0,
+            width: 40,
+            height: 5,
+        };
+        ui.visible_text = vec!["hello world".to_string()];
+        super::select_line_at(&mut ui, 0);
+        let (anchor, cursor) = ui.selection.expect("the line was selected");
+        // Content coordinates: line 0, columns within the line (0..width), not
+        // offset by the transcript's screen x.
+        assert_eq!(anchor, (0, 0));
+        assert_eq!(cursor, (0, 11));
+    }
+
+    /// A fresh conversation must not inherit the previous one's floating quote
+    /// panel (its quote is cleared, so it would show "loading" forever), nor its
+    /// sparkline paths or confirmed-ticker aliases.
+    #[test]
+    fn reset_render_drops_the_previous_conversations_overlay_state() {
+        let mut ui = super::Ui::new();
+        ui.quote_panel = Some("TSLA.US".into());
+        ui.paths.insert("TSLA.US".into(), vec![1.0, 2.0]);
+        ui.aliases.insert("SPCX".into(), "SPCX.US".into());
+        ui.tape.push("TSLA.US".into());
+        ui.reset_render();
+        assert!(ui.quote_panel.is_none());
+        assert!(ui.paths.is_empty());
+        assert!(ui.aliases.is_empty());
+        assert!(ui.tape.is_empty());
+    }
+
+    /// The quote panel overlays the chat; switching to another view (which cannot
+    /// dismiss it) must take it down rather than strand it there.
+    #[test]
+    fn switching_away_from_chat_closes_the_quote_panel() {
+        let mut ui = super::Ui::new();
+        ui.quote_panel = Some("TSLA.US".into());
+        ui.switch(super::View::Sessions);
+        assert!(ui.quote_panel.is_none());
+    }
+
+    /// A transcript cell maps to a content line through the recorded view offset,
+    /// with the column measured from the text start, not the screen edge.
+    #[test]
+    fn a_transcript_cell_maps_to_its_content_line() {
+        let mut ui = super::Ui::new();
+        ui.transcript = super::Rect {
+            x: 3,
+            y: 2,
+            width: 40,
+            height: 5,
+        };
+        ui.view_start = 7;
+        ui.view_total = 30;
+        // Third visible row (y+2), five columns past the text start (x+5).
+        assert_eq!(super::content_at(&ui, 8, 4), (9, 5));
+    }
+
+    /// Dragging past an edge scrolls the transcript so the selection can extend
+    /// beyond the visible page — up past the top, down past the bottom.
+    #[test]
+    fn dragging_past_an_edge_scrolls_to_extend_the_selection() {
+        let mut ui = super::Ui::new();
+        ui.transcript = super::Rect {
+            x: 0,
+            y: 1,
+            width: 40,
+            height: 5,
+        };
+        // Scrolled up: view_start = total - scroll - height = 40 - 25 - 5 = 10.
+        ui.view_start = 10;
+        ui.view_rows = 5;
+        ui.view_total = 40;
+        ui.max_scroll = 35;
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        state.scroll = 25;
+        // Below the bottom edge (rows are y=1..6): scroll down, cursor advances.
+        let (line, _) = super::drag_to_content(&mut ui, &mut state, 0, 9);
+        assert!(state.scroll < 25, "dragging below the bottom scrolls down");
+        assert!(
+            line > 10,
+            "and the cursor reaches newly-revealed lower content"
+        );
+        // Above the top edge: scroll back up, cursor retreats.
+        state.scroll = 25;
+        let (line, _) = super::drag_to_content(&mut ui, &mut state, 0, 0);
+        assert!(state.scroll > 25, "dragging above the top scrolls up");
+        assert!(
+            line < 10,
+            "and the cursor reaches newly-revealed upper content"
+        );
+    }
+
+    /// A drag on a fresh session — where no transcript has been laid out, so
+    /// `view_rows` is 0 while the transcript rect starts below row 0 — must not
+    /// panic on the `clamp(top, top - 1)` the edge math would otherwise reach.
+    #[test]
+    fn dragging_on_an_unrendered_transcript_does_not_panic() {
+        let mut ui = super::Ui::new();
+        ui.transcript = super::Rect {
+            x: 0,
+            y: 2,
+            width: 40,
+            height: 6,
+        };
+        // view_rows / view_total left at their defaults of 0.
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let (line, _) = super::drag_to_content(&mut ui, &mut state, 5, 4);
+        assert_eq!(
+            line, 0,
+            "with nothing laid out, the drag maps to the first line"
+        );
+    }
+
+    #[test]
+    fn double_click_on_whitespace_selects_nothing() {
+        let mut ui = super::Ui::new();
+        ui.transcript = super::Rect {
+            x: 0,
+            y: 0,
+            width: 40,
+            height: 5,
+        };
+        ui.visible_text = vec!["hi   there".to_string()];
+        super::select_word_at(&mut ui, 3, 0); // a space
+        assert!(ui.selection.is_none());
+    }
+
+    #[test]
+    fn wrap_breaks_at_word_boundaries() {
+        // "hello world" at width 8 breaks between words, not mid-word.
+        assert_eq!(super::wrap("hello world", 8), vec!["hello", "world"]);
+    }
+
+    #[test]
+    fn wrap_hard_breaks_an_overlong_word() {
+        // A single token longer than the width still has to be split.
+        assert_eq!(super::wrap("abcdefgh", 4), vec!["abcd", "efgh"]);
+    }
+
+    #[test]
+    fn wrap_packs_cjk_to_width() {
+        // Two full-width glyphs fill width 4, so they share a line.
+        assert_eq!(super::wrap("你好世界", 4), vec!["你好", "世界"]);
+    }
 
     #[test]
     fn fits_within_width_is_unchanged() {
@@ -4613,6 +6057,37 @@ mod tests {
         assert_eq!(relative_time(0, 120), "2m");
         assert_eq!(relative_time(0, 7200), "2h");
         assert_eq!(relative_time(0, 172_800), "2d");
+        assert_eq!(relative_time(0, 14 * 86_400), "2w");
+        assert_eq!(relative_time(0, 800 * 86_400), "2y");
+    }
+
+    #[test]
+    fn session_time_switches_to_dates_after_72_hours() {
+        let now = time::macros::datetime!(2026-08-16 12:00 UTC)
+            .unix_timestamp()
+            .cast_unsigned();
+        assert_eq!(
+            super::session_time_label_at(now - (3 * 86_400 - 1), now, time::UtcOffset::UTC),
+            "2d"
+        );
+        assert_eq!(
+            super::session_time_label_at(now - 3 * 86_400, now, time::UtcOffset::UTC),
+            "Aug 13"
+        );
+    }
+
+    #[test]
+    fn session_time_in_another_year_includes_the_year() {
+        let now = time::macros::datetime!(2026-01-02 12:00 UTC)
+            .unix_timestamp()
+            .cast_unsigned();
+        let updated = time::macros::datetime!(2025-12-29 12:00 UTC)
+            .unix_timestamp()
+            .cast_unsigned();
+        assert_eq!(
+            super::session_time_label_at(updated, now, time::UtcOffset::UTC),
+            "Dec 29, 2025"
+        );
     }
 
     #[test]
@@ -4704,7 +6179,7 @@ mod tests {
     static TAPE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// Render the whole view into an in-memory backend and return its text rows.
-    fn frame(ui: &mut super::Ui, state: &super::ChatState, w: u16, h: u16) -> Vec<String> {
+    fn frame(ui: &mut super::Ui, state: &mut super::ChatState, w: u16, h: u16) -> Vec<String> {
         let backend = ratatui::backend::TestBackend::new(w, h);
         let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
         let editor = super::Editor::new();
@@ -4719,6 +6194,123 @@ mod tests {
                     .collect::<String>()
             })
             .collect()
+    }
+
+    /// A selection that runs off the top of the view still copies the lines that
+    /// scrolled out of sight, not only what happens to be on screen — the whole
+    /// point of dragging past the edge.
+    #[test]
+    fn a_selection_copies_lines_that_scrolled_off_screen() {
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        for i in 0..20 {
+            state.apply(super::ChatEvent::UserPrompt(format!("Q{i}")));
+            state.apply(super::ChatEvent::Delta(format!("ANSWER{i}")));
+            state.apply(super::ChatEvent::TurnFinished { error: None });
+        }
+        let mut ui = super::Ui::new();
+        // First render populates the transcript cache and the view metrics.
+        frame(&mut ui, &mut state, 40, 8);
+        assert!(
+            ui.view_total > ui.view_rows,
+            "the content must overflow the view for the top to be off screen"
+        );
+        // Select the whole transcript, top (off screen) to bottom.
+        ui.selection = Some(((0, 0), (ui.view_total - 1, 200)));
+        frame(&mut ui, &mut state, 40, 8);
+        let copied = ui.selected_text.clone().unwrap_or_default();
+        assert!(
+            copied.contains("ANSWER0") && copied.contains("Q0"),
+            "the earliest, off-screen lines are copied: {copied:?}"
+        );
+        assert!(
+            copied.contains("ANSWER19"),
+            "and so is the visible bottom: {copied:?}"
+        );
+    }
+
+    #[test]
+    fn find_matches_are_case_insensitive_and_ordered() {
+        let lines: Vec<String> = ["Apple pie", "banana", "APPLE crumble"]
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(super::find_matches(&lines, "apple"), vec![0, 2]);
+        assert!(super::find_matches(&lines, "").is_empty());
+        assert!(super::find_matches(&lines, "   ").is_empty());
+        assert!(super::find_matches(&lines, "xyz").is_empty());
+    }
+
+    #[test]
+    fn scroll_to_line_brings_a_line_into_view_and_respects_the_cap() {
+        // A mid-transcript line: a couple of rows of context above it.
+        assert_eq!(super::scroll_to_line(100, 10, 90, 50), 42);
+        // A line near the bottom pins to the latest.
+        assert_eq!(super::scroll_to_line(100, 10, 90, 99), 0);
+        // Never scrolls past the top.
+        assert!(super::scroll_to_line(100, 10, 5, 0) <= 5);
+    }
+
+    /// Ctrl+F opens the find bar, typing filters, and the view scrolls up to a
+    /// match buried early in a long transcript; Esc closes it.
+    #[test]
+    fn ctrl_f_scrolls_to_a_match_deep_in_the_transcript() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        for i in 0..20 {
+            state.apply(super::ChatEvent::UserPrompt(format!("Q{i}")));
+            state.apply(super::ChatEvent::Delta(format!("ANSWER about topic {i}")));
+            state.apply(super::ChatEvent::TurnFinished { error: None });
+        }
+        let mut ui = super::Ui::new();
+        let mut editor = super::Editor::new();
+        let mut turn = None;
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        // Render once so the text cache and view metrics are populated.
+        frame(&mut ui, &mut state, 48, 10);
+        let send = |ui: &mut super::Ui,
+                    state: &mut super::ChatState,
+                    editor: &mut super::Editor,
+                    turn: &mut Option<tokio::task::JoinHandle<()>>,
+                    code,
+                    mods| {
+            super::on_chat_key(KeyEvent::new(code, mods), ui, state, editor, turn, &tx);
+        };
+        send(
+            &mut ui,
+            &mut state,
+            &mut editor,
+            &mut turn,
+            KeyCode::Char('f'),
+            KeyModifiers::CONTROL,
+        );
+        assert!(ui.find.is_some(), "Ctrl+F opens the find bar");
+        for c in "topic 3".chars() {
+            send(
+                &mut ui,
+                &mut state,
+                &mut editor,
+                &mut turn,
+                KeyCode::Char(c),
+                KeyModifiers::NONE,
+            );
+        }
+        let query = ui.find.as_ref().unwrap().query.clone();
+        assert_eq!(query, "topic 3");
+        assert_eq!(
+            super::find_matches(&ui.cache_text, &query).len(),
+            1,
+            "only one line matches 'topic 3'"
+        );
+        assert!(state.scroll > 0, "the view scrolled up to the buried match");
+        send(
+            &mut ui,
+            &mut state,
+            &mut editor,
+            &mut turn,
+            KeyCode::Esc,
+            KeyModifiers::NONE,
+        );
+        assert!(ui.find.is_none(), "Esc closes the find bar");
     }
 
     /// A conversation waiting on a structured question.
@@ -4751,8 +6343,8 @@ mod tests {
     /// answer it is asking about has to stay readable while the reader answers.
     #[test]
     fn a_question_rises_from_the_input_without_covering_the_chat() {
-        let (mut ui, state) = asking();
-        let rows = frame(&mut ui, &state, 72, 22);
+        let (mut ui, mut state) = asking();
+        let rows = frame(&mut ui, &mut state, 72, 22);
         let text = rows.join("\n");
         assert!(
             text.contains("compare NVDA and AMD"),
@@ -4810,7 +6402,7 @@ mod tests {
     fn a_notice_does_not_hide_the_running_turn() {
         let mut ui = super::Ui::new();
         ui.notice = Some("Copied to clipboard.".into());
-        let rows = frame(&mut ui, &busy_state(), 70, 16);
+        let rows = frame(&mut ui, &mut busy_state(), 70, 16);
         let screen = rows.join("\n");
         assert!(
             screen.contains("Copied to clipboard."),
@@ -4831,7 +6423,7 @@ mod tests {
     #[test]
     fn the_turn_row_exists_only_while_busy() {
         let mut ui = super::Ui::new();
-        let busy = frame(&mut ui, &busy_state(), 70, 16);
+        let busy = frame(&mut ui, &mut busy_state(), 70, 16);
         assert!(
             busy.iter().any(|l| l.contains("[stop]")),
             "a running turn should offer [stop]:\n{}",
@@ -4839,15 +6431,38 @@ mod tests {
         );
         assert!(ui.stop_button.is_some(), "the button needs a hit rect");
 
-        let idle = super::ChatState::new("chatbot".into(), "welcome".into());
+        let mut idle = super::ChatState::new("chatbot".into(), "welcome".into());
         let mut ui = super::Ui::new();
-        let rows = frame(&mut ui, &idle, 70, 16);
+        let rows = frame(&mut ui, &mut idle, 70, 16);
         assert!(
             !rows.iter().any(|l| l.contains("[stop]")),
             "no turn, no stop button:\n{}",
             rows.join("\n")
         );
         assert!(ui.stop_button.is_none());
+    }
+
+    /// While a turn runs the prompt box hugs the status row rather than leaving a
+    /// second blank row between the spinner and the input.
+    #[test]
+    fn the_prompt_hugs_the_status_while_a_turn_runs() {
+        let mut ui = super::Ui::new();
+        let rows = frame(&mut ui, &mut busy_state(), 70, 16);
+        let turn = rows
+            .iter()
+            .position(|l| l.contains("[stop]"))
+            .expect("the turn row");
+        let box_top = rows
+            .iter()
+            .position(|l| l.contains('╭'))
+            .expect("the prompt box");
+        assert!(box_top > turn, "the box sits below the turn row");
+        assert!(
+            box_top - turn <= 2,
+            "at most one blank row between the spinner and the prompt, got {}:\n{}",
+            box_top - turn,
+            rows.join("\n")
+        );
     }
 
     /// The count is per turn, not per conversation.
@@ -4869,6 +6484,41 @@ mod tests {
         state.apply(ChatEvent::ToolStarted("B".into()));
         state.apply(ChatEvent::ToolStarted("C".into()));
         assert_eq!(super::tools_this_turn(&state), 2);
+    }
+
+    /// The `/` command palette's selection wraps: ↑ past the top lands on the last
+    /// command and ↓ past the bottom on the first.
+    #[test]
+    fn the_command_palette_selection_wraps() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let plain = |code| KeyEvent::new(code, KeyModifiers::empty());
+        let mut ui = super::Ui::new();
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let mut editor = super::Editor::new();
+        editor.set_text("/");
+        let mut turn = None;
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let count = super::slash_matches(&editor).len();
+        assert!(count > 1, "several commands match a bare slash");
+        ui.slash_sel = 0;
+        super::on_chat_key(
+            plain(KeyCode::Up),
+            &mut ui,
+            &mut state,
+            &mut editor,
+            &mut turn,
+            &tx,
+        );
+        assert_eq!(ui.slash_sel, count - 1, "Up past the top wraps to the last");
+        super::on_chat_key(
+            plain(KeyCode::Down),
+            &mut ui,
+            &mut state,
+            &mut editor,
+            &mut turn,
+            &tx,
+        );
+        assert_eq!(ui.slash_sel, 0, "Down past the bottom wraps to the first");
     }
 
     /// A `MacBook`'s built-in keyboard has no `PageUp`/`PageDown`/`Home`/`End` —
@@ -5023,7 +6673,7 @@ mod tests {
             url: "https://example.com/n1".into(),
             content: None,
         }];
-        let rows = frame(&mut ui, &state, 70, 20);
+        let rows = frame(&mut ui, &mut state, 70, 20);
         let refs_at = rows
             .iter()
             .position(|r| r.contains(t!("Agent.References").as_ref()))
@@ -5050,7 +6700,7 @@ mod tests {
         let mut ui = super::Ui::new();
         let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
         state.apply(super::ChatEvent::Title("A very specific chat title".into()));
-        let rows = frame(&mut ui, &state, 70, 14);
+        let rows = frame(&mut ui, &mut state, 70, 14);
         assert!(
             !rows
                 .iter()
@@ -5062,11 +6712,34 @@ mod tests {
 
     /// The title bar needs air under it, or it reads as the transcript's first
     /// line rather than as chrome.
+    /// Scrolled up mid-stream, the visible window must stay anchored to the same
+    /// content as new answer lines are appended below — not drift downward.
+    #[test]
+    fn a_scrolled_view_stays_anchored_while_streaming() {
+        let mut ui = super::Ui::new();
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        for i in 0..40 {
+            state
+                .messages
+                .push(super::Message::new(super::Role::User, format!("line {i}")));
+        }
+        state.scroll = 10;
+        let before = frame(&mut ui, &mut state, 40, 12);
+        // A streaming answer grows the transcript beneath the scrolled window.
+        state.streaming = Some("new answer line".into());
+        state.busy = true;
+        let after = frame(&mut ui, &mut state, 40, 12);
+        assert_eq!(
+            before[1], after[1],
+            "the top visible row should not move as lines are appended below"
+        );
+    }
+
     #[test]
     fn the_title_bar_is_separated_from_the_transcript() {
         let mut ui = super::Ui::new();
-        let state = super::ChatState::new("chatbot".into(), "welcome".into());
-        let rows = frame(&mut ui, &state, 70, 24);
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let rows = frame(&mut ui, &mut state, 70, 24);
         assert!(
             rows[0].contains("Longbridge AI"),
             "row 0 is the badge: {:?}",
@@ -5196,12 +6869,17 @@ mod tests {
         );
         let text = text_of(&out);
         assert!(text.contains("NVDA.US") && text.contains("英伟达"));
-        assert!(text.contains("182.4") && text.contains("+2.10%"));
+        // The percent drops its sign; a ▲/▼ arrow carries the direction instead.
+        assert!(text.contains("182.4") && text.contains("▲") && text.contains("2.10%"));
         assert!(
             text.contains("179.2"),
             "the day's range belongs on the card"
         );
-        assert!(text.contains('┌') && text.contains('└'), "it is a box");
+        assert!(
+            (text.contains('┌') || text.contains('╭'))
+                && (text.contains('└') || text.contains('╰')),
+            "it is a box"
+        );
         assert!(!text.contains("widget://"), "never show the URL");
     }
 
@@ -5216,7 +6894,8 @@ mod tests {
         );
         let text = text_of(&out);
         assert!(text.contains("TSLA.US") && text.contains("NVDA.US"));
-        assert!(text.contains("-1.59%") && text.contains("+2.10%"));
+        // The direction rides an arrow, so the percent shows without its sign.
+        assert!(text.contains("▼1.59%") && text.contains("▲2.10%"));
         assert!(!text.contains("widget://"));
     }
 
@@ -5276,10 +6955,10 @@ mod tests {
     #[test]
     fn the_logo_yields_to_the_welcome_copy_on_a_short_terminal() {
         let logo_h = usize::from(crate::tui::ui::assets::mark_height());
-        let state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
 
         let mut ui = super::Ui::new();
-        let tall = frame(&mut ui, &state, 80, (logo_h + 20) as u16);
+        let tall = frame(&mut ui, &mut state, 80, (logo_h + 20) as u16);
         assert!(
             tall.iter().any(|l| l.contains('█')),
             "a tall terminal should show the mark:\n{}",
@@ -5287,7 +6966,7 @@ mod tests {
         );
 
         let mut ui = super::Ui::new();
-        let short = frame(&mut ui, &state, 80, 14);
+        let short = frame(&mut ui, &mut state, 80, 14);
         assert!(
             !short.iter().any(|l| l.contains('█')),
             "a short terminal should drop it:\n{}",
@@ -5306,10 +6985,10 @@ mod tests {
     /// Nothing in the welcome state may exceed the width, logo included.
     #[test]
     fn the_welcome_state_fits_the_width() {
-        let state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
         for width in [40u16, 60, 80, 120] {
             let mut ui = super::Ui::new();
-            for line in frame(&mut ui, &state, width, 40) {
+            for line in frame(&mut ui, &mut state, width, 40) {
                 assert!(
                     unicode_width::UnicodeWidthStr::width(line.trim_end()) <= width as usize,
                     "welcome line exceeds {width}: {line:?}"
@@ -5451,7 +7130,7 @@ mod tests {
             "700.HK and AAPL.US both rose.".into(),
         ));
         state.apply(super::ChatEvent::TurnFinished { error: None });
-        let _ = frame(&mut ui, &state, 64, 20);
+        let _ = frame(&mut ui, &mut state, 64, 20);
         let symbols: Vec<(String, u16)> = ui
             .chips
             .iter()
@@ -5483,7 +7162,7 @@ mod tests {
         // `/quote` with no argument opens the security the answer mentioned last.
         super::exec_slash("quote", "", &mut ui, &mut state);
         assert_eq!(ui.quote_panel.as_deref(), Some("700.HK"));
-        let rows = frame(&mut ui, &state, 64, 20);
+        let rows = frame(&mut ui, &mut state, 64, 20);
         assert!(
             rows.iter().any(|r| r.contains("700.HK")),
             "the panel names the security: {rows:?}"
@@ -5516,7 +7195,7 @@ mod tests {
         state.apply(super::ChatEvent::TurnFinished { error: None });
         ui.quotes
             .insert("700.HK".to_string(), card("700.HK", "512.5", "+1.28%", 1));
-        let _ = frame(&mut ui, &state, 70, 20);
+        let _ = frame(&mut ui, &mut state, 70, 20);
         let tall = ui
             .chips
             .iter()
@@ -5568,8 +7247,8 @@ mod tests {
             expires_at: None,
             member_id: Some("123456".into()),
         };
-        let state = super::ChatState::new("chatbot".into(), "welcome".into());
-        let rows = frame(&mut ui, &state, 74, 24);
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let rows = frame(&mut ui, &mut state, 74, 24);
         let text = rows.join("\n");
         assert!(text.contains(t!("Ai.Account").as_ref()), "{text}");
         assert!(text.contains("#123456"), "the member id: {text}");
@@ -5597,8 +7276,8 @@ mod tests {
             status: "expired",
             ..Default::default()
         };
-        let state = super::ChatState::new("chatbot".into(), "welcome".into());
-        let text = frame(&mut ui, &state, 74, 24).join("\n");
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let text = frame(&mut ui, &mut state, 74, 24).join("\n");
         assert!(text.contains(t!("Ai.SessionExpired").as_ref()), "{text}");
         assert!(text.contains(t!("Ai.SignIn").as_ref()), "{text}");
     }
@@ -5652,7 +7331,7 @@ mod tests {
             ui.quotes
                 .insert(symbol.clone(), card(&symbol, "512.5", "+1.28%", 1));
         }
-        let first = frame(&mut ui, &state, 78, 10)[0].clone();
+        let first = frame(&mut ui, &mut state, 78, 10)[0].clone();
         assert!(first.contains("700.HK 512.5 ▲1.28%"), "{first}");
         // More than fits, so the ticker rotates rather than truncating.
         assert!(
@@ -5662,8 +7341,8 @@ mod tests {
         // Pretend the page has been up for its full dwell. The frame that finds it
         // due draws the page it is replacing, so the new one lands on the next.
         ui.tape_shown_at = std::time::Instant::now().checked_sub(super::TAPE_DWELL);
-        let _ = frame(&mut ui, &state, 78, 10);
-        let rotated = frame(&mut ui, &state, 78, 10)[0].clone();
+        let _ = frame(&mut ui, &mut state, 78, 10);
+        let rotated = frame(&mut ui, &mut state, 78, 10)[0].clone();
         assert_ne!(first, rotated, "the ticker should have advanced");
         assert!(
             !rotated.contains("700.HK") && !rotated.contains("AAPL.US"),
@@ -5686,12 +7365,12 @@ mod tests {
         super::track_session_symbols(&mut ui, &state);
         ui.quotes
             .insert("700.HK".into(), card("700.HK", "512.5", "+1.28%", 1));
-        let before = frame(&mut ui, &state, 78, 10)[0].clone();
+        let before = frame(&mut ui, &mut state, 78, 10)[0].clone();
         ui.tape_shown_at = std::time::Instant::now().checked_sub(super::TAPE_DWELL);
-        let _ = frame(&mut ui, &state, 78, 10);
+        let _ = frame(&mut ui, &mut state, 78, 10);
         assert_eq!(
             before,
-            frame(&mut ui, &state, 78, 10)[0],
+            frame(&mut ui, &mut state, 78, 10)[0],
             "one security fits, so nothing moves"
         );
         // The toggle is a chip in the row, and clicking it hides the ticker.
@@ -5702,7 +7381,7 @@ mod tests {
             "the toggle should be clickable"
         );
         crate::ai::settings::set_tape(false);
-        let off = frame(&mut ui, &state, 78, 10)[0].clone();
+        let off = frame(&mut ui, &mut state, 78, 10)[0].clone();
         assert!(!off.contains("512.5"), "collapsed: {off}");
         crate::ai::settings::set_tape(true);
     }
@@ -5728,7 +7407,7 @@ mod tests {
             .insert("SPCX.US".into(), card("SPCX.US", "135.995", "-3.75%", -1));
         super::track_session_symbols(&mut ui, &state);
         assert_eq!(ui.tape, ["SPCX.US"], "the ticker is tracked by its symbol");
-        let rows = frame(&mut ui, &state, 70, 16);
+        let rows = frame(&mut ui, &mut state, 70, 16);
         let text = rows.join("\n");
         assert!(text.contains("135.995 ▼3.75%"), "priced inline: {text}");
         // Clicking the four letters opens the security they resolve to.
@@ -5751,8 +7430,8 @@ mod tests {
     #[test]
     fn the_prompt_is_marked_not_boxed() {
         let mut ui = super::Ui::new();
-        let state = super::ChatState::new("chatbot".into(), "welcome".into());
-        let rows = frame(&mut ui, &state, 60, 16);
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let rows = frame(&mut ui, &mut state, 60, 16);
         let prompt = rows
             .iter()
             .rev()
@@ -5769,6 +7448,33 @@ mod tests {
         assert!(
             rows[top - 1].trim().is_empty(),
             "a blank row above it: {rows:?}"
+        );
+    }
+
+    /// A long single line of input follows the caret: the end being typed is on
+    /// screen even though it sits far past the box width, rather than clipped with
+    /// the cursor frozen at the border.
+    #[test]
+    fn a_long_prompt_line_scrolls_to_follow_the_caret() {
+        let mut ui = super::Ui::new();
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let mut editor = super::Editor::new();
+        // A line far wider than the 40-column frame, with a distinct tail so its
+        // visibility can only come from horizontal scrolling.
+        editor.insert_str(&format!("{}END", "a".repeat(80)));
+        let backend = ratatui::backend::TestBackend::new(40, 16);
+        let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|f| super::view(f, &mut ui, &mut state, &editor))
+            .expect("draw");
+        let buf = terminal.backend().buffer().clone();
+        let joined: String = (0..buf.area.height)
+            .flat_map(|y| (0..buf.area.width).map(move |x| (x, y)))
+            .map(|(x, y)| buf[(x, y)].symbol().to_string())
+            .collect();
+        assert!(
+            joined.contains("END"),
+            "the caret end of a long line should be visible: {joined:?}"
         );
     }
 
@@ -5838,6 +7544,14 @@ mod tests {
         assert_eq!(out, "$AAPL.US 与 $700.HK");
     }
 
+    #[test]
+    fn a_ticker_in_inline_code_keeps_verbatim() {
+        // A ticker inside `code` is already set apart; it must not gain a `$`.
+        let out =
+            super::cashtag_annotated("see `700.HK` and 700.HK", &std::collections::HashMap::new());
+        assert_eq!(out, "see `700.HK` and $700.HK");
+    }
+
     /// A comparison is a card, and its columns line up: reading a set of prices
     /// down the page is the whole point of the widget. It used to be a header at
     /// one indent and rows at another, with the prices left to a fixed `{:>10}`.
@@ -5876,7 +7590,10 @@ mod tests {
             .iter()
             .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
             .collect();
-        assert!(text[0].starts_with('┌'), "framed: {text:?}");
+        assert!(
+            text[0].starts_with('┌') || text[0].starts_with('╭'),
+            "framed: {text:?}"
+        );
         // The prices start at the same column on every row.
         let at = |row: &str, needle: &str| row.find(needle).map(|i| row[..i].chars().count());
         assert_eq!(
@@ -5903,7 +7620,7 @@ mod tests {
         let mut c = card("700.HK", "512.5", "+1.28%", 1);
         c.name = "腾讯控股".into();
         ui.quotes.insert("700.HK".into(), c);
-        let _ = frame(&mut ui, &state, 70, 20);
+        let _ = frame(&mut ui, &mut state, 70, 20);
         let tall = ui
             .chips
             .iter()
@@ -5936,22 +7653,22 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         crate::ai::settings::set_tape(true);
         let mut ui = super::Ui::new();
-        let state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
         // Nothing to collapse: no control at all.
-        let bare = frame(&mut ui, &state, 72, 12)[0].clone();
+        let bare = frame(&mut ui, &mut state, 72, 12)[0].clone();
         assert!(
             !bare.contains(t!("Ai.TapeToggle").as_ref()),
             "no ticker, no control: {bare:?}"
         );
         ui.tape.push("700.HK".into());
-        let open = frame(&mut ui, &state, 72, 12)[0].clone();
+        let open = frame(&mut ui, &mut state, 72, 12)[0].clone();
         assert!(
             !open.contains(t!("Ai.TapeToggle").as_ref()),
             "open, the label is dead weight: {open:?}"
         );
         assert!(!open.contains('['), "and no brackets: {open:?}");
         crate::ai::settings::set_tape(false);
-        let shut = frame(&mut ui, &state, 72, 12)[0].clone();
+        let shut = frame(&mut ui, &mut state, 72, 12)[0].clone();
         assert!(
             shut.contains(t!("Ai.TapeToggle").as_ref()),
             "collapsed, the label is what says the ticker is there: {shut:?}"
@@ -5972,11 +7689,11 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         crate::ai::settings::set_tape(true);
         let mut ui = super::Ui::new();
-        let state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
         for symbol in ["700.HK", "TSLA.US"] {
             ui.tape.push(symbol.into());
         }
-        let rows = frame(&mut ui, &state, 72, 12);
+        let rows = frame(&mut ui, &mut state, 72, 12);
         for symbol in ["700.HK", "TSLA.US"] {
             let (_, rect) = ui
                 .chips
@@ -5998,33 +7715,198 @@ mod tests {
     #[test]
     fn the_quote_dialog_is_sized_to_its_content() {
         let mut ui = super::Ui::new();
-        let state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
         let mut c = card("SPCX.US", "139.239", "-1.45%", -1);
         c.name = "SpaceX".into();
         ui.quotes.insert("SPCX.US".into(), c);
         ui.quote_panel = Some("SPCX.US".into());
-        let rows = frame(&mut ui, &state, 100, 20);
+        let rows = frame(&mut ui, &mut state, 100, 20);
         let framed: Vec<&String> = rows.iter().filter(|r| r.contains('│')).collect();
         assert!(!framed.is_empty(), "the dialog should be drawn: {rows:?}");
         let text = rows.join("\n");
         assert!(text.contains("$SPCX.US"), "the title: {text}");
+        // No `[Close]` button: the panel is dismissed by a click outside it or Esc,
+        // so it registers no close rect.
         assert!(
-            text.contains(t!("Ai.CloseButton").as_ref()),
-            "a way out that can be clicked: {text}"
+            ui.close_button.is_none(),
+            "the panel carries no close button"
         );
-        // The way out to the web is a button on the frame, not a line of prose.
-        assert!(text.contains(t!("Ai.QuoteWeb").as_ref()), "{text}");
-        // Content-sized: nowhere near the 100 columns available. Measured on the
-        // dialog's own top border, since the prompt's frame spans the width.
+        // The way out to the web is an icon on the frame, not a line of prose.
+        assert!(text.contains(super::WEB_ICON), "{text}");
+        // Content-sized: nowhere near the 100 columns available. Measured by
+        // trimming the drawer's own top border out of its row — it is right-aligned,
+        // so both the leading gap and any trailing space have to go.
         let top = rows
             .iter()
-            .find(|r| r.contains(t!("Ai.QuoteWeb").as_ref()))
-            .expect("the top border carries the button");
-        let widest = unicode_width::UnicodeWidthStr::width(top.trim_end());
+            .find(|r| r.contains(super::WEB_ICON))
+            .expect("the top border carries the icon");
+        let widest = unicode_width::UnicodeWidthStr::width(top.trim());
         assert!(widest < 80, "sized to content, got {widest} of 100");
-        // The web link is a button, positioned on the bottom border.
+        // A drawer: it hangs from the top of the transcript rather than floating in
+        // the middle, so its top border is one of the first rows, not a centred one.
+        let top_row = rows
+            .iter()
+            .position(|r| r.contains(super::WEB_ICON))
+            .expect("the drawer is drawn");
+        assert!(
+            top_row <= 2,
+            "the drawer drops from the top, at row {top_row}"
+        );
+        // The web link is a button, positioned on the top border.
         let button = ui.open_button.expect("the link should be clickable");
         assert!(button.height == 1 && button.width > 0);
+    }
+
+    /// The drawer opens at a fixed height and anchors under the security that was
+    /// clicked: it must not grow as the detail lands (the flash), and it drops from
+    /// the clicked column, not the corner.
+    #[test]
+    fn the_drawer_is_stable_and_anchors_under_the_click() {
+        let render = |with_detail: bool, anchor: Option<u16>| -> Vec<String> {
+            let mut ui = super::Ui::new();
+            ui.quote_anchor_x = anchor;
+            let mut state = super::ChatState::new("c".into(), "w".into());
+            ui.quotes.insert(
+                "NVDA.US".into(),
+                sample_card("NVDA.US", "英伟达", "182.4", "+3.75", "+2.10%", 1),
+            );
+            if with_detail {
+                ui.details.insert(
+                    "NVDA.US".into(),
+                    crate::ai::quotes::QuoteDetail {
+                        avg: Some("181.2".into()),
+                        pe_ttm: Some("48.3".into()),
+                        ..Default::default()
+                    },
+                );
+            }
+            ui.quote_panel = Some("NVDA.US".into());
+            frame(&mut ui, &mut state, 100, 24)
+        };
+        let bars = |rows: &[String]| rows.iter().filter(|r| r.contains('│')).count();
+        assert_eq!(
+            bars(&render(false, None)),
+            bars(&render(true, None)),
+            "the drawer must not grow when detail lands"
+        );
+        // Anchored under the clicked column: its left border corner sits there.
+        let rows = render(true, Some(30));
+        let top = rows.iter().find(|r| r.contains('┌')).expect("a top border");
+        assert_eq!(
+            top.find('┌'),
+            Some(30),
+            "the drawer opens under the clicked column: {top}"
+        );
+    }
+
+    /// The richer figures render once they arrive, and only the ones a market
+    /// returned: a `None` field adds no row rather than an empty one.
+    #[test]
+    fn the_panel_shows_the_richer_figures_when_present() {
+        let card = sample_card("NVDA.US", "英伟达", "182.4", "+3.75", "+2.10%", 1);
+        let detail = crate::ai::quotes::QuoteDetail {
+            avg: Some("181.2".into()),
+            amplitude: Some("2.51%".into()),
+            pe_ttm: Some("48.3".into()),
+            market_cap: Some("4.47B".into()),
+            eps_ttm: Some("3.78".into()),
+            ..Default::default()
+        };
+        let text: String = super::card_lines(&card, &[], Some(&detail))
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        for value in ["181.2", "2.51%", "48.3", "4.47B", "3.78"] {
+            assert!(text.contains(value), "missing {value} in:\n{text}");
+        }
+        // Nothing came back for PB, so its label never appears.
+        assert!(
+            !text.contains(t!("Ai.QuotePb").as_ref()),
+            "an absent field must not draw a row:\n{text}"
+        );
+        // And with no detail at all, only the core six rows are drawn.
+        let plain: String = super::card_lines(&card, &[], None)
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!plain.contains("181.2"), "no detail rows without a detail");
+    }
+
+    /// Left/Right walk the conversation's securities in place and wrap at the ends;
+    /// a security the tape never named leaves the panel where it is.
+    #[test]
+    fn the_panel_steps_through_the_sessions_securities() {
+        let mut ui = super::Ui::new();
+        ui.tape = vec!["AAPL.US".into(), "NVDA.US".into(), "TSLA.US".into()];
+        ui.quote_panel = Some("NVDA.US".into());
+
+        super::step_quote_panel(&mut ui, 1);
+        assert_eq!(ui.quote_panel.as_deref(), Some("TSLA.US"), "forward");
+        super::step_quote_panel(&mut ui, 1);
+        assert_eq!(
+            ui.quote_panel.as_deref(),
+            Some("AAPL.US"),
+            "wraps past the end"
+        );
+        super::step_quote_panel(&mut ui, -1);
+        assert_eq!(ui.quote_panel.as_deref(), Some("TSLA.US"), "wraps back");
+
+        // A symbol not on the tape (a bare /quote) has no neighbours to step to.
+        ui.quote_panel = Some("SPCX.US".into());
+        super::step_quote_panel(&mut ui, 1);
+        assert_eq!(
+            ui.quote_panel.as_deref(),
+            Some("SPCX.US"),
+            "off-tape is a no-op"
+        );
+
+        // And a lone security stays put rather than stepping onto itself.
+        ui.tape = vec!["AAPL.US".into()];
+        ui.quote_panel = Some("AAPL.US".into());
+        super::step_quote_panel(&mut ui, 1);
+        assert_eq!(ui.quote_panel.as_deref(), Some("AAPL.US"), "nowhere to go");
+    }
+
+    /// Stepping pages the ticker only when the next security is off the visible
+    /// window, so the drawer's tab and the ticker stay lined up: a step within the
+    /// page holds the ticker still, a step past its edge slides it just enough.
+    #[test]
+    fn stepping_pages_the_ticker_only_when_the_next_stock_is_off_screen() {
+        let mut ui = super::Ui::new();
+        for i in 0..8 {
+            ui.tape.push(format!("SYM{i}.US"));
+        }
+        // Three of the eight are on screen, starting at the first.
+        ui.tape_drawn = 3;
+        ui.tape_at = 0;
+        ui.quote_panel = Some("SYM1.US".into());
+        // SYM2 is already visible, so the ticker does not move.
+        super::step_quote_panel(&mut ui, 1);
+        assert_eq!(ui.quote_panel.as_deref(), Some("SYM2.US"));
+        assert_eq!(
+            ui.tape_at, 0,
+            "an on-screen neighbour holds the ticker still"
+        );
+        // Stepping back from the first entry wraps to the last, which is off screen,
+        // so the ticker pages to bring it on.
+        ui.tape_at = 0;
+        ui.tape_drawn = 3;
+        ui.quote_panel = Some("SYM0.US".into());
+        super::step_quote_panel(&mut ui, -1);
+        assert_eq!(ui.quote_panel.as_deref(), Some("SYM7.US"));
+        assert_eq!(ui.tape_at, 7, "an off-screen entry pages the ticker to it");
     }
 
     /// The web page has the chart and the filings the panel cannot hold.
@@ -6068,8 +7950,8 @@ mod tests {
             code: "WDJB-MJHT".into(),
             browser_opened: true,
         });
-        let state = super::ChatState::new("chatbot".into(), "welcome".into());
-        let rows = frame(&mut ui, &state, 84, 20);
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let rows = frame(&mut ui, &mut state, 84, 20);
         let text = rows.join("\n");
         assert!(
             text.contains("longbridge.com/oauth/device"),
@@ -6106,8 +7988,8 @@ mod tests {
     #[test]
     fn a_welcome_example_sends_itself() {
         let mut ui = super::Ui::new();
-        let state = super::ChatState::new("chatbot".into(), "welcome".into());
-        let _ = frame(&mut ui, &state, 80, 24);
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let _ = frame(&mut ui, &mut state, 80, 24);
         let samples: Vec<&'static str> = ui
             .chips
             .iter()
@@ -6152,11 +8034,66 @@ mod tests {
         assert!(turn.is_none(), "nothing was sent yet");
         assert!(editor.is_blank(), "and the input is clear for the next one");
         // On screen, dim, so the reader can see what they have lined up.
-        let text = frame(&mut ui, &state, 60, 16).join("\n");
+        let text = frame(&mut ui, &mut state, 60, 16).join("\n");
         assert!(text.contains("NVDA 呢"), "{text}");
         // Cancelling means stop, not "stop this one and start the next".
         state.cancel("(cancelled)");
         assert!(state.queued.is_empty());
+    }
+
+    /// A folded paste is sent together with the typed prompt, and the input is
+    /// cleared afterwards — the whole paste→submit path end to end.
+    #[test]
+    fn a_folded_paste_is_sent_with_the_typed_prompt() {
+        let mut ui = super::Ui::new();
+        // The busy path queues without needing credentials, so it exercises the
+        // submit logic offline.
+        let mut state = busy_state();
+        let mut editor = super::Editor::new();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut turn = None;
+        let big = (0..12)
+            .map(|i| format!("row {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        editor.paste(&big);
+        for c in "explain this".chars() {
+            editor.insert_char(c);
+        }
+        // The box shows only the typed text; the paste is a chip.
+        assert_eq!(editor.text(), "explain this");
+        assert_eq!(editor.attachments().len(), 1);
+        super::on_key(
+            crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Enter,
+                crossterm::event::KeyModifiers::NONE,
+            ),
+            &mut ui,
+            &mut state,
+            &mut editor,
+            &mut turn,
+            &tx,
+        );
+        assert_eq!(state.queued.len(), 1);
+        let sent = &state.queued[0];
+        assert!(
+            sent.contains("explain this") && sent.contains("row 11"),
+            "the paste is folded back into the sent prompt: {sent}"
+        );
+        assert!(editor.is_blank(), "the input clears after send");
+    }
+
+    /// `/retry` will not start a second turn while one is already running; it says
+    /// to wait instead.
+    #[test]
+    fn retry_refuses_while_a_turn_is_running() {
+        let mut ui = super::Ui::new();
+        let mut state = busy_state();
+        let mut turn = None;
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        super::retry_last(&mut ui, &mut state, &mut turn, &tx);
+        assert!(turn.is_none(), "no turn was started");
+        assert_eq!(ui.notice.as_deref(), Some(t!("Ai.RetryBusy").as_ref()));
     }
 
     /// A run of tool rows is a block, and a block needs air on both sides — the
@@ -6175,7 +8112,7 @@ mod tests {
         }
         state.apply(super::ChatEvent::Delta("Answer.".into()));
         state.apply(super::ChatEvent::TurnFinished { error: None });
-        let rows = frame(&mut ui, &state, 60, 16);
+        let rows = frame(&mut ui, &mut state, 60, 16);
         let last_tool = rows
             .iter()
             .rposition(|r| r.contains("List Ticker News"))
@@ -6194,9 +8131,9 @@ mod tests {
     #[test]
     fn a_list_view_closes_from_its_header() {
         let mut ui = super::Ui::new();
-        let state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
         ui.view = super::View::Sessions;
-        let rows = frame(&mut ui, &state, 64, 12);
+        let rows = frame(&mut ui, &mut state, 64, 12);
         let rect = ui.close_button.expect("a way out that is not only a key");
         assert_eq!(rect.y, 0, "it sits on the header row");
         let label = format!("[{}]", t!("Ai.CloseButton"));
@@ -6209,11 +8146,23 @@ mod tests {
         assert!(ui.view == super::View::Chat, "and it goes back to the chat");
     }
 
+    #[test]
+    fn a_list_views_close_button_is_flush_right() {
+        let mut ui = super::Ui::new();
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        ui.view = super::View::Sessions;
+        let width = 64usize;
+        let rows = frame(&mut ui, &mut state, width as u16, 12);
+        assert_eq!(rows[0].chars().nth(width - 1), Some(']'), "{:?}", rows[0]);
+        let rect = ui.close_button.expect("the visible close button");
+        assert_eq!(rect.x + rect.width, width as u16);
+    }
+
     /// The hint under a list is not one more row of the list.
     #[test]
     fn a_list_views_hint_stands_off_the_rows() {
         let mut ui = super::Ui::new();
-        let state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
         ui.view = super::View::Sessions;
         ui.sessions = (0..9)
             .map(|i| super::SessionSummary {
@@ -6223,7 +8172,7 @@ mod tests {
                 agent: String::new(),
             })
             .collect();
-        let rows = frame(&mut ui, &state, 64, 12);
+        let rows = frame(&mut ui, &mut state, 64, 12);
         let hint = rows
             .iter()
             .position(|r| r.contains(t!("Ai.SessionsHint").split(' ').next().unwrap()))
@@ -6238,14 +8187,32 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_session_row_shows_age_without_the_agent_name() {
+        let mut ui = super::Ui::new();
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        ui.view = super::View::Sessions;
+        ui.sessions = vec![super::SessionSummary {
+            id: "chat-1".into(),
+            updated_at: super::now_secs().saturating_sub(60),
+            title: "Market outlook".into(),
+            agent: "LongbridgeAI".into(),
+        }];
+
+        let text = frame(&mut ui, &mut state, 72, 12).join("\n");
+        assert!(text.contains("Market outlook"), "title: {text}");
+        assert!(text.contains("1m"), "relative update time: {text}");
+        assert!(!text.contains("LongbridgeAI"), "redundant agent: {text}");
+    }
+
     /// A view that carries its own name takes the title bar's rows: two titles, one
     /// above the other, read as a nesting that is not there.
     #[test]
     fn a_list_view_replaces_the_title_bar_rather_than_stacking_under_it() {
         let mut ui = super::Ui::new();
-        let state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
         ui.view = super::View::Sessions;
-        let rows = frame(&mut ui, &state, 72, 12);
+        let rows = frame(&mut ui, &mut state, 72, 12);
         assert!(
             !rows.join("\n").contains(t!("Ai.Title").as_ref()),
             "the brand title bar is covered: {rows:?}"
@@ -6263,8 +8230,8 @@ mod tests {
     #[test]
     fn the_title_bar_offers_the_conversations() {
         let mut ui = super::Ui::new();
-        let state = super::ChatState::new("chatbot".into(), "welcome".into());
-        let rows = frame(&mut ui, &state, 76, 12);
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let rows = frame(&mut ui, &mut state, 76, 12);
         let (_, rect) = ui
             .chips
             .iter()
@@ -6288,7 +8255,7 @@ mod tests {
         super::exec_slash("help", "", &mut ui, &mut state);
         assert_eq!(ui.help, Some(0), "the panel is open");
         assert_eq!(state.messages.len(), before, "and nothing was written");
-        let text = frame(&mut ui, &state, 80, 30).join("\n");
+        let text = frame(&mut ui, &mut state, 80, 30).join("\n");
         assert!(text.contains(t!("Ai.Help").as_ref()), "{text}");
         assert!(text.contains("/resume"), "the commands are listed: {text}");
         assert!(text.contains("Shift+Enter"), "and the keys: {text}");

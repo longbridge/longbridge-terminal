@@ -79,6 +79,10 @@ pub enum ChatEvent {
     Title(String),
     /// The agent paused to ask the user something; the next prompt answers it.
     Interrupt(Value),
+    /// The server reported the turn failed (via `chat_finished`/`workflow_finished`),
+    /// even though the stream itself ended cleanly. Recorded so the turn is
+    /// finalized as an error rather than a clean completion.
+    TurnError(String),
     /// End-of-turn metadata (source references / suggested follow-ups) rendered
     /// as interactive chips rather than folded into the answer text.
     Meta {
@@ -115,6 +119,14 @@ pub struct ChatState {
     pub parent_message_id: Option<String>,
     /// Set when the last turn ended asking a question; the next prompt answers.
     pub pending_interrupt: Option<Value>,
+    /// A server-reported error for the active turn, carried out-of-band.
+    ///
+    /// The stream ends `Ok` even when the server says the turn failed (the error
+    /// rides a `chat_finished`/`workflow_finished` event, not a transport error),
+    /// so without this a failed turn would look clean and become the parent of the
+    /// next — the very thing that bricks a conversation. Consumed by
+    /// [`Self::finish_turn`].
+    pub turn_error: Option<String>,
     /// Prompts typed while a turn was running, sent one at a time as it frees up.
     ///
     /// A reader who has thought of the next question should not have to hold it in
@@ -150,6 +162,7 @@ impl ChatState {
                 self.tool_failures.clear();
                 self.references.clear();
                 self.further.clear();
+                self.turn_error = None;
             }
             ChatEvent::TurnStarted {
                 chat_uid,
@@ -202,6 +215,13 @@ impl ChatState {
                 }
             }
             ChatEvent::Interrupt(interrupt) => self.pending_interrupt = Some(interrupt),
+            // Keep the first cause: a later teardown event may repeat it or arrive
+            // blank, and the first one is the real reason.
+            ChatEvent::TurnError(err) => {
+                if self.turn_error.is_none() && !err.trim().is_empty() {
+                    self.turn_error = Some(err);
+                }
+            }
             ChatEvent::Meta {
                 references,
                 further,
@@ -209,7 +229,13 @@ impl ChatState {
                 self.references = references;
                 self.further = further;
             }
-            ChatEvent::TurnFinished { error } => self.finish_turn(error),
+            ChatEvent::TurnFinished { error } => {
+                // A transport error takes precedence, but a server-reported one is
+                // just as fatal — fold it in so the turn is finalized as failed.
+                let error = error.or_else(|| self.turn_error.take());
+                self.turn_error = None;
+                self.finish_turn(error);
+            }
         }
     }
 
@@ -224,8 +250,9 @@ impl ChatState {
             })
             .is_some();
         if let Some(err) = error {
+            let prefix = rust_i18n::t!("Ai.ErrorPrefix");
             self.messages
-                .push(Message::new(Role::System, format!("[error] {err}")));
+                .push(Message::new(Role::System, format!("[{prefix}] {err}")));
         } else if !produced {
             // A turn that streamed no answer text — usually because every tool
             // the agent tried failed (e.g. account tools on a paper account).
@@ -268,6 +295,7 @@ impl ChatState {
         self.message_id = None;
         self.parent_message_id = None;
         self.pending_interrupt = None;
+        self.turn_error = None;
         self.queued.clear();
         self.tool_failures.clear();
         self.references.clear();
@@ -289,6 +317,11 @@ impl ChatState {
         self.status.clear();
         // Cancelling means stop, not "stop this one and start the next".
         self.queued.clear();
+        // The aborted run cannot be resumed, so a question it raised is not
+        // answerable — leaving it set would misroute the next prompt as an answer
+        // to a run the server has already dropped.
+        self.pending_interrupt = None;
+        self.turn_error = None;
     }
 }
 
@@ -298,6 +331,95 @@ mod tests {
 
     fn state() -> ChatState {
         ChatState::new("chatbot".into(), "welcome".into())
+    }
+
+    #[test]
+    fn cancelling_folds_the_partial_answer_and_clears_the_queue() {
+        let mut s = state();
+        s.apply(ChatEvent::UserPrompt("first".into()));
+        s.apply(ChatEvent::Delta("partial".into()));
+        s.queued.push("queued next".into());
+        s.cancel("(cancelled)");
+        assert!(!s.busy);
+        // The partial answer is kept, with the cancel note appended.
+        let last = &s.messages.last().unwrap().text;
+        assert!(last.contains("partial") && last.contains("(cancelled)"));
+        // Cancelling means stop, not "run the queue".
+        assert!(s.queued.is_empty());
+    }
+
+    /// Cancelling a turn that had raised a question drops the interrupt: the
+    /// aborted run cannot be resumed, so the next prompt must go out fresh rather
+    /// than as an answer to a run the server already let go.
+    #[test]
+    fn cancelling_drops_a_pending_interrupt() {
+        let mut s = state();
+        s.apply(ChatEvent::UserPrompt("first".into()));
+        s.apply(ChatEvent::Interrupt(
+            serde_json::json!({ "tool_call_id": "tc1" }),
+        ));
+        s.cancel("(cancelled)");
+        assert!(s.pending_interrupt.is_none());
+    }
+
+    /// A server-reported error (delivered out-of-band, over a stream that ends
+    /// cleanly) finalizes the turn as failed: it prints an error line and does not
+    /// advance the parent.
+    #[test]
+    fn a_server_error_finalizes_the_turn_as_failed() {
+        let mut s = state();
+        s.apply(ChatEvent::UserPrompt("q".into()));
+        s.apply(ChatEvent::TurnStarted {
+            chat_uid: "c1".into(),
+            message_id: "m1".into(),
+        });
+        s.apply(ChatEvent::TurnError("rate limited".into()));
+        s.apply(ChatEvent::TurnFinished { error: None });
+        assert_eq!(s.parent_message_id, None, "a failed turn is not a parent");
+        assert!(
+            s.messages.last().unwrap().text.contains("rate limited"),
+            "the failure is reported to the reader"
+        );
+        assert!(
+            s.turn_error.is_none(),
+            "the error is consumed, not left to leak"
+        );
+    }
+
+    #[test]
+    fn only_a_clean_finish_becomes_the_next_turns_parent() {
+        // A finish carrying an error must not be parented on: doing so bricked the
+        // whole conversation. Only an error-free, un-paused turn advances it.
+        let mut s = state();
+        s.apply(ChatEvent::UserPrompt("q".into()));
+        s.apply(ChatEvent::TurnStarted {
+            chat_uid: "c1".into(),
+            message_id: "m1".into(),
+        });
+        s.apply(ChatEvent::TurnFinished {
+            error: Some("boom".into()),
+        });
+        assert_eq!(s.parent_message_id, None, "an errored turn is not a parent");
+
+        let mut s = state();
+        s.apply(ChatEvent::UserPrompt("q".into()));
+        s.apply(ChatEvent::TurnStarted {
+            chat_uid: "c1".into(),
+            message_id: "m2".into(),
+        });
+        s.apply(ChatEvent::Delta("ok".into()));
+        s.apply(ChatEvent::TurnFinished { error: None });
+        assert_eq!(s.parent_message_id.as_deref(), Some("m2"));
+    }
+
+    #[test]
+    fn a_title_event_sets_the_conversation_title() {
+        let mut s = state();
+        s.apply(ChatEvent::Title("Tesla outlook".into()));
+        assert_eq!(s.title.as_deref(), Some("Tesla outlook"));
+        // A blank title does not overwrite a real one.
+        s.apply(ChatEvent::Title("   ".into()));
+        assert_eq!(s.title.as_deref(), Some("Tesla outlook"));
     }
 
     #[test]

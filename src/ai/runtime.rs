@@ -99,23 +99,33 @@ fn map_agent_event(ev: &AgentEvent) -> Vec<ChatEvent> {
         AgentEvent::WorkflowFinished {
             references,
             further_questions,
+            error_message,
             ..
         } => {
-            if references.is_empty() && further_questions.is_empty() {
-                Vec::new()
-            } else {
-                vec![ChatEvent::Meta {
+            let mut events = Vec::new();
+            if !(references.is_empty() && further_questions.is_empty()) {
+                events.push(ChatEvent::Meta {
                     references: references.clone(),
                     further: further_questions.clone(),
-                }]
+                });
             }
+            // A workflow that ends with an error is a failed turn: carry the cause
+            // so the turn is finalized as such, not silently dropped.
+            if !error_message.is_empty() {
+                events.push(ChatEvent::TurnError(error_message.clone()));
+            }
+            events
         }
         AgentEvent::HumanInteractionRequired { interrupt } => vec![
             ChatEvent::Delta(interrupt_text(interrupt)),
             ChatEvent::Interrupt(interrupt.clone()),
         ],
+        // A non-empty error here means the server failed the turn. Carry it as a
+        // turn error rather than appending it to the answer text: folded into the
+        // answer it looked like a clean completion, so the next turn was parented
+        // on a failed message and the whole conversation bricked.
         AgentEvent::ChatFinished { error_message } if !error_message.is_empty() => {
-            vec![ChatEvent::Delta(format!("\n[error] {error_message}"))]
+            vec![ChatEvent::TurnError(error_message.clone())]
         }
         AgentEvent::ChatTitleUpdated { title } => vec![ChatEvent::Title(title.clone())],
         AgentEvent::ThinkingFinished
@@ -214,6 +224,126 @@ fn interrupt_text(interrupt: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai::state::ChatEvent;
+
+    #[test]
+    fn answer_deltas_map_to_a_delta_plus_a_status() {
+        let evs = map_agent_event(&AgentEvent::AnswerDelta { text: "hi".into() });
+        assert!(matches!(evs[0], ChatEvent::Delta(ref t) if t == "hi"));
+        assert!(matches!(evs[1], ChatEvent::Status(_)));
+    }
+
+    #[test]
+    fn a_tool_start_is_recorded_and_shown() {
+        let evs = map_agent_event(&AgentEvent::ToolUseStarted {
+            tool_name: "get_quote".into(),
+        });
+        assert!(matches!(evs[0], ChatEvent::ToolStarted(ref n) if n == "get_quote"));
+        assert!(matches!(evs[1], ChatEvent::Status(_)));
+    }
+
+    #[test]
+    fn a_tool_finish_carries_its_outcome() {
+        let ok = map_agent_event(&AgentEvent::ToolUseFinished {
+            tool_name: "get_quote".into(),
+            status: "succeeded".into(),
+        });
+        assert!(matches!(ok[0], ChatEvent::ToolFinished { ok: true, .. }));
+        let bad = map_agent_event(&AgentEvent::ToolUseFinished {
+            tool_name: "get_quote".into(),
+            status: "failed".into(),
+        });
+        assert!(matches!(bad[0], ChatEvent::ToolFinished { ok: false, .. }));
+    }
+
+    #[test]
+    fn a_title_event_maps_through() {
+        let evs = map_agent_event(&AgentEvent::ChatTitleUpdated {
+            title: "Tesla".into(),
+        });
+        assert!(matches!(evs.as_slice(), [ChatEvent::Title(t)] if t == "Tesla"));
+    }
+
+    #[test]
+    fn a_workflow_with_no_meta_maps_to_nothing() {
+        let evs = map_agent_event(&AgentEvent::WorkflowFinished {
+            status: "succeeded".into(),
+            references: vec![],
+            further_questions: vec![],
+            elapsed_time: None,
+            error_message: String::new(),
+        });
+        assert!(evs.is_empty());
+    }
+
+    #[test]
+    fn an_interrupt_shows_the_question_and_records_it() {
+        let interrupt = json!({"tool_call_id": "tc", "questions": [{"question": "Which market?"}]});
+        let evs = map_agent_event(&AgentEvent::HumanInteractionRequired {
+            interrupt: interrupt.clone(),
+        });
+        // The question is written into the transcript, and the interrupt is kept
+        // so the next prompt can answer it.
+        assert!(matches!(&evs[0], ChatEvent::Delta(t) if t.contains("Which market?")));
+        assert!(matches!(&evs[1], ChatEvent::Interrupt(i) if *i == interrupt));
+    }
+
+    #[test]
+    fn a_chat_error_becomes_a_turn_error_but_an_empty_one_is_dropped() {
+        let with = map_agent_event(&AgentEvent::ChatFinished {
+            error_message: "rate limited".into(),
+        });
+        assert!(matches!(&with[0], ChatEvent::TurnError(t) if t == "rate limited"));
+        let without = map_agent_event(&AgentEvent::ChatFinished {
+            error_message: String::new(),
+        });
+        assert!(without.is_empty());
+    }
+
+    #[test]
+    fn a_workflow_error_becomes_a_turn_error() {
+        let evs = map_agent_event(&AgentEvent::WorkflowFinished {
+            status: "failed".into(),
+            references: vec![],
+            further_questions: vec![],
+            elapsed_time: None,
+            error_message: "workflow blew up".into(),
+        });
+        assert!(matches!(&evs[0], ChatEvent::TurnError(t) if t == "workflow blew up"));
+    }
+
+    /// A turn the server reports as failed — over a stream that itself ends `Ok` —
+    /// must not become the parent of the next turn, or the failure propagates to
+    /// every later message and bricks the conversation.
+    #[test]
+    fn a_server_reported_error_does_not_become_the_parent() {
+        use crate::ai::state::ChatEvent;
+        let mut state = ChatState::new("chatbot".into(), "welcome".into());
+        // One good turn establishes a parent.
+        state.apply(ChatEvent::UserPrompt("hi".into()));
+        state.apply(ChatEvent::TurnStarted {
+            chat_uid: "c1".into(),
+            message_id: "m1".into(),
+        });
+        state.apply(ChatEvent::Delta("hello".into()));
+        state.apply(ChatEvent::TurnFinished { error: None });
+        assert_eq!(state.parent_message_id.as_deref(), Some("m1"));
+        // Then a turn the server fails via chat_finished, while the stream ends Ok
+        // (so TurnFinished carries no transport error).
+        state.apply(ChatEvent::UserPrompt("and now?".into()));
+        state.apply(ChatEvent::TurnStarted {
+            chat_uid: "c1".into(),
+            message_id: "m2".into(),
+        });
+        state.apply(ChatEvent::TurnError("Something went wrong".into()));
+        state.apply(ChatEvent::TurnFinished { error: None });
+        assert_eq!(
+            state.parent_message_id.as_deref(),
+            Some("m1"),
+            "the parent stays at the last message that actually completed"
+        );
+    }
+
     use crate::ai::state::ChatState;
     use serde_json::json;
 

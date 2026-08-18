@@ -143,9 +143,17 @@ pub fn restore(loaded: LoadedChat, state: &mut ChatState) {
     // and neither is something the server will build on.
     state.parent_message_id = loaded.parent_message_id;
     state.pending_interrupt = None;
+    state.turn_error = None;
     state.scroll = 0;
     state.references.clear();
     state.further.clear();
+    // Drop any transient turn state so a restored conversation never inherits a
+    // half-streamed answer, a stale status/spinner, or queued prompts.
+    state.streaming = None;
+    state.status.clear();
+    state.busy = false;
+    state.queued.clear();
+    state.tool_failures.clear();
     state.messages = loaded.messages;
 }
 

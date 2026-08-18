@@ -15,6 +15,7 @@
 //! - **charts** — the braille plot from [`super::chart`], the same drawing
 //!   `agent chat` prints, rather than the JSON that produced it
 //! - **math** — LaTeX flattened to readable text in a gutter
+//! - **`>` quotes** — inner Markdown with a colored gutter down the left
 //! - **`---`** — a full-width rule
 
 use ratatui::style::{Color, Modifier, Style};
@@ -117,12 +118,15 @@ enum Block {
     /// A `---` thematic break. Recognised so it does not reach the screen as text,
     /// and then drawn as nothing at all — see the render arm.
     Rule,
+    /// A `>`-quoted block, kept as its inner lines with the marker stripped.
+    Quote(Vec<String>),
 }
 
 /// Render `md` into owned, width-wrapped styled lines.
 pub fn render(md: &str, width: usize) -> Vec<Line<'static>> {
+    let md = task_list_glyphs(md);
     let mut out = Vec::new();
-    for block in split_blocks(md) {
+    for block in split_blocks(&md) {
         // Blocks we draw ourselves carry no margin of their own, so without a
         // separator a table would butt straight against the sentence above it.
         if !out.is_empty() && !is_blank(out.last()) {
@@ -140,6 +144,7 @@ pub fn render(md: &str, width: usize) -> Vec<Line<'static>> {
             Block::Chart(spec) => render_chart(&spec, width, &mut out),
             Block::Math(lines) => render_math(&lines, width, &mut out),
             Block::Heading(level, text) => render_heading(level, &text, width, &mut out),
+            Block::Quote(lines) => render_quote(&lines, width, &mut out),
             // Nothing: the blank row every block already gets is the break. It has
             // been a full-width rule (louder than the sections it separated), a
             // left-aligned `---` (leftover markup) and a short centred rule
@@ -153,6 +158,33 @@ pub fn render(md: &str, width: usize) -> Vec<Line<'static>> {
         out.pop();
     }
     out
+}
+
+/// Replace GitHub task-list markers with checkbox glyphs so `- [ ]` / `- [x]`
+/// items read as checkboxes rather than literal brackets. Only the bullet's own
+/// `[ ]`/`[x]` is touched; brackets elsewhere in a line are left alone.
+fn task_list_glyphs(md: &str) -> String {
+    md.split('\n')
+        .map(|line| {
+            let indent_len = line.len() - line.trim_start().len();
+            let (indent, rest) = line.split_at(indent_len);
+            for bullet in ['-', '*', '+'] {
+                let prefix = format!("{bullet} ");
+                if let Some(after) = rest.strip_prefix(&prefix) {
+                    let glyph = match after.get(0..3) {
+                        Some("[ ]") => Some('☐'),
+                        Some("[x]" | "[X]") => Some('☑'),
+                        _ => None,
+                    };
+                    if let Some(glyph) = glyph {
+                        return format!("{indent}{bullet} {glyph}{}", &after[3..]);
+                    }
+                }
+            }
+            line.to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Whether a rendered line has no visible content.
@@ -224,18 +256,19 @@ fn split_blocks(md: &str) -> Vec<Block> {
                 Some(spec) if lang == CHART_LANG => blocks.push(Block::Chart(spec)),
                 _ => blocks.push(Block::Code(lang, body)),
             }
+        } else if let Some(inner) = one_line_math(line) {
+            // `$$ … $$` all on one line.
+            flush_prose(&mut prose, &mut blocks);
+            blocks.push(Block::Math(vec![inner]));
+            i += 1;
         } else if is_math_fence(line) {
+            // A bare `$$` opens a block that runs to the next bare `$$`.
             flush_prose(&mut prose, &mut blocks);
             let mut body = Vec::new();
-            // `$$ … $$` on one line, or a fence pair spanning several.
-            if let Some(inner) = one_line_math(line) {
-                body.push(inner);
-            } else {
+            i += 1;
+            while i < lines.len() && !is_math_fence(lines[i]) {
+                body.push(lines[i].to_string());
                 i += 1;
-                while i < lines.len() && !is_math_fence(lines[i]) {
-                    body.push(lines[i].to_string());
-                    i += 1;
-                }
             }
             i += 1;
             blocks.push(Block::Math(body));
@@ -261,6 +294,19 @@ fn split_blocks(md: &str) -> Vec<Block> {
                 i += 1;
             }
             blocks.push(Block::Table(rows));
+        } else if let Some(inner) = quote_line(line) {
+            flush_prose(&mut prose, &mut blocks);
+            let mut body = vec![inner];
+            i += 1;
+            while i < lines.len() {
+                if let Some(inner) = quote_line(lines[i]) {
+                    body.push(inner);
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+            blocks.push(Block::Quote(body));
         } else {
             if !prose.is_empty() {
                 prose.push('\n');
@@ -302,8 +348,15 @@ fn atx_heading(line: &str) -> Option<(u8, String)> {
     if rest.is_empty() {
         return None;
     }
-    // A closing run of hashes is decoration, not content.
-    let text = rest.trim_end_matches('#').trim_end();
+    // A closing run of hashes is decoration only when a space sets it off, per
+    // CommonMark. Otherwise the hash is part of the word — `# C#` is the heading
+    // "C#", not "C".
+    let stripped = rest.trim_end_matches('#');
+    let text = if stripped.len() != rest.len() && stripped.ends_with(' ') {
+        stripped.trim_end()
+    } else {
+        rest
+    };
     Some((hashes as u8, text.to_string()))
 }
 
@@ -343,9 +396,41 @@ fn render_heading(level: u8, text: &str, width: usize, out: &mut Vec<Line<'stati
     }
 }
 
-/// Whether `line` opens or closes a `$$` display-math block.
+/// The inner text of a `>`-quoted line (marker and one optional space stripped),
+/// or `None` if the line is not a blockquote line.
+fn quote_line(line: &str) -> Option<String> {
+    let rest = line.trim_start().strip_prefix('>')?;
+    Some(rest.strip_prefix(' ').unwrap_or(rest).to_string())
+}
+
+/// Draw a blockquote as its inner Markdown with a colored gutter down the left,
+/// so callouts and disclaimers read as set apart from the prose.
+fn render_quote(lines: &[String], width: usize, out: &mut Vec<Line<'static>>) {
+    let gutter = width.min(2);
+    let inner = render(&lines.join("\n"), width.saturating_sub(gutter).max(1));
+    for line in inner {
+        let mut spans = vec![Span::styled("▎ ", Style::default().fg(HEADING))];
+        // Dim the quoted text so it recedes behind the surrounding answer.
+        for s in line.spans {
+            spans.push(Span::styled(
+                s.content.into_owned(),
+                s.style.fg(Color::Gray),
+            ));
+        }
+        out.push(Line::from(spans));
+    }
+}
+
+/// Whether `line` is a `$$` display-math fence delimiter — a line that is
+/// *exactly* `$$`.
+///
+/// Deliberately not "starts with `$$`": a prose line like `$$100 到 $$120` (a
+/// dollar range, common in a finance answer) merely begins with `$$`, and
+/// treating it as a fence made it swallow every paragraph up to the next such
+/// line. A complete one-line `$$ … $$` is recognised separately by
+/// [`one_line_math`].
 fn is_math_fence(line: &str) -> bool {
-    line.trim().starts_with("$$")
+    line.trim() == "$$"
 }
 
 /// The body of a one-line `$$ … $$`, or `None` if the `$$` only opens a block.
@@ -354,12 +439,13 @@ fn one_line_math(line: &str) -> Option<String> {
     Some(inner.trim().to_string())
 }
 
-/// Whether `line` is a thematic break (`---`, `***`, `___`).
+/// Whether `line` is a thematic break (`---`, `***`, `___`, or the spaced forms
+/// `- - -` / `* * *`).
 fn is_thematic_break(line: &str) -> bool {
-    let t = line.trim();
-    t.len() >= 3
-        && matches!(t.chars().next(), Some('-' | '*' | '_'))
-        && t.chars().all(|c| c == t.chars().next().unwrap_or(' '))
+    // CommonMark allows spaces between the marks, so they are dropped before the
+    // run is measured: `- - -` is as much a rule as `---`.
+    let marks: Vec<char> = line.trim().chars().filter(|c| !c.is_whitespace()).collect();
+    marks.len() >= 3 && matches!(marks[0], '-' | '*' | '_') && marks.iter().all(|&c| c == marks[0])
 }
 
 /// A table starts where a `|`-bearing row is followed by a separator row.
@@ -375,19 +461,35 @@ fn is_separator_row(line: &str) -> bool {
 }
 
 /// Split a table row into trimmed cells, dropping the outer pipes.
+///
+/// A `\|` inside a cell is an escaped pipe (the standard way to put a literal
+/// pipe in a table), not a column boundary, so the split honours the escape and
+/// unescapes it — otherwise one cell containing `\|` would shift every column
+/// after it.
 fn split_row(line: &str) -> Vec<String> {
-    line.trim()
-        .trim_start_matches('|')
-        .trim_end_matches('|')
-        .split('|')
-        .map(|c| c.trim().to_string())
-        .collect()
+    let inner = line.trim().trim_start_matches('|').trim_end_matches('|');
+    let mut cells = Vec::new();
+    let mut cur = String::new();
+    let mut chars = inner.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' if chars.peek() == Some(&'|') => {
+                cur.push('|');
+                chars.next();
+            }
+            '|' => cells.push(std::mem::take(&mut cur).trim().to_string()),
+            _ => cur.push(c),
+        }
+    }
+    cells.push(cur.trim().to_string());
+    cells
 }
 
 /// Draw a fenced code block as a shaded, padded box with an optional tag.
 fn render_code(lang: &str, lines: &[String], width: usize, out: &mut Vec<Line<'static>>) {
     let content_w = lines.iter().map(|l| l.width()).max().unwrap_or(0);
     let box_w = (content_w + 2).min(width.max(2));
+    let slash_comment = slash_is_comment(lang);
     if !lang.is_empty() {
         out.push(Line::from(Span::styled(
             format!(" {lang} "),
@@ -402,7 +504,7 @@ fn render_code(lang: &str, lines: &[String], width: usize, out: &mut Vec<Line<'s
         // the JSON of a rejected chart spec is one very long line, and letting
         // the terminal fold it breaks out of the shaded block. Code is never
         // truncated — a clipped command or value is worse than a taller block.
-        let cells = highlight(&format!(" {line}"));
+        let cells = highlight(&format!(" {line}"), slash_comment);
         for part in wrap_chars(&cells, box_w) {
             let mut spans = coalesce(&part).spans;
             // Extend the shaded background to the full block width.
@@ -421,16 +523,48 @@ fn render_code(lang: &str, lines: &[String], width: usize, out: &mut Vec<Line<'s
     }
 }
 
-/// Classify each char of a code line into a foreground color (over `CODE_BG`),
-/// a small language-agnostic highlighter: comments, strings, numbers, keywords.
-fn highlight(line: &str) -> Vec<(char, Style)> {
+/// Whether `//` begins a line comment in `lang`. False for languages where it is
+/// an operator (Python's floor division) or not a comment at all (shell, YAML),
+/// so `a // b` is not painted as a comment; true for the C-like majority and for
+/// an untagged block.
+fn slash_is_comment(lang: &str) -> bool {
+    !matches!(
+        lang.trim().to_ascii_lowercase().as_str(),
+        "python"
+            | "py"
+            | "ruby"
+            | "rb"
+            | "bash"
+            | "sh"
+            | "shell"
+            | "zsh"
+            | "fish"
+            | "yaml"
+            | "yml"
+            | "toml"
+            | "ini"
+            | "r"
+            | "perl"
+            | "pl"
+            | "sql"
+            | "lua"
+            | "makefile"
+            | "make"
+            | "dockerfile"
+    )
+}
+
+/// Classify each char of a code line into a foreground color (over `CODE_BG`), a
+/// small highlighter: comments, strings, numbers, keywords. Mostly
+/// language-agnostic; `slash_comment` narrows the one rule that is not (`//`).
+fn highlight(line: &str, slash_comment: bool) -> Vec<(char, Style)> {
     let chars: Vec<char> = line.chars().collect();
     let n = chars.len();
     let mut color = vec![CODE_FG; n];
     let mut i = 0;
     while i < n {
         let c = chars[i];
-        if c == '/' && chars.get(i + 1) == Some(&'/')
+        if slash_comment && c == '/' && chars.get(i + 1) == Some(&'/')
             || c == '#' && chars.get(i + 1).is_none_or(|n| n.is_whitespace())
         {
             color[i..].fill(COMMENT);
@@ -920,6 +1054,56 @@ mod tests {
         assert_eq!(string.style.fg, Some(super::STR));
     }
 
+    #[test]
+    fn code_comments_and_numbers_are_colored() {
+        let md = "```rust\nlet n = 42; // note\n```";
+        let spans: Vec<_> = render(md, 80).into_iter().flat_map(|l| l.spans).collect();
+        let num = spans
+            .iter()
+            .find(|s| s.content.contains("42"))
+            .expect("number span");
+        assert_eq!(num.style.fg, Some(super::NUM));
+        let comment = spans
+            .iter()
+            .find(|s| s.content.contains("note"))
+            .expect("comment span");
+        assert_eq!(comment.style.fg, Some(super::COMMENT));
+    }
+
+    /// In Python, `//` is floor division, not a comment; `#` still starts one.
+    /// C-like blocks keep `//` as a comment.
+    #[test]
+    fn slash_comments_are_language_aware() {
+        let spans: Vec<_> = render("```python\nx = a // b  # floor\n```", 80)
+            .into_iter()
+            .flat_map(|l| l.spans)
+            .collect();
+        let op = spans
+            .iter()
+            .find(|s| s.content.contains("//"))
+            .expect("the // operator span");
+        assert_ne!(
+            op.style.fg,
+            Some(super::COMMENT),
+            "// is division in Python, not a comment"
+        );
+        let comment = spans
+            .iter()
+            .find(|s| s.content.contains("floor"))
+            .expect("the # comment span");
+        assert_eq!(comment.style.fg, Some(super::COMMENT));
+        // A C-like block still treats // as a comment.
+        let c_spans: Vec<_> = render("```c\nint x = a; // note\n```", 80)
+            .into_iter()
+            .flat_map(|l| l.spans)
+            .collect();
+        let c_comment = c_spans
+            .iter()
+            .find(|s| s.content.contains("note"))
+            .expect("the // comment span");
+        assert_eq!(c_comment.style.fg, Some(super::COMMENT));
+    }
+
     /// Cells are inline Markdown: `**bold**` must bold rather than print its
     /// asterisks, and `\$` must yield a bare `$`. Table and prose used to
     /// disagree here, which is visible in every answer the agent writes.
@@ -1016,6 +1200,20 @@ mod tests {
             .flat_map(|l| l.spans.iter().map(|s| s.content.to_string()))
             .collect();
         assert!(text.contains("not json"), "content must survive: {text}");
+    }
+
+    #[test]
+    fn task_list_markers_become_checkboxes() {
+        let text = joined(&render("- [ ] pending\n- [x] done", 40));
+        assert!(text.contains('☐') && text.contains('☑'));
+        assert!(!text.contains("[ ]") && !text.contains("[x]"));
+    }
+
+    #[test]
+    fn blockquote_gets_a_gutter() {
+        let text = joined(&render("> heads up\n> be careful", 40));
+        assert!(text.contains('▎'), "expected a blockquote gutter");
+        assert!(text.contains("heads up") && text.contains("be careful"));
     }
 
     #[test]
@@ -1173,5 +1371,61 @@ mod tests {
                 "{md:?} should stay text, got {rows:?}"
             );
         }
+    }
+
+    /// A trailing `#` glued to a word is part of the heading, not a closing
+    /// sequence: `# C#` is the heading "C#", not "C".
+    #[test]
+    fn a_trailing_hash_without_a_space_stays_in_the_heading() {
+        assert!(plain("# C#", 60).iter().any(|r| r.contains("C#")));
+        // But a spaced closing run is still decoration.
+        let rows = plain("## Title ##", 60);
+        assert!(rows.iter().any(|r| r.contains("Title")));
+        assert!(!rows.iter().any(|r| r.contains("Title ##")));
+    }
+
+    /// The spaced form of a thematic break is still a rule, not prose.
+    #[test]
+    fn a_spaced_thematic_break_is_a_rule() {
+        let rows = plain("above\n\n- - -\n\nbelow", 40);
+        assert!(
+            !rows.iter().any(|r| r.contains("- - -")),
+            "the markup must not survive: {rows:?}"
+        );
+        assert!(rows.iter().any(|r| r.contains("above")));
+        assert!(rows.iter().any(|r| r.contains("below")));
+    }
+
+    /// An escaped pipe belongs to its cell, not the column boundary, so it must
+    /// not shift the columns after it.
+    #[test]
+    fn an_escaped_pipe_stays_inside_its_cell() {
+        assert_eq!(
+            super::split_row(r"| a \| b | c |"),
+            vec!["a | b".to_string(), "c".to_string()]
+        );
+    }
+
+    /// A prose line that merely begins with `$$` (a dollar range) must not be
+    /// treated as a math fence and swallow the paragraphs after it.
+    #[test]
+    fn a_dollar_range_is_not_a_math_fence() {
+        let rows = plain("$$100 到 $$120 的区间\n\n后续段落", 60);
+        let joined = rows.join("\n");
+        assert!(
+            joined.contains("后续段落"),
+            "the next paragraph survives: {joined:?}"
+        );
+        assert!(joined.contains("100") && joined.contains("120"));
+    }
+
+    /// A real `$$ … $$` on one line, and a bare-`$$` fenced pair, both render as
+    /// math without dropping content.
+    #[test]
+    fn display_math_renders_one_line_and_fenced() {
+        let one = plain("$$ E = mc^2 $$", 60).join("\n");
+        assert!(one.contains("E = mc^2"), "one-line math: {one:?}");
+        let fenced = plain("$$\na + b = c\n$$", 60).join("\n");
+        assert!(fenced.contains("a + b = c"), "fenced math: {fenced:?}");
     }
 }

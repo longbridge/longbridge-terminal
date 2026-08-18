@@ -12,7 +12,8 @@
 /// A snapshot of the session, for display.
 #[derive(Debug, Default, Clone)]
 pub struct Session {
-    /// `valid`, `refresh_pending`, `expired`, `not_found`, `decrypt_failed`.
+    /// One of `valid`, `refresh_pending`, `present`, `expired`, `not_found`,
+    /// `decrypt_failed`.
     pub status: &'static str,
     /// Data centre the token belongs to: `us` or `ap`.
     pub dc_region: Option<&'static str>,
@@ -55,16 +56,23 @@ pub async fn member_id() -> Option<String> {
     if !crate::openapi::is_ready() {
         return None;
     }
-    crate::openapi::quote()
-        .member_id()
-        .await
-        .ok()
-        .map(|id| id.to_string())
+    optional_member_id(crate::openapi::quote().member_id().await)
+}
+
+fn optional_member_id<T: ToString, E>(result: Result<T, E>) -> Option<String> {
+    result.ok().map(|id| id.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_member_id_connection_reset_is_optional() {
+        let result: Result<u64, std::io::Error> =
+            Err(std::io::Error::from(std::io::ErrorKind::ConnectionReset));
+        assert_eq!(optional_member_id(result), None);
+    }
 
     /// The header is read from disk, so it must render on a machine with no token
     /// at all rather than failing.
