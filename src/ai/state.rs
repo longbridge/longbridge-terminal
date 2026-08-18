@@ -216,7 +216,19 @@ impl ChatState {
                     self.title = Some(title);
                 }
             }
-            ChatEvent::Interrupt(interrupt) => self.pending_interrupt = Some(interrupt),
+            ChatEvent::Interrupt(interrupt) => {
+                if let Some(message_id) = interrupt.get("message_id") {
+                    let id = match message_id {
+                        Value::String(id) => Some(id.clone()),
+                        Value::Number(id) => Some(id.to_string()),
+                        _ => None,
+                    };
+                    if let Some(id) = id.filter(|id| !id.is_empty() && id != "0") {
+                        self.message_id = Some(id);
+                    }
+                }
+                self.pending_interrupt = Some(interrupt);
+            }
             // Keep the first cause: a later teardown event may repeat it or arrive
             // blank, and the first one is the real reason.
             ChatEvent::TurnError(err) => {
@@ -461,6 +473,17 @@ mod tests {
         });
         assert_eq!(s.chat_uid.as_deref(), Some("c1"));
         assert_eq!(s.message_id.as_deref(), Some("m1"));
+    }
+
+    #[test]
+    fn an_interrupts_message_id_is_authoritative_for_continuation() {
+        let mut s = state();
+        s.message_id = Some("old".into());
+        s.apply(ChatEvent::Interrupt(serde_json::json!({
+            "message_id": 42,
+            "interactions": []
+        })));
+        assert_eq!(s.message_id.as_deref(), Some("42"));
     }
 
     /// Tool calls used to exist only as a status string that the next event

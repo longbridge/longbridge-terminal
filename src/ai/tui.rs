@@ -236,13 +236,15 @@ struct QuestionState {
     questions: Vec<(String, Vec<String>)>,
     /// Where the selected option for each displayed step belongs in the resume
     /// payload: `(interrupt_id, answer key, wire values by option index)`.
-    targets: Vec<(String, String, Option<Vec<String>>)>,
+    targets: Vec<(String, String, Option<Vec<String>>, bool)>,
     /// Which question is being answered.
     qi: usize,
     /// Collected `{interrupt_id: {answer key: answer}}` resume payload.
     answers: longbridge::agent::AnswersByToolCall,
     /// Human-readable selections echoed into the transcript.
     summaries: Vec<String>,
+    /// Selected option indices for multi-select questions, keyed by question index.
+    multi_selected: HashMap<usize, Vec<usize>>,
 }
 
 /// In-transcript search (Ctrl+F): a query and which of its matches is focused.
@@ -286,7 +288,15 @@ impl QuestionState {
         if runtime::interrupt_interactions(interrupt)
             .iter()
             .any(|interaction| {
-                interaction.get("type").and_then(Value::as_str) == Some("trade_password")
+                matches!(
+                    interaction.get("type").and_then(Value::as_str),
+                    Some(
+                        "trade_password"
+                            | "connector_reauth"
+                            | "openapi_reauth"
+                            | "data_authorization"
+                    )
+                )
             })
         {
             return Self {
@@ -295,6 +305,7 @@ impl QuestionState {
                 qi: 0,
                 answers: HashMap::new(),
                 summaries: Vec::new(),
+                multi_selected: HashMap::new(),
             };
         }
         for interaction in runtime::interrupt_interactions(interrupt) {
@@ -310,15 +321,25 @@ impl QuestionState {
                     let Some(text) = question.get("question").and_then(Value::as_str) else {
                         continue;
                     };
-                    questions.push((
+                    let multi_select = question
+                        .get("multi_select")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    let mut choices = crate::cli::agent::chat::question_choices(question);
+                    if multi_select && !choices.is_empty() {
+                        choices.push(t!("Ai.ConfirmSelection").to_string());
+                    }
+                    questions.push((text.to_string(), choices));
+                    targets.push((
+                        interrupt_id.to_string(),
                         text.to_string(),
-                        crate::cli::agent::chat::question_choices(question),
+                        None,
+                        multi_select,
                     ));
-                    targets.push((interrupt_id.to_string(), text.to_string(), None));
                 }
                 continue;
             }
-            if matches!(kind, "authorization" | "connector_reauth") {
+            if kind == "authorization" {
                 // `tool_name` is an internal MCP function identifier. Only use
                 // the server's human-readable display name; otherwise the
                 // generic prompt is clearer than leaking implementation detail.
@@ -335,15 +356,11 @@ impl QuestionState {
                     prompt,
                     vec![t!("Ai.Decline").to_string(), t!("Ai.Allow").to_string()],
                 ));
-                let key = if kind == "connector_reauth" {
-                    "acknowledged"
-                } else {
-                    "authorized"
-                };
                 targets.push((
                     interrupt_id.to_string(),
-                    key.to_string(),
+                    "authorized".to_string(),
                     Some(vec!["false".into(), "true".into()]),
+                    false,
                 ));
             }
         }
@@ -353,6 +370,7 @@ impl QuestionState {
             qi: 0,
             answers: HashMap::new(),
             summaries: Vec::new(),
+            multi_selected: HashMap::new(),
         }
     }
 
@@ -363,7 +381,9 @@ impl QuestionState {
     }
 
     fn has_confirmation(&self) -> bool {
-        self.targets.iter().any(|(_, _, values)| values.is_some())
+        self.targets
+            .iter()
+            .any(|(_, _, values, _)| values.is_some())
     }
 
     fn select(&mut self, option_index: usize) -> bool {
@@ -373,9 +393,40 @@ impl QuestionState {
         let Some(choice) = options.get(option_index).cloned() else {
             return false;
         };
-        let Some((interrupt_id, key, wire_values)) = self.targets.get(self.qi) else {
+        let Some((interrupt_id, key, wire_values, multi_select)) = self.targets.get(self.qi) else {
             return false;
         };
+        if *multi_select {
+            let confirm_index = options.len().saturating_sub(1);
+            if option_index != confirm_index {
+                let selected = self.multi_selected.entry(self.qi).or_default();
+                if let Some(pos) = selected.iter().position(|index| *index == option_index) {
+                    selected.remove(pos);
+                } else {
+                    selected.push(option_index);
+                }
+                return false;
+            }
+            let selected = self
+                .multi_selected
+                .get(&self.qi)
+                .cloned()
+                .unwrap_or_default();
+            if selected.is_empty() {
+                return false;
+            }
+            let choices = selected
+                .into_iter()
+                .filter_map(|index| options.get(index).cloned())
+                .collect::<Vec<_>>();
+            let value = choices.join(", ");
+            self.answers
+                .entry(interrupt_id.clone())
+                .or_default()
+                .insert(key.clone(), value.clone());
+            self.summaries.push(value);
+            return true;
+        }
         let value = wire_values
             .as_ref()
             .and_then(|values| values.get(option_index))
@@ -1805,6 +1856,7 @@ fn on_question_key(
         KeyCode::Home => ui.sel = 0,
         KeyCode::End => ui.sel = ui.row_count().saturating_sub(1),
         KeyCode::Enter => answer_selected(ui, state, turn, tx),
+        KeyCode::Char('x' | 'X') => skip_question(ui, state, turn, tx),
         _ => {}
     }
 }
@@ -2315,6 +2367,51 @@ fn answer_selected(
         // (sign-out clears the ids the resume addresses) the send would drop
         // silently and the conversation would stall with no explanation, so say
         // what to do — as the free-text prompt path does.
+        if !submit_answers(&qs, state, turn, tx) {
+            ui.notice = Some(t!("Ai.SignInToAsk").to_string());
+        }
+        ui.view = View::Chat;
+    }
+}
+
+/// Skip the current ask-human interaction using the same sentinel as the web
+/// and GPUI clients, then continue with the next interaction (if any).
+fn skip_question(
+    ui: &mut Ui,
+    state: &mut ChatState,
+    turn: &mut Option<JoinHandle<()>>,
+    tx: &UnboundedSender<ChatEvent>,
+) {
+    let Some(q) = ui.question.as_mut() else {
+        return;
+    };
+    let Some((interrupt_id, _, _, _)) = q.targets.get(q.qi).cloned() else {
+        return;
+    };
+    // Authorization decisions must be explicit; skip applies only to ask_human.
+    if q.targets
+        .get(q.qi)
+        .is_some_and(|(_, _, wire, _)| wire.is_some())
+    {
+        return;
+    }
+    q.answers.insert(
+        interrupt_id.clone(),
+        HashMap::from([
+            ("_skipped".into(), "true".into()),
+            (
+                "_note".into(),
+                "Human ignored this question and may not want to answer".into(),
+            ),
+        ]),
+    );
+    q.summaries.push(t!("Ai.SkipQuestion").to_string());
+    while q.qi < q.targets.len() && q.targets[q.qi].0 == interrupt_id {
+        q.qi += 1;
+    }
+    ui.sel = 0;
+    if q.qi >= q.questions.len() {
+        let qs = ui.question.take().expect("question present");
         if !submit_answers(&qs, state, turn, tx) {
             ui.notice = Some(t!("Ai.SignInToAsk").to_string());
         }
@@ -4325,22 +4422,37 @@ fn session_lines(session: &super::account::Session) -> Vec<Line<'static>> {
 /// ask it took away the thing they need to answer it. So the transcript stays
 /// visible behind and the drawer takes only the rows it needs.
 fn render_question(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
-    let Some((question, options, wire_values, qi, total)) = ui.question.as_ref().and_then(|q| {
-        q.questions.get(q.qi).map(|(t, o)| {
-            (
-                t.clone(),
-                o.clone(),
-                q.targets
-                    .get(q.qi)
-                    .and_then(|(_, _, values)| values.clone()),
-                q.qi,
-                q.questions.len(),
-            )
+    let Some((question, mut options, wire_values, selected, multi_select, qi, total)) =
+        ui.question.as_ref().and_then(|q| {
+            q.questions.get(q.qi).map(|(t, o)| {
+                (
+                    t.clone(),
+                    o.clone(),
+                    q.targets
+                        .get(q.qi)
+                        .and_then(|(_, _, values, _)| values.clone()),
+                    q.multi_selected.get(&q.qi).cloned().unwrap_or_default(),
+                    q.targets.get(q.qi).is_some_and(|(_, _, _, multi)| *multi),
+                    q.qi,
+                    q.questions.len(),
+                )
+            })
         })
-    }) else {
+    else {
         ui.rows.clear();
         return;
     };
+    if multi_select {
+        let confirm_index = options.len().saturating_sub(1);
+        for (index, option) in options.iter_mut().enumerate().take(confirm_index) {
+            let mark = if selected.contains(&index) {
+                "☑"
+            } else {
+                "☐"
+            };
+            *option = format!("{mark} {option}");
+        }
+    }
     // The question wraps inside the frame, and the options are one row each.
     let inner_w = area.width.saturating_sub(4).max(1) as usize;
     let qlines = wrap(&question, inner_w);
@@ -5881,6 +5993,71 @@ mod tests {
     }
 
     #[test]
+    fn external_authorization_interactions_do_not_offer_fake_confirmation() {
+        for kind in ["connector_reauth", "openapi_reauth", "data_authorization"] {
+            let interrupt = serde_json::json!({
+                "interactions": [{
+                    "interrupt_id": "external_auth",
+                    "type": kind
+                }]
+            });
+            let qs = super::QuestionState::from_interrupt(&interrupt);
+            assert!(qs.questions.is_empty(), "{kind} must not show Allow");
+        }
+    }
+
+    #[test]
+    fn multi_select_toggles_choices_then_submits_the_joined_answer() {
+        let interrupt = serde_json::json!({
+            "interactions": [{
+                "interrupt_id": "pick_markets",
+                "type": "ask_human",
+                "questions": [{
+                    "question": "Which markets?",
+                    "options": [
+                        {"description": "HK"},
+                        {"description": "US"}
+                    ],
+                    "multi_select": true
+                }]
+            }]
+        });
+        let mut qs = super::QuestionState::from_interrupt(&interrupt);
+        assert!(!qs.select(0));
+        assert!(!qs.select(1));
+        assert!(qs.select(2)); // Confirm selection.
+        assert_eq!(qs.answers["pick_markets"]["Which markets?"], "HK, US");
+    }
+
+    #[test]
+    fn skipping_uses_the_shared_hitl_sentinel_and_advances_the_interaction() {
+        let interrupt = serde_json::json!({
+            "interactions": [
+                {
+                    "interrupt_id": "first",
+                    "type": "ask_human",
+                    "questions": [{"question": "Private detail?", "choices": ["Yes"]}]
+                },
+                {
+                    "interrupt_id": "second",
+                    "type": "ask_human",
+                    "questions": [{"question": "Market?", "choices": ["US"]}]
+                }
+            ]
+        });
+        let mut ui = super::Ui::new();
+        ui.view = super::View::Question;
+        ui.question = Some(super::QuestionState::from_interrupt(&interrupt));
+        let mut state = super::ChatState::default();
+        let mut turn = None;
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        super::skip_question(&mut ui, &mut state, &mut turn, &tx);
+        let question = ui.question.as_ref().expect("second question remains");
+        assert_eq!(question.qi, 1);
+        assert_eq!(question.answers["first"]["_skipped"], "true");
+    }
+
+    #[test]
     fn multiple_interactions_collect_one_combined_resume_payload() {
         let interrupt = serde_json::json!({
             "interactions": [
@@ -5895,9 +6072,9 @@ mod tests {
                     "questions": [{"question": "Which market?", "choices": ["HK", "US"]}]
                 },
                 {
-                    "interrupt_id": "reauth_news",
-                    "type": "connector_reauth",
-                    "tool_display_name": "News connector"
+                    "interrupt_id": "authorize_orders",
+                    "type": "authorization",
+                    "tool_display_name": "Read orders"
                 }
             ]
         });
@@ -5906,11 +6083,11 @@ mod tests {
         qs.qi += 1;
         assert!(qs.select(0)); // HK.
         qs.qi += 1;
-        assert!(qs.select(0)); // Decline connector reauth.
+        assert!(qs.select(0)); // Decline orders authorization.
 
         assert_eq!(qs.answers["authorize_watchlist"]["authorized"], "true");
         assert_eq!(qs.answers["ask_market"]["Which market?"], "HK");
-        assert_eq!(qs.answers["reauth_news"]["acknowledged"], "false");
+        assert_eq!(qs.answers["authorize_orders"]["authorized"], "false");
     }
 
     #[test]
@@ -6549,10 +6726,12 @@ mod tests {
                 "call_1".into(),
                 "Which timeframe should the comparison use?".into(),
                 None,
+                false,
             )],
             qi: 0,
             answers: std::collections::HashMap::new(),
             summaries: Vec::new(),
+            multi_selected: std::collections::HashMap::new(),
         });
         (ui, state)
     }

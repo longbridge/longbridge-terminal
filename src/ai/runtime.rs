@@ -257,7 +257,10 @@ pub fn answers_by_tool_call(
 /// to key an answer under.
 pub fn is_answerable(interrupt: &&Value) -> bool {
     if interrupt_interactions(interrupt).iter().any(|interaction| {
-        interaction.get("type").and_then(Value::as_str) == Some("trade_password")
+        matches!(
+            interaction.get("type").and_then(Value::as_str),
+            Some("trade_password" | "connector_reauth" | "openapi_reauth" | "data_authorization")
+        )
     }) {
         return false;
     }
@@ -294,10 +297,7 @@ fn interrupt_text(interrupt: &Value) -> String {
     let confirmations: Vec<&str> = interrupt_interactions(interrupt)
         .into_iter()
         .filter(|interaction| {
-            matches!(
-                interaction.get("type").and_then(Value::as_str),
-                Some("authorization" | "connector_reauth")
-            )
+            interaction.get("type").and_then(Value::as_str) == Some("authorization")
         })
         .filter_map(|interaction| {
             interaction
@@ -313,18 +313,33 @@ fn interrupt_text(interrupt: &Value) -> String {
     let trade_password_unsupported = interrupt_interactions(interrupt).iter().any(|interaction| {
         interaction.get("type").and_then(Value::as_str) == Some("trade_password")
     });
+    let external_authorization_unsupported =
+        interrupt_interactions(interrupt).iter().any(|interaction| {
+            matches!(
+                interaction.get("type").and_then(Value::as_str),
+                Some("connector_reauth" | "openapi_reauth" | "data_authorization")
+            )
+        });
     if trade_password_unsupported {
         out.push_str("\n\n");
         out.push_str(&t!("Agent.TradePasswordUnsupported"));
     }
-    if questions.is_empty() && confirmations.is_empty() && !trade_password_unsupported {
+    if external_authorization_unsupported {
+        out.push_str("\n\n");
+        out.push_str(&t!("Agent.ExternalAuthorizationUnsupported"));
+    }
+    if questions.is_empty()
+        && confirmations.is_empty()
+        && !trade_password_unsupported
+        && !external_authorization_unsupported
+    {
         tracing::warn!(
             interrupt = %interrupt,
             "interrupt carried no answerable question"
         );
         out.push_str("\n\n");
         out.push_str(&t!("Agent.InterruptedUnreadable"));
-    } else if !trade_password_unsupported {
+    } else if !trade_password_unsupported && !external_authorization_unsupported {
         out.push_str("\n\n");
         out.push_str(&t!("Agent.InterruptedAnswerHint"));
     }
@@ -562,6 +577,21 @@ mod tests {
         });
         assert!(!is_answerable(&&interrupt));
         assert!(interrupt_text(&interrupt).contains(t!("Agent.TradePasswordUnsupported").as_ref()));
+    }
+
+    #[test]
+    fn external_authorization_interrupts_explain_that_terminal_cannot_continue_them() {
+        for kind in ["connector_reauth", "openapi_reauth", "data_authorization"] {
+            let interrupt = json!({
+                "interactions": [{
+                    "interrupt_id": "external_auth",
+                    "type": kind
+                }]
+            });
+            assert!(!is_answerable(&&interrupt));
+            assert!(interrupt_text(&interrupt)
+                .contains(t!("Agent.ExternalAuthorizationUnsupported").as_ref()));
+        }
     }
 
     /// An interrupt with nothing to key an answer under would resume with an
