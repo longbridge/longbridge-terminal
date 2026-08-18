@@ -208,6 +208,7 @@ fn map_event(ev: ConversationStreamEvent) -> Option<AgentEvent> {
         ConversationStreamEvent::NodeToolUseFinished(p) => AgentEvent::ToolUseFinished {
             tool_name: p.tool_name,
             status: p.status,
+            error: p.error,
         },
         ConversationStreamEvent::WorkflowFinished(resp) => AgentEvent::WorkflowFinished {
             status: status_str(resp.status),

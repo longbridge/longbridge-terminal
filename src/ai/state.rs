@@ -10,11 +10,13 @@ use longbridge::agent::Reference;
 use serde_json::Value;
 
 /// Who authored a transcript line.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Role {
     User,
     Assistant,
     System,
+    /// A turn-level error rendered as semantic red text.
+    Alert,
     /// A tool the agent called, recorded so the answer can be traced back to
     /// the data it was built from.
     Tool,
@@ -250,9 +252,7 @@ impl ChatState {
             })
             .is_some();
         if let Some(err) = error {
-            let prefix = rust_i18n::t!("Ai.ErrorPrefix");
-            self.messages
-                .push(Message::new(Role::System, format!("[{prefix}] {err}")));
+            self.messages.push(Message::new(Role::Alert, err));
         } else if !produced {
             // A turn that streamed no answer text — usually because every tool
             // the agent tried failed (e.g. account tools on a paper account).
@@ -380,6 +380,8 @@ mod tests {
             s.messages.last().unwrap().text.contains("rate limited"),
             "the failure is reported to the reader"
         );
+        assert_eq!(s.messages.last().unwrap().role, Role::Alert);
+        assert!(!s.messages.last().unwrap().text.contains("[error]"));
         assert!(
             s.turn_error.is_none(),
             "the error is consumed, not left to leak"

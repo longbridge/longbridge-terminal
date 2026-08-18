@@ -232,13 +232,17 @@ enum Chip {
 
 /// State of the structured interrupt answering flow.
 struct QuestionState {
-    tool_call_id: String,
     /// `(question text, option texts)` for each question.
     questions: Vec<(String, Vec<String>)>,
+    /// Where the selected option for each displayed step belongs in the resume
+    /// payload: `(interrupt_id, answer key, wire values by option index)`.
+    targets: Vec<(String, String, Option<Vec<String>>)>,
     /// Which question is being answered.
     qi: usize,
-    /// Collected `question -> answer` pairs.
-    answers: HashMap<String, String>,
+    /// Collected `{interrupt_id: {answer key: answer}}` resume payload.
+    answers: longbridge::agent::AnswersByToolCall,
+    /// Human-readable selections echoed into the transcript.
+    summaries: Vec<String>,
 }
 
 /// In-transcript search (Ctrl+F): a query and which of its matches is focused.
@@ -277,29 +281,78 @@ fn scroll_to_line(total: usize, height: usize, max_scroll: u16, line: usize) -> 
 
 impl QuestionState {
     fn from_interrupt(interrupt: &Value) -> Self {
-        let tool_call_id = interrupt
-            .get("tool_call_id")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        let questions = interrupt
-            .get("questions")
-            .and_then(Value::as_array)
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|q| {
-                        let text = q.get("question").and_then(Value::as_str)?.to_string();
-                        let options = crate::cli::agent::chat::question_choices(q);
-                        Some((text, options))
-                    })
-                    .collect()
+        let mut questions = Vec::new();
+        let mut targets = Vec::new();
+        if runtime::interrupt_interactions(interrupt)
+            .iter()
+            .any(|interaction| {
+                interaction.get("type").and_then(Value::as_str) == Some("trade_password")
             })
-            .unwrap_or_default();
+        {
+            return Self {
+                questions,
+                targets,
+                qi: 0,
+                answers: HashMap::new(),
+                summaries: Vec::new(),
+            };
+        }
+        for interaction in runtime::interrupt_interactions(interrupt) {
+            let Some(interrupt_id) = runtime::interaction_id(interaction) else {
+                continue;
+            };
+            let kind = interaction
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("ask_human");
+            if kind == "ask_human" || !runtime::interaction_questions(interaction).is_empty() {
+                for question in runtime::interaction_questions(interaction) {
+                    let Some(text) = question.get("question").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    questions.push((
+                        text.to_string(),
+                        crate::cli::agent::chat::question_choices(question),
+                    ));
+                    targets.push((interrupt_id.to_string(), text.to_string(), None));
+                }
+                continue;
+            }
+            if matches!(kind, "authorization" | "connector_reauth") {
+                // `tool_name` is an internal MCP function identifier. Only use
+                // the server's human-readable display name; otherwise the
+                // generic prompt is clearer than leaking implementation detail.
+                let name = interaction
+                    .get("tool_display_name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let prompt = if name.is_empty() {
+                    t!("Ai.AuthorizationPrompt").to_string()
+                } else {
+                    t!("Ai.AuthorizationToolPrompt", name = name).to_string()
+                };
+                questions.push((
+                    prompt,
+                    vec![t!("Ai.Decline").to_string(), t!("Ai.Allow").to_string()],
+                ));
+                let key = if kind == "connector_reauth" {
+                    "acknowledged"
+                } else {
+                    "authorized"
+                };
+                targets.push((
+                    interrupt_id.to_string(),
+                    key.to_string(),
+                    Some(vec!["false".into(), "true".into()]),
+                ));
+            }
+        }
         Self {
-            tool_call_id,
             questions,
+            targets,
             qi: 0,
             answers: HashMap::new(),
+            summaries: Vec::new(),
         }
     }
 
@@ -307,6 +360,33 @@ impl QuestionState {
     /// answer it (otherwise the inline free-text path is used instead).
     fn fully_selectable(&self) -> bool {
         !self.questions.is_empty() && self.questions.iter().all(|(_, o)| !o.is_empty())
+    }
+
+    fn has_confirmation(&self) -> bool {
+        self.targets.iter().any(|(_, _, values)| values.is_some())
+    }
+
+    fn select(&mut self, option_index: usize) -> bool {
+        let Some((_question, options)) = self.questions.get(self.qi) else {
+            return false;
+        };
+        let Some(choice) = options.get(option_index).cloned() else {
+            return false;
+        };
+        let Some((interrupt_id, key, wire_values)) = self.targets.get(self.qi) else {
+            return false;
+        };
+        let value = wire_values
+            .as_ref()
+            .and_then(|values| values.get(option_index))
+            .cloned()
+            .unwrap_or_else(|| choice.clone());
+        self.answers
+            .entry(interrupt_id.clone())
+            .or_default()
+            .insert(key.clone(), value);
+        self.summaries.push(choice);
+        true
     }
 }
 
@@ -703,7 +783,11 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
                     // Whatever the reader typed while waiting goes out now. It
                     // answers a pending question too, which is what a reply typed
                     // while the agent was asking is: an answer.
-                    if !state.queued.is_empty() {
+                    let waiting_for_confirmation = ui
+                        .question
+                        .as_ref()
+                        .is_some_and(QuestionState::has_confirmation);
+                    if !state.queued.is_empty() && !waiting_for_confirmation {
                         let next = state.queued.remove(0);
                         // The drawer was asking what this message answers, so it
                         // goes; a reader who has wandered into Settings stays there.
@@ -814,6 +898,7 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
                     track_session_symbols(&mut ui, &state);
                     fetch_missing_quotes(&ui, &cards_tx);
                     ui.switch(View::Chat);
+                    maybe_open_question(&mut ui, &state);
                 } else {
                     // Resume failed: stay on History with an error notice.
                     ui.notice = Some(t!("Ai.SessionsError").to_string());
@@ -911,7 +996,7 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
 fn track_session_symbols(ui: &mut Ui, state: &ChatState) {
     let mut fresh = Vec::new();
     for message in &state.messages {
-        if matches!(message.role, Role::System | Role::Tool) {
+        if matches!(message.role, Role::System | Role::Alert | Role::Tool) {
             continue;
         }
         for (_, symbol) in super::answer::security_spans(&message.text, &ui.aliases) {
@@ -945,7 +1030,7 @@ fn resolve_session_tickers(
     }
     let mut candidates: Vec<String> = Vec::new();
     for message in &state.messages {
-        if matches!(message.role, Role::System | Role::Tool) {
+        if matches!(message.role, Role::System | Role::Alert | Role::Tool) {
             continue;
         }
         for candidate in super::answer::ticker_candidates(&message.text) {
@@ -2219,11 +2304,8 @@ fn answer_selected(
     let Some(q) = ui.question.as_mut() else {
         return;
     };
-    let Some((question, options)) = q.questions.get(q.qi) else {
+    if !q.select(ui.sel) {
         return;
-    };
-    if let Some(choice) = options.get(ui.sel) {
-        q.answers.insert(question.clone(), choice.clone());
     }
     q.qi += 1;
     ui.sel = 0;
@@ -2253,13 +2335,8 @@ fn submit_answers(
     else {
         return false;
     };
-    let answers = runtime::answers_by_tool_call(&qs.tool_call_id, &qs.answers);
-    let summary = qs
-        .questions
-        .iter()
-        .filter_map(|(q, _)| qs.answers.get(q).cloned())
-        .collect::<Vec<_>>()
-        .join(", ");
+    let answers = qs.answers.clone();
+    let summary = qs.summaries.join(", ");
     let req = ConversationRequest::Continue {
         agent_uid: state.agent_uid.clone(),
         chat_uid,
@@ -2401,7 +2478,7 @@ fn export_conversation(state: &ChatState) -> std::io::Result<std::path::PathBuf>
             Role::Assistant => t!("Ai.Assistant"),
             // Tool lines are UI trace, not conversation; an export is the
             // conversation.
-            Role::System | Role::Tool => continue,
+            Role::System | Role::Alert | Role::Tool => continue,
         };
         let _ = write!(body, "**{label}:**\n\n{}\n\n", m.text);
     }
@@ -4248,10 +4325,18 @@ fn session_lines(session: &super::account::Session) -> Vec<Line<'static>> {
 /// ask it took away the thing they need to answer it. So the transcript stays
 /// visible behind and the drawer takes only the rows it needs.
 fn render_question(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
-    let Some((question, options, qi, total)) = ui.question.as_ref().and_then(|q| {
-        q.questions
-            .get(q.qi)
-            .map(|(t, o)| (t.clone(), o.clone(), q.qi, q.questions.len()))
+    let Some((question, options, wire_values, qi, total)) = ui.question.as_ref().and_then(|q| {
+        q.questions.get(q.qi).map(|(t, o)| {
+            (
+                t.clone(),
+                o.clone(),
+                q.targets
+                    .get(q.qi)
+                    .and_then(|(_, _, values)| values.clone()),
+                q.qi,
+                q.questions.len(),
+            )
+        })
     }) else {
         ui.rows.clear();
         return;
@@ -4306,14 +4391,34 @@ fn render_question(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
         })
         .collect();
     f.render_widget(Paragraph::new(Text::from(head_lines)), head);
-    let rows: Vec<(usize, String)> = options.into_iter().enumerate().collect();
+    let rows: Vec<(usize, String, Option<Color>)> = options
+        .into_iter()
+        .enumerate()
+        .map(|(index, label)| {
+            let color = option_color(wire_values.as_deref(), index);
+            (index, label, color)
+        })
+        .collect();
     render_rows(f, rest, ui, &rows);
+}
+
+fn option_color(wire_values: Option<&[String]>, index: usize) -> Option<Color> {
+    match wire_values.and_then(|values| values.get(index).map(String::as_str)) {
+        Some("true") => Some(Color::Green),
+        Some("false") => Some(Color::Red),
+        _ => None,
+    }
 }
 
 /// The drawer's option list: one row each, a subtle tinted background on the
 /// selected or hovered one and an accent marker, a hit rectangle per visible row,
 /// windowed around the selection.
-fn render_rows(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, rows: &[(usize, String)]) {
+fn render_rows(
+    f: &mut ratatui::Frame,
+    area: Rect,
+    ui: &mut Ui,
+    rows: &[(usize, String, Option<Color>)],
+) {
     ui.rows.clear();
     ui.clamp_sel();
     let width = area.width as usize;
@@ -4325,7 +4430,7 @@ fn render_rows(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, rows: &[(usize, 
         (ui.sel + 1 - fit).min(rows.len().saturating_sub(fit))
     };
     let mut lines = Vec::new();
-    for (idx, label) in rows.iter().skip(start).take(fit) {
+    for (idx, label, semantic_color) in rows.iter().skip(start).take(fit) {
         if lines.len() >= area.height as usize {
             break;
         }
@@ -4344,8 +4449,13 @@ fn render_rows(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, rows: &[(usize, 
         } else {
             None
         };
-        let marker_color = if selected { IDX_SEL } else { Color::DarkGray };
-        let mut text_style = Style::default().fg(if selected { Color::White } else { Color::Gray });
+        let marker_color =
+            semantic_color.unwrap_or(if selected { IDX_SEL } else { Color::DarkGray });
+        let mut text_style = Style::default().fg(semantic_color.unwrap_or(if selected {
+            Color::White
+        } else {
+            Color::Gray
+        }));
         if selected {
             text_style = text_style.add_modifier(Modifier::BOLD);
         }
@@ -4779,6 +4889,16 @@ fn push_message(
             lines.extend(render_answer_lines(&message.text, width, quotes, aliases));
         }
         Role::User => lines.extend(user_lines(&message.text, width)),
+        Role::Alert => {
+            for logical in message.text.split('\n') {
+                for wrapped in wrap(logical, width) {
+                    lines.push(Line::from(Span::styled(
+                        wrapped,
+                        Style::default().fg(Color::Red),
+                    )));
+                }
+            }
+        }
         Role::System | Role::Tool => {
             for logical in message.text.split('\n') {
                 for wrapped in wrap(logical, width) {
@@ -5709,8 +5829,8 @@ mod tests {
             ],
         });
         let qs = super::QuestionState::from_interrupt(&interrupt);
-        assert_eq!(qs.tool_call_id, "call_1");
         assert_eq!(qs.questions.len(), 2);
+        assert_eq!(qs.targets[0].0, "call_1");
         assert!(qs.fully_selectable());
     }
 
@@ -5726,6 +5846,84 @@ mod tests {
         });
         let qs = super::QuestionState::from_interrupt(&interrupt);
         assert!(!qs.fully_selectable());
+    }
+
+    #[test]
+    fn an_authorization_interaction_offers_decline_and_allow() {
+        let interrupt = serde_json::json!({
+            "interactions": [{
+                "tool_call_id": "call_watchlist",
+                "interrupt_id": "authorize_watchlist",
+                "type": "authorization",
+                "tool_display_name": "Read watchlist",
+                "questions": []
+            }]
+        });
+        let qs = super::QuestionState::from_interrupt(&interrupt);
+        assert_eq!(qs.targets[0].0, "authorize_watchlist");
+        assert!(qs.fully_selectable());
+        assert_eq!(qs.questions.len(), 1);
+        assert_eq!(qs.questions[0].1.len(), 2);
+    }
+
+    #[test]
+    fn a_trade_password_interaction_does_not_offer_a_false_continue_path() {
+        let interrupt = serde_json::json!({
+            "interactions": [{
+                "interrupt_id": "trade_password",
+                "type": "trade_password",
+                "tool_display_name": "Account details"
+            }]
+        });
+        let qs = super::QuestionState::from_interrupt(&interrupt);
+        assert!(qs.questions.is_empty());
+        assert!(!qs.fully_selectable());
+    }
+
+    #[test]
+    fn multiple_interactions_collect_one_combined_resume_payload() {
+        let interrupt = serde_json::json!({
+            "interactions": [
+                {
+                    "interrupt_id": "authorize_watchlist",
+                    "type": "authorization",
+                    "tool_display_name": "Read watchlist"
+                },
+                {
+                    "interrupt_id": "ask_market",
+                    "type": "ask_human",
+                    "questions": [{"question": "Which market?", "choices": ["HK", "US"]}]
+                },
+                {
+                    "interrupt_id": "reauth_news",
+                    "type": "connector_reauth",
+                    "tool_display_name": "News connector"
+                }
+            ]
+        });
+        let mut qs = super::QuestionState::from_interrupt(&interrupt);
+        assert!(qs.select(1)); // Allow watchlist.
+        qs.qi += 1;
+        assert!(qs.select(0)); // HK.
+        qs.qi += 1;
+        assert!(qs.select(0)); // Decline connector reauth.
+
+        assert_eq!(qs.answers["authorize_watchlist"]["authorized"], "true");
+        assert_eq!(qs.answers["ask_market"]["Which market?"], "HK");
+        assert_eq!(qs.answers["reauth_news"]["acknowledged"], "false");
+    }
+
+    #[test]
+    fn authorization_choices_use_semantic_colors() {
+        let values = vec!["false".to_string(), "true".to_string()];
+        assert_eq!(
+            super::option_color(Some(&values), 0),
+            Some(ratatui::style::Color::Red)
+        );
+        assert_eq!(
+            super::option_color(Some(&values), 1),
+            Some(ratatui::style::Color::Green)
+        );
     }
 
     #[test]
@@ -6196,6 +6394,21 @@ mod tests {
             .collect()
     }
 
+    #[test]
+    fn turn_errors_render_as_plain_red_text() {
+        let message = super::Message::new(super::Role::Alert, "Cannot continue".into());
+        let mut lines = Vec::new();
+        super::push_message(
+            &mut lines,
+            &message,
+            80,
+            &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
+        );
+        assert_eq!(lines[0].spans[0].content, "Cannot continue");
+        assert_eq!(lines[0].spans[0].style.fg, Some(ratatui::style::Color::Red));
+    }
+
     /// A selection that runs off the top of the view still copies the lines that
     /// scrolled out of sight, not only what happens to be on screen — the whole
     /// point of dragging past the edge.
@@ -6324,7 +6537,6 @@ mod tests {
         let mut ui = super::Ui::new();
         ui.view = super::View::Question;
         ui.question = Some(super::QuestionState {
-            tool_call_id: "call_1".into(),
             questions: vec![(
                 "Which timeframe should the comparison use?".into(),
                 vec![
@@ -6333,8 +6545,14 @@ mod tests {
                     "Year to date".into(),
                 ],
             )],
+            targets: vec![(
+                "call_1".into(),
+                "Which timeframe should the comparison use?".into(),
+                None,
+            )],
             qi: 0,
             answers: std::collections::HashMap::new(),
+            summaries: Vec::new(),
         });
         (ui, state)
     }

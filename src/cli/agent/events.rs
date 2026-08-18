@@ -27,6 +27,7 @@ pub enum AgentEvent {
     ToolUseFinished {
         tool_name: String,
         status: String,
+        error: String,
     },
     WorkflowFinished {
         status: String,
@@ -101,6 +102,7 @@ pub fn parse_data_line(payload: &str) -> Option<AgentEvent> {
         "node_tool_use_finished" => AgentEvent::ToolUseFinished {
             tool_name: str_field(&data, "tool_name"),
             status: str_field(&data, "status"),
+            error: str_field(&data, "error"),
         },
         "workflow_finished" => {
             let outputs = data.get("outputs").cloned().unwrap_or(Value::Null);
