@@ -25,6 +25,7 @@ pub mod schema;
 pub mod screener;
 pub mod search;
 pub mod sec_edgar;
+pub mod serve;
 pub mod sharelist;
 pub mod statement;
 pub mod topic;
@@ -146,12 +147,72 @@ pub enum Commands {
     /// Serve a Longbridge AI agent over ACP on stdin/stdout
     ///
     /// The process speaks newline-delimited JSON-RPC and is intended to be
-    /// launched by ACP clients such as Zed and Cherry Studio.
+    /// launched by an ACP-compatible AI chat client.
     /// Example: longbridge acp
     Acp {
         /// Longbridge AI agent UID (defaults to the main `chatbot` agent)
         #[arg(long)]
         agent_id: Option<String>,
+
+        /// Alias for top-level commands that ACP clients append to the launch
+        /// command (see [`AcpCmd`]).
+        #[command(subcommand)]
+        cmd: Option<AcpCmd>,
+    },
+
+    /// Serve the Longbridge API over JSON-RPC on stdin/stdout, with live quote push
+    ///
+    /// A stable, long-lived data source for third-party clients — desktop
+    /// widgets, bar plugins, dashboards. The process authenticates and opens
+    /// the market WebSocket once, then answers newline-delimited JSON-RPC 2.0
+    /// requests and pushes real-time updates as server notifications. Clients
+    /// need only a JSON parser and a line splitter, no protocol library.
+    ///
+    /// Results are the raw Longbridge `OpenAPI` payloads, NOT the reshaped
+    /// `--format json` output the CLI prints: that output is tuned for AI
+    /// consumption and may change, whereas this is an API contract.
+    ///
+    /// Method surface (call `initialize` for the full list):
+    ///   `quote.*` — every `QuoteApi` call, e.g. `quote.quote`,
+    ///               `quote.candlesticks`, `quote.watchlist`
+    ///   `trade.*` — every `TradeApi` call, e.g. `trade.stock_positions`,
+    ///               `trade.account_balance`, `trade.submit_order`
+    ///   `api.get` / `api.post` — raw passthrough to any REST endpoint, which
+    ///               is how the fundamentals, screener, IPO and news commands
+    ///               reach their data
+    ///   `quote.subscribe` / `quote.unsubscribe` — live feed, no CLI equivalent
+    ///
+    /// Notifications: `quote.updated`, `quote.depth`, `quote.brokers`,
+    /// `quote.trades`.
+    ///
+    /// Exits when stdin closes, so it cannot outlive the client that spawned it.
+    ///
+    /// Example: longbridge serve
+    /// Example: echo '{"jsonrpc":"2.0","id":1,"method":"quote.watchlist"}' | longbridge serve
+    // The protocol and method list are appended to the help rather than kept
+    // as a separate `--list-methods` flag: this is the reference someone reads
+    // while writing a client, and `-h` is where they will look for it.
+    // `after_help` (not `after_long_help`) so the short form carries it too.
+    #[command(after_help = crate::cli::serve::method_reference())]
+    Serve,
+
+    /// Chat with Longbridge AI in a full-screen TUI
+    ///
+    /// An interactive assistant for markets, quotes, filings, and your
+    /// portfolio. Answers stream live; Esc cancels a turn or quits.
+    /// Example: longbridge ai
+    Ai {
+        /// Agent UID to converse with (from `longbridge agent list`); defaults
+        /// to the Longbridge AI assistant
+        ///
+        /// The default agent's UID is an internal handle, so it is not printed
+        /// here — inside the chat, `/agent reset` returns to it by name.
+        #[arg(
+            long,
+            default_value = crate::cli::agent::DEFAULT_AGENT_UID,
+            hide_default_value = true
+        )]
+        agent: String,
     },
 
     /// Generate shell completion script
@@ -2697,6 +2758,33 @@ pub enum AgentCmd {
     /// Example: longbridge agent workspaces --format json
     #[command(alias = "workspace")]
     Workspaces,
+
+    /// List the account's chats (conversations) across agents
+    ///
+    /// Returns each chat's uid, name, owning agent, and timestamps. Use the
+    /// uid with `longbridge agent chat-detail <UID>` to read its messages.
+    /// Example: longbridge agent chats
+    /// Example: longbridge agent chats --exclude-agent-uids dsl_builder
+    Chats {
+        /// Exclude chats owned by these agent UIDs (comma-joined)
+        #[arg(long)]
+        exclude_agent_uids: Option<String>,
+        /// Page number, starts at 1
+        #[arg(long, default_value = "1")]
+        page: u32,
+        /// Page size
+        #[arg(long, alias = "limit", default_value = "20")]
+        count: u32,
+    },
+
+    /// Show a single chat's detail, including its messages
+    ///
+    /// Example: longbridge agent chat-detail qhso2nm42nis6
+    #[command(alias = "chat-messages")]
+    ChatDetail {
+        /// Chat UID (from `longbridge agent chats`)
+        chat_uid: String,
+    },
 }
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -3184,14 +3272,16 @@ pub enum OrderCmd {
 
 #[derive(Subcommand)]
 pub enum NewsCmd {
-    /// Full Markdown content of a news article
+    /// Full detail of a news article (Markdown body)
     ///
-    /// Fetches the article from longbridge.com (or longbridge.cn for CN region).
-    /// Use the global --lang flag to select language (zh-CN or en).
+    /// Fetches `GET /v1/content/news/{id}`. Prints the title,
+    /// published time, author, related tickers, URL, and the Markdown body.
+    /// With --format json: the full item (id, title, description, body, url,
+    /// author, images, counters, `published_at`, tickers).
     /// Example: longbridge news detail 12345678
-    /// Example: longbridge --lang zh-CN news detail 12345678
+    /// Example: longbridge news detail 12345678 --format json
     Detail {
-        /// News article ID (from `longbridge news <SYMBOL>`)
+        /// News article ID (from `longbridge news <SYMBOL>` or `news search`)
         id: String,
     },
 
@@ -3529,6 +3619,41 @@ pub enum AuthCmd {
     },
 }
 
+/// Aliases accepted after `acp` so ACP clients can run terminal authentication.
+///
+/// A client launches the agent as `longbridge acp`, then starts terminal auth by
+/// re-running that same command with the auth method's `args` appended, which
+/// yields `longbridge acp auth login`. Accepting the alias here makes that
+/// invocation behave exactly like `longbridge auth login`.
+#[derive(Subcommand, Debug, Clone)]
+pub enum AcpCmd {
+    /// Alias for `longbridge auth login` / `longbridge auth logout`
+    Auth {
+        /// `login` or `logout`.
+        #[arg(value_enum)]
+        action: AcpAuthAction,
+
+        /// Client name to register with the OAuth server (see `auth login`).
+        /// Ignored by `logout`.
+        #[arg(long, value_name = "NAME")]
+        client_name: Option<String>,
+
+        /// Print request/response details for each OAuth step.
+        /// Ignored by `logout`.
+        #[arg(short, long)]
+        verbose: bool,
+    },
+}
+
+/// The actions `longbridge acp auth` accepts.
+#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AcpAuthAction {
+    /// Authenticate via the Device Authorization Flow.
+    Login,
+    /// Clear the locally stored OAuth token.
+    Logout,
+}
+
 /// Render a top-level subcommand group's help text, e.g. `agent` or `workspace`.
 ///
 /// Returns `None` only when `name` is not a top-level subcommand, which would
@@ -3830,7 +3955,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             }
         }
         Commands::News { symbol, count, cmd } => match cmd {
-            Some(NewsCmd::Detail { id }) => news::cmd_news_detail(id).await,
+            Some(NewsCmd::Detail { id }) => news::cmd_news_detail(id, format, verbose).await,
             Some(NewsCmd::Search { keyword, count }) => {
                 search::cmd_search(keyword, "news", count, format, verbose).await
             }
@@ -4359,6 +4484,8 @@ IpoCmd::ProfitLoss { period, page, count } => {
 
         Commands::Auth { .. }
         | Commands::Acp { .. }
+        | Commands::Ai { .. }
+        | Commands::Serve
         | Commands::Tui
         | Commands::Check
         | Commands::Update { .. }
@@ -4430,7 +4557,10 @@ mod tests {
         let cli = parse(&["longbridge", "acp"]).unwrap();
         assert!(matches!(
             cli.command,
-            Some(Commands::Acp { agent_id: None })
+            Some(Commands::Acp {
+                agent_id: None,
+                cmd: None
+            })
         ));
     }
 
@@ -4439,8 +4569,47 @@ mod tests {
         let cli = parse(&["longbridge", "acp", "--agent-id", "custom-agent"]).unwrap();
         assert!(matches!(
             cli.command,
-            Some(Commands::Acp { agent_id: Some(agent_id) }) if agent_id == "custom-agent"
+            Some(Commands::Acp { agent_id: Some(agent_id), .. }) if agent_id == "custom-agent"
         ));
+    }
+
+    #[test]
+    fn test_acp_auth_login_alias() {
+        // ACP clients append the terminal auth method's args to the launch
+        // command, producing `longbridge acp auth login`.
+        let cli = parse(&["longbridge", "acp", "auth", "login"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Acp {
+                cmd: Some(AcpCmd::Auth {
+                    action: AcpAuthAction::Login,
+                    client_name: None,
+                    verbose: false,
+                }),
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn test_acp_auth_logout_alias() {
+        let cli = parse(&["longbridge", "acp", "auth", "logout"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Acp {
+                cmd: Some(AcpCmd::Auth {
+                    action: AcpAuthAction::Logout,
+                    ..
+                }),
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn test_acp_rejects_unknown_alias() {
+        assert!(parse(&["longbridge", "acp", "auth", "status"]).is_err());
+        assert!(parse(&["longbridge", "acp", "logout"]).is_err());
     }
 
     // ─── Quote commands ───────────────────────────────────────────────────────

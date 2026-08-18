@@ -3,8 +3,6 @@ use anyhow::{bail, Result};
 use super::{output::print_table, OutputFormat};
 use crate::utils::datetime::fmt_rfc3339;
 
-const NEWS_DETAIL_HOST: &str = "https://longbridge.com";
-
 /// Return `s` truncated to `max` chars with a trailing `…`, or the original if it fits.
 pub(crate) fn truncate_display(s: &str, max: usize) -> String {
     if s.chars().count() > max {
@@ -318,38 +316,85 @@ pub async fn cmd_topic_detail(id: String) -> Result<()> {
     Ok(())
 }
 
-/// Build the news detail URL for the given id.
-///
-/// Always uses longbridge.com as host.
-/// Language prefix is determined by the global content language (`crate::locale::get()`).
-fn news_detail_url(id: &str) -> String {
-    match crate::locale::get() {
-        "zh-CN" => format!("{NEWS_DETAIL_HOST}/zh-CN/news/{id}.md"),
-        "zh-HK" => format!("{NEWS_DETAIL_HOST}/zh-HK/news/{id}.md"),
-        _ => format!("{NEWS_DETAIL_HOST}/news/{id}.md"),
+/// Fetch one news article's full detail: `GET /v1/content/news/{id}`.
+pub async fn cmd_news_detail(id: String, format: &OutputFormat, verbose: bool) -> Result<()> {
+    let id: i64 = id
+        .parse()
+        .map_err(|_| anyhow::anyhow!("Invalid news id: {id} (expected a numeric article ID)"))?;
+    if verbose {
+        eprintln!("* GET /v1/content/news/{id}");
     }
-}
-
-/// Fetch full news article as Markdown.
-///
-/// URL pattern:
-/// - English: `https://longbridge.com/news/{id}.md`
-/// - Chinese: `https://longbridge.com/zh-CN/news/{id}.md`
-pub async fn cmd_news_detail(id: String) -> Result<()> {
-    let url = news_detail_url(&id);
-    let client = reqwest::Client::new();
-    let resp = client
-        .get(&url)
-        .header("User-Agent", "Mozilla/5.0")
-        .send()
-        .await?;
-
-    if !resp.status().is_success() {
-        bail!("Failed to fetch news detail: HTTP {}", resp.status());
+    let item = crate::openapi::news::news_detail(id).await?;
+    // A 200 with an empty/absent `item` means the article doesn't exist —
+    // don't print an empty shell with exit code 0. (Some gateways echo the
+    // requested id back in an otherwise-empty object, so don't rely on id.)
+    if item.id == 0
+        || (item.title.is_empty() && item.body.is_empty() && item.description.is_empty())
+    {
+        bail!("News article {id} not found");
     }
 
-    let content = resp.text().await?;
-    print!("{content}");
+    // RFC3339, matching the `news` list output (which an agent chains from).
+    // A missing/invalid timestamp is treated as absent, not 1970-01-01.
+    let published_at = (item.published_at > 0)
+        .then(|| {
+            time::OffsetDateTime::from_unix_timestamp(item.published_at)
+                .map(fmt_rfc3339)
+                .ok()
+        })
+        .flatten();
+
+    if matches!(format, OutputFormat::Json) {
+        // Same field representations as the `news` list: string id, RFC3339
+        // timestamp — so list → detail chaining needs no type juggling.
+        let record = serde_json::json!({
+            "id": item.id.to_string(),
+            "published_at": published_at,
+            "title": item.title,
+            "description": item.description,
+            "body": item.body,
+            "url": item.url,
+            "author": {
+                "id": item.author.id.to_string(),
+                "name": item.author.name,
+                "avatar": item.author.avatar,
+            },
+            "images": item.images,
+            "comments_count": item.comments_count,
+            "likes_count": item.likes_count,
+            "shares_count": item.shares_count,
+            "tickers": item.tickers,
+        });
+        println!("{}", serde_json::to_string_pretty(&record)?);
+        return Ok(());
+    }
+
+    let title = if item.title.is_empty() {
+        truncate_display(&item.description, 70)
+    } else {
+        item.title.clone()
+    };
+    println!("# {title}");
+    let mut meta = Vec::new();
+    if let Some(published_at) = &published_at {
+        meta.push(published_at.clone());
+    }
+    if !item.author.name.is_empty() {
+        meta.push(item.author.name.clone());
+    }
+    if !item.tickers.is_empty() {
+        meta.push(item.tickers.join(" "));
+    }
+    println!("{}", meta.join(" · "));
+    if !item.url.is_empty() {
+        println!("{}", item.url);
+    }
+    println!();
+    if item.body.is_empty() {
+        println!("{}", item.description);
+    } else {
+        println!("{}", item.body);
+    }
     Ok(())
 }
 
@@ -369,7 +414,32 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
                 "comments_count",
             ],
         ),
-        "news detail" => text("Full news article Markdown content"),
+        "news detail" => super::schema::schema(
+            "Full news article detail",
+            super::schema::RootKind::Object,
+            vec![
+                super::schema::field("id", "string", "News article ID (numeric string)"),
+                super::schema::field("title", "string", "Title"),
+                super::schema::field("description", "string", "Plain-text excerpt, no HTML"),
+                super::schema::field("body", "string", "Markdown content"),
+                super::schema::field("url", "string", "Full article page URL"),
+                super::schema::field("author", "object", "{id, name, avatar}"),
+                super::schema::field("images", "object[]", "{url, width, height}"),
+                super::schema::field("comments_count", "number", "Comments count"),
+                super::schema::field("likes_count", "number", "Likes count"),
+                super::schema::field("shares_count", "number", "Shares count"),
+                super::schema::field(
+                    "published_at",
+                    "string | null",
+                    "Published time (RFC3339); null when absent",
+                ),
+                super::schema::field(
+                    "tickers",
+                    "string[]",
+                    "Related tickers, {symbol}.{market} e.g. [\"AAPL.US\", \"700.HK\"]",
+                ),
+            ],
+        ),
         "news search" => array(
             "News search results",
             &["id", "title", "url", "source_name", "time", "excerpt"],

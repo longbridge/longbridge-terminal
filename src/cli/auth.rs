@@ -47,16 +47,23 @@ fn format_duration(secs: u64) -> String {
     }
 }
 
-struct TokenState {
-    status: &'static str,
-    detail: String,
-    access_token_exp: Option<u64>,
-    refresh_token_exp: Option<u64>,
+/// What the stored token says about the session.
+///
+/// Shared with the `ai` chat's Settings view: reading a token — where it lives,
+/// when it expires, whether the refresh token can still save it — is one rule,
+/// and it lives here. `detail` carries ANSI for the CLI's own output, so a caller
+/// rendering elsewhere should ignore it and use the fields.
+pub(crate) struct TokenState {
+    pub(crate) status: &'static str,
+    pub(crate) detail: String,
+    pub(crate) access_token_exp: Option<u64>,
+    #[allow(dead_code)]
+    pub(crate) refresh_token_exp: Option<u64>,
     /// Unix timestamp of when the token file was last written (login time).
-    logged_in_at: Option<u64>,
+    pub(crate) logged_in_at: Option<u64>,
     /// Data-center region (`us`/`ap`) derived from the access token prefix.
     /// `None` when no token is stored or it cannot be decrypted.
-    dc_region: Option<&'static str>,
+    pub(crate) dc_region: Option<&'static str>,
 }
 
 /// Decode a numeric field from a JWT payload without verifying the signature.
@@ -74,7 +81,7 @@ fn jwt_exp(token: &str) -> Option<u64> {
     jwt_field(token, "exp")
 }
 
-fn read_token_state() -> Result<TokenState> {
+pub(crate) fn read_token_state() -> Result<TokenState> {
     let token_path = crate::auth::token_file_path()?;
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)

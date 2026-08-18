@@ -1,42 +1,71 @@
 use anyhow::Result;
-use std::sync::{Arc, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, PoisonError, RwLock};
 
 use super::wrapper::{RateLimitedQuoteContext, RateLimitedTradeContext};
 
 /// Global `QuoteContext`
-pub static QUOTE_CTX: OnceLock<longbridge::quote::QuoteContext> = OnceLock::new();
+/// A process-wide handle that can be *replaced*, unlike a `OnceLock`.
+///
+/// Signing out and back in — as a different account, usually, since that is why
+/// anyone does it — has to be able to swap the contexts. Every call site in the CLI
+/// takes a `&'static` context, so a replacement leaks the previous value instead of
+/// freeing it while a borrow could still be live. Signing in is a human-scale event,
+/// a couple of times in a session at most, so the leak is bounded and tiny; the
+/// alternative is threading a handle through every command for no other gain.
+pub(crate) struct Slot<T: 'static>(RwLock<Option<&'static T>>);
+
+impl<T: 'static> Slot<T> {
+    const fn new() -> Self {
+        Self(RwLock::new(None))
+    }
+
+    pub(crate) fn get(&self) -> Option<&'static T> {
+        *self.0.read().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn set(&self, value: T) {
+        let leaked: &'static T = Box::leak(Box::new(value));
+        *self.0.write().unwrap_or_else(PoisonError::into_inner) = Some(leaked);
+    }
+}
+
+pub(crate) static QUOTE_CTX: Slot<longbridge::quote::QuoteContext> = Slot::new();
+
+/// Set by [`mark_signed_out`]; see [`is_ready`].
+static SIGNED_OUT: AtomicBool = AtomicBool::new(false);
 
 /// Global `AssetContext`
-pub static STATEMENT_CTX: OnceLock<longbridge::AssetContext> = OnceLock::new();
+pub(crate) static STATEMENT_CTX: Slot<longbridge::AssetContext> = Slot::new();
 
 /// Global `TradeContext`
-pub static TRADE_CTX: OnceLock<longbridge::trade::TradeContext> = OnceLock::new();
+pub(crate) static TRADE_CTX: Slot<longbridge::trade::TradeContext> = Slot::new();
 
 /// Global `GridContext` for grid trading (REST-only)
-pub static GRID_CTX: OnceLock<longbridge::grid::GridContext> = OnceLock::new();
+pub(crate) static GRID_CTX: Slot<longbridge::grid::GridContext> = Slot::new();
 
 /// Global `ContentContext` for news and topics
-pub static CONTENT_CTX: OnceLock<longbridge::ContentContext> = OnceLock::new();
+pub(crate) static CONTENT_CTX: Slot<longbridge::ContentContext> = Slot::new();
 
 /// Global `FundamentalContext` for fundamental data (ratings, dividends, ETF allocation, etc.)
-pub static FUNDAMENTAL_CTX: OnceLock<longbridge::FundamentalContext> = OnceLock::new();
+pub(crate) static FUNDAMENTAL_CTX: Slot<longbridge::FundamentalContext> = Slot::new();
 
 /// Global `AgentContext` for AI agent discovery and conversations
-pub static AGENT_CTX: OnceLock<longbridge::agent::AgentContext> = OnceLock::new();
+pub(crate) static AGENT_CTX: Slot<longbridge::agent::AgentContext> = Slot::new();
 
 /// Whether this process authenticated with API-key env vars (vs OAuth).
-static USING_API_KEY: OnceLock<bool> = OnceLock::new();
+static USING_API_KEY: Slot<bool> = Slot::new();
 
 /// Global `HttpClient` for making authenticated requests to the Longbridge `OpenAPI`
-pub static HTTP_CLIENT: OnceLock<longbridge::httpclient::HttpClient> = OnceLock::new();
+pub(crate) static HTTP_CLIENT: Slot<longbridge::httpclient::HttpClient> = Slot::new();
 
 const CLI_APP_ID: &str = "longbridge-cli";
 
 /// Global rate-limited `QuoteContext` wrapper
-pub static RATE_LIMITED_QUOTE_CTX: OnceLock<RateLimitedQuoteContext> = OnceLock::new();
+pub(crate) static RATE_LIMITED_QUOTE_CTX: Slot<RateLimitedQuoteContext> = Slot::new();
 
 /// Global rate-limited `TradeContext` wrapper
-pub static RATE_LIMITED_TRADE_CTX: OnceLock<RateLimitedTradeContext> = OnceLock::new();
+pub(crate) static RATE_LIMITED_TRADE_CTX: Slot<RateLimitedTradeContext> = Slot::new();
 
 /// Map the effective content language to the SDK Language enum.
 fn get_api_language() -> longbridge::Language {
@@ -83,10 +112,57 @@ pub async fn init_contexts() -> Result<(
     bool,
     String,
 )> {
-    let (config_builder, http_client_config, using_api_key) = if let (Ok(config), Ok(http_config)) = (
-        longbridge::Config::from_apikey_env(),
-        longbridge::httpclient::HttpClientConfig::from_apikey_env(),
-    ) {
+    init_contexts_with_auth(true).await
+}
+
+/// Initialize contexts using only credentials saved by `longbridge auth login`.
+pub async fn init_oauth_contexts() -> Result<(
+    impl tokio_stream::Stream<Item = longbridge::quote::PushEvent> + Send + Unpin,
+    bool,
+    String,
+)> {
+    init_contexts_with_auth(false).await
+}
+
+/// Return whether an OAuth token is available without starting an OAuth flow.
+pub fn oauth_credentials_available() -> Result<bool> {
+    let token_path = crate::auth::token_file_path()?;
+    if !token_path.exists() {
+        return Ok(false);
+    }
+    if crate::secure_storage::EncryptedFileTokenStorage::load_full(
+        &crate::auth::effective_client_id(),
+    )
+    .is_none()
+    {
+        return Err(anyhow::anyhow!(
+            "Failed to decrypt auth token. Please run `longbridge auth login` to re-authenticate."
+        ));
+    }
+    Ok(true)
+}
+
+async fn init_contexts_with_auth(
+    allow_api_key: bool,
+) -> Result<(
+    impl tokio_stream::Stream<Item = longbridge::quote::PushEvent> + Send + Unpin,
+    bool,
+    String,
+)> {
+    let api_key_configs = if allow_api_key {
+        match (
+            longbridge::Config::from_apikey_env(),
+            longbridge::httpclient::HttpClientConfig::from_apikey_env(),
+        ) {
+            (Ok(config), Ok(http_config)) => Some((config, http_config)),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let (config_builder, http_client_config, using_api_key) = if let Some((config, http_config)) =
+        api_key_configs
+    {
         tracing::info!("Using API key authentication (env vars)");
         (
             config
@@ -100,22 +176,9 @@ pub async fn init_contexts() -> Result<(
 
         // If no token file exists, refuse to start a browser/callback-server flow.
         // CLI commands require a stored token; users must run `longbridge auth login` first.
-        let token_path = crate::auth::token_file_path()?;
-        if !token_path.exists() {
+        if !oauth_credentials_available()? {
             return Err(anyhow::anyhow!(
-                "Not authenticated. Please run 'longbridge auth login' first."
-            ));
-        }
-        // If the token file exists but cannot be decrypted (e.g. machine ID
-        // changed), fail fast rather than hanging in the OAuth browser flow.
-        if crate::secure_storage::EncryptedFileTokenStorage::load_full(
-            &crate::auth::effective_client_id(),
-        )
-        .is_none()
-        {
-            return Err(anyhow::anyhow!(
-                "Failed to decrypt auth token. Please run 'longbridge auth login' to \
-                 re-authenticate."
+                "Not authenticated. Please run `longbridge auth login` first."
             ));
         }
 
@@ -257,33 +320,32 @@ pub async fn init_contexts() -> Result<(
 
     // Published for callers that bypass the SDK client and need to know the
     // auth mode (e.g. the agent commands reject API-key mode).
-    let _ = USING_API_KEY.set(using_api_key);
+    USING_API_KEY.set(using_api_key);
+    // A successful init is what "signed in" means, including the second one after a
+    // sign-out in the same process.
+    SIGNED_OUT.store(false, Ordering::Relaxed);
 
     let content_ctx = longbridge::ContentContext::new(Arc::clone(&config));
-    CONTENT_CTX
-        .set(content_ctx)
-        .map_err(|_| anyhow::anyhow!("ContentContext already initialized"))?;
+    CONTENT_CTX.set(content_ctx);
 
     let statement_ctx = longbridge::AssetContext::new(Arc::clone(&config));
-    STATEMENT_CTX
-        .set(statement_ctx)
-        .map_err(|_| anyhow::anyhow!("AssetContext already initialized"))?;
+    STATEMENT_CTX.set(statement_ctx);
 
     let fundamental_ctx = longbridge::FundamentalContext::new(Arc::clone(&config));
-    FUNDAMENTAL_CTX
-        .set(fundamental_ctx)
-        .map_err(|_| anyhow::anyhow!("FundamentalContext already initialized"))?;
+    FUNDAMENTAL_CTX.set(fundamental_ctx);
 
     let agent_ctx = longbridge::agent::AgentContext::new(Arc::clone(&config));
-    AGENT_CTX
-        .set(agent_ctx)
-        .map_err(|_| anyhow::anyhow!("AgentContext already initialized"))?;
+    AGENT_CTX.set(agent_ctx);
 
     // Also inject into the standalone HttpClient used for direct REST calls.
+    // Unlike the SDK contexts (whose config carries `.language(...)`), the raw
+    // client has no language field — forward the effective content language
+    // ourselves so `--lang` keeps working on raw endpoints.
     let mut http_client = longbridge::httpclient::HttpClient::new(http_client_config);
     http_client = http_client
         .header("user-agent", user_agent)
-        .header("x-app-id", CLI_APP_ID);
+        .header("x-app-id", CLI_APP_ID)
+        .header("accept-language", crate::locale::get());
     if !cli_cmd.is_empty() {
         http_client = http_client.header("x-cli-cmd", cli_cmd.as_str());
     }
@@ -291,9 +353,7 @@ pub async fn init_contexts() -> Result<(
         http_client = http_client.header("x-cli-args", cli_args.as_str());
     }
 
-    HTTP_CLIENT
-        .set(http_client)
-        .map_err(|_| anyhow::anyhow!("HttpClient already initialized"))?;
+    HTTP_CLIENT.set(http_client);
 
     // Create QuoteContext and TradeContext.
     // new() is synchronous and infallible in the new SDK; connection and auth errors
@@ -305,26 +365,16 @@ pub async fn init_contexts() -> Result<(
     let grid_ctx = longbridge::grid::GridContext::new(Arc::clone(&config));
 
     // Store in global variables
-    QUOTE_CTX
-        .set(quote_ctx)
-        .map_err(|_| anyhow::anyhow!("QuoteContext already initialized"))?;
-    TRADE_CTX
-        .set(trade_ctx)
-        .map_err(|_| anyhow::anyhow!("TradeContext already initialized"))?;
-    GRID_CTX
-        .set(grid_ctx)
-        .map_err(|_| anyhow::anyhow!("GridContext already initialized"))?;
+    QUOTE_CTX.set(quote_ctx);
+    TRADE_CTX.set(trade_ctx);
+    GRID_CTX.set(grid_ctx);
 
     // Initialize rate-limited wrappers
     let quote_ref = QUOTE_CTX.get().expect("QuoteContext just initialized");
     let trade_ref = TRADE_CTX.get().expect("TradeContext just initialized");
 
-    RATE_LIMITED_QUOTE_CTX
-        .set(RateLimitedQuoteContext::new(quote_ref))
-        .map_err(|_| anyhow::anyhow!("RateLimitedQuoteContext already initialized"))?;
-    RATE_LIMITED_TRADE_CTX
-        .set(RateLimitedTradeContext::new(trade_ref))
-        .map_err(|_| anyhow::anyhow!("RateLimitedTradeContext already initialized"))?;
+    RATE_LIMITED_QUOTE_CTX.set(RateLimitedQuoteContext::new(quote_ref));
+    RATE_LIMITED_TRADE_CTX.set(RateLimitedTradeContext::new(trade_ref));
 
     tracing::info!("Rate limiter initialized: 10 requests/second, burst capacity: 20");
 
@@ -336,6 +386,29 @@ pub async fn init_contexts() -> Result<(
 }
 
 /// Get global `QuoteContext`
+/// Whether the contexts have been built, i.e. whether the process is signed in.
+///
+/// The accessors below panic when they have not: they are written for commands
+/// that cannot run without credentials. The `ai` chat can — it opens signed out
+/// and offers to sign in — so it asks first.
+#[must_use]
+pub fn is_ready() -> bool {
+    !SIGNED_OUT.load(Ordering::Relaxed)
+        && AGENT_CTX.get().is_some()
+        && QUOTE_CTX.get().is_some()
+        && HTTP_CLIENT.get().is_some()
+}
+
+/// Stop treating this process as signed in.
+///
+/// Called when the reader signs out without leaving: the token on disk is gone, but
+/// the contexts hold a session that would keep working until it expired. Rather
+/// than quietly trading on revoked credentials, everything gated on [`is_ready`]
+/// goes back to behaving as it does before a sign-in.
+pub fn mark_signed_out() {
+    SIGNED_OUT.store(true, Ordering::Relaxed);
+}
+
 pub fn quote() -> &'static longbridge::quote::QuoteContext {
     QUOTE_CTX
         .get()

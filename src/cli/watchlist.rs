@@ -30,28 +30,36 @@ fn sorted_securities(
     sorted
 }
 
+/// Render watchlist groups as the JSON array that `watchlist --format json`
+/// emits.
+fn groups_to_json(groups: &[longbridge::quote::WatchlistGroup]) -> Vec<serde_json::Value> {
+    groups
+        .iter()
+        .map(|g| {
+            serde_json::json!({
+                "id": g.id,
+                "name": g.name,
+                "securities": sorted_securities(&g.securities).iter().map(|s| serde_json::json!({
+                    "symbol": s.symbol,
+                    "name": s.name,
+                    "market": format!("{:?}", s.market),
+                    "is_pinned": s.is_pinned,
+                })).collect::<Vec<_>>(),
+            })
+        })
+        .collect()
+}
+
 async fn cmd_list(format: &OutputFormat) -> Result<()> {
     let ctx = crate::openapi::quote_cmd();
     let groups = ctx.watchlist().await?;
 
     match format {
         OutputFormat::Json => {
-            let val: Vec<_> = groups
-                .iter()
-                .map(|g| {
-                    serde_json::json!({
-                        "id": g.id,
-                        "name": g.name,
-                        "securities": sorted_securities(&g.securities).iter().map(|s| serde_json::json!({
-                            "symbol": s.symbol,
-                            "name": s.name,
-                            "market": format!("{:?}", s.market),
-                            "is_pinned": s.is_pinned,
-                        })).collect::<Vec<_>>(),
-                    })
-                })
-                .collect();
-            println!("{}", serde_json::to_string_pretty(&val)?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&groups_to_json(&groups))?
+            );
         }
         OutputFormat::Pretty => {
             for group in &groups {

@@ -348,7 +348,21 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<ResponseSchema> {
         "update" => crate::update::schema_for_path(path),
         "tui" => crate::tui::schema_for_path(path),
         "completion" => completion::schema_for_path(path),
-        "acp" => (path == ["acp"]).then(|| text("ACP JSON-RPC session over stdio")),
+        "acp" => match path {
+            [_] => Some(text("ACP JSON-RPC session over stdio")),
+            // `acp auth login` / `acp auth logout`: aliases ACP clients reach by
+            // appending the terminal auth method's args to the launch command.
+            [_, sub] if sub == "auth" => Some(text("OAuth login/logout flow status messages")),
+            _ => None,
+        },
+        "ai" => (path == ["ai"]).then(|| text("Interactive Longbridge AI chat TUI")),
+        "serve" => (path == ["serve"]).then(|| {
+            text(
+                "JSON-RPC 2.0 session over stdio (NDJSON). Results are raw \
+                 Longbridge OpenAPI payloads, not the reshaped `--format json` \
+                 output; call `initialize` for the method list",
+            )
+        }),
         "quote" | "depth" | "brokers" | "trades" | "intraday" | "kline" | "static"
         | "calc-index" | "capital" | "market-temp" | "trading" | "security-list"
         | "participants" | "subscriptions" | "option" | "warrant" | "constituent"
@@ -608,7 +622,7 @@ mod tests {
             let paths = real_leaf_paths(&root);
             assert_eq!(
                 paths.len(),
-                156,
+                160,
                 "real command count changed; review schema coverage"
             );
 

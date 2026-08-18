@@ -3,6 +3,7 @@ use clap::Parser;
 use std::io::Write;
 use std::time::Instant;
 
+pub mod ai;
 pub mod auth;
 pub mod cli;
 pub mod data;
@@ -33,7 +34,7 @@ fn print_cli_error(e: &anyhow::Error, using_api_key: bool) {
     // Strip terminal control/escape sequences from server-controlled text
     // before it hits stderr, so a hostile API error cannot repaint the
     // terminal. Reuses the shared helper (keeps newlines/tabs).
-    use crate::cli::agent::render::strip_control_chars as sanitize_server_text;
+    use crate::utils::text::strip_control_chars as sanitize_server_text;
 
     if let Some(lb_err) = e.downcast_ref::<LbError>() {
         match lb_err {
@@ -249,6 +250,74 @@ async fn main() {
             return;
         }
 
+        // `longbridge ai`: the interactive Longbridge AI chat TUI. Needs a live
+        // context, so a failed init exits (a prompt turn cannot run without it).
+        Some(cli::Commands::Ai { agent }) => {
+            // Hydrate the persisted chat preferences (tool-call display, quote
+            // cards, notifications, the ticker tape). The market TUI does this on
+            // startup; `longbridge ai` launches on its own, so without this the
+            // Settings view would forget every change on the next launch.
+            crate::tui::settings::load_and_apply();
+            // The chat opens signed out. Everything that needs credentials is
+            // guarded inside it, and Settings offers to sign in — which then builds
+            // the contexts in place, so the reader carries on in the same session.
+            // Refusing to start was the wrong call: signing in is the one thing you
+            // would come here to do without a token.
+            let quote_receiver: Option<ai::QuoteStream> = match openapi::init_contexts().await {
+                Ok((rx, _, _)) => Some(Box::pin(rx)),
+                Err(_) => None,
+            };
+
+            let hook = std::panic::take_hook();
+            std::panic::set_hook(Box::new(move |info| {
+                // `ai::run` also turns on bracketed paste and focus reporting;
+                // `exit_full_screen` only undoes the alternate screen and mouse
+                // capture, so disable them here too or a panic leaves the
+                // terminal echoing paste brackets and focus escapes.
+                let _ = crossterm::execute!(
+                    std::io::stdout(),
+                    crossterm::event::DisableBracketedPaste,
+                    crossterm::event::DisableFocusChange,
+                );
+                Terminal::exit_full_screen();
+                hook(info);
+            }));
+
+            Terminal::enter_full_screen();
+            let result = ai::run(agent, quote_receiver).await;
+            Terminal::exit_full_screen();
+            match result {
+                // Signing in or out is reported here, outside the alternate
+                // screen — printed inside it, the message would scroll away with
+                // it.
+                Ok(Some(note)) => println!("{note}"),
+                Ok(None) => {}
+                Err(e) => eprintln!("Error: {e}"),
+            }
+            return;
+        }
+
+        // `serve` is the only command that keeps the market WebSocket: every
+        // other one discards the push stream after `init_contexts`.
+        Some(cli::Commands::Serve) => {
+            let (quote_receiver, using_api_key, _) = match openapi::init_contexts().await {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Authentication failed: {e}");
+                    std::process::exit(1);
+                }
+            };
+            if let Err(e) = openapi::quote().member_id().await {
+                print_cli_error(&anyhow::anyhow!(e), using_api_key);
+                std::process::exit(1);
+            }
+            if let Err(e) = cli::serve::run(quote_receiver).await {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+            return;
+        }
+
         Some(cli::Commands::Init { invite_code }) => {
             if let Err(e) = cli::init::cmd_init(&invite_code) {
                 eprintln!("Error: {e}");
@@ -301,23 +370,47 @@ async fn main() {
             }
         }
 
-        Some(cli::Commands::Auth {
-            cmd:
-                cli::AuthCmd::Login {
-                    auth_code: None,
-                    client_name,
-                    verbose,
-                },
-        }) => {
+        // ACP clients start terminal auth by re-running the launch command with
+        // the auth method's args appended, i.e. `longbridge acp auth login`.
+        // That alias lands here and behaves like a plain `longbridge auth login`.
+        Some(
+            cli::Commands::Auth {
+                cmd:
+                    cli::AuthCmd::Login {
+                        auth_code: None,
+                        client_name,
+                        verbose,
+                    },
+            }
+            | cli::Commands::Acp {
+                cmd:
+                    Some(cli::AcpCmd::Auth {
+                        action: cli::AcpAuthAction::Login,
+                        client_name,
+                        verbose,
+                    }),
+                ..
+            },
+        ) => {
             if let Err(e) = auth::device_login(verbose, client_name).await {
                 eprintln!("Authentication failed: {e:#}");
                 std::process::exit(1);
             }
         }
 
-        Some(cli::Commands::Auth {
-            cmd: cli::AuthCmd::Logout,
-        }) => match auth::clear_token().await {
+        Some(
+            cli::Commands::Auth {
+                cmd: cli::AuthCmd::Logout,
+            }
+            | cli::Commands::Acp {
+                cmd:
+                    Some(cli::AcpCmd::Auth {
+                        action: cli::AcpAuthAction::Logout,
+                        ..
+                    }),
+                ..
+            },
+        ) => match auth::clear_token().await {
             Ok(()) => println!("Successfully logged out."),
             Err(e) => {
                 eprintln!("Failed to clear credentials: {e}");
@@ -338,20 +431,25 @@ async fn main() {
             cli::completion::cmd_completion(shell);
         }
 
-        Some(cli::Commands::Acp { agent_id }) => {
+        Some(cli::Commands::Acp { agent_id, cmd: _ }) => {
             let agent_id = agent_id
                 .or_else(|| std::env::var("LONGBRIDGE_AGENT_ID").ok())
-                .unwrap_or_else(|| "chatbot".to_string());
-            let using_api_key = match openapi::init_contexts().await {
-                Ok((_, using_api_key, _)) => using_api_key,
-                Err(e) => {
-                    eprintln!("{}: {e}", t!("ACP.AuthenticationFailed"));
-                    std::process::exit(1);
-                }
-            };
-            let backend = openapi::OpenApiAgent::new(openapi::agent().clone(), agent_id);
-            if let Err(e) = longbridge_ai_acp::serve_stdio(backend).await {
-                print_cli_error(&anyhow::anyhow!(e), using_api_key);
+                .unwrap_or_else(|| cli::agent::DEFAULT_AGENT_UID.to_string());
+            let auth_methods = vec![longbridge_ai_acp::acp::schema::v1::AuthMethod::Terminal(
+                longbridge_ai_acp::acp::schema::v1::AuthMethodTerminal::new(
+                    "longbridge-login",
+                    "Log in to Longbridge",
+                )
+                .description("Authenticate with Longbridge OAuth in an interactive terminal")
+                .args(vec!["auth".into(), "login".into()]),
+            )];
+            let result = longbridge_ai_acp::serve_stdio_with_auth_methods(
+                openapi::AuthenticationRequiredAgent::new(&agent_id),
+                auth_methods,
+            )
+            .await;
+            if let Err(e) = result {
+                print_cli_error(&anyhow::anyhow!(e), false);
                 std::process::exit(1);
             }
         }

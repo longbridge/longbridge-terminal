@@ -464,7 +464,7 @@ longbridge tui
 
 ## ACP Agent 服务
 
-通过 stdio 将 Longbridge AI 主 Agent（`chatbot`）提供给 ACP 客户端：
+通过 stdio 将 Longbridge AI 主 Agent（`chatbot`）提供给 [ACP](https://agentclientprotocol.com) 客户端：
 
 ```bash
 longbridge acp
@@ -484,18 +484,6 @@ Zed 可将它注册为自定义 External Agent：
   }
 }
 ```
-
-Zed 已纳入 stdio 集成测试。Cherry Studio 是目标客户端，但其当前公开文档
-尚未提供 ACP 自定义 Agent 入口；不能把以上命令配置成 MCP，因为 ACP 与 MCP
-是不同协议。
-
-如需选择其他已发布 Agent，可使用 `--agent-id <ID>` 或
-`LONGBRIDGE_AGENT_ID`。两者均未提供时默认使用 `chatbot`。Rust 桌面客户端不需要启动
-CLI：[`longbridge-ai-acp`](crates/longbridge-ai-acp) crate 可在进程内运行
-provider-neutral 桥接。每个桌面端通过自己的私有 API、地址与授权流程实现
-`AgentBackend`；该 crate 不依赖 OpenAPI。它也可接入 Codex、Claude 等外部
-ACP Agent。二者需要分别安装 `codex-acp` 和
-`claude-agent-acp` 适配器；原生 `codex`、`claude` 命令本身不是 ACP Server。
 
 ## 输出格式
 

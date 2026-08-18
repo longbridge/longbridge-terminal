@@ -10,10 +10,11 @@ use rust_i18n::t;
 use serde_json::{json, Value};
 
 use super::client::{stream_conversation, ConversationRequest};
-use super::events::{AgentEvent, ChatAggregator, ChatOutcome, Widget};
-use super::render::{parse_quote_widget_symbol, render_answer, strip_control_chars, QuoteCardData};
+use super::events::{AgentEvent, ChatAggregator, ChatOutcome};
 use super::ChatTarget;
+use crate::ai::stdout::render_answer;
 use crate::cli::OutputFormat;
+use crate::utils::text::strip_control_chars;
 
 /// Single-quote `s` for safe inclusion in a copy-pasteable POSIX shell
 /// command line, escaping embedded single quotes as `'\''`. Used for
@@ -408,7 +409,10 @@ pub(crate) fn ensure_interactive_supported_for(
     use crate::cli::AgentCmd;
     let interactive = match cmd {
         AgentCmd::Chat { interactive, .. } | AgentCmd::Continue { interactive, .. } => *interactive,
-        AgentCmd::List { .. } | AgentCmd::Workspaces => false,
+        AgentCmd::List { .. }
+        | AgentCmd::Workspaces
+        | AgentCmd::Chats { .. }
+        | AgentCmd::ChatDetail { .. } => false,
     };
     ensure_interactive_supported(interactive, format)
 }
@@ -578,7 +582,9 @@ async fn run_streaming(
                     let tool_name = strip_control_chars(tool_name);
                     eprintln!("* {}", t!("Agent.CallingTool", name = tool_name));
                 }
-                AgentEvent::ToolUseFinished { tool_name, status } => {
+                AgentEvent::ToolUseFinished {
+                    tool_name, status, ..
+                } => {
                     let tool_name = strip_control_chars(tool_name);
                     let status = strip_control_chars(status);
                     eprintln!(
@@ -779,60 +785,10 @@ async fn render_pretty_answer(outcome: &ChatOutcome, streamed: bool) {
     if streamed {
         return;
     }
-    let quotes = fetch_quote_cards(&outcome.widgets).await;
+    let quotes = crate::ai::quotes::fetch_cards(&outcome.widgets).await;
     let width = crossterm::terminal::size().map_or(80, |(w, _)| w as usize);
     let color = std::io::IsTerminal::is_terminal(&std::io::stdout());
     print!("{}", render_answer(&outcome.answer, &quotes, width, color));
-}
-
-/// Fetch mini quote cards for quote-detail widgets (best effort).
-async fn fetch_quote_cards(widgets: &[Widget]) -> HashMap<String, QuoteCardData> {
-    // Dedupe: the same ticker can appear in several widgets, and a batched
-    // quote request should not carry (or re-look-up) duplicate symbols.
-    let mut seen = std::collections::HashSet::new();
-    let symbols: Vec<String> = widgets
-        .iter()
-        .filter_map(|w| match w {
-            Widget::XWidget { src } => parse_quote_widget_symbol(src),
-            Widget::VisChart { .. } => None,
-        })
-        .filter(|s| seen.insert(s.clone()))
-        .collect();
-    let mut cards = HashMap::new();
-    if symbols.is_empty() {
-        return cards;
-    }
-    if let Ok(quotes) = crate::openapi::helpers::get_quotes(symbols).await {
-        for q in quotes {
-            let prev = q.prev_close;
-            let last = q.last_done;
-            let pct = if prev.is_zero() {
-                rust_decimal::Decimal::ZERO
-            } else {
-                (last - prev) / prev * rust_decimal::Decimal::ONE_HUNDRED
-            };
-            let direction = match last.cmp(&prev) {
-                std::cmp::Ordering::Greater => 1,
-                std::cmp::Ordering::Less => -1,
-                std::cmp::Ordering::Equal => 0,
-            };
-            cards.insert(
-                q.symbol.clone(),
-                QuoteCardData {
-                    symbol: q.symbol.clone(),
-                    name: String::new(), // static name lookup skipped: keep it one API call
-                    last: last.round_dp(3).to_string(),
-                    change_pct: format!(
-                        "{}{:.2}%",
-                        if pct.is_sign_positive() { "+" } else { "" },
-                        pct
-                    ),
-                    direction,
-                },
-            );
-        }
-    }
-    cards
 }
 
 fn print_footer(agent_uid: &str, outcome: &ChatOutcome) {

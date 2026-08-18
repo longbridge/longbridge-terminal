@@ -27,6 +27,7 @@ pub enum AgentEvent {
     ToolUseFinished {
         tool_name: String,
         status: String,
+        error: String,
     },
     WorkflowFinished {
         status: String,
@@ -40,6 +41,10 @@ pub enum AgentEvent {
     },
     ChatFinished {
         error_message: String,
+    },
+    /// The server auto-generated a short title for the conversation.
+    ChatTitleUpdated {
+        title: String,
     },
     Unknown {
         event: String,
@@ -97,6 +102,7 @@ pub fn parse_data_line(payload: &str) -> Option<AgentEvent> {
         "node_tool_use_finished" => AgentEvent::ToolUseFinished {
             tool_name: str_field(&data, "tool_name"),
             status: str_field(&data, "status"),
+            error: str_field(&data, "error"),
         },
         "workflow_finished" => {
             let outputs = data.get("outputs").cloned().unwrap_or(Value::Null);
@@ -126,6 +132,9 @@ pub fn parse_data_line(payload: &str) -> Option<AgentEvent> {
         "human_interaction_required" => AgentEvent::HumanInteractionRequired { interrupt: data },
         "chat_finished" => AgentEvent::ChatFinished {
             error_message: str_field(&data, "error_message"),
+        },
+        "chat_title_updated" => AgentEvent::ChatTitleUpdated {
+            title: str_field(&data, "title"),
         },
         other => AgentEvent::Unknown {
             event: other.to_string(),
@@ -288,6 +297,21 @@ pub fn extract_widgets(answer: &str) -> Vec<Widget> {
         }
         rest = &after[tag_end..];
     }
+    // Bare `widget://…` URLs, which some answers print instead of a tag. Scanned
+    // over absolute offsets so the copy inside a `src="…"` attribute — already
+    // collected above — can be recognized by what precedes it and skipped.
+    let scheme = crate::ai::answer::WIDGET_SCHEME;
+    let mut at = 0usize;
+    while let Some(rel) = answer[at..].find(scheme) {
+        let start = at + rel;
+        let len = crate::ai::answer::bare_widget_url_end(&answer[start..]);
+        if !answer[..start].ends_with("src=\"") {
+            widgets.push(Widget::XWidget {
+                src: answer[start..start + len].to_string(),
+            });
+        }
+        at = start + len.max(1);
+    }
     widgets
 }
 
@@ -348,16 +372,20 @@ mod tests {
 
     #[test]
     fn unknown_events_are_tolerated() {
-        // `ping` and `chat_title_updated` are real but undocumented events
+        // `ping` is a real but unsurfaced heartbeat event.
         let events = fixture_events();
         assert!(events.iter().any(|e| matches!(
             e,
             AgentEvent::Unknown { event } if event == "ping"
         )));
-        assert!(events.iter().any(|e| matches!(
-            e,
-            AgentEvent::Unknown { event } if event == "chat_title_updated"
-        )));
+    }
+
+    #[test]
+    fn chat_title_updated_is_surfaced() {
+        let events = fixture_events();
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, AgentEvent::ChatTitleUpdated { .. })));
     }
 
     #[test]

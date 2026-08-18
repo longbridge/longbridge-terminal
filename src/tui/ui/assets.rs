@@ -16,6 +16,62 @@ static BANNER_STR: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
 
 pub const BANNER_HEIGHT: u16 = 23;
 
+/// The Longbridge mark: a small, colour-accurate version of the app icon.
+///
+/// Loaded from `assets/logo-mark.ansi`, a hand-tuned 17x8 rendering of the icon's
+/// seven-bar chart in its own colours. It is a separate asset rather than a
+/// scaled-down `logo.ascii`: reducing that block art far enough to sit above a
+/// chat's welcome copy fuses neighbouring bars into one solid run and the chart
+/// stops reading as a chart. The tall bars end on a half block, so they measure
+/// 7.5 rows — at 8 they read as too long, at 7 the mark looks squat.
+#[must_use]
+pub fn logo_mark() -> Vec<ratatui::text::Line<'static>> {
+    MARK.clone()
+}
+
+/// Rows the mark occupies.
+#[must_use]
+pub fn mark_height() -> u16 {
+    MARK.len() as u16
+}
+
+/// Columns the mark occupies.
+#[must_use]
+pub fn mark_width() -> u16 {
+    MARK.first().map_or(0, line_width)
+}
+
+static MARK_STR: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/logo-mark.ansi"
+));
+
+static MARK: std::sync::LazyLock<Vec<ratatui::text::Line<'static>>> =
+    std::sync::LazyLock::new(|| {
+        use ansi_to_tui::IntoText;
+        use ratatui::text::Span;
+
+        let mut lines = MARK_STR.into_text().map(|t| t.lines).unwrap_or_default();
+        // Every row is padded to the same width. The mark is drawn centre-aligned
+        // as a block of lines, and a short row would be centred on its own and
+        // knock the bars out of column.
+        let width = lines.iter().map(line_width).max().unwrap_or(0);
+        for line in &mut lines {
+            let pad = width - line_width(line);
+            if pad > 0 {
+                line.spans.push(Span::raw(" ".repeat(usize::from(pad))));
+            }
+        }
+        lines
+    });
+
+fn line_width(line: &ratatui::text::Line<'_>) -> u16 {
+    line.spans
+        .iter()
+        .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()) as u16)
+        .sum()
+}
+
 /// Banner widget that properly renders ANSI-colored logo and text banner
 pub struct BannerWidget {
     style: Style,

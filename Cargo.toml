@@ -1,7 +1,7 @@
 [package]
 edition = "2021"
 name = "longbridge-terminal"
-version = "0.26.0"
+version = "0.27.1"
 license = "Apache-2.0"
 
 [[bin]]
@@ -37,7 +37,7 @@ crossterm = { version = "0.29", features = ["event-stream"] }
 dashmap = "6.1"
 dirs = "5.0"
 csv = "1"
-longbridge = { git = "https://github.com/longbridge/openapi.git", branch = "feat/grid-trading-rust-core" }
+longbridge = { git = "https://github.com/longbridge/openapi.git", branch = "main" }
 longbridge-ai-acp = { git = "https://github.com/longbridge/longbridge-ai-acp.git", branch = "main" }
 futures = "0.3.28"
 open = "5"
@@ -60,7 +60,14 @@ strum = { version = "0.26", features = ["derive"] }
 tempfile = "3"
 termimad = "0.30"
 time = { version = "0.3", features = ["formatting", "local-offset", "macros", "parsing"] }
-tokio = { version = "1.33.0", features = ["macros", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1.33.0", features = [
+    "io-std",
+    "io-util",
+    "macros",
+    "rt-multi-thread",
+    "sync",
+    "time",
+] }
 tokio-stream = "0.1"
 tracing = "0.1.40"
 tracing-appender = { version = "0.2.4" }

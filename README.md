@@ -432,6 +432,12 @@ longbridge screener search --market HK --filter filter_marketcap:100:1000 --filt
 longbridge screener indicators                                # List all available filter indicators with IDs, keys, and default value ranges
 ```
 
+### Embedding in Another App
+
+```bash
+longbridge serve                                              # JSON-RPC 2.0 API endpoint on stdin/stdout, with live quote push
+```
+
 <!-- COMMANDS_END -->
 
 ### Symbol Format
@@ -506,9 +512,19 @@ longbridge tui
 
 Features: real-time watchlist, candlestick charts, portfolio view, stock search, Vim-like keybindings.
 
+## Longbridge AI chat
+
+A full-screen chat TUI backed by Longbridge AI:
+
+```bash
+longbridge ai [--agent <agent-id>]
+```
+
+Features: streaming answers rendered as Markdown with charts, tables, syntax-highlighted code, and live quote cards; click any security an answer mentions (or `/quote 700.HK`) for a floating live quote, with the securities of the session and their quotes on a rotating title-bar ticker; a `/` command palette (`/new /retry /copy /export /quote /resume /settings /agent /login /logout /exit /help`); opens signed out too, with sign-in completed in place; the session and sign in/out under `/settings`, alongside preferences (tool-call detail, done notification, quote cards, title-bar ticker, up/down colours); server-synced conversations (`/v1/ai/chats`) reopened with `/resume` and searchable in place; search within the open transcript with `Ctrl+F` (Enter/↑↓ to walk the matches); drag-to-select copy (OSC 52) that scrolls to extend across pages, and `/export` to Markdown; multi-line input with undo/redo (Ctrl+Z/Y), a large paste folded to a compact chip, and prompt history that persists across sessions (↑/↓ or Ctrl+P/N). `/agent <agent-id>` switches agent for a fresh conversation and `/agent reset` returns to the default. Type `exit` or press Ctrl+C twice to quit.
+
 ## ACP agent server
 
-Expose the main Longbridge AI agent (`chatbot`) to an ACP client over stdio:
+Expose the main Longbridge AI agent (`chatbot`) to an [ACP](https://agentclientprotocol.com) client over stdio:
 
 ```bash
 longbridge acp
@@ -529,20 +545,74 @@ Zed can register it as a custom external agent:
 }
 ```
 
-Zed is covered by the stdio integration test. Cherry Studio is a target client,
-but its current public documentation does not expose an ACP custom-agent entry;
-do not configure this command as MCP, because ACP and MCP are different
-protocols.
+## Embedding in another app
 
-Use `--agent-id <ID>` or `LONGBRIDGE_AGENT_ID` to select a different published
-agent. Without either override, the CLI uses `chatbot`. Rust desktop clients do
-not need to launch the CLI: the [`longbridge-ai-acp`](crates/longbridge-ai-acp)
-crate runs a provider-neutral bridge in-process. Each desktop implements its
-own `AgentBackend` using its private API, endpoint, and authorization flow; the
-crate does not depend on OpenAPI. It can also connect to external ACP agents
-such as Codex and Claude. Those CLIs require their ACP adapters (`codex-acp` and
-`claude-agent-acp`); the native `codex` and `claude` commands are not ACP
-servers.
+Third-party clients — desktop widgets, bar plugins, dashboards — can drive the CLI as a
+long-lived data source instead of polling one-shot commands:
+
+```bash
+longbridge serve
+```
+
+The process authenticates and opens the market WebSocket once, then speaks
+newline-delimited [JSON-RPC 2.0](https://www.jsonrpc.org/specification) on stdin/stdout —
+one compact JSON object per line. That is the same base protocol LSP, MCP and ACP build
+on, so a client needs only a JSON parser and a line splitter, no protocol library.
+
+```jsonc
+→ {"jsonrpc":"2.0","id":1,"method":"quote.quote","params":{"symbols":["700.HK"]}}
+← {"jsonrpc":"2.0","id":1,"result":[{"symbol":"700.HK","last_done":"445.600", ...}]}
+→ {"jsonrpc":"2.0","id":2,"method":"quote.subscribe","params":{"symbols":["700.HK"]}}
+← {"jsonrpc":"2.0","id":2,"result":{"subscribed":[{"symbol":"700.HK","fields":["quote"]}],"quotes":[…]}}
+← {"jsonrpc":"2.0","method":"quote.updated","params":{"symbol":"700.HK","last_done":"446.000", ...}}
+```
+
+One request per line: batches (a JSON array) are not accepted, as in LSP and MCP.
+
+### Raw payloads, on purpose
+
+`serve` returns the **raw Longbridge OpenAPI payloads** — not the JSON the CLI prints.
+The CLI's `--format json` reshapes data for AI consumption and is free to change with it;
+`serve` is an API contract for other people's software, so it tracks the upstream shapes
+instead.
+
+### Method surface
+
+`serve` sits below the CLI commands, at the API seam all of them share, so it covers the
+whole command surface without a parallel implementation:
+
+| Namespace | Covers |
+| --- | --- |
+| `quote.*` | Every `QuoteApi` call — `quote.quote`, `quote.depth`, `quote.candlesticks`, `quote.watchlist`, `quote.option_chain_info_by_date`, … |
+| `trade.*` | Every `TradeApi` call — `trade.stock_positions`, `trade.account_balance`, `trade.today_orders`, `trade.submit_order`, … |
+| `api.get` / `api.post` | Raw passthrough to any REST endpoint, e.g. `{"path":"/v1/quote/dividends","query":{"symbol":"AAPL.US"}}`. This is how the fundamentals, screener, IPO and news commands reach their data. |
+| `quote.subscribe` / `quote.unsubscribe` | Live feed; `fields` is any of `quote`, `depth`, `brokers`, `trades` (default `quote`). `subscribe` also returns a `quotes` snapshot to paint the first screen from. No one-shot CLI equivalent. |
+| `initialize` / `shutdown` | Session control. `initialize` returns the full method list, so clients discover the surface rather than hard-coding it. |
+
+`longbridge serve -h` prints the protocol, the full method list and a worked exchange —
+generated from the routing tables, so the help cannot advertise a method that is not
+there. Params and results follow the Longbridge OpenAPI shapes for the same call, so look
+a method up under its own name at <https://open.longbridge.com/docs> for its fields.
+
+Server notifications: `quote.updated`, `quote.depth`, `quote.brokers`, `quote.trades`.
+`quote.updated` is a tick rather than a full quote, and a push that raced ahead of
+`subscribe`'s snapshot can still be the older of the two, so keep whichever `timestamp` is
+newer.
+
+A test asserts every `QuoteApi`/`TradeApi` method is reachable over RPC, so adding one
+without exposing it fails the build — `serve` cannot drift behind the CLI.
+
+Derived views the CLI computes locally (`portfolio`, for instance, which merges balances,
+positions and FX rates) are deliberately not methods: a client composes them from
+`trade.account_balance`, `trade.stock_positions` and `quote.quote` rather than depending on
+our arithmetic.
+
+Requests are answered concurrently — a slow `trade.stock_positions` never stalls the quote
+feed — so responses may arrive out of order; correlate them by `id`. Up to 8 run upstream
+at once and the rest queue, so a burst is paced rather than dropped. An error code says
+whether a retry can help: `-32602` names the parameter at fault and will fail the same way
+again, `-32000` came from Longbridge and may not. The process exits when stdin closes, so
+it cannot outlive the client that spawned it.
 
 ## Output Format
 

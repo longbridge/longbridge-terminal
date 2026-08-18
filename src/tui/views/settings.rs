@@ -11,7 +11,9 @@ use crate::tui::ui::styles;
 /// Render the settings modal: one row per setting, its choices shown inline
 /// with the active one highlighted, plus a description and a key hint.
 pub fn render(frame: &mut Frame, rect: Rect) {
-    let metas = settings::all();
+    // The modal shows the market TUI's rows; the chat's own live in its
+    // Settings view, off the same table.
+    let metas = settings::modal_rows();
     let sel = settings::selected();
 
     let width = 64u16.min(rect.width);
