@@ -28,6 +28,8 @@ pub struct LoadedChat {
     pub parent_message_id: Option<String>,
     pub title: Option<String>,
     pub messages: Vec<Message>,
+    /// HITL payload carried by the last paused message, if any.
+    pub pending_interrupt: Option<serde_json::Value>,
 }
 
 /// List the account's chats, newest first. `None` means the request failed
@@ -82,6 +84,7 @@ pub async fn load_detail(uid: &str) -> Option<LoadedChat> {
         .filter(|m| m.id != 0)
         .map(|m| m.id.to_string());
     let parent_message_id = continuable_parent(&detail.messages);
+    let pending_interrupt = pending_interrupt(&detail.messages);
     let messages = detail
         .messages
         .iter()
@@ -106,7 +109,35 @@ pub async fn load_detail(uid: &str) -> Option<LoadedChat> {
         parent_message_id,
         title,
         messages,
+        pending_interrupt,
     })
+}
+
+/// Recover the pending HITL payload stored in an interrupted history message.
+/// Web clients rebuild their confirmation card from this `interrupt` chunk;
+/// doing the same keeps Allow / Decline available after reopening a session.
+fn pending_interrupt(messages: &[crate::openapi::chats::ChatMessage]) -> Option<serde_json::Value> {
+    const INTERRUPTED: i32 = 5;
+    // A confirmation is resumable only while it is the current end state of
+    // the conversation. Searching backwards resurrects an older confirmation
+    // after newer turns have already run, then submits its interrupt id against
+    // the newest message id.
+    let message = messages
+        .last()
+        .filter(|message| message.id != 0 && message.status == INTERRUPTED)?;
+    message
+        .chunks
+        .iter()
+        .rev()
+        .filter(|chunk| chunk.chunk_type == "interrupt")
+        .filter_map(|chunk| serde_json::from_str::<serde_json::Value>(&chunk.content).ok())
+        .find(|payload| {
+            payload.get("status").and_then(serde_json::Value::as_str) != Some("completed")
+                && payload
+                    .get("interactions")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|items| !items.is_empty())
+        })
 }
 
 /// The last message a new turn can be parented on: the most recent one the
@@ -142,7 +173,7 @@ pub fn restore(loaded: LoadedChat, state: &mut ChatState) {
     // Not necessarily the last message: a conversation can end paused or failed,
     // and neither is something the server will build on.
     state.parent_message_id = loaded.parent_message_id;
-    state.pending_interrupt = None;
+    state.pending_interrupt = loaded.pending_interrupt;
     state.turn_error = None;
     state.scroll = 0;
     state.references.clear();
@@ -200,5 +231,70 @@ mod tests {
         assert_eq!(continuable_parent(&[msg(10, 5)]), None);
         // An id of 0 is a placeholder, not a message.
         assert_eq!(continuable_parent(&[msg(0, 1)]), None);
+    }
+
+    #[test]
+    fn a_paused_messages_interrupt_is_restored_from_history() {
+        let mut paused = msg(12, 5);
+        paused.chunks.push(crate::openapi::chats::ChatMessageChunk {
+            chunk_type: "interrupt".into(),
+            content: serde_json::json!({
+                "status": "pending",
+                "interactions": [{
+                    "interrupt_id": "authorize_watchlist",
+                    "type": "authorization",
+                    "tool_display_name": "Read watchlist"
+                }]
+            })
+            .to_string(),
+            ..Default::default()
+        });
+
+        let interrupt = pending_interrupt(&[paused]).expect("pending interrupt");
+        assert_eq!(
+            interrupt["interactions"][0]["interrupt_id"],
+            "authorize_watchlist"
+        );
+    }
+
+    #[test]
+    fn an_old_pause_is_not_restored_after_a_newer_message() {
+        let mut paused = msg(12, 5);
+        paused.chunks.push(crate::openapi::chats::ChatMessageChunk {
+            chunk_type: "interrupt".into(),
+            content: serde_json::json!({
+                "status": "pending",
+                "interactions": [{
+                    "interrupt_id": "old_watchlist_authorization",
+                    "type": "authorization"
+                }]
+            })
+            .to_string(),
+            ..Default::default()
+        });
+
+        assert!(pending_interrupt(&[paused, msg(13, 1)]).is_none());
+    }
+
+    #[test]
+    fn restore_keeps_a_pending_confirmation_answerable() {
+        let interrupt = serde_json::json!({
+            "interactions": [{
+                "interrupt_id": "authorize_watchlist",
+                "type": "authorization"
+            }]
+        });
+        let loaded = LoadedChat {
+            agent_uid: "agent".into(),
+            chat_uid: "chat".into(),
+            message_id: Some("12".into()),
+            parent_message_id: Some("11".into()),
+            title: None,
+            messages: Vec::new(),
+            pending_interrupt: Some(interrupt.clone()),
+        };
+        let mut state = ChatState::default();
+        restore(loaded, &mut state);
+        assert_eq!(state.pending_interrupt, Some(interrupt));
     }
 }

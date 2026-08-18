@@ -17,6 +17,15 @@ use super::state::{ChatEvent, ChatState};
 use crate::cli::agent::client::{stream_conversation, ConversationRequest};
 use crate::cli::agent::events::AgentEvent;
 
+/// A chat event tagged with the conversation generation that spawned it.
+///
+/// Aborting a task cannot retract events it already queued.  The generation lets
+/// the TUI discard those events after `/new` has moved on to another conversation.
+pub struct TurnEvent {
+    pub generation: u64,
+    pub event: ChatEvent,
+}
+
 /// Build the conversation request for the current input: a fresh chat, a
 /// follow-up, or an answer to a pending clarifying question.
 ///
@@ -53,16 +62,26 @@ pub fn build_request(state: &ChatState, query: String) -> ConversationRequest {
 /// [`ChatEvent`]s pushed onto `tx`. The returned handle is aborted on cancel
 /// (dropping the SSE stream). The closure captures only the `Send` sender, so
 /// the task is `Send` for `tokio::spawn`.
-pub fn spawn_turn(req: ConversationRequest, tx: UnboundedSender<ChatEvent>) -> JoinHandle<()> {
+pub fn spawn_turn(
+    req: ConversationRequest,
+    generation: u64,
+    tx: UnboundedSender<TurnEvent>,
+) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut forward = |ev: AgentEvent| {
             for chat_event in map_agent_event(&ev) {
-                let _ = tx.send(chat_event);
+                let _ = tx.send(TurnEvent {
+                    generation,
+                    event: chat_event,
+                });
             }
         };
         let result = stream_conversation(req, false, &mut forward).await;
-        let _ = tx.send(ChatEvent::TurnFinished {
-            error: result.err().map(|e| e.to_string()),
+        let _ = tx.send(TurnEvent {
+            generation,
+            event: ChatEvent::TurnFinished {
+                error: result.err().map(|e| e.to_string()),
+            },
         });
     })
 }
@@ -89,13 +108,23 @@ fn map_agent_event(ev: &AgentEvent) -> Vec<ChatEvent> {
             ChatEvent::ToolStarted(tool_name.clone()),
             ChatEvent::Status(t!("Agent.CallingTool", name = tool_name).to_string()),
         ],
-        AgentEvent::ToolUseFinished { tool_name, status } => vec![
-            ChatEvent::ToolFinished {
-                name: tool_name.clone(),
-                ok: !tool_failed(status),
-            },
-            ChatEvent::Status(t!("Agent.Generating").to_string()),
-        ],
+        AgentEvent::ToolUseFinished {
+            tool_name,
+            status,
+            error,
+        } => {
+            let mut events = vec![
+                ChatEvent::ToolFinished {
+                    name: tool_name.clone(),
+                    ok: !tool_failed(status),
+                },
+                ChatEvent::Status(t!("Agent.Generating").to_string()),
+            ];
+            if tool_failed(status) && is_trade_password_error(error) {
+                events.push(ChatEvent::TurnError(display_error(error)));
+            }
+            events
+        }
         AgentEvent::WorkflowFinished {
             references,
             further_questions,
@@ -112,7 +141,7 @@ fn map_agent_event(ev: &AgentEvent) -> Vec<ChatEvent> {
             // A workflow that ends with an error is a failed turn: carry the cause
             // so the turn is finalized as such, not silently dropped.
             if !error_message.is_empty() {
-                events.push(ChatEvent::TurnError(error_message.clone()));
+                events.push(ChatEvent::TurnError(display_error(error_message)));
             }
             events
         }
@@ -125,13 +154,28 @@ fn map_agent_event(ev: &AgentEvent) -> Vec<ChatEvent> {
         // answer it looked like a clean completion, so the next turn was parented
         // on a failed message and the whole conversation bricked.
         AgentEvent::ChatFinished { error_message } if !error_message.is_empty() => {
-            vec![ChatEvent::TurnError(error_message.clone())]
+            vec![ChatEvent::TurnError(display_error(error_message))]
         }
         AgentEvent::ChatTitleUpdated { title } => vec![ChatEvent::Title(title.clone())],
         AgentEvent::ThinkingFinished
         | AgentEvent::ChatFinished { .. }
         | AgentEvent::Unknown { .. } => Vec::new(),
     }
+}
+
+fn display_error(error: &str) -> String {
+    if is_trade_password_error(error) {
+        t!("Agent.TradePasswordUnsupported").to_string()
+    } else {
+        error.to_string()
+    }
+}
+
+fn is_trade_password_error(error: &str) -> bool {
+    error
+        .to_ascii_lowercase()
+        .replace(['-', '_'], " ")
+        .contains("trade password")
 }
 
 fn tool_failed(status: &str) -> bool {
@@ -142,20 +186,76 @@ fn tool_failed(status: &str) -> bool {
 /// Map one free-text answer onto the interrupt's tool-call questions.
 fn build_answers(interrupt: &Value, answer: &str) -> longbridge::agent::AnswersByToolCall {
     let mut by_tool_call: longbridge::agent::AnswersByToolCall = HashMap::new();
-    let tool_call_id = interrupt
-        .get("tool_call_id")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    let inner = by_tool_call.entry(tool_call_id).or_default();
-    if let Some(questions) = interrupt.get("questions").and_then(Value::as_array) {
-        for q in questions {
-            if let Some(question) = q.get("question").and_then(Value::as_str) {
-                inner.insert(question.to_string(), answer.to_string());
+    for interaction in interrupt_interactions(interrupt) {
+        let Some(interrupt_id) = interaction_id(interaction) else {
+            continue;
+        };
+        let inner = by_tool_call.entry(interrupt_id.to_string()).or_default();
+        if let Some(questions) = interaction.get("questions").and_then(Value::as_array) {
+            for q in questions {
+                if let Some(question) = q.get("question").and_then(Value::as_str) {
+                    inner.insert(question.to_string(), answer.to_string());
+                }
             }
+        }
+        match interaction.get("type").and_then(Value::as_str) {
+            Some("authorization") => {
+                inner.insert("authorized".into(), confirmation_value(answer).into());
+            }
+            Some("connector_reauth") => {
+                inner.insert("acknowledged".into(), confirmation_value(answer).into());
+            }
+            _ => {}
         }
     }
     by_tool_call
+}
+
+fn confirmation_value(answer: &str) -> &'static str {
+    let answer = answer.trim().to_ascii_lowercase();
+    if matches!(
+        answer.as_str(),
+        "decline" | "deny" | "no" | "false" | "拒绝" | "拒絕"
+    ) {
+        "false"
+    } else {
+        "true"
+    }
+}
+
+/// Normalize the live `interactions[]` protocol while retaining compatibility
+/// with older streams that placed one interaction directly in `data`.
+pub fn interrupt_interactions(interrupt: &Value) -> Vec<&Value> {
+    interrupt
+        .get("interactions")
+        .and_then(Value::as_array)
+        .filter(|items| !items.is_empty())
+        .map_or_else(|| vec![interrupt], |items| items.iter().collect())
+}
+
+pub fn interaction_id(interaction: &Value) -> Option<&str> {
+    interaction
+        .get("interrupt_id")
+        .or_else(|| interaction.get("tool_call_id"))
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+}
+
+pub fn interaction_questions(interaction: &Value) -> Vec<&Value> {
+    interaction
+        .get("questions")
+        .and_then(Value::as_array)
+        .map(|questions| {
+            questions
+                .iter()
+                .filter(|q| {
+                    q.get("question")
+                        .and_then(Value::as_str)
+                        .is_some_and(|text| !text.is_empty())
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Wrap per-question answers into the SDK's `{tool_call_id: {question: answer}}`
@@ -175,25 +275,31 @@ pub fn answers_by_tool_call(
 /// id and at least one question text are required. Without them there is nothing
 /// to key an answer under.
 pub fn is_answerable(interrupt: &&Value) -> bool {
-    let has_tool_call = interrupt
-        .get("tool_call_id")
-        .and_then(Value::as_str)
-        .is_some_and(|id| !id.is_empty());
-    has_tool_call && !interrupt_questions(interrupt).is_empty()
+    if interrupt_interactions(interrupt).iter().any(|interaction| {
+        matches!(
+            interaction.get("type").and_then(Value::as_str),
+            Some("trade_password" | "connector_reauth" | "openapi_reauth" | "data_authorization")
+        )
+    }) {
+        return false;
+    }
+    interrupt_interactions(interrupt).iter().any(|interaction| {
+        interaction_id(interaction).is_some()
+            && (!interaction_questions(interaction).is_empty()
+                || matches!(
+                    interaction.get("type").and_then(Value::as_str),
+                    Some("authorization" | "connector_reauth")
+                ))
+    })
 }
 
 /// The interrupt's question texts, in order.
 fn interrupt_questions(interrupt: &Value) -> Vec<&str> {
-    interrupt
-        .get("questions")
-        .and_then(Value::as_array)
-        .map(|qs| {
-            qs.iter()
-                .filter_map(|q| q.get("question").and_then(Value::as_str))
-                .filter(|q| !q.is_empty())
-                .collect()
-        })
-        .unwrap_or_default()
+    interrupt_interactions(interrupt)
+        .into_iter()
+        .flat_map(interaction_questions)
+        .filter_map(|q| q.get("question").and_then(Value::as_str))
+        .collect()
 }
 
 fn interrupt_text(interrupt: &Value) -> String {
@@ -207,14 +313,52 @@ fn interrupt_text(interrupt: &Value) -> String {
     // and no way forward. Say what happened and that the conversation continues,
     // and log the payload — the shape is the server's, and this is the only
     // record of one we could not read.
-    if questions.is_empty() {
+    let confirmations: Vec<&str> = interrupt_interactions(interrupt)
+        .into_iter()
+        .filter(|interaction| {
+            interaction.get("type").and_then(Value::as_str) == Some("authorization")
+        })
+        .filter_map(|interaction| {
+            interaction
+                .get("tool_display_name")
+                .or_else(|| interaction.get("tool_name"))
+                .and_then(Value::as_str)
+        })
+        .collect();
+    for name in &confirmations {
+        out.push_str("\n- ");
+        out.push_str(name);
+    }
+    let trade_password_unsupported = interrupt_interactions(interrupt).iter().any(|interaction| {
+        interaction.get("type").and_then(Value::as_str) == Some("trade_password")
+    });
+    let external_authorization_unsupported =
+        interrupt_interactions(interrupt).iter().any(|interaction| {
+            matches!(
+                interaction.get("type").and_then(Value::as_str),
+                Some("connector_reauth" | "openapi_reauth" | "data_authorization")
+            )
+        });
+    if trade_password_unsupported {
+        out.push_str("\n\n");
+        out.push_str(&t!("Agent.TradePasswordUnsupported"));
+    }
+    if external_authorization_unsupported {
+        out.push_str("\n\n");
+        out.push_str(&t!("Agent.ExternalAuthorizationUnsupported"));
+    }
+    if questions.is_empty()
+        && confirmations.is_empty()
+        && !trade_password_unsupported
+        && !external_authorization_unsupported
+    {
         tracing::warn!(
             interrupt = %interrupt,
             "interrupt carried no answerable question"
         );
         out.push_str("\n\n");
         out.push_str(&t!("Agent.InterruptedUnreadable"));
-    } else {
+    } else if !trade_password_unsupported && !external_authorization_unsupported {
         out.push_str("\n\n");
         out.push_str(&t!("Agent.InterruptedAnswerHint"));
     }
@@ -247,13 +391,30 @@ mod tests {
         let ok = map_agent_event(&AgentEvent::ToolUseFinished {
             tool_name: "get_quote".into(),
             status: "succeeded".into(),
+            error: String::new(),
         });
         assert!(matches!(ok[0], ChatEvent::ToolFinished { ok: true, .. }));
         let bad = map_agent_event(&AgentEvent::ToolUseFinished {
             tool_name: "get_quote".into(),
             status: "failed".into(),
+            error: "upstream unavailable".into(),
         });
         assert!(matches!(bad[0], ChatEvent::ToolFinished { ok: false, .. }));
+    }
+
+    #[test]
+    fn a_tool_trade_password_failure_marks_the_turn_unsupported() {
+        let events = map_agent_event(&AgentEvent::ToolUseFinished {
+            tool_name: "Get Enhanced RMS Account Info".into(),
+            status: "failed".into(),
+            error: "MCP tool trade password validation (trade password required for mcp tool)"
+                .into(),
+        });
+        assert!(events.iter().any(|event| matches!(
+            event,
+            ChatEvent::TurnError(text)
+                if text == t!("Agent.TradePasswordUnsupported").as_ref()
+        )));
     }
 
     #[test]
@@ -310,6 +471,29 @@ mod tests {
             error_message: "workflow blew up".into(),
         });
         assert!(matches!(&evs[0], ChatEvent::TurnError(t) if t == "workflow blew up"));
+    }
+
+    #[test]
+    fn a_trade_password_error_explains_that_terminal_cannot_complete_the_flow() {
+        for ev in [
+            AgentEvent::WorkflowFinished {
+                status: "failed".into(),
+                references: vec![],
+                further_questions: vec![],
+                elapsed_time: None,
+                error_message: "trade password required for mcp tool".into(),
+            },
+            AgentEvent::ChatFinished {
+                error_message: "trade_password validation failed".into(),
+            },
+        ] {
+            let events = map_agent_event(&ev);
+            assert!(matches!(
+                &events[0],
+                ChatEvent::TurnError(text)
+                    if text == t!("Agent.TradePasswordUnsupported").as_ref()
+            ));
+        }
     }
 
     /// A turn the server reports as failed — over a stream that itself ends `Ok` —
@@ -374,6 +558,58 @@ mod tests {
                 assert_eq!(answers["tc1"]["Which market?"], "HK");
             }
             ConversationRequest::New { .. } => panic!("expected a resume, got a new turn"),
+        }
+    }
+
+    /// The live HITL protocol nests interactions and addresses answers by
+    /// `interrupt_id` (not the tool call id). This is the shape used when a
+    /// watchlist tool asks the user for permission.
+    #[test]
+    fn a_nested_authorization_interrupt_resumes_with_its_interrupt_id() {
+        let state = interrupted(json!({
+            "message_id": 11_820_498,
+            "interactions": [{
+                "tool_call_id": "call_watchlist",
+                "interrupt_id": "authorize_watchlist",
+                "type": "authorization",
+                "tool_display_name": "Read watchlist",
+                "questions": []
+            }]
+        }));
+        match build_request(&state, "Allow".into()) {
+            ConversationRequest::Continue { answers, .. } => {
+                assert_eq!(answers["authorize_watchlist"]["authorized"], "true");
+                assert!(!answers.contains_key("call_watchlist"));
+            }
+            ConversationRequest::New { .. } => panic!("expected a resume, got a new turn"),
+        }
+    }
+
+    #[test]
+    fn trade_password_interrupt_explains_that_terminal_cannot_continue_it() {
+        let interrupt = json!({
+            "interactions": [{
+                "interrupt_id": "trade_password",
+                "type": "trade_password",
+                "tool_display_name": "Account details"
+            }]
+        });
+        assert!(!is_answerable(&&interrupt));
+        assert!(interrupt_text(&interrupt).contains(t!("Agent.TradePasswordUnsupported").as_ref()));
+    }
+
+    #[test]
+    fn external_authorization_interrupts_explain_that_terminal_cannot_continue_them() {
+        for kind in ["connector_reauth", "openapi_reauth", "data_authorization"] {
+            let interrupt = json!({
+                "interactions": [{
+                    "interrupt_id": "external_auth",
+                    "type": kind
+                }]
+            });
+            assert!(!is_answerable(&&interrupt));
+            assert!(interrupt_text(&interrupt)
+                .contains(t!("Agent.ExternalAuthorizationUnsupported").as_ref()));
         }
     }
 

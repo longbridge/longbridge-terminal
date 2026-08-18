@@ -10,11 +10,13 @@ use longbridge::agent::Reference;
 use serde_json::Value;
 
 /// Who authored a transcript line.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Role {
     User,
     Assistant,
     System,
+    /// A turn-level error rendered as semantic red text.
+    Alert,
     /// A tool the agent called, recorded so the answer can be traced back to
     /// the data it was built from.
     Tool,
@@ -97,6 +99,10 @@ pub enum ChatEvent {
 #[derive(Default)]
 pub struct ChatState {
     pub agent_uid: String,
+    /// Changes whenever `/new` starts a fresh conversation. Runtime events carry
+    /// the generation they originated in so late events from an aborted turn can
+    /// never be applied to its successor.
+    pub generation: u64,
     pub messages: Vec<Message>,
     /// The assistant answer accumulating during the active turn.
     pub streaming: Option<String>,
@@ -214,7 +220,19 @@ impl ChatState {
                     self.title = Some(title);
                 }
             }
-            ChatEvent::Interrupt(interrupt) => self.pending_interrupt = Some(interrupt),
+            ChatEvent::Interrupt(interrupt) => {
+                if let Some(message_id) = interrupt.get("message_id") {
+                    let id = match message_id {
+                        Value::String(id) => Some(id.clone()),
+                        Value::Number(id) => Some(id.to_string()),
+                        _ => None,
+                    };
+                    if let Some(id) = id.filter(|id| !id.is_empty() && id != "0") {
+                        self.message_id = Some(id);
+                    }
+                }
+                self.pending_interrupt = Some(interrupt);
+            }
             // Keep the first cause: a later teardown event may repeat it or arrive
             // blank, and the first one is the real reason.
             ChatEvent::TurnError(err) => {
@@ -250,9 +268,7 @@ impl ChatState {
             })
             .is_some();
         if let Some(err) = error {
-            let prefix = rust_i18n::t!("Ai.ErrorPrefix");
-            self.messages
-                .push(Message::new(Role::System, format!("[{prefix}] {err}")));
+            self.messages.push(Message::new(Role::Alert, err));
         } else if !produced {
             // A turn that streamed no answer text — usually because every tool
             // the agent tried failed (e.g. account tools on a paper account).
@@ -285,6 +301,7 @@ impl ChatState {
     /// Reset to a fresh conversation, keeping the agent but dropping all
     /// messages and conversation identity. Used by the "new chat" action.
     pub fn reset(&mut self, welcome: String) {
+        self.generation = self.generation.wrapping_add(1);
         self.messages = vec![Message::new(Role::System, welcome)];
         self.streaming = None;
         self.status.clear();
@@ -380,6 +397,8 @@ mod tests {
             s.messages.last().unwrap().text.contains("rate limited"),
             "the failure is reported to the reader"
         );
+        assert_eq!(s.messages.last().unwrap().role, Role::Alert);
+        assert!(!s.messages.last().unwrap().text.contains("[error]"));
         assert!(
             s.turn_error.is_none(),
             "the error is consumed, not left to leak"
@@ -459,6 +478,17 @@ mod tests {
         });
         assert_eq!(s.chat_uid.as_deref(), Some("c1"));
         assert_eq!(s.message_id.as_deref(), Some("m1"));
+    }
+
+    #[test]
+    fn an_interrupts_message_id_is_authoritative_for_continuation() {
+        let mut s = state();
+        s.message_id = Some("old".into());
+        s.apply(ChatEvent::Interrupt(serde_json::json!({
+            "message_id": 42,
+            "interactions": []
+        })));
+        assert_eq!(s.message_id.as_deref(), Some("42"));
     }
 
     /// Tool calls used to exist only as a status string that the next event

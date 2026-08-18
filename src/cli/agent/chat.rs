@@ -582,7 +582,9 @@ async fn run_streaming(
                     let tool_name = strip_control_chars(tool_name);
                     eprintln!("* {}", t!("Agent.CallingTool", name = tool_name));
                 }
-                AgentEvent::ToolUseFinished { tool_name, status } => {
+                AgentEvent::ToolUseFinished {
+                    tool_name, status, ..
+                } => {
                     let tool_name = strip_control_chars(tool_name);
                     let status = strip_control_chars(status);
                     eprintln!(
