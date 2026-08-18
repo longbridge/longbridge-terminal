@@ -59,7 +59,7 @@ serde_json = "1.0"
 strum = { version = "0.26", features = ["derive"] }
 tempfile = "3"
 termimad = "0.30"
-time = { version = "0.3", features = ["formatting", "local-offset", "macros"] }
+time = { version = "0.3", features = ["formatting", "local-offset", "macros", "parsing"] }
 tokio = { version = "1.33.0", features = [
     "io-std",
     "io-util",

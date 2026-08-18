@@ -10,6 +10,7 @@ pub mod check;
 pub mod completion;
 pub mod dca;
 pub mod fundamental;
+pub mod grid;
 pub mod init;
 pub mod insider_trades;
 pub mod investors;
@@ -1335,6 +1336,53 @@ pub enum Commands {
         limit: u32,
     },
 
+    // ── Grid trading ──────────────────────────────────────────────────────────────
+    /// Grid trading: automatically buy low / sell high within a price range
+    ///
+    /// Places and manages grid strategies that trigger buy/sell orders as the price
+    /// moves through a configured range. Without a subcommand, lists grid orders;
+    /// pass `--ids` to query specific orders instead.
+    ///
+    /// Example: longbridge grid
+    /// Example: longbridge grid --symbol 700.HK --status Performing
+    /// Example: longbridge grid --ids 1271403976985698304 1271409458223800320
+    /// Example: longbridge grid submit 700.HK --currency HKD --base-price 300 --upper-price 360 --lower-price 240 --trigger-type percent --trigger-up 2 --trigger-down 2 --quantity 100 --upper-quantity 200 --lower-quantity 100 --order-type GMO --tif gtc
+    /// Example: longbridge grid detail 1271403976985698304
+    /// Example: longbridge grid cancel 1271403976985698304
+    /// Example: longbridge grid info 700.HK
+    #[command(name = "grid")]
+    Grid {
+        #[command(subcommand)]
+        cmd: Option<GridCmd>,
+        /// Query specific grid orders by ID (lists these instead of filtering).
+        /// Mutually exclusive with the filter/sort flags below.
+        #[arg(
+            long,
+            num_args = 1..,
+            value_delimiter = ' ',
+            conflicts_with_all = ["symbol", "status", "page", "limit", "sort_by", "sort_order"]
+        )]
+        ids: Vec<String>,
+        /// Filter by symbol (e.g. 700.HK)
+        #[arg(long)]
+        symbol: Option<String>,
+        /// Filter by status: Performing, Suspended, Canceled
+        #[arg(long)]
+        status: Option<String>,
+        /// Page number
+        #[arg(long)]
+        page: Option<i32>,
+        /// Records per page
+        #[arg(long)]
+        limit: Option<i32>,
+        /// Sort field (e.g. `created_at`)
+        #[arg(long)]
+        sort_by: Option<String>,
+        /// Sort order: asc | desc
+        #[arg(long)]
+        sort_order: Option<String>,
+    },
+
     // ── Short positions ─────────────────────────────────────────────────
     /// Short selling open interest — undisclosed short positions held over time
     ///
@@ -1661,6 +1709,224 @@ pub enum InvestorsSubCmd {
         #[arg(long, value_name = "PERIOD")]
         from: Option<String>,
     },
+}
+
+/// Trigger type for a grid rule.
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum GridTriggerTypeArg {
+    /// Trigger by absolute price spread
+    Spread,
+    /// Trigger by percent
+    Percent,
+}
+
+impl GridTriggerTypeArg {
+    pub fn as_i32(self) -> i32 {
+        match self {
+            Self::Spread => 1,
+            Self::Percent => 2,
+        }
+    }
+}
+
+/// Order type used when a grid level triggers.
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+#[value(rename_all = "UPPER")]
+pub enum GridOrderTypeArg {
+    /// Market order
+    Gmo,
+    /// Limit order
+    Glo,
+    /// Trigger-price order
+    Gtg,
+}
+
+impl GridOrderTypeArg {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Gmo => "GMO",
+            Self::Glo => "GLO",
+            Self::Gtg => "GTG",
+        }
+    }
+}
+
+/// Time in force for a grid rule.
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum GridTifArg {
+    /// Day
+    Day,
+    /// Good till cancel
+    Gtc,
+    /// Good till date
+    Gtd,
+}
+
+impl GridTifArg {
+    pub fn as_i32(self) -> i32 {
+        match self {
+            Self::Day => 0,
+            Self::Gtc => 1,
+            Self::Gtd => 6,
+        }
+    }
+}
+
+/// Action taken when the price crosses a grid boundary.
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+#[value(rename_all = "kebab-case")]
+pub enum GridLimitEventArg {
+    /// Keep the grid running (ignore the breach)
+    Ignore,
+    /// Close the position at the last price
+    CloseAtLast,
+}
+
+impl GridLimitEventArg {
+    pub fn as_i32(self) -> i32 {
+        match self {
+            Self::Ignore => 1,
+            Self::CloseAtLast => 2,
+        }
+    }
+}
+
+/// Shared grid rule flags for `submit` / `replace`. `trigger-up/down` are
+/// interpreted as percent or spread according to `--trigger-type`.
+#[derive(Debug, Clone, clap::Args)]
+pub struct GridRuleArgs {
+    /// Base price the grid is anchored to (must be within [lower-price, upper-price])
+    #[arg(long)]
+    pub base_price: String,
+    /// Upper price bound
+    #[arg(long)]
+    pub upper_price: String,
+    /// Lower price bound
+    #[arg(long)]
+    pub lower_price: String,
+    /// Trigger type: percent | spread
+    #[arg(long)]
+    pub trigger_type: GridTriggerTypeArg,
+    /// Upward trigger value (percent or spread, per --trigger-type)
+    #[arg(long)]
+    pub trigger_up: String,
+    /// Downward trigger value (percent or spread, per --trigger-type)
+    #[arg(long)]
+    pub trigger_down: String,
+    /// Quantity per trigger
+    #[arg(long)]
+    pub quantity: String,
+    /// Quantity handled at the upper bound (must be greater than --lower-quantity)
+    #[arg(long)]
+    pub upper_quantity: String,
+    /// Quantity handled at the lower bound
+    #[arg(long)]
+    pub lower_quantity: String,
+    /// Order type for both sides: GMO | GLO | GTG
+    #[arg(long, default_value = "GMO", ignore_case = true)]
+    pub order_type: GridOrderTypeArg,
+    /// Override sell-side (upper) order type
+    #[arg(long)]
+    pub order_type_up: Option<GridOrderTypeArg>,
+    /// Override buy-side (lower) order type
+    #[arg(long)]
+    pub order_type_down: Option<GridOrderTypeArg>,
+    /// Time in force: day | gtc | gtd
+    #[arg(long, default_value = "gtc")]
+    pub tif: GridTifArg,
+    /// Expiry for GTD: RFC3339 (e.g. 2026-11-10T08:00:00Z) or unix seconds
+    #[arg(long)]
+    pub expire: Option<String>,
+    /// Regular trading hours (`OutsideRTH` convention): 0=default, 1=RTH only,
+    /// 2=include pre/post-market. The symbol must allow it — see `grid info`
+    /// → `channel_info.support_rth`.
+    #[arg(long, default_value = "0")]
+    pub rth: i32,
+    /// Allow a single grid level to trigger multiple times
+    #[arg(long)]
+    pub multiple_trigger: bool,
+    /// Allow short selling
+    #[arg(long)]
+    pub support_shortsell: bool,
+    /// Action at the upper bound: ignore | close-at-last
+    #[arg(long, default_value = "ignore")]
+    pub upper_event: GridLimitEventArg,
+    /// Action at the lower bound: ignore | close-at-last
+    #[arg(long, default_value = "ignore")]
+    pub lower_event: GridLimitEventArg,
+    /// Sell-side order-book depth (-5..5, 0 = use order type)
+    #[arg(long, default_value = "0")]
+    pub sell_depth: i32,
+    /// Buy-side order-book depth (-5..5, 0 = use order type)
+    #[arg(long, default_value = "0")]
+    pub buy_depth: i32,
+    /// Validate and print the rule that would be sent, without submitting
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+/// Grid trading subcommands.
+#[derive(Subcommand)]
+pub enum GridCmd {
+    /// Submit a new grid order
+    Submit {
+        /// Symbol (e.g. 700.HK)
+        symbol: String,
+        /// Settlement currency — match the symbol's market (HK→HKD, US→USD);
+        /// see `grid info` → `channel_info.settlement_currency`
+        #[arg(long, default_value = "HKD")]
+        currency: String,
+        #[command(flatten)]
+        rule: GridRuleArgs,
+        /// Agree to the strategy risk disclosure without an interactive prompt
+        #[arg(long)]
+        agree_terms: bool,
+    },
+    /// Replace (modify) a grid order's rule
+    Replace {
+        /// Grid order ID
+        order_id: String,
+        #[command(flatten)]
+        rule: GridRuleArgs,
+    },
+    /// Show grid order detail
+    Detail {
+        /// Grid order ID
+        order_id: String,
+    },
+    /// Show grid trigger history
+    Triggers {
+        /// Grid order ID
+        order_id: String,
+        /// Page number
+        #[arg(long)]
+        page: Option<i32>,
+        /// Records per page
+        #[arg(long)]
+        limit: Option<i32>,
+    },
+    /// Cancel a grid order
+    Cancel {
+        /// Grid order ID
+        order_id: String,
+    },
+    /// Suspend a grid order
+    Suspend {
+        /// Grid order ID
+        order_id: String,
+    },
+    /// Restart a suspended grid order
+    Restart {
+        /// Grid order ID
+        order_id: String,
+    },
+    /// Show a symbol's grid-trading info: lot size, last price, strategy authorization, currency
+    Info {
+        /// Symbol (e.g. 700.HK)
+        symbol: String,
+    },
+    /// Submit the strategy risk-disclosure questionnaire (compliance authorization)
+    Questionnaire,
 }
 
 #[derive(Subcommand)]
@@ -4111,6 +4377,20 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             limit,
         } => dca::cmd_dca(cmd, status.as_deref(), symbol.as_deref(), page, limit, format).await,
 
+        Commands::Grid {
+            cmd,
+            ids,
+            symbol,
+            status,
+            page,
+            limit,
+            sort_by,
+            sort_order,
+        } => {
+            grid::cmd_grid(cmd, ids, symbol, status, page, limit, sort_by, sort_order, format)
+                .await
+        }
+
         Commands::ShortPositions { symbol, count } => {
             quote::cmd_short_positions(symbol, false, count, format, verbose).await
         }
@@ -4222,6 +4502,9 @@ mod tests {
     use clap::Parser;
 
     fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
+        // `clap`'s command-tree build recurses deep enough to overflow the 2 MiB
+        // default stack of test threads (the main binary runs on the 8 MiB main
+        // thread). Parse on a thread with a roomy stack.
         let args = args.iter().map(ToString::to_string).collect::<Vec<_>>();
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)

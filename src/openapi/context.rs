@@ -41,6 +41,9 @@ pub(crate) static STATEMENT_CTX: Slot<longbridge::AssetContext> = Slot::new();
 /// Global `TradeContext`
 pub(crate) static TRADE_CTX: Slot<longbridge::trade::TradeContext> = Slot::new();
 
+/// Global `GridContext` for grid trading (REST-only)
+pub(crate) static GRID_CTX: Slot<longbridge::grid::GridContext> = Slot::new();
+
 /// Global `ContentContext` for news and topics
 pub(crate) static CONTENT_CTX: Slot<longbridge::ContentContext> = Slot::new();
 
@@ -220,13 +223,20 @@ async fn init_contexts_with_auth(
     // This takes highest priority over region detection.
     let effective_http_url: String;
     if crate::region::is_test_env() {
-        tracing::info!("Using TEST environment endpoints (openapi.longbridge.xyz)");
+        // Allow overriding the test HTTP host (e.g. openapi.longbridge.xyz vs the
+        // -global gateway) via LONGBRIDGE_HTTP_URL without editing constants.
+        let test_http_url: &'static str = std::env::var("LONGBRIDGE_HTTP_URL")
+            .ok()
+            .map_or(crate::region::HTTP_URL_TEST, |u| {
+                &*Box::leak(u.into_boxed_str())
+            });
+        tracing::info!("Using TEST environment endpoints ({test_http_url})");
         config_builder = config_builder
-            .http_url(crate::region::HTTP_URL_TEST)
+            .http_url(test_http_url)
             .quote_ws_url(crate::region::QUOTE_WS_URL_TEST)
             .trade_ws_url(crate::region::TRADE_WS_URL_TEST);
-        http_client_config = http_client_config.http_url(crate::region::HTTP_URL_TEST);
-        effective_http_url = crate::region::HTTP_URL_TEST.to_string();
+        http_client_config = http_client_config.http_url(test_http_url);
+        effective_http_url = test_http_url.to_string();
     } else if cfg!(debug_assertions)
         && std::env::var("LONGBRIDGE_HTTP_URL").is_ok_and(|s| !s.trim().is_empty())
     {
@@ -350,10 +360,14 @@ async fn init_contexts_with_auth(
     // will surface naturally on the first real API call made by the caller.
     let (quote_ctx, quote_receiver) = longbridge::quote::QuoteContext::new(Arc::clone(&config));
     let (trade_ctx, _trade_receiver) = longbridge::trade::TradeContext::new(Arc::clone(&config));
+    // Grid trading is REST-only; its master-order push travels on the trade
+    // private topic (handled by TradeContext), so GridContext needs no receiver.
+    let grid_ctx = longbridge::grid::GridContext::new(Arc::clone(&config));
 
     // Store in global variables
     QUOTE_CTX.set(quote_ctx);
     TRADE_CTX.set(trade_ctx);
+    GRID_CTX.set(grid_ctx);
 
     // Initialize rate-limited wrappers
     let quote_ref = QUOTE_CTX.get().expect("QuoteContext just initialized");
@@ -406,6 +420,13 @@ pub fn trade() -> &'static longbridge::trade::TradeContext {
     TRADE_CTX
         .get()
         .expect("TradeContext not initialized, please call init_contexts() first")
+}
+
+/// Get global `GridContext`
+pub fn grid() -> &'static longbridge::grid::GridContext {
+    GRID_CTX
+        .get()
+        .expect("GridContext not initialized, please call init_contexts() first")
 }
 
 /// Server-side beacon endpoint. Quote operations flow over the WebSocket quote

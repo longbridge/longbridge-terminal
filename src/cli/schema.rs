@@ -4,8 +4,9 @@ use serde_json::{json, Map, Value};
 use std::ffi::OsString;
 
 use super::{
-    agent, asset, atm, auth, check, completion, dca, fundamental, init, insider_trades, investors,
-    ipo, news, quote, run_script, screener, sharelist, statement, topic, trade, watchlist, Cli,
+    agent, asset, atm, auth, check, completion, dca, fundamental, grid, init, insider_trades,
+    investors, ipo, news, quote, run_script, screener, sharelist, statement, topic, trade,
+    watchlist, Cli,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -52,7 +53,7 @@ pub fn handle_schema_args(args: impl IntoIterator<Item = OsString>) -> Result<Sc
     }
 
     if let Some(schema) = schema_for_path(&path) {
-        print_response_schema(&schema);
+        print_response_schema(selected, &schema);
         Ok(SchemaOutcome::Handled)
     } else if selected.has_subcommands() {
         let mut help_cmd = selected.clone();
@@ -149,11 +150,73 @@ fn short_option_takes_value(command: &Command, raw: &str) -> bool {
     false
 }
 
-fn print_response_schema(schema: &ResponseSchema) {
+fn print_response_schema(cmd: &Command, schema: &ResponseSchema) {
+    // Keep the response JSON Schema at the top level (backwards-compatible with
+    // existing --schema consumers) and attach the reflected request parameters
+    // as an extra `request` key so agents can discover how to build the call.
+    let mut out = response_json_schema(schema);
+    if let Some(obj) = out.as_object_mut() {
+        obj.insert("request".to_string(), request_object_schema(cmd));
+    }
     println!(
         "{}",
-        serde_json::to_string_pretty(&response_json_schema(schema)).expect("schema JSON")
+        serde_json::to_string_pretty(&out).expect("schema JSON")
     );
+}
+
+/// Build a request-parameter schema by reflecting the clap `Command`, so the
+/// `--schema` output tells an agent exactly which flags to pass (required vs
+/// optional, enum choices, defaults) without any hand-maintained duplication.
+fn request_object_schema(cmd: &Command) -> Value {
+    let mut required: Vec<Value> = Vec::new();
+    let mut props = serde_json::Map::new();
+    for arg in cmd.get_arguments() {
+        let id = arg.get_id().as_str();
+        if id == "help" {
+            continue;
+        }
+        let name = if arg.is_positional() {
+            id.to_string()
+        } else {
+            arg.get_long()
+                .map_or_else(|| id.to_string(), |l| format!("--{l}"))
+        };
+
+        let mut prop = serde_json::Map::new();
+        let is_flag = matches!(
+            arg.get_action(),
+            clap::ArgAction::SetTrue | clap::ArgAction::SetFalse
+        );
+        let choices: Vec<String> = arg
+            .get_possible_values()
+            .iter()
+            .map(|v| v.get_name().to_string())
+            .collect();
+        if is_flag {
+            prop.insert("type".to_string(), json!("boolean"));
+        } else {
+            prop.insert("type".to_string(), json!("string"));
+            if !choices.is_empty() {
+                prop.insert("enum".to_string(), json!(choices));
+            }
+        }
+        if let Some(help) = arg.get_help() {
+            prop.insert("description".to_string(), json!(help.to_string()));
+        }
+        if let Some(def) = arg.get_default_values().first() {
+            prop.insert("default".to_string(), json!(def.to_string_lossy()));
+        }
+        if arg.is_required_set() {
+            required.push(json!(name));
+        }
+        props.insert(name, Value::Object(prop));
+    }
+
+    json!({
+        "type": "object",
+        "required": required,
+        "properties": props,
+    })
 }
 
 fn response_json_schema(schema: &ResponseSchema) -> Value {
@@ -345,6 +408,7 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<ResponseSchema> {
         "insider-trades" => insider_trades::schema_for_path(path),
         "investors" => investors::schema_for_path(path),
         "dca" => dca::schema_for_path(path),
+        "grid" => grid::schema_for_path(path),
         "sharelist" => sharelist::schema_for_path(path),
         "quant" => run_script::schema_for_path(path),
         "screener" => screener::schema_for_path(path),
@@ -381,6 +445,21 @@ pub(crate) fn schema(summary: &str, root: RootKind, fields: Vec<Field>) -> Respo
         root,
         fields,
     }
+}
+
+/// Overlay human-readable descriptions onto specific response fields, keeping
+/// the rest generic. Use for enum-like integer fields whose meaning an agent
+/// cannot infer from the value alone (e.g. `trigger_price_type: 2`): the legend
+/// lands in the `--schema` output next to the field, without touching the JSON
+/// data itself. Unknown field names are ignored so callers can pass one legend
+/// table across schemas that share only some of the keys.
+pub(crate) fn with_legend(mut schema: ResponseSchema, legends: &[(&str, &str)]) -> ResponseSchema {
+    for (name, desc) in legends {
+        if let Some(f) = schema.fields.iter_mut().find(|f| f.name == *name) {
+            f.description = (*desc).to_string();
+        }
+    }
+    schema
 }
 
 pub(crate) fn fields(keys: &[&str]) -> Vec<Field> {
@@ -480,6 +559,21 @@ fn print_no_schema_error(path: &[String]) {
 mod tests {
     use super::*;
 
+    /// Run a test body on a thread with a large stack.
+    ///
+    /// `clap`'s `Command::build` recurses over the whole command tree; with the
+    /// full CLI the depth exceeds the 2 MiB default stack of test threads and
+    /// overflows. The main binary runs on the 8 MiB main thread, so this only
+    /// affects tests. Give them a roomy stack instead.
+    fn with_large_stack(f: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(f)
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
     fn real_leaf_paths(command: &Command) -> Vec<Vec<String>> {
         let mut out = Vec::new();
         // Iterative DFS: stack holds (command_ref, current_prefix)
@@ -504,54 +598,41 @@ mod tests {
 
     #[test]
     fn schema_path_preparse_selects_nested_command_without_required_args() {
-        // clap validates this broad command tree recursively in debug builds.
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut root = Cli::command();
-                root.build();
-                let args = [
-                    OsString::from("kline"),
-                    OsString::from("history"),
-                    OsString::from("--schema"),
-                ];
+        with_large_stack(|| {
+            let mut root = Cli::command();
+            root.build();
+            let args = [
+                OsString::from("kline"),
+                OsString::from("history"),
+                OsString::from("--schema"),
+            ];
 
-                let (selected, path) = selected_command_and_path_for_args(&root, args.iter());
+            let (selected, path) = selected_command_and_path_for_args(&root, args.iter());
 
-                assert_eq!(selected.get_name(), "history");
-                assert_eq!(path, vec!["kline".to_string(), "history".to_string()]);
-            })
-            .expect("spawn schema preparse thread")
-            .join()
-            .expect("schema preparse thread");
+            assert_eq!(selected.get_name(), "history");
+            assert_eq!(path, vec!["kline".to_string(), "history".to_string()]);
+        });
     }
 
     #[test]
     fn every_real_leaf_command_has_schema_provider() {
-        // clap's debug-time validation of this unusually broad command tree is
-        // recursive and exceeds the test harness's 2 MiB worker stack.
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut root = Cli::command();
-                root.build();
-                let paths = real_leaf_paths(&root);
-                assert_eq!(
-                    paths.len(),
-                    151,
-                    "real command count changed; review schema coverage"
-                );
+        with_large_stack(|| {
+            let mut root = Cli::command();
+            root.build();
+            let paths = real_leaf_paths(&root);
+            assert_eq!(
+                paths.len(),
+                160,
+                "real command count changed; review schema coverage"
+            );
 
-                let missing = paths
-                    .iter()
-                    .filter(|path| schema_for_path(path).is_none())
-                    .map(|path| path.join(" "))
-                    .collect::<Vec<_>>();
+            let missing = paths
+                .iter()
+                .filter(|path| schema_for_path(path).is_none())
+                .map(|path| path.join(" "))
+                .collect::<Vec<_>>();
 
-                assert!(missing.is_empty(), "missing schema coverage: {missing:#?}");
-            })
-            .expect("spawn schema coverage thread")
-            .join()
-            .expect("schema coverage thread");
+            assert!(missing.is_empty(), "missing schema coverage: {missing:#?}");
+        });
     }
 }
