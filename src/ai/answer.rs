@@ -32,8 +32,10 @@ pub enum Segment {
 /// What the answer scanner found next.
 #[derive(PartialEq, Eq, Clone, Copy)]
 enum Marker {
-    /// A ```` ```vis-chart ```` fence.
-    Chart,
+    /// A ```` ``` ```` code fence. A `vis-chart` one becomes a chart; any other
+    /// is opaque text — its content is not scanned for widgets, so a `widget://`
+    /// or `<x-widget` written *inside* a code example is shown, not extracted.
+    Fence,
     /// An `<x-widget src="…">` tag.
     Tag,
     /// A `widget://…` URL sitting in the prose on its own.
@@ -155,8 +157,8 @@ pub fn parse_widget(src: &str) -> Option<WidgetRef> {
 /// money.
 fn order_side(values: &[String]) -> String {
     match values.first().map(String::as_str) {
-        Some("1") => "Buy".to_string(),
-        Some("2") => "Sell".to_string(),
+        Some("1") => rust_i18n::t!("Trade.Buy").to_string(),
+        Some("2") => rust_i18n::t!("Trade.Sell").to_string(),
         _ => String::new(),
     }
 }
@@ -261,12 +263,17 @@ const NOT_TICKERS: [&str; 62] = [
     "BIAS", "DIF", "DEA", "EMA", "SMA", "VWAP", "GTC", "LO", "MO",
 ];
 
-/// Bare tokens in `text` that could be a ticker: `SPCX`, `TSLA`, `9988`.
+/// Bare letter-bearing tokens in `text` that could be a ticker: `SPCX`, `TSLA`.
 ///
 /// Candidates only. An answer about options is full of words shaped like tickers
 /// — `ITM`, `MACD`, `BOLL` — so nothing here is linked until something confirms
 /// it is a security: an explicit `[stock …]` marker, a widget, or the server
 /// recognising it (see [`crate::ai::quotes::resolve_symbols`]).
+///
+/// A purely numeric token (a bare HK code like `9988`, but also every price and
+/// year in the prose) is not a candidate: on its own a number is too ambiguous
+/// to probe. Such a code is still linked when it carries its market (`9988.HK`,
+/// via [`symbol_spans`]) or is named by a widget.
 pub fn ticker_candidates(text: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for range in token_spans(text) {
@@ -362,7 +369,22 @@ pub fn parse_quote_widget_symbol(src: &str) -> Option<String> {
 pub fn bare_widget_url_end(s: &str) -> usize {
     let end = s
         .find(|c: char| {
-            c.is_whitespace() || matches!(c, ')' | ']' | '}' | '>' | '<' | '"' | '\'' | '，' | '。')
+            c.is_whitespace()
+                || matches!(
+                    c,
+                    ')' | ']'
+                        | '}'
+                        | '>'
+                        | '<'
+                        | '"'
+                        | '\''
+                        // Full-width CJK punctuation that ends a clause. A bare URL
+                        // in Chinese prose is far more often closed by one of these
+                        // than by an ASCII mark, and pulling it into the URL
+                        // corrupts the trailing parameter (e.g. the symbol).
+                        | '，' | '。' | '、' | '；' | '：' | '？' | '！'
+                        | '）' | '（' | '】' | '【' | '》' | '《' | '」' | '「'
+                )
         })
         .unwrap_or(s.len());
     s[..end].trim_end_matches(['.', ',', ';', ':']).len()
@@ -381,7 +403,7 @@ pub fn segment_answer(answer: &str) -> Vec<Segment> {
         // before the `widget://` inside it, so the bare-URL scan cannot steal a
         // tag out from under the tag branch.
         let found = [
-            (rest.find("```vis-chart"), Marker::Chart),
+            (rest.find("```"), Marker::Fence),
             (rest.find("<x-widget"), Marker::Tag),
             (rest.find(WIDGET_SCHEME), Marker::BareUrl),
         ];
@@ -404,19 +426,34 @@ pub fn segment_answer(answer: &str) -> Vec<Segment> {
             flush_text(&mut segments, &mut text_acc);
             segments.push(Segment::XWidget(rest[..end].to_string()));
             rest = &rest[end..];
-        } else if marker == Marker::Chart {
-            let after = &rest["```vis-chart".len()..];
-            let Some(end) = after.find("```") else {
-                break; // unterminated fence: emit as text
-            };
-            match serde_json::from_str::<Value>(after[..end].trim()) {
-                Ok(spec) => {
-                    flush_text(&mut segments, &mut text_acc);
-                    segments.push(Segment::VisChart(spec));
+        } else if marker == Marker::Fence {
+            if rest.starts_with("```vis-chart") {
+                let after = &rest["```vis-chart".len()..];
+                let Some(end) = after.find("```") else {
+                    break; // unterminated fence: emit as text
+                };
+                match serde_json::from_str::<Value>(after[..end].trim()) {
+                    Ok(spec) => {
+                        flush_text(&mut segments, &mut text_acc);
+                        segments.push(Segment::VisChart(spec));
+                    }
+                    Err(_) => text_acc.push_str(&rest[.."```vis-chart".len() + end + 3]),
                 }
-                Err(_) => text_acc.push_str(&rest[.."```vis-chart".len() + end + 3]),
+                rest = &after[end + 3..];
+            } else {
+                // A plain code block is opaque: emit it whole (fences included) as
+                // text so the markdown renderer draws it as code, and — crucially —
+                // so a `widget://`/`<x-widget` written inside a code example is not
+                // torn out of it. The closing fence is the next ```.
+                let after = &rest[3..];
+                match after.find("```") {
+                    Some(end) => {
+                        text_acc.push_str(&rest[..3 + end + 3]);
+                        rest = &after[end + 3..];
+                    }
+                    None => break, // unterminated fence: emit the rest as text
+                }
             }
-            rest = &after[end + 3..];
         } else {
             // Find the opening tag's end
             let Some(tag_end_pos) = rest.find('>') else {
@@ -509,7 +546,12 @@ pub fn replace_inline_markers(text: &str, color: bool) -> String {
                     let _ = write!(out, " ({symbol})");
                 }
             }
-        } else if let Some(n) = marker_body(inner, "citation").or_else(|| inner.strip_prefix('^')) {
+        } else if let Some(n) = marker_body(inner, "citation")
+            .or_else(|| inner.strip_prefix('^'))
+            // A bare `[^]` (or `[citation ]`) has no number; leaving it to fall
+            // through keeps it as literal text rather than rendering an empty `[]`.
+            .filter(|n| !n.is_empty())
+        {
             if color {
                 let _ = write!(out, "\x1b[2m[{n}]\x1b[0m");
             } else {
@@ -720,6 +762,39 @@ mod tests {
         assert!(joined.contains("not json"));
     }
 
+    /// A widget reference written inside a plain code block is an example, not a
+    /// live widget: the block stays whole text so the renderer draws it as code,
+    /// and the URL is not extracted into a card.
+    #[test]
+    fn a_widget_inside_a_code_block_is_not_extracted() {
+        let md = "here is the syntax:\n```text\n<x-widget src=\"widget://quote/security/detail?symbol=AAPL.US\"></x-widget>\n```\ndone";
+        let segs = segment_answer(md);
+        assert!(
+            segs.iter().all(|s| matches!(s, Segment::Text(_))),
+            "no widget/chart should be split out: {segs:?}"
+        );
+        let joined: String = segs
+            .iter()
+            .map(|s| match s {
+                Segment::Text(t) => t.as_str(),
+                _ => "",
+            })
+            .collect();
+        assert!(joined.contains("widget://quote/security/detail?symbol=AAPL.US"));
+        assert!(joined.contains("done"));
+    }
+
+    /// A bare code fence before a real chart must not let the tag scanner reach
+    /// into the code block: the block is text, the chart still draws.
+    #[test]
+    fn a_code_block_does_not_shadow_a_later_chart() {
+        let md = "```json\n{\"note\": \"widget://quote/security/detail?symbol=X.US\"}\n```\n```vis-chart\n{\"type\":\"pie\"}\n```";
+        let segs = segment_answer(md);
+        assert!(matches!(&segs[0], Segment::Text(t) if t.contains("widget://")));
+        assert!(segs.iter().any(|s| matches!(s, Segment::VisChart(_))));
+        assert!(!segs.iter().any(|s| matches!(s, Segment::XWidget(_))));
+    }
+
     #[test]
     fn plain_answer_is_single_text_segment() {
         assert_eq!(
@@ -778,6 +853,12 @@ mod tests {
             "[stockholders meeting]"
         );
         assert_eq!(replace_inline_markers("[stock]", false), "[stock]");
+        // A footnote marker with no number is not a citation; it stays literal
+        // rather than collapsing to an empty `[]`.
+        assert_eq!(
+            replace_inline_markers("see [^] here", false),
+            "see [^] here"
+        );
     }
 
     /// The link form is common, and the web client discards the target. In a
@@ -902,6 +983,20 @@ mod tests {
             ("widget://a?b=1.", "widget://a?b=1"),
             ("widget://a?b=1)", "widget://a?b=1"),
             ("widget://a?b=1\nnext", "widget://a?b=1"),
+            // Chinese prose closes a clause with full-width punctuation; it must
+            // not be pulled into the URL and corrupt the last parameter.
+            (
+                "widget://quote/security/detail?symbol=700.HK）",
+                "widget://quote/security/detail?symbol=700.HK",
+            ),
+            (
+                "widget://quote/security/detail?symbol=700.HK；后面",
+                "widget://quote/security/detail?symbol=700.HK",
+            ),
+            (
+                "widget://quote/security/detail?symbol=700.HK。",
+                "widget://quote/security/detail?symbol=700.HK",
+            ),
         ] {
             let end = bare_widget_url_end(input);
             assert_eq!(&input[..end], want, "for {input:?}");

@@ -74,12 +74,10 @@ pub fn render_quote_card(card: &QuoteCardData, color: bool) -> String {
     );
     let inner_w = display_width(&head).max(display_width(&body));
     let colored_body = if color {
-        let sgr = match card.direction {
-            1 => "\x1b[32m",
-            -1 => "\x1b[31m",
-            _ => "\x1b[0m",
-        };
-        format!("{sgr}{body}\x1b[0m")
+        // Respect the reader's red-up/green-up preference rather than hardcoding
+        // the Western convention — a rising price is red for a mainland reader.
+        let c = crate::tui::ui::styles::up_color(card.direction.cmp(&0));
+        format!("\x1b[{}m{body}\x1b[0m", sgr(c))
     } else {
         body.clone()
     };
@@ -248,13 +246,13 @@ mod tests {
         let out = render_vis_chart(&spec, 60, false);
         assert!(out.contains("Valuation"));
         assert!(out.contains("AAPL") && out.contains("NVDA"));
-        assert!(out.contains('▓'));
+        assert!(out.contains('█'));
         assert!(out.contains("42.53"));
         // longest value owns the longest bar
         let bar_len = |needle: &str| {
             out.lines()
                 .find(|l| l.contains(needle))
-                .map_or(0, |l| l.chars().filter(|&c| c == '▓').count())
+                .map_or(0, |l| l.chars().filter(|&c| c == '█').count())
         };
         assert!(bar_len("42.53") > bar_len("27.84"));
     }
@@ -273,14 +271,16 @@ mod tests {
     }
 
     #[test]
-    fn unknown_chart_type_falls_back_to_table() {
+    fn unknown_chart_type_falls_back_to_readable_text() {
+        // A kind with no faithful ASCII form still lists its data rather than
+        // dropping it — as text, not bars.
         let spec = serde_json::json!({
-            "type": "radar",
+            "type": "sunburst",
             "data": [{"category": "growth", "value": 8.0}]
         });
         let out = render_vis_chart(&spec, 60, false);
         assert!(out.contains("growth") && out.contains('8'));
-        assert!(!out.contains('▓')); // table, not bars
+        assert!(!out.contains('█')); // listed as text, not drawn as bars
     }
 
     #[test]
@@ -371,7 +371,7 @@ mod tests {
     #[test]
     fn bar_labels_align_with_cjk_categories() {
         let spec = serde_json::json!({
-            "type": "column",
+            "type": "bar",
             "data": [
                 {"category": "腾讯控股", "value": 10.0},
                 {"category": "AAPL", "value": 20.0}
@@ -383,7 +383,7 @@ mod tests {
         // the CJK label being visually wider than its char count.
         let bar_col = |needle: &str| {
             out.lines().find(|l| l.contains(needle)).and_then(|l| {
-                l.find('▓')
+                l.find('█')
                     .map(|byte_idx| UnicodeWidthStr::width(&l[..byte_idx]))
             })
         };

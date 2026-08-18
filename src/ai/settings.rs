@@ -56,7 +56,8 @@ pub fn set_tool_calls(value: ToolCalls) {
     TOOL_CALLS.store(value.as_u8(), Ordering::Relaxed);
 }
 
-/// Whether a finished turn rings the terminal bell when the window is unfocused.
+/// Whether a finished turn raises a desktop notification (OSC 9, with a bell
+/// fallback) when the window is unfocused.
 pub fn notify_on_finish() -> bool {
     NOTIFY_ON_FINISH.load(Ordering::Relaxed) == 1
 }
@@ -110,5 +111,6 @@ mod tests {
         assert_eq!(ToolCalls::from_u8(0), ToolCalls::All);
         assert!(notify_on_finish());
         assert!(quote_cards());
+        assert!(tape());
     }
 }
