@@ -17,6 +17,15 @@ use super::state::{ChatEvent, ChatState};
 use crate::cli::agent::client::{stream_conversation, ConversationRequest};
 use crate::cli::agent::events::AgentEvent;
 
+/// A chat event tagged with the conversation generation that spawned it.
+///
+/// Aborting a task cannot retract events it already queued.  The generation lets
+/// the TUI discard those events after `/new` has moved on to another conversation.
+pub struct TurnEvent {
+    pub generation: u64,
+    pub event: ChatEvent,
+}
+
 /// Build the conversation request for the current input: a fresh chat, a
 /// follow-up, or an answer to a pending clarifying question.
 ///
@@ -53,16 +62,26 @@ pub fn build_request(state: &ChatState, query: String) -> ConversationRequest {
 /// [`ChatEvent`]s pushed onto `tx`. The returned handle is aborted on cancel
 /// (dropping the SSE stream). The closure captures only the `Send` sender, so
 /// the task is `Send` for `tokio::spawn`.
-pub fn spawn_turn(req: ConversationRequest, tx: UnboundedSender<ChatEvent>) -> JoinHandle<()> {
+pub fn spawn_turn(
+    req: ConversationRequest,
+    generation: u64,
+    tx: UnboundedSender<TurnEvent>,
+) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut forward = |ev: AgentEvent| {
             for chat_event in map_agent_event(&ev) {
-                let _ = tx.send(chat_event);
+                let _ = tx.send(TurnEvent {
+                    generation,
+                    event: chat_event,
+                });
             }
         };
         let result = stream_conversation(req, false, &mut forward).await;
-        let _ = tx.send(ChatEvent::TurnFinished {
-            error: result.err().map(|e| e.to_string()),
+        let _ = tx.send(TurnEvent {
+            generation,
+            event: ChatEvent::TurnFinished {
+                error: result.err().map(|e| e.to_string()),
+            },
         });
     })
 }

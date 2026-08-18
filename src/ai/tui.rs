@@ -100,6 +100,7 @@ fn settings_rows(session: &super::account::Session) -> Vec<SettingsRow> {
 /// a click.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Pending {
+    NewSession,
     SignOut,
     SignIn,
 }
@@ -466,6 +467,10 @@ struct Ui {
     animating: bool,
     rows: Vec<(usize, Rect)>,
     chips: Vec<(Chip, Rect)>,
+    /// Click targets drawn in the single-row title bar. Kept apart from content
+    /// chips so a large rotating ticker can never claim cells in the chat body.
+    header_chips: Vec<(Chip, Rect)>,
+    title_bar: Rect,
     /// Slash-palette hit rects: `(SLASH index, rect)` for the visible entries.
     slash_rows: Vec<(usize, Rect)>,
     /// The transcript area, recorded so a drag there starts a text selection.
@@ -540,6 +545,7 @@ struct Ui {
     /// it rather than in the corner. `None` for a keyboard/command open, which has
     /// no on-screen anchor and falls back to the right edge.
     quote_anchor_x: Option<u16>,
+    quote_anchor_y: Option<u16>,
     /// Where the topmost thing's `[Close]` button is. One field rather than one per
     /// overlay: only ever one is on screen, and the click path then works the same
     /// in every view.
@@ -609,6 +615,8 @@ impl Ui {
             animating: false,
             rows: Vec::new(),
             chips: Vec::new(),
+            header_chips: Vec::new(),
+            title_bar: Rect::default(),
             slash_rows: Vec::new(),
             transcript: Rect::default(),
             selection: None,
@@ -637,6 +645,7 @@ impl Ui {
             prev_button: None,
             next_button: None,
             quote_anchor_x: None,
+            quote_anchor_y: None,
             close_button: None,
             paths: HashMap::new(),
             paths_tx: None,
@@ -732,6 +741,8 @@ impl Ui {
         // the sparkline paths or the confirmed-ticker aliases would show one
         // conversation's securities in the next.
         self.quote_panel = None;
+        self.quote_anchor_x = None;
+        self.quote_anchor_y = None;
         self.paths.clear();
         self.aliases.clear();
     }
@@ -755,7 +766,7 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
     // sessions, the way a shell does.
     editor.seed_history(super::history::load());
     let mut turn: Option<JoinHandle<()>> = None;
-    let (tx, mut turn_rx) = unbounded_channel::<ChatEvent>();
+    let (tx, mut turn_rx) = unbounded_channel::<runtime::TurnEvent>();
     let (cards_tx, mut cards_rx) =
         unbounded_channel::<HashMap<String, super::quotes::QuoteCardData>>();
     let (history_tx, mut history_rx) = unbounded_channel::<Option<Vec<SessionSummary>>>();
@@ -825,7 +836,12 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
                     }
                 }
             }
-            Some(event) = turn_rx.recv() => {
+            Some(turn_event) = turn_rx.recv() => {
+                // `/new` aborts the producer, but events sent just before the
+                // abort may already be queued. They belong to the old transcript.
+                let Some(event) = current_turn_event(&state, turn_event) else {
+                    continue;
+                };
                 let finished = matches!(event, ChatEvent::TurnFinished { .. });
                 state.apply(event);
                 if finished {
@@ -956,6 +972,10 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
                 }
             }
         }
+        if ui.pending == Some(Pending::NewSession) {
+            ui.pending = None;
+            new_session(&mut ui, &mut state, &mut turn);
+        }
         if ui.pending == Some(Pending::SignIn) {
             ui.pending = None;
             // Signing in happens here, in the chat: the flow only needs a URL on
@@ -1034,6 +1054,10 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
         task.abort();
     }
     Ok(ui.exit_note.take())
+}
+
+fn current_turn_event(state: &ChatState, event: runtime::TurnEvent) -> Option<ChatEvent> {
+    (event.generation == state.generation).then_some(event.event)
 }
 
 /// Add every security the conversation has mentioned to the ticker, and keep its
@@ -1180,7 +1204,7 @@ fn dispatch_event(
     state: &mut ChatState,
     editor: &mut Editor,
     turn: &mut Option<JoinHandle<()>>,
-    tx: &UnboundedSender<ChatEvent>,
+    tx: &UnboundedSender<runtime::TurnEvent>,
 ) {
     match event {
         Event::Key(key) if key.kind != KeyEventKind::Release => {
@@ -1211,7 +1235,7 @@ fn on_key(
     state: &mut ChatState,
     editor: &mut Editor,
     turn: &mut Option<JoinHandle<()>>,
-    tx: &UnboundedSender<ChatEvent>,
+    tx: &UnboundedSender<runtime::TurnEvent>,
 ) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     if ctrl && key.code == KeyCode::Char('c') {
@@ -1224,7 +1248,7 @@ fn on_key(
     // views are reached via `/` commands rather than a tab bar.
     if key.code == KeyCode::Tab {
         if ui.view == View::Chat && slash_active(editor) {
-            complete_slash(ui, editor);
+            complete_slash(ui, state, editor);
         }
         return;
     }
@@ -1313,7 +1337,7 @@ fn on_chat_key(
     state: &mut ChatState,
     editor: &mut Editor,
     turn: &mut Option<JoinHandle<()>>,
-    tx: &UnboundedSender<ChatEvent>,
+    tx: &UnboundedSender<runtime::TurnEvent>,
 ) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let shift = key.modifiers.contains(KeyModifiers::SHIFT);
@@ -1407,7 +1431,7 @@ fn on_chat_key(
     // input no longer matches any command (e.g. "/why is …"), the palette is not
     // shown and these keys fall through, so a prompt that merely starts with `/`
     // can still be sent rather than having its Enter swallowed.
-    let count = slash_matches(editor).len();
+    let count = slash_matches(editor, state).len();
     if slash_active(editor) && count > 0 {
         // The selection wraps, so ↑ past the top lands on the last command and ↓
         // past the bottom on the first — a short list is quicker to reach either
@@ -1423,7 +1447,7 @@ fn on_chat_key(
                 return;
             }
             KeyCode::Enter if !newline => {
-                run_slash_selected(ui, state, editor);
+                run_slash_selected(ui, state, editor, turn);
                 return;
             }
             KeyCode::Esc => {
@@ -1527,7 +1551,7 @@ fn on_chat_key(
     if slash_active(editor) {
         ui.slash_sel = ui
             .slash_sel
-            .min(slash_matches(editor).len().saturating_sub(1));
+            .min(slash_matches(editor, state).len().saturating_sub(1));
     }
 }
 
@@ -1537,7 +1561,7 @@ fn submit(
     state: &mut ChatState,
     editor: &mut Editor,
     turn: &mut Option<JoinHandle<()>>,
-    tx: &UnboundedSender<ChatEvent>,
+    tx: &UnboundedSender<runtime::TurnEvent>,
 ) {
     if editor.is_blank() {
         return;
@@ -1562,6 +1586,8 @@ fn submit(
                 // commands do not — handle it here rather than in `exec_slash`.
                 if key == "retry" {
                     retry_last(ui, state, turn, tx);
+                } else if key == "new" {
+                    new_session(ui, state, turn);
                 } else {
                     exec_slash(key, args, ui, state);
                 }
@@ -1618,7 +1644,7 @@ fn retry_last(
     ui: &mut Ui,
     state: &mut ChatState,
     turn: &mut Option<JoinHandle<()>>,
-    tx: &UnboundedSender<ChatEvent>,
+    tx: &UnboundedSender<runtime::TurnEvent>,
 ) {
     if state.busy {
         ui.notice = Some(t!("Ai.RetryBusy").to_string());
@@ -1647,12 +1673,21 @@ fn start_turn(
     query: String,
     state: &mut ChatState,
     turn: &mut Option<JoinHandle<()>>,
-    tx: &UnboundedSender<ChatEvent>,
+    tx: &UnboundedSender<runtime::TurnEvent>,
 ) {
     let req = runtime::build_request(state, query.clone());
     state.apply(ChatEvent::UserPrompt(query));
     state.pending_interrupt = None;
-    *turn = Some(runtime::spawn_turn(req, tx.clone()));
+    *turn = Some(runtime::spawn_turn(req, state.generation, tx.clone()));
+}
+
+fn new_session(ui: &mut Ui, state: &mut ChatState, turn: &mut Option<JoinHandle<()>>) {
+    if let Some(task) = turn.take() {
+        task.abort();
+    }
+    state.reset(t!("Ai.Welcome").to_string());
+    ui.reset_render();
+    ui.switch(View::Chat);
 }
 
 /// Split `/name rest` into the `/name` and its trimmed argument string.
@@ -1679,6 +1714,7 @@ fn exec_slash(name: &str, args: &str, ui: &mut Ui, state: &mut ChatState) {
             // A keyboard open has no on-screen anchor, so the drawer falls back to
             // the right edge under the ticker.
             ui.quote_anchor_x = None;
+            ui.quote_anchor_y = None;
             if args.is_empty() {
                 match last_symbol(state) {
                     Some(symbol) => open_quote_panel(ui, symbol),
@@ -1844,7 +1880,7 @@ fn on_question_key(
     ui: &mut Ui,
     state: &mut ChatState,
     turn: &mut Option<JoinHandle<()>>,
-    tx: &UnboundedSender<ChatEvent>,
+    tx: &UnboundedSender<runtime::TurnEvent>,
 ) {
     match key.code {
         KeyCode::Esc => ui.switch(View::Chat),
@@ -1867,7 +1903,7 @@ fn on_mouse(
     state: &mut ChatState,
     editor: &mut Editor,
     turn: &mut Option<JoinHandle<()>>,
-    tx: &UnboundedSender<ChatEvent>,
+    tx: &UnboundedSender<runtime::TurnEvent>,
 ) {
     if let MouseEventKind::Moved = m.kind {
         ui.hover = Some((m.column, m.row));
@@ -1930,7 +1966,20 @@ fn on_mouse(
                     .find(|(_, r)| hit(*r, col, row))
                     .map(|(i, _)| *i)
                 {
-                    run_slash(idx, ui, state, editor);
+                    run_slash(idx, ui, state, editor, turn);
+                } else if hit(ui.title_bar, col, row) {
+                    if let Some((chip, rect)) = ui
+                        .header_chips
+                        .iter()
+                        .find(|(_, r)| hit(*r, col, row))
+                        .map(|(c, r)| (c.clone(), *r))
+                    {
+                        if matches!(chip, Chip::Symbol(_)) {
+                            ui.quote_anchor_x = Some(rect.x);
+                            ui.quote_anchor_y = Some(rect.y);
+                        }
+                        click_chip(chip, ui, state, editor, turn, tx);
+                    }
                 } else if let Some((chip, rect)) = ui
                     .chips
                     .iter()
@@ -1942,6 +1991,7 @@ fn on_mouse(
                     // itself. Other chips leave the anchor alone.
                     if matches!(chip, Chip::Symbol(_)) {
                         ui.quote_anchor_x = Some(rect.x);
+                        ui.quote_anchor_y = Some(rect.y);
                     }
                     click_chip(chip, ui, state, editor, turn, tx);
                 } else if hit(ui.transcript, col, row) {
@@ -2145,7 +2195,7 @@ fn scroll(ui: &mut Ui, state: &mut ChatState, up: bool) {
 }
 
 /// Run the selected row's action in the active list view.
-fn activate(ui: &mut Ui, state: &mut ChatState) {
+fn activate(ui: &mut Ui, _state: &mut ChatState) {
     match ui.view {
         View::Sessions => {
             // The row past the last session is the "New session" action.
@@ -2158,9 +2208,9 @@ fn activate(ui: &mut Ui, state: &mut ChatState) {
                     });
                 }
             } else {
-                state.reset(t!("Ai.Welcome").to_string());
-                ui.reset_render();
-                ui.switch(View::Chat);
+                // The async loop owns the turn handle, so ask it to abort the old
+                // stream and reset atomically rather than resetting state here.
+                ui.pending = Some(Pending::NewSession);
             }
         }
         // A preference changes in place and stays on the list: the reader is here
@@ -2267,6 +2317,8 @@ fn close_topmost(ui: &mut Ui) {
 /// reading the same stream, and dropping it here would freeze them.
 fn close_quote_panel(ui: &mut Ui) {
     ui.quote_panel = None;
+    ui.quote_anchor_x = None;
+    ui.quote_anchor_y = None;
 }
 
 /// Step the open panel to the previous (`-1`) or next (`+1`) security the
@@ -2297,6 +2349,8 @@ fn step_quote_panel(ui: &mut Ui, delta: isize) {
         ui.tape_at = next;
     }
     let symbol = ui.tape[next].clone();
+    ui.quote_anchor_x = None;
+    ui.quote_anchor_y = None;
     open_quote_panel(ui, symbol);
 }
 
@@ -2351,7 +2405,7 @@ fn answer_selected(
     ui: &mut Ui,
     state: &mut ChatState,
     turn: &mut Option<JoinHandle<()>>,
-    tx: &UnboundedSender<ChatEvent>,
+    tx: &UnboundedSender<runtime::TurnEvent>,
 ) {
     let Some(q) = ui.question.as_mut() else {
         return;
@@ -2380,7 +2434,7 @@ fn skip_question(
     ui: &mut Ui,
     state: &mut ChatState,
     turn: &mut Option<JoinHandle<()>>,
-    tx: &UnboundedSender<ChatEvent>,
+    tx: &UnboundedSender<runtime::TurnEvent>,
 ) {
     let Some(q) = ui.question.as_mut() else {
         return;
@@ -2426,7 +2480,7 @@ fn submit_answers(
     qs: &QuestionState,
     state: &mut ChatState,
     turn: &mut Option<JoinHandle<()>>,
-    tx: &UnboundedSender<ChatEvent>,
+    tx: &UnboundedSender<runtime::TurnEvent>,
 ) -> bool {
     let (Some(chat_uid), Some(message_id)) = (state.chat_uid.clone(), state.message_id.clone())
     else {
@@ -2442,7 +2496,7 @@ fn submit_answers(
     };
     state.apply(ChatEvent::UserPrompt(summary));
     state.pending_interrupt = None;
-    *turn = Some(runtime::spawn_turn(req, tx.clone()));
+    *turn = Some(runtime::spawn_turn(req, state.generation, tx.clone()));
     true
 }
 
@@ -2454,7 +2508,7 @@ fn click_chip(
     state: &mut ChatState,
     editor: &mut Editor,
     turn: &mut Option<JoinHandle<()>>,
-    tx: &UnboundedSender<ChatEvent>,
+    tx: &UnboundedSender<runtime::TurnEvent>,
 ) {
     match chip {
         // The example is the quickest way in: clicking it sends it, rather than
@@ -2492,7 +2546,7 @@ fn click_chip(
                 let req = runtime::build_request(state, query.clone());
                 state.apply(ChatEvent::UserPrompt(query));
                 state.pending_interrupt = None;
-                *turn = Some(runtime::spawn_turn(req, tx.clone()));
+                *turn = Some(runtime::spawn_turn(req, state.generation, tx.clone()));
             }
         }
     }
@@ -2686,39 +2740,61 @@ fn slash_active(editor: &Editor) -> bool {
 }
 
 /// SLASH indices whose name or an alias starts with the current input.
-fn slash_matches(editor: &Editor) -> Vec<usize> {
+fn slash_matches(editor: &Editor, state: &ChatState) -> Vec<usize> {
     let prefix = editor.text();
     let prefix = prefix.trim_end();
     SLASH
         .iter()
         .enumerate()
-        .filter(|(_, cmd)| cmd.starts_with(prefix))
+        .filter(|(_, cmd)| {
+            cmd.starts_with(prefix)
+                && (cmd.key() != "retry"
+                    || state
+                        .messages
+                        .iter()
+                        .any(|message| message.role == Role::User))
+        })
         .map(|(i, _)| i)
         .collect()
 }
 
 /// Complete the input to the highlighted command's canonical name.
-fn complete_slash(ui: &Ui, editor: &mut Editor) {
-    let matches = slash_matches(editor);
+fn complete_slash(ui: &Ui, state: &ChatState, editor: &mut Editor) {
+    let matches = slash_matches(editor, state);
     if let Some(&idx) = matches.get(ui.slash_sel.min(matches.len().saturating_sub(1))) {
         editor.set_text(&format!("{} ", SLASH[idx].name));
     }
 }
 
 /// Run the highlighted palette command.
-fn run_slash_selected(ui: &mut Ui, state: &mut ChatState, editor: &mut Editor) {
-    let matches = slash_matches(editor);
+fn run_slash_selected(
+    ui: &mut Ui,
+    state: &mut ChatState,
+    editor: &mut Editor,
+    turn: &mut Option<JoinHandle<()>>,
+) {
+    let matches = slash_matches(editor, state);
     if let Some(&idx) = matches.get(ui.slash_sel) {
-        run_slash(idx, ui, state, editor);
+        run_slash(idx, ui, state, editor, turn);
     }
 }
 
 /// Clear the input and execute the command at `SLASH[idx]`, with no argument —
 /// the palette only ever holds a bare command name.
-fn run_slash(idx: usize, ui: &mut Ui, state: &mut ChatState, editor: &mut Editor) {
+fn run_slash(
+    idx: usize,
+    ui: &mut Ui,
+    state: &mut ChatState,
+    editor: &mut Editor,
+    turn: &mut Option<JoinHandle<()>>,
+) {
     let key = SLASH[idx].key();
     editor.clear();
-    exec_slash(key, "", ui, state);
+    if key == "new" {
+        new_session(ui, state, turn);
+    } else {
+        exec_slash(key, "", ui, state);
+    }
 }
 
 // ── rendering ────────────────────────────────────────────────────────────────
@@ -2808,6 +2884,8 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &mut ChatState, editor: &Edi
     // Chips are recorded by both the transcript (references) and the meta panel
     // (follow-ups), so the list is cleared once per frame rather than by each.
     ui.chips.clear();
+    ui.header_chips.clear();
+    ui.title_bar = Rect::default();
     // Re-recorded by whatever draws a `[Close]` this frame; a stale rect would
     // otherwise swallow clicks where nothing is any more.
     ui.close_button = None;
@@ -2851,7 +2929,7 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &mut ChatState, editor: &Edi
     // floats over the status row and any chrome between the transcript and the
     // prompt rather than being anchored to the transcript's foot with a gap.
     if ui.view == View::Chat {
-        render_slash_dropdown(f, body, footer, ui, editor);
+        render_slash_dropdown(f, body, footer, ui, state, editor);
     } else {
         ui.slash_rows.clear();
     }
@@ -3039,7 +3117,7 @@ fn render_quote_panel(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
     // The tallest the drawer's content gets — name, price, sparkline, the six core
     // figures and the detail block — so it opens at full height and fills in rather
     // than growing (and flashing) as the quote and its detail arrive.
-    const DRAWER_INNER: usize = 13;
+    const DRAWER_INNER: usize = 15;
 
     let Some(symbol) = ui.quote_panel.clone() else {
         ui.open_button = None;
@@ -3056,19 +3134,15 @@ fn render_quote_panel(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
             Style::default().fg(Color::DarkGray),
         ))],
     };
-    let title = format!(" ${symbol} ");
-    let web = format!(" {WEB_ICON} ");
+    // The first row is custom-drawn after the frame so its left and right actions
+    // can have independent hover styles and exact click targets.
+    body.insert(0, Line::from(""));
+    let symbol_label = format!("${symbol}");
+    let web = format!("{WEB_ICON} More");
     let content_w = body.iter().map(line_width).max().unwrap_or(0);
-    let chrome = UnicodeWidthStr::width(title.as_str()) + UnicodeWidthStr::width(web.as_str()) + 4;
+    let chrome =
+        UnicodeWidthStr::width(symbol_label.as_str()) + UnicodeWidthStr::width(web.as_str()) + 3;
     let width = (content_w + 6).max(chrome).min(area.width as usize) as u16;
-    // Open at the reserved height and pad to it, rather than growing from a short
-    // "loading" box to a tall one as the quote and then its detail land — the
-    // resize flashed; a fixed frame that fills in does not.
-    let inner_h = DRAWER_INNER.min((area.height as usize).saturating_sub(2));
-    while body.len() < inner_h {
-        body.push(Line::from(""));
-    }
-    let height = (body.len() as u16 + 2).min(area.height);
     // A drawer: it drops from the top of the transcript rather than floating in the
     // middle over the answer. It anchors under the security's own ticker entry —
     // found among this frame's chips, topmost occurrence so the ticker wins over an
@@ -3076,20 +3150,44 @@ fn render_quote_panel(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
     // the reader steps through. Failing that (rotated out, or a keyboard open), the
     // remembered click column, then the right edge. Clamped so it never spills off.
     let right_edge = area.x + area.width.saturating_sub(width);
-    let anchor = ui
-        .chips
+    let chip_anchor = ui
+        .header_chips
         .iter()
+        .chain(ui.chips.iter())
         .filter_map(|(c, r)| match c {
             Chip::Symbol(s) if s == &symbol => Some(*r),
             _ => None,
         })
-        .min_by_key(|r| r.y)
-        .map(|r| r.x)
-        .or(ui.quote_anchor_x);
-    let x = anchor.map_or(right_edge, |ax| ax.min(right_edge));
+        .min_by_key(|r| r.y);
+    let anchor_x = ui.quote_anchor_x.or_else(|| chip_anchor.map(|r| r.x));
+    let anchor_y = ui.quote_anchor_y.or_else(|| chip_anchor.map(|r| r.y));
+    let x = anchor_x.map_or(right_edge, |ax| ax.min(right_edge));
+    let area_bottom = area.y + area.height;
+    let desired_height = (DRAWER_INNER as u16 + 2).min(area.height);
+    let (y, available_height) = anchor_y.map_or((area.y, area.height), |clicked_y| {
+        if clicked_y < area.y || clicked_y >= area_bottom {
+            return (area.y, area.height);
+        }
+        let below = area_bottom.saturating_sub(clicked_y.saturating_add(1));
+        let above = clicked_y.saturating_sub(area.y);
+        if below >= desired_height || below >= above {
+            (clicked_y + 1, below)
+        } else {
+            let height = desired_height.min(above);
+            (clicked_y - height, above)
+        }
+    });
+    // A middle-row click may not leave room for the full drawer on either side.
+    // Clip lower-priority detail rows rather than covering the clicked text.
+    let height = desired_height.min(available_height).max(3);
+    let inner_h = height.saturating_sub(2) as usize;
+    body.truncate(inner_h);
+    while body.len() < inner_h {
+        body.push(Line::from(""));
+    }
     let rect = Rect {
         x,
-        y: area.y,
+        y,
         width,
         height,
     };
@@ -3099,12 +3197,12 @@ fn render_quote_panel(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
     // the terminal drawing the whole glyph across the frame, which is what made
     // the border look broken. The cell outside has to go too.
     blank_straddling_glyphs(f.buffer_mut(), rect, area);
-    // The button's geometry comes first so the live dot cannot collide with it, and
-    // so the icon can brighten under the pointer.
+    // The first inner row carries the symbol on the left and the explicit web
+    // action on the right. Its geometry comes first so hover can style it.
     let web_w = UnicodeWidthStr::width(web.as_str()) as u16;
     let open_rect = Rect {
-        x: rect.x + rect.width.saturating_sub(web_w + 1),
-        y: rect.y,
+        x: rect.x + rect.width.saturating_sub(web_w + 3),
+        y: rect.y + 1,
         width: web_w,
         height: 1,
     };
@@ -3117,62 +3215,84 @@ fn render_quote_panel(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(Style::default().fg(Color::DarkGray))
-        .padding(Padding::horizontal(2))
-        .title(Line::from(vec![
-            Span::styled(
-                title,
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            // The dot says the number is streaming, so a price that sits still is a
-            // quiet market rather than a stale panel.
-            Span::styled("●", Style::default().fg(Color::Green)),
-        ]))
-        .title_top(
-            Line::from(Span::styled(
-                web,
-                Style::default().fg(web_fg).add_modifier(Modifier::BOLD),
-            ))
-            .right_aligned(),
-        );
+        .padding(Padding::horizontal(2));
     f.render_widget(Paragraph::new(Text::from(body)).block(block), rect);
+    let draw_text =
+        |buf: &mut ratatui::buffer::Buffer, x: u16, y: u16, text: &str, style: Style| {
+            for (offset, glyph) in text.chars().enumerate() {
+                if let Some(cell) =
+                    buf.cell_mut(ratatui::layout::Position::new(x + offset as u16, y))
+                {
+                    cell.set_char(glyph).set_style(style);
+                }
+            }
+        };
+    draw_text(
+        f.buffer_mut(),
+        rect.x + 3,
+        rect.y + 1,
+        &symbol_label,
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    );
+    draw_text(
+        f.buffer_mut(),
+        open_rect.x,
+        open_rect.y,
+        &web,
+        Style::default().fg(web_fg).add_modifier(Modifier::BOLD),
+    );
     // No `[Close]` label: a click anywhere outside the panel (or Esc) dismisses it,
     // so the button was clutter. The whole-view close handler reads `quote_panel`
     // directly, not this rect.
     ui.close_button = None;
-    // The web page has the chart and the filings this panel cannot hold, so the way
-    // out to it is a button on the frame rather than a line of instructions.
+    // The web page has the chart and the filings this panel cannot hold, so the
+    // top-right `↗ More` label makes the icon's destination explicit.
     ui.open_button = Some(open_rect);
-    // When the conversation named more than one security, `‹`/`›` on the side
-    // borders step through them without leaving the panel — the click twin of the
-    // arrow keys. Drawn only then, and only when this security is on the tape, so
-    // the arrows never promise a move that goes nowhere.
+    // When the conversation named more than one security, a compact pagination
+    // control sits on the last row inside the frame. Button-shaped `[<] [>]` affordances are
+    // much easier to discover than the old single glyphs on opposite side borders.
+    // Drawn only when a move is possible, matching the keyboard arrow behavior.
     let steppable = ui.tape.len() > 1 && ui.tape.contains(&symbol);
-    if steppable && rect.height >= 3 {
-        let mid_y = rect.y + rect.height / 2;
-        let arrow = |buf: &mut ratatui::buffer::Buffer, x: u16, glyph: &str, hovered: bool| {
-            if let Some(cell) = buf.cell_mut(ratatui::layout::Position::new(x, mid_y)) {
-                cell.set_symbol(glyph);
-                let fg = if hovered { Color::White } else { Color::Cyan };
-                cell.set_style(Style::default().fg(fg).add_modifier(Modifier::BOLD));
-            }
-        };
-        let right_x = rect.x + rect.width.saturating_sub(1);
+    if steppable && rect.height >= 3 && rect.width >= 9 {
+        const PREV: &str = "[<]";
+        const NEXT: &str = "[>]";
+        let y = rect.y + rect.height.saturating_sub(2);
+        let controls_w = 7;
+        let start_x = rect.x + rect.width.saturating_sub(controls_w) / 2;
         let prev_rect = Rect {
-            x: rect.x,
-            y: mid_y,
-            width: 1,
+            x: start_x,
+            y,
+            width: 3,
             height: 1,
         };
         let next_rect = Rect {
-            x: right_x,
-            y: mid_y,
-            width: 1,
+            x: start_x + 4,
+            y,
+            width: 3,
             height: 1,
         };
-        arrow(f.buffer_mut(), rect.x, "‹", hovering(ui, prev_rect));
-        arrow(f.buffer_mut(), right_x, "›", hovering(ui, next_rect));
+        let button = |buf: &mut ratatui::buffer::Buffer, rect: Rect, label: &str, hovered: bool| {
+            let style = if hovered {
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            };
+            for (offset, glyph) in label.chars().enumerate() {
+                let pos = ratatui::layout::Position::new(rect.x + offset as u16, rect.y);
+                if let Some(cell) = buf.cell_mut(pos) {
+                    cell.set_char(glyph).set_style(style);
+                }
+            }
+        };
+        button(f.buffer_mut(), prev_rect, PREV, hovering(ui, prev_rect));
+        button(f.buffer_mut(), next_rect, NEXT, hovering(ui, next_rect));
         ui.prev_button = Some(prev_rect);
         ui.next_button = Some(next_rect);
     } else {
@@ -3254,6 +3374,7 @@ fn close_rect(panel: Rect) -> Rect {
 }
 
 fn render_title(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatState) {
+    ui.title_bar = Rect { height: 1, ..area };
     // The brand badge, and nothing else by default. The server-generated
     // conversation title lived here, but it is a label for picking a chat out of
     // a list — which is where it is shown — not something worth a permanent row
@@ -3304,12 +3425,12 @@ fn render_title(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatSta
             Style::default().fg(Color::DarkGray)
         },
     ));
-    ui.chips.push((Chip::Sessions, sessions_rect));
+    ui.header_chips.push((Chip::Sessions, sessions_rect));
     let left_w: usize = left.iter().map(|s| s.content.width()).sum();
     // The badge is a link: the same conversations are on the web, with the widgets
     // a terminal can only describe.
     let badge_w = left.first().map_or(0, |s| s.content.width()) as u16;
-    ui.chips.push((
+    ui.header_chips.push((
         Chip::Brand,
         Rect {
             x: area.x,
@@ -3374,7 +3495,7 @@ fn render_title(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatSta
     };
     spans.push(Span::styled(toggle, toggle_style));
     if !ui.tape.is_empty() {
-        ui.chips.push((Chip::Tape, toggle_rect));
+        ui.header_chips.push((Chip::Tape, toggle_rect));
     }
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
@@ -3474,7 +3595,7 @@ fn tape_spans(ui: &mut Ui, area: Rect, start_x: Option<u16>, room: usize) -> Vec
         used += w;
         drawn += 1;
     }
-    ui.chips.extend(hits);
+    ui.header_chips.extend(hits);
     if start_x.is_some() {
         ui.tape_drawn = drawn;
     }
@@ -3901,13 +4022,14 @@ fn render_slash_dropdown(
     area: Rect,
     prompt: Rect,
     ui: &mut Ui,
+    state: &ChatState,
     editor: &Editor,
 ) {
     ui.slash_rows.clear();
     if !slash_active(editor) {
         return;
     }
-    let matches = slash_matches(editor);
+    let matches = slash_matches(editor, state);
     if matches.is_empty() {
         return;
     }
@@ -5526,10 +5648,7 @@ fn card_lines(
     let dir = change_color(card.direction);
     let mut out = Vec::new();
     if !card.name.is_empty() {
-        out.push(Line::from(Span::styled(
-            card.name.clone(),
-            Style::default().fg(Color::Gray),
-        )));
+        out.push(Line::from(Span::styled(card.name.clone(), dim)));
     }
     // The price is what the panel is for, so it leads: last, then the change in the
     // direction's colour.
@@ -6180,11 +6299,29 @@ mod tests {
         // command, so the palette does not capture its Enter — the fix that lets
         // it be sent to the agent rather than swallowed.
         let mut e = super::Editor::new();
+        let state = super::ChatState::new("chatbot".into(), "welcome".into());
         e.set_text("/why does TSLA trade at a premium");
-        assert!(super::slash_matches(&e).is_empty());
+        assert!(super::slash_matches(&e, &state).is_empty());
         // A real command prefix still matches.
         e.set_text("/ne");
-        assert!(!super::slash_matches(&e).is_empty());
+        assert!(!super::slash_matches(&e, &state).is_empty());
+    }
+
+    #[test]
+    fn retry_only_appears_after_a_user_command_exists() {
+        let mut editor = super::Editor::new();
+        editor.set_text("/");
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let names = |state: &super::ChatState| {
+            super::slash_matches(&editor, state)
+                .into_iter()
+                .map(|i| super::SLASH[i].name)
+                .collect::<Vec<_>>()
+        };
+        assert!(!names(&state).contains(&"/retry"));
+
+        state.apply(super::ChatEvent::UserPrompt("last command".into()));
+        assert!(names(&state).contains(&"/retry"));
     }
 
     #[test]
@@ -6286,6 +6423,31 @@ mod tests {
         assert!(ui.paths.is_empty());
         assert!(ui.aliases.is_empty());
         assert!(ui.tape.is_empty());
+    }
+
+    /// `/new` can race with events the old SSE task queued immediately before it
+    /// was aborted. Those events must not become the new conversation's answer.
+    #[test]
+    fn a_new_session_rejects_events_queued_by_the_previous_turn() {
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        state.apply(super::ChatEvent::UserPrompt("old question".into()));
+        let old_generation = state.generation;
+
+        state.reset("welcome".into());
+        let stale = crate::ai::runtime::TurnEvent {
+            generation: old_generation,
+            event: super::ChatEvent::Delta("old answer".into()),
+        };
+        assert!(super::current_turn_event(&state, stale).is_none());
+
+        state.apply(super::ChatEvent::UserPrompt("new question".into()));
+        let current = crate::ai::runtime::TurnEvent {
+            generation: state.generation,
+            event: super::ChatEvent::Delta("new answer".into()),
+        };
+        let event = super::current_turn_event(&state, current).expect("current event");
+        state.apply(event);
+        assert_eq!(state.streaming.as_deref(), Some("new answer"));
     }
 
     /// The quote panel overlays the chat; switching to another view (which cannot
@@ -6536,7 +6698,8 @@ mod tests {
         use super::{slash_lookup, slash_matches, Editor, SLASH};
         let mut e = Editor::new();
         e.set_text("/qu");
-        let names: Vec<&str> = slash_matches(&e)
+        let state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let names: Vec<&str> = slash_matches(&e, &state)
             .into_iter()
             .map(|i| SLASH[i].name)
             .collect();
@@ -6895,7 +7058,7 @@ mod tests {
         editor.set_text("/");
         let mut turn = None;
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        let count = super::slash_matches(&editor).len();
+        let count = super::slash_matches(&editor, &state).len();
         assert!(count > 1, "several commands match a bare slash");
         ui.slash_sel = 0;
         super::on_chat_key(
@@ -7772,7 +7935,7 @@ mod tests {
         );
         // The toggle is a chip in the row, and clicking it hides the ticker.
         assert!(
-            ui.chips
+            ui.header_chips
                 .iter()
                 .any(|(chip, _)| matches!(chip, super::Chip::Tape)),
             "the toggle should be clickable"
@@ -7781,6 +7944,37 @@ mod tests {
         let off = frame(&mut ui, &mut state, 78, 10)[0].clone();
         assert!(!off.contains("512.5"), "collapsed: {off}");
         crate::ai::settings::set_tape(true);
+    }
+
+    /// A very large ticker is paged in the title bar. Its hidden entries must not
+    /// leave hit targets in the transcript or the blank separator beneath it.
+    #[test]
+    fn a_large_ticker_keeps_all_of_its_click_targets_in_the_title_bar() {
+        let _guard = TAPE_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        crate::ai::settings::set_tape(true);
+        let mut ui = super::Ui::new();
+        ui.tape = (0..100).map(|i| format!("SYM{i}.US")).collect();
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+
+        let _ = frame(&mut ui, &mut state, 100, 24);
+
+        assert!(ui
+            .header_chips
+            .iter()
+            .any(|(chip, _)| matches!(chip, super::Chip::Symbol(_))));
+        assert!(ui.header_chips.iter().all(|(_, rect)| {
+            rect.y == ui.title_bar.y
+                && rect.x >= ui.title_bar.x
+                && rect.right() <= ui.title_bar.right()
+        }));
+        assert!(
+            ui.chips
+                .iter()
+                .all(|(chip, _)| !matches!(chip, super::Chip::Symbol(_))),
+            "hidden ticker symbols must not be registered as chat-body targets"
+        );
     }
 
     /// A bare ticker the server confirmed is a link, priced like a dotted one,
@@ -8093,7 +8287,7 @@ mod tests {
         let rows = frame(&mut ui, &mut state, 72, 12);
         for symbol in ["700.HK", "TSLA.US"] {
             let (_, rect) = ui
-                .chips
+                .header_chips
                 .iter()
                 .find(|(chip, _)| matches!(chip, super::Chip::Symbol(s) if s == symbol))
                 .unwrap_or_else(|| panic!("no click target for {symbol}"));
@@ -8128,8 +8322,11 @@ mod tests {
             ui.close_button.is_none(),
             "the panel carries no close button"
         );
-        // The way out to the web is an icon on the frame, not a line of prose.
-        assert!(text.contains(super::WEB_ICON), "{text}");
+        // The first inner row is the symbol plus an explicit web action.
+        assert!(
+            text.contains(&format!("{} More", super::WEB_ICON)),
+            "{text}"
+        );
         // Content-sized: nowhere near the 100 columns available. Measured by
         // trimming the drawer's own top border out of its row — it is right-aligned,
         // so both the leading gap and any trailing space have to go.
@@ -8139,19 +8336,76 @@ mod tests {
             .expect("the top border carries the icon");
         let widest = unicode_width::UnicodeWidthStr::width(top.trim());
         assert!(widest < 80, "sized to content, got {widest} of 100");
-        // A drawer: it hangs from the top of the transcript rather than floating in
-        // the middle, so its top border is one of the first rows, not a centred one.
-        let top_row = rows
+        let header_row = rows
             .iter()
             .position(|r| r.contains(super::WEB_ICON))
-            .expect("the drawer is drawn");
+            .expect("the inner header is drawn");
         assert!(
-            top_row <= 2,
-            "the drawer drops from the top, at row {top_row}"
+            header_row <= 3,
+            "the drawer drops from the top, with its inner header at row {header_row}"
         );
-        // The web link is a button, positioned on the top border.
+        assert!(rows[header_row].contains("$SPCX.US"));
+        assert!(rows[header_row + 1].contains("SpaceX"));
+        // The web link is a button on the first row inside the border.
         let button = ui.open_button.expect("the link should be clickable");
-        assert!(button.height == 1 && button.width > 0);
+        assert!(button.height == 1 && button.width > 0 && button.y == header_row as u16);
+        let name = super::card_lines(ui.quotes.get("SPCX.US").unwrap(), &[], None);
+        assert_eq!(
+            name[0].spans[0].style.fg,
+            Some(ratatui::style::Color::DarkGray)
+        );
+    }
+
+    #[test]
+    fn quote_pagination_is_a_pair_of_buttons_on_the_bottom_border() {
+        let mut ui = super::Ui::new();
+        ui.tape = vec!["AAPL.US".into(), "NVDA.US".into(), "TSLA.US".into()];
+        ui.quotes.insert(
+            "NVDA.US".into(),
+            sample_card("NVDA.US", "NVIDIA", "182.4", "+3.75", "+2.10%", 1),
+        );
+        ui.quote_panel = Some("NVDA.US".into());
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+
+        let rows = frame(&mut ui, &mut state, 100, 24);
+        let prev = ui.prev_button.expect("previous button");
+        let next = ui.next_button.expect("next button");
+        assert_eq!(prev.width, 3);
+        assert_eq!(next.width, 3);
+        assert_eq!(prev.y, next.y);
+        assert_eq!(next.x, prev.x + 4, "one-cell gap between buttons");
+        assert!(
+            rows[prev.y as usize].contains("[<] [>]"),
+            "pagination belongs on the last row inside the border: {:?}",
+            rows[prev.y as usize]
+        );
+        assert!(
+            rows[(prev.y + 1) as usize].contains('└'),
+            "the bottom border remains intact"
+        );
+    }
+
+    #[test]
+    fn an_inline_quote_popover_opens_near_the_clicked_row() {
+        let mut ui = super::Ui::new();
+        ui.quote_anchor_x = Some(12);
+        ui.quote_anchor_y = Some(7);
+        ui.quotes.insert(
+            "NVDA.US".into(),
+            sample_card("NVDA.US", "NVIDIA", "182.4", "+3.75", "+2.10%", 1),
+        );
+        ui.quote_panel = Some("NVDA.US".into());
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let rows = frame(&mut ui, &mut state, 100, 30);
+        let top = rows
+            .iter()
+            .position(|row| row.contains('┌'))
+            .expect("panel");
+        assert_eq!(top, 8, "the panel starts below the clicked row");
+        assert!(
+            !rows[7].contains('│'),
+            "the clicked text row must remain unobscured"
+        );
     }
 
     /// The drawer opens at a fixed height and anchors under the security that was
@@ -8398,7 +8652,7 @@ mod tests {
         assert_eq!(samples.len(), 3, "every example is clickable: {samples:?}");
         // And the badge opens Longbridge AI on the web.
         assert!(
-            ui.chips
+            ui.header_chips
                 .iter()
                 .any(|(chip, _)| matches!(chip, super::Chip::Brand)),
             "the badge should be a link"
@@ -8630,7 +8884,7 @@ mod tests {
         let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
         let rows = frame(&mut ui, &mut state, 76, 12);
         let (_, rect) = ui
-            .chips
+            .header_chips
             .iter()
             .find(|(chip, _)| matches!(chip, super::Chip::Sessions))
             .expect("a control for the conversations");

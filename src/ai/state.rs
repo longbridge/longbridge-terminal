@@ -99,6 +99,10 @@ pub enum ChatEvent {
 #[derive(Default)]
 pub struct ChatState {
     pub agent_uid: String,
+    /// Changes whenever `/new` starts a fresh conversation. Runtime events carry
+    /// the generation they originated in so late events from an aborted turn can
+    /// never be applied to its successor.
+    pub generation: u64,
     pub messages: Vec<Message>,
     /// The assistant answer accumulating during the active turn.
     pub streaming: Option<String>,
@@ -297,6 +301,7 @@ impl ChatState {
     /// Reset to a fresh conversation, keeping the agent but dropping all
     /// messages and conversation identity. Used by the "new chat" action.
     pub fn reset(&mut self, welcome: String) {
+        self.generation = self.generation.wrapping_add(1);
         self.messages = vec![Message::new(Role::System, welcome)];
         self.streaming = None;
         self.status.clear();
