@@ -56,6 +56,8 @@ rust_decimal_macros = "1.32.0"
 scopeguard = "1.2.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
+uuid = { version = "1", features = ["v4"] }
+log = "0.4"
 strum = { version = "0.26", features = ["derive"] }
 tempfile = "3"
 termimad = "0.30"
@@ -71,11 +73,17 @@ tokio = { version = "1.33.0", features = [
 tokio-stream = "0.1"
 tracing = "0.1.40"
 tracing-appender = { version = "0.2.4" }
+# Default features include `tracing-log`, which routes `log` records into
+# tracing. src/analytics/core.rs is shared verbatim with the desktop app and
+# reports through `log`, so that bridge is what keeps its diagnostics -- notably
+# "nothing was sent" -- in the log file. Do not disable default features here
+# without replacing it.
 tracing-subscriber = { version = "0.3.17", features = [
     "env-filter",
     "parking_lot",
     "time",
 ] }
+
 tui-input = "0.15"
 unicode-width = "0.1.11"
 bitflags = "2.10.0"

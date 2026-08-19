@@ -321,6 +321,26 @@ pub fn account_channel() -> Option<String> {
         .map(str::to_owned)
 }
 
+/// Read the logged-in user's member id from the local access token.
+///
+/// Decoded from the token rather than fetched, so callers pay no network round
+/// trip and need no initialised `OpenAPI` context — which is what makes it usable
+/// from a one-shot command.
+///
+/// The claim's spelling is not guaranteed across token versions, so several are
+/// tried. `None` means signed out, or a token that carries no member id; both
+/// are ordinary, and callers are expected to carry on without one.
+pub fn member_id() -> Option<String> {
+    let full = crate::secure_storage::EncryptedFileTokenStorage::load_full(&effective_client_id())?;
+    let claims = decode_jwt_payload(full["access_token"].as_str()?)?;
+    let sub_str = claims["sub"].as_str()?;
+    let sub: serde_json::Value = serde_json::from_str(sub_str).ok()?;
+    ["member_id", "memberId", "uid", "user_id"]
+        .iter()
+        .find_map(|key| sub[*key].as_str().filter(|value| !value.is_empty()))
+        .map(str::to_owned)
+}
+
 /// [`account_channel`] with a fallback to [`DEFAULT_ACCOUNT_CHANNEL`].
 pub fn account_channel_or_default() -> String {
     account_channel().unwrap_or_else(|| DEFAULT_ACCOUNT_CHANNEL.to_owned())

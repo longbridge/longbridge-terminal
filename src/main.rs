@@ -4,6 +4,9 @@ use std::io::Write;
 use std::time::Instant;
 
 pub mod ai;
+/// Sensors Analytics. `analytics::core` is shared verbatim with the desktop
+/// app; everything terminal-specific lives beside it in `analytics/mod.rs`.
+pub mod analytics;
 pub mod auth;
 pub mod cli;
 pub mod data;
@@ -144,6 +147,24 @@ fn option_quote_permission_guidance(
     )
 }
 
+/// The subcommand the user typed, matched against the names clap declares.
+///
+/// Checked against that list rather than taken as "the first bare argument":
+/// a global option's value (`--lang zh`) is also bare, and would otherwise be
+/// reported as a command that does not exist. Anything unrecognised — a typo,
+/// an alias — reports as `unknown` rather than leaking whatever was typed.
+fn invoked_subcommand() -> String {
+    use clap::CommandFactory;
+    let known: Vec<String> = cli::Cli::command()
+        .get_subcommands()
+        .map(|sub| sub.get_name().to_owned())
+        .collect();
+    std::env::args()
+        .skip(1)
+        .find(|arg| known.contains(arg))
+        .unwrap_or_else(|| "unknown".to_owned())
+}
+
 #[tokio::main]
 async fn main() {
     match cli::schema::handle_schema_args(std::env::args_os()) {
@@ -212,6 +233,27 @@ async fn main() {
     // Show release notes URL once after a version change (e.g. brew upgrade, manual install).
     update::check_and_show_release_notes();
 
+    // Armed before the dispatch, not inside it: several commands (auth, tui, ai,
+    // completion, acp) have match arms of their own, so anything wired into the
+    // catch-all arm would silently miss them — which it did, until a run of
+    // `auth status` produced no event at all.
+    //
+    // Before the OpenAPI context too: a command that fails to authenticate is
+    // exactly the kind worth recording.
+    analytics::init(match &cli.command {
+        Some(cli::Commands::Tui) => analytics::Shape::Tui,
+        _ => analytics::Shape::Command,
+    });
+    analytics::install_crash_hook();
+    if cli.command.is_some() {
+        // The subcommand name only. Arguments carry symbols, account numbers
+        // and order details, none of which belong in analytics.
+        analytics::track(
+            analytics::event::COMMAND,
+            serde_json::json!({ "command": invoked_subcommand() }),
+        );
+    }
+
     match cli.command {
         None => {
             // No subcommand: print help and exit
@@ -222,6 +264,7 @@ async fn main() {
 
         Some(cli::Commands::Tui) => {
             tracing::info!("App started");
+            analytics::track(analytics::event::TUI_LAUNCH, serde_json::json!({}));
             let (quote_receiver, using_api_key, _) = match openapi::init_contexts().await {
                 Ok(r) => r,
                 Err(e) => {
@@ -237,6 +280,9 @@ async fn main() {
 
             let hook = std::panic::take_hook();
             std::panic::set_hook(Box::new(move |info| {
+                // Recorded before the terminal is restored, so a panic during
+                // the restore itself still leaves a report for the next run.
+                analytics::note_crash(&info.to_string());
                 Terminal::exit_full_screen();
                 hook(info);
             }));
@@ -247,6 +293,10 @@ async fn main() {
             Terminal::enter_full_screen();
             tui::app::run(Args { logout: false }, quote_receiver).await;
             Terminal::exit_full_screen();
+            // The TUI outlives its own requests while running, but its last
+            // ones are raised on the way out — after this point the runtime
+            // goes away and anything unsent goes with it.
+            analytics::flush().await;
             return;
         }
 
@@ -267,6 +317,12 @@ async fn main() {
                 Ok((rx, _, _)) => Some(Box::pin(rx)),
                 Err(_) => None,
             };
+
+            // Reported after the contexts are built, because whether the chat
+            // opened signed in is the interesting half: it opens either way, and
+            // a reader who arrives without a token behaves nothing like one who
+            // arrives with one.
+            ai::analytics::launch(&agent, quote_receiver.is_some());
 
             let hook = std::panic::take_hook();
             std::panic::set_hook(Box::new(move |info| {
@@ -294,6 +350,11 @@ async fn main() {
                 Ok(None) => {}
                 Err(e) => eprintln!("Error: {e}"),
             }
+            // This arm returns rather than falling through to the flush at the
+            // end of `main`, so it has to flush for itself. Without this the
+            // chat's own events — including the last turn of the session — were
+            // cancelled with the runtime and never sent.
+            analytics::flush().await;
             return;
         }
 
@@ -463,6 +524,10 @@ async fn main() {
                 Ok((_, using_api_key, http_url)) => (using_api_key, http_url),
                 Err(e) => {
                     eprintln!("Authentication failed: {e}");
+                    // Flushed before exiting: a failure to authenticate is
+                    // exactly the kind of run worth knowing about, and
+                    // `process::exit` gives background tasks no chance to run.
+                    analytics::flush().await;
                     std::process::exit(1);
                 }
             };
@@ -471,6 +536,7 @@ async fn main() {
             }
             if let Err(e) = cli::dispatch(cmd, &cli.format, cli.verbose).await {
                 print_cli_error(&e, using_api_key);
+                analytics::flush().await;
                 std::process::exit(1);
             }
             if let Some(t) = start {
@@ -481,6 +547,11 @@ async fn main() {
     }
 
     update::notify_if_update_available();
+
+    // Every path that reaches here is about to return from `main`, which drops
+    // the runtime and cancels anything still sending. The exits above flush on
+    // their own; this covers the rest.
+    analytics::flush().await;
 }
 
 #[cfg(test)]
