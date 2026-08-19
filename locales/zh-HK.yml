@@ -90,9 +90,9 @@ Keyboard.Group: "分組 [g]"
 Keyboard.Layout: "佈局 [t]"
 Keyboard.News: "資訊 [n]"
 Keyboard.NewsOpen: "打開 [o]"
-Keyboard.Settings: "設定 [^,]"
-settings.title: " 設定 "
-settings.hint: "↑↓ 移動 · 空格/回車 切換 · Esc 關閉"
+Keyboard.Settings: "設定 [,]"
+settings.title: "設定"
+settings.hint: "↑↓ 移動 · ←→ 切換 · Esc 關閉"
 settings.stock_color.label: "漲跌顏色"
 settings.stock_color.description: "用哪種顏色表示上漲。"
 settings.stock_color.red_up: "紅漲綠跌"
@@ -247,6 +247,7 @@ HelpTips: |-
     q, ESC                          關閉當前窗口，或返回上一個 Tab
     Enter                           選擇或確定
     R                               手動刷新行情數據
+    ,                               打開設定
 
   - 個股詳情 -----------------------------------------------------------------------------
 
@@ -258,7 +259,9 @@ HelpTips: |-
 
     G                               切換關注列表分組
     t                               展示或隱藏個股詳情視圖
-    n                               切換新聞視圖（在個股詳情面板中）
+    n                               切換新聞列表，也可點擊行情面板邊框上的 News [n]
+    ESC                             退出新聞列表，也可點擊邊框上的 Back [esc]
+    o, ↗                            在 longbridge.com 開啟選中的文章
     j, Up Arrow, k, Down Arrow      上下切換關注列表項目 / 滾動新聞
 
   - 資產總覽 -----------------------------------------------------------------------------
@@ -266,16 +269,26 @@ HelpTips: |-
     a                               多賬户之前切換（如有）
     c                               切換展示幣種
     j, Up Arrow, k, Down Arrow      上下切換持倉列表或其他列表的選中項
+    Enter, 點擊                     展示詳情面板（ESC 關閉）
+
+  - 訂單 ---------------------------------------------------------------------------------
+
+    c                               撤銷選中的訂單
+    m                               修改選中的訂單
+    f                               設置歷史訂單日期範圍
+    TAB                             在今日與歷史訂單之間切換
+    點擊                            展示詳情面板（ESC 關閉）
 
 Tab:
   Quote: "行情"
-  News: "新聞 [n]"
+  News: "新聞"
 News:
   Title: "新聞"
+  BackKey: "返回 [esc]"
   Empty: "暫無新聞"
   Detail: "文章"
   DetailEmpty: "選擇一篇文章來閱讀"
-  DetailHint: "↑↓ 切換文章  PgUp/PgDn 捲動  o 瀏覽器開啟  q 返回"
+  DetailHint: "↑↓ 切換文章 · PgUp/PgDn 或滾輪 捲動 · o / ↗ 瀏覽器開啟 · q 返回"
   ErrorContent: "讀取內容失敗：%{error}"
   ErrorHttp: "載入新聞失敗（HTTP %{status}）"
   ErrorFetch: "載入新聞失敗：%{error}"
@@ -308,6 +321,37 @@ Orders.DateFilterApply: "確認"
 Orders.StartDate: "開始"
 Orders.EndDate: "結束"
 Orders.DateHint: "格式：YYYY-MM-DD"
+Detail.Title: "詳情"
+Detail.Position: "持倉"
+Detail.Performance: "盈虧"
+Detail.Order: "訂單"
+Detail.Execution: "成交"
+Detail.Timing: "時間"
+Detail.CloseKey: "[esc] 關閉"
+Detail.Quantity: "持倉數量"
+Detail.Available: "可用數量"
+Detail.CostPrice: "成本價"
+Detail.LastPrice: "最新價"
+Detail.MarketValue: "市值"
+Detail.ValueUSD: "市值（美元）"
+Detail.PrevClose: "昨收"
+Detail.IntradayPL: "當日盈虧"
+Detail.IntradayPLPct: "當日盈虧%"
+Detail.TotalPL: "浮動盈虧"
+Detail.TotalPLPct: "浮動盈虧%"
+Detail.Currency: "幣種"
+Detail.FilledQty: "成交數量"
+Detail.FilledPrice: "成交價"
+Detail.LastDone: "最新價"
+Detail.TriggerPrice: "觸發價"
+Detail.TimeInForce: "有效期"
+Detail.SubmittedAt: "提交時間"
+Detail.UpdatedAt: "更新時間"
+Detail.OrderId: "訂單號"
+Detail.Remark: "備註"
+Detail.CancelKey: "[c] 撤單"
+Detail.ModifyKey: "[m] 改單"
+Detail.QuoteKey: "[⏎] 行情"
 Trade.Buy: "買入"
 Trade.Sell: "賣出"
 Trade.BuyKey: "[b] 買入"

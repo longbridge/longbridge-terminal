@@ -127,6 +127,7 @@ pub fn render_stock(
             &stock.0,
             KLINE_TYPE.load(Ordering::Relaxed),
             KLINE_INDEX.load(Ordering::Relaxed),
+            false,
         );
         crate::tui::views::popup::render(
             frame,
@@ -157,12 +158,18 @@ pub fn render_stock(
     });
 }
 
+/// Draw the quote panel.
+///
+/// `news_button` offers the `News [n]` affordance on the panel's border. It is
+/// off on the full-screen stock view, where news has no binding — an
+/// affordance that does nothing is worse than none.
 pub(crate) fn stock_detail(
     frame: &mut Frame,
     rect: Rect,
     counter: &Counter,
     kline_type: KlineType,
     selected: usize,
+    news_button: bool,
 ) {
     fn price_spans(data: &crate::data::QuoteData, counter: &Counter) -> Vec<Span<'static>> {
         // Prefer last_done, fallback to prev_close if not available
@@ -246,11 +253,29 @@ pub(crate) fn stock_detail(
     )];
     titles.extend(price_spans(&stock.quote, counter));
 
-    let detail_container = Block::default()
+    // `News [n]` rides the panel's own border rather than a tab strip above it:
+    // one row saved, and the control sits on the thing it acts on.
+    let mut detail_container = Block::default()
         .title(Line::from(titles))
         .borders(Borders::ALL)
         .border_type(ratatui::widgets::BorderType::Rounded)
         .border_style(styles::border());
+
+    // Rewritten every frame, so a hidden button cannot keep a live click area.
+    let mut news_rect = Rect::default();
+    if news_button {
+        let label = format!(" {} ", t!("Keyboard.News"));
+        let width = unicode_width::UnicodeWidthStr::width(label.as_str()) as u16;
+        detail_container = detail_container
+            .title_top(Line::from(Span::styled(label, styles::hint_key())).right_aligned());
+        news_rect = Rect {
+            x: rect.x + rect.width.saturating_sub(1 + width),
+            y: rect.y,
+            width: width.min(rect.width),
+            height: 1,
+        };
+    }
+    *crate::tui::mouse::NEWS_OPEN_RECT.lock().expect("poison") = news_rect;
 
     // draw border
     frame.render_widget(detail_container, rect);

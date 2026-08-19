@@ -22,16 +22,8 @@ impl ChartRenderer {
         control::set_virtual_terminal(true).unwrap();
 
         ChartRenderer {
-            bullish_color: Color::TrueColor {
-                r: 52,
-                g: 208,
-                b: 88,
-            },
-            bearish_color: Color::TrueColor {
-                r: 234,
-                g: 74,
-                b: 90,
-            },
+            bullish_color: Color::BrightGreen,
+            bearish_color: Color::BrightRed,
         }
     }
 

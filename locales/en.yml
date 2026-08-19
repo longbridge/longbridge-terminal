@@ -90,9 +90,9 @@ Keyboard.Group: "Group [g]"
 Keyboard.Layout: "Layout [t]"
 Keyboard.News: "News [n]"
 Keyboard.NewsOpen: "Open [o]"
-Keyboard.Settings: "Settings [^,]"
-settings.title: " Settings "
-settings.hint: "↑↓ move · Space/Enter change · Esc close"
+Keyboard.Settings: "Settings [,]"
+settings.title: "Settings"
+settings.hint: "↑↓ move · ←→ change · Esc close"
 settings.stock_color.label: "Up/Down colors"
 settings.stock_color.description: "Which color means a rising price."
 settings.stock_color.red_up: "Red up"
@@ -247,6 +247,7 @@ HelpTips: |-
     q, ESC                          Dismiss current window, or go back to last tab
     Enter                           Perform action for the current selection
     R                               Refresh data manually
+    ,                               Open settings
 
   - Stock Detail -----------------------------------------------------------------------------
 
@@ -258,7 +259,9 @@ HelpTips: |-
 
     G                               Switch watchlist group
     t                               Toggle stock detail view
-    n                               Toggle news view (in stock detail panel)
+    n                               Toggle the news list — or click News [n] on the quote panel's border
+    ESC                             Leave the news list — or click Back [esc] on its border
+    o, ↗                            Open the selected article on longbridge.com
     j, Up Arrow, k, Down Arrow      Switch watching selection / scroll news
 
   - Portfolio  -------------------------------------------------------------------------------
@@ -266,16 +269,26 @@ HelpTips: |-
     a                               Switch account
     c                               Switch currency
     j, Up Arrow, k, Down Arrow      Switch holding selection
+    Enter, click                    Show the detail panel (ESC closes it)
+
+  - Orders -----------------------------------------------------------------------------------
+
+    c                               Cancel the selected order
+    m                               Modify the selected order
+    f                               Set the history date range
+    TAB                             Switch between today and history
+    click                           Show the detail panel (ESC closes it)
 
 Tab:
   Quote: "Quote"
-  News: "News [n]"
+  News: "News"
 News:
   Title: "News"
+  BackKey: "Back [esc]"
   Empty: "No news available"
   Detail: "Article"
   DetailEmpty: "Select an article to read"
-  DetailHint: "↑↓ switch article  PgUp/PgDn scroll  o browser  q back"
+  DetailHint: "↑↓ article · PgUp/PgDn or wheel scroll · o / ↗ open · q back"
   ErrorContent: "Failed to read content: %{error}"
   ErrorHttp: "Failed to load news (HTTP %{status})"
   ErrorFetch: "Failed to load news: %{error}"
@@ -330,6 +343,37 @@ Orders.DateFilterApply: "apply"
 Orders.StartDate: "Start"
 Orders.EndDate: "End  "
 Orders.DateHint: "Format: YYYY-MM-DD"
+Detail.Title: "Detail"
+Detail.Position: "Position"
+Detail.Performance: "Performance"
+Detail.Order: "Order"
+Detail.Execution: "Execution"
+Detail.Timing: "Timing"
+Detail.CloseKey: "[esc] Close"
+Detail.Quantity: "Quantity"
+Detail.Available: "Available"
+Detail.CostPrice: "Cost Price"
+Detail.LastPrice: "Last Price"
+Detail.MarketValue: "Market Value"
+Detail.ValueUSD: "Value (USD)"
+Detail.PrevClose: "Prev Close"
+Detail.IntradayPL: "Intraday P/L"
+Detail.IntradayPLPct: "Intraday P/L %"
+Detail.TotalPL: "Total P/L"
+Detail.TotalPLPct: "Total P/L %"
+Detail.Currency: "Currency"
+Detail.FilledQty: "Filled Qty"
+Detail.FilledPrice: "Filled Price"
+Detail.LastDone: "Last Done"
+Detail.TriggerPrice: "Trigger Price"
+Detail.TimeInForce: "Time in Force"
+Detail.SubmittedAt: "Submitted"
+Detail.UpdatedAt: "Updated"
+Detail.OrderId: "Order ID"
+Detail.Remark: "Remark"
+Detail.CancelKey: "[c] Cancel"
+Detail.ModifyKey: "[m] Modify"
+Detail.QuoteKey: "[⏎] Quote"
 CancelOrder.Title: "Cancel Order"
 CancelOrder.Order: "Order"
 CancelOrder.Symbol: "Symbol"

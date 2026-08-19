@@ -25,16 +25,17 @@ fn braille_char(bits: u8) -> char {
     char::from_u32(0x2800 + u32::from(bits)).unwrap_or(' ')
 }
 
-/// Dim the base color by `factor` (0.0 = black, 1.0 = original). Used for the
-/// gradient area fill below the price line.
-fn dim_color(base: Color, factor: f64) -> Color {
-    match base {
-        Color::TrueColor { r, g, b } => Color::TrueColor {
-            r: (f64::from(r) * factor).round() as u8,
-            g: (f64::from(g) * factor).round() as u8,
-            b: (f64::from(b) * factor).round() as u8,
-        },
-        c => c,
+/// Shade block for the area wash, `depth` character rows below the curve.
+///
+/// Shading rather than a blended background colour: a smooth gradient needs
+/// truecolor, which ignores the user's terminal theme. These three blocks
+/// dither the line's own colour at 75 / 50 / 25% coverage, so the wash stays on
+/// the terminal palette and still reads as densest right under the curve.
+fn shade_char(depth: usize) -> char {
+    match depth {
+        0..=1 => '\u{2593}', // ▓
+        2..=4 => '\u{2592}', // ▒
+        _ => '\u{2591}',     // ░
     }
 }
 
@@ -55,26 +56,10 @@ pub struct LineChart {
 impl LineChart {
     pub fn new_with_size(candles: Vec<Candle>, size: (u16, u16)) -> Self {
         Self {
-            bullish_color: Color::TrueColor {
-                r: 52,
-                g: 208,
-                b: 88,
-            },
-            bearish_color: Color::TrueColor {
-                r: 234,
-                g: 74,
-                b: 90,
-            },
-            vol_bullish_color: Color::TrueColor {
-                r: 52,
-                g: 208,
-                b: 88,
-            },
-            vol_bearish_color: Color::TrueColor {
-                r: 234,
-                g: 74,
-                b: 90,
-            },
+            bullish_color: Color::BrightGreen,
+            bearish_color: Color::BrightRed,
+            vol_bullish_color: Color::BrightGreen,
+            vol_bearish_color: Color::BrightRed,
             candles,
             size,
         }
@@ -138,10 +123,15 @@ impl LineChart {
             ((1.0 - norm) * (px_h - 1) as f64).round() as usize
         };
 
-        // line_bits: braille dots for the price line strokes
-        // fill_bits: braille dots for the gradient area below the line
+        // The price curve keeps braille's 2x4 resolution. The area under it does
+        // NOT: braille can only set a foreground, so a braille "fill" is a dot
+        // texture, which is what made this chart read as stippled rather than
+        // filled. The area is drawn with shade blocks instead — full-cell,
+        // evenly dithered, and in the line's own terminal colour.
         let mut line_bits = vec![vec![0u8; chart_char_width]; chart_char_height];
-        let mut fill_bits = vec![vec![0u8; chart_char_width]; chart_char_height];
+        // The character row each column's wash starts at; `chart_char_height`
+        // means the column has no wash at all.
+        let mut fill_from = vec![chart_char_height; chart_char_width];
 
         if px_w > 0 && px_h > 1 {
             let step = n as f64 / px_w as f64;
@@ -151,29 +141,23 @@ impl LineChart {
                 let i1 = (((px_x + 1) as f64 * step) as usize).min(n - 1);
                 let y0 = px_y(close_prices[i0]);
                 let y1 = px_y(close_prices[i1]);
+                let col = px_x / 2;
+                let dx = px_x % 2;
 
                 // Fill vertical stroke between adjacent samples to avoid gaps
                 for y in y0.min(y1)..=y0.max(y1) {
                     let char_row = y / 4;
                     let dy = y % 4;
-                    let col = px_x / 2;
-                    let dx = px_x % 2;
                     if char_row < chart_char_height {
                         line_bits[char_row][col] |= dot_bit(dx, dy);
                     }
                 }
 
-                // Gradient fill: all pixels below the line stroke
-                let y_below = y0.max(y1) + 1;
-                for y in y_below..px_h {
-                    let char_row = y / 4;
-                    let dy = y % 4;
-                    let col = px_x / 2;
-                    let dx = px_x % 2;
-                    if char_row < chart_char_height {
-                        fill_bits[char_row][col] |= dot_bit(dx, dy);
-                    }
-                }
+                // The wash starts under the lowest dot of the stroke. A cell
+                // spans two pixel columns, so the shallower of the two wins and
+                // the wash meets the curve instead of notching it.
+                let start = (y0.max(y1) + 1) / 4;
+                fill_from[col] = fill_from[col].min(start.min(chart_char_height));
             }
         }
 
@@ -185,7 +169,7 @@ impl LineChart {
 
         let mut output = String::new();
 
-        for (row, (line_row, fill_row)) in line_bits.iter().zip(fill_bits.iter()).enumerate() {
+        for (row, line_row) in line_bits.iter().enumerate() {
             output.push('\n');
 
             // Y-axis tick every 4 character rows (from bottom), matching YAxis convention
@@ -205,33 +189,32 @@ impl LineChart {
                 output += &y_axis_empty;
             }
 
-            for (lb, fb) in line_row.iter().zip(fill_row.iter()) {
-                let combined = lb | fb;
-                if combined == 0 {
-                    output.push(' ');
-                } else if *lb != 0 {
-                    // Cell contains part of the price line — render at full line color
-                    output += &braille_char(combined)
+            for (col, lb) in line_row.iter().enumerate() {
+                if *lb != 0 {
+                    // The curve wins the cell.
+                    output += &braille_char(*lb).to_string().color(line_color).to_string();
+                } else if row >= fill_from[col] {
+                    output += &shade_char(row - fill_from[col])
                         .to_string()
                         .color(line_color)
                         .to_string();
                 } else {
-                    // Cell is in the fill area — gradient: bright near line, dim at bottom
-                    let t = row as f64 / chart_char_height.max(1) as f64;
-                    let factor = 0.55 - 0.35 * t; // ~55% at top, ~20% at bottom
-                    let fill_color = dim_color(line_color, factor);
-                    output += &braille_char(*fb).to_string().color(fill_color).to_string();
+                    output.push(' ');
                 }
             }
         }
 
-        // Volume pane: braille-filled bars from bottom up, colored per candle direction
+        // Volume pane: half-block bars from the bottom up, coloured per candle
+        // direction. Half blocks rather than braille so neighbouring bars form
+        // one continuous mass — braille glyphs leave a gap at every cell edge,
+        // which reads as a dotted texture instead of a bar.
         if has_volume && vol_height > 0 {
             let max_vol = candle_set.max_volume;
             let vol_h_usize = vol_height as usize;
-            let vol_px_h = vol_h_usize * 4;
-            let mut vol_bits = vec![vec![0u8; chart_char_width]; vol_h_usize];
-            let mut vol_is_bullish = vec![vec![true; chart_char_width]; vol_h_usize];
+            let vol_half_h = vol_h_usize * 2;
+            // Half-cell rows filled per column, and that column's direction.
+            let mut vol_fill = vec![0usize; chart_char_width];
+            let mut vol_is_bullish = vec![true; chart_char_width];
 
             if max_vol > 0.0 && px_w > 0 {
                 let step = n as f64 / px_w as f64;
@@ -243,39 +226,38 @@ impl LineChart {
                     if vol <= 0.0 {
                         continue;
                     }
-                    let is_bullish = candle.close >= candle.open;
-                    let fill =
-                        ((vol / max_vol) * (vol_px_h.saturating_sub(1)) as f64).round() as usize;
-
                     let col = px_x / 2;
-                    let dx = px_x % 2;
-
-                    // Fill from the bottom of the volume pane upward
-                    for py in 0..=fill {
-                        let y_from_top = vol_px_h - 1 - py;
-                        let char_row = y_from_top / 4;
-                        let dy = y_from_top % 4;
-                        if char_row < vol_h_usize {
-                            vol_bits[char_row][col] |= dot_bit(dx, dy);
-                            vol_is_bullish[char_row][col] = is_bullish;
-                        }
+                    // A bar at least one half-cell tall, so a small but real
+                    // volume never vanishes entirely.
+                    let filled = (((vol / max_vol) * vol_half_h as f64).round() as usize)
+                        .clamp(1, vol_half_h);
+                    if filled >= vol_fill[col] {
+                        vol_fill[col] = filled;
+                        vol_is_bullish[col] = candle.close >= candle.open;
                     }
                 }
             }
 
-            for (vol_row, vol_bull_row) in vol_bits.iter().zip(vol_is_bullish.iter()) {
+            for row in 0..vol_h_usize {
                 output.push('\n');
                 output += &y_axis_empty;
-                for (b, is_bull) in vol_row.iter().zip(vol_bull_row.iter()) {
-                    if *b == 0 {
-                        output.push(' ');
+                // Half-cell rows counted from the bottom of the pane.
+                let top_from_bottom = (vol_h_usize - row) * 2 - 1;
+                let bottom_from_bottom = (vol_h_usize - row - 1) * 2;
+                for (col, filled) in vol_fill.iter().enumerate() {
+                    let color = if vol_is_bullish[col] {
+                        self.vol_bullish_color
                     } else {
-                        let color = if *is_bull {
-                            self.vol_bullish_color
-                        } else {
-                            self.vol_bearish_color
-                        };
-                        output += &braille_char(*b).to_string().color(color).to_string();
+                        self.vol_bearish_color
+                    };
+                    match (*filled > top_from_bottom, *filled > bottom_from_bottom) {
+                        (true, _) => {
+                            output += &"\u{2588}".color(color).to_string();
+                        }
+                        (false, true) => {
+                            output += &"\u{2584}".color(color).to_string();
+                        }
+                        (false, false) => output.push(' '),
                     }
                 }
             }
@@ -286,37 +268,38 @@ impl LineChart {
         output += &"─".repeat(chart_char_width + YAxis::WIDTH as usize);
         output.push('\n');
 
-        let arrow = if candle_set.variation > 0.0 {
-            "↖"
+        // Rise and fall follow the caller's configured convention — under
+        // "red up" a gain is red — so nothing here may hardcode green/red.
+        let (arrow, var_color) = if candle_set.variation > 0.0 {
+            ("\u{2196}", self.bullish_color)
         } else {
-            "↙"
-        };
-        let var_color = if candle_set.variation > 0.0 {
-            "green"
-        } else {
-            "red"
+            ("\u{2199}", self.bearish_color)
         };
 
         let avg_str = format!("{:.2}", candle_set.average);
-        let avg_colored = if candle_set.last_price > candle_set.average {
-            avg_str.bold().red()
-        } else if candle_set.last_price < candle_set.average {
-            avg_str.bold().green()
-        } else {
-            avg_str.bold().yellow()
+        let avg_colored = match candle_set.last_price {
+            lp if lp > candle_set.average => avg_str.bold().color(self.bullish_color),
+            lp if lp < candle_set.average => avg_str.bold().color(self.bearish_color),
+            _ => avg_str.bold().yellow(),
         }
         .to_string();
 
         output += &format!(
             "Price: {price} | Highest: {high} | Lowest: {low} | Var.: {var} | Avg.: {avg} │ Cum. Vol: {vol}",
-            price = format!("{:.2}", candle_set.last_price).green().bold(),
-            high = format!("{:.2}", candle_set.max_price).green().bold(),
-            low = format!("{:.2}", candle_set.min_price).red().bold(),
+            price = format!("{:.2}", candle_set.last_price)
+                .color(line_color)
+                .bold(),
+            high = format!("{:.2}", candle_set.max_price)
+                .color(self.bullish_color)
+                .bold(),
+            low = format!("{:.2}", candle_set.min_price)
+                .color(self.bearish_color)
+                .bold(),
             var = format!("{arrow} {:>+.2}%", candle_set.variation)
                 .color(var_color)
                 .bold(),
             avg = avg_colored,
-            vol = format!("{:.0}", candle_set.cumulative_volume).green().bold(),
+            vol = format!("{:.0}", candle_set.cumulative_volume).bold(),
         );
 
         output

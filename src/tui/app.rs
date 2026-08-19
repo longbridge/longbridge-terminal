@@ -255,8 +255,7 @@ pub async fn run(
 
                 // Toggle log panel: global shortcut, works even with popups
                 if keymap.lookup(&event, Context::Always) == Some(ActionId::ToggleLog) {
-                    let was_visible = LOG_PANEL_VISIBLE.load(Ordering::Relaxed);
-                    LOG_PANEL_VISIBLE.store(!was_visible, Ordering::Relaxed);
+                    input::toggle_log_panel();
                     render_state.mark_dirty(DirtyFlags::ALL);
                     continue;
                 }
