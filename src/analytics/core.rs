@@ -303,6 +303,35 @@ struct Inner {
     active_since_ms: Mutex<Option<u64>>,
 }
 
+/// Reports what was still unsent when the client went away.
+///
+/// Losing events at exit is the failure this module is most prone to and least
+/// able to show: the request was never made, so nothing appears in the log at
+/// all. This turns that silence into one line.
+///
+/// It fires only when the host actually releases the client. A client parked in
+/// a `static` — an `OnceLock` singleton, which is how both known hosts keep it —
+/// is never dropped at exit, so this is a backstop for hosts that own their
+/// client outright, not a substitute for flushing.
+impl Drop for Inner {
+    fn drop(&mut self) {
+        let in_flight = self.in_flight.load(Ordering::SeqCst);
+        let held = self.deferred.get_mut().map_or(0, |queue| queue.len());
+        let pending = self.pending.get_mut().map_or(0, |queue| queue.len());
+
+        if in_flight > 0 || held > 0 {
+            log::warn!(
+                "[sensors] dropped with {in_flight} request(s) in flight and {held} event(s) \
+                 still held — both are lost. A short-lived process has to flush on every exit \
+                 path, error paths included."
+            );
+        }
+        if pending > 0 {
+            log::warn!("[sensors] dropped with {pending} event(s) awaiting retry — those are lost");
+        }
+    }
+}
+
 /// An event waiting for an identity. Unencoded, because its `distinct_id` is
 /// not knowable yet — which is the whole reason it waits. `occurred_ms` keeps
 /// it on the timeline where it happened rather than where it was released.

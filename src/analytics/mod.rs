@@ -19,10 +19,10 @@
 //! The switch is the build profile, not a flag: nothing to discover, nothing to
 //! keep working across two states.
 //!
-//! # The two process shapes
+//! # The three process shapes
 //!
-//! This binary is both a short-lived CLI and a long-running TUI, and analytics
-//! works differently for each:
+//! This binary is a short-lived CLI, a full-screen TUI, and a set of servers
+//! that stay open, and analytics works differently for each:
 //!
 //! * **A command** (`longbridge static TSLA.US`) outlives none of its own
 //!   requests. Reports run on background tasks, and `#[tokio::main]` cancels
@@ -30,11 +30,16 @@
 //!   (or [`flush`]) before exiting, or its events are simply never sent. There
 //!   is nothing in the log to indicate this: the failure is a request that was
 //!   never made.
-//! * **The TUI** runs long enough to report normally, and is the only shape
-//!   where a heartbeat means anything.
+//! * **The TUI** runs long enough to report normally, and beats.
+//! * **A session** (`ai`, `serve`, `acp`) also stays open and beats, but is
+//!   routinely killed rather than exited, which is why its run event goes out on
+//!   the way in. Counted as a command it would have looked like the fastest
+//!   thing in the product while actually being the longest.
 //!
-//! Both are configured from [`init`], which takes the shape as an argument
-//! rather than guessing.
+//! All three are configured from [`init`], which takes the shape as an argument
+//! rather than guessing. [`Shape`] owns every consequence of the distinction —
+//! whether it beats, when the run event fires, which crash file it claims — so
+//! adding a shape does not mean finding the places that switch on it.
 //!
 //! # When the run event is sent
 //!
@@ -134,17 +139,46 @@ pub enum Shape {
     Command,
     /// The full-screen TUI. Runs long enough for liveness to mean something.
     Tui,
+    /// A session that stays open without owning the screen: `ai`, `serve`,
+    /// `acp`. Beats like the TUI, because the question "how long was it open"
+    /// is the same question — and answering it for `ai` is the whole point of
+    /// telling this shape apart from a command that happens to run long.
+    Session,
 }
 
 impl Shape {
-    /// The `surface` property, and the suffix that keeps the two shapes' crash
-    /// files apart.
+    /// The `surface` property, and the suffix that keeps each shape's crash file
+    /// apart from the others'.
     const fn as_str(self) -> &'static str {
         match self {
             Self::Command => "cli",
             Self::Tui => "tui",
+            Self::Session => "session",
         }
     }
+
+    /// Whether this shape lives long enough for a heartbeat to mean anything.
+    /// A command would arm a timer it never reaches.
+    const fn beats(self) -> bool {
+        matches!(self, Self::Tui | Self::Session)
+    }
+
+    /// Whether the run event goes out on the way in rather than on the way out.
+    ///
+    /// Sessions are killed far more often than they exit, so an exit-time event
+    /// never arrives. Kept here rather than as a second list of subcommands at
+    /// the call site: that list and this one have to agree, and the way to
+    /// guarantee they do is for there to be only one.
+    pub const fn reports_on_entry(self) -> bool {
+        matches!(self, Self::Session)
+    }
+
+    /// Every shape. Declared with its length so that adding a variant without
+    /// listing it here fails to compile — the tests below check properties that
+    /// must hold for *all* shapes, and one that quietly skips the new one is
+    /// worse than no test, since it reads as coverage.
+    #[cfg(test)]
+    const ALL: [Self; 3] = [Self::Command, Self::Tui, Self::Session];
 }
 
 /// How a run ended.
@@ -216,9 +250,15 @@ pub mod event {
 ///
 /// Never fails: a terminal that cannot report is a terminal that still works.
 ///
-/// Does nothing in a debug build — see the module docs.
+/// Does nothing in a debug build, or when the reader has opted out — see the
+/// module docs.
 pub fn init(shape: Shape) {
     if cfg!(debug_assertions) {
+        return;
+    }
+
+    if opted_out() {
+        tracing::debug!("analytics disabled by the environment");
         return;
     }
 
@@ -241,13 +281,10 @@ pub fn init(shape: Shape) {
         base_properties: base_properties(shape),
         // Only the TUI lives long enough to beat. A command would arm a timer
         // it never reaches.
-        heartbeat: match shape {
-            Shape::Tui => Some(Heartbeat {
-                event: event::HEARTBEAT.into(),
-                ..Default::default()
-            }),
-            Shape::Command => None,
-        },
+        heartbeat: shape.beats().then(|| Heartbeat {
+            event: event::HEARTBEAT.into(),
+            ..Default::default()
+        }),
         crash: crash_path(shape).map(|path| Crash {
             path,
             event: event::CRASH.into(),
@@ -445,6 +482,23 @@ const fn platform_type() -> &'static str {
     }
 }
 
+/// Whether the reader has asked not to be measured.
+///
+/// `DO_NOT_TRACK` is the cross-vendor convention (consoledonottrack.com), so a
+/// reader who already sets it for their other tools gets the same answer here
+/// without having to learn a Longbridge-specific name. The second name exists
+/// because the first is broad — someone may want telemetry from everything else
+/// and not from this — and because a release build has no other way to be told:
+/// `cfg!(debug_assertions)` covers contributors, not users.
+///
+/// Any value counts as opting out except an empty one and `0`, matching how the
+/// convention is implemented elsewhere.
+fn opted_out() -> bool {
+    ["DO_NOT_TRACK", "LONGBRIDGE_NO_ANALYTICS"]
+        .iter()
+        .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty() && value != "0"))
+}
+
 /// A stable per-machine id, created on first use.
 ///
 /// Kept beside the `OpenAPI` token rather than in a cache directory: a cache that
@@ -494,24 +548,61 @@ fn analytics_dir() -> Option<PathBuf> {
 mod tests {
     use super::*;
 
-    /// Mixing the two shapes into one breakdown would make both unreadable.
+    /// Mixing the shapes into one breakdown would make each of them unreadable,
+    /// so every shape reports a `surface` and no two report the same one.
     #[test]
     fn each_shape_names_itself() {
-        assert_eq!(
-            base_properties(Shape::Command).get("surface").unwrap(),
-            "cli"
-        );
-        assert_eq!(base_properties(Shape::Tui).get("surface").unwrap(), "tui");
+        let names: Vec<&str> = Shape::ALL
+            .iter()
+            .map(|shape| {
+                let properties = base_properties(*shape);
+                let surface = properties.get("surface").expect("a surface").as_str();
+                assert_eq!(surface, Some(shape.as_str()));
+                shape.as_str()
+            })
+            .collect();
+        let mut unique = names.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), names.len(), "two shapes share a surface");
     }
 
     /// A crash is reported by the next process of the *same* shape, because the
-    /// properties around it come from that process.
+    /// properties around it come from that process. Two shapes sharing a file
+    /// would file each other's panics under the wrong surface.
     #[test]
     fn the_shapes_do_not_share_a_crash_file() {
-        let Some((cli, tui)) = crash_path(Shape::Command).zip(crash_path(Shape::Tui)) else {
-            return; // No home directory in this environment.
-        };
-        assert_ne!(cli, tui);
+        let mut paths: Vec<PathBuf> = Vec::new();
+        for shape in Shape::ALL {
+            let Some(path) = crash_path(shape) else {
+                return; // No home directory in this environment.
+            };
+            paths.push(path);
+        }
+        let count = paths.len();
+        paths.sort_unstable();
+        paths.dedup();
+        assert_eq!(paths.len(), count, "two shapes share a crash file");
+    }
+
+    /// A command would arm a timer it never lives to reach; the shapes that stay
+    /// open are the reason the heartbeat exists. `ai` reporting no heartbeat is
+    /// what made its sessions immeasurable in the first place.
+    #[test]
+    fn the_open_shapes_beat_and_a_command_does_not() {
+        assert!(!Shape::Command.beats());
+        assert!(Shape::Tui.beats());
+        assert!(Shape::Session.beats());
+    }
+
+    /// Only a session reports on entry. A command reporting there could not say
+    /// how it went, and the TUI would be counted twice — it has a launch event
+    /// of its own.
+    #[test]
+    fn only_a_session_reports_on_entry() {
+        assert!(Shape::Session.reports_on_entry());
+        assert!(!Shape::Command.reports_on_entry());
+        assert!(!Shape::Tui.reports_on_entry());
     }
 
     /// Every dashboard for this product is keyed on this value; it is pinned

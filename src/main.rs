@@ -254,11 +254,18 @@ async fn main() {
     // in the product by a wide margin, and would put a network round trip in
     // front of every prompt.
     let reports = !matches!(cli.command, Some(cli::Commands::Completion { .. }));
+    // Worked out once and used for both decisions below. `ai`, `serve` and `acp`
+    // stay open, so they beat and report on entry; deciding that from a second
+    // list of subcommands further down is how the two lists drift apart.
+    let shape = match &cli.command {
+        Some(cli::Commands::Tui) => analytics::Shape::Tui,
+        Some(cli::Commands::Ai { .. } | cli::Commands::Serve | cli::Commands::Acp { .. }) => {
+            analytics::Shape::Session
+        }
+        _ => analytics::Shape::Command,
+    };
     if reports {
-        analytics::init(match &cli.command {
-            Some(cli::Commands::Tui) => analytics::Shape::Tui,
-            _ => analytics::Shape::Command,
-        });
+        analytics::init(shape);
         analytics::install_crash_hook();
     }
     // `tui` is left out here as well: it reports its own launch event, and
@@ -268,10 +275,7 @@ async fn main() {
         // A session is killed far more often than it exits, so its run event
         // goes out now; a one-shot command reports on the way out instead, where
         // it can say how it went. See `analytics`.
-        if matches!(
-            cli.command,
-            Some(cli::Commands::Ai { .. } | cli::Commands::Serve | cli::Commands::Acp { .. })
-        ) {
+        if shape.reports_on_entry() {
             analytics::report_started();
         }
     }
