@@ -87,7 +87,7 @@ pub mod core;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use self::core::{Config, Crash, Heartbeat, Sensors};
@@ -128,6 +128,21 @@ struct Run {
     name: String,
     started: Instant,
 }
+
+/// The page currently on screen, for pairing `$AppPageLeave` with the
+/// `$AppViewScreen` that opened it.
+struct OpenPage {
+    name: String,
+    since: Instant,
+    /// What the view reported alongside the page, repeated on the leave so both
+    /// halves can be filtered the same way.
+    properties: serde_json::Value,
+}
+
+static PAGE: Mutex<Option<OpenPage>> = Mutex::new(None);
+/// The runtime [`init`] was called on, so events reported from threads outside it
+/// still reach it. See [`track`].
+static RUNTIME: OnceLock<tokio::runtime::Handle> = OnceLock::new();
 
 /// Which shape the process is running as. Decides whether a heartbeat is armed,
 /// and which crash file this process owns.
@@ -218,6 +233,14 @@ pub mod event {
     /// A panic from the previous run, replayed on this one.
     pub const CRASH: &str = "terminal_crash";
 
+    /// A page was opened. Sensors' own preset event, so page views from this
+    /// binary land in the same reports as the apps' — which is the whole reason
+    /// to use the group's `page_name` vocabulary rather than inventing one.
+    pub const VIEW_SCREEN: &str = "$AppViewScreen";
+    /// A page was left, carrying `$event_duration`. Always paired with a
+    /// preceding [`VIEW_SCREEN`] for the same page.
+    pub const PAGE_LEAVE: &str = "$AppPageLeave";
+
     /// `longbridge ai` was opened. Carries `agent` and `signed_in`.
     pub const AI_LAUNCH: &str = "terminal_ai_launch";
     /// A question was sent to the agent. Carries `agent`, `is_first_turn` and
@@ -260,6 +283,13 @@ pub fn init(shape: Shape) {
     if opted_out() {
         tracing::debug!("analytics disabled by the environment");
         return;
+    }
+
+    // Captured here because `init` runs on the async main, which is inside the
+    // runtime. Threads that are not — Bevy's executor, most of the market TUI —
+    // borrow it back in `track`.
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        let _ = RUNTIME.set(handle);
     }
 
     if SENSORS.get().is_some() {
@@ -349,16 +379,53 @@ fn report_run(outcome: Outcome, elapsed: Option<Duration>) {
 }
 
 /// Reports one event. No-op before [`init`].
+///
+/// Enters the runtime captured at [`init`] first, because [`core`] sends on a
+/// background task and finds the runtime through `Handle::try_current()` — which
+/// only works on a thread that is already inside one. The market TUI's systems
+/// run on Bevy's executor threads, which are not, and every event reported from
+/// there was dropped with a warning: `track` logged, no request was ever made,
+/// and nothing downstream said otherwise.
 pub fn track(event: &str, properties: serde_json::Value) {
-    if let Some(sensors) = SENSORS.get() {
-        sensors.track(event, properties);
-    }
+    let Some(sensors) = SENSORS.get() else {
+        return;
+    };
+    let _runtime = RUNTIME.get().map(tokio::runtime::Handle::enter);
+    sensors.track(event, properties);
 }
 
 /// Waits for reports to drain.
 pub async fn flush() {
     if let Some(sensors) = SENSORS.get() {
         sensors.flush(FLUSH_TIMEOUT).await;
+    }
+}
+
+/// [`flush`] for a caller that has no `await` to offer.
+///
+/// The TUI's quit path is synchronous and ends in `process::exit`, so there is
+/// nowhere to await and no unwinding afterwards — without a blocking wait its
+/// last events are cancelled with the runtime.
+///
+/// Waits on a thread of its own, because `block_on` panics when called from
+/// inside the runtime and the quit path arrives on both kinds of thread: Bevy's
+/// executor for most of the TUI, but the runtime's own main thread for the
+/// keystroke that quits. Guarding on `Handle::try_current()` instead avoided the
+/// panic and skipped the wait in exactly the case that needed it — the last page
+/// of every session went out and was then cancelled by `process::exit`.
+///
+/// A borrowed thread is cheap here: this runs once, on the way out.
+pub fn flush_blocking() {
+    let Some(handle) = RUNTIME.get().cloned() else {
+        return;
+    };
+    // A newly spawned thread is never inside a runtime, so this is legal
+    // wherever the caller happens to be. `join` is what makes it a wait.
+    if std::thread::spawn(move || handle.block_on(flush()))
+        .join()
+        .is_err()
+    {
+        tracing::debug!("analytics: the flushing thread went away before it finished");
     }
 }
 
@@ -371,6 +438,78 @@ pub async fn flush() {
 pub fn set_active(active: bool) {
     if let Some(sensors) = SENSORS.get() {
         sensors.set_active(active);
+    }
+}
+
+/// Reports that the reader is now looking at `page`.
+///
+/// Sends `$AppViewScreen` for the page being entered and, if another page was
+/// open, `$AppPageLeave` for it first — so the two always come in pairs and the
+/// warehouse can total time per page. Callers only ever say which page they are
+/// on; the pairing, the ordering and the timing are handled here, because a
+/// caller that forgets the leave does not fail visibly — it just makes that one
+/// page look like nobody ever left it.
+///
+/// `page` must be a registered `page_name`. Re-entering the same page is
+/// ignored, so a re-render or a repeated state write does not inflate the count.
+pub fn enter_page(page: &str, properties: serde_json::Value) {
+    let Ok(mut current) = PAGE.lock() else {
+        return;
+    };
+    if current.as_ref().is_some_and(|open| open.name == page) {
+        return;
+    }
+    if let Some(open) = current.take() {
+        report_leave(&open);
+    }
+    *current = Some(OpenPage {
+        name: page.to_owned(),
+        since: Instant::now(),
+        properties: properties.clone(),
+    });
+    let mut props = properties;
+    merge(&mut props, "$screen_name", page.into());
+    merge(&mut props, "page_name", page.into());
+    track(event::VIEW_SCREEN, props);
+}
+
+/// Reports leaving whatever page is open, if any. Call before the process exits:
+/// the last page of a session would otherwise have a view with no leave, and its
+/// time would be missing from every total.
+pub fn leave_page() {
+    let Ok(mut current) = PAGE.lock() else {
+        return;
+    };
+    if let Some(open) = current.take() {
+        report_leave(&open);
+    }
+}
+
+fn report_leave(open: &OpenPage) {
+    let mut props = open.properties.clone();
+    merge(&mut props, "$screen_name", open.name.as_str().into());
+    merge(&mut props, "page_name", open.name.as_str().into());
+    // Seconds, which is what `$event_duration` means to Sensors — milliseconds
+    // here would overstate every page by a factor of a thousand, and read as
+    // plausible.
+    //
+    // TODO(data): the group's spec names the property but not its unit; this
+    // follows the vendor's definition. Worth confirming against one real page
+    // before any dashboard is built on it.
+    let seconds = open.since.elapsed().as_secs_f64();
+    merge(
+        &mut props,
+        "$event_duration",
+        serde_json::Number::from_f64((seconds * 1000.0).round() / 1000.0)
+            .map_or_else(|| 0.into(), serde_json::Value::Number),
+    );
+    track(event::PAGE_LEAVE, props);
+}
+
+/// Adds a key without overwriting one the caller set deliberately.
+fn merge(properties: &mut serde_json::Value, key: &str, value: serde_json::Value) {
+    if let Some(object) = properties.as_object_mut() {
+        object.entry(key).or_insert(value);
     }
 }
 
@@ -441,6 +580,8 @@ fn base_properties(shape: Shape) -> serde_json::Map<String, serde_json::Value> {
     // clients in this project do the same, so shell events stay the same shape.
     base.insert("$lib".into(), "Rust".into());
     base.insert("$lib_version".into(), env!("CARGO_PKG_VERSION").into());
+    // The operating system, kept out of `platform_type` — see that function.
+    base.insert("$os".into(), os_name().into());
     base
 }
 
@@ -465,20 +606,37 @@ fn is_ci() -> bool {
     .any(|name| std::env::var_os(name).is_some())
 }
 
-/// Platform, kept distinct from the desktop app's `desktop-*` so the two
-/// products do not merge into one breakdown.
+/// Platform type, as the group's collection spec defines the term: the kind of
+/// client, not the operating system it runs on.
+///
+/// The spec's own values are `iOS`, `Android`, `Desktop`, `Web`, `H5`, `Golang`
+/// — none carries an OS, and `Desktop` covers mac and Windows alike. This used
+/// to report `cli-mac` / `cli-win` / `cli-linux`, which folded two dimensions
+/// into one field and matched no value in the enumeration. The OS moved to
+/// [`os_name`], which is where the rest of the group already looks for it.
+///
+/// `Terminal` rather than `CLI` because half of this product is full-screen:
+/// two TUIs plus two servers. Which of those produced an event is the
+/// `surface` property's job, one level down.
 const fn platform_type() -> &'static str {
+    "Terminal"
+}
+
+/// `$os`, using the values the group's web clients report so the field means the
+/// same thing across products. A self-named `os_family` would have been one more
+/// thing to register, and would not join to anything.
+const fn os_name() -> &'static str {
     #[cfg(target_os = "macos")]
     {
-        "cli-mac"
+        "macOS"
     }
     #[cfg(target_os = "windows")]
     {
-        "cli-win"
+        "Windows"
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        "cli-linux"
+        "Linux"
     }
 }
 
@@ -617,12 +775,83 @@ mod tests {
         );
     }
 
-    /// Sharing a platform name with the desktop app would merge two products
-    /// into one breakdown.
+    /// The quit path calls this from a runtime thread — `q` is handled on the
+    /// main one — where a bare `block_on` panics. It has to wait there rather
+    /// than give up: giving up is what dropped the last page of every session,
+    /// and panicking would crash the process on its way out.
+    ///
+    /// Asserted from inside a runtime, which is the case that used to fail.
+    #[tokio::test]
+    async fn the_blocking_flush_waits_from_a_runtime_thread() {
+        let _ = RUNTIME.set(tokio::runtime::Handle::current());
+        flush_blocking();
+    }
+
+    /// Re-entering the page already open is ignored, and the clock is not
+    /// restarted. A view that re-renders, or a state written twice, would
+    /// otherwise emit a view per frame and reset the duration each time — every
+    /// page would read as heavily visited and instantly abandoned.
+    ///
+    /// Nothing is sent here: `track` is a no-op before `init`, which is what
+    /// makes the state machine testable without reaching the network.
     #[test]
-    fn the_platform_is_not_the_desktop_apps() {
-        assert!(platform_type().starts_with("cli-"));
-        assert!(!platform_type().starts_with("desktop-"));
+    fn a_page_already_open_is_not_reentered() {
+        enter_page("tlb_test_first", serde_json::json!({}));
+        let opened_at = PAGE
+            .lock()
+            .expect("the page lock")
+            .as_ref()
+            .map(|page| page.since);
+        assert!(opened_at.is_some(), "the first page was not recorded");
+
+        enter_page("tlb_test_first", serde_json::json!({}));
+        let after = PAGE.lock().expect("the page lock").as_ref().map(|page| {
+            assert_eq!(page.name, "tlb_test_first");
+            page.since
+        });
+        assert_eq!(opened_at, after, "re-entering restarted the clock");
+
+        enter_page("tlb_test_second", serde_json::json!({}));
+        assert_eq!(
+            PAGE.lock()
+                .expect("the page lock")
+                .as_ref()
+                .map(|page| page.name.clone()),
+            Some("tlb_test_second".to_owned()),
+            "a different page did not replace the open one"
+        );
+
+        leave_page();
+        assert!(
+            PAGE.lock().expect("the page lock").is_none(),
+            "leaving did not close the page, so its successor would report no view"
+        );
+    }
+
+    /// `platform_type` names the kind of client and nothing else. It used to
+    /// carry the OS as well (`cli-mac`), which folded two dimensions into one
+    /// field and matched no value in the group's enumeration.
+    #[test]
+    fn the_platform_is_a_client_kind_not_an_operating_system() {
+        assert_eq!(platform_type(), "Terminal");
+        for os in ["mac", "win", "linux", "macOS", "Windows", "Linux"] {
+            assert!(
+                !platform_type().contains(os),
+                "the OS belongs in $os, not in platform_type"
+            );
+        }
+    }
+
+    /// The OS is still reported, under the name the group's other clients use, so
+    /// the field joins across products instead of being terminal-only.
+    #[test]
+    fn the_operating_system_is_reported_separately() {
+        let properties = base_properties(Shape::Command);
+        let os = properties.get("$os").expect("an $os").as_str();
+        assert!(
+            matches!(os, Some("macOS" | "Windows" | "Linux")),
+            "unexpected $os: {os:?}"
+        );
     }
 
     /// These events come from Rust, not from a browser SDK. Claiming `js` would

@@ -318,6 +318,9 @@ async fn main() {
             Terminal::enter_full_screen();
             tui::app::run(Args { logout: false }, quote_receiver).await;
             Terminal::exit_full_screen();
+            // The page on screen at exit is left here, or its time is missing
+            // from every total — a view with no matching leave.
+            analytics::leave_page();
             // The TUI outlives its own requests while running, but its last
             // ones are raised on the way out — after this point the runtime
             // goes away and anything unsent goes with it.
@@ -375,6 +378,9 @@ async fn main() {
                 Ok(None) => {}
                 Err(e) => eprintln!("Error: {e}"),
             }
+            // Same as the market TUI: the view open at exit needs its leave, or
+            // its time is missing from every total.
+            analytics::leave_page();
             // This arm returns rather than falling through to the flush at the
             // end of `main`, so it has to flush for itself. Without this the
             // chat's own events — including the last turn of the session — were

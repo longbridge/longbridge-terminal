@@ -30,6 +30,48 @@ pub static USER: std::sync::LazyLock<RwLock<User>> = std::sync::LazyLock::new(De
 pub static ACCOUNT_CHANNEL: std::sync::LazyLock<RwLock<Option<String>>> =
     std::sync::LazyLock::new(|| RwLock::new(None));
 
+/// The group's registered `page_name` for a state, or `None` for a state that is
+/// not a page.
+///
+/// These follow the vocabulary in the group's `page_name` document —
+/// `应用_业务关键字_页面功能_页面特征` — so a terminal page totals in the same
+/// report as the app's equivalent: `tlb_stock_select_home` sits beside
+/// `lb_stock_select_home` rather than in a breakdown of its own. `tlb` extends
+/// the existing prefixes (`lb` app, `dlb` desktop) the way they were built:
+/// `t`(erminal) + `lb`.
+///
+/// `Loading` and `Error` are deliberately absent. They are states the reader
+/// passes through, not pages they visit, and counting them would put a page view
+/// in front of every real one.
+const fn page_name(state: AppState) -> Option<&'static str> {
+    match state {
+        AppState::Watchlist => Some("tlb_stock_select_home"),
+        AppState::WatchlistStock => Some("tlb_stock_select_detail"),
+        AppState::Stock => Some("tlb_stock_quote_detail"),
+        AppState::Portfolio => Some("tlb_account_asset_home"),
+        AppState::Orders => Some("tlb_trade_order_home"),
+        AppState::TradeToken => Some("tlb_trade_token_entry"),
+        AppState::Loading | AppState::Error => None,
+    }
+}
+
+/// Reports a page view whenever the state changes.
+///
+/// One system watching transitions rather than a line in each `OnEnter`: the
+/// eight states share four enter systems (`Watchlist` and `WatchlistStock` both
+/// run `enter_watchlist_common`), so per-system reporting could not tell those
+/// two apart, and a state added later would silently report nothing.
+fn report_page_view(state: Res<State<AppState>>, mut reported: Local<Option<AppState>>) {
+    let current = *state.get();
+    if *reported == Some(current) {
+        return;
+    }
+    *reported = Some(current);
+    if let Some(page) = page_name(current) {
+        crate::analytics::enter_page(page, serde_json::json!({}));
+    }
+}
+
 #[derive(
     Clone, Copy, PartialEq, Eq, Hash, Debug, Default, States, strum::EnumIter, bytemuck::NoUninit,
 )]
@@ -114,6 +156,7 @@ pub async fn run(
         .insert_resource(systems::Command(update_tx.clone()))
         .insert_resource(Carousel::new(indexes, Duration::from_secs(5)))
         .insert_resource(systems::WsState(crate::data::ReadyState::Open))
+        .add_systems(Update, report_page_view)
         .add_systems(Update, systems::loading.run_if(in_state(AppState::Loading)))
         .add_systems(Update, systems::error.run_if(in_state(AppState::Error)))
         .add_systems(OnExit(AppState::Watchlist), systems::exit_watchlist)
@@ -328,4 +371,70 @@ pub async fn run(
 fn send_evt<T: Event>(evt: T, world: &mut World) {
     let mut state = SystemState::<EventWriter<T>>::new(world);
     state.get_mut(world).send(evt);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{page_name, AppState};
+    use strum::IntoEnumIterator;
+
+    /// One page, one name. The `match` is exhaustive so a new state cannot be
+    /// forgotten, but nothing stops two states from being given the same string —
+    /// and that would silently merge two pages in every report.
+    #[test]
+    fn no_two_states_share_a_page_name() {
+        let mut names: Vec<&str> = AppState::iter().filter_map(page_name).collect();
+        let total = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), total, "two states report the same page_name");
+    }
+
+    /// Every page follows the group's vocabulary: this client's prefix, then at
+    /// least a business keyword and what the page is.
+    #[test]
+    fn every_page_name_follows_the_convention() {
+        for state in AppState::iter() {
+            let Some(name) = page_name(state) else {
+                continue;
+            };
+            assert!(
+                name.starts_with("tlb_"),
+                "{state:?} → {name} is missing this client's prefix"
+            );
+            assert!(
+                name.split('_').count() >= 3,
+                "{state:?} → {name} needs at least prefix_business_page"
+            );
+            assert_eq!(
+                name,
+                name.to_lowercase(),
+                "{state:?} → {name} should be lower snake_case"
+            );
+        }
+    }
+
+    /// The states the reader passes through are not pages. Counting them would
+    /// put a page view in front of every real one, since every session starts in
+    /// `Loading`.
+    #[test]
+    fn the_transient_states_are_not_pages() {
+        assert_eq!(page_name(AppState::Loading), None);
+        assert_eq!(page_name(AppState::Error), None);
+    }
+
+    /// Three pages exist to match the app's, so they must keep the app's names
+    /// with only the prefix swapped — that is the entire reason to use this
+    /// vocabulary rather than inventing one.
+    #[test]
+    fn the_shared_pages_match_the_apps_names() {
+        for (state, app) in [
+            (AppState::Watchlist, "lb_stock_select_home"),
+            (AppState::Portfolio, "lb_account_asset_home"),
+            (AppState::Orders, "lb_trade_order_home"),
+        ] {
+            let ours = page_name(state).expect("a page name");
+            assert_eq!(ours, app.replacen("lb_", "tlb_", 1), "{state:?} drifted");
+        }
+    }
 }

@@ -48,6 +48,28 @@ enum View {
     Question,
 }
 
+impl View {
+    /// The group's registered `page_name` for this view.
+    ///
+    /// Built from the same vocabulary as the market TUI's (see
+    /// `crate::tui::app::page_name`): `tlb` for this client, then the business
+    /// keyword, then what the page is. `ai` is a new business keyword — the chat
+    /// is its own product line with its own `app_id`, and filing it under
+    /// `content` would bury it among posts and courses.
+    ///
+    /// `Question` is a drawer rather than a destination, but it reports as a page
+    /// anyway: it is where a turn stops and waits for the reader, so how long
+    /// they spend there is worth as much as any view's.
+    const fn page_name(self) -> &'static str {
+        match self {
+            Self::Chat => "tlb_ai_chat_home",
+            Self::Sessions => "tlb_ai_chat_list",
+            Self::Settings => "tlb_ai_setting_entry",
+            Self::Question => "tlb_ai_interrupt_drawer",
+        }
+    }
+}
+
 /// Transcript lines a page-scroll keystroke moves.
 const SCROLL_PAGE: u16 = 5;
 /// Rows a PageUp/PageDown moves the selection in a list view.
@@ -706,6 +728,7 @@ impl Ui {
     /// selection. (Entering Conversations is done via `open_sessions`, which
     /// also kicks off the async fetch.)
     fn switch(&mut self, view: View) {
+        crate::analytics::enter_page(view.page_name(), serde_json::json!({}));
         self.view = view;
         self.notice = None;
         self.sel = 0;
@@ -761,6 +784,9 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
     let mut terminal = Terminal::default();
     let mut state = ChatState::new(agent_uid, t!("Ai.Welcome").to_string());
     let mut ui = Ui::new();
+    // The opening view never goes through `switch`, so it reports itself here or
+    // the first page of every session is missing.
+    crate::analytics::enter_page(ui.view.page_name(), serde_json::json!({}));
     let mut editor = Editor::new();
     // Seed the prompt history from disk so ↑/↓ recalls prompts from previous
     // sessions, the way a shell does.
@@ -6116,6 +6142,27 @@ fn wrap(s: &str, width: usize) -> Vec<String> {
 mod tests {
     use super::marquee;
     use unicode_width::UnicodeWidthStr;
+
+    /// One view, one name — see the market TUI's equivalent. A duplicate would
+    /// merge two views in every report without failing anywhere.
+    #[test]
+    fn no_two_views_share_a_page_name() {
+        let views = [
+            super::View::Chat,
+            super::View::Sessions,
+            super::View::Settings,
+            super::View::Question,
+        ];
+        let mut names: Vec<&str> = views.iter().map(|view| view.page_name()).collect();
+        let total = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), total, "two views report the same page_name");
+        for name in names {
+            assert!(name.starts_with("tlb_ai_"), "{name} is not an AI page");
+            assert_eq!(name, name.to_lowercase(), "{name} should be lower snake");
+        }
+    }
 
     #[test]
     fn a_question_with_options_is_fully_selectable() {

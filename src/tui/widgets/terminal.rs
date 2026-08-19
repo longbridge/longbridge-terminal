@@ -79,8 +79,19 @@ impl Terminal {
     }
 
     /// Graceful exit - cleanup terminal and exit program
+    ///
+    /// Analytics is settled here rather than after the TUI returns, because it
+    /// never does: this is `q` and Ctrl-C, and `process::exit` below ends the
+    /// process without unwinding. Anything still queued — the page on screen,
+    /// which has no leave yet, and whatever was reported on the way out — would
+    /// go with it, silently, since a cancelled request logs nothing.
+    ///
+    /// The terminal is restored first so the wait happens against a normal
+    /// prompt instead of a frozen full-screen frame.
     pub fn graceful_exit(code: i32) -> ! {
         Self::exit_full_screen();
+        crate::analytics::leave_page();
+        crate::analytics::flush_blocking();
         std::process::exit(code);
     }
 }
