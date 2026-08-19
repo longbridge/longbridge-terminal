@@ -264,10 +264,12 @@ fn help_popup_url_is_clickable() {
 /// The footer packs its quotes left to right and drops a whole quote rather
 /// than clipping one, so a wide bar is not mostly gaps and a narrow one is not
 /// a half-written number.
+///
+/// Deliberately locale-agnostic. `rust_i18n`'s locale is process-global and
+/// other tests change it, so anything asserted about an exact column here would
+/// depend on which test ran last — the layout rules below hold for any label.
 #[test]
 fn footer_packs_quotes_and_drops_whole_ones() {
-    rust_i18n::set_locale("en");
-
     let indexes = [
         crate::data::Counter::new("HSI.HK"),
         crate::data::Counter::new("HSCEI.HK"),
@@ -275,7 +277,7 @@ fn footer_packs_quotes_and_drops_whole_ones() {
     ];
     let state = crate::tui::systems::WsState(crate::data::ReadyState::Open);
 
-    let render = |width: u16| -> Vec<ratatui::layout::Rect> {
+    let quotes = |width: u16| -> Vec<ratatui::layout::Rect> {
         let backend = ratatui::backend::TestBackend::new(width, 1);
         let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
         terminal
@@ -284,12 +286,16 @@ fn footer_packs_quotes_and_drops_whole_ones() {
         crate::tui::mouse::FOOTER_INDEX_RECTS
             .lock()
             .expect("poison")
-            .to_vec()
+            .iter()
+            .copied()
+            .filter(|r| r.width > 0)
+            .collect()
     };
 
-    // Wide: all three, packed with no dead space between them.
-    let wide = render(150);
-    assert!(wide.iter().all(|r| r.width > 0), "all three should fit");
+    // Wide enough for all three under any locale: they are all shown, and each
+    // begins right after the one before rather than at a fixed offset.
+    let wide = quotes(150);
+    assert_eq!(wide.len(), 3, "all three quotes should fit in 150 columns");
     for pair in wide.windows(2) {
         let gap = pair[1].x - (pair[0].x + pair[0].width);
         assert!(
@@ -298,17 +304,21 @@ fn footer_packs_quotes_and_drops_whole_ones() {
         );
     }
 
-    // Narrow: whatever is kept still ends inside the bar, never mid-number.
-    for width in [20u16, 40, 60, 80] {
-        for r in render(width).iter().filter(|r| r.width > 0) {
+    // Whatever survives always ends inside the bar — a quote is dropped whole,
+    // never clipped mid-number — and narrowing never gains one back.
+    let mut previous = usize::MAX;
+    for width in [150u16, 120, 100, 80, 60, 40, 20, 10] {
+        let kept = quotes(width);
+        for r in &kept {
             assert!(
                 r.x + r.width <= width,
                 "a quote runs past the {width}-column bar"
             );
         }
+        assert!(
+            kept.len() <= previous,
+            "narrowing to {width} columns showed more quotes, not fewer"
+        );
+        previous = kept.len();
     }
-    assert!(
-        render(20).iter().all(|r| r.width == 0),
-        "nothing fits in 20 columns"
-    );
 }
