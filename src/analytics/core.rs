@@ -413,7 +413,10 @@ impl Sensors {
                 return;
             };
             if identity.member_id != member_id {
-                log::debug!("[sensors] identity {}", if bound { "bound" } else { "cleared" });
+                log::debug!(
+                    "[sensors] identity {}",
+                    if bound { "bound" } else { "cleared" }
+                );
                 identity.member_id = member_id;
                 // The first payload of a process is always anonymous — the
                 // launch event precedes any sign-in — so re-arm, otherwise the
@@ -631,7 +634,10 @@ impl Sensors {
             .map(|mut queue| queue.drain(..).collect())
             .unwrap_or_default();
         if !held.is_empty() {
-            log::debug!("[sensors] identity settled ({reason}); releasing {}", held.len());
+            log::debug!(
+                "[sensors] identity settled ({reason}); releasing {}",
+                held.len()
+            );
         }
         for event in held {
             self.dispatch(&event.event, event.properties, event.occurred_ms);
@@ -658,9 +664,7 @@ impl Sensors {
         );
         let body = encode_body(&payload);
         log::debug!("[sensors] reporting {event}");
-        if self.0.config.log_first_payload
-            && !self.0.payload_logged.swap(true, Ordering::Relaxed)
-        {
+        if self.0.config.log_first_payload && !self.0.payload_logged.swap(true, Ordering::Relaxed) {
             log::debug!(
                 "[sensors] payload {}",
                 serde_json::to_string(&payload).unwrap_or_default()
@@ -823,9 +827,9 @@ pub fn encode_body(event: &serde_json::Value) -> String {
 /// The SDK's `hashCode`: `h = h * 31 + c`, truncated to a signed 32-bit int at
 /// every step, computed over the **base64 text** rather than the JSON.
 fn crc(encoded: &str) -> i32 {
-    encoded
-        .bytes()
-        .fold(0i32, |hash, byte| hash.wrapping_mul(31).wrapping_add(i32::from(byte)))
+    encoded.bytes().fold(0i32, |hash, byte| {
+        hash.wrapping_mul(31).wrapping_add(i32::from(byte))
+    })
 }
 
 /// `encodeURIComponent`, which leaves `-_.!~*'()` and alphanumerics alone.
@@ -867,11 +871,7 @@ impl Drop for InFlightGuard {
 
 /// What goes back into the queue when a flush stops partway: the body that
 /// failed, everything still behind it, then the event that started the flush.
-fn retry_batch(
-    failed: String,
-    rest: impl Iterator<Item = String>,
-    body: String,
-) -> Vec<String> {
+fn retry_batch(failed: String, rest: impl Iterator<Item = String>, body: String) -> Vec<String> {
     let mut batch = vec![failed];
     batch.extend(rest);
     batch.push(body);
@@ -1036,7 +1036,9 @@ mod tests {
         assert_eq!(payload["login_id"], "member-9");
         assert_eq!(payload["anonymous_id"], "device-1");
         assert_eq!(payload["identities"]["$identity_login_id"], "member-9");
-        assert!(payload["identities"].get("$identity_anonymous_id").is_none());
+        assert!(payload["identities"]
+            .get("$identity_anonymous_id")
+            .is_none());
     }
 
     #[test]
@@ -1061,14 +1063,30 @@ mod tests {
     /// An event held back still belongs at the moment it happened.
     #[test]
     fn a_deferred_event_keeps_the_time_it_happened() {
-        let payload = build_event("e", serde_json::json!({}), &anonymous(), &config(), 100, 900, 1);
+        let payload = build_event(
+            "e",
+            serde_json::json!({}),
+            &anonymous(),
+            &config(),
+            100,
+            900,
+            1,
+        );
         assert_eq!(payload["time"], 100);
         assert_eq!(payload["_flush_time"], 900);
     }
 
     #[test]
     fn every_event_carries_the_track_and_flush_stamps() {
-        let payload = build_event("e", serde_json::json!({}), &anonymous(), &config(), 42, 99, 7);
+        let payload = build_event(
+            "e",
+            serde_json::json!({}),
+            &anonymous(),
+            &config(),
+            42,
+            99,
+            7,
+        );
         assert_eq!(payload["_track_id"], 7);
     }
 
@@ -1288,7 +1306,10 @@ mod tests {
 
         let sensors = Sensors::new(settings).expect("client builds");
         sensors.note_crash("thread panicked at 'boom'");
-        assert!(path.exists(), "the crash is on disk before the process dies");
+        assert!(
+            path.exists(),
+            "the crash is on disk before the process dies"
+        );
 
         let recorded = std::fs::read_to_string(&path).unwrap();
         assert!(recorded.contains("boom"));

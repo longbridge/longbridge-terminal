@@ -1,5 +1,5 @@
 use crate::tui::widgets::Terminal;
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches};
 use std::io::Write;
 use std::time::Instant;
 
@@ -147,22 +147,25 @@ fn option_quote_permission_guidance(
     )
 }
 
-/// The subcommand the user typed, matched against the names clap declares.
+/// The subcommand the user ran, as clap resolved it: `"kline"`, `"alert add"`.
 ///
-/// Checked against that list rather than taken as "the first bare argument":
-/// a global option's value (`--lang zh`) is also bare, and would otherwise be
-/// reported as a command that does not exist. Anything unrecognised — a typo,
-/// an alias — reports as `unknown` rather than leaking whatever was typed.
-fn invoked_subcommand() -> String {
-    use clap::CommandFactory;
-    let known: Vec<String> = cli::Cli::command()
-        .get_subcommands()
-        .map(|sub| sub.get_name().to_owned())
-        .collect();
-    std::env::args()
-        .skip(1)
-        .find(|arg| known.contains(arg))
-        .unwrap_or_else(|| "unknown".to_owned())
+/// Taken from the parse rather than from a rescan of `argv`, which is the only
+/// way to get this right. Scanning cannot tell a subcommand from a global
+/// option's value (`--lang zh`), loses the second level entirely (`alert add`
+/// reads as `alert`), and needs an `unknown` bucket for anything it fails to
+/// recognise. clap already knows the answer; this asks it.
+///
+/// Names only — never argument values, which carry symbols, account numbers and
+/// order details.
+fn command_path(matches: &clap::ArgMatches) -> String {
+    let mut path = Vec::new();
+    let mut current = matches;
+    // Two levels is every group this CLI has (`alert add`, `auth login`).
+    while let Some((name, sub)) = current.subcommand() {
+        path.push(name.to_owned());
+        current = sub;
+    }
+    path.join(" ")
 }
 
 #[tokio::main]
@@ -182,7 +185,11 @@ async fn main() {
     // Clean up leftover .old binary from a previous Windows update.
     update::cleanup_old_binary();
 
-    let cli = cli::Cli::parse();
+    // Parsed through `ArgMatches` rather than `Cli::parse()` so the resolved
+    // subcommand path is available for reporting; the typed value is the same
+    // one `parse` would have produced.
+    let matches = cli::Cli::command().get_matches();
+    let cli = cli::Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
     let verbose = cli.verbose;
 
     locale::init(cli.lang.as_deref());
@@ -240,24 +247,38 @@ async fn main() {
     //
     // Before the OpenAPI context too: a command that fails to authenticate is
     // exactly the kind worth recording.
-    analytics::init(match &cli.command {
-        Some(cli::Commands::Tui) => analytics::Shape::Tui,
-        _ => analytics::Shape::Command,
-    });
-    analytics::install_crash_hook();
-    if cli.command.is_some() {
-        // The subcommand name only. Arguments carry symbols, account numbers
-        // and order details, none of which belong in analytics.
-        analytics::track(
-            analytics::event::COMMAND,
-            serde_json::json!({ "command": invoked_subcommand() }),
-        );
+    //
+    // `completion` is the one command left out. The README has users put
+    // `source <(longbridge completion zsh)` in their shell profile, so it runs
+    // on every new shell — reporting there would make it the most-used command
+    // in the product by a wide margin, and would put a network round trip in
+    // front of every prompt.
+    let reports = !matches!(cli.command, Some(cli::Commands::Completion { .. }));
+    if reports {
+        analytics::init(match &cli.command {
+            Some(cli::Commands::Tui) => analytics::Shape::Tui,
+            _ => analytics::Shape::Command,
+        });
+        analytics::install_crash_hook();
+    }
+    // `tui` is left out here as well: it reports its own launch event, and
+    // counting it as a command too would double every total.
+    if reports && cli.command.is_some() && !matches!(cli.command, Some(cli::Commands::Tui)) {
+        analytics::arm_command(command_path(&matches));
+        // A session is killed far more often than it exits, so its run event
+        // goes out now; a one-shot command reports on the way out instead, where
+        // it can say how it went. See `analytics`.
+        if matches!(
+            cli.command,
+            Some(cli::Commands::Ai { .. } | cli::Commands::Serve | cli::Commands::Acp { .. })
+        ) {
+            analytics::report_started();
+        }
     }
 
     match cli.command {
         None => {
             // No subcommand: print help and exit
-            use clap::CommandFactory;
             cli::Cli::command().print_help().unwrap();
             println!();
         }
@@ -353,7 +374,8 @@ async fn main() {
             // This arm returns rather than falling through to the flush at the
             // end of `main`, so it has to flush for itself. Without this the
             // chat's own events — including the last turn of the session — were
-            // cancelled with the runtime and never sent.
+            // cancelled with the runtime and never sent. The run event itself
+            // has already gone out: a session reports on the way in.
             analytics::flush().await;
             return;
         }
@@ -365,23 +387,28 @@ async fn main() {
                 Ok(r) => r,
                 Err(e) => {
                     eprintln!("Authentication failed: {e}");
+                    analytics::flush().await;
                     std::process::exit(1);
                 }
             };
             if let Err(e) = openapi::quote().member_id().await {
                 print_cli_error(&anyhow::anyhow!(e), using_api_key);
+                analytics::flush().await;
                 std::process::exit(1);
             }
             if let Err(e) = cli::serve::run(quote_receiver).await {
                 eprintln!("Error: {e}");
+                analytics::flush().await;
                 std::process::exit(1);
             }
+            analytics::flush().await;
             return;
         }
 
         Some(cli::Commands::Init { invite_code }) => {
             if let Err(e) = cli::init::cmd_init(&invite_code) {
                 eprintln!("Error: {e}");
+                analytics::finish_command(analytics::Outcome::Error).await;
                 std::process::exit(1);
             }
         }
@@ -389,6 +416,7 @@ async fn main() {
         Some(cli::Commands::Check) => {
             if let Err(e) = cli::check::cmd_check(&cli.format).await {
                 print_cli_error(&e, false);
+                analytics::finish_command(analytics::Outcome::Error).await;
                 std::process::exit(1);
             }
         }
@@ -400,12 +428,15 @@ async fn main() {
             if release_notes {
                 if let Err(e) = update::cmd_release_notes().await {
                     eprintln!("Error: {e}");
+                    analytics::finish_command(analytics::Outcome::Error).await;
                     std::process::exit(1);
                 }
             } else if let Err(e) = update::cmd_update(verbose, force).await {
                 eprintln!("Error: {e}");
+                analytics::finish_command(analytics::Outcome::Error).await;
                 std::process::exit(1);
             }
+            analytics::finish_command(analytics::Outcome::Ok).await;
             return;
         }
 
@@ -427,6 +458,7 @@ async fn main() {
             };
             if let Err(e) = result {
                 eprintln!("Authentication failed: {e:#}");
+                analytics::finish_command(analytics::Outcome::AuthFailed).await;
                 std::process::exit(1);
             }
         }
@@ -455,6 +487,7 @@ async fn main() {
         ) => {
             if let Err(e) = auth::device_login(verbose, client_name).await {
                 eprintln!("Authentication failed: {e:#}");
+                analytics::finish_command(analytics::Outcome::AuthFailed).await;
                 std::process::exit(1);
             }
         }
@@ -475,6 +508,7 @@ async fn main() {
             Ok(()) => println!("Successfully logged out."),
             Err(e) => {
                 eprintln!("Failed to clear credentials: {e}");
+                analytics::finish_command(analytics::Outcome::Error).await;
                 std::process::exit(1);
             }
         },
@@ -484,6 +518,7 @@ async fn main() {
         }) => {
             if let Err(e) = cli::auth::cmd_auth_status(&cli.format, &market).await {
                 eprintln!("Error: {e}");
+                analytics::finish_command(analytics::Outcome::Error).await;
                 std::process::exit(1);
             }
         }
@@ -511,6 +546,7 @@ async fn main() {
             .await;
             if let Err(e) = result {
                 print_cli_error(&anyhow::anyhow!(e), false);
+                analytics::flush().await;
                 std::process::exit(1);
             }
         }
@@ -524,10 +560,10 @@ async fn main() {
                 Ok((_, using_api_key, http_url)) => (using_api_key, http_url),
                 Err(e) => {
                     eprintln!("Authentication failed: {e}");
-                    // Flushed before exiting: a failure to authenticate is
+                    // Reported before exiting: a failure to authenticate is
                     // exactly the kind of run worth knowing about, and
                     // `process::exit` gives background tasks no chance to run.
-                    analytics::flush().await;
+                    analytics::finish_command(analytics::Outcome::AuthFailed).await;
                     std::process::exit(1);
                 }
             };
@@ -536,7 +572,7 @@ async fn main() {
             }
             if let Err(e) = cli::dispatch(cmd, &cli.format, cli.verbose).await {
                 print_cli_error(&e, using_api_key);
-                analytics::flush().await;
+                analytics::finish_command(analytics::Outcome::Error).await;
                 std::process::exit(1);
             }
             if let Some(t) = start {
@@ -549,9 +585,70 @@ async fn main() {
     update::notify_if_update_available();
 
     // Every path that reaches here is about to return from `main`, which drops
-    // the runtime and cancels anything still sending. The exits above flush on
+    // the runtime and cancels anything still sending. The exits above report on
     // their own; this covers the rest.
-    analytics::flush().await;
+    analytics::finish_command(analytics::Outcome::Ok).await;
+}
+
+#[cfg(test)]
+mod command_path_tests {
+    use super::command_path;
+    use clap::CommandFactory;
+
+    /// Built on a thread of its own because this CLI's clap tree is deep enough
+    /// to overflow a test thread's default stack while it is being constructed —
+    /// a property of the tree's size in a debug build, not of the parse.
+    fn path_of<const N: usize>(args: [&str; N]) -> String {
+        let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(move || command_path(&crate::cli::Cli::command().get_matches_from(args)))
+            .expect("spawn")
+            .join()
+            .expect("parse")
+    }
+
+    /// The plain case, and the reason the name is worth reporting at all.
+    #[test]
+    fn names_the_command() {
+        assert_eq!(path_of(["longbridge", "quote", "700.HK"]), "quote");
+    }
+
+    /// A group's second level is where the interesting distinction lives:
+    /// listing alerts and creating one are not the same activity.
+    #[test]
+    fn names_the_second_level_too() {
+        assert_eq!(
+            path_of(["longbridge", "alert", "add", "TSLA.US", "--price", "200"]),
+            "alert add"
+        );
+        assert_eq!(
+            path_of(["longbridge", "profit-analysis", "detail", "700.HK"]),
+            "profit-analysis detail"
+        );
+    }
+
+    /// A group used without a subcommand is its own case, not a missing name.
+    #[test]
+    fn a_bare_group_is_just_the_group() {
+        assert_eq!(path_of(["longbridge", "alert"]), "alert");
+    }
+
+    /// A global option's value is a bare argument too. Scanning `argv` for the
+    /// first bare word would report `zh` as the command.
+    #[test]
+    fn a_global_options_value_is_not_the_command() {
+        assert_eq!(
+            path_of(["longbridge", "--lang", "zh", "quote", "700.HK"]),
+            "quote"
+        );
+    }
+
+    /// Nothing to report when nothing was run: `longbridge` alone prints help.
+    #[test]
+    fn no_subcommand_is_empty() {
+        assert_eq!(path_of(["longbridge"]), "");
+    }
 }
 
 #[cfg(test)]

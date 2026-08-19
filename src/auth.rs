@@ -335,10 +335,23 @@ pub fn member_id() -> Option<String> {
     let claims = decode_jwt_payload(full["access_token"].as_str()?)?;
     let sub_str = claims["sub"].as_str()?;
     let sub: serde_json::Value = serde_json::from_str(sub_str).ok()?;
-    ["member_id", "memberId", "uid", "user_id"]
+    member_id_from_sub(&sub)
+}
+
+/// Pulls the member id out of a decoded `sub` claim.
+///
+/// Takes numbers as well as strings. A member id is a number in every system
+/// that produces one, and whether it arrives JSON-quoted is a detail of whoever
+/// minted the token — reading only strings is how this returned `None` for a
+/// signed-in user, which pins every event to an anonymous id.
+fn member_id_from_sub(sub: &serde_json::Value) -> Option<String> {
+    ["member_id", "memberId", "uid", "user_id", "account_id"]
         .iter()
-        .find_map(|key| sub[*key].as_str().filter(|value| !value.is_empty()))
-        .map(str::to_owned)
+        .find_map(|key| match &sub[*key] {
+            serde_json::Value::String(value) if !value.is_empty() => Some(value.clone()),
+            serde_json::Value::Number(value) => Some(value.to_string()),
+            _ => None,
+        })
 }
 
 /// [`account_channel`] with a fallback to [`DEFAULT_ACCOUNT_CHANNEL`].
@@ -1233,5 +1246,26 @@ mod auth_code_tests {
         // Legacy base58 display form (no version byte) and empty input → None.
         assert!(unpack_agent_code(BASE58_FORM).is_none());
         assert!(unpack_agent_code("").is_none());
+    }
+
+    /// A member id that arrives as a JSON number is still a member id. Reading
+    /// only strings reported every signed-in run under an anonymous id.
+    #[test]
+    fn a_numeric_member_id_is_read() {
+        let sub = serde_json::json!({ "account_channel": "lb", "member_id": 1_234_567 });
+        assert_eq!(super::member_id_from_sub(&sub), Some("1234567".to_owned()));
+    }
+
+    #[test]
+    fn a_quoted_member_id_is_read() {
+        let sub = serde_json::json!({ "member_id": "1234567" });
+        assert_eq!(super::member_id_from_sub(&sub), Some("1234567".to_owned()));
+    }
+
+    /// Signed out, or a token that simply carries no member id: both ordinary.
+    #[test]
+    fn a_sub_without_a_member_id_yields_none() {
+        let sub = serde_json::json!({ "account_channel": "lb", "member_id": "" });
+        assert_eq!(super::member_id_from_sub(&sub), None);
     }
 }

@@ -237,6 +237,16 @@ pub async fn run(
                         mouse_input::handle_mouse_event(&mut app, mouse_event, state, popup, update_tx.clone(), &mut render_state);
                         continue;
                     }
+                    // Time spent with the terminal in the background is not
+                    // time in use; `active_ms` is what tells the two apart.
+                    Ok(crossterm::event::Event::FocusGained) => {
+                        crate::analytics::set_active(true);
+                        continue;
+                    }
+                    Ok(crossterm::event::Event::FocusLost) => {
+                        crate::analytics::set_active(false);
+                        continue;
+                    }
                     Ok(_) => continue,
                     Err(err) => {
                         tracing::error!("fail to receive event: {err}");

@@ -73,17 +73,16 @@ tokio = { version = "1.33.0", features = [
 tokio-stream = "0.1"
 tracing = "0.1.40"
 tracing-appender = { version = "0.2.4" }
-# Default features include `tracing-log`, which routes `log` records into
-# tracing. src/analytics/core.rs is shared verbatim with the desktop app and
-# reports through `log`, so that bridge is what keeps its diagnostics -- notably
-# "nothing was sent" -- in the log file. Do not disable default features here
-# without replacing it.
+# `tracing-log` routes `log` records into tracing. src/analytics/core.rs is
+# shared verbatim with the desktop app and reports through `log`, so that bridge
+# is what keeps its diagnostics -- notably "nothing was sent" -- in the log file.
+# It is on by default; listed anyway, because a default is not a contract.
 tracing-subscriber = { version = "0.3.17", features = [
     "env-filter",
     "parking_lot",
     "time",
+    "tracing-log",
 ] }
-
 tui-input = "0.15"
 unicode-width = "0.1.11"
 bitflags = "2.10.0"
@@ -114,6 +113,14 @@ windows-sys = { version = "0.48.0", features = [
     "Win32_Storage_FileSystem",
     "Win32_System_IO",
 ] }
+
+# `src/analytics/core.rs` is shared verbatim with the desktop app, where this
+# feature selects Tauri's runtime for background work. The terminal has no such
+# runtime and declares no such feature; naming it here keeps the shared file
+# from warning without adding a feature this binary would never use.
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = ['cfg(feature, values("tauri-runtime"))']
 
 [lints.clippy]
 all = { level = "deny", priority = -1 }

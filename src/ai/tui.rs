@@ -1249,8 +1249,16 @@ fn dispatch_event(
             }
             _ => {}
         },
-        Event::FocusGained => ui.focused = true,
-        Event::FocusLost => ui.focused = false,
+        // Also told to analytics: a session left in a background pane is not a
+        // session somebody is using, and `active_ms` is how that is told apart.
+        Event::FocusGained => {
+            ui.focused = true;
+            crate::analytics::set_active(true);
+        }
+        Event::FocusLost => {
+            ui.focused = false;
+            crate::analytics::set_active(false);
+        }
         _ => {}
     }
 }
