@@ -35,6 +35,17 @@ impl Default for Terminal {
 }
 
 impl Terminal {
+    /// Draw a frame. Shadows [`ratatui::Terminal::draw`] so that per-frame hit
+    /// areas — the clickable links the render pass re-registers — are reset
+    /// once per frame instead of at every call site.
+    pub fn draw<F>(&mut self, render: F) -> std::io::Result<ratatui::CompletedFrame<'_>>
+    where
+        F: FnOnce(&mut ratatui::Frame),
+    {
+        crate::tui::mouse::clear_links();
+        self.0.draw(render)
+    }
+
     pub fn enter_full_screen() {
         use crossterm::{cursor, event, terminal};
 

@@ -135,6 +135,26 @@ impl SettingMeta {
         }
     }
 
+    /// The value before this one, wrapping.
+    #[must_use]
+    pub fn prev_value(&self) -> &'static str {
+        match &self.kind {
+            SettingKind::Enum { choices } => {
+                let cur = self.id.current();
+                let i = choices.iter().position(|c| c.canonical == cur).unwrap_or(0);
+                choices[(i + choices.len() - 1) % choices.len()].canonical
+            }
+        }
+    }
+
+    /// The canonical value of the `index`-th choice, if there is one.
+    #[must_use]
+    pub fn choice_at(&self, index: usize) -> Option<&'static str> {
+        match &self.kind {
+            SettingKind::Enum { choices } => choices.get(index).map(|c| c.canonical),
+        }
+    }
+
     /// The i18n key labelling the current value.
     #[must_use]
     pub fn value_label(&self) -> &'static str {
@@ -253,6 +273,12 @@ pub fn cycle(meta: &SettingMeta) {
     persist();
 }
 
+/// Apply a specific canonical value to a row and persist.
+pub fn set(meta: &SettingMeta, canonical: &str) {
+    meta.id.apply(canonical);
+    persist();
+}
+
 // ---- Modal selection state ----
 
 static SELECTED: AtomicUsize = AtomicUsize::new(0);
@@ -275,6 +301,21 @@ pub fn selected() -> usize {
     SELECTED
         .load(Ordering::Relaxed)
         .min(modal_rows().len().saturating_sub(1))
+}
+
+/// Focus `row` and apply its `choice`-th value. Returns whether the row and
+/// choice both existed.
+pub fn set_choice(row: usize, choice: usize) -> bool {
+    let rows = modal_rows();
+    let Some(meta) = rows.get(row) else {
+        return false;
+    };
+    let Some(canonical) = meta.choice_at(choice) else {
+        return false;
+    };
+    SELECTED.store(row, Ordering::Relaxed);
+    set(meta, canonical);
+    true
 }
 
 fn select_next() {
@@ -343,8 +384,23 @@ pub fn handle_key(event: KeyEvent) {
     match crate::tui::keymap::global().lookup(&event, Context::Always) {
         Some(ActionId::Up) => select_prev(),
         Some(ActionId::Down) => select_next(),
-        Some(ActionId::Enter) => cycle_selected(),
+        // Left/Right step through the row's values, so a multi-choice setting
+        // can be walked in either direction instead of only cycled forward.
+        Some(ActionId::Left) => step_selected(false),
+        Some(ActionId::Right | ActionId::Enter) => step_selected(true),
         Some(ActionId::Escape | ActionId::OpenSettings) => popup::close(),
         _ => {}
+    }
+}
+
+/// Move the highlighted row's value one step forward or back.
+fn step_selected(forward: bool) {
+    if let Some(meta) = modal_rows().get(selected()) {
+        let value = if forward {
+            meta.next_value()
+        } else {
+            meta.prev_value()
+        };
+        set(meta, value);
     }
 }

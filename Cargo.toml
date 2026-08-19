@@ -48,7 +48,7 @@ once_cell = "1.18.0"
 percent-encoding = "2"
 prost = "0.12"
 qrcode = { version = "0.12.0", default-features = false }
-ratatui = "0.30"
+ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
 tui-markdown = "0.3"
 rust-i18n = "4"
 rust_decimal = "1.32.0"

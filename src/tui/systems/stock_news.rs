@@ -8,15 +8,20 @@ use ratatui::{
     text::{Line, Span},
     widgets::{
         Block, Borders, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation,
-        ScrollbarState,
+        ScrollbarState, Wrap,
     },
     Frame,
 };
 use time::OffsetDateTime;
 use tokio::sync::mpsc;
 use tui_markdown::{Options, StyleSheet};
+use unicode_width::UnicodeWidthStr;
 
-use crate::{data::Counter, tui::app::RT, tui::ui::styles, utils::datetime::fmt_rfc3339};
+use crate::{data::Counter, tui::app::RT, tui::ui::styles};
+
+/// The "open on the web" affordance in the article pane's title bar.
+const OPEN_ICON: &str = " ↗ ";
+const OPEN_ICON_WIDTH: u16 = 3;
 
 // ─── Markdown StyleSheet ─────────────────────────────────────────────────────
 
@@ -66,7 +71,7 @@ impl StyleSheet for NewsStyleSheet {
 
 // ─── State ───────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy, PartialEq, Eq, bytemuck::NoUninit, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, bytemuck::NoUninit, Default)]
 #[repr(u8)]
 pub enum NewsView {
     #[default]
@@ -82,7 +87,6 @@ pub static NEWS_VIEW: Atomic<NewsView> = Atomic::new(NewsView::Quote);
 pub struct NewsItem {
     pub id: String,
     pub title: String,
-    pub url: String,
     pub published_at: OffsetDateTime,
 }
 
@@ -95,9 +99,19 @@ pub static NEWS_LIST_STATE: std::sync::LazyLock<Mutex<ListState>> =
 pub static NEWS_DETAIL_CONTENT: std::sync::LazyLock<Mutex<String>> =
     std::sync::LazyLock::new(|| Mutex::new(String::new()));
 
+/// The security the loaded list belongs to. The dock and the full list view
+/// share one fetch, so toggling between them does not re-request.
+pub static NEWS_SYMBOL: std::sync::LazyLock<Mutex<String>> =
+    std::sync::LazyLock::new(|| Mutex::new(String::new()));
+
 pub static NEWS_LOADING: Atomic<bool> = Atomic::new(false);
 pub static NEWS_DETAIL_LOADING: Atomic<bool> = Atomic::new(false);
 pub static NEWS_DETAIL_SCROLL: Atomic<u16> = Atomic::new(0);
+
+/// The furthest the article can scroll, as of the last render. Kept so the
+/// scroll keys and the wheel stop at the end of the text instead of running on
+/// into blank space.
+pub static NEWS_DETAIL_MAX_SCROLL: Atomic<u16> = Atomic::new(0);
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -113,6 +127,20 @@ fn prepare_article(text: &str) -> String {
     } else {
         text.to_owned()
     }
+}
+
+/// A headline's published time, as a reader scans it: local `MM-DD HH:MM`.
+/// The RFC 3339 stamp the API returns is precise but unreadable at a glance.
+fn fmt_published(dt: OffsetDateTime) -> String {
+    let local =
+        dt.to_offset(time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC));
+    format!(
+        "{:02}-{:02} {:02}:{:02}",
+        local.month() as u8,
+        local.day(),
+        local.hour(),
+        local.minute()
+    )
 }
 
 fn truncate_title(title: &str, max: usize) -> String {
@@ -131,7 +159,19 @@ fn truncate_title(title: &str, max: usize) -> String {
 
 // ─── Actions ─────────────────────────────────────────────────────────────────
 
+/// Load `counter`'s news unless the list already holds it. The news dock shows
+/// without the user asking, so the fetch has to be idempotent per security.
+pub fn ensure_news(counter: Counter, tx: mpsc::UnboundedSender<CommandQueue>) {
+    let symbol = counter.to_string();
+    let loaded = NEWS_SYMBOL.lock().expect("poison").as_str() == symbol;
+    if loaded && !NEWS_ITEMS.lock().expect("poison").is_empty() {
+        return;
+    }
+    fetch_news(counter, tx);
+}
+
 pub fn fetch_news(counter: Counter, tx: mpsc::UnboundedSender<CommandQueue>) {
+    *NEWS_SYMBOL.lock().expect("poison") = counter.to_string();
     NEWS_LOADING.store(true, Ordering::Relaxed);
     if let Ok(mut items) = NEWS_ITEMS.lock() {
         items.clear();
@@ -155,7 +195,6 @@ pub fn fetch_news(counter: Counter, tx: mpsc::UnboundedSender<CommandQueue>) {
                         NewsItem {
                             id: item.id.clone(),
                             title,
-                            url: item.url.clone(),
                             published_at: item.published_at,
                         }
                     })
@@ -250,18 +289,29 @@ pub fn news_list_down() {
     state.select(Some(new_idx));
 }
 
+/// Scroll the article by `lines` (negative scrolls up), clamped to its length.
+pub fn news_detail_scroll_by(lines: i32) {
+    let current = NEWS_DETAIL_SCROLL.load(Ordering::Relaxed);
+    let max = NEWS_DETAIL_MAX_SCROLL.load(Ordering::Relaxed);
+    let delta = lines.unsigned_abs().min(u32::from(u16::MAX)) as u16;
+    let next = if lines < 0 {
+        current.saturating_sub(delta)
+    } else {
+        current.saturating_add(delta).min(max)
+    };
+    NEWS_DETAIL_SCROLL.store(next, Ordering::Relaxed);
+}
+
 pub fn news_detail_scroll_up() {
-    let s = NEWS_DETAIL_SCROLL.load(Ordering::Relaxed);
-    NEWS_DETAIL_SCROLL.store(s.saturating_sub(3), Ordering::Relaxed);
+    news_detail_scroll_by(-3);
 }
 
 pub fn news_detail_scroll_down() {
-    let s = NEWS_DETAIL_SCROLL.load(Ordering::Relaxed);
-    NEWS_DETAIL_SCROLL.store(s.saturating_add(3), Ordering::Relaxed);
+    news_detail_scroll_by(3);
 }
 
-/// Returns `(id, url)` for the currently selected news item, if any.
-pub fn selected_news_item() -> Option<(String, String)> {
+/// The id of the currently selected news item, if any.
+pub fn selected_news_id() -> Option<String> {
     let state = NEWS_LIST_STATE.lock().expect("poison");
     let idx = state.selected()?;
     drop(state);
@@ -269,17 +319,19 @@ pub fn selected_news_item() -> Option<(String, String)> {
         .lock()
         .expect("poison")
         .get(idx)
-        .map(|item| (item.id.clone(), item.url.clone()))
+        .map(|item| item.id.clone())
 }
 
-// Kept for callers that only need the id.
-pub fn selected_news_id() -> Option<String> {
-    selected_news_item().map(|(id, _)| id)
+/// The article's page on longbridge.com. The list API also carries a source
+/// URL, but the Longbridge page is the canonical destination and always exists.
+#[must_use]
+pub fn news_web_url(id: &str) -> String {
+    format!("https://longbridge.com/news/{id}")
 }
 
-/// Returns the web URL of the currently selected news item, if any.
+/// The web URL of the currently selected news item, if any.
 pub fn selected_news_url() -> Option<String> {
-    selected_news_item().map(|(_, url)| url)
+    selected_news_id().as_deref().map(news_web_url)
 }
 
 pub fn reset_news_view() {
@@ -293,21 +345,39 @@ pub fn reset_news_view() {
     if let Ok(mut content) = NEWS_DETAIL_CONTENT.lock() {
         content.clear();
     }
+    if let Ok(mut symbol) = NEWS_SYMBOL.lock() {
+        symbol.clear();
+    }
     NEWS_DETAIL_SCROLL.store(0, Ordering::Relaxed);
+    NEWS_DETAIL_MAX_SCROLL.store(0, Ordering::Relaxed);
 }
 
 // ─── Rendering ───────────────────────────────────────────────────────────────
 
-/// Renders the news list into `rect`. In compact mode only titles are shown
-/// (no timestamp, no spacing), intended for the narrow 3/10 column.
-fn render_news_list(frame: &mut Frame, rect: Rect, compact: bool) {
+/// Renders the news list into `rect`.
+///
+/// Every item is two rows — headline, then a dim published time. Titles alone
+/// pack too tightly to tell one story from the next, so the second row is what
+/// separates them, not decoration.
+fn render_news_list(frame: &mut Frame, rect: Rect) {
     let title_str = t!("News.Title");
+    // The way out rides the list's border, mirroring `News [n]` on the quote
+    // panel — the pair replaces the tab strip that used to sit above both.
+    let back_label = format!(" {} ", t!("News.BackKey"));
+    let back_width = back_label.width() as u16;
     let block = Block::default()
         .title(format!(" {title_str} "))
+        .title_top(Line::from(Span::styled(back_label, styles::hint_key())).right_aligned())
         .borders(Borders::ALL)
         .border_type(ratatui::widgets::BorderType::Rounded)
         .border_style(styles::border());
     frame.render_widget(block, rect);
+    *crate::tui::mouse::NEWS_BACK_RECT.lock().expect("poison") = Rect {
+        x: rect.x + rect.width.saturating_sub(1 + back_width),
+        y: rect.y,
+        width: back_width.min(rect.width),
+        height: 1,
+    };
 
     let inner = rect.inner(Margin {
         vertical: 1,
@@ -345,17 +415,13 @@ fn render_news_list(frame: &mut Frame, rect: Rect, compact: bool) {
     let list_items: Vec<ListItem> = items
         .iter()
         .map(|item| {
-            if compact {
-                ListItem::new(truncate_title(&item.title, list_width as usize))
-            } else {
-                ListItem::new(vec![
-                    Line::from(item.title.clone()),
-                    Line::from(Span::styled(
-                        fmt_rfc3339(item.published_at),
-                        styles::dark_gray(),
-                    )),
-                ])
-            }
+            ListItem::new(vec![
+                Line::from(item.title.clone()),
+                Line::from(Span::styled(
+                    fmt_published(item.published_at),
+                    styles::dark_gray(),
+                )),
+            ])
         })
         .collect();
 
@@ -376,10 +442,13 @@ fn render_news_list(frame: &mut Frame, rect: Rect, compact: bool) {
     frame.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
 }
 
-/// Full-width news list view (news mode without a selected article).
+/// The news list, as its own pane.
 pub fn render_news_list_view(frame: &mut Frame, rect: Rect) {
-    render_news_list(frame, rect, false);
+    render_news_list(frame, rect);
 }
+
+/// Rows a list item occupies: its headline and its published time.
+pub const NEWS_ITEM_ROWS: u16 = 2;
 
 /// Split view: 3/10 mini list on the left, 7/10 article detail on the right.
 pub fn render_news_detail_view(frame: &mut Frame, rect: Rect) {
@@ -388,52 +457,104 @@ pub fn render_news_detail_view(frame: &mut Frame, rect: Rect) {
         .constraints([Constraint::Ratio(3, 10), Constraint::Ratio(7, 10)])
         .split(rect);
 
-    render_news_list(frame, chunks[0], false);
+    render_news_list(frame, chunks[0]);
 
     // ── Detail pane ──────────────────────────────────────────────────────────
+    render_news_detail_pane(frame, chunks[1]);
+}
+
+/// Draw the article pane: the markdown body, wrapped and scrollable with a
+/// scrollbar, under a title bar carrying a clickable "open on the web" icon.
+fn render_news_detail_pane(frame: &mut Frame, rect: Rect) {
     let detail_title = t!("News.Detail");
-    let block = Block::default()
+    let article_url = selected_news_url();
+
+    let mut block = Block::default()
         .title(format!(" {detail_title} "))
         .borders(Borders::ALL)
         .border_type(ratatui::widgets::BorderType::Rounded)
         .border_style(styles::border());
-    frame.render_widget(block, chunks[1]);
+    if article_url.is_some() {
+        block =
+            block.title_top(Line::from(Span::styled(OPEN_ICON, styles::link())).right_aligned());
+    }
+    frame.render_widget(block, rect);
 
-    let inner = chunks[1].inner(Margin {
+    // The icon opens the article on longbridge.com. It sits on the top border,
+    // ending one column before the corner.
+    if let Some(url) = article_url {
+        crate::tui::mouse::register_link(
+            Rect {
+                x: rect.x + rect.width.saturating_sub(1 + OPEN_ICON_WIDTH),
+                y: rect.y,
+                width: OPEN_ICON_WIDTH,
+                height: 1,
+            },
+            url,
+        );
+    }
+
+    let inner = rect.inner(Margin {
         vertical: 1,
         horizontal: 1,
     });
+    *crate::tui::mouse::NEWS_DETAIL_RECT.lock().expect("poison") = inner;
 
-    // Split inner: content area + 1-line key hint bar at the bottom
-    let inner_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(0), Constraint::Length(1)])
-        .split(inner);
-    let content_area = inner_chunks[0];
-    let hint_area = inner_chunks[1];
+    // Content area + a 1-line key hint bar at the bottom.
+    let [content_area, hint_area] =
+        Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(inner);
+    let hint = Paragraph::new(t!("News.DetailHint").to_string()).style(styles::dark_gray());
 
-    let loading = NEWS_DETAIL_LOADING.load(Ordering::Relaxed);
-    if loading {
+    if NEWS_DETAIL_LOADING.load(Ordering::Relaxed) {
         frame.render_widget(Paragraph::new("Loading..."), content_area);
-        frame.render_widget(
-            Paragraph::new(t!("News.DetailHint").to_string()).style(styles::dark_gray()),
-            hint_area,
-        );
+        frame.render_widget(hint, hint_area);
         return;
     }
 
     let content = NEWS_DETAIL_CONTENT.lock().expect("poison").clone();
-    let scroll = NEWS_DETAIL_SCROLL.load(Ordering::Relaxed);
-
     if content.is_empty() {
+        NEWS_DETAIL_MAX_SCROLL.store(0, Ordering::Relaxed);
         frame.render_widget(Paragraph::new(t!("News.DetailEmpty")), content_area);
-    } else {
-        let md_text = tui_markdown::from_str_with_options(&content, &Options::new(NewsStyleSheet));
-        frame.render_widget(Paragraph::new(md_text).scroll((scroll, 0)), content_area);
+        frame.render_widget(hint, hint_area);
+        return;
     }
 
-    frame.render_widget(
-        Paragraph::new(t!("News.DetailHint").to_string()).style(styles::dark_gray()),
-        hint_area,
-    );
+    // Reserve the right-hand column for the scrollbar so wrapped text never
+    // runs under it.
+    let text_area = Rect {
+        width: content_area.width.saturating_sub(1),
+        ..content_area
+    };
+    let md_text = tui_markdown::from_str_with_options(&content, &Options::new(NewsStyleSheet));
+    let article = Paragraph::new(md_text).wrap(Wrap { trim: false });
+
+    // Clamp the stored offset to what the wrapped text actually needs, so the
+    // scroll keys and the wheel stop at the last line.
+    let total = article.line_count(text_area.width) as u16;
+    let max_scroll = total.saturating_sub(text_area.height);
+    NEWS_DETAIL_MAX_SCROLL.store(max_scroll, Ordering::Relaxed);
+    let scroll = NEWS_DETAIL_SCROLL.load(Ordering::Relaxed).min(max_scroll);
+    NEWS_DETAIL_SCROLL.store(scroll, Ordering::Relaxed);
+
+    frame.render_widget(article.scroll((scroll, 0)), text_area);
+
+    if max_scroll > 0 {
+        let mut state = ScrollbarState::new(max_scroll as usize).position(scroll as usize);
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None)
+                .track_symbol(None)
+                .thumb_symbol("▐")
+                .thumb_style(styles::dark_gray()),
+            Rect {
+                x: content_area.x + content_area.width.saturating_sub(1),
+                width: 1,
+                ..content_area
+            },
+            &mut state,
+        );
+    }
+
+    frame.render_widget(hint, hint_area);
 }

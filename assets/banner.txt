@@ -1,4 +1,5 @@
 Longbridge Terminal (v%{version})
 https://longbridge.com
 
-© 2023 - 2026 Long Bridge HK Limited. All Rights Reserved.
+© 2023 - %{year}, Longbridge.
+All rights reserved.

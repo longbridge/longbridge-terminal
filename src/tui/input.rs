@@ -185,7 +185,6 @@ fn is_tradeable(state: AppState) -> bool {
 /// Resolve a key event to an [`ActionId`] via the data-driven [`Keymap`], then
 /// execute the action for the current screen. Behavior per action is screen-
 /// aware; the keymap only decides *which* action a key triggers.
-#[allow(clippy::too_many_lines)]
 pub fn handle_global_keys(
     app: &mut bevy_app::App,
     event: KeyEvent,
@@ -197,7 +196,19 @@ pub fn handle_global_keys(
     let Some(action) = keymap.lookup(&event, Context::from_state(state)) else {
         return;
     };
+    run_action(app, action, state, update_tx, render_state);
+}
 
+/// Execute a resolved [`ActionId`] for the current screen. Separate from key
+/// lookup so the navbar's clickable shortcut hints run the very same code.
+#[allow(clippy::too_many_lines)]
+pub fn run_action(
+    app: &mut bevy_app::App,
+    action: ActionId,
+    state: AppState,
+    update_tx: mpsc::UnboundedSender<CommandQueue>,
+    render_state: &mut RenderState,
+) {
     match action {
         ActionId::ForceQuit => crate::tui::widgets::Terminal::graceful_exit(0),
 
@@ -378,7 +389,11 @@ pub fn handle_global_keys(
         }
 
         ActionId::Escape => {
-            if state == AppState::WatchlistStock {
+            // A visible detail panel is the innermost layer, so Esc dismisses
+            // it before it means "leave this screen".
+            if close_detail_panel(state) {
+                render_state.mark_dirty(DirtyFlags::ALL);
+            } else if state == AppState::WatchlistStock {
                 cycle_news_view_back(app, render_state);
             } else if state == AppState::Stock || state == AppState::Orders {
                 app.world
@@ -452,9 +467,31 @@ pub fn handle_global_keys(
             render_state.mark_dirty(DirtyFlags::ALL);
         }
 
-        // Handled globally in the event loop (before the popup check), so it
-        // is never reached here; listed for exhaustiveness.
-        ActionId::ToggleLog => {}
+        ActionId::ToggleLog => {
+            toggle_log_panel();
+            render_state.mark_dirty(DirtyFlags::ALL);
+        }
+    }
+}
+
+/// Show or hide the floating log panel.
+///
+/// Shared with the event loop, which intercepts the key before the popup check
+/// so the panel opens even over a modal. Going through one function keeps the
+/// navbar's clickable `Console` hint doing what the key does.
+pub fn toggle_log_panel() {
+    use std::sync::atomic::Ordering;
+    let visible = crate::tui::app::LOG_PANEL_VISIBLE.load(Ordering::Relaxed);
+    crate::tui::app::LOG_PANEL_VISIBLE.store(!visible, Ordering::Relaxed);
+}
+
+/// Close the Portfolio / Orders detail panel if it is open on this screen.
+/// Returns whether anything was closed.
+fn close_detail_panel(state: AppState) -> bool {
+    match state {
+        AppState::Portfolio => systems::close_holding_detail(),
+        AppState::Orders => systems::close_order_detail(),
+        _ => false,
     }
 }
 
@@ -568,6 +605,20 @@ pub fn handle_popup_mouse_click(
                 popup::close();
                 WATCHLIST.write().expect("poison").set_group_id(group.id);
                 systems::refresh_watchlist(update_tx);
+                render_state.mark_dirty(DirtyFlags::ALL);
+            }
+        }
+        PopupKind::Settings => {
+            // Clicking a value chip picks that value directly, instead of
+            // cycling until the wanted one comes round.
+            let hit = mouse::SETTINGS_CHIP_RECTS
+                .lock()
+                .expect("poison")
+                .iter()
+                .find(|(r, _, _)| row == r.y && col >= r.x && col < r.x + r.width)
+                .map(|(_, meta_idx, choice_idx)| (*meta_idx, *choice_idx));
+            if let Some((meta_idx, choice_idx)) = hit {
+                crate::tui::settings::set_choice(meta_idx, choice_idx);
                 render_state.mark_dirty(DirtyFlags::ALL);
             }
         }

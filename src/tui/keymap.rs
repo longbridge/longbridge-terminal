@@ -211,10 +211,13 @@ fn default_actions() -> Vec<ActionDef> {
         def(A::Search, Always, c('/'), &[], "Keyboard.Search", true),
         def(A::Help, Always, c('?'), &[], "Keyboard.Help", true),
         def(A::ToggleLog, Always, c('`'), &[], "Keyboard.Console", false),
+        // Plain `,` rather than `Ctrl+,`: several terminals and desktop
+        // environments already claim the Ctrl chord, and `,` alone is free on
+        // every screen.
         def(
             A::OpenSettings,
             Always,
-            ctrl(','),
+            c(','),
             &[],
             "Keyboard.Settings",
             true,

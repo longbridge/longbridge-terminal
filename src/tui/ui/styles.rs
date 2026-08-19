@@ -59,6 +59,73 @@ pub fn hint_key() -> Style {
     gray().add_modifier(Modifier::BOLD)
 }
 
+/// The accent used by the active primary tab, settings chips and links.
+///
+/// One of the terminal's own sixteen colours, not a fixed palette index or an
+/// RGB value, so it follows whatever theme the user runs. Cyan is the closest
+/// the palette gets to the brand teal and does not collide with the red/green
+/// the up-down convention already owns.
+#[inline]
+pub fn accent() -> Color {
+    Color::Cyan
+}
+
+/// Active primary tab: a solid accent pill with dark text.
+#[inline]
+pub fn tab_active() -> Style {
+    Style::default()
+        .bg(accent())
+        .fg(Color::Black)
+        .add_modifier(Modifier::BOLD)
+}
+
+/// The `[n]` shortcut digit inside the active pill — same fill, lighter weight.
+#[inline]
+pub fn tab_active_key() -> Style {
+    Style::default().bg(accent()).fg(Color::Black)
+}
+
+/// Inactive primary tab label.
+#[inline]
+pub fn tab_inactive() -> Style {
+    Style::default().fg(Color::Gray)
+}
+
+/// The `[n]` shortcut digit of an inactive tab — dimmer than its label.
+#[inline]
+pub fn tab_inactive_key() -> Style {
+    Style::default().fg(Color::DarkGray)
+}
+
+/// Plain accent-coloured text (focus markers, small emphasis).
+#[inline]
+pub fn accent_text() -> Style {
+    Style::default().fg(accent())
+}
+
+/// Selected value of a settings row: a filled accent chip.
+#[inline]
+pub fn chip_active() -> Style {
+    Style::default()
+        .bg(accent())
+        .fg(Color::Black)
+        .add_modifier(Modifier::BOLD)
+}
+
+/// An unselected settings value.
+#[inline]
+pub fn chip_inactive() -> Style {
+    Style::default().fg(Color::Gray)
+}
+
+/// A clickable URL.
+#[inline]
+pub fn link() -> Style {
+    Style::default()
+        .fg(accent())
+        .add_modifier(Modifier::UNDERLINED)
+}
+
 #[inline]
 pub fn popup() -> Style {
     text()

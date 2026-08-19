@@ -103,26 +103,28 @@ impl Chart {
         self.info_bar.name = name;
     }
 
-    /// Set the color of the bearish candle
-    /// The default color is  (234, 74, 90).
+    /// Set the color of the bearish candle. Defaults to the terminal's bright
+    /// red. Also applies to the info bar, so a fall reads the same everywhere.
     pub fn set_bear_color(&mut self, color: colored::Color) {
         self.renderer.bearish_color = color;
+        self.info_bar.bearish_color = color;
     }
 
-    /// Set the color of the bullish candle
-    /// The default color is  (52, 208, 88).
+    /// Set the color of the bullish candle. Defaults to the terminal's bright
+    /// green. Also applies to the info bar.
     pub fn set_bull_color(&mut self, color: colored::Color) {
         self.renderer.bullish_color = color;
+        self.info_bar.bullish_color = color;
     }
 
     /// Sets the color of the volume when the candle is bearish.
-    /// The default color is  (234, 74, 90).
+    /// Defaults to the terminal's bright red.
     pub fn set_vol_bear_color(&mut self, color: colored::Color) {
         self.volume_pane.bearish_color = color;
     }
 
     /// Sets the color of the volume when the candle is bullish.
-    /// The default color is  (52, 208, 88).
+    /// Defaults to the terminal's bright green.
     pub fn set_vol_bull_color(&mut self, color: colored::Color) {
         self.volume_pane.bullish_color = color;
     }

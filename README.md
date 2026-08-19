@@ -510,7 +510,7 @@ claude> Show me TSLA and NVDA performance over the last 5 days
 longbridge tui
 ```
 
-Features: real-time watchlist, candlestick charts, portfolio view, stock search, Vim-like keybindings.
+Features: real-time watchlist, candlestick charts, portfolio view, stock search, a responsive layout that docks the news list beside the quote panel when there is room for both, Vim-like keybindings, and mouse support — click the tabs, the shortcut hints, a headline, or a Portfolio/Orders row to open its detail panel. Press `?` for the full key list.
 
 ## Longbridge AI chat
 

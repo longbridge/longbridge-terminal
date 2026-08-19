@@ -61,6 +61,43 @@ pub static CANCEL_TARGET: LazyLock<RwLock<Option<longbridge::trade::Order>>> =
 pub static ORDERS_TABLE: LazyLock<Mutex<TableState>> = LazyLock::new(Mutex::default);
 pub static HISTORY_ORDERS_TABLE: LazyLock<Mutex<TableState>> = LazyLock::new(Mutex::default);
 
+/// Whether the right-hand order detail panel is showing. Opened by clicking an
+/// order and closed with Esc.
+pub static ORDER_DETAIL_OPEN: AtomicBool = AtomicBool::new(false);
+
+/// Open the order detail panel for row `index` of the today/history list.
+pub fn open_order_detail(index: usize, is_history: bool) {
+    let table = if is_history {
+        &HISTORY_ORDERS_TABLE
+    } else {
+        &ORDERS_TABLE
+    };
+    table.lock().expect("poison").select(Some(index));
+    ORDERS_MODE.store(is_history, Ordering::Relaxed);
+    ORDER_DETAIL_OPEN.store(true, Ordering::Relaxed);
+}
+
+/// Close the order detail panel. Returns whether it had been open.
+pub fn close_order_detail() -> bool {
+    ORDER_DETAIL_OPEN.swap(false, Ordering::Relaxed)
+}
+
+/// The order currently under the cursor in the active (today/history) list.
+fn selected_order() -> Option<longbridge::trade::Order> {
+    let is_history = ORDERS_MODE.load(Ordering::Relaxed);
+    let index = if is_history {
+        HISTORY_ORDERS_TABLE.lock().expect("poison").selected()
+    } else {
+        ORDERS_TABLE.lock().expect("poison").selected()
+    }?;
+    let view = if is_history {
+        HISTORY_ORDERS_VIEW.read().expect("poison")
+    } else {
+        ORDERS_VIEW.read().expect("poison")
+    };
+    view.get(index).cloned()
+}
+
 // ────────────────────────────── state structs ───────────────────────────────
 
 pub struct HistoryDateRange {
@@ -892,7 +929,34 @@ pub fn render_orders(
             height: rect.height - 2,
         };
 
-        render_orders_list(frame, content_rect);
+        let order_detail = ORDER_DETAIL_OPEN
+            .load(Ordering::Relaxed)
+            .then(selected_order)
+            .flatten();
+        let (list_rect, panel_rect) = if order_detail.is_some() {
+            crate::tui::views::detail::split(content_rect)
+        } else {
+            crate::tui::views::detail::clear_hit_areas();
+            (content_rect, Rect::default())
+        };
+
+        render_orders_list(frame, list_rect);
+
+        if let Some(order) = &order_detail {
+            let hints = vec![
+                Span::styled(format!(" {} ", t!("Detail.CancelKey")), styles::dark_gray()),
+                Span::styled(format!("{} ", t!("Detail.ModifyKey")), styles::dark_gray()),
+                Span::styled(format!("{} ", t!("Detail.QuoteKey")), styles::dark_gray()),
+                Span::styled(format!("{} ", t!("Detail.CloseKey")), styles::hint_key()),
+            ];
+            crate::tui::views::detail::render(
+                frame,
+                panel_rect,
+                &t!("Detail.Title"),
+                &order_detail_rows(order),
+                hints,
+            );
+        }
 
         crate::tui::views::popup::render(
             frame,
@@ -1207,6 +1271,100 @@ fn order_status_label(status: longbridge::trade::OrderStatus) -> &'static str {
         longbridge::trade::OrderStatus::PartialWithdrawal => "PartialWithdrawal",
         longbridge::trade::OrderStatus::Unknown => "–",
     }
+}
+
+/// Format an `OffsetDateTime` for the detail panel (local wall clock as the
+/// API reports it, to the second).
+fn format_datetime(t: time::OffsetDateTime) -> String {
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+        t.year(),
+        t.month() as u8,
+        t.day(),
+        t.hour(),
+        t.minute(),
+        t.second()
+    )
+}
+
+/// The label/value sheet shown in the order detail panel.
+fn order_detail_rows(order: &longbridge::trade::Order) -> Vec<crate::tui::views::detail::Row<'_>> {
+    use crate::tui::views::detail::Row;
+
+    let ccy = order.currency.as_str();
+    let side_style = match order.side {
+        longbridge::trade::OrderSide::Buy => styles::up(std::cmp::Ordering::Greater),
+        longbridge::trade::OrderSide::Sell => styles::up(std::cmp::Ordering::Less),
+        longbridge::trade::OrderSide::Unknown => styles::text(),
+    };
+    let side_label = match order.side {
+        longbridge::trade::OrderSide::Buy => t!("Trade.Buy").to_string(),
+        longbridge::trade::OrderSide::Sell => t!("Trade.Sell").to_string(),
+        longbridge::trade::OrderSide::Unknown => "–".to_string(),
+    };
+    let amount =
+        |v: Option<Decimal>| v.map_or_else(|| "–".to_string(), |p| format!("{p:.2} {ccy}"));
+
+    let mut rows = vec![
+        Row::Text(Line::from(vec![
+            Span::styled(order.symbol.clone(), styles::title()),
+            Span::raw("  "),
+            Span::styled(order.stock_name.clone(), styles::label()),
+        ])),
+        Row::Blank,
+        Row::Section(t!("Detail.Order").to_string()),
+        Row::styled(
+            t!("Orders.Status"),
+            order_status_label(order.status),
+            order_status_style(order.status),
+        ),
+        Row::styled(t!("Orders.Side"), side_label, side_style),
+        Row::field(t!("Orders.Type"), order_type_label(order.order_type)),
+        Row::field(
+            t!("Detail.TimeInForce"),
+            format!("{:?}", order.time_in_force),
+        ),
+        Row::field(t!("Detail.Currency"), ccy),
+        Row::Blank,
+        Row::Section(t!("Detail.Execution").to_string()),
+        Row::field(t!("Detail.Quantity"), order.quantity.to_string()),
+        Row::field(t!("Detail.FilledQty"), order.executed_quantity.to_string()),
+        Row::field(t!("Orders.Price"), amount(order.price)),
+        Row::field(t!("Detail.FilledPrice"), amount(order.executed_price)),
+        Row::field(t!("Detail.LastDone"), amount(order.last_done)),
+    ];
+
+    if order.trigger_price.is_some() {
+        rows.push(Row::field(
+            t!("Detail.TriggerPrice"),
+            amount(order.trigger_price),
+        ));
+    }
+
+    rows.push(Row::Blank);
+    rows.push(Row::Section(t!("Detail.Timing").to_string()));
+    rows.push(Row::field(
+        t!("Detail.SubmittedAt"),
+        format_datetime(order.submitted_at),
+    ));
+    if let Some(updated) = order.updated_at {
+        rows.push(Row::field(t!("Detail.UpdatedAt"), format_datetime(updated)));
+    }
+
+    rows.push(Row::Blank);
+    rows.push(Row::field(t!("Detail.OrderId"), order.order_id.clone()));
+    if !order.remark.is_empty() {
+        rows.push(Row::field(t!("Detail.Remark"), order.remark.clone()));
+    }
+    if !order.msg.is_empty() {
+        rows.push(Row::Blank);
+        rows.push(Row::Text(Line::from(Span::styled(
+            order.msg.clone(),
+            styles::dark_gray(),
+        ))));
+    }
+
+    rows
 }
 
 fn order_type_label(order_type: longbridge::trade::OrderType) -> &'static str {

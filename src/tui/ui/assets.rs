@@ -1,7 +1,7 @@
 use ansi_parser::AnsiParser;
 use ratatui::{
     buffer::Buffer,
-    layout::{Alignment, Rect},
+    layout::Rect,
     style::Style,
     text::Text,
     widgets::{Paragraph, Widget},
@@ -9,12 +9,21 @@ use ratatui::{
 
 static LOGO_STR: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/logo.ascii"));
 
+/// The site the banner links to, and the prefix that marks the banner's link
+/// line so it is styled and hit-tested as one.
+pub const HOME_URL: &str = "https://longbridge.com";
+
 static BANNER_STR: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
     let banner = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/banner.txt"));
-    banner.replace("%{version}", env!("CARGO_PKG_VERSION"))
+    let year = time::OffsetDateTime::now_local()
+        .unwrap_or_else(|_| time::OffsetDateTime::now_utc())
+        .year();
+    banner
+        .replace("%{version}", env!("CARGO_PKG_VERSION"))
+        .replace("%{year}", &year.to_string())
 });
 
-pub const BANNER_HEIGHT: u16 = 23;
+pub const BANNER_HEIGHT: u16 = 24;
 
 /// The Longbridge mark: a small, colour-accurate version of the app icon.
 ///
@@ -91,7 +100,6 @@ impl Widget for BannerWidget {
 
         let logo_height = logo_lines as u16;
         let spacing_height = 2;
-        let banner_height = banner_lines as u16;
 
         if area.height < total_lines as u16 {
             // If area is too small, just render what we can
@@ -108,18 +116,38 @@ impl Widget for BannerWidget {
         };
         center_ansi(LOGO_STR, logo_area, buf);
 
-        // Render banner text (without ANSI, centered)
-        let banner_area = Rect {
-            x: area.x,
-            y: area.y + logo_height + spacing_height,
-            width: area.width,
-            height: banner_height,
-        };
-        let banner_text = Text::raw(BANNER_STR.as_str());
-        Paragraph::new(banner_text)
-            .alignment(Alignment::Center)
-            .style(self.style)
-            .render(banner_area, buf);
+        // Render banner text (without ANSI, centered). Drawn line by line so
+        // the home-page URL can be styled as a link and registered as a click
+        // target.
+        let top = area.y + logo_height + spacing_height;
+        for (y, line) in (top..).zip(BANNER_STR.lines()) {
+            if y >= area.bottom() {
+                break;
+            }
+            let line_area = centered_line(line, area, y);
+            if line.trim() == HOME_URL {
+                Paragraph::new(Text::styled(line, crate::tui::ui::styles::link()))
+                    .render(line_area, buf);
+                crate::tui::mouse::register_link(line_area, HOME_URL);
+            } else {
+                Paragraph::new(Text::raw(line))
+                    .style(self.style)
+                    .render(line_area, buf);
+            }
+        }
+    }
+}
+
+/// The one-row rect a centered `line` occupies on row `y` of `area`.
+fn centered_line(line: &str, area: Rect, y: u16) -> Rect {
+    use unicode_width::UnicodeWidthStr;
+
+    let width = (line.width() as u16).min(area.width);
+    Rect {
+        x: area.x + (area.width - width) / 2,
+        y,
+        width,
+        height: 1,
     }
 }
 

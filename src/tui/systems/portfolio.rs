@@ -34,6 +34,132 @@ pub static PORTFOLIO_VIEW: std::sync::LazyLock<
 pub static PORTFOLIO_TABLE: std::sync::LazyLock<Mutex<ratatui::widgets::TableState>> =
     std::sync::LazyLock::new(Mutex::default);
 
+/// Whether the right-hand holding detail panel is showing. Opened by clicking
+/// a holding (or pressing Enter) and closed with Esc.
+pub static HOLDING_DETAIL_OPEN: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Open the holding detail panel for the row at `index`.
+pub fn open_holding_detail(index: usize) {
+    PORTFOLIO_TABLE.lock().expect("poison").select(Some(index));
+    HOLDING_DETAIL_OPEN.store(true, Ordering::Relaxed);
+}
+
+/// Close the holding detail panel. Returns whether it had been open.
+pub fn close_holding_detail() -> bool {
+    HOLDING_DETAIL_OPEN.swap(false, Ordering::Relaxed)
+}
+
+/// Currency code of a holding, as shown next to its amounts.
+fn currency_code(currency: crate::data::Currency) -> &'static str {
+    match currency {
+        crate::data::Currency::HKD => "HKD",
+        crate::data::Currency::USD => "USD",
+        crate::data::Currency::CNY => "CNY",
+        crate::data::Currency::SGD => "SGD",
+    }
+}
+
+/// Total and intraday P/L for a holding, as (total, total %, today, today %).
+/// Shared by the holdings table and the detail panel so both agree.
+fn holding_pl(holding: &crate::data::Holding) -> (Decimal, Decimal, Decimal, Decimal) {
+    let (pl, pl_pct) = match holding.cost_price {
+        Some(cost) if cost > Decimal::ZERO => (
+            holding.market_value - (cost * holding.quantity),
+            (holding.market_price - cost) / cost * Decimal::ONE_HUNDRED,
+        ),
+        Some(cost) => (
+            holding.market_value - (cost * holding.quantity),
+            Decimal::ZERO,
+        ),
+        None => (Decimal::ZERO, Decimal::ZERO),
+    };
+    let (today, today_pct) = match holding.prev_close {
+        Some(prev) if prev > Decimal::ZERO => (
+            (holding.market_price - prev) * holding.quantity,
+            (holding.market_price - prev) / prev * Decimal::ONE_HUNDRED,
+        ),
+        _ => (Decimal::ZERO, Decimal::ZERO),
+    };
+    (pl, pl_pct, today, today_pct)
+}
+
+/// The label/value sheet shown in the holding detail panel.
+fn holding_detail_rows(holding: &crate::data::Holding) -> Vec<crate::tui::views::detail::Row<'_>> {
+    use crate::tui::views::detail::Row;
+
+    let counter = Counter::from(holding.symbol.as_str());
+    let ccy = currency_code(holding.currency);
+    let (pl, pl_pct, today_pl, today_pct) = holding_pl(holding);
+    let pl_style = styles::up(pl.cmp(&Decimal::ZERO));
+    let today_style = styles::up(today_pl.cmp(&Decimal::ZERO));
+
+    vec![
+        Row::Text(Line::from(vec![
+            Span::styled(
+                counter.market().to_string(),
+                styles::market(counter.region()),
+            ),
+            Span::raw(" "),
+            Span::styled(counter.code().to_string(), styles::title()),
+        ])),
+        Row::Blank,
+        Row::Section(t!("Detail.Position").to_string()),
+        Row::field(t!("Detail.Quantity"), format!("{:.0}", holding.quantity)),
+        Row::field(
+            t!("Detail.Available"),
+            format!("{:.0}", holding.available_quantity),
+        ),
+        Row::field(
+            t!("Detail.CostPrice"),
+            holding
+                .cost_price
+                .map_or_else(|| "–".to_string(), |p| format!("{p:.2} {ccy}")),
+        ),
+        Row::field(
+            t!("Detail.LastPrice"),
+            format!("{:.2} {ccy}", holding.market_price),
+        ),
+        Row::field(
+            t!("Detail.MarketValue"),
+            format!("{:.2} {ccy}", holding.market_value),
+        ),
+        Row::field(
+            t!("Detail.ValueUSD"),
+            format!("{:.2} USD", holding.market_value_usd),
+        ),
+        Row::Blank,
+        Row::Section(t!("Detail.Performance").to_string()),
+        Row::field(
+            t!("Detail.PrevClose"),
+            holding
+                .prev_close
+                .map_or_else(|| "–".to_string(), |p| format!("{p:.2} {ccy}")),
+        ),
+        Row::styled(
+            t!("Detail.IntradayPL"),
+            format!(
+                "{}{today_pl:+.2}",
+                styles::trend_arrow(today_pl.cmp(&Decimal::ZERO))
+            ),
+            today_style,
+        ),
+        Row::styled(
+            t!("Detail.IntradayPLPct"),
+            format!("{today_pct:+.2}%"),
+            today_style,
+        ),
+        Row::styled(
+            t!("Detail.TotalPL"),
+            format!("{}{pl:+.2}", styles::trend_arrow(pl.cmp(&Decimal::ZERO))),
+            pl_style,
+        ),
+        Row::styled(t!("Detail.TotalPLPct"), format!("{pl_pct:+.2}%"), pl_style),
+        Row::Blank,
+        Row::field(t!("Detail.Currency"), ccy),
+    ]
+}
+
 pub fn render_portfolio(
     mut terminal: ResMut<Terminal>,
     mut events: EventReader<super::Key>,
@@ -63,6 +189,14 @@ pub fn render_portfolio(
                 let idx = table.selected();
                 if len > 0 {
                     table.select(Some(idx.map_or(0, |i| if i + 1 < len { i + 1 } else { i })));
+                }
+            }
+            super::Key::Enter if len > 0 => {
+                let selected = PORTFOLIO_TABLE.lock().expect("poison").selected();
+                if HOLDING_DETAIL_OPEN.load(Ordering::Relaxed) {
+                    close_holding_detail();
+                } else {
+                    open_holding_detail(selected.unwrap_or(0));
                 }
             }
             _ => {}
@@ -337,7 +471,15 @@ pub fn render_portfolio(
             }
         }
 
-        // Bottom: Holdings list
+        // Bottom: Holdings list, with the detail panel beside it when open.
+        let detail_open = HOLDING_DETAIL_OPEN.load(Ordering::Relaxed) && !holdings.is_empty();
+        let (list_rect, panel_rect) = if detail_open {
+            crate::tui::views::detail::split(chunks[1])
+        } else {
+            crate::tui::views::detail::clear_hit_areas();
+            (chunks[1], Rect::default())
+        };
+
         {
             let holdings_block = Block::default()
                 .borders(Borders::ALL)
@@ -362,7 +504,7 @@ pub fn render_portfolio(
                 ])
                 .block(holdings_block)
                 .alignment(Alignment::Center);
-                frame.render_widget(message, chunks[1]);
+                frame.render_widget(message, list_rect);
             } else {
                 // Create holdings table
                 let header = Row::new(vec![
@@ -385,47 +527,11 @@ pub fn render_portfolio(
                         // Parse Counter from symbol string
                         let counter = Counter::from(holding.symbol.as_str());
 
-                        // Calculate P/L
-                        let (profit_loss, profit_loss_percent) =
-                            if let Some(cost_price) = holding.cost_price {
-                                let pl = holding.market_value - (cost_price * holding.quantity);
-                                let pl_pct = if cost_price > Decimal::ZERO {
-                                    (holding.market_price - cost_price) / cost_price
-                                        * Decimal::from(100)
-                                } else {
-                                    Decimal::ZERO
-                                };
-                                (pl, pl_pct)
-                            } else {
-                                (Decimal::ZERO, Decimal::ZERO)
-                            };
-
+                        let (profit_loss, profit_loss_percent, today_pl, today_pl_percent) =
+                            holding_pl(holding);
                         let pl_style = styles::up(profit_loss.cmp(&Decimal::ZERO));
-
-                        // Calculate today's P/L from prev_close
-                        let (today_pl, today_pl_percent) = if let Some(prev_close) =
-                            holding.prev_close
-                        {
-                            if prev_close > Decimal::ZERO {
-                                let tpl = (holding.market_price - prev_close) * holding.quantity;
-                                let tpl_pct = (holding.market_price - prev_close) / prev_close
-                                    * Decimal::from(100);
-                                (tpl, tpl_pct)
-                            } else {
-                                (Decimal::ZERO, Decimal::ZERO)
-                            }
-                        } else {
-                            (Decimal::ZERO, Decimal::ZERO)
-                        };
                         let today_pl_style = styles::up(today_pl.cmp(&Decimal::ZERO));
-
-                        // Get currency string
-                        let currency_str = match holding.currency {
-                            crate::data::Currency::HKD => "HKD",
-                            crate::data::Currency::USD => "USD",
-                            crate::data::Currency::CNY => "CNY",
-                            crate::data::Currency::SGD => "SGD",
-                        };
+                        let currency_str = currency_code(holding.currency);
 
                         Row::new(vec![
                             Cell::from(Line::from(vec![
@@ -475,13 +581,35 @@ pub fn render_portfolio(
 
                 frame.render_stateful_widget(
                     table,
-                    chunks[1],
+                    list_rect,
                     &mut *PORTFOLIO_TABLE.lock().expect("poison"),
                 );
                 *crate::tui::mouse::PORTFOLIO_TABLE_RECT
                     .lock()
-                    .expect("poison") = chunks[1];
+                    .expect("poison") = list_rect;
             }
+        }
+
+        if detail_open {
+            let selected = PORTFOLIO_TABLE
+                .lock()
+                .expect("poison")
+                .selected()
+                .unwrap_or(0)
+                .min(holdings.len() - 1);
+            let holding = &holdings[selected];
+            let hints = vec![
+                Span::styled(format!(" {} ", t!("Trade.BuyKey")), styles::dark_gray()),
+                Span::styled(format!("{} ", t!("Trade.SellKey")), styles::dark_gray()),
+                Span::styled(format!("{} ", t!("Detail.CloseKey")), styles::hint_key()),
+            ];
+            crate::tui::views::detail::render(
+                frame,
+                panel_rect,
+                &holding.name,
+                &holding_detail_rows(holding),
+                hints,
+            );
         }
 
         // Render popups
