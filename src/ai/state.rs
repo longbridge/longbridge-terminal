@@ -95,6 +95,21 @@ pub enum ChatEvent {
     TurnFinished { error: Option<String> },
 }
 
+/// Where the turn in flight began. `None` between turns.
+///
+/// Carried for analytics, which needs both halves: the timestamp to measure how
+/// long a turn took, and the transcript index to tell *this* turn's tool calls
+/// apart from every call the conversation has made.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TurnStart {
+    /// When the prompt went out. A monotonic instant rather than a wall clock:
+    /// the value is only ever used as a duration, and a clock adjustment
+    /// mid-turn would otherwise report a negative or wildly inflated one.
+    pub at: std::time::Instant,
+    /// Index into [`ChatState::messages`] the turn starts at.
+    pub from: usize,
+}
+
 /// The full chat state the view renders.
 #[derive(Default)]
 pub struct ChatState {
@@ -145,6 +160,8 @@ pub struct ChatState {
     pub references: Vec<Reference>,
     /// Suggested follow-up questions from the latest turn (click to send).
     pub further: Vec<String>,
+    /// Where the turn in flight began, for analytics. See [`TurnStart`].
+    pub turn_started: Option<TurnStart>,
 }
 
 impl ChatState {
@@ -161,6 +178,13 @@ impl ChatState {
     pub fn apply(&mut self, event: ChatEvent) {
         match event {
             ChatEvent::UserPrompt(text) => {
+                // Recorded before the prompt is pushed, so `from` points at the
+                // prompt itself and the turn's own tool lines are everything
+                // after it — not the whole conversation's.
+                self.turn_started = Some(TurnStart {
+                    at: std::time::Instant::now(),
+                    from: self.messages.len(),
+                });
                 self.messages.push(Message::new(Role::User, text));
                 self.scroll = 0;
                 self.busy = true;
@@ -317,6 +341,7 @@ impl ChatState {
         self.tool_failures.clear();
         self.references.clear();
         self.further.clear();
+        self.turn_started = None;
     }
 
     /// Cancel the active turn, folding any partial answer into the transcript.
@@ -339,6 +364,9 @@ impl ChatState {
         // to a run the server has already dropped.
         self.pending_interrupt = None;
         self.turn_error = None;
+        // Cleared last, and only here: callers that report the cancelled turn
+        // read it first, so anything that clears it earlier loses the duration.
+        self.turn_started = None;
     }
 }
 

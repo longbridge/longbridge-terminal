@@ -2,6 +2,7 @@
 //!
 //! Structured after grok-build's layering, at a scale proportionate to a hosted
 //! chat agent:
+//! - [`analytics`] — the business events this chat reports (counts, never content)
 //! - [`answer`]  — what an answer is made of (segments, widgets, markers)
 //! - [`chart`]   — `vis-chart` specs drawn as braille plots
 //! - [`quotes`]  — live quotes for the securities an answer references
@@ -14,6 +15,7 @@
 //! local tool/workspace layer (unlike grok-build, which edits and runs code).
 
 pub mod account;
+pub mod analytics;
 pub mod answer;
 pub mod chart;
 pub mod editor;

@@ -31,7 +31,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use super::editor::Editor;
 use super::session_store::{self, SessionSummary};
 use super::state::{ChatEvent, ChatState, Message, Role, ToolStatus};
-use super::{markdown, runtime};
+use super::{analytics, markdown, runtime};
 use crate::cli::agent::client::ConversationRequest;
 use crate::cli::agent::DEFAULT_AGENT_UID;
 use crate::tui::ui::assets;
@@ -46,6 +46,28 @@ enum View {
     Sessions,
     Settings,
     Question,
+}
+
+impl View {
+    /// The group's registered `page_name` for this view.
+    ///
+    /// Built from the same vocabulary as the market TUI's (see
+    /// `crate::tui::app::page_name`): `tlb` for this client, then the business
+    /// keyword, then what the page is. `ai` is a new business keyword — the chat
+    /// is its own product line with its own `app_id`, and filing it under
+    /// `content` would bury it among posts and courses.
+    ///
+    /// `Question` is a drawer rather than a destination, but it reports as a page
+    /// anyway: it is where a turn stops and waits for the reader, so how long
+    /// they spend there is worth as much as any view's.
+    const fn page_name(self) -> &'static str {
+        match self {
+            Self::Chat => "tlb_ai_chat_home",
+            Self::Sessions => "tlb_ai_chat_list",
+            Self::Settings => "tlb_ai_setting_entry",
+            Self::Question => "tlb_ai_interrupt_drawer",
+        }
+    }
 }
 
 /// Transcript lines a page-scroll keystroke moves.
@@ -706,6 +728,7 @@ impl Ui {
     /// selection. (Entering Conversations is done via `open_sessions`, which
     /// also kicks off the async fetch.)
     fn switch(&mut self, view: View) {
+        crate::analytics::enter_page(view.page_name(), serde_json::json!({}));
         self.view = view;
         self.notice = None;
         self.sel = 0;
@@ -761,6 +784,9 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
     let mut terminal = Terminal::default();
     let mut state = ChatState::new(agent_uid, t!("Ai.Welcome").to_string());
     let mut ui = Ui::new();
+    // The opening view never goes through `switch`, so it reports itself here or
+    // the first page of every session is missing.
+    crate::analytics::enter_page(ui.view.page_name(), serde_json::json!({}));
     let mut editor = Editor::new();
     // Seed the prompt history from disk so ↑/↓ recalls prompts from previous
     // sessions, the way a shell does.
@@ -842,8 +868,34 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
                 let Some(event) = current_turn_event(&state, turn_event) else {
                     continue;
                 };
-                let finished = matches!(event, ChatEvent::TurnFinished { .. });
+                if let ChatEvent::Interrupt(interrupt) = &event {
+                    let questions = runtime::interrupt_interactions(interrupt)
+                        .iter()
+                        .map(|interaction| runtime::interaction_questions(interaction).len())
+                        .sum();
+                    analytics::interrupt(questions);
+                }
+                // Read before applying: applying takes the server error, so
+                // afterwards there is no way to tell a failed stream from a
+                // stream that carried a failure.
+                let outcome = match &event {
+                    ChatEvent::TurnFinished { error } => Some(if error.is_some() {
+                        analytics::Outcome::StreamError
+                    } else if state.turn_error.is_some() {
+                        analytics::Outcome::ServerError
+                    } else {
+                        analytics::Outcome::Ok
+                    }),
+                    _ => None,
+                };
+                let finished = outcome.is_some();
                 state.apply(event);
+                if let Some(outcome) = outcome {
+                    // Reported after applying, so the answer has been folded
+                    // into the transcript and its length is final.
+                    analytics::turn_finish(&state, outcome);
+                    state.turn_started = None;
+                }
                 if finished {
                     turn = None;
                     maybe_open_question(&mut ui, &state);
@@ -959,6 +1011,7 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
             }
             Some(loaded) = load_rx.recv() => {
                 if let Some(loaded) = loaded {
+                    analytics::session_resume();
                     session_store::restore(loaded, &mut state);
                     ui.reset_render();
                     resolve_session_tickers(&ui, &state, &aliases_tx);
@@ -1222,8 +1275,16 @@ fn dispatch_event(
             }
             _ => {}
         },
-        Event::FocusGained => ui.focused = true,
-        Event::FocusLost => ui.focused = false,
+        // Also told to analytics: a session left in a background pane is not a
+        // session somebody is using, and `active_ms` is how that is told apart.
+        Event::FocusGained => {
+            ui.focused = true;
+            crate::analytics::set_active(true);
+        }
+        Event::FocusLost => {
+            ui.focused = false;
+            crate::analytics::set_active(false);
+        }
         _ => {}
     }
 }
@@ -1286,6 +1347,16 @@ fn on_ctrl_c(
 fn cancel_turn(state: &mut ChatState, turn: &mut Option<JoinHandle<()>>) {
     if let Some(turn) = turn.take() {
         turn.abort();
+        // Aborting stops the producer, so no finishing event is coming. Reported
+        // before `cancel`, which clears the turn's start along with the rest of
+        // the in-flight state. `turn_finish` ignores an idle chat on its own, but
+        // gating on the handle keeps a bare Esc from reaching it at all.
+        analytics::turn_finish(state, analytics::Outcome::Cancelled);
+    }
+    // `cancel` drops a pending question as unanswerable, so it counts as walked
+    // away from — reported before that happens.
+    if state.pending_interrupt.is_some() {
+        analytics::interrupt_answered(false);
     }
     state.cancel(&t!("Ai.Cancelled"));
 }
@@ -1676,6 +1747,10 @@ fn start_turn(
     tx: &UnboundedSender<runtime::TurnEvent>,
 ) {
     let req = runtime::build_request(state, query.clone());
+    // Reported before the prompt is applied: applying it appends this very
+    // message, after which "has the reader asked anything yet" is always yes and
+    // no turn would ever look like a first one.
+    analytics::turn_start(state, query.chars().count());
     state.apply(ChatEvent::UserPrompt(query));
     state.pending_interrupt = None;
     *turn = Some(runtime::spawn_turn(req, state.generation, tx.clone()));
@@ -1684,7 +1759,19 @@ fn start_turn(
 fn new_session(ui: &mut Ui, state: &mut ChatState, turn: &mut Option<JoinHandle<()>>) {
     if let Some(task) = turn.take() {
         task.abort();
+        // An aborted turn sends no finishing event, so its end is reported here
+        // or not at all — and a start with no end is a turn the warehouse counts
+        // forever as still running.
+        analytics::turn_finish(state, analytics::Outcome::Cancelled);
     }
+    // Checked apart from the turn: a question left over from a turn that already
+    // finished is the most common way one goes unanswered — the reader reads it
+    // and starts over instead of replying.
+    if state.pending_interrupt.is_some() {
+        analytics::interrupt_answered(false);
+    }
+    analytics::session_new();
+    // Reported before the reset, which clears the turn's start.
     state.reset(t!("Ai.Welcome").to_string());
     ui.reset_render();
     ui.switch(View::Chat);
@@ -1795,6 +1882,7 @@ fn switch_agent(args: &str, ui: &mut Ui, state: &mut ChatState) {
         t!("Ai.AgentSwitched")
     }
     .to_string();
+    analytics::agent_switch(&state.agent_uid, &uid);
     // A conversation belongs to its agent server-side, so switching starts a
     // fresh one rather than continuing this thread under a different agent.
     state.reset(t!("Ai.Welcome").to_string());
@@ -2494,6 +2582,11 @@ fn submit_answers(
         message_id,
         answers,
     };
+    analytics::interrupt_answered(true);
+    // Answering starts a turn of its own, and this path does not go through
+    // `start_turn` — without its own start the resulting turn would report a
+    // finish with nothing it belongs to.
+    analytics::turn_start(state, summary.chars().count());
     state.apply(ChatEvent::UserPrompt(summary));
     state.pending_interrupt = None;
     *turn = Some(runtime::spawn_turn(req, state.generation, tx.clone()));
@@ -6049,6 +6142,27 @@ fn wrap(s: &str, width: usize) -> Vec<String> {
 mod tests {
     use super::marquee;
     use unicode_width::UnicodeWidthStr;
+
+    /// One view, one name — see the market TUI's equivalent. A duplicate would
+    /// merge two views in every report without failing anywhere.
+    #[test]
+    fn no_two_views_share_a_page_name() {
+        let views = [
+            super::View::Chat,
+            super::View::Sessions,
+            super::View::Settings,
+            super::View::Question,
+        ];
+        let mut names: Vec<&str> = views.iter().map(|view| view.page_name()).collect();
+        let total = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), total, "two views report the same page_name");
+        for name in names {
+            assert!(name.starts_with("tlb_ai_"), "{name} is not an AI page");
+            assert_eq!(name, name.to_lowercase(), "{name} should be lower snake");
+        }
+    }
 
     #[test]
     fn a_question_with_options_is_fully_selectable() {

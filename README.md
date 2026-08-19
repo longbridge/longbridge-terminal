@@ -631,6 +631,29 @@ Longbridge OpenAPI: maximum 10 calls per second. The SDK auto-refreshes OAuth to
 - Internet connection and browser access (for initial OAuth)
 - [Longbridge account](https://open.longbridge.com)
 
+## Usage Data
+
+Official release builds report usage data to Longbridge, so we can see which
+commands are used and where they fail. When you are signed in the reports carry
+your member id, so they are not anonymous. A build you make yourself (`cargo
+build`, `cargo run`) reports nothing at all.
+
+What is sent, per run:
+
+- which command ran (`quote`, `alert add`) — never its arguments, so no symbols,
+  account numbers, or order details
+- whether it succeeded, and how long it took
+- app version, OS family, whether the output is a terminal, whether this looks
+  like CI
+- a random id generated on first run and stored in `~/.longbridge/openapi/device-id`
+- your Longbridge member id, when signed in
+- panic messages when the app crashes, with your home directory and account name
+  removed
+
+Nothing else is collected: no arguments, no market data you looked at, no
+positions, no orders. The code is in [`src/analytics/`](src/analytics/) — the
+event payload is assembled in one place and can be read in full.
+
 ## Documentation
 
 - [Longbridge OpenAPI Docs](https://open.longbridge.com)

@@ -58,6 +58,10 @@ impl Terminal {
             cursor::MoveTo(0, 0),
             cursor::Hide,
             event::EnableMouseCapture,
+            // Focus reporting: without it a TUI left open in a background pane
+            // reports the same time-in-use as one somebody is watching.
+            // Terminals that do not support it simply send nothing.
+            event::EnableFocusChange,
         );
     }
 
@@ -67,6 +71,7 @@ impl Terminal {
         _ = crossterm::execute!(
             std::io::stdout(),
             event::DisableMouseCapture,
+            event::DisableFocusChange,
             cursor::Show,
             terminal::LeaveAlternateScreen,
         );
@@ -74,8 +79,19 @@ impl Terminal {
     }
 
     /// Graceful exit - cleanup terminal and exit program
+    ///
+    /// Analytics is settled here rather than after the TUI returns, because it
+    /// never does: this is `q` and Ctrl-C, and `process::exit` below ends the
+    /// process without unwinding. Anything still queued — the page on screen,
+    /// which has no leave yet, and whatever was reported on the way out — would
+    /// go with it, silently, since a cancelled request logs nothing.
+    ///
+    /// The terminal is restored first so the wait happens against a normal
+    /// prompt instead of a frozen full-screen frame.
     pub fn graceful_exit(code: i32) -> ! {
         Self::exit_full_screen();
+        crate::analytics::leave_page();
+        crate::analytics::flush_blocking();
         std::process::exit(code);
     }
 }
