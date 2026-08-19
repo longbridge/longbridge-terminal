@@ -344,13 +344,29 @@ struct Deferred {
 impl Sensors {
     /// Builds a client and starts the identity timer.
     ///
-    /// Returns `None` only if the HTTP client cannot be constructed, which
-    /// should cost telemetry and nothing else — callers are expected to carry
-    /// on without analytics rather than fail.
+    /// Returns `None` if `server_url` or `device_id` is empty, or if the HTTP
+    /// client cannot be constructed. Any of those should cost telemetry and
+    /// nothing else — callers are expected to carry on without analytics
+    /// rather than fail.
     ///
     /// Must be called where background tasks can be spawned: inside a Tokio
     /// runtime, or anywhere at all with the `tauri` feature.
     pub fn new(config: Config) -> Option<Self> {
+        // Neither of these fails loudly when left empty, which is why they are
+        // checked here rather than left to surface at runtime: an empty
+        // `server_url` POSTs into the void and quietly fills the retry buffer,
+        // an empty `device_id` reports everything under an empty `distinct_id`.
+        // From the host both look exactly like analytics that works.
+        for (field, value) in [
+            ("server_url", &config.server_url),
+            ("device_id", &config.device_id),
+        ] {
+            if value.trim().is_empty() {
+                log::warn!("[sensors] no reporting client: {field} is empty");
+                return None;
+            }
+        }
+
         let http = reqwest::Client::builder()
             .timeout(config.request_timeout)
             .build()
@@ -382,10 +398,17 @@ impl Sensors {
 
         // The backstop for a session nobody signs in on: without it those
         // events would be held until the process exits and then be lost.
-        let timer = sensors.clone();
+        // Weak, not a clone: a background task holding a strong reference would
+        // keep the client alive for as long as it runs, and the heartbeat below
+        // runs forever. That makes the client impossible to shut down or to
+        // rebuild against a different endpoint, and it stops [`Inner::drop`]
+        // from ever reporting work left behind.
+        let timer = Arc::downgrade(&sensors.0);
         spawn(async move {
             sleep(wait).await;
-            timer.settle("timed out");
+            if let Some(inner) = timer.upgrade() {
+                Sensors(inner).settle("timed out");
+            }
         });
 
         // A crash from the previous run, if any. Reported through the normal
@@ -394,11 +417,17 @@ impl Sensors {
         sensors.replay_crash();
 
         if let Some(heartbeat) = sensors.0.config.heartbeat.clone() {
-            let beating = sensors.clone();
+            let beating = Arc::downgrade(&sensors.0);
             spawn(async move {
                 loop {
                     sleep(heartbeat.interval).await;
-                    beating.beat(&heartbeat);
+                    // Ends when the host lets go of the client. The strong
+                    // reference lives only for the beat itself, never across
+                    // the sleep, so the client stays droppable throughout.
+                    let Some(inner) = beating.upgrade() else {
+                        break;
+                    };
+                    Sensors(inner).beat(&heartbeat);
                 }
             });
         }
@@ -413,7 +442,9 @@ impl Sensors {
     pub fn track(&self, event: &str, properties: serde_json::Value) {
         let now = now_ms();
 
-        if !self.0.settled.load(Ordering::Relaxed) {
+        // A fast path only — `hold` re-checks this under the queue lock, which
+        // is where the answer is actually authoritative.
+        if !self.0.settled.load(Ordering::SeqCst) {
             match self.hold(event, properties, now) {
                 None => return,
                 // Queue full — send as-is rather than drop.
@@ -639,6 +670,14 @@ impl Sensors {
         let Ok(mut queue) = self.0.deferred.lock() else {
             return Some(properties);
         };
+        // Re-checked here rather than trusting the read in `track`: between the
+        // two, `settle` may have already drained the queue. Settling happens
+        // once, so anything pushed after that drain would wait for a release
+        // that never comes — no error, no retry, just an event that is never
+        // sent. The flag is flipped under this same lock to close the window.
+        if self.0.settled.load(Ordering::SeqCst) {
+            return Some(properties);
+        }
         if queue.len() >= self.0.config.max_deferred {
             return Some(properties);
         }
@@ -653,15 +692,26 @@ impl Sensors {
 
     /// Releases held events. Idempotent; only the first call flushes.
     fn settle(&self, reason: &str) {
-        if self.0.settled.swap(true, Ordering::Relaxed) {
-            return;
-        }
-        let held: Vec<Deferred> = self
-            .0
-            .deferred
-            .lock()
-            .map(|mut queue| queue.drain(..).collect())
-            .unwrap_or_default();
+        // The flag flips under the `deferred` lock, paired with the re-check in
+        // [`Sensors::hold`]. Flipping it outside would leave a window where an
+        // event reads "not settled", loses the race to this drain, and lands in
+        // a queue nothing will ever empty again.
+        let held: Vec<Deferred> = match self.0.deferred.lock() {
+            Ok(mut queue) => {
+                if self.0.settled.swap(true, Ordering::SeqCst) {
+                    return;
+                }
+                queue.drain(..).collect()
+            }
+            // A poisoned lock still has to release the flag: otherwise every
+            // later event waits forever for a settle that already happened.
+            Err(_) => {
+                if self.0.settled.swap(true, Ordering::SeqCst) {
+                    return;
+                }
+                Vec::new()
+            }
+        };
         if !held.is_empty() {
             log::debug!(
                 "[sensors] identity settled ({reason}); releasing {}",
@@ -741,7 +791,12 @@ impl Sensors {
                 // Logged on success too. Analytics has no visible effect
                 // anywhere, so without this a client reporting nothing and one
                 // reporting everything read identically in the log.
-                log::debug!("[sensors] reported");
+                //
+                // Deliberately not "reported": ingest answers 200 to malformed
+                // payloads as well. This line proves the request was accepted,
+                // never that the event reached the warehouse — only the backend
+                // can answer that, and reading more into it has cost days.
+                log::debug!("[sensors] accepted (200)");
                 true
             }
             Ok(response) => {
@@ -1209,6 +1264,58 @@ mod tests {
         assert!(
             sensors.hold("e", serde_json::json!({}), 1).is_some(),
             "the event must come back to the caller"
+        );
+    }
+
+    /// A client missing either unguessable field reports nothing while looking
+    /// perfectly healthy: an empty endpoint POSTs into the void and fills the
+    /// retry buffer, an empty device id attributes everything to nobody. Both
+    /// are refused at construction, where the host can still see it.
+    #[test]
+    fn a_client_without_an_endpoint_or_a_device_id_is_refused() {
+        for broken in [
+            Config {
+                server_url: String::new(),
+                ..config()
+            },
+            Config {
+                server_url: "   ".into(),
+                ..config()
+            },
+            Config {
+                device_id: String::new(),
+                ..config()
+            },
+        ] {
+            assert!(Sensors::new(broken).is_none());
+        }
+        assert!(
+            Sensors::new(config()).is_some(),
+            "a complete config still builds"
+        );
+    }
+
+    /// An event that loses the race to `settle` must still go out.
+    ///
+    /// The window: `track` reads "not settled", `settle` drains the queue, and
+    /// only then does the event reach `hold`. Since settling happens once, a
+    /// push after that drain would sit in the queue forever — no error, no
+    /// retry, nothing in the log. This calls `hold` directly because that is
+    /// exactly the state the loser of the race arrives in.
+    #[test]
+    fn an_event_arriving_after_settling_is_sent_rather_than_queued() {
+        let sensors = client();
+        sensors.settle("test");
+
+        let returned = sensors.hold("late", serde_json::json!({}), 1);
+
+        assert!(
+            returned.is_some(),
+            "the event must come back to be dispatched, not be queued"
+        );
+        assert!(
+            sensors.0.deferred.lock().unwrap().is_empty(),
+            "nothing may be left in a queue that will never be drained again"
         );
     }
 
