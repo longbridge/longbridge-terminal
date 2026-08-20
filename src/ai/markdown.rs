@@ -1,6 +1,6 @@
 //! Markdown rendering for assistant answers.
 //!
-//! Longbridge AI replies in Markdown (headings, bold, lists, code fences,
+//! `LongbridgeAI` replies in Markdown (headings, bold, lists, code fences,
 //! tables), plus two things of its own: ```` ```vis-chart ```` specs and `$$`
 //! display math for finance formulas.
 //!
@@ -41,7 +41,7 @@ const STR: Color = Color::Rgb(206, 145, 120); // string literals
 const NUM: Color = Color::Rgb(181, 206, 168); // numbers
 const COMMENT: Color = Color::Rgb(106, 153, 85); // comments
 
-/// Keywords shared across the languages Longbridge AI is likely to emit
+/// Keywords shared across the languages `LongbridgeAI` is likely to emit
 /// (Rust / Python / JS / TS / Go / shell). Matched whole-word only.
 const KEYWORDS: &[&str] = &[
     "as",

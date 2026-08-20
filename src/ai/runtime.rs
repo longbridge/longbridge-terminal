@@ -1,8 +1,8 @@
 //! Agent runtime seam for the `longbridge ai` TUI.
 //!
 //! Modeled on grok-build's `xai-grok-shell`: turns a user prompt into a
-//! streaming Longbridge AI conversation and translates the SDK's stream into
-//! [`ChatEvent`]s the state layer understands. The Longbridge AI model runs
+//! streaming `LongbridgeAI` conversation and translates the SDK's stream into
+//! [`ChatEvent`]s the state layer understands. The `LongbridgeAI` model runs
 //! server-side (it orchestrates its own tools), so this is a thin translation
 //! layer over [`stream_conversation`] — there is no local tool execution.
 
@@ -86,7 +86,7 @@ pub fn spawn_turn(
     })
 }
 
-/// Translate one Longbridge AI stream event into zero or more chat events.
+/// Translate one `LongbridgeAI` stream event into zero or more chat events.
 fn map_agent_event(ev: &AgentEvent) -> Vec<ChatEvent> {
     match ev {
         AgentEvent::ChatStarted {

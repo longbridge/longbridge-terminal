@@ -1,4 +1,4 @@
-//! The shape of a Longbridge AI answer.
+//! The shape of a `LongbridgeAI` answer.
 //!
 //! An answer is Markdown with three things of the agent's own mixed in:
 //! ```` ```vis-chart ```` specs, `widget://…` references, and `[stock …]` /

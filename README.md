@@ -512,9 +512,9 @@ longbridge tui
 
 Features: real-time watchlist, candlestick charts, portfolio view, stock search, a responsive layout that docks the news list beside the quote panel when there is room for both, Vim-like keybindings, and mouse support — click the tabs, the shortcut hints, a headline, or a Portfolio/Orders row to open its detail panel. Press `?` for the full key list.
 
-## Longbridge AI chat
+## LongbridgeAI chat
 
-A full-screen chat TUI backed by Longbridge AI:
+A full-screen chat TUI backed by LongbridgeAI:
 
 ```bash
 longbridge ai [--agent <agent-id>]
@@ -524,7 +524,7 @@ Features: streaming answers rendered as Markdown with charts, tables, syntax-hig
 
 ## ACP agent server
 
-Expose the main Longbridge AI agent (`chatbot`) to an [ACP](https://agentclientprotocol.com) client over stdio:
+Expose the main LongbridgeAI agent (`chatbot`) to an [ACP](https://agentclientprotocol.com) client over stdio:
 
 ```bash
 longbridge acp

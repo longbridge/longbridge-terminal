@@ -4,9 +4,9 @@ use indoc::indoc;
 
 pub fn skills_doc() -> &'static str {
     indoc! {r#"
-        # Longbridge AI Agent Chat
+        # LongbridgeAI Agent Chat
 
-        Chat with Longbridge AI agents (investment research, stock analysis,
+        Chat with LongbridgeAI agents (investment research, stock analysis,
         screeners, custom workflow agents) from the command line. Designed for
         AI harnesses: every command supports `--format json`.
 
