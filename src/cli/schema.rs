@@ -355,7 +355,7 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<ResponseSchema> {
             [_, sub] if sub == "auth" => Some(text("OAuth login/logout flow status messages")),
             _ => None,
         },
-        "ai" => (path == ["ai"]).then(|| text("Interactive Longbridge AI chat TUI")),
+        "ai" => (path == ["ai"]).then(|| text("Interactive LongbridgeAI chat TUI")),
         "serve" => (path == ["serve"]).then(|| {
             text(
                 "JSON-RPC 2.0 session over stdio (NDJSON). Results are raw \

@@ -247,7 +247,7 @@ enum Chip {
     Tape,
     /// One of the welcome screen's example prompts; sends it.
     Sample(&'static str),
-    /// The brand badge, which opens Longbridge AI on the web.
+    /// The brand badge, which opens `LongbridgeAI` on the web.
     Brand,
     /// The title bar's control for the account's conversations.
     Sessions,
@@ -3435,7 +3435,7 @@ fn line_width(line: &Line<'_>) -> usize {
         .sum()
 }
 
-/// Longbridge AI on the web. The badge in the title bar opens it — the same
+/// `LongbridgeAI` on the web. The badge in the title bar opens it — the same
 /// conversations, with the widgets a terminal can only describe.
 const AI_WEB_URL: &str = "https://longbridge.com/ai";
 
@@ -3489,7 +3489,7 @@ fn render_title(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatSta
         badge_style = badge_style.add_modifier(Modifier::UNDERLINED);
     }
     let mut left = vec![Span::styled(badge, badge_style)];
-    // A marker only when the conversation is not with Longbridge AI's own
+    // A marker only when the conversation is not with LongbridgeAI's own
     // assistant. An agent uid is an internal handle and never goes on screen (see
     // `cli::agent::DEFAULT_AGENT_UID`), so this says *that* a custom agent is in
     // use without naming it — the badge on the left already names the default.
@@ -7415,7 +7415,7 @@ mod tests {
         let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
         let rows = frame(&mut ui, &mut state, 70, 24);
         assert!(
-            rows[0].contains("Longbridge AI"),
+            rows[0].contains("LongbridgeAI"),
             "row 0 is the badge: {:?}",
             rows[0]
         );
@@ -8764,7 +8764,7 @@ mod tests {
             })
             .collect();
         assert_eq!(samples.len(), 3, "every example is clickable: {samples:?}");
-        // And the badge opens Longbridge AI on the web.
+        // And the badge opens LongbridgeAI on the web.
         assert!(
             ui.header_chips
                 .iter()

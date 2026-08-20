@@ -144,13 +144,15 @@ pub enum Commands {
     /// Example: longbridge tui
     Tui,
 
-    /// Serve a Longbridge AI agent over ACP on stdin/stdout
+    // Backticks render literally in `--help`, so the brand name stays bare here.
+    #[allow(clippy::doc_markdown)]
+    /// Serve a LongbridgeAI agent over ACP on stdin/stdout
     ///
     /// The process speaks newline-delimited JSON-RPC and is intended to be
     /// launched by an ACP-compatible AI chat client.
     /// Example: longbridge acp
     Acp {
-        /// Longbridge AI agent UID (defaults to the main `chatbot` agent)
+        /// LongbridgeAI agent UID (defaults to the main `chatbot` agent)
         #[arg(long)]
         agent_id: Option<String>,
 
@@ -196,14 +198,16 @@ pub enum Commands {
     #[command(after_help = crate::cli::serve::method_reference())]
     Serve,
 
-    /// Chat with Longbridge AI in a full-screen TUI
+    // Backticks render literally in `--help`, so the brand name stays bare here.
+    #[allow(clippy::doc_markdown)]
+    /// Chat with LongbridgeAI in a full-screen TUI
     ///
     /// An interactive assistant for markets, quotes, filings, and your
     /// portfolio. Answers stream live; Esc cancels a turn or quits.
     /// Example: longbridge ai
     Ai {
         /// Agent UID to converse with (from `longbridge agent list`); defaults
-        /// to the Longbridge AI assistant
+        /// to the LongbridgeAI assistant
         ///
         /// The default agent's UID is an internal handle, so it is not printed
         /// here — inside the chat, `/agent reset` returns to it by name.
@@ -1539,7 +1543,9 @@ pub enum Commands {
     },
 
     // ── AI Agents ───────────────────────────────────────────────────────
-    /// AI agents: discover and chat with Longbridge AI agents
+    // Backticks render literally in `--help`, so the brand name stays bare here.
+    #[allow(clippy::doc_markdown)]
+    /// AI agents: discover and chat with LongbridgeAI agents
     ///
     /// Chat transport is SSE under the hood; agent runs can take 1-2 minutes.
     /// Returns (chat): `chat_uid`, `message_id`, status, answer (markdown), widgets,

@@ -328,7 +328,7 @@ async fn main() {
             return;
         }
 
-        // `longbridge ai`: the interactive Longbridge AI chat TUI. Needs a live
+        // `longbridge ai`: the interactive LongbridgeAI chat TUI. Needs a live
         // context, so a failed init exits (a prompt turn cannot run without it).
         Some(cli::Commands::Ai { agent }) => {
             // Hydrate the persisted chat preferences (tool-call display, quote
