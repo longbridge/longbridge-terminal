@@ -2826,7 +2826,7 @@ dependencies = [
 
 [[package]]
 name = "longbridge-terminal"
-version = "0.28.1"
+version = "0.28.2"
 dependencies = [
  "aes-gcm",
  "ansi-parser",
