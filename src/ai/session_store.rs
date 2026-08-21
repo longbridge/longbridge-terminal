@@ -38,7 +38,15 @@ pub async fn list_summaries() -> Option<Vec<SessionSummary>> {
     if !crate::openapi::is_ready() {
         return None;
     }
-    let resp = crate::openapi::chats::list_chats(1, 50, None).await.ok()?;
+    // Reading a list is safe to repeat, so a rejected token is worth one
+    // refresh-and-retry rather than an error the reader can only answer by
+    // restarting: this chat may have been open long enough for its credentials
+    // to be rotated away underneath it.
+    let resp = crate::openapi::retry_after_token_refresh(|| {
+        crate::openapi::chats::list_chats(1, 50, None)
+    })
+    .await
+    .ok()?;
     let mut sessions: Vec<SessionSummary> = resp
         .chats
         .into_iter()

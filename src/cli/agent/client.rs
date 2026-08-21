@@ -133,21 +133,6 @@ impl AgentApi for LbAgentApi {
     }
 }
 
-/// Reject AI conversations when the process authenticated with API-key env
-/// vars. The AI conversation endpoints are only known to accept an OAuth
-/// principal; failing fast with an actionable message beats an opaque 401
-/// mid-stream. (Can be lifted once API-key auth is confirmed to work against
-/// the AI endpoints, now that requests go through the SDK's signing client.)
-fn ensure_oauth_auth(using_api_key: bool) -> Result<()> {
-    if using_api_key {
-        anyhow::bail!(
-            "agent chat requires OAuth login (API-key auth is not supported for AI \
-             conversations); run `longbridge auth login`"
-        );
-    }
-    Ok(())
-}
-
 /// A conversation to stream: either a fresh round or the resumption of an
 /// interrupted one. Mirrors the two SDK entry points
 /// ([`AgentContext::conversation_streamed`](longbridge::agent::AgentContext::conversation_streamed)
@@ -301,19 +286,24 @@ async fn open_conversation_stream(
 /// surfaced event to `on_event`.
 ///
 /// Every attempt is metered through the shared 10 req/s limiter, and only the
-/// pre-stream handshake is retried — and only on a typed 429002 rate limit, so
-/// a misclassified error can never replay (and duplicate) the conversation
-/// POST. Once draining starts below, a mid-stream failure is propagated as-is.
+/// pre-stream handshake is retried — and only on a typed 429002 rate limit or a
+/// rejected token, so a misclassified error can never replay (and duplicate)
+/// the conversation POST. Once draining starts below, a mid-stream failure is
+/// propagated as-is.
 pub async fn stream_conversation(
     req: ConversationRequest,
     verbose: bool,
     on_event: &mut (dyn FnMut(AgentEvent) + Send),
 ) -> Result<()> {
-    ensure_oauth_auth(crate::openapi::using_api_key())?;
-    let ctx = crate::openapi::agent();
+    let mut ctx = crate::openapi::agent();
     if verbose {
         eprintln!("* POST agent conversation (SSE)");
     }
+    // A rejected token buys exactly one repair. It belongs next to the 429002
+    // case and nowhere wider: the conversation POST is not idempotent, and
+    // 401003 / 401004 are the two codes that say the server declined to
+    // authenticate the request — declining it is all it did.
+    let mut token_repaired = false;
     let mut stream = 'handshake: {
         for backoff in HANDSHAKE_BACKOFF_SECS {
             crate::openapi::global_rate_limiter().acquire().await;
@@ -321,6 +311,17 @@ pub async fn stream_conversation(
                 Ok(s) => break 'handshake s,
                 Err(e) if is_rate_limited(&e) => {
                     tokio::time::sleep(std::time::Duration::from_secs_f64(backoff)).await;
+                }
+                Err(e) if crate::auth::is_token_rejected(&e) && !token_repaired => {
+                    token_repaired = true;
+                    if crate::openapi::reauthenticate().await.is_err() {
+                        return Err(
+                            anyhow::Error::new(e).context("Failed to run the AI conversation")
+                        );
+                    }
+                    // The rebuild replaced the process-wide contexts; the old
+                    // handle still carries the credentials that were refused.
+                    ctx = crate::openapi::agent();
                 }
                 Err(e) => {
                     return Err(anyhow::Error::new(e).context("Failed to run the AI conversation"));
@@ -362,17 +363,6 @@ mod tests {
             trace_id: "t".into(),
         });
         assert!(!is_rate_limited(&other));
-    }
-
-    #[test]
-    fn api_key_mode_is_rejected_with_actionable_message() {
-        let err = ensure_oauth_auth(true).unwrap_err().to_string();
-        assert!(err.contains("OAuth"), "unexpected message: {err}");
-        assert!(
-            err.contains("longbridge auth login"),
-            "message must be actionable: {err}"
-        );
-        ensure_oauth_auth(false).expect("OAuth mode must be allowed");
     }
 
     #[test]

@@ -60,7 +60,13 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
                 );
             }
             Err(e) => {
-                token_ok = true;
+                // The server's answer outranks the local expiry timestamp. A
+                // token can be rotated out from under this machine — a
+                // concurrent refresh in another process does exactly that —
+                // long before the expiry we recorded, and calling that "valid"
+                // is what makes the failure so hard to recognise. Any other API
+                // error says nothing about the token, so it stays valid.
+                token_ok = !crate::auth::is_token_rejected(&e);
                 token_detail = format!("api error: {e}");
             }
         }

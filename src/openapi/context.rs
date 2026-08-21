@@ -53,9 +53,6 @@ pub(crate) static FUNDAMENTAL_CTX: Slot<longbridge::FundamentalContext> = Slot::
 /// Global `AgentContext` for AI agent discovery and conversations
 pub(crate) static AGENT_CTX: Slot<longbridge::agent::AgentContext> = Slot::new();
 
-/// Whether this process authenticated with API-key env vars (vs OAuth).
-static USING_API_KEY: Slot<bool> = Slot::new();
-
 /// Global `HttpClient` for making authenticated requests to the Longbridge `OpenAPI`
 pub(crate) static HTTP_CLIENT: Slot<longbridge::httpclient::HttpClient> = Slot::new();
 
@@ -101,29 +98,6 @@ fn ws_url_from_http(http_url: &str) -> String {
     }
 }
 
-/// Initialize contexts (should be called once at app startup).
-/// If `LONGBRIDGE_APP_KEY`, `LONGBRIDGE_APP_SECRET`, and `LONGBRIDGE_ACCESS_TOKEN`
-/// are all set, uses API key authentication (no browser needed).
-/// Otherwise falls back to OAuth: loads token from disk or runs browser flow.
-/// Returns `(quote_stream, using_api_key, http_url)` where `http_url` is the
-/// effective base URL that was configured (useful for diagnostics/verbose output).
-pub async fn init_contexts() -> Result<(
-    impl tokio_stream::Stream<Item = longbridge::quote::PushEvent> + Send + Unpin,
-    bool,
-    String,
-)> {
-    init_contexts_with_auth(true).await
-}
-
-/// Initialize contexts using only credentials saved by `longbridge auth login`.
-pub async fn init_oauth_contexts() -> Result<(
-    impl tokio_stream::Stream<Item = longbridge::quote::PushEvent> + Send + Unpin,
-    bool,
-    String,
-)> {
-    init_contexts_with_auth(false).await
-}
-
 /// Return whether an OAuth token is available without starting an OAuth flow.
 pub fn oauth_credentials_available() -> Result<bool> {
     let token_path = crate::auth::token_file_path()?;
@@ -142,77 +116,45 @@ pub fn oauth_credentials_available() -> Result<bool> {
     Ok(true)
 }
 
-async fn init_contexts_with_auth(
-    allow_api_key: bool,
-) -> Result<(
+/// Initialize contexts (should be called once at app startup).
+///
+/// Authentication is OAuth-only: the token saved by `longbridge auth login` is
+/// loaded from disk and refreshed when it has expired. API-key environment
+/// variables (`LONGBRIDGE_APP_KEY` and friends) are never read, so a stale one
+/// left in the shell cannot quietly take over from the signed-in account.
+///
+/// Returns `(quote_stream, http_url)` where `http_url` is the effective base URL
+/// that was configured (useful for diagnostics/verbose output).
+pub async fn init_contexts() -> Result<(
     impl tokio_stream::Stream<Item = longbridge::quote::PushEvent> + Send + Unpin,
-    bool,
     String,
 )> {
-    let api_key_configs = if allow_api_key {
-        match (
-            longbridge::Config::from_apikey_env(),
-            longbridge::httpclient::HttpClientConfig::from_apikey_env(),
-        ) {
-            (Ok(config), Ok(http_config)) => Some((config, http_config)),
-            _ => None,
-        }
-    } else {
-        None
-    };
-    let (config_builder, http_client_config, using_api_key) = if let Some((config, http_config)) =
-        api_key_configs
-    {
-        tracing::info!("Using API key authentication (env vars)");
-        (
-            config
-                .language(get_api_language())
-                .dont_print_quote_packages(),
-            http_config,
-            true,
-        )
-    } else {
-        tracing::info!("No API key env vars found, using OAuth authentication");
+    // If no token file exists, refuse to start a browser/callback-server flow.
+    // CLI commands require a stored token; users must run `longbridge auth login` first.
+    if !oauth_credentials_available()? {
+        return Err(anyhow::anyhow!(
+            "Not authenticated. Please run `longbridge auth login` first."
+        ));
+    }
 
-        // If no token file exists, refuse to start a browser/callback-server flow.
-        // CLI commands require a stored token; users must run `longbridge auth login` first.
-        if !oauth_credentials_available()? {
-            return Err(anyhow::anyhow!(
-                "Not authenticated. Please run `longbridge auth login` first."
-            ));
-        }
+    // Refresh the access token ourselves if it has expired, before handing
+    // off to the SDK.  This avoids a 5-minute browser-callback timeout that
+    // the SDK would trigger when its own refresh fallback fires.
+    crate::auth::refresh_if_expired().await?;
 
-        // Refresh the access token ourselves if it has expired, before handing
-        // off to the SDK.  This avoids a 5-minute browser-callback timeout that
-        // the SDK would trigger when its own refresh fallback fires.
-        crate::auth::refresh_if_expired().await?;
+    let oauth = longbridge::oauth::OAuthBuilder::new(crate::auth::effective_client_id())
+        .callback_port(crate::auth::CALLBACK_PORT)
+        .token_storage(crate::secure_storage::EncryptedFileTokenStorage)
+        .build(|_url| {
+            tracing::warn!("OAuth browser flow triggered unexpectedly");
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("OAuth initialization failed: {e}"))?;
 
-        let oauth_result = longbridge::oauth::OAuthBuilder::new(crate::auth::effective_client_id())
-            .callback_port(crate::auth::CALLBACK_PORT)
-            .token_storage(crate::secure_storage::EncryptedFileTokenStorage)
-            .build(|_url| {
-                tracing::warn!("OAuth browser flow triggered unexpectedly");
-            })
-            .await;
-
-        let oauth = match oauth_result {
-            Ok(o) => o,
-            Err(e) => {
-                return Err(anyhow::anyhow!("OAuth initialization failed: {e}"));
-            }
-        };
-
-        let config_builder = longbridge::Config::from_oauth(oauth.clone())
-            .language(get_api_language())
-            .dont_print_quote_packages();
-
-        let http_client_config =
-            longbridge::httpclient::HttpClientConfig::from_oauth(oauth.clone());
-        (config_builder, http_client_config, false)
-    };
-
-    let mut config_builder = config_builder;
-    let mut http_client_config = http_client_config;
+    let mut config_builder = longbridge::Config::from_oauth(oauth.clone())
+        .language(get_api_language())
+        .dont_print_quote_packages();
+    let mut http_client_config = longbridge::httpclient::HttpClientConfig::from_oauth(oauth);
 
     // Enable the US overnight market so `quote` returns `overnight_quote`.
     // Pre/post-market quotes are returned without this flag, but the overnight
@@ -318,9 +260,6 @@ async fn init_contexts_with_auth(
 
     let config = Arc::new(config_builder);
 
-    // Published for callers that bypass the SDK client and need to know the
-    // auth mode (e.g. the agent commands reject API-key mode).
-    USING_API_KEY.set(using_api_key);
     // A successful init is what "signed in" means, including the second one after a
     // sign-out in the same process.
     SIGNED_OUT.store(false, Ordering::Relaxed);
@@ -380,12 +319,51 @@ async fn init_contexts_with_auth(
 
     Ok((
         tokio_stream::wrappers::UnboundedReceiverStream::new(quote_receiver),
-        using_api_key,
         effective_http_url,
     ))
 }
 
-/// Get global `QuoteContext`
+/// Recover from a server-side token rejection: refresh the token whatever the
+/// local expiry claims, then rebuild every context from the new credentials.
+///
+/// The rebuild is the half that matters to a long-running process. The SDK
+/// serves its access token from process memory and only ever refetches it when
+/// its own copy is near expiry, so a token refreshed on disk reaches it no
+/// other way.
+pub async fn reauthenticate() -> Result<(
+    impl tokio_stream::Stream<Item = longbridge::quote::PushEvent> + Send + Unpin,
+    String,
+)> {
+    crate::auth::force_refresh().await?;
+    init_contexts().await
+}
+
+/// Run an `OpenAPI` call, and if the server rejects our token, repair the
+/// credentials and try once more.
+///
+/// For a long-running process — the `ai` chat, `serve` — this is the difference
+/// between recovering and being stuck. It hands out the access token it loaded
+/// at startup, so once a refresh anywhere rotates that credential away, every
+/// call it makes carries one the server will never accept again. A bare retry
+/// would replay the same dead token; the refresh in between is what makes the
+/// second attempt a different request.
+///
+/// Only for calls that are safe to run twice.
+pub async fn retry_after_token_refresh<T, F, Fut>(mut op: F) -> Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T>>,
+{
+    let first = op().await;
+    let Err(e) = first else {
+        return first;
+    };
+    if !crate::auth::token_rejected(&e) || reauthenticate().await.is_err() {
+        return Err(e);
+    }
+    op().await
+}
+
 /// Whether the contexts have been built, i.e. whether the process is signed in.
 ///
 /// The accessors below panic when they have not: they are written for commands
@@ -488,12 +466,6 @@ pub fn fundamental() -> &'static longbridge::FundamentalContext {
     FUNDAMENTAL_CTX
         .get()
         .expect("FundamentalContext not initialized, please call init_contexts() first")
-}
-
-/// Whether the session authenticated with API-key env vars rather than
-/// OAuth. Defaults to `false` before [`init_contexts`] runs.
-pub fn using_api_key() -> bool {
-    USING_API_KEY.get().copied().unwrap_or(false)
 }
 
 /// Get global `AgentContext` for AI agent discovery and conversations

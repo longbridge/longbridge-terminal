@@ -766,7 +766,36 @@ pub async fn device_login(verbose: bool, client_name: Option<String>) -> Result<
     Ok(())
 }
 
-/// Refresh the access token in-place if it has expired.
+/// How long before the recorded expiry a token is already treated as expired.
+///
+/// Matches the margin the SDK applies to its own in-memory token. Without it a
+/// token with seconds left passes this check and is then rejected by the server
+/// mid-request, which surfaces as a 401003 the CLI has no way to recover from.
+const REFRESH_SKEW_SECS: u64 = 300;
+
+/// `OpenAPI` codes that mean the server no longer accepts this access token:
+/// 401003 (expired) and 401004 (invalid).
+///
+/// Worth distinguishing from every other API failure, because these are the two
+/// the CLI can act on: a refresh fixes them, and nothing else does.
+pub fn is_token_rejected(err: &longbridge::Error) -> bool {
+    matches!(
+        err,
+        longbridge::Error::HttpClient(longbridge::httpclient::HttpClientError::OpenApi {
+            code,
+            ..
+        }) if *code == 401_003 || *code == 401_004
+    )
+}
+
+/// [`is_token_rejected`] for an error that has already been boxed into
+/// `anyhow`, which is how most of the CLI carries it.
+pub fn token_rejected(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<longbridge::Error>()
+        .is_some_and(is_token_rejected)
+}
+
+/// Refresh the access token in-place if it has expired (or is about to).
 ///
 /// Not expired → returns immediately. Expired → refreshes via HTTP and saves.
 /// This runs before `OAuthBuilder::build()` to avoid that SDK's 5-minute
@@ -774,7 +803,6 @@ pub async fn device_login(verbose: bool, client_name: Option<String>) -> Result<
 pub async fn refresh_if_expired() -> Result<()> {
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    let storage = crate::secure_storage::EncryptedFileTokenStorage;
     let Some(full) =
         crate::secure_storage::EncryptedFileTokenStorage::load_full(&effective_client_id())
     else {
@@ -790,9 +818,133 @@ pub async fn refresh_if_expired() -> Result<()> {
     if expires_at == 0 {
         return Ok(());
     }
-    if expires_at > now {
+    if expires_at > now + REFRESH_SKEW_SECS {
         return Ok(());
     }
+
+    refresh_now().await
+}
+
+/// Refresh the access token whatever the recorded expiry claims.
+///
+/// That timestamp is only this machine's guess at the server's state, and the
+/// two come apart: a refresh in another process rotates the token server-side
+/// (killing the copy this one holds), a revoked session dies early, a slow
+/// clock moves the deadline. Once the server has answered 401003/401004, its
+/// answer is the authoritative one — refresh regardless of what we recorded.
+pub async fn force_refresh() -> Result<()> {
+    refresh_now().await
+}
+
+/// How long a refresh lock may be held before another process breaks it. Well
+/// past a refresh round trip, so only a crashed holder is ever displaced.
+const REFRESH_LOCK_STALE_SECS: u64 = 30;
+
+/// How long to wait for another process to finish its refresh before giving up
+/// and refreshing anyway.
+const REFRESH_LOCK_WAIT_SECS: u64 = 15;
+
+/// Cross-process mutual exclusion around a token refresh.
+///
+/// A refresh rotates the credential server-side: the instant one process
+/// exchanges the refresh token, the copy every other process holds is void.
+/// Two refreshing at once therefore race, and whichever writes last decides
+/// what is on disk — which may well be the *older* of the two exchanges, now
+/// rejected by the server. That is how a token whose recorded expiry is still
+/// two weeks out comes back 401003 with nobody having signed out.
+///
+/// Deliberately advisory: if the lock cannot be taken the refresh proceeds
+/// anyway. A stuck lock file must never be able to lock a user out of their
+/// own CLI, and racing is still better than refusing to work.
+struct RefreshLock(Option<PathBuf>);
+
+impl RefreshLock {
+    /// Take the lock, waiting up to [`REFRESH_LOCK_WAIT_SECS`] for a holder to
+    /// release it. A lock older than [`REFRESH_LOCK_STALE_SECS`] is assumed to
+    /// belong to a process that died mid-refresh and is broken.
+    async fn acquire() -> Self {
+        let Ok(path) = token_file_path().map(|p| p.with_file_name(".refresh.lock")) else {
+            return Self(None);
+        };
+        Self::acquire_at(path).await
+    }
+
+    async fn acquire_at(path: PathBuf) -> Self {
+        let deadline =
+            std::time::Instant::now() + std::time::Duration::from_secs(REFRESH_LOCK_WAIT_SECS);
+        loop {
+            // `create_new` is the atomic part: exactly one process can win it.
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(_) => return Self(Some(path)),
+                Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => return Self(None),
+                Err(_) => {}
+            }
+            let stale = std::fs::metadata(&path)
+                .and_then(|m| m.modified())
+                .is_ok_and(|t| {
+                    t.elapsed()
+                        .is_ok_and(|age| age.as_secs() > REFRESH_LOCK_STALE_SECS)
+                });
+            if stale {
+                let _ = std::fs::remove_file(&path);
+                continue;
+            }
+            if std::time::Instant::now() >= deadline {
+                tracing::warn!("Timed out waiting for the token refresh lock; refreshing anyway");
+                return Self(None);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+    }
+}
+
+impl Drop for RefreshLock {
+    fn drop(&mut self) {
+        if let Some(path) = &self.0 {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+/// The access token currently on disk, if any. Read fresh rather than cached:
+/// what matters is what another process may have just written there.
+fn stored_access_token() -> Option<String> {
+    crate::secure_storage::EncryptedFileTokenStorage::load_full(&effective_client_id())
+        .and_then(|full| full["access_token"].as_str().map(str::to_owned))
+}
+
+/// Exchange the stored refresh token for a new access token and save both.
+async fn refresh_now() -> Result<()> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let before = stored_access_token();
+    let _lock = RefreshLock::acquire().await;
+
+    // Re-read after taking the lock. If the token on disk changed while we
+    // waited, another process just refreshed it — that exchange is the one the
+    // server now honours, and refreshing again would only invalidate it.
+    if before.is_some() && stored_access_token() != before {
+        tracing::debug!("Another process refreshed the token; using the token it stored");
+        return Ok(());
+    }
+
+    let storage = crate::secure_storage::EncryptedFileTokenStorage;
+    let Some(full) =
+        crate::secure_storage::EncryptedFileTokenStorage::load_full(&effective_client_id())
+    else {
+        return Err(anyhow::anyhow!(
+            "Not authenticated. Please run `longbridge auth login` first."
+        ));
+    };
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
 
     let Some(refresh_token) = full["refresh_token"]
         .as_str()
@@ -1267,5 +1419,43 @@ mod auth_code_tests {
     fn a_sub_without_a_member_id_yields_none() {
         let sub = serde_json::json!({ "account_channel": "lb", "member_id": "" });
         assert_eq!(super::member_id_from_sub(&sub), None);
+    }
+
+    #[test]
+    fn only_the_two_auth_codes_count_as_a_rejected_token() {
+        use longbridge::httpclient::HttpClientError;
+        let api_error = |code| {
+            longbridge::Error::HttpClient(HttpClientError::OpenApi {
+                code,
+                message: "m".into(),
+                trace_id: "t".into(),
+            })
+        };
+        assert!(super::is_token_rejected(&api_error(401_003)));
+        assert!(super::is_token_rejected(&api_error(401_004)));
+        // A rate limit says nothing about the token, and neither does anything
+        // else — treating them as auth failures would refresh on every hiccup.
+        assert!(!super::is_token_rejected(&api_error(429_002)));
+        assert!(!super::is_token_rejected(&api_error(500_000)));
+        assert!(super::token_rejected(&anyhow::Error::new(api_error(
+            401_003
+        ))));
+        assert!(!super::token_rejected(&anyhow::anyhow!("plain error")));
+    }
+
+    /// The lock has to be released when the refresh ends, or the next process
+    /// waits out the full stale timeout for a holder that is long gone.
+    #[tokio::test]
+    async fn the_refresh_lock_is_released_on_drop() {
+        let dir = std::env::temp_dir().join(format!("lb-refresh-lock-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join(".refresh.lock");
+
+        let lock = super::RefreshLock::acquire_at(path.clone()).await;
+        assert!(path.exists(), "acquiring must create the lock file");
+        drop(lock);
+        assert!(!path.exists(), "dropping must remove the lock file");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

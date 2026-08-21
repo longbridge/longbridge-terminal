@@ -978,7 +978,7 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
                         // different account, usually). The contexts are rebuilt from
                         // the new credentials and this session carries on with them;
                         // only a failure to build them is worth leaving for.
-                        if let Ok((rx, _, _)) = crate::openapi::init_contexts().await {
+                        if let Ok((rx, _)) = crate::openapi::init_contexts().await {
                             quotes = Box::pin(rx);
                             ui.session = super::account::local();
                             ui.notice = Some(t!("Ai.SignedIn").to_string());

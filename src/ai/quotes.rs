@@ -255,7 +255,11 @@ pub async fn fetch_cards_for(symbols: &[String]) -> HashMap<String, QuoteCardDat
     if symbols.is_empty() {
         return cards;
     }
-    let Ok(quotes) = crate::openapi::helpers::get_quotes(symbols.to_vec()).await else {
+    let Ok(quotes) = crate::openapi::retry_after_token_refresh(|| {
+        crate::openapi::helpers::get_quotes(symbols.to_vec())
+    })
+    .await
+    else {
         return cards;
     };
     // Names come from a second batched call. A card without one is still useful,

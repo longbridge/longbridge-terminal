@@ -127,8 +127,7 @@ pub fn skills_doc() -> &'static str {
 
         ## 6. Etiquette
 
-        - Requires OAuth login (`longbridge auth login`). API-key env
-          authentication is not supported for AI conversations.
+        - Requires OAuth login (`longbridge auth login`).
         - Serialize requests; the API rejects bursts with code 429002.
           On 429002, wait a few seconds and retry.
         - Agent runs are slow (up to ~2 min). Do not re-send while running.
