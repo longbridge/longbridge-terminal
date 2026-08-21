@@ -242,6 +242,14 @@ fn slash_lookup(typed: &str) -> Option<&'static str> {
     SLASH.iter().find(|c| c.answers_to(typed)).map(Slash::key)
 }
 
+/// A card being scanned for its click target: the security it is about, the row
+/// it opened on, and how wide it has actually been drawn so far.
+struct CardHit {
+    symbol: String,
+    top: u16,
+    width: u16,
+}
+
 /// A clickable chip in the Chat meta panel.
 #[derive(Clone)]
 enum Chip {
@@ -259,6 +267,8 @@ enum Chip {
     Brand,
     /// The title bar's control for the account's conversations.
     Sessions,
+    /// A finished reasoning block, by index into `state.messages`; opens it.
+    Thinking(usize),
 }
 
 /// State of the structured interrupt answering flow.
@@ -558,6 +568,9 @@ struct Ui {
     sessions_error: bool,
     /// Senders for background History fetch / load, set once in `run`.
     history_tx: Option<UnboundedSender<Option<Vec<SessionSummary>>>>,
+    /// Where each finished reasoning block's header sits in the cached
+    /// transcript, as `(row, message index)`, so a visible one can be clicked.
+    thinking_rows: Vec<(usize, usize)>,
     /// Sender for background quote fetches, so a clicked symbol can ask for its
     /// own quote the same way a finished turn asks for its cards.
     cards_tx: Option<UnboundedSender<HashMap<String, super::quotes::QuoteCardData>>>,
@@ -664,6 +677,7 @@ impl Ui {
             prev_total: 0,
             visible_text: Vec::new(),
             last_click: None,
+            thinking_rows: Vec::new(),
             quotes: HashMap::new(),
             sessions_loading: false,
             sessions_error: false,
@@ -2630,6 +2644,13 @@ fn click_chip(
             }
         }
         Chip::Symbol(symbol) => open_quote_panel(ui, symbol),
+        // The fold is the whole affordance: there is nowhere else to reach the
+        // reasoning, so clicking the row is what opens and closes it.
+        Chip::Thinking(i) => {
+            if let Some(block) = state.messages.get_mut(i).and_then(|m| m.thinking.as_mut()) {
+                block.expanded = !block.expanded;
+            }
+        }
         Chip::Tape => {
             let meta = crate::tui::settings::all()
                 .iter()
@@ -3791,9 +3812,20 @@ fn render_chat(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &mut Chat
     let sig = transcript_sig(state, width);
     if ui.cache_sig != sig {
         let mut cache = Vec::new();
-        for m in &state.messages {
+        // Where each reasoning block's header landed, so a visible one can be
+        // clicked open. Recorded here rather than re-derived every frame: this
+        // runs only when the transcript's shape changes.
+        let mut thinking_rows: Vec<(usize, usize)> = Vec::new();
+        for (i, m) in state.messages.iter().enumerate() {
+            let before = cache.len();
             push_message(&mut cache, m, width, &ui.quotes, &ui.aliases);
+            if m.role == Role::Thinking {
+                if let Some(off) = cache[before..].iter().position(is_thinking_header) {
+                    thinking_rows.push((before + off, i));
+                }
+            }
         }
+        ui.thinking_rows = thinking_rows;
         ui.cache_text = cache
             .iter()
             .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
@@ -3899,6 +3931,12 @@ fn render_chat(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &mut Chat
         if (start..bottom).contains(&row) {
             let rect = row_rect(area, area.y + (row - start) as u16);
             ui.chips.push((Chip::Reference(i), rect));
+        }
+    }
+    for (row, i) in ui.thinking_rows.clone() {
+        if (start..bottom).contains(&row) {
+            let rect = row_rect(area, area.y + (row - start) as u16);
+            ui.chips.push((Chip::Thinking(i), rect));
         }
     }
     link_visible_symbols(&mut window, area, ui);
@@ -5165,6 +5203,14 @@ fn transcript_sig(state: &ChatState, width: usize) -> u64 {
     if let Some(last) = state.messages.last() {
         last.text.hash(&mut h);
     }
+    // Opening a fold changes how many rows a message takes, and the cache is
+    // keyed on shape. Without this the transcript kept its folded height and the
+    // reasoning appeared only after some unrelated edit invalidated the cache.
+    for (i, m) in state.messages.iter().enumerate() {
+        if m.thinking.as_ref().is_some_and(|t| t.expanded) {
+            i.hash(&mut h);
+        }
+    }
     h.finish()
 }
 
@@ -5176,6 +5222,14 @@ fn transcript_sig(state: &ChatState, width: usize) -> u64 {
 /// invisible unless the whole turn came back empty.
 /// The markers a tool row leads with, so a row can be recognised as one later.
 const TOOL_MARKERS: [&str; 3] = ["  ◌ ", "  ⏺ ", "  ⚠ "];
+
+/// Whether `line` is a finished reasoning block's header — the row that opens
+/// and closes the fold.
+fn is_thinking_header(line: &Line<'_>) -> bool {
+    line.spans
+        .first()
+        .is_some_and(|s| s.content.as_ref() == THINKING_MARKER)
+}
 
 /// Whether `line` is one of the tool rows.
 fn is_tool_line(line: &Line<'_>) -> bool {
@@ -5257,7 +5311,7 @@ fn push_message(
         // What is left of a reasoning phase once the answer arrives: one line
         // saying it happened and how long it took. The reasoning itself was for
         // the wait, and keeping it at full length here would bury the answer.
-        Role::Thinking => lines.push(thinking_line("✻", &message.text)),
+        Role::Thinking => lines.extend(finished_thinking_lines(message, width)),
         Role::System | Role::Tool => {
             for logical in message.text.split('\n') {
                 for wrapped in wrap(logical, width) {
@@ -5288,20 +5342,38 @@ fn thinking_line(marker: &str, text: &str) -> Line<'static> {
     ])
 }
 
-/// The reasoning as it streams: a header, then the text itself.
+/// The fold marks: what a folded block offers, and what an open one shows.
+const FOLD_CLOSED: &str = "▸";
+const FOLD_OPEN: &str = "▾";
+
+/// A finished reasoning phase: one line saying how long it ran, and — once the
+/// reader opens it — the reasoning underneath.
 ///
-/// A turn spends most of its wall clock before the first answer byte, and a
-/// spinner alone cannot tell a run that is working from one that has stalled.
-/// Muted and italic throughout — it is the agent thinking aloud, not the answer.
-fn live_thinking_lines(text: &str, width: usize, tick: u64) -> Vec<Line<'static>> {
+/// Folded by default. Keeping the text is what makes a transcript a record of
+/// how an answer was reached; folding it is what keeps that record from burying
+/// the answer, which at several hundred words it otherwise does.
+fn finished_thinking_lines(message: &Message, width: usize) -> Vec<Line<'static>> {
+    let expanded = message.thinking.as_ref().is_some_and(|t| t.expanded);
+    let secs = message.thinking.as_ref().map_or(0, |t| t.secs);
+    let mark = if expanded { FOLD_OPEN } else { FOLD_CLOSED };
+    let mut out = vec![thinking_line(
+        "✻",
+        &format!("{}  {mark}", t!("Ai.ThoughtFor", secs = secs)),
+    )];
+    if expanded {
+        out.extend(indented_reasoning(&message.text, width));
+    }
+    out
+}
+
+/// The reasoning body, wrapped under the marker's indent.
+fn indented_reasoning(text: &str, width: usize) -> Vec<Line<'static>> {
     let indent = UnicodeWidthStr::width(THINKING_MARKER);
     let body_w = width.saturating_sub(indent).max(1);
     let style = Style::default()
         .fg(Color::DarkGray)
         .add_modifier(Modifier::ITALIC);
-    // The header pulses so a long silent stretch still reads as running.
-    let pulse = THINKING_PULSE[(tick as usize) % THINKING_PULSE.len()];
-    let mut out = vec![thinking_line(pulse, &t!("Agent.Thinking"))];
+    let mut out = Vec::new();
     for logical in text.split('\n') {
         for wrapped in wrap(logical, body_w) {
             out.push(Line::from(vec![
@@ -5310,6 +5382,19 @@ fn live_thinking_lines(text: &str, width: usize, tick: u64) -> Vec<Line<'static>
             ]));
         }
     }
+    out
+}
+
+/// The reasoning as it streams: a header, then the text itself.
+///
+/// A turn spends most of its wall clock before the first answer byte, and a
+/// spinner alone cannot tell a run that is working from one that has stalled.
+/// Muted and italic throughout — it is the agent thinking aloud, not the answer.
+fn live_thinking_lines(text: &str, width: usize, tick: u64) -> Vec<Line<'static>> {
+    // The header pulses so a long silent stretch still reads as running.
+    let pulse = THINKING_PULSE[(tick as usize) % THINKING_PULSE.len()];
+    let mut out = vec![thinking_line(pulse, &t!("Agent.Thinking"))];
+    out.extend(indented_reasoning(text, width));
     out
 }
 
@@ -5521,7 +5606,7 @@ fn link_visible_symbols(window: &mut [Line<'static>], area: Rect, ui: &mut Ui) {
     // A card is a block, and the reader aims at the block rather than at the six
     // columns of its ticker. Its rows are recognised by the box this module drew,
     // so anywhere on the card opens the panel.
-    let mut card: Option<(String, u16)> = None;
+    let mut card: Option<CardHit> = None;
     for (i, line) in window.iter_mut().enumerate() {
         let y = area.y + i as u16;
         let mut x = area.x;
@@ -5547,27 +5632,39 @@ fn link_visible_symbols(window: &mut [Line<'static>], area: Rect, ui: &mut Ui) {
             x = x.saturating_add(w);
         }
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        // A card is as wide as it is drawn, not as wide as the row it sits on.
+        // The rect used to span the full transcript width, which made every blank
+        // cell to the right of a card open its quote panel — anywhere on that row
+        // counted as "on the card".
+        let drawn = UnicodeWidthStr::width(text.trim_end()) as u16;
+        if let Some(open) = card.as_mut() {
+            open.width = open.width.max(drawn);
+        }
         // Cards top with either a sharp or a rounded corner; recognise both so the
         // whole box stays one click target whichever style it uses.
         if text.contains('┌') || text.contains('╭') {
-            card = Some((String::new(), y));
+            card = Some(CardHit {
+                symbol: String::new(),
+                top: y,
+                width: drawn,
+            });
         } else if text.contains('└') || text.contains('╰') {
-            if let Some((symbol, top)) = card.take() {
-                if !symbol.is_empty() {
+            if let Some(open) = card.take() {
+                if !open.symbol.is_empty() {
                     ui.chips.push((
-                        Chip::Symbol(symbol),
+                        Chip::Symbol(open.symbol),
                         Rect {
                             x: area.x,
-                            y: top,
-                            width: area.width,
-                            height: y + 1 - top,
+                            y: open.top,
+                            width: open.width.min(area.width),
+                            height: y + 1 - open.top,
                         },
                     ));
                 }
             }
-        } else if let (Some(entry), Some(symbol)) = (card.as_mut(), symbol_here) {
-            if entry.0.is_empty() {
-                entry.0 = symbol;
+        } else if let (Some(open), Some(symbol)) = (card.as_mut(), symbol_here) {
+            if open.symbol.is_empty() {
+                open.symbol = symbol;
             }
         }
     }
@@ -7228,6 +7325,106 @@ mod tests {
             "the reasoning follows the answer it interrupted:\n{}",
             rows.join("\n")
         );
+    }
+
+    /// The reasoning is kept, not dropped: folded to one line, and opened by
+    /// clicking that line. A transcript that threw the reasoning away could not
+    /// answer "how did it get there" once the answer was on screen.
+    #[test]
+    fn a_finished_reasoning_block_folds_and_opens_again() {
+        let mut ui = super::Ui::new();
+        let mut state = busy_state();
+        state.apply(super::ChatEvent::ThinkingDelta(
+            "Checking NVDA's last close against the 50-day average".into(),
+        ));
+        state.apply(super::ChatEvent::Delta("NVDA closed at 180.".into()));
+
+        let folded = frame(&mut ui, &mut state, 70, 20).join("\n");
+        assert!(
+            !folded.contains("Checking NVDA's last close"),
+            "folded by default:\n{folded}"
+        );
+        assert!(
+            folded.contains(super::FOLD_CLOSED),
+            "it offers to open:\n{folded}"
+        );
+
+        // The fold registers a click target on its own row.
+        let (i, rect) = ui
+            .chips
+            .iter()
+            .find_map(|(chip, r)| match chip {
+                super::Chip::Thinking(i) => Some((*i, *r)),
+                _ => None,
+            })
+            .expect("the header is clickable");
+        assert_eq!(rect.height, 1, "one row, the header itself");
+        state.messages[i]
+            .thinking
+            .as_mut()
+            .expect("a reasoning block")
+            .expanded = true;
+
+        let opened = frame(&mut ui, &mut state, 70, 20).join("\n");
+        assert!(
+            opened.contains("Checking NVDA's last close"),
+            "opening it shows the reasoning:\n{opened}"
+        );
+        assert!(opened.contains(super::FOLD_OPEN), "and says so:\n{opened}");
+    }
+
+    /// A quote card is a click target the size of the card. It used to claim the
+    /// full width of every row it occupied, so clicking the empty space beside it
+    /// — which is most of the row — opened its quote panel.
+    #[test]
+    fn a_quote_card_claims_only_the_columns_it_is_drawn_on() {
+        let mut ui = super::Ui::new();
+        ui.quotes
+            .insert("700.HK".into(), card("700.HK", "512.5", "+1.28%", 1));
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        state.apply(super::ChatEvent::UserPrompt("700.HK?".into()));
+        state.apply(super::ChatEvent::Delta(
+            "Here it is.\n\nwidget://quote/security/detail?symbol=700.HK\n\nDone.".into(),
+        ));
+        state.apply(super::ChatEvent::TurnFinished { error: None });
+
+        let width = 60;
+        let rows = frame(&mut ui, &mut state, width, 24);
+        let card_rect = ui
+            .chips
+            .iter()
+            .filter_map(|(c, r)| matches!(c, super::Chip::Symbol(_)).then_some(*r))
+            .max_by_key(|r| r.height)
+            .expect("the card is a click target");
+        assert!(
+            card_rect.height > 1,
+            "the whole box, not one row: {card_rect:?}"
+        );
+        assert!(
+            card_rect.width < width,
+            "the card is narrower than the row it sits on: {card_rect:?}"
+        );
+
+        // Nothing outside the drawn box may open a quote panel.
+        for y in 0..24u16 {
+            for x in 0..width {
+                let drawn = rows[y as usize]
+                    .chars()
+                    .nth(x as usize)
+                    .is_some_and(|c| c != ' ');
+                let clickable = ui
+                    .chips
+                    .iter()
+                    .any(|(c, r)| matches!(c, super::Chip::Symbol(_)) && super::hit(*r, x, y));
+                if clickable && !drawn {
+                    assert!(
+                        super::hit(card_rect, x, y),
+                        "blank cell ({x},{y}) outside the card must not be clickable:\n{}",
+                        rows.join("\n")
+                    );
+                }
+            }
+        }
     }
 
     /// A `/copy` confirmation used to take over the one status row and hide the

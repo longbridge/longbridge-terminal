@@ -20,7 +20,7 @@ pub enum Role {
     /// A tool the agent called, recorded so the answer can be traced back to
     /// the data it was built from.
     Tool,
-    /// A finished reasoning phase, collapsed to how long it took.
+    /// A finished reasoning phase, folded to how long it took until opened.
     Thinking,
 }
 
@@ -32,11 +32,24 @@ pub enum ToolStatus {
     Failed,
 }
 
+/// A finished reasoning phase: how long it ran, and whether the reader has
+/// opened it.
+///
+/// The reasoning itself stays in the message's `text`. It is kept rather than
+/// discarded — how an answer was arrived at is part of the record — but folded
+/// by default, because at full length it buries the answer it produced.
+pub struct ThinkingBlock {
+    pub secs: u64,
+    pub expanded: bool,
+}
+
 pub struct Message {
     pub role: Role,
     pub text: String,
     /// Set only on [`Role::Tool`] lines.
     pub tool: Option<ToolStatus>,
+    /// Set only on [`Role::Thinking`] lines.
+    pub thinking: Option<ThinkingBlock>,
 }
 
 impl Message {
@@ -46,6 +59,7 @@ impl Message {
             role,
             text,
             tool: None,
+            thinking: None,
         }
     }
 
@@ -55,6 +69,20 @@ impl Message {
             role: Role::Tool,
             text: name,
             tool: Some(status),
+            thinking: None,
+        }
+    }
+
+    /// A finished reasoning phase, folded until the reader opens it.
+    pub fn thinking(reasoning: String, secs: u64) -> Self {
+        Self {
+            role: Role::Thinking,
+            text: reasoning,
+            tool: None,
+            thinking: Some(ThinkingBlock {
+                secs,
+                expanded: false,
+            }),
         }
     }
 }
@@ -366,7 +394,9 @@ impl ChatState {
         self.status.clear();
     }
 
-    /// Retire the live reasoning block, leaving one line saying how long it ran.
+    /// Retire the live reasoning block into the transcript, folded to one line
+    /// saying how long it ran. The reasoning is kept, not dropped — it is part of
+    /// how the answer was reached — but it opens only when the reader asks.
     ///
     /// Reasoning that produced nothing leaves no trace: an empty block would be a
     /// row claiming the agent thought when it did not.
@@ -378,10 +408,7 @@ impl ChatState {
             return;
         }
         let secs = thinking.started.elapsed().as_secs();
-        self.messages.push(Message::new(
-            Role::Thinking,
-            rust_i18n::t!("Ai.ThoughtFor", secs = secs).to_string(),
-        ));
+        self.messages.push(Message::thinking(thinking.text, secs));
     }
 
     /// Reset to a fresh conversation, keeping the agent but dropping all
