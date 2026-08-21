@@ -154,6 +154,10 @@ struct Slash {
     aliases: &'static [&'static str],
     /// i18n key of the one-line description shown in the palette.
     desc: &'static str,
+    /// Only offered in a debug build. A troubleshooting aid, kept out of the
+    /// shipped command surface rather than shown to every reader who opens the
+    /// palette looking for something else.
+    debug_only: bool,
 }
 
 impl Slash {
@@ -165,6 +169,11 @@ impl Slash {
     /// Whether `typed` (a `/name`, canonical or alias) addresses this command.
     fn answers_to(&self, typed: &str) -> bool {
         self.name == typed || self.aliases.contains(&typed)
+    }
+
+    /// Whether this build offers the command at all.
+    fn available(&self) -> bool {
+        !self.debug_only || cfg!(debug_assertions)
     }
 
     /// Whether any of this command's names starts with `prefix`, so the palette
@@ -179,72 +188,89 @@ const SLASH: [Slash; 13] = [
         name: "/new",
         aliases: &["/clear"],
         desc: "Ai.SlashNew",
+        debug_only: false,
     },
     Slash {
         name: "/retry",
         aliases: &["/regenerate"],
         desc: "Ai.SlashRetry",
+        debug_only: false,
     },
     Slash {
         name: "/copy",
         aliases: &[],
         desc: "Ai.SlashCopy",
+        debug_only: false,
     },
     Slash {
         name: "/export",
         aliases: &[],
         desc: "Ai.SlashExport",
+        debug_only: false,
     },
     Slash {
         name: "/quote",
         aliases: &[],
         desc: "Ai.SlashQuote",
+        debug_only: false,
     },
     Slash {
         name: "/resume",
         aliases: &[],
         desc: "Ai.SlashResume",
+        debug_only: false,
     },
     Slash {
         name: "/settings",
         aliases: &[],
         desc: "Ai.SlashSettings",
+        debug_only: false,
     },
     Slash {
         name: "/agent",
         aliases: &[],
         desc: "Ai.SlashAgent",
+        debug_only: false,
     },
     Slash {
         name: "/login",
         aliases: &[],
         desc: "Ai.SlashLogin",
+        debug_only: false,
     },
     Slash {
         name: "/logout",
         aliases: &[],
         desc: "Ai.SlashLogout",
+        debug_only: false,
     },
     Slash {
         name: "/debug",
         aliases: &[],
         desc: "Ai.SlashDebug",
+        debug_only: true,
     },
     Slash {
         name: "/help",
         aliases: &[],
         desc: "Ai.SlashHelp",
+        debug_only: false,
     },
     Slash {
         name: "/exit",
         aliases: &["/quit"],
         desc: "Ai.SlashExit",
+        debug_only: false,
     },
 ];
 
 /// Resolve a typed `/name` to the canonical key `exec_slash` dispatches on.
 fn slash_lookup(typed: &str) -> Option<&'static str> {
-    SLASH.iter().find(|c| c.answers_to(typed)).map(Slash::key)
+    SLASH
+        .iter()
+        .filter(|c| c.available())
+        .find(|c| c.answers_to(typed))
+        .map(Slash::key)
 }
 
 /// How long the stream must be silent before the turn row says so. Long enough
@@ -2042,7 +2068,7 @@ fn switch_agent(args: &str, ui: &mut Ui, state: &mut ChatState) {
 /// section heading and an empty pair for a blank row.
 fn help_rows() -> Vec<(String, String)> {
     let mut rows = vec![(String::new(), t!("Ai.HelpCommands").to_string())];
-    for c in &SLASH {
+    for c in SLASH.iter().filter(|c| c.available()) {
         let names = if c.aliases.is_empty() {
             c.name.to_string()
         } else {
@@ -3160,7 +3186,8 @@ fn slash_matches(editor: &Editor, state: &ChatState) -> Vec<usize> {
         .iter()
         .enumerate()
         .filter(|(_, cmd)| {
-            cmd.starts_with(prefix)
+            cmd.available()
+                && cmd.starts_with(prefix)
                 && (cmd.key() != "retry"
                     || state
                         .messages
@@ -7710,6 +7737,32 @@ mod tests {
             .find(|e| e.label.starts_with("thinking_delta"))
             .expect("the deltas");
         assert_eq!(deltas.count, 3, "and the deltas fold into one line");
+    }
+
+    /// `/debug` is a troubleshooting aid, not part of the shipped command
+    /// surface: a reader opening the palette for `/export` should not have to
+    /// scroll past it.
+    #[test]
+    fn debug_is_offered_only_in_a_debug_build() {
+        let offered = cfg!(debug_assertions);
+        assert_eq!(
+            super::slash_lookup("/debug").is_some(),
+            offered,
+            "typing it works exactly where it is offered"
+        );
+        assert_eq!(
+            super::help_rows()
+                .iter()
+                .any(|(names, _)| names.contains("/debug")),
+            offered,
+            "and help lists exactly what the palette offers"
+        );
+        // Every other command is unconditional; only this one is gated.
+        assert_eq!(
+            super::SLASH.iter().filter(|c| c.debug_only).count(),
+            1,
+            "gating is for troubleshooting aids, not a general mechanism"
+        );
     }
 
     /// `/debug` exists so a session that misbehaved can explain itself. The
