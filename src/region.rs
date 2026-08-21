@@ -3,15 +3,113 @@
 /// On each startup:
 /// 1. `refresh_region_cache()` re-probes geotest.lbkrs.com if the cached
 ///    verdict is older than `CACHE_TTL_SECS`, and persists the result.
-/// 2. `is_cn_cached()` reads that verdict from disk for use in the Config
+/// 2. `spawn_latency_repin()` measures both access points in the background and
+///    repins to the better one, so a wrong verdict repairs itself.
+/// 3. `is_cn_cached()` reads that verdict from disk for use in the Config
 ///    builder.
+///
+/// Geolocation only approximates "which access point serves you better"; the
+/// latency probe measures it. That is why step 2 exists and can overrule step 1.
 use std::{
     path::PathBuf,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 const GEOTEST_URL: &str = "https://geotest.lbkrs.com";
 const GEOTEST_TIMEOUT_SECS: u64 = 2;
+
+/// Timeout for one access-point health request.
+pub const CONNECT_TIMEOUT_SECS: u64 = 5;
+
+/// How long the background probe holds off before its first request, so the
+/// command's own startup has the network and the runtime to itself.
+const PROBE_START_DELAY: Duration = Duration::from_secs(3);
+
+/// Health requests per access point, averaged after dropping the fastest and
+/// slowest. Enough samples that one stalled request cannot decide a repin.
+pub const PROBE_COUNT: usize = 10;
+
+/// How much faster the other access point must measure before its latency
+/// overrides the geo verdict — both an absolute and a relative margin.
+///
+/// Geolocation is only a proxy for "which access point serves you better"; the
+/// probe measures that directly. But a single sample is noisy, and a
+/// split-tunnel proxy can route geotest and the API over entirely different
+/// paths, so only a wide, unambiguous gap should repin. Sized from observed
+/// data: a same-continent 41ms / 20% edge is noise; a split-tunnel 135ms / 42%
+/// gap is not.
+const REPIN_MIN_DELTA_MS: u64 = 50;
+
+/// One access point's measured reachability and warm-connection latency.
+pub struct ProbeStats {
+    pub ok: bool,
+    pub ms: u64,
+}
+
+/// Whether measured latency should override the geo verdict, and which way.
+///
+/// `None` leaves the verdict alone.
+fn repin_from_latency(is_cn: bool, global: &ProbeStats, cn: &ProbeStats) -> Option<bool> {
+    let (active, other) = if is_cn { (cn, global) } else { (global, cn) };
+
+    // An unreachable access point is never the right one — switch whenever the
+    // alternative works. This is the case that stranded overseas clients.
+    if !active.ok {
+        return other.ok.then_some(!is_cn);
+    }
+    if !other.ok {
+        return None;
+    }
+
+    let faster_by = active.ms.checked_sub(other.ms)?;
+    // `other.ms * 4 <= active.ms * 3` is "at least 25% faster" in integers.
+    let decisive = faster_by >= REPIN_MIN_DELTA_MS && other.ms * 4 <= active.ms * 3;
+    decisive.then_some(!is_cn)
+}
+
+/// Measures HTTPS warm-connection latency with `PROBE_COUNT` requests.
+/// Sends one warm-up request first to establish the connection, then
+/// drops the fastest and slowest sample from the measured runs and averages the rest.
+async fn probe(url: &str) -> ProbeStats {
+    let Ok(client) = reqwest::Client::builder()
+        .timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
+        .build()
+    else {
+        return ProbeStats { ok: false, ms: 0 };
+    };
+    // Warm-up: establish connection, result not counted
+    if client.get(url).send().await.is_err() {
+        return ProbeStats { ok: false, ms: 0 };
+    }
+    let mut samples = Vec::with_capacity(PROBE_COUNT);
+    for _ in 0..PROBE_COUNT {
+        let start = Instant::now();
+        match client.get(url).send().await {
+            Ok(resp) => {
+                let body = resp.text().await.unwrap_or_default();
+                if body.trim() != "success" {
+                    return ProbeStats { ok: false, ms: 0 };
+                }
+            }
+            Err(_) => return ProbeStats { ok: false, ms: 0 },
+        }
+        samples.push(start.elapsed().as_millis() as u64);
+    }
+    samples.sort_unstable();
+    let trimmed = &samples[1..samples.len() - 1];
+    let ms = trimmed.iter().sum::<u64>() / trimmed.len() as u64;
+    ProbeStats { ok: true, ms }
+}
+
+/// Measure both access points at once. The pair is what a repin decision needs:
+/// either one alone says nothing about which is better.
+pub async fn probe_access_points() -> (ProbeStats, ProbeStats) {
+    let (global, cn) = (
+        format!("{HTTP_URL_GLOBAL}/health"),
+        format!("{HTTP_URL_CN}/health"),
+    );
+    tokio::join!(probe(&global), probe(&cn))
+}
 
 /// How long a probed verdict is trusted before it is re-checked. Long enough
 /// that the probe is invisible in day-to-day use, short enough that a laptop
@@ -111,15 +209,25 @@ struct CachedRegion {
     /// written by an older version, which had no timestamp; those are treated
     /// as stale so the first run after upgrading re-probes.
     checked_at: Option<u64>,
+    /// Unix seconds of the last access-point latency measurement, which paces
+    /// itself separately from the geotest verdict above: it is far more
+    /// expensive, and it is the one that can overrule that verdict.
+    latency_checked_at: Option<u64>,
 }
 
 impl CachedRegion {
     fn is_fresh(&self) -> bool {
-        let Some(checked_at) = self.checked_at else {
-            return false;
-        };
-        now_unix().is_some_and(|now| now.saturating_sub(checked_at) < CACHE_TTL_SECS)
+        fresh(self.checked_at)
     }
+}
+
+/// Whether a stamp is recent enough to trust. A missing stamp is stale, so a
+/// cache from a version that did not write one re-probes once.
+fn fresh(checked_at: Option<u64>) -> bool {
+    let Some(checked_at) = checked_at else {
+        return false;
+    };
+    now_unix().is_some_and(|now| now.saturating_sub(checked_at) < CACHE_TTL_SECS)
 }
 
 fn now_unix() -> Option<u64> {
@@ -136,14 +244,26 @@ fn parse_cache(raw: &str) -> CachedRegion {
     let is_cn = lines
         .next()
         .is_some_and(|v| v.trim().eq_ignore_ascii_case("cn"));
-    let checked_at = lines.next().and_then(|ts| ts.trim().parse::<u64>().ok());
-    CachedRegion { is_cn, checked_at }
+    let mut stamp = || lines.next().and_then(|ts| ts.trim().parse::<u64>().ok());
+    CachedRegion {
+        is_cn,
+        checked_at: stamp(),
+        // Absent in caches written before the latency probe existed, which
+        // reads as "never measured" — exactly right for those.
+        latency_checked_at: stamp(),
+    }
 }
 
 fn read_cache() -> Option<CachedRegion> {
     let path = cache_file_path()?;
     let raw = std::fs::read_to_string(path).ok()?;
     Some(parse_cache(&raw))
+}
+
+/// The latency stamp on disk, or `None` when the access points have never been
+/// measured.
+fn cached_latency_checked_at() -> Option<u64> {
+    read_cache().and_then(|c| c.latency_checked_at)
 }
 
 /// The cached region verdict (`"cn"` / `"global"`), or `None` when no cache
@@ -165,7 +285,11 @@ pub fn is_cn_cached() -> bool {
     read_cache().is_some_and(|c| c.is_cn)
 }
 
-fn write_cache(is_cn: bool) {
+/// Persist a verdict plus the latency stamp to carry forward.
+///
+/// The stamp is passed in rather than read here: a geotest refresh must keep
+/// whatever the last measurement wrote, while a measurement replaces it.
+fn write_cache(is_cn: bool, latency_checked_at: Option<u64>) {
     let Some(path) = cache_file_path() else {
         return;
     };
@@ -173,9 +297,12 @@ fn write_cache(is_cn: bool) {
         let _ = std::fs::create_dir_all(parent);
     }
     let verdict = if is_cn { "cn" } else { "global" };
-    let contents = match now_unix() {
-        Some(ts) => format!("{verdict}\n{ts}\n"),
-        None => format!("{verdict}\n"),
+    // The latency stamp is the third line, so it can only be written when the
+    // second one is there to hold its place.
+    let contents = match (now_unix(), latency_checked_at) {
+        (Some(ts), Some(latency)) => format!("{verdict}\n{ts}\n{latency}\n"),
+        (Some(ts), None) => format!("{verdict}\n{ts}\n"),
+        (None, _) => format!("{verdict}\n"),
     };
     let _ = std::fs::write(&path, contents);
 }
@@ -200,7 +327,78 @@ pub async fn refresh_region_cache() {
         return;
     }
 
-    write_cache(probe_or_keep(cached).await);
+    let latency_checked_at = cached.as_ref().and_then(|c| c.latency_checked_at);
+    write_cache(probe_or_keep(cached).await, latency_checked_at);
+}
+
+/// Measure both access points in the background and repin to the better one.
+///
+/// Geolocation is a guess about which access point serves this client best, and
+/// on a split-tunnel proxy — or for someone who has simply moved — it is the
+/// wrong guess. `check` has always measured and corrected it, but only when a
+/// user thought to run it, which is not something a user has any reason to do
+/// until they are already suffering. Measuring on startup makes the wrong guess
+/// repair itself instead.
+///
+/// Backgrounded and never awaited, because the measurement costs an order of
+/// magnitude more than the geotest probe and nothing in this run depends on it:
+/// the verdict is read from disk at the *next* startup, when swapping the access
+/// point costs nothing. Awaiting it would trade an invisible fix for a visible
+/// stall.
+///
+/// The stamp is written before the probe starts, following the same reasoning as
+/// the version check: a short command usually exits before the task finishes, and
+/// without the stamp every run would start another probe that never lands.
+///
+/// The probe waits [`PROBE_START_DELAY`] before its first request, so it cannot
+/// compete with the command's own startup. Building two TLS clients and opening
+/// two connections is not free, and doing it while the process is still coming up
+/// delayed the work the user actually asked for — enough to push an ACP
+/// `initialize` response past the editor's timeout. Waiting also means a short
+/// command exits before the probe costs it anything at all, and the runs that do
+/// pay for it are the long-lived ones that were going to outlive it anyway.
+pub fn spawn_latency_repin() {
+    // With an override in force the verdict is not consulted, so measuring it
+    // would be work whose result nothing can read.
+    if std::env::var("LONGBRIDGE_REGION").is_ok() {
+        return;
+    }
+    if fresh(cached_latency_checked_at()) {
+        return;
+    }
+    let is_cn = is_cn_cached();
+    write_cache(is_cn, now_unix());
+    tokio::spawn(async move {
+        tokio::time::sleep(PROBE_START_DELAY).await;
+        let (global, cn) = probe_access_points().await;
+        if let Some(measured_is_cn) = record_measurement(is_cn, &global, &cn) {
+            tracing::debug!(
+                "Access point repinned to {} by latency (global {}ms ok={}, cn {}ms ok={})",
+                if measured_is_cn { "CN" } else { "global" },
+                global.ms,
+                global.ok,
+                cn.ms,
+                cn.ok,
+            );
+        }
+    });
+}
+
+/// Persist what a measurement found: repin when the gap is decisive, and stamp
+/// the probe either way so the background one paces itself.
+///
+/// Returns the new verdict when it changed, for `check` to report.
+pub fn record_measurement(
+    active_is_cn: bool,
+    global: &ProbeStats,
+    cn: &ProbeStats,
+) -> Option<bool> {
+    if std::env::var("LONGBRIDGE_REGION").is_ok() {
+        return None;
+    }
+    let repinned = repin_from_latency(active_is_cn, global, cn);
+    write_cache(repinned.unwrap_or(active_is_cn), now_unix());
+    repinned
 }
 
 /// Probe geotest, falling back to the previous verdict when it cannot answer.
@@ -238,11 +436,12 @@ pub async fn redetect_region() -> Option<String> {
     }
 
     let country = probe_country().await;
+    let cached = read_cache();
     let is_cn = match country.as_deref() {
         Some(code) => code.eq_ignore_ascii_case("CN"),
-        None => read_cache().is_some_and(|c| c.is_cn),
+        None => cached.as_ref().is_some_and(|c| c.is_cn),
     };
-    write_cache(is_cn);
+    write_cache(is_cn, cached.and_then(|c| c.latency_checked_at));
     country
 }
 
@@ -253,7 +452,7 @@ pub fn record_region(is_cn: bool) {
     if std::env::var("LONGBRIDGE_REGION").is_ok() {
         return;
     }
-    write_cache(is_cn);
+    write_cache(is_cn, cached_latency_checked_at());
 }
 
 /// The region forced by `LONGBRIDGE_REGION`, if that variable is set.
@@ -333,5 +532,70 @@ mod tests {
         assert!(!legacy.is_fresh());
 
         assert!(!parse_cache("global\n1750000000\n").is_cn);
+    }
+
+    /// The latency stamp is a third line. A cache written before the background
+    /// probe existed has none, which has to read as "never measured" so the
+    /// first run after upgrading measures once.
+    #[test]
+    fn parses_the_latency_stamp_and_treats_its_absence_as_never() {
+        let measured = parse_cache("cn\n1750000000\n1750000900\n");
+        assert_eq!(measured.checked_at, Some(1_750_000_000));
+        assert_eq!(measured.latency_checked_at, Some(1_750_000_900));
+
+        let never = parse_cache("cn\n1750000000\n");
+        assert_eq!(never.latency_checked_at, None);
+        assert!(!fresh(never.latency_checked_at));
+    }
+
+    /// A stamp from the last few minutes is trusted; one older than the TTL is
+    /// not, which is what paces the background probe.
+    #[test]
+    fn a_stamp_expires_with_the_ttl() {
+        let now = now_unix().expect("a clock");
+        assert!(fresh(Some(now)));
+        assert!(!fresh(Some(now - CACHE_TTL_SECS - 1)));
+        assert!(!fresh(None));
+    }
+
+    #[test]
+    fn repins_when_the_other_access_point_is_decisively_faster() {
+        // Measured on a split-tunnel proxy: geotest said CN, but the global
+        // endpoint was 135ms (42%) ahead of the CN one.
+        assert_eq!(repin_from_latency(true, &ok(321), &ok(456)), Some(false));
+    }
+
+    #[test]
+    fn ignores_a_narrow_lead() {
+        // Measured on a US CI runner: cn led global by 41ms (20%). Too close to
+        // act on — repinning here would undo correct geo detection.
+        assert_eq!(repin_from_latency(false, &ok(244), &ok(203)), None);
+    }
+
+    #[test]
+    fn leaves_an_already_optimal_verdict_alone() {
+        // CN proxy exit: cn is active and far ahead, nothing to do.
+        assert_eq!(repin_from_latency(true, &ok(228), &ok(46)), None);
+    }
+
+    #[test]
+    fn always_leaves_an_unreachable_access_point() {
+        // The case that stranded overseas clients on longbridge.cn.
+        assert_eq!(repin_from_latency(true, &ok(300), &down()), Some(false));
+        assert_eq!(repin_from_latency(false, &down(), &ok(300)), Some(true));
+    }
+
+    #[test]
+    fn stays_put_when_the_alternative_is_also_down() {
+        assert_eq!(repin_from_latency(true, &down(), &down()), None);
+        // A working active endpoint is kept even if the other one is dead.
+        assert_eq!(repin_from_latency(true, &down(), &ok(50)), None);
+    }
+
+    fn ok(ms: u64) -> ProbeStats {
+        ProbeStats { ok: true, ms }
+    }
+    fn down() -> ProbeStats {
+        ProbeStats { ok: false, ms: 0 }
     }
 }

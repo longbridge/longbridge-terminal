@@ -230,8 +230,15 @@ async fn main() {
     // Re-probe the access-point region if the cached verdict has gone stale.
     // Usually a no-op; only the first run after the cache TTL expires waits.
     // `check` detects unconditionally, so skip the routine refresh for it.
+    //
+    // Then measure both access points in the background and repin to whichever
+    // actually serves this client better. Geolocation is only a guess at that,
+    // and correcting it used to require the user to run `check` — which nobody
+    // does until they are already suffering. Never awaited: the verdict is read
+    // at the next startup, where swapping costs nothing.
     if !matches!(cli.command, Some(cli::Commands::Check)) {
         region::refresh_region_cache().await;
+        region::spawn_latency_repin();
     }
 
     // Kick off background version check to refresh the update cache for the next run.
