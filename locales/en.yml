@@ -405,6 +405,8 @@ Agent:
   FollowUpWith: "Follow up with:"
   Elapsed: "elapsed %{secs}s"
   PartialAnswer: "Warning: stream dropped; showing partial answer"
+  Reconnecting: "Connection lost; reconnecting to the run…"
+  RunFailed: "The agent run did not complete successfully"
   StreamDropped: "Agent run interrupted: the stream dropped before the run completed"
 
 Ai:

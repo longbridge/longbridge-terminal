@@ -126,6 +126,46 @@ impl ChatMessage {
             .collect::<Vec<_>>()
             .join("\n\n")
     }
+
+    /// True while the server is still generating this message.
+    ///
+    /// `status` is the shared message-status enum: `0` generating, `1`
+    /// completed, `2` stopped by the user, `3` exception, `4` blocked by the
+    /// guard rails, `5` paused for human input. Anything but `0` is terminal —
+    /// the run is over and this record is the whole of it.
+    pub fn is_generating(&self) -> bool {
+        self.status == 0
+    }
+
+    /// One entry of the `extends` list, parsed from its JSON-string `value`.
+    ///
+    /// `extends` is a list of `{key, value, created_at}` whose `value` is itself
+    /// a JSON document encoded as a string. It holds the end-of-turn metadata
+    /// that the SSE stream delivers as typed events, persisted for anyone
+    /// reading the message back afterwards.
+    fn extends_entry(&self, key: &str) -> Option<serde_json::Value> {
+        self.extends
+            .as_array()?
+            .iter()
+            .find(|e| e.get("key").and_then(serde_json::Value::as_str) == Some(key))?
+            .get("value")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|raw| serde_json::from_str(raw).ok())
+    }
+
+    /// The sources the answer cites, as persisted in `extends`.
+    pub fn references(&self) -> Vec<longbridge::agent::Reference> {
+        self.extends_entry("references")
+            .and_then(|v| serde_json::from_value(v).ok())
+            .unwrap_or_default()
+    }
+
+    /// The follow-up questions the agent suggested, as persisted in `extends`.
+    pub fn further_questions(&self) -> Vec<String> {
+        self.extends_entry("further_questions")
+            .and_then(|v| serde_json::from_value(v).ok())
+            .unwrap_or_default()
+    }
 }
 
 #[cfg(test)]

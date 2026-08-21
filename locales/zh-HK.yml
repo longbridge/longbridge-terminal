@@ -405,6 +405,8 @@ Agent:
   FollowUpWith: "續聊命令："
   Elapsed: "耗時 %{secs}s"
   PartialAnswer: "警告：流中斷，以下為已接收的部分回答"
+  Reconnecting: "連線中斷，正在重新連線…"
+  RunFailed: "本次執行未能成功完成"
   StreamDropped: "Agent 運行中斷：流在運行完成前斷開"
 
 Ai:

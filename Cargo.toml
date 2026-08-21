@@ -100,6 +100,9 @@ whoami = "1.5"
 [dev-dependencies]
 mockall = "0.13"
 serial_test = "3"
+# `test-util` for the paused clock, so timeout behaviour can be tested without
+# tests that actually wait out the timeout.
+tokio = { version = "1.33.0", features = ["test-util"] }
 
 [features]
 integration = []

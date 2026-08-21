@@ -126,6 +126,12 @@ pub enum ChatEvent {
         references: Vec<Reference>,
         further: Vec<String>,
     },
+    /// The connection carrying the turn died and is being re-established.
+    ///
+    /// The run continues on the server, and re-attaching to it replays this
+    /// turn from the beginning, so everything the dead connection produced is
+    /// discarded rather than left for the replay to duplicate.
+    StreamInterrupted,
     /// The turn ended. Finalizes the streamed answer into a message.
     TurnFinished { error: Option<String> },
 }
@@ -339,6 +345,20 @@ impl ChatState {
             } => {
                 self.references = references;
                 self.further = further;
+            }
+            ChatEvent::StreamInterrupted => {
+                // Drop this turn's transcript back to the prompt that started
+                // it: the replay re-emits its tool lines, and keeping the
+                // originals would show every tool twice.
+                if let Some(start) = self.turn_started {
+                    self.messages.truncate(start.from + 1);
+                }
+                self.streaming = Some(String::new());
+                self.thinking = None;
+                self.tool_failures.clear();
+                self.references.clear();
+                self.further.clear();
+                self.turn_error = None;
             }
             ChatEvent::TurnFinished { error } => {
                 // A transport error takes precedence, but a server-reported one is

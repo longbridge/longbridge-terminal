@@ -352,6 +352,7 @@ fn event_label(event: &ChatEvent) -> String {
             references,
             further,
         } => format!("meta refs={} further={}", references.len(), further.len()),
+        ChatEvent::StreamInterrupted => "stream_interrupted".to_string(),
         ChatEvent::TurnFinished { error } => match error {
             Some(e) => format!("turn_finished error={e}"),
             None => "turn_finished".to_string(),
@@ -6939,6 +6940,57 @@ mod tests {
         // A real command prefix still matches.
         e.set_text("/ne");
         assert!(!super::slash_matches(&e, &state).is_empty());
+    }
+
+    /// Re-attaching replays the turn from the beginning, so the transcript has
+    /// to drop back to the prompt that started it — otherwise the replayed tool
+    /// lines land beneath the originals and every tool reads as having run
+    /// twice.
+    #[test]
+    fn a_restart_rewinds_the_turn_to_its_prompt() {
+        let mut state = super::ChatState::new("chatbot".into(), String::new());
+        state.apply(super::ChatEvent::UserPrompt("how is 700.HK doing?".into()));
+        state.apply(super::ChatEvent::ToolStarted("quote".into()));
+        state.apply(super::ChatEvent::ToolFinished {
+            name: "quote".into(),
+            ok: true,
+        });
+        state.apply(super::ChatEvent::ThinkingDelta("checking".into()));
+        state.apply(super::ChatEvent::Delta("Tencent is".into()));
+
+        state.apply(super::ChatEvent::StreamInterrupted);
+
+        // The turn is rewound to its prompt; the answer and reasoning start over.
+        assert_eq!(
+            state.messages.last().map(|m| m.role),
+            Some(super::Role::User)
+        );
+        assert!(!state.messages.iter().any(|m| m.role == super::Role::Tool));
+        assert_eq!(state.streaming.as_deref(), Some(""));
+        assert!(state.thinking.is_none());
+        // Still the same turn: it has not been finalized.
+        assert!(state.busy);
+
+        // The replay rebuilds it, without doubling the tool line.
+        state.apply(super::ChatEvent::ToolStarted("quote".into()));
+        state.apply(super::ChatEvent::ToolFinished {
+            name: "quote".into(),
+            ok: true,
+        });
+        state.apply(super::ChatEvent::Delta("Tencent is up 2%.".into()));
+        state.apply(super::ChatEvent::TurnFinished { error: None });
+        assert_eq!(
+            state
+                .messages
+                .iter()
+                .filter(|m| m.role == super::Role::Tool)
+                .count(),
+            1
+        );
+        assert!(state
+            .messages
+            .iter()
+            .any(|m| m.role == super::Role::Assistant && m.text == "Tencent is up 2%."));
     }
 
     #[test]
