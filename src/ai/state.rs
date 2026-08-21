@@ -20,6 +20,8 @@ pub enum Role {
     /// A tool the agent called, recorded so the answer can be traced back to
     /// the data it was built from.
     Tool,
+    /// A finished reasoning phase, collapsed to how long it took.
+    Thinking,
 }
 
 /// How a tool call ended, for the transcript's tool lines.
@@ -72,6 +74,10 @@ pub enum ChatEvent {
     Delta(String),
     /// A transient status line (thinking, calling a tool, generating).
     Status(String),
+    /// An incremental chunk of the agent's reasoning for the turn in flight.
+    ThinkingDelta(String),
+    /// The reasoning phase ended; the live block collapses to a summary line.
+    ThinkingFinished,
     /// The agent started calling a tool; appends a running tool line.
     ToolStarted(String),
     /// A tool finished; resolves its line and records failures so an empty turn
@@ -110,6 +116,26 @@ pub struct TurnStart {
     pub from: usize,
 }
 
+/// The agent's reasoning for the turn in flight, and when it started.
+///
+/// Held apart from [`ChatState::messages`] because it is live-only: it is what
+/// the reader watches during the wait, and once the answer lands it collapses to
+/// a single [`Role::Thinking`] line rather than staying in the transcript at
+/// full length, where it would bury the answer it belongs to.
+pub struct Thinking {
+    pub text: String,
+    pub started: std::time::Instant,
+}
+
+impl Default for Thinking {
+    fn default() -> Self {
+        Self {
+            text: String::new(),
+            started: std::time::Instant::now(),
+        }
+    }
+}
+
 /// The full chat state the view renders.
 #[derive(Default)]
 pub struct ChatState {
@@ -121,6 +147,8 @@ pub struct ChatState {
     pub messages: Vec<Message>,
     /// The assistant answer accumulating during the active turn.
     pub streaming: Option<String>,
+    /// The reasoning accumulating during the active turn. See [`Thinking`].
+    pub thinking: Option<Thinking>,
     pub status: String,
     pub busy: bool,
     /// Lines scrolled up from the bottom (0 = pinned to the latest).
@@ -189,6 +217,7 @@ impl ChatState {
                 self.scroll = 0;
                 self.busy = true;
                 self.streaming = Some(String::new());
+                self.thinking = None;
                 self.tool_failures.clear();
                 self.references.clear();
                 self.further.clear();
@@ -202,11 +231,22 @@ impl ChatState {
                 self.message_id = Some(message_id);
             }
             ChatEvent::Delta(text) => {
+                // Answer text is the end of the reasoning, whether or not the
+                // stream said so. Only real text: an empty delta would retire a
+                // block the agent is still writing, splitting one reasoning phase
+                // into two.
+                if !text.is_empty() {
+                    self.collapse_thinking();
+                }
                 self.streaming
                     .get_or_insert_with(String::new)
                     .push_str(&text);
             }
             ChatEvent::Status(status) => self.status = status,
+            ChatEvent::ThinkingDelta(text) => {
+                self.thinking.get_or_insert_with(Thinking::default).text += &text;
+            }
+            ChatEvent::ThinkingFinished => self.collapse_thinking(),
             // A tool call is committed to the transcript rather than only
             // flashing through the status line: for a finance agent, which data
             // an answer was built from is part of the answer.
@@ -282,6 +322,10 @@ impl ChatState {
     }
 
     fn finish_turn(&mut self, error: Option<String>) {
+        // Before the answer is committed, so a turn whose reasoning never got an
+        // explicit `thinking_finished` still leaves its summary above the answer
+        // rather than below it.
+        self.collapse_thinking();
         let error_free = error.is_none();
         let produced = self
             .streaming
@@ -322,12 +366,31 @@ impl ChatState {
         self.status.clear();
     }
 
+    /// Retire the live reasoning block, leaving one line saying how long it ran.
+    ///
+    /// Reasoning that produced nothing leaves no trace: an empty block would be a
+    /// row claiming the agent thought when it did not.
+    fn collapse_thinking(&mut self) {
+        let Some(thinking) = self.thinking.take() else {
+            return;
+        };
+        if thinking.text.trim().is_empty() {
+            return;
+        }
+        let secs = thinking.started.elapsed().as_secs();
+        self.messages.push(Message::new(
+            Role::Thinking,
+            rust_i18n::t!("Ai.ThoughtFor", secs = secs).to_string(),
+        ));
+    }
+
     /// Reset to a fresh conversation, keeping the agent but dropping all
     /// messages and conversation identity. Used by the "new chat" action.
     pub fn reset(&mut self, welcome: String) {
         self.generation = self.generation.wrapping_add(1);
         self.messages = vec![Message::new(Role::System, welcome)];
         self.streaming = None;
+        self.thinking = None;
         self.status.clear();
         self.busy = false;
         self.scroll = 0;
@@ -359,6 +422,10 @@ impl ChatState {
 
     /// Cancel the active turn, folding any partial answer into the transcript.
     pub fn cancel(&mut self, cancelled_label: &str) {
+        // First, so the summary lands above the partial answer — and so a turn
+        // cancelled mid-reasoning does not leave its live block on screen with
+        // nothing left to finish it.
+        self.collapse_thinking();
         if let Some(mut text) = self.streaming.take() {
             if text.trim().is_empty() {
                 text = cancelled_label.to_string();
@@ -389,6 +456,61 @@ mod tests {
 
     fn state() -> ChatState {
         ChatState::new("chatbot".into(), "welcome".into())
+    }
+
+    /// The reasoning is live while the turn runs — that is the whole point of
+    /// carrying it — and collapses to one line once the answer starts, so it
+    /// cannot bury the answer it produced.
+    #[test]
+    fn reasoning_streams_live_and_collapses_when_the_answer_starts() {
+        let mut s = state();
+        s.apply(ChatEvent::UserPrompt("how is TSLA?".into()));
+        s.apply(ChatEvent::ThinkingDelta("Let".into()));
+        s.apply(ChatEvent::ThinkingDelta(" me think".into()));
+        assert_eq!(
+            s.thinking.as_ref().map(|t| t.text.as_str()),
+            Some("Let me think"),
+            "the reasoning is what the reader watches during the wait"
+        );
+        s.apply(ChatEvent::Delta("TSLA is".into()));
+        assert!(s.thinking.is_none(), "the answer starting ends the block");
+        assert_eq!(
+            s.messages.last().map(|m| m.role),
+            Some(Role::Thinking),
+            "one line stays behind, above the answer"
+        );
+    }
+
+    /// A `thinking_finished` before any answer text collapses it just the same.
+    #[test]
+    fn an_explicit_end_of_reasoning_collapses_it() {
+        let mut s = state();
+        s.apply(ChatEvent::UserPrompt("how is TSLA?".into()));
+        s.apply(ChatEvent::ThinkingDelta("weighing the data".into()));
+        s.apply(ChatEvent::ThinkingFinished);
+        assert!(s.thinking.is_none());
+        assert_eq!(s.messages.last().map(|m| m.role), Some(Role::Thinking));
+    }
+
+    /// A turn that never reasoned must not claim it did.
+    #[test]
+    fn a_turn_without_reasoning_leaves_no_line() {
+        let mut s = state();
+        s.apply(ChatEvent::UserPrompt("hi".into()));
+        s.apply(ChatEvent::Delta("hello".into()));
+        s.apply(ChatEvent::TurnFinished { error: None });
+        assert!(!s.messages.iter().any(|m| m.role == Role::Thinking));
+    }
+
+    /// Reasoning belongs to the turn that produced it: a new prompt starts empty
+    /// rather than continuing the previous turn's block.
+    #[test]
+    fn a_new_prompt_starts_its_own_reasoning() {
+        let mut s = state();
+        s.apply(ChatEvent::UserPrompt("first".into()));
+        s.apply(ChatEvent::ThinkingDelta("about the first".into()));
+        s.apply(ChatEvent::UserPrompt("second".into()));
+        assert!(s.thinking.is_none());
     }
 
     /// Prompts lined up during one answer go out as a single turn: the reader was
@@ -422,6 +544,19 @@ mod tests {
         assert!(last.contains("partial") && last.contains("(cancelled)"));
         // Cancelling means stop, not "run the queue".
         assert!(s.queued.is_empty());
+    }
+
+    /// A turn cancelled while the agent was still reasoning leaves nothing live:
+    /// the block has no stream left to finish it, so it would sit on screen for
+    /// the rest of the session.
+    #[test]
+    fn cancelling_retires_the_live_reasoning() {
+        let mut s = state();
+        s.apply(ChatEvent::UserPrompt("first".into()));
+        s.apply(ChatEvent::ThinkingDelta("halfway through a thought".into()));
+        s.cancel("(cancelled)");
+        assert!(s.thinking.is_none());
+        assert!(s.messages.iter().any(|m| m.role == Role::Thinking));
     }
 
     /// Cancelling a turn that had raised a question drops the interrupt: the

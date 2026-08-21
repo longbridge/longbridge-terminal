@@ -469,6 +469,7 @@ Ai:
   ExportFailed: "Export failed."
   ToolFailed: "failed"
   ToolCount: "%{count} tools"
+  ThoughtFor: "Thought for %{secs}s"
   Stop: "stop"
   CustomAgent: "custom agent"
   WidgetComparison: "Comparison"

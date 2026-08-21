@@ -78,6 +78,14 @@ const LIST_PAGE: usize = 8;
 /// Braille spinner frames for the "generating" status line.
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
+/// The star the live reasoning header pulses through while the agent thinks.
+///
+/// A star that grows and shrinks rather than spins: the reasoning below it is
+/// already moving, and a second spinner next to the status line's would read as
+/// two things happening. The sequence returns through the middle weights so the
+/// pulse is symmetric instead of snapping back to the smallest glyph.
+const THINKING_PULSE: [&str; 8] = ["·", "✢", "✳", "∗", "✻", "∗", "✳", "✢"];
+
 /// The reader's own turns get a band of their own so a long transcript is
 /// scannable. Foreground is set alongside the background: there is no theme
 /// layer yet, and a background alone would be unreadable against a light
@@ -2724,9 +2732,9 @@ fn export_conversation(state: &ChatState) -> std::io::Result<std::path::PathBuf>
         let label = match m.role {
             Role::User => t!("Ai.You"),
             Role::Assistant => t!("Ai.Assistant"),
-            // Tool lines are UI trace, not conversation; an export is the
-            // conversation.
-            Role::System | Role::Alert | Role::Tool => continue,
+            // Tool and reasoning lines are UI trace, not conversation; an
+            // export is the conversation.
+            Role::System | Role::Alert | Role::Tool | Role::Thinking => continue,
         };
         let _ = write!(body, "**{label}:**\n\n{}\n\n", m.text);
     }
@@ -3804,6 +3812,22 @@ fn render_chat(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &mut Chat
             &ui.quotes,
             &ui.aliases,
         );
+    }
+    // Live reasoning goes last, because the view is pinned to the bottom and this
+    // is the row the reader is waiting on. An agent may stream a sentence of
+    // answer and then go back to thinking, and putting the block above the answer
+    // pushed it off the bottom of the screen — out of sight, which is the one
+    // thing it must not be. It gets air after a run of tool rows, like a message.
+    if let Some(thinking) = state.thinking.as_ref().filter(|t| !t.text.is_empty()) {
+        if tail
+            .last()
+            .or_else(|| ui.transcript_cache.last())
+            .is_some_and(is_tool_line)
+        {
+            tail.push(Line::from(""));
+        }
+        tail.extend(live_thinking_lines(&thinking.text, width, ui.tick));
+        tail.push(Line::from(""));
     }
     // Prompts waiting their turn, dim and unbanded: on screen so the reader can see
     // what they have lined up, but visibly not sent yet.
@@ -5230,6 +5254,10 @@ fn push_message(
                 }
             }
         }
+        // What is left of a reasoning phase once the answer arrives: one line
+        // saying it happened and how long it took. The reasoning itself was for
+        // the wait, and keeping it at full length here would bury the answer.
+        Role::Thinking => lines.push(thinking_line("✻", &message.text)),
         Role::System | Role::Tool => {
             for logical in message.text.split('\n') {
                 for wrapped in wrap(logical, width) {
@@ -5242,6 +5270,47 @@ fn push_message(
         }
     }
     lines.push(Line::from(""));
+}
+
+/// The marker a reasoning block leads with, and the width every row indents by.
+const THINKING_MARKER: &str = "  ✻ ";
+
+/// One muted, italic row led by `marker`.
+fn thinking_line(marker: &str, text: &str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!("  {marker} "), Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            text.to_string(),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+        ),
+    ])
+}
+
+/// The reasoning as it streams: a header, then the text itself.
+///
+/// A turn spends most of its wall clock before the first answer byte, and a
+/// spinner alone cannot tell a run that is working from one that has stalled.
+/// Muted and italic throughout — it is the agent thinking aloud, not the answer.
+fn live_thinking_lines(text: &str, width: usize, tick: u64) -> Vec<Line<'static>> {
+    let indent = UnicodeWidthStr::width(THINKING_MARKER);
+    let body_w = width.saturating_sub(indent).max(1);
+    let style = Style::default()
+        .fg(Color::DarkGray)
+        .add_modifier(Modifier::ITALIC);
+    // The header pulses so a long silent stretch still reads as running.
+    let pulse = THINKING_PULSE[(tick as usize) % THINKING_PULSE.len()];
+    let mut out = vec![thinking_line(pulse, &t!("Agent.Thinking"))];
+    for logical in text.split('\n') {
+        for wrapped in wrap(logical, body_w) {
+            out.push(Line::from(vec![
+                Span::raw(" ".repeat(indent)),
+                Span::styled(wrapped, style),
+            ]));
+        }
+    }
+    out
 }
 
 /// The reader's own message: a quote marker and a band across the transcript.
@@ -7072,6 +7141,93 @@ mod tests {
         state.apply(super::ChatEvent::ToolStarted("Get Quote".into()));
         state.apply(super::ChatEvent::Status("Calling Get Quote".into()));
         state
+    }
+
+    /// Most of a turn is spent before the first answer byte. The reasoning is
+    /// what fills that stretch — without it the screen showed only a spinner,
+    /// and a working run looked the same as a stalled one.
+    #[test]
+    fn a_running_turns_reasoning_is_on_screen() {
+        let mut ui = super::Ui::new();
+        let mut state = busy_state();
+        state.apply(super::ChatEvent::ThinkingDelta(
+            "Checking NVDA's last close against the 50-day average".into(),
+        ));
+        let screen = frame(&mut ui, &mut state, 70, 20).join("\n");
+        assert!(
+            screen.contains("Checking NVDA's last close"),
+            "the reader can see the turn is working:\n{screen}"
+        );
+    }
+
+    /// A long reasoning stretch can go seconds without new text. The header
+    /// pulses so the screen still reads as running rather than frozen.
+    #[test]
+    fn the_reasoning_header_animates_between_frames() {
+        let markers: Vec<String> = (0..super::THINKING_PULSE.len() as u64)
+            .map(|tick| {
+                super::live_thinking_lines("weighing the data", 60, tick)[0].spans[0]
+                    .content
+                    .to_string()
+            })
+            .collect();
+        assert!(
+            markers
+                .iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+                > 1,
+            "the marker changes with the frame: {markers:?}"
+        );
+    }
+
+    /// Once the answer arrives the reasoning is history: it collapses to one line
+    /// so it cannot push the answer it produced off the screen.
+    #[test]
+    fn finished_reasoning_collapses_to_one_line() {
+        let mut ui = super::Ui::new();
+        let mut state = busy_state();
+        state.apply(super::ChatEvent::ThinkingDelta(
+            "Checking NVDA's last close against the 50-day average".into(),
+        ));
+        state.apply(super::ChatEvent::Delta("NVDA closed at 180.".into()));
+        let screen = frame(&mut ui, &mut state, 70, 20).join("\n");
+        assert!(
+            !screen.contains("Checking NVDA's last close"),
+            "the reasoning is gone:\n{screen}"
+        );
+        assert!(screen.contains('✻'), "but its trace remains:\n{screen}");
+        assert!(
+            screen.contains("NVDA closed at 180."),
+            "and the answer is what is left:\n{screen}"
+        );
+    }
+
+    /// The agent streams a sentence of answer, then goes back to thinking. The
+    /// view is pinned to the bottom, so the reasoning has to sit *below* that
+    /// sentence — above it, it is off-screen exactly when it is being written.
+    #[test]
+    fn reasoning_that_resumes_after_an_answer_stays_at_the_bottom() {
+        let mut ui = super::Ui::new();
+        let mut state = busy_state();
+        state.apply(super::ChatEvent::Delta("Let me pull together NVDA.".into()));
+        state.apply(super::ChatEvent::ThinkingDelta(
+            "Weighing the moving averages".into(),
+        ));
+        let rows = frame(&mut ui, &mut state, 70, 20);
+        let answer = rows
+            .iter()
+            .position(|r| r.contains("Let me pull together"))
+            .expect("the answer so far");
+        let reasoning = rows
+            .iter()
+            .position(|r| r.contains("Weighing the moving averages"))
+            .expect("the reasoning that resumed");
+        assert!(
+            reasoning > answer,
+            "the reasoning follows the answer it interrupted:\n{}",
+            rows.join("\n")
+        );
     }
 
     /// A `/copy` confirmation used to take over the one status row and hide the

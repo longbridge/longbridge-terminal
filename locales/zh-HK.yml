@@ -469,6 +469,7 @@ Ai:
   ExportFailed: "匯出失敗。"
   ToolFailed: "失敗"
   ToolCount: "%{count} 個工具"
+  ThoughtFor: "已思考 %{secs} 秒"
   Stop: "停止"
   CustomAgent: "自訂智能體"
   WidgetComparison: "對比"

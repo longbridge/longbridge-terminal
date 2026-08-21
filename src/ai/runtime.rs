@@ -16,6 +16,7 @@ use tokio::task::JoinHandle;
 use super::state::{ChatEvent, ChatState};
 use crate::cli::agent::client::{stream_conversation, ConversationRequest};
 use crate::cli::agent::events::AgentEvent;
+use crate::utils::text::strip_control_chars;
 
 /// A chat event tagged with the conversation generation that spawned it.
 ///
@@ -101,6 +102,19 @@ fn map_agent_event(ev: &AgentEvent) -> Vec<ChatEvent> {
             ChatEvent::Status(t!("Agent.Generating").to_string()),
         ],
         AgentEvent::ThinkingStarted => vec![ChatEvent::Status(t!("Agent.Thinking").to_string())],
+        // The reasoning itself, which is what the wait is made of. Sanitized on
+        // the way in: it is server text that lands in the transcript verbatim,
+        // and a stray control byte there corrupts the frame.
+        AgentEvent::ThinkingDelta { text } => vec![
+            ChatEvent::ThinkingDelta(strip_control_chars(text)),
+            ChatEvent::Status(t!("Agent.Thinking").to_string()),
+        ],
+        // A named stage says more than "Thinking…" does, so it takes the status
+        // line for as long as the stage runs.
+        AgentEvent::StageStarted { title } => {
+            vec![ChatEvent::Status(strip_control_chars(title))]
+        }
+        AgentEvent::ThinkingFinished => vec![ChatEvent::ThinkingFinished],
         // A tool call goes to the transcript as well as the status line: the
         // status line is overwritten by the next event, and which data an answer
         // was built from is worth keeping.
@@ -157,9 +171,7 @@ fn map_agent_event(ev: &AgentEvent) -> Vec<ChatEvent> {
             vec![ChatEvent::TurnError(display_error(error_message))]
         }
         AgentEvent::ChatTitleUpdated { title } => vec![ChatEvent::Title(title.clone())],
-        AgentEvent::ThinkingFinished
-        | AgentEvent::ChatFinished { .. }
-        | AgentEvent::Unknown { .. } => Vec::new(),
+        AgentEvent::ChatFinished { .. } | AgentEvent::Unknown { .. } => Vec::new(),
     }
 }
 

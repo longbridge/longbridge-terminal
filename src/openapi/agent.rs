@@ -499,21 +499,15 @@ impl AgentBackend for OpenApiAgent {
                 let acp_session_id = acp_session_id.clone();
                 async move {
                 match event {
-                    Ok(ConversationStreamEvent::Message(message))
-                        if message.message_type == "think" =>
-                    {
-                        let metadata = event_metadata("message", &message);
-                        Some(Ok(AgentEvent::Content {
-                            text: message.text,
-                            thought: true,
-                            metadata,
-                        }))
-                    }
+                    // Only `answer` is the answer. Reasoning arrives as both
+                    // `think` and `process`, and matching on `think` alone spliced
+                    // the `process` half — which is what the server actually sends
+                    // — into the answer text as if the agent had said it.
                     Ok(ConversationStreamEvent::Message(message)) => {
                         let metadata = event_metadata("message", &message);
                         Some(Ok(AgentEvent::Content {
+                            thought: message.message_type != "answer",
                             text: message.text,
-                            thought: false,
                             metadata,
                         }))
                     }
