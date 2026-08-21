@@ -78,6 +78,14 @@ const LIST_PAGE: usize = 8;
 /// Braille spinner frames for the "generating" status line.
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
+/// The star the live reasoning header pulses through while the agent thinks.
+///
+/// A star that grows and shrinks rather than spins: the reasoning below it is
+/// already moving, and a second spinner next to the status line's would read as
+/// two things happening. The sequence returns through the middle weights so the
+/// pulse is symmetric instead of snapping back to the smallest glyph.
+const THINKING_PULSE: [&str; 8] = ["·", "✢", "✳", "∗", "✻", "∗", "✳", "✢"];
+
 /// The reader's own turns get a band of their own so a long transcript is
 /// scannable. Foreground is set alongside the background: there is no theme
 /// layer yet, and a background alone would be unreadable against a light
@@ -146,6 +154,10 @@ struct Slash {
     aliases: &'static [&'static str],
     /// i18n key of the one-line description shown in the palette.
     desc: &'static str,
+    /// Only offered in a debug build. A troubleshooting aid, kept out of the
+    /// shipped command surface rather than shown to every reader who opens the
+    /// palette looking for something else.
+    debug_only: bool,
 }
 
 impl Slash {
@@ -159,6 +171,11 @@ impl Slash {
         self.name == typed || self.aliases.contains(&typed)
     }
 
+    /// Whether this build offers the command at all.
+    fn available(&self) -> bool {
+        !self.debug_only || cfg!(debug_assertions)
+    }
+
     /// Whether any of this command's names starts with `prefix`, so the palette
     /// surfaces `/exit` while the user is still typing `/qu`.
     fn starts_with(&self, prefix: &str) -> bool {
@@ -166,72 +183,188 @@ impl Slash {
     }
 }
 
-const SLASH: [Slash; 12] = [
+const SLASH: [Slash; 13] = [
     Slash {
         name: "/new",
         aliases: &["/clear"],
         desc: "Ai.SlashNew",
+        debug_only: false,
     },
     Slash {
         name: "/retry",
         aliases: &["/regenerate"],
         desc: "Ai.SlashRetry",
+        debug_only: false,
     },
     Slash {
         name: "/copy",
         aliases: &[],
         desc: "Ai.SlashCopy",
+        debug_only: false,
     },
     Slash {
         name: "/export",
         aliases: &[],
         desc: "Ai.SlashExport",
+        debug_only: false,
     },
     Slash {
         name: "/quote",
         aliases: &[],
         desc: "Ai.SlashQuote",
+        debug_only: false,
     },
     Slash {
         name: "/resume",
         aliases: &[],
         desc: "Ai.SlashResume",
+        debug_only: false,
     },
     Slash {
         name: "/settings",
         aliases: &[],
         desc: "Ai.SlashSettings",
+        debug_only: false,
     },
     Slash {
         name: "/agent",
         aliases: &[],
         desc: "Ai.SlashAgent",
+        debug_only: false,
     },
     Slash {
         name: "/login",
         aliases: &[],
         desc: "Ai.SlashLogin",
+        debug_only: false,
     },
     Slash {
         name: "/logout",
         aliases: &[],
         desc: "Ai.SlashLogout",
+        debug_only: false,
+    },
+    Slash {
+        name: "/debug",
+        aliases: &[],
+        desc: "Ai.SlashDebug",
+        debug_only: true,
     },
     Slash {
         name: "/help",
         aliases: &[],
         desc: "Ai.SlashHelp",
+        debug_only: false,
     },
     Slash {
         name: "/exit",
         aliases: &["/quit"],
         desc: "Ai.SlashExit",
+        debug_only: false,
     },
 ];
 
 /// Resolve a typed `/name` to the canonical key `exec_slash` dispatches on.
 fn slash_lookup(typed: &str) -> Option<&'static str> {
-    SLASH.iter().find(|c| c.answers_to(typed)).map(Slash::key)
+    SLASH
+        .iter()
+        .filter(|c| c.available())
+        .find(|c| c.answers_to(typed))
+        .map(Slash::key)
+}
+
+/// How long the stream must be silent before the turn row says so. Long enough
+/// that an ordinary gap between chunks never trips it, short enough to answer
+/// "is this stuck?" before the reader gives up and asks.
+const QUIET_AFTER: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// One entry in the session's event log, with repeats folded into `count`.
+struct LoggedEvent {
+    at: std::time::Instant,
+    label: String,
+    count: u32,
+}
+
+/// How many event entries to keep. Enough to cover a long turn's whole timeline
+/// once repeats are folded, and small enough that the report stays readable.
+const EVENT_LOG_MAX: usize = 200;
+
+/// Record one applied event.
+///
+/// Repeats of the same kind fold into a count rather than each taking a line: a
+/// turn streams hundreds of deltas, and a log full of them would push out the
+/// tool and status transitions that are the reason to read it at all.
+fn log_event(ui: &mut Ui, event: &ChatEvent, status: &str) {
+    // A status that repeats the one already showing changes nothing, and one
+    // rides along with every delta — logging them broke up the runs of deltas so
+    // nothing folded, and the timeline drowned in `status Thinking…`.
+    if let ChatEvent::Status(new) = event {
+        if new == status {
+            return;
+        }
+    }
+    let label = event_label(event);
+    let kind = label.split(' ').next().unwrap_or_default().to_string();
+    match ui.event_log.back_mut() {
+        Some(last) if last.label.starts_with(&kind) && repeatable(&kind) => {
+            last.count += 1;
+            last.at = std::time::Instant::now();
+        }
+        _ => {
+            if ui.event_log.len() >= EVENT_LOG_MAX {
+                ui.event_log.pop_front();
+            }
+            ui.event_log.push_back(LoggedEvent {
+                at: std::time::Instant::now(),
+                label,
+                count: 1,
+            });
+        }
+    }
+}
+
+/// Whether a run of this event kind is worth folding into one line.
+fn repeatable(kind: &str) -> bool {
+    matches!(kind, "answer_delta" | "thinking_delta" | "status")
+}
+
+/// A compact, content-free description of an event.
+///
+/// Lengths rather than text: the report is meant to be handed to someone else,
+/// and what went wrong is in the shape of the stream, not in what was said.
+fn event_label(event: &ChatEvent) -> String {
+    match event {
+        ChatEvent::UserPrompt(t) => format!("user_prompt ({} chars)", t.chars().count()),
+        ChatEvent::TurnStarted {
+            chat_uid,
+            message_id,
+        } => format!("turn_started chat={chat_uid} message={message_id}"),
+        ChatEvent::Delta(t) => format!("answer_delta ({} chars)", t.chars().count()),
+        ChatEvent::ThinkingDelta(t) => format!("thinking_delta ({} chars)", t.chars().count()),
+        ChatEvent::ThinkingFinished => "thinking_finished".to_string(),
+        ChatEvent::Status(s) => format!("status {s}"),
+        ChatEvent::ToolStarted(name) => format!("tool_started {name}"),
+        ChatEvent::ToolFinished { name, ok } => format!("tool_finished {name} ok={ok}"),
+        ChatEvent::Title(_) => "title".to_string(),
+        ChatEvent::Interrupt(_) => "interrupt".to_string(),
+        ChatEvent::TurnError(e) => format!("turn_error {e}"),
+        ChatEvent::Meta {
+            references,
+            further,
+        } => format!("meta refs={} further={}", references.len(), further.len()),
+        ChatEvent::TurnFinished { error } => match error {
+            Some(e) => format!("turn_finished error={e}"),
+            None => "turn_finished".to_string(),
+        },
+    }
+}
+
+/// A card being scanned for its click target: the security it is about, the row
+/// it opened on, and how wide it has actually been drawn so far.
+struct CardHit {
+    symbol: String,
+    top: u16,
+    width: u16,
 }
 
 /// A clickable chip in the Chat meta panel.
@@ -251,6 +384,8 @@ enum Chip {
     Brand,
     /// The title bar's control for the account's conversations.
     Sessions,
+    /// A finished reasoning block, by index into `state.messages`; opens it.
+    Thinking(usize),
 }
 
 /// State of the structured interrupt answering flow.
@@ -550,6 +685,14 @@ struct Ui {
     sessions_error: bool,
     /// Senders for background History fetch / load, set once in `run`.
     history_tx: Option<UnboundedSender<Option<Vec<SessionSummary>>>>,
+    /// Where each finished reasoning block's header sits in the cached
+    /// transcript, as `(row, message index)`, so a visible one can be clicked.
+    thinking_rows: Vec<(usize, usize)>,
+    /// Columns reserved for each ticker entry's price. See [`tape_spans`].
+    tape_price_w: HashMap<String, usize>,
+    /// The stream events this session has applied, most recent last, capped at
+    /// [`EVENT_LOG_MAX`]. What `/debug` reports; see [`log_event`].
+    event_log: std::collections::VecDeque<LoggedEvent>,
     /// Sender for background quote fetches, so a clicked symbol can ask for its
     /// own quote the same way a finished turn asks for its cards.
     cards_tx: Option<UnboundedSender<HashMap<String, super::quotes::QuoteCardData>>>,
@@ -656,6 +799,9 @@ impl Ui {
             prev_total: 0,
             visible_text: Vec::new(),
             last_click: None,
+            thinking_rows: Vec::new(),
+            tape_price_w: HashMap::new(),
+            event_log: std::collections::VecDeque::new(),
             quotes: HashMap::new(),
             sessions_loading: false,
             sessions_error: false,
@@ -868,6 +1014,7 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
                 let Some(event) = current_turn_event(&state, turn_event) else {
                     continue;
                 };
+                log_event(&mut ui, &event, &state.status);
                 if let ChatEvent::Interrupt(interrupt) = &event {
                     let questions = runtime::interrupt_interactions(interrupt)
                         .iter()
@@ -1111,6 +1258,17 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
         task.abort();
     }
     Ok(ui.exit_note.take())
+}
+
+impl Ui {
+    /// How long the stream has been silent, once that is worth reporting.
+    ///
+    /// `None` while events are still arriving normally, so the turn row stays
+    /// quiet itself until there is something to say.
+    fn quiet_for(&self) -> Option<std::time::Duration> {
+        let since = self.event_log.back()?.at.elapsed();
+        (since >= QUIET_AFTER).then_some(since)
+    }
 }
 
 fn current_turn_event(state: &ChatState, event: runtime::TurnEvent) -> Option<ChatEvent> {
@@ -1835,6 +1993,13 @@ fn exec_slash(name: &str, args: &str, ui: &mut Ui, state: &mut ChatState) {
                 None => ui.notice = Some(t!("Ai.NothingToCopy").to_string()),
             }
         }
+        // The report is the whole point: it goes to the clipboard so it can be
+        // pasted into a conversation with an assistant, not printed into the
+        // transcript where it would be one more thing to scroll past.
+        "debug" => {
+            let report = debug_report(ui, state);
+            copy_with_notice(ui, Some(report));
+        }
         "export" => {
             // Nothing said yet: don't drop an empty file in Downloads.
             if transcript_text(state).trim().is_empty() {
@@ -1903,7 +2068,7 @@ fn switch_agent(args: &str, ui: &mut Ui, state: &mut ChatState) {
 /// section heading and an empty pair for a blank row.
 fn help_rows() -> Vec<(String, String)> {
     let mut rows = vec![(String::new(), t!("Ai.HelpCommands").to_string())];
-    for c in &SLASH {
+    for c in SLASH.iter().filter(|c| c.available()) {
         let names = if c.aliases.is_empty() {
             c.name.to_string()
         } else {
@@ -2622,6 +2787,13 @@ fn click_chip(
             }
         }
         Chip::Symbol(symbol) => open_quote_panel(ui, symbol),
+        // The fold is the whole affordance: there is nowhere else to reach the
+        // reasoning, so clicking the row is what opens and closes it.
+        Chip::Thinking(i) => {
+            if let Some(block) = state.messages.get_mut(i).and_then(|m| m.thinking.as_mut()) {
+                block.expanded = !block.expanded;
+            }
+        }
         Chip::Tape => {
             let meta = crate::tui::settings::all()
                 .iter()
@@ -2724,9 +2896,9 @@ fn export_conversation(state: &ChatState) -> std::io::Result<std::path::PathBuf>
         let label = match m.role {
             Role::User => t!("Ai.You"),
             Role::Assistant => t!("Ai.Assistant"),
-            // Tool lines are UI trace, not conversation; an export is the
-            // conversation.
-            Role::System | Role::Alert | Role::Tool => continue,
+            // Tool and reasoning lines are UI trace, not conversation; an
+            // export is the conversation.
+            Role::System | Role::Alert | Role::Tool | Role::Thinking => continue,
         };
         let _ = write!(body, "**{label}:**\n\n{}\n\n", m.text);
     }
@@ -2752,6 +2924,176 @@ fn export_slug(title: &str) -> String {
 }
 
 /// Copy `text` and set a status notice reflecting the outcome.
+/// The `/debug` report: everything needed to explain a session that misbehaved,
+/// in a form that can be pasted straight into a conversation with an AI.
+///
+/// It exists because the interesting failures are in the *shape* of the stream —
+/// an event that never arrived, a row that never resolved — and none of that
+/// survives in a screenshot. Contents are summarised to lengths and counts: the
+/// report is meant to be handed to someone else, and what was said is not what
+/// went wrong.
+fn debug_report(ui: &Ui, state: &ChatState) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+    let _ = writeln!(out, "# longbridge ai — debug report\n");
+    let _ = writeln!(
+        out,
+        "Paste this to an assistant to diagnose the session. Message text is \
+         summarised as lengths, never included.\n"
+    );
+
+    let _ = writeln!(out, "## Build\n");
+    let _ = writeln!(out, "- version: {}", env!("CARGO_PKG_VERSION"));
+    let _ = writeln!(
+        out,
+        "- target: {} {} ({})",
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        }
+    );
+    let _ = writeln!(out, "- locale: {}", crate::locale::get());
+    if let Ok((cols, rows)) = crossterm::terminal::size() {
+        let _ = writeln!(out, "- terminal: {cols}x{rows}");
+    }
+
+    let _ = writeln!(out, "\n## Access point\n");
+    let _ = writeln!(
+        out,
+        "- cached verdict: {}",
+        crate::region::cached_verdict().unwrap_or("none")
+    );
+    let _ = writeln!(
+        out,
+        "- active: {}",
+        if crate::region::is_cn_cached() {
+            "CN"
+        } else {
+            "Global"
+        }
+    );
+    let _ = writeln!(
+        out,
+        "- override: {}",
+        crate::region::region_override().unwrap_or("none")
+    );
+
+    let _ = writeln!(out, "\n## Session\n");
+    let _ = writeln!(out, "- agent: {}", state.agent_uid);
+    let _ = writeln!(
+        out,
+        "- chat: {}",
+        state.chat_uid.as_deref().unwrap_or("none")
+    );
+    let _ = writeln!(
+        out,
+        "- message: {}",
+        state.message_id.as_deref().unwrap_or("none")
+    );
+    let _ = writeln!(
+        out,
+        "- parent: {}",
+        state.parent_message_id.as_deref().unwrap_or("none")
+    );
+
+    let _ = writeln!(out, "\n## Turn\n");
+    let _ = writeln!(out, "- busy: {}", state.busy);
+    let _ = writeln!(
+        out,
+        "- status: {}",
+        if state.status.is_empty() {
+            "—"
+        } else {
+            &state.status
+        }
+    );
+    if let Some(started) = ui.turn_started {
+        let _ = writeln!(out, "- elapsed: {}s", started.elapsed().as_secs());
+    }
+    let _ = writeln!(out, "- queued prompts: {}", state.queued.len());
+    let _ = writeln!(
+        out,
+        "- awaiting an answer: {}",
+        state.pending_interrupt.is_some()
+    );
+    if let Some(err) = &state.turn_error {
+        let _ = writeln!(out, "- server error: {err}");
+    }
+    if let Some(streaming) = &state.streaming {
+        let _ = writeln!(out, "- answer so far: {} chars", streaming.chars().count());
+    }
+    if let Some(thinking) = &state.thinking {
+        let _ = writeln!(
+            out,
+            "- reasoning in flight: {} chars, {}s",
+            thinking.text.chars().count(),
+            thinking.started.elapsed().as_secs()
+        );
+    }
+
+    let _ = writeln!(out, "\n## Transcript\n");
+    let _ = writeln!(out, "- messages: {}", state.messages.len());
+    // Tool rows with their status: a call still marked running under a finished
+    // answer is the single most reported symptom, and it is invisible in prose.
+    let tools: Vec<&Message> = state
+        .messages
+        .iter()
+        .filter(|m| m.role == Role::Tool)
+        .collect();
+    let _ = writeln!(out, "- tool calls: {}", tools.len());
+    for m in &tools {
+        let status = match m.tool {
+            Some(ToolStatus::Running) => "running",
+            Some(ToolStatus::Ok) => "ok",
+            Some(ToolStatus::Failed) => "failed",
+            None => "unknown",
+        };
+        let _ = writeln!(out, "  - {} — {status}", m.text);
+    }
+    let reasoning: Vec<u64> = state
+        .messages
+        .iter()
+        .filter_map(|m| m.thinking.as_ref().map(|t| t.secs))
+        .collect();
+    if !reasoning.is_empty() {
+        let _ = writeln!(
+            out,
+            "- reasoning blocks: {} ({})",
+            reasoning.len(),
+            reasoning
+                .iter()
+                .map(|s| format!("{s}s"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    if !state.tool_failures.is_empty() {
+        let _ = writeln!(out, "- failed tools: {}", state.tool_failures.join(", "));
+    }
+
+    let _ = writeln!(out, "\n## Events (oldest first)\n");
+    if ui.event_log.is_empty() {
+        let _ = writeln!(out, "_none recorded_");
+    } else {
+        let _ = writeln!(out, "```");
+        let first = ui.event_log.front().map(|e| e.at);
+        for entry in &ui.event_log {
+            let offset = first.map_or(0.0, |f| entry.at.duration_since(f).as_secs_f64());
+            let repeat = if entry.count > 1 {
+                format!(" ×{}", entry.count)
+            } else {
+                String::new()
+            };
+            let _ = writeln!(out, "{offset:7.2}s  {}{repeat}", entry.label);
+        }
+        let _ = writeln!(out, "```");
+    }
+    out
+}
+
 fn copy_with_notice(ui: &mut Ui, text: Option<String>) {
     ui.notice = Some(
         match text {
@@ -2844,7 +3186,8 @@ fn slash_matches(editor: &Editor, state: &ChatState) -> Vec<usize> {
         .iter()
         .enumerate()
         .filter(|(_, cmd)| {
-            cmd.starts_with(prefix)
+            cmd.available()
+                && cmd.starts_with(prefix)
                 && (cmd.key() != "retry"
                     || state
                         .messages
@@ -3628,6 +3971,23 @@ fn tape_spans(ui: &mut Ui, area: Rect, start_x: Option<u16>, room: usize) -> Vec
     if entries.is_empty() || room == 0 {
         return Vec::new();
     }
+    // Hold each price to the widest it has been, padding the rest with blanks.
+    //
+    // The ticker is right-aligned, so one extra digit anywhere in it moved every
+    // entry on the row: a price crossing 99.98 → 100.02, or a percent gaining a
+    // decimal, shunted the whole line sideways and back. Reserving the columns a
+    // price has already needed means later quotes redraw in place. The reservation
+    // only ever grows, because a width that could shrink is a width that can
+    // oscillate — which is the thing being fixed.
+    let entries: Vec<(String, String, Color)> = entries
+        .into_iter()
+        .map(|(symbol, price, color)| {
+            let reserved = ui.tape_price_w.entry(symbol.clone()).or_default();
+            *reserved = (*reserved).max(price.width());
+            let pad = " ".repeat(reserved.saturating_sub(price.width()));
+            (symbol, format!("{price}{pad}"), color)
+        })
+        .collect();
     let total: usize = entries
         .iter()
         .map(|(symbol, price, _)| symbol.width() + price.width() + GAP.width())
@@ -3783,9 +4143,20 @@ fn render_chat(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &mut Chat
     let sig = transcript_sig(state, width);
     if ui.cache_sig != sig {
         let mut cache = Vec::new();
-        for m in &state.messages {
+        // Where each reasoning block's header landed, so a visible one can be
+        // clicked open. Recorded here rather than re-derived every frame: this
+        // runs only when the transcript's shape changes.
+        let mut thinking_rows: Vec<(usize, usize)> = Vec::new();
+        for (i, m) in state.messages.iter().enumerate() {
+            let before = cache.len();
             push_message(&mut cache, m, width, &ui.quotes, &ui.aliases);
+            if m.role == Role::Thinking {
+                if let Some(off) = cache[before..].iter().position(is_thinking_header) {
+                    thinking_rows.push((before + off, i));
+                }
+            }
         }
+        ui.thinking_rows = thinking_rows;
         ui.cache_text = cache
             .iter()
             .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
@@ -3804,6 +4175,22 @@ fn render_chat(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &mut Chat
             &ui.quotes,
             &ui.aliases,
         );
+    }
+    // Live reasoning goes last, because the view is pinned to the bottom and this
+    // is the row the reader is waiting on. An agent may stream a sentence of
+    // answer and then go back to thinking, and putting the block above the answer
+    // pushed it off the bottom of the screen — out of sight, which is the one
+    // thing it must not be. It gets air after a run of tool rows, like a message.
+    if let Some(thinking) = state.thinking.as_ref().filter(|t| !t.text.is_empty()) {
+        if tail
+            .last()
+            .or_else(|| ui.transcript_cache.last())
+            .is_some_and(is_tool_line)
+        {
+            tail.push(Line::from(""));
+        }
+        tail.extend(live_thinking_lines(&thinking.text, width, ui.tick));
+        tail.push(Line::from(""));
     }
     // Prompts waiting their turn, dim and unbanded: on screen so the reader can see
     // what they have lined up, but visibly not sent yet.
@@ -3875,6 +4262,12 @@ fn render_chat(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &mut Chat
         if (start..bottom).contains(&row) {
             let rect = row_rect(area, area.y + (row - start) as u16);
             ui.chips.push((Chip::Reference(i), rect));
+        }
+    }
+    for (row, i) in ui.thinking_rows.clone() {
+        if (start..bottom).contains(&row) {
+            let rect = row_rect(area, area.y + (row - start) as u16);
+            ui.chips.push((Chip::Thinking(i), rect));
         }
     }
     link_visible_symbols(&mut window, area, ui);
@@ -4936,6 +5329,17 @@ fn render_turn_status(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &C
             Style::default().fg(Color::DarkGray),
         ));
     }
+    // A spinner spins the same whether the agent is working or the stream has
+    // gone quiet, which is the whole of "it looks stuck". Once the silence is
+    // long enough to be worth naming, say how long it has lasted — during a slow
+    // tool call that reads as "still waiting on it", and during a stalled stream
+    // it is the only thing that says so.
+    if let Some(quiet) = ui.quiet_for() {
+        spans.push(Span::styled(
+            format!("   {}", t!("Ai.NoUpdatesFor", secs = quiet.as_secs())),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
     // The button is right-aligned, so its rect is derived from the label width.
     let label = format!("[{}]", t!("Ai.Stop"));
     let label_w = UnicodeWidthStr::width(label.as_str()) as u16;
@@ -5141,6 +5545,22 @@ fn transcript_sig(state: &ChatState, width: usize) -> u64 {
     if let Some(last) = state.messages.last() {
         last.text.hash(&mut h);
     }
+    // Anything that changes what a committed row *looks like* has to be in the
+    // key, not just how many rows there are.
+    //
+    // A tool resolving from running to done changes only its own marker, and a
+    // fold opening changes only its own height — neither moves `len` or the last
+    // message's text. Without them here, a turn's later tool calls sat spinning
+    // on screen long after they had finished, until some unrelated change
+    // happened to invalidate the cache.
+    for (i, m) in state.messages.iter().enumerate() {
+        if let Some(status) = m.tool {
+            (i, status as u8).hash(&mut h);
+        }
+        if m.thinking.as_ref().is_some_and(|t| t.expanded) {
+            i.hash(&mut h);
+        }
+    }
     h.finish()
 }
 
@@ -5152,6 +5572,14 @@ fn transcript_sig(state: &ChatState, width: usize) -> u64 {
 /// invisible unless the whole turn came back empty.
 /// The markers a tool row leads with, so a row can be recognised as one later.
 const TOOL_MARKERS: [&str; 3] = ["  ◌ ", "  ⏺ ", "  ⚠ "];
+
+/// Whether `line` is a finished reasoning block's header — the row that opens
+/// and closes the fold.
+fn is_thinking_header(line: &Line<'_>) -> bool {
+    line.spans
+        .first()
+        .is_some_and(|s| s.content.as_ref() == THINKING_MARKER)
+}
 
 /// Whether `line` is one of the tool rows.
 fn is_tool_line(line: &Line<'_>) -> bool {
@@ -5230,6 +5658,10 @@ fn push_message(
                 }
             }
         }
+        // What is left of a reasoning phase once the answer arrives: one line
+        // saying it happened and how long it took. The reasoning itself was for
+        // the wait, and keeping it at full length here would bury the answer.
+        Role::Thinking => lines.extend(finished_thinking_lines(message, width)),
         Role::System | Role::Tool => {
             for logical in message.text.split('\n') {
                 for wrapped in wrap(logical, width) {
@@ -5242,6 +5674,78 @@ fn push_message(
         }
     }
     lines.push(Line::from(""));
+}
+
+/// The marker a reasoning block leads with, and the width every row indents by.
+const THINKING_MARKER: &str = "  ✻ ";
+
+/// One muted, italic row led by `marker`.
+fn thinking_line(marker: &str, text: &str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!("  {marker} "), Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            text.to_string(),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
+        ),
+    ])
+}
+
+/// The fold marks: what a folded block offers, and what an open one shows.
+const FOLD_CLOSED: &str = "▸";
+const FOLD_OPEN: &str = "▾";
+
+/// A finished reasoning phase: one line saying how long it ran, and — once the
+/// reader opens it — the reasoning underneath.
+///
+/// Folded by default. Keeping the text is what makes a transcript a record of
+/// how an answer was reached; folding it is what keeps that record from burying
+/// the answer, which at several hundred words it otherwise does.
+fn finished_thinking_lines(message: &Message, width: usize) -> Vec<Line<'static>> {
+    let expanded = message.thinking.as_ref().is_some_and(|t| t.expanded);
+    let secs = message.thinking.as_ref().map_or(0, |t| t.secs);
+    let mark = if expanded { FOLD_OPEN } else { FOLD_CLOSED };
+    let mut out = vec![thinking_line(
+        "✻",
+        &format!("{}  {mark}", t!("Ai.ThoughtFor", secs = secs)),
+    )];
+    if expanded {
+        out.extend(indented_reasoning(&message.text, width));
+    }
+    out
+}
+
+/// The reasoning body, wrapped under the marker's indent.
+fn indented_reasoning(text: &str, width: usize) -> Vec<Line<'static>> {
+    let indent = UnicodeWidthStr::width(THINKING_MARKER);
+    let body_w = width.saturating_sub(indent).max(1);
+    let style = Style::default()
+        .fg(Color::DarkGray)
+        .add_modifier(Modifier::ITALIC);
+    let mut out = Vec::new();
+    for logical in text.split('\n') {
+        for wrapped in wrap(logical, body_w) {
+            out.push(Line::from(vec![
+                Span::raw(" ".repeat(indent)),
+                Span::styled(wrapped, style),
+            ]));
+        }
+    }
+    out
+}
+
+/// The reasoning as it streams: a header, then the text itself.
+///
+/// A turn spends most of its wall clock before the first answer byte, and a
+/// spinner alone cannot tell a run that is working from one that has stalled.
+/// Muted and italic throughout — it is the agent thinking aloud, not the answer.
+fn live_thinking_lines(text: &str, width: usize, tick: u64) -> Vec<Line<'static>> {
+    // The header pulses so a long silent stretch still reads as running.
+    let pulse = THINKING_PULSE[(tick as usize) % THINKING_PULSE.len()];
+    let mut out = vec![thinking_line(pulse, &t!("Agent.Thinking"))];
+    out.extend(indented_reasoning(text, width));
+    out
 }
 
 /// The reader's own message: a quote marker and a band across the transcript.
@@ -5452,7 +5956,7 @@ fn link_visible_symbols(window: &mut [Line<'static>], area: Rect, ui: &mut Ui) {
     // A card is a block, and the reader aims at the block rather than at the six
     // columns of its ticker. Its rows are recognised by the box this module drew,
     // so anywhere on the card opens the panel.
-    let mut card: Option<(String, u16)> = None;
+    let mut card: Option<CardHit> = None;
     for (i, line) in window.iter_mut().enumerate() {
         let y = area.y + i as u16;
         let mut x = area.x;
@@ -5478,27 +5982,39 @@ fn link_visible_symbols(window: &mut [Line<'static>], area: Rect, ui: &mut Ui) {
             x = x.saturating_add(w);
         }
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        // A card is as wide as it is drawn, not as wide as the row it sits on.
+        // The rect used to span the full transcript width, which made every blank
+        // cell to the right of a card open its quote panel — anywhere on that row
+        // counted as "on the card".
+        let drawn = UnicodeWidthStr::width(text.trim_end()) as u16;
+        if let Some(open) = card.as_mut() {
+            open.width = open.width.max(drawn);
+        }
         // Cards top with either a sharp or a rounded corner; recognise both so the
         // whole box stays one click target whichever style it uses.
         if text.contains('┌') || text.contains('╭') {
-            card = Some((String::new(), y));
+            card = Some(CardHit {
+                symbol: String::new(),
+                top: y,
+                width: drawn,
+            });
         } else if text.contains('└') || text.contains('╰') {
-            if let Some((symbol, top)) = card.take() {
-                if !symbol.is_empty() {
+            if let Some(open) = card.take() {
+                if !open.symbol.is_empty() {
                     ui.chips.push((
-                        Chip::Symbol(symbol),
+                        Chip::Symbol(open.symbol),
                         Rect {
                             x: area.x,
-                            y: top,
-                            width: area.width,
-                            height: y + 1 - top,
+                            y: open.top,
+                            width: open.width.min(area.width),
+                            height: y + 1 - open.top,
                         },
                     ));
                 }
             }
-        } else if let (Some(entry), Some(symbol)) = (card.as_mut(), symbol_here) {
-            if entry.0.is_empty() {
-                entry.0 = symbol;
+        } else if let (Some(open), Some(symbol)) = (card.as_mut(), symbol_here) {
+            if open.symbol.is_empty() {
+                open.symbol = symbol;
             }
         }
     }
@@ -7074,6 +7590,360 @@ mod tests {
         state
     }
 
+    /// Most of a turn is spent before the first answer byte. The reasoning is
+    /// what fills that stretch — without it the screen showed only a spinner,
+    /// and a working run looked the same as a stalled one.
+    #[test]
+    fn a_running_turns_reasoning_is_on_screen() {
+        let mut ui = super::Ui::new();
+        let mut state = busy_state();
+        state.apply(super::ChatEvent::ThinkingDelta(
+            "Checking NVDA's last close against the 50-day average".into(),
+        ));
+        let screen = frame(&mut ui, &mut state, 70, 20).join("\n");
+        assert!(
+            screen.contains("Checking NVDA's last close"),
+            "the reader can see the turn is working:\n{screen}"
+        );
+    }
+
+    /// A long reasoning stretch can go seconds without new text. The header
+    /// pulses so the screen still reads as running rather than frozen.
+    #[test]
+    fn the_reasoning_header_animates_between_frames() {
+        let markers: Vec<String> = (0..super::THINKING_PULSE.len() as u64)
+            .map(|tick| {
+                super::live_thinking_lines("weighing the data", 60, tick)[0].spans[0]
+                    .content
+                    .to_string()
+            })
+            .collect();
+        assert!(
+            markers
+                .iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+                > 1,
+            "the marker changes with the frame: {markers:?}"
+        );
+    }
+
+    /// Once the answer arrives the reasoning is history: it collapses to one line
+    /// so it cannot push the answer it produced off the screen.
+    #[test]
+    fn finished_reasoning_collapses_to_one_line() {
+        let mut ui = super::Ui::new();
+        let mut state = busy_state();
+        state.apply(super::ChatEvent::ThinkingDelta(
+            "Checking NVDA's last close against the 50-day average".into(),
+        ));
+        state.apply(super::ChatEvent::Delta("NVDA closed at 180.".into()));
+        let screen = frame(&mut ui, &mut state, 70, 20).join("\n");
+        assert!(
+            !screen.contains("Checking NVDA's last close"),
+            "the reasoning is gone:\n{screen}"
+        );
+        assert!(screen.contains('✻'), "but its trace remains:\n{screen}");
+        assert!(
+            screen.contains("NVDA closed at 180."),
+            "and the answer is what is left:\n{screen}"
+        );
+    }
+
+    /// The agent streams a sentence of answer, then goes back to thinking. The
+    /// view is pinned to the bottom, so the reasoning has to sit *below* that
+    /// sentence — above it, it is off-screen exactly when it is being written.
+    #[test]
+    fn reasoning_that_resumes_after_an_answer_stays_at_the_bottom() {
+        let mut ui = super::Ui::new();
+        let mut state = busy_state();
+        state.apply(super::ChatEvent::Delta("Let me pull together NVDA.".into()));
+        state.apply(super::ChatEvent::ThinkingDelta(
+            "Weighing the moving averages".into(),
+        ));
+        let rows = frame(&mut ui, &mut state, 70, 20);
+        let answer = rows
+            .iter()
+            .position(|r| r.contains("Let me pull together"))
+            .expect("the answer so far");
+        let reasoning = rows
+            .iter()
+            .position(|r| r.contains("Weighing the moving averages"))
+            .expect("the reasoning that resumed");
+        assert!(
+            reasoning > answer,
+            "the reasoning follows the answer it interrupted:\n{}",
+            rows.join("\n")
+        );
+    }
+
+    /// A spinner spins the same whether the agent is working or the stream has
+    /// died. Once the silence is long enough to be worth naming, the turn row has
+    /// to say so — that is the difference between "slow" and "stuck".
+    #[test]
+    fn a_quiet_stream_says_how_long_it_has_been_quiet() {
+        let mut ui = super::Ui::new();
+        let mut state = busy_state();
+        super::log_event(
+            &mut ui,
+            &super::ChatEvent::Delta("hi".into()),
+            &state.status,
+        );
+        state.apply(super::ChatEvent::Delta("hi".into()));
+        assert!(ui.quiet_for().is_none(), "a fresh event is not a stall");
+
+        // Age the last event past the threshold.
+        if let Some(last) = ui.event_log.back_mut() {
+            last.at = std::time::Instant::now()
+                .checked_sub(super::QUIET_AFTER + std::time::Duration::from_secs(2))
+                .expect("a clock with some history");
+        }
+        let quiet = ui.quiet_for().expect("a stall worth naming");
+        assert!(quiet >= super::QUIET_AFTER);
+        let screen = frame(&mut ui, &mut state, 90, 16).join("\n");
+        assert!(
+            screen.contains(t!("Ai.NoUpdatesFor", secs = quiet.as_secs()).as_ref()),
+            "the reader is told the stream went quiet:\n{screen}"
+        );
+    }
+
+    /// The status that rides along with every delta repeats what is already
+    /// showing. Logging it broke up the runs of deltas so nothing folded, and the
+    /// timeline drowned in `status Thinking…` instead of showing the shape.
+    #[test]
+    fn a_status_that_changes_nothing_stays_out_of_the_log() {
+        let mut ui = super::Ui::new();
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        for event in [
+            super::ChatEvent::Status("Thinking…".into()),
+            super::ChatEvent::ThinkingDelta("a".into()),
+            super::ChatEvent::Status("Thinking…".into()),
+            super::ChatEvent::ThinkingDelta("b".into()),
+            super::ChatEvent::Status("Thinking…".into()),
+            super::ChatEvent::ThinkingDelta("c".into()),
+        ] {
+            super::log_event(&mut ui, &event, &state.status);
+            state.apply(event);
+        }
+        let labels: Vec<&str> = ui.event_log.iter().map(|e| e.label.as_str()).collect();
+        assert_eq!(
+            labels.iter().filter(|l| l.starts_with("status")).count(),
+            1,
+            "the status is logged once, when it changes: {labels:?}"
+        );
+        let deltas = ui
+            .event_log
+            .iter()
+            .find(|e| e.label.starts_with("thinking_delta"))
+            .expect("the deltas");
+        assert_eq!(deltas.count, 3, "and the deltas fold into one line");
+    }
+
+    /// `/debug` is a troubleshooting aid, not part of the shipped command
+    /// surface: a reader opening the palette for `/export` should not have to
+    /// scroll past it.
+    #[test]
+    fn debug_is_offered_only_in_a_debug_build() {
+        let offered = cfg!(debug_assertions);
+        assert_eq!(
+            super::slash_lookup("/debug").is_some(),
+            offered,
+            "typing it works exactly where it is offered"
+        );
+        assert_eq!(
+            super::help_rows()
+                .iter()
+                .any(|(names, _)| names.contains("/debug")),
+            offered,
+            "and help lists exactly what the palette offers"
+        );
+        // Every other command is unconditional; only this one is gated.
+        assert_eq!(
+            super::SLASH.iter().filter(|c| c.debug_only).count(),
+            1,
+            "gating is for troubleshooting aids, not a general mechanism"
+        );
+    }
+
+    /// `/debug` exists so a session that misbehaved can explain itself. The
+    /// symptom that prompted it — a tool row still marked running under a
+    /// finished answer — has to be visible in the report, and no message text
+    /// may be, because the report is meant to be handed to someone else.
+    #[test]
+    fn the_debug_report_shows_the_shape_of_the_stream_and_no_content() {
+        let mut ui = super::Ui::new();
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        for event in [
+            super::ChatEvent::UserPrompt("继续深入分析 QCOM, SNDK".into()),
+            super::ChatEvent::TurnStarted {
+                chat_uid: "6b4g6ojes95aq".into(),
+                message_id: "42".into(),
+            },
+            super::ChatEvent::ThinkingDelta("weighing both".into()),
+            super::ChatEvent::ToolStarted("Get Ticker Region".into()),
+            super::ChatEvent::ToolFinished {
+                name: "Get Ticker Region".into(),
+                ok: true,
+            },
+            // Delegated to a subagent: started, never reported finished.
+            super::ChatEvent::ToolStarted("Get Candlestick Data".into()),
+            super::ChatEvent::Delta("QCOM and SNDK diverge.".into()),
+        ] {
+            super::log_event(&mut ui, &event, &state.status);
+            state.apply(event);
+        }
+
+        let report = super::debug_report(&ui, &state);
+        assert!(
+            report.contains("6b4g6ojes95aq"),
+            "the session it happened in:\n{report}"
+        );
+        assert!(
+            report.contains("Get Candlestick Data — running"),
+            "the row that never resolved is the whole point:\n{report}"
+        );
+        assert!(
+            report.contains("Get Ticker Region — ok"),
+            "and the ones that did:\n{report}"
+        );
+        assert!(
+            report.contains("tool_started Get Candlestick Data"),
+            "the timeline:\n{report}"
+        );
+        // Content stays out: lengths only.
+        assert!(
+            !report.contains("QCOM and SNDK diverge."),
+            "the answer text must not travel with the report:\n{report}"
+        );
+        assert!(
+            !report.contains("weighing both"),
+            "nor the reasoning:\n{report}"
+        );
+    }
+
+    /// A tool resolving changes only its own marker — not the message count, not
+    /// the last message's text. The cached transcript was keyed on those, so a
+    /// call that finished after the last shape change kept spinning on screen
+    /// under a finished answer for the rest of the session.
+    #[test]
+    fn a_tool_that_finishes_redraws_without_any_other_change() {
+        let mut ui = super::Ui::new();
+        let mut state = busy_state();
+        let running = frame(&mut ui, &mut state, 70, 16).join("\n");
+        assert!(running.contains("◌ Get Quote"), "in flight:\n{running}");
+
+        state.apply(super::ChatEvent::ToolFinished {
+            name: "Get Quote".into(),
+            ok: true,
+        });
+        let done = frame(&mut ui, &mut state, 70, 16).join("\n");
+        assert!(done.contains("⏺ Get Quote"), "resolved on screen:\n{done}");
+        assert!(
+            !done.contains("◌ Get Quote"),
+            "and no longer claiming to be running:\n{done}"
+        );
+    }
+
+    /// The reasoning is kept, not dropped: folded to one line, and opened by
+    /// clicking that line. A transcript that threw the reasoning away could not
+    /// answer "how did it get there" once the answer was on screen.
+    #[test]
+    fn a_finished_reasoning_block_folds_and_opens_again() {
+        let mut ui = super::Ui::new();
+        let mut state = busy_state();
+        state.apply(super::ChatEvent::ThinkingDelta(
+            "Checking NVDA's last close against the 50-day average".into(),
+        ));
+        state.apply(super::ChatEvent::Delta("NVDA closed at 180.".into()));
+
+        let folded = frame(&mut ui, &mut state, 70, 20).join("\n");
+        assert!(
+            !folded.contains("Checking NVDA's last close"),
+            "folded by default:\n{folded}"
+        );
+        assert!(
+            folded.contains(super::FOLD_CLOSED),
+            "it offers to open:\n{folded}"
+        );
+
+        // The fold registers a click target on its own row.
+        let (i, rect) = ui
+            .chips
+            .iter()
+            .find_map(|(chip, r)| match chip {
+                super::Chip::Thinking(i) => Some((*i, *r)),
+                _ => None,
+            })
+            .expect("the header is clickable");
+        assert_eq!(rect.height, 1, "one row, the header itself");
+        state.messages[i]
+            .thinking
+            .as_mut()
+            .expect("a reasoning block")
+            .expanded = true;
+
+        let opened = frame(&mut ui, &mut state, 70, 20).join("\n");
+        assert!(
+            opened.contains("Checking NVDA's last close"),
+            "opening it shows the reasoning:\n{opened}"
+        );
+        assert!(opened.contains(super::FOLD_OPEN), "and says so:\n{opened}");
+    }
+
+    /// A quote card is a click target the size of the card. It used to claim the
+    /// full width of every row it occupied, so clicking the empty space beside it
+    /// — which is most of the row — opened its quote panel.
+    #[test]
+    fn a_quote_card_claims_only_the_columns_it_is_drawn_on() {
+        let mut ui = super::Ui::new();
+        ui.quotes
+            .insert("700.HK".into(), card("700.HK", "512.5", "+1.28%", 1));
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        state.apply(super::ChatEvent::UserPrompt("700.HK?".into()));
+        state.apply(super::ChatEvent::Delta(
+            "Here it is.\n\nwidget://quote/security/detail?symbol=700.HK\n\nDone.".into(),
+        ));
+        state.apply(super::ChatEvent::TurnFinished { error: None });
+
+        let width = 60;
+        let rows = frame(&mut ui, &mut state, width, 24);
+        let card_rect = ui
+            .chips
+            .iter()
+            .filter_map(|(c, r)| matches!(c, super::Chip::Symbol(_)).then_some(*r))
+            .max_by_key(|r| r.height)
+            .expect("the card is a click target");
+        assert!(
+            card_rect.height > 1,
+            "the whole box, not one row: {card_rect:?}"
+        );
+        assert!(
+            card_rect.width < width,
+            "the card is narrower than the row it sits on: {card_rect:?}"
+        );
+
+        // Nothing outside the drawn box may open a quote panel.
+        for y in 0..24u16 {
+            for x in 0..width {
+                let drawn = rows[y as usize]
+                    .chars()
+                    .nth(x as usize)
+                    .is_some_and(|c| c != ' ');
+                let clickable = ui
+                    .chips
+                    .iter()
+                    .any(|(c, r)| matches!(c, super::Chip::Symbol(_)) && super::hit(*r, x, y));
+                if clickable && !drawn {
+                    assert!(
+                        super::hit(card_rect, x, y),
+                        "blank cell ({x},{y}) outside the card must not be clickable:\n{}",
+                        rows.join("\n")
+                    );
+                }
+            }
+        }
+    }
+
     /// A `/copy` confirmation used to take over the one status row and hide the
     /// spinner, so a running turn looked finished.
     #[test]
@@ -8062,6 +8932,45 @@ mod tests {
         let off = frame(&mut ui, &mut state, 78, 10)[0].clone();
         assert!(!off.contains("512.5"), "collapsed: {off}");
         crate::ai::settings::set_tape(true);
+    }
+
+    /// The ticker is right-aligned, so one extra digit anywhere in it used to move
+    /// every entry on the row — and moved them back on the next tick. A price that
+    /// gains a digit and loses it again must leave the row where it found it.
+    #[test]
+    fn a_price_that_gains_a_digit_does_not_shift_the_ticker_back_and_forth() {
+        let _guard = TAPE_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        crate::ai::settings::set_tape(true);
+        let mut ui = super::Ui::new();
+        ui.tape = vec!["AAPL.US".into(), "TSLA.US".into()];
+        ui.quotes
+            .insert("TSLA.US".into(), card("TSLA.US", "345.13", "-1.70%", -1));
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+
+        let tick = |ui: &mut super::Ui, state: &mut super::ChatState, last: &str, pct: &str| {
+            ui.quotes
+                .insert("AAPL.US".into(), card("AAPL.US", last, pct, 1));
+            frame(ui, state, 100, 12)[0].clone()
+        };
+
+        // Crossing 99.98 → 100.02 widens the entry once, which is real news.
+        let narrow = tick(&mut ui, &mut state, "99.98", "+0.5%");
+        let wide = tick(&mut ui, &mut state, "100.02", "+0.54%");
+        assert_ne!(narrow, wide, "the wider price is on screen");
+        // Falling back must not drag the row with it.
+        let back = tick(&mut ui, &mut state, "99.98", "+0.5%");
+        assert_eq!(
+            wide.find("TSLA.US"),
+            back.find("TSLA.US"),
+            "the row must not move when a price gets shorter again:\n{wide}\n{back}"
+        );
+        assert_eq!(
+            wide.find("AAPL.US"),
+            back.find("AAPL.US"),
+            "and neither may the entry that changed:\n{wide}\n{back}"
+        );
     }
 
     /// A very large ticker is paged in the title bar. Its hidden entries must not

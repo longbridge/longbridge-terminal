@@ -94,8 +94,9 @@ impl ChatMessage {
     /// The message's visible text: only the `text`-type chunks joined together.
     ///
     /// A message can also carry `process` (thinking) and `tool_use` chunks whose
-    /// `content` is internal JSON, not display text; those are excluded so the
-    /// rendered message (and any history replay) shows just the answer.
+    /// `content` is internal JSON, not display text; those are excluded here so
+    /// the answer is just the answer. The reasoning is read back separately, by
+    /// [`Self::reasoning`].
     pub fn text(&self) -> String {
         self.chunks
             .iter()
@@ -103,6 +104,81 @@ impl ChatMessage {
             .map(|c| c.content.as_str())
             .collect::<Vec<_>>()
             .join("")
+    }
+
+    /// The reasoning the agent recorded for this message.
+    ///
+    /// Lives in the `process` chunks as `{"message": "…"}`. A message can hold
+    /// several — the agent thinks, answers a little, thinks again — and they are
+    /// joined in order, the same flattening [`Self::text`] already applies to the
+    /// answer itself.
+    pub fn reasoning(&self) -> String {
+        self.chunks
+            .iter()
+            .filter(|c| c.chunk_type == "process")
+            .filter_map(|c| serde_json::from_str::<serde_json::Value>(&c.content).ok())
+            .filter_map(|v| {
+                v.get("message")
+                    .and_then(serde_json::Value::as_str)
+                    .map(crate::utils::text::strip_control_chars)
+            })
+            .filter(|m| !m.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ChatMessage, ChatMessageChunk};
+
+    fn chunk(kind: &str, content: &str) -> ChatMessageChunk {
+        ChatMessageChunk {
+            chunk_type: kind.into(),
+            content: content.into(),
+            ..Default::default()
+        }
+    }
+
+    /// A stored message keeps its reasoning in `process` chunks, and the answer
+    /// in `text` ones. Reading a chat back has to tell them apart, or the
+    /// reasoning is either lost or spliced into the answer.
+    #[test]
+    fn reasoning_and_answer_are_read_back_separately() {
+        let m = ChatMessage {
+            sender: "assistant".into(),
+            thinking_seconds: 4,
+            chunks: vec![
+                chunk("process", r#"{"message":"Weighing the data."}"#),
+                chunk("text", "NVDA is up."),
+                chunk("tool_use", r#"{"status":"succeeded"}"#),
+                chunk("process", r#"{"message":"One more check."}"#),
+                chunk("text", " Details follow."),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(m.text(), "NVDA is up. Details follow.");
+        assert_eq!(m.reasoning(), "Weighing the data.\n\nOne more check.");
+    }
+
+    /// A message that never reasoned must not claim it did, and a `process`
+    /// chunk we cannot read is skipped rather than shown as raw JSON.
+    #[test]
+    fn unreadable_or_absent_reasoning_yields_nothing() {
+        let none = ChatMessage {
+            chunks: vec![chunk("text", "hi")],
+            ..Default::default()
+        };
+        assert!(none.reasoning().is_empty());
+        let broken = ChatMessage {
+            chunks: vec![
+                chunk("process", "not json"),
+                chunk("process", r#"{"other":"field"}"#),
+                chunk("process", r#"{"message":"   "}"#),
+            ],
+            ..Default::default()
+        };
+        assert!(broken.reasoning().is_empty());
     }
 }
 

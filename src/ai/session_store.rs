@@ -85,20 +85,30 @@ pub async fn load_detail(uid: &str) -> Option<LoadedChat> {
         .map(|m| m.id.to_string());
     let parent_message_id = continuable_parent(&detail.messages);
     let pending_interrupt = pending_interrupt(&detail.messages);
+    // A resumed conversation carries its reasoning too, folded exactly as it was
+    // when it streamed. A transcript that kept only the answers could not say how
+    // any of them was reached, which is most of what makes an old chat worth
+    // reopening.
     let messages = detail
         .messages
         .iter()
-        .filter_map(|m| {
-            let text = m.text();
-            if text.trim().is_empty() {
-                return None;
+        .flat_map(|m| {
+            let mut out = Vec::new();
+            let reasoning = m.reasoning();
+            if !reasoning.trim().is_empty() {
+                let secs = u64::try_from(m.thinking_seconds).unwrap_or(0);
+                out.push(Message::thinking(reasoning, secs));
             }
-            let role = if m.sender == "user" {
-                Role::User
-            } else {
-                Role::Assistant
-            };
-            Some(Message::new(role, text))
+            let text = m.text();
+            if !text.trim().is_empty() {
+                let role = if m.sender == "user" {
+                    Role::User
+                } else {
+                    Role::Assistant
+                };
+                out.push(Message::new(role, text));
+            }
+            out
         })
         .collect();
     let title = (!detail.chat.name.trim().is_empty()).then(|| detail.chat.name.clone());
