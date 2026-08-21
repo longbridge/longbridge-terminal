@@ -148,11 +148,11 @@ pub struct ChatState {
     /// next — the very thing that bricks a conversation. Consumed by
     /// [`Self::finish_turn`].
     pub turn_error: Option<String>,
-    /// Prompts typed while a turn was running, sent one at a time as it frees up.
+    /// Prompts typed while a turn was running, sent together as it frees up.
     ///
     /// A reader who has thought of the next question should not have to hold it in
     /// their head until the answer lands — and typing it used to start a second,
-    /// concurrent turn on the same conversation.
+    /// concurrent turn on the same conversation. Drained by [`Self::take_queued`].
     pub queued: Vec<String>,
     /// Tools that failed during the active turn.
     pub tool_failures: Vec<String>,
@@ -344,6 +344,19 @@ impl ChatState {
         self.turn_started = None;
     }
 
+    /// Take everything queued as a single prompt, or `None` if nothing waits.
+    ///
+    /// Prompts typed while one answer was streaming are one follow-up thought, not
+    /// a backlog of separate turns: sending them together lets the agent plan once
+    /// with the whole picture, instead of answering the first and then discovering
+    /// the rest one turn at a time.
+    pub fn take_queued(&mut self) -> Option<String> {
+        if self.queued.is_empty() {
+            return None;
+        }
+        Some(self.queued.drain(..).collect::<Vec<_>>().join("\n\n"))
+    }
+
     /// Cancel the active turn, folding any partial answer into the transcript.
     pub fn cancel(&mut self, cancelled_label: &str) {
         if let Some(mut text) = self.streaming.take() {
@@ -376,6 +389,24 @@ mod tests {
 
     fn state() -> ChatState {
         ChatState::new("chatbot".into(), "welcome".into())
+    }
+
+    /// Prompts lined up during one answer go out as a single turn: the reader was
+    /// reading one reply when they typed them, so they belong together.
+    #[test]
+    fn everything_queued_goes_out_as_one_prompt() {
+        let mut s = state();
+        assert!(
+            s.take_queued().is_none(),
+            "nothing waiting, nothing to send"
+        );
+        s.queued.push("那 NVDA 呢？".into());
+        s.queued.push("顺便看看 AMD".into());
+        assert_eq!(
+            s.take_queued(),
+            Some("那 NVDA 呢？\n\n顺便看看 AMD".to_string())
+        );
+        assert!(s.queued.is_empty(), "and the queue is drained, not re-sent");
     }
 
     #[test]

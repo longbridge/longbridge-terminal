@@ -906,8 +906,12 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
                         .question
                         .as_ref()
                         .is_some_and(QuestionState::has_confirmation);
-                    if !state.queued.is_empty() && !waiting_for_confirmation {
-                        let next = state.queued.remove(0);
+                    let queued = if waiting_for_confirmation {
+                        None
+                    } else {
+                        state.take_queued()
+                    };
+                    if let Some(next) = queued {
                         // The drawer was asking what this message answers, so it
                         // goes; a reader who has wandered into Settings stays there.
                         if ui.view == View::Question {
