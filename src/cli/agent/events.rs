@@ -19,6 +19,17 @@ pub enum AgentEvent {
     AnswerDelta {
         text: String,
     },
+    /// An incremental chunk of the agent's reasoning, streamed while it works.
+    ///
+    /// A turn spends most of its wall clock here, so this is the only thing that
+    /// distinguishes a run that is progressing from one that has stalled.
+    ThinkingDelta {
+        text: String,
+    },
+    /// The agent entered a named stage of its run (`stage_title` on the wire).
+    StageStarted {
+        title: String,
+    },
     ThinkingStarted,
     ThinkingFinished,
     ToolUseStarted {
@@ -68,6 +79,21 @@ fn str_field(data: &Value, key: &str) -> String {
         .to_string()
 }
 
+/// A `think`/`process` message as either a stage marker or reasoning text.
+///
+/// One message carries at most one of the two: a stage boundary names itself in
+/// `stage_title` and carries no text, and reasoning text arrives with the title
+/// empty. A message with neither is a heartbeat for a stage already announced.
+#[cfg(test)]
+fn thinking_event(data: &Value) -> Option<AgentEvent> {
+    let title = str_field(data, "stage_title");
+    if !title.is_empty() {
+        return Some(AgentEvent::StageStarted { title });
+    }
+    let text = str_field(data, "text");
+    (!text.is_empty()).then_some(AgentEvent::ThinkingDelta { text })
+}
+
 /// Parse one SSE `data:` payload. Returns `None` for unparseable JSON.
 ///
 /// The SDK now owns SSE parsing on the production path; this is retained as a
@@ -90,8 +116,9 @@ pub fn parse_data_line(payload: &str) -> Option<AgentEvent> {
             Some("answer") => AgentEvent::AnswerDelta {
                 text: str_field(&data, "text"),
             },
-            // Non-answer (think/process) messages are progress-only and are
-            // dropped on the production path; mirror that here.
+            // `think` / `process` carry the agent's reasoning and its stage
+            // titles — the progress a reader watches during the wait.
+            Some("think" | "process") => return thinking_event(&data),
             _ => return None,
         },
         "thinking_started" => AgentEvent::ThinkingStarted,
@@ -368,6 +395,20 @@ mod tests {
             })
             .collect();
         assert_eq!(answer, GOLDEN_ANSWER);
+    }
+
+    /// The reasoning arrives as `process` messages and is what fills the long
+    /// silence before the first answer byte; dropping it left that stretch blank.
+    #[test]
+    fn reasoning_deltas_are_surfaced() {
+        let reasoning: String = fixture_events()
+            .iter()
+            .filter_map(|e| match e {
+                AgentEvent::ThinkingDelta { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(reasoning, "Let me think about what's happening");
     }
 
     #[test]

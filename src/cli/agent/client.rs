@@ -191,15 +191,30 @@ fn map_event(ev: ConversationStreamEvent) -> Option<AgentEvent> {
             chat_uid: p.chat_uid,
             message_id: p.message_id,
         },
-        ConversationStreamEvent::Message(p) => {
-            // Only the final answer body is surfaced; `think`/`process`
-            // progress messages are dropped like the other progress events.
-            if p.message_type == "answer" {
-                AgentEvent::AnswerDelta { text: p.text }
-            } else {
-                return None;
+        ConversationStreamEvent::Message(p) => match p.message_type.as_str() {
+            "answer" => AgentEvent::AnswerDelta { text: p.text },
+            // `think` and `process` carry the agent's reasoning as it runs. A
+            // turn spends most of its wall clock before the first answer byte,
+            // and dropping these left that whole stretch showing nothing but a
+            // spinner — indistinguishable from a stalled run.
+            //
+            // One message is either a stage boundary (named in `stage_title`,
+            // no text) or a chunk of reasoning (text, no title); a message with
+            // neither repeats a stage already announced and is dropped.
+            "think" | "process" => {
+                if p.stage_title.is_empty() {
+                    if p.text.is_empty() {
+                        return None;
+                    }
+                    AgentEvent::ThinkingDelta { text: p.text }
+                } else {
+                    AgentEvent::StageStarted {
+                        title: p.stage_title,
+                    }
+                }
             }
-        }
+            _ => return None,
+        },
         ConversationStreamEvent::ThinkingStarted(_) => AgentEvent::ThinkingStarted,
         ConversationStreamEvent::ThinkingFinished(_) => AgentEvent::ThinkingFinished,
         ConversationStreamEvent::NodeToolUseStarted(p) => AgentEvent::ToolUseStarted {
@@ -488,8 +503,26 @@ mod tests {
             message_type: "think".into(),
             ..Default::default()
         };
-        // Non-answer progress messages are dropped, not surfaced.
-        assert!(map_event(ConversationStreamEvent::Message(think)).is_none());
+        assert!(matches!(
+            map_event(ConversationStreamEvent::Message(think)),
+            Some(AgentEvent::ThinkingDelta { .. })
+        ));
+        // A stage boundary names itself instead of carrying reasoning.
+        let stage = MessagePayload {
+            message_type: "process".into(),
+            stage_title: "Reading filings".into(),
+            ..Default::default()
+        };
+        assert!(matches!(
+            map_event(ConversationStreamEvent::Message(stage)),
+            Some(AgentEvent::StageStarted { title }) if title == "Reading filings"
+        ));
+        // An empty progress message repeats a stage already announced.
+        let empty = MessagePayload {
+            message_type: "process".into(),
+            ..Default::default()
+        };
+        assert!(map_event(ConversationStreamEvent::Message(empty)).is_none());
     }
 
     #[test]

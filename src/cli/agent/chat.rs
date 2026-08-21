@@ -574,10 +574,29 @@ async fn run_streaming(
     let pretty = matches!(format, OutputFormat::Pretty);
     let mut agg = ChatAggregator::default();
     let mut answer_started = false;
+    // Whether reasoning is mid-line on stderr. It streams without newlines, so
+    // whatever prints next has to close the line first or it lands in the middle
+    // of a sentence.
+    let mut thinking_open = false;
     let result = stream_conversation(req, verbose, &mut |ev| {
         if pretty {
+            // Everything but more reasoning ends the reasoning line.
+            if thinking_open && !matches!(ev, AgentEvent::ThinkingDelta { .. }) {
+                eprintln!();
+                thinking_open = false;
+            }
             match &ev {
                 AgentEvent::ThinkingStarted => eprintln!("* {}", t!("Agent.Thinking")),
+                // The reasoning itself: a turn waits here far longer than
+                // anywhere else, and this is what shows the wait is progressing.
+                AgentEvent::ThinkingDelta { text } => {
+                    eprint!("{}", strip_control_chars(text));
+                    let _ = std::io::stderr().flush();
+                    thinking_open = true;
+                }
+                AgentEvent::StageStarted { title } => {
+                    eprintln!("* {}", strip_control_chars(title));
+                }
                 AgentEvent::ToolUseStarted { tool_name } => {
                     let tool_name = strip_control_chars(tool_name);
                     eprintln!("* {}", t!("Agent.CallingTool", name = tool_name));
@@ -608,6 +627,9 @@ async fn run_streaming(
         agg.push(&ev);
     })
     .await;
+    if thinking_open {
+        eprintln!();
+    }
     let outcome = agg.finish();
     match result {
         Ok(()) => Ok(outcome),
