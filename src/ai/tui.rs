@@ -571,6 +571,8 @@ struct Ui {
     /// Where each finished reasoning block's header sits in the cached
     /// transcript, as `(row, message index)`, so a visible one can be clicked.
     thinking_rows: Vec<(usize, usize)>,
+    /// Columns reserved for each ticker entry's price. See [`tape_spans`].
+    tape_price_w: HashMap<String, usize>,
     /// Sender for background quote fetches, so a clicked symbol can ask for its
     /// own quote the same way a finished turn asks for its cards.
     cards_tx: Option<UnboundedSender<HashMap<String, super::quotes::QuoteCardData>>>,
@@ -678,6 +680,7 @@ impl Ui {
             visible_text: Vec::new(),
             last_click: None,
             thinking_rows: Vec::new(),
+            tape_price_w: HashMap::new(),
             quotes: HashMap::new(),
             sessions_loading: false,
             sessions_error: false,
@@ -3657,6 +3660,23 @@ fn tape_spans(ui: &mut Ui, area: Rect, start_x: Option<u16>, room: usize) -> Vec
     if entries.is_empty() || room == 0 {
         return Vec::new();
     }
+    // Hold each price to the widest it has been, padding the rest with blanks.
+    //
+    // The ticker is right-aligned, so one extra digit anywhere in it moved every
+    // entry on the row: a price crossing 99.98 → 100.02, or a percent gaining a
+    // decimal, shunted the whole line sideways and back. Reserving the columns a
+    // price has already needed means later quotes redraw in place. The reservation
+    // only ever grows, because a width that could shrink is a width that can
+    // oscillate — which is the thing being fixed.
+    let entries: Vec<(String, String, Color)> = entries
+        .into_iter()
+        .map(|(symbol, price, color)| {
+            let reserved = ui.tape_price_w.entry(symbol.clone()).or_default();
+            *reserved = (*reserved).max(price.width());
+            let pad = " ".repeat(reserved.saturating_sub(price.width()));
+            (symbol, format!("{price}{pad}"), color)
+        })
+        .collect();
     let total: usize = entries
         .iter()
         .map(|(symbol, price, _)| symbol.width() + price.width() + GAP.width())
@@ -8415,6 +8435,45 @@ mod tests {
         let off = frame(&mut ui, &mut state, 78, 10)[0].clone();
         assert!(!off.contains("512.5"), "collapsed: {off}");
         crate::ai::settings::set_tape(true);
+    }
+
+    /// The ticker is right-aligned, so one extra digit anywhere in it used to move
+    /// every entry on the row — and moved them back on the next tick. A price that
+    /// gains a digit and loses it again must leave the row where it found it.
+    #[test]
+    fn a_price_that_gains_a_digit_does_not_shift_the_ticker_back_and_forth() {
+        let _guard = TAPE_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        crate::ai::settings::set_tape(true);
+        let mut ui = super::Ui::new();
+        ui.tape = vec!["AAPL.US".into(), "TSLA.US".into()];
+        ui.quotes
+            .insert("TSLA.US".into(), card("TSLA.US", "345.13", "-1.70%", -1));
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+
+        let tick = |ui: &mut super::Ui, state: &mut super::ChatState, last: &str, pct: &str| {
+            ui.quotes
+                .insert("AAPL.US".into(), card("AAPL.US", last, pct, 1));
+            frame(ui, state, 100, 12)[0].clone()
+        };
+
+        // Crossing 99.98 → 100.02 widens the entry once, which is real news.
+        let narrow = tick(&mut ui, &mut state, "99.98", "+0.5%");
+        let wide = tick(&mut ui, &mut state, "100.02", "+0.54%");
+        assert_ne!(narrow, wide, "the wider price is on screen");
+        // Falling back must not drag the row with it.
+        let back = tick(&mut ui, &mut state, "99.98", "+0.5%");
+        assert_eq!(
+            wide.find("TSLA.US"),
+            back.find("TSLA.US"),
+            "the row must not move when a price gets shorter again:\n{wide}\n{back}"
+        );
+        assert_eq!(
+            wide.find("AAPL.US"),
+            back.find("AAPL.US"),
+            "and neither may the entry that changed:\n{wide}\n{back}"
+        );
     }
 
     /// A very large ticker is paged in the title bar. Its hidden entries must not
