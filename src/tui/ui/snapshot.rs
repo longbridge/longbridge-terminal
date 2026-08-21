@@ -163,7 +163,12 @@ fn print_text(name: &str, buf: &Buffer) {
     }
 }
 
+/// Serialized against [`footer_packs_quotes_and_drops_whole_ones`]: both render
+/// the footer, and the rects it asserts on are published through a single
+/// process-global (`mouse::FOOTER_INDEX_RECTS`), so run in parallel each
+/// overwrites the other's.
 #[test]
+#[serial_test::serial(footer_rects)]
 fn ui_snapshot_export() {
     rust_i18n::set_locale("en");
 
@@ -269,6 +274,7 @@ fn help_popup_url_is_clickable() {
 /// other tests change it, so anything asserted about an exact column here would
 /// depend on which test ran last — the layout rules below hold for any label.
 #[test]
+#[serial_test::serial(footer_rects)]
 fn footer_packs_quotes_and_drops_whole_ones() {
     let indexes = [
         crate::data::Counter::new("HSI.HK"),

@@ -171,6 +171,13 @@ fn map_agent_event(ev: &AgentEvent) -> Vec<ChatEvent> {
             vec![ChatEvent::TurnError(display_error(error_message))]
         }
         AgentEvent::ChatTitleUpdated { title } => vec![ChatEvent::Title(title.clone())],
+        // Not an error: the run is alive on the server and the client is
+        // re-attaching to it. Say so, and discard what the dead connection
+        // produced so the replay does not double it.
+        AgentEvent::StreamInterrupted => vec![
+            ChatEvent::StreamInterrupted,
+            ChatEvent::Status(t!("Agent.Reconnecting").to_string()),
+        ],
         AgentEvent::ChatFinished { .. } | AgentEvent::Unknown { .. } => Vec::new(),
     }
 }

@@ -574,6 +574,11 @@ async fn run_streaming(
     let pretty = matches!(format, OutputFormat::Pretty);
     let mut agg = ChatAggregator::default();
     let mut answer_started = false;
+    // Exactly what stdout has already been given. A reconnect replays the
+    // message from the beginning, so the echo below is driven from the
+    // aggregate against this rather than from each delta — otherwise the
+    // replayed prefix would be printed twice.
+    let mut printed = String::new();
     // Whether reasoning is mid-line on stderr. It streams without newlines, so
     // whatever prints next has to close the line first or it lands in the middle
     // of a sentence.
@@ -611,20 +616,40 @@ async fn run_streaming(
                         t!("Agent.ToolDone", name = tool_name, status = status)
                     );
                 }
-                AgentEvent::AnswerDelta { text } => {
+                AgentEvent::AnswerDelta { .. } => {
                     if !answer_started {
                         answer_started = true;
                         eprintln!("* {}", t!("Agent.Generating"));
                     }
-                    if stream {
-                        print!("{}", strip_control_chars(text));
-                        let _ = std::io::stdout().flush();
-                    }
+                }
+                // Not a failure: the run is alive on the server and the client
+                // is re-attaching to it.
+                AgentEvent::StreamInterrupted => {
+                    eprintln!("* {}", t!("Agent.Reconnecting"));
+                    answer_started = false;
                 }
                 _ => {}
             }
         }
         agg.push(&ev);
+        if pretty && stream {
+            let answer = agg.answer();
+            // The common case, and what a replay of an unchanged message also
+            // looks like: only the genuinely new tail is printed. Otherwise the
+            // re-attached run said something different from what was already
+            // shown, so the answer starts again on its own line.
+            if let Some(rest) = answer.strip_prefix(printed.as_str()) {
+                if !rest.is_empty() {
+                    print!("{}", strip_control_chars(rest));
+                    let _ = std::io::stdout().flush();
+                }
+            } else {
+                println!();
+                print!("{}", strip_control_chars(answer));
+                let _ = std::io::stdout().flush();
+            }
+            printed = answer.to_string();
+        }
     })
     .await;
     if thinking_open {

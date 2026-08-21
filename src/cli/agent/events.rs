@@ -57,13 +57,20 @@ pub enum AgentEvent {
     ChatTitleUpdated {
         title: String,
     },
+    /// The SSE connection died and the client is re-attaching to the run.
+    ///
+    /// The run itself is unaffected — it lives on the server, not in this
+    /// connection — so this is a restart, not a failure. Everything the
+    /// interrupted connection had delivered for this turn is about to be
+    /// delivered again from the beginning, so a consumer must **discard what it
+    /// accumulated** rather than let the replay extend it.
+    StreamInterrupted,
     Unknown {
         event: String,
     },
 }
 
 /// Render a JSON id that may be a number or a string as a plain string.
-#[cfg(test)]
 fn id_string(v: &Value) -> String {
     match v {
         Value::String(s) => s.clone(),
@@ -71,7 +78,6 @@ fn id_string(v: &Value) -> String {
     }
 }
 
-#[cfg(test)]
 fn str_field(data: &Value, key: &str) -> String {
     data.get(key)
         .and_then(Value::as_str)
@@ -84,7 +90,6 @@ fn str_field(data: &Value, key: &str) -> String {
 /// One message carries at most one of the two: a stage boundary names itself in
 /// `stage_title` and carries no text, and reasoning text arrives with the title
 /// empty. A message with neither is a heartbeat for a stage already announced.
-#[cfg(test)]
 fn thinking_event(data: &Value) -> Option<AgentEvent> {
     let title = str_field(data, "stage_title");
     if !title.is_empty() {
@@ -96,10 +101,10 @@ fn thinking_event(data: &Value) -> Option<AgentEvent> {
 
 /// Parse one SSE `data:` payload. Returns `None` for unparseable JSON.
 ///
-/// The SDK now owns SSE parsing on the production path; this is retained as a
-/// test helper so the recorded golden stream still cross-checks the event
-/// shapes the [`AgentEvent`] mapping in `client.rs` depends on.
-#[cfg(test)]
+/// The SDK owns SSE parsing for the conversation endpoints it wraps. This
+/// parses the same frames for the one endpoint it does not wrap — the reconnect
+/// stream in `client.rs` — and the recorded golden stream cross-checks it
+/// against the shapes the SDK mapping produces.
 pub fn parse_data_line(payload: &str) -> Option<AgentEvent> {
     let frame: Value = serde_json::from_str(payload).ok()?;
     let event = frame
@@ -246,6 +251,17 @@ impl ChatAggregator {
                 self.outcome.message_id.clone_from(message_id);
             }
             AgentEvent::AnswerDelta { text } => self.outcome.answer.push_str(text),
+            // The reconnected run replays this message from the beginning, so
+            // keeping the interrupted connection's partial answer would double
+            // its prefix.
+            AgentEvent::StreamInterrupted => {
+                self.outcome.answer.clear();
+                self.outcome.references.clear();
+                self.outcome.further_questions.clear();
+                self.outcome.error_message.clear();
+                self.outcome.status.clear();
+                self.outcome.interrupt = None;
+            }
             AgentEvent::HumanInteractionRequired { interrupt } => {
                 self.outcome.status = "interrupted".to_string();
                 self.outcome.interrupt = Some(interrupt.clone());
@@ -281,6 +297,12 @@ impl ChatAggregator {
             }
             _ => {}
         }
+    }
+
+    /// The answer accumulated so far. Lets a caller that echoes the answer as
+    /// it streams stay in step with an aggregate that a restart has reset.
+    pub fn answer(&self) -> &str {
+        &self.outcome.answer
     }
 
     pub fn finish(mut self) -> ChatOutcome {

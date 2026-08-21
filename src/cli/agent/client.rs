@@ -2,13 +2,16 @@
 //! [`AgentContext`](longbridge::agent::AgentContext).
 
 use std::pin::Pin;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use futures::{Stream, StreamExt};
 use longbridge::agent::{ConversationStatus, ConversationStreamEvent, GetAgentsOptions};
+use longbridge::httpclient::{HttpClientError, Json, Method};
+use rust_i18n::t;
 
-use super::events::AgentEvent;
+use super::events::{parse_data_line, AgentEvent};
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct WorkspaceInfo {
@@ -169,6 +172,28 @@ pub enum ConversationRequest {
     },
 }
 
+impl ConversationRequest {
+    fn agent_uid(&self) -> &str {
+        match self {
+            ConversationRequest::New { agent_uid, .. }
+            | ConversationRequest::Continue { agent_uid, .. } => agent_uid,
+        }
+    }
+
+    /// The message this request is already addressed to, if any. A resumption
+    /// names one up front; a fresh round only learns it from `chat_started`.
+    fn ident(&self) -> Option<(String, String)> {
+        match self {
+            ConversationRequest::Continue {
+                chat_uid,
+                message_id,
+                ..
+            } => Some((chat_uid.clone(), message_id.clone())),
+            ConversationRequest::New { .. } => None,
+        }
+    }
+}
+
 /// The final run status, as the lowercase wire string the outcome layer keys
 /// on (`classify_outcome` in `chat.rs`).
 fn status_str(status: ConversationStatus) -> String {
@@ -312,13 +337,404 @@ async fn open_conversation_stream(
     Ok(stream)
 }
 
-/// Stream a conversation through the SDK's `AgentContext`, dispatching each
-/// surfaced event to `on_event`.
+/// No SSE frame at all for this long means the connection is gone rather than
+/// the agent being slow.
 ///
-/// Every attempt is metered through the shared 10 req/s limiter, and only the
-/// pre-stream handshake is retried — and only on a typed 429002 rate limit, so
-/// a misclassified error can never replay (and duplicate) the conversation
-/// POST. Once draining starts below, a mid-stream failure is propagated as-is.
+/// A run legitimately spends minutes between *interesting* events — a long tool
+/// call says nothing while it works — so silence on its own proves nothing. The
+/// server's `ping` heartbeat is what makes this measurable: it arrives every few
+/// seconds on a healthy connection and the loop below counts it as liveness even
+/// though nothing is rendered for it. A minute without even that is the socket,
+/// not the agent.
+const STREAM_IDLE_SECS: u64 = 60;
+const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(STREAM_IDLE_SECS);
+
+/// Backoff between re-attach attempts (short in tests).
+#[cfg(test)]
+const RECONNECT_BACKOFF_SECS: [f64; 3] = [0.01, 0.02, 0.04];
+#[cfg(not(test))]
+const RECONNECT_BACKOFF_SECS: [f64; 3] = [1.0, 2.0, 4.0];
+
+/// Only bounds the reconnect handshake — getting a status back — not the
+/// event-by-event reads after it, which last as long as the run does.
+const RECONNECT_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long to keep waiting for a run to finish when re-attaching is not
+/// possible, and how often to check.
+const READ_BACK_WINDOW_SECS: u64 = 600;
+const READ_BACK_POLL: Duration = Duration::from_secs(5);
+
+/// One frame of an agent SSE stream: an event to surface, or `None` for a frame
+/// that carries no event but proves the connection is alive (a heartbeat, or
+/// progress the CLI does not render).
+///
+/// Normalizing to this is what lets the conversation endpoints — parsed by the
+/// SDK — and the reconnect endpoint — parsed here — share one drain loop.
+type Frame = Result<Option<AgentEvent>>;
+type FrameStream = Pin<Box<dyn Stream<Item = Frame> + Send>>;
+
+fn sdk_frames(
+    stream: impl Stream<Item = longbridge::Result<ConversationStreamEvent>> + Send + 'static,
+) -> FrameStream {
+    Box::pin(stream.map(|item| item.map(map_event).map_err(anyhow::Error::new)))
+}
+
+/// Why the drain loop stopped.
+enum StreamEnd {
+    /// The run reported its own outcome. Whatever the connection does
+    /// afterwards is teardown, not a lost answer.
+    Complete,
+    /// The stream ended in an orderly way — `chat_finished` came — but never
+    /// carried the run's outcome.
+    ///
+    /// `workflow_finished` describes the workflow that produced the message
+    /// rather than the message itself, so a reconnect that replays a message
+    /// which had already finished ends without one (`../longbridge-gpui` notes
+    /// the same). The answer is all there; only the verdict, sources and
+    /// follow-ups still have to be read back.
+    EndedWithoutOutcome,
+    /// The connection stopped delivering while the run was still going.
+    Broken(anyhow::Error),
+}
+
+/// Drain an SSE stream into `on_event`, watching for the connection dying under
+/// it.
+///
+/// The run lives on the server, not in this connection, so losing the
+/// connection is not the same as losing the run — a stream that stops
+/// delivering is reported as a break rather than as a finished turn, which is
+/// what lets a caller tell "the agent answered" apart from "we stopped hearing
+/// about it".
+///
+/// `ident` collects the `chat_uid`/`message_id` the run is writing to: what a
+/// reconnect addresses, and what names the message in a break report.
+async fn drain_stream(
+    stream: &mut FrameStream,
+    on_event: &mut (dyn FnMut(AgentEvent) + Send),
+    ident: &mut Option<(String, String)>,
+) -> StreamEnd {
+    // Neither marker returns early — the outcome is followed by more
+    // housekeeping frames (`chat_title_updated`), and on a live stream
+    // `chat_finished` is itself followed by `workflow_finished`. What they
+    // change is how the stream *ending* is read, below.
+    let mut outcome = false;
+    let mut closing = false;
+    loop {
+        let next = tokio::time::timeout(STREAM_IDLE_TIMEOUT, stream.next()).await;
+        // Idle: not even a heartbeat for a minute.
+        let Ok(item) = next else {
+            return ended(outcome, closing, || {
+                anyhow::anyhow!(
+                    "SSE stream went silent for {STREAM_IDLE_SECS}s{}",
+                    describe(ident.as_ref())
+                )
+            });
+        };
+        match item {
+            Some(Ok(frame)) => {
+                let Some(ev) = frame else { continue };
+                // `workflow_finished` carries the run's outcome; a pause for
+                // human input ends the round just as definitively.
+                outcome |= matches!(
+                    ev,
+                    AgentEvent::WorkflowFinished { .. }
+                        | AgentEvent::HumanInteractionRequired { .. }
+                );
+                closing |= matches!(ev, AgentEvent::ChatFinished { .. });
+                if let AgentEvent::ChatStarted {
+                    chat_uid,
+                    message_id,
+                } = &ev
+                {
+                    *ident = Some((chat_uid.clone(), message_id.clone()));
+                }
+                on_event(ev);
+            }
+            Some(Err(err)) => {
+                return ended(outcome, closing, || {
+                    err.context(format!("SSE stream error{}", describe(ident.as_ref())))
+                })
+            }
+            // End of stream. Orderly only if the run got far enough to say so:
+            // closing early was previously indistinguishable from success, so a
+            // connection dropped mid-answer finalized the turn as complete and
+            // silently truncated it.
+            None => {
+                return ended(outcome, closing, || {
+                    anyhow::anyhow!(
+                        "SSE stream closed before the run reported an outcome{}",
+                        describe(ident.as_ref())
+                    )
+                })
+            }
+        }
+    }
+}
+
+/// Classify a stream that stopped delivering, by how far the run got first.
+fn ended(outcome: bool, closing: bool, cause: impl FnOnce() -> anyhow::Error) -> StreamEnd {
+    if outcome {
+        StreamEnd::Complete
+    } else if closing {
+        StreamEnd::EndedWithoutOutcome
+    } else {
+        StreamEnd::Broken(cause())
+    }
+}
+
+/// Name the interrupted message in a break report, when the server got far
+/// enough to tell us which one it is.
+fn describe(ident: Option<&(String, String)>) -> String {
+    match ident {
+        Some((chat_uid, message_id)) => format!(" (chat {chat_uid}, message {message_id})"),
+        None => String::new(),
+    }
+}
+
+/// `POST /v1/ai/agents/{id}/conversations/{chat_uid}/messages/{message_id}/reconnect`
+/// — re-attach to a run whose connection died, replaying the message from the
+/// beginning and then continuing live.
+///
+/// Mirrors the endpoint the desktop client reconnects with (`../longbridge-gpui`
+/// `ai_agent::api::reconnect_message`). The SDK does not wrap it, so the request
+/// goes through the shared signed HTTP client the same way the chat-history
+/// endpoints do, and the frames are parsed by [`parse_data_line`].
+async fn reconnect_stream(
+    agent_id: &str,
+    chat_uid: &str,
+    message_id: &str,
+) -> std::result::Result<FrameStream, HttpClientError> {
+    let path = format!(
+        "/v1/ai/agents/{agent_id}/conversations/{chat_uid}/messages/{message_id}/reconnect"
+    );
+    crate::openapi::global_rate_limiter().acquire().await;
+    let raw = crate::openapi::http_client()
+        .request(Method::POST, path)
+        .body(Json(serde_json::json!({})))
+        .timeout(RECONNECT_HANDSHAKE_TIMEOUT)
+        .send_events()
+        .await?;
+    Ok(Box::pin(raw.map(|item| {
+        item.map(|sse| parse_data_line(&sse.data))
+            .map_err(anyhow::Error::new)
+    })))
+}
+
+/// True when the gateway has no such route, as opposed to failing to serve it.
+/// Retrying cannot conjure an endpoint, so this routes straight to the fallback.
+fn endpoint_missing(err: &HttpClientError) -> bool {
+    matches!(err, HttpClientError::OpenApi { code, .. } if *code == 404_000)
+}
+
+/// Re-attach to a run whose connection died, and see it through to its outcome.
+///
+/// Re-attaching replays the message from the start, so each attempt announces
+/// itself with [`AgentEvent::StreamInterrupted`] and the consumer discards what
+/// the dead connection produced rather than letting the replay double it.
+///
+/// Resending the original request is *not* an option here: the run is still
+/// going on the server, so a resend would not resume it but start a second one
+/// alongside it — two answers, two sets of tool calls, both billed.
+async fn reattach(
+    agent_id: &str,
+    chat_uid: &str,
+    message_id: &str,
+    cause: anyhow::Error,
+    verbose: bool,
+    on_event: &mut (dyn FnMut(AgentEvent) + Send),
+) -> Result<()> {
+    let mut cause = cause;
+    // Whether the announced restart is still unspent — nothing has been
+    // delivered since, so the fallback below need not announce another.
+    let mut pristine = false;
+    for backoff in RECONNECT_BACKOFF_SECS {
+        tracing::warn!("agent SSE stream broke, re-attaching: {cause:#}");
+        if verbose {
+            eprintln!("* SSE stream broke ({cause:#}); reconnecting");
+        }
+        on_event(AgentEvent::StreamInterrupted);
+        pristine = true;
+        match reconnect_stream(agent_id, chat_uid, message_id).await {
+            Ok(mut frames) => {
+                let mut ident = Some((chat_uid.to_string(), message_id.to_string()));
+                pristine = false;
+                match drain_stream(&mut frames, on_event, &mut ident).await {
+                    StreamEnd::Complete => return Ok(()),
+                    // The usual shape for a replay of a message that had
+                    // already finished: everything is there but the verdict.
+                    StreamEnd::EndedWithoutOutcome => {
+                        return finalize_from_history(chat_uid, message_id, on_event).await
+                    }
+                    StreamEnd::Broken(err) => cause = err,
+                }
+            }
+            Err(err) if endpoint_missing(&err) => {
+                tracing::info!("no reconnect endpoint here; waiting the run out instead");
+                if verbose {
+                    eprintln!("* no reconnect endpoint; waiting for the run to finish");
+                }
+                break;
+            }
+            Err(err) => {
+                cause = anyhow::Error::new(err).context("Failed to reconnect to the run");
+            }
+        }
+        tokio::time::sleep(Duration::from_secs_f64(backoff)).await;
+    }
+    read_back_answer(chat_uid, message_id, cause, !pristine, verbose, on_event).await
+}
+
+/// Wait the run out and read the finished message back from chat history.
+///
+/// The fallback for when re-attaching is not possible. It cannot show the answer
+/// being written — the server does not persist a message's chunks until the run
+/// ends, so an in-flight message reads back empty — so it trades the live view
+/// for not losing the answer.
+async fn read_back_answer(
+    chat_uid: &str,
+    message_id: &str,
+    cause: anyhow::Error,
+    needs_reset: bool,
+    verbose: bool,
+    on_event: &mut (dyn FnMut(AgentEvent) + Send),
+) -> Result<()> {
+    // A partial re-attach may have replayed some of the message before breaking
+    // again; the full text below replaces it rather than extending it. Skipped
+    // when the caller's restart is still unspent, so the reader is not told the
+    // connection dropped twice over for one drop.
+    if needs_reset {
+        on_event(AgentEvent::StreamInterrupted);
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(READ_BACK_WINDOW_SECS);
+    let finished = loop {
+        tokio::time::sleep(READ_BACK_POLL).await;
+        match crate::openapi::chats::chat_detail(chat_uid).await {
+            Ok(detail) => {
+                if let Some(msg) = detail
+                    .messages
+                    .into_iter()
+                    .find(|m| m.id.to_string() == message_id)
+                {
+                    if !msg.is_generating() {
+                        break Some(msg);
+                    }
+                }
+            }
+            // The network may still be down. Keep trying until the window closes.
+            Err(err) => tracing::debug!("history poll failed while waiting out the run: {err:#}"),
+        }
+        if std::time::Instant::now() >= deadline {
+            break None;
+        }
+    };
+    let Some(msg) = finished else {
+        return Err(cause.context(format!(
+            "the run was still going {READ_BACK_WINDOW_SECS}s after the connection dropped"
+        )));
+    };
+    if verbose {
+        eprintln!("* read the finished answer back from chat history");
+    }
+
+    let reasoning = msg.reasoning();
+    if !reasoning.is_empty() {
+        on_event(AgentEvent::ThinkingDelta { text: reasoning });
+    }
+    let text = msg.text();
+    if !text.is_empty() {
+        on_event(AgentEvent::AnswerDelta { text });
+    }
+    let status = recovered_status(msg.status);
+    on_event(AgentEvent::WorkflowFinished {
+        status: status.to_string(),
+        references: msg.references(),
+        further_questions: msg.further_questions(),
+        // Only ever reported by the stream event, and that stream is gone.
+        elapsed_time: None,
+        // Unlike the other read-back path, no `chat_finished` was seen here to
+        // carry the server's own wording, so a failed run would otherwise
+        // finalize looking like a clean one.
+        error_message: if status == "failed" {
+            t!("Agent.RunFailed").to_string()
+        } else {
+            String::new()
+        },
+    });
+    Ok(())
+}
+
+/// Emit the run's outcome for a stream that delivered the answer but ended
+/// without saying how the run went (see [`StreamEnd::EndedWithoutOutcome`]).
+///
+/// One read of the stored message, not the polling [`read_back_answer`] does:
+/// `chat_finished` already established that the run is over. The answer is left
+/// alone — the stream delivered it — and only the verdict, sources and
+/// follow-ups are supplied.
+async fn finalize_from_history(
+    chat_uid: &str,
+    message_id: &str,
+    on_event: &mut (dyn FnMut(AgentEvent) + Send),
+) -> Result<()> {
+    let mut last: Option<anyhow::Error> = None;
+    for backoff in RECONNECT_BACKOFF_SECS {
+        match crate::openapi::chats::chat_detail(chat_uid).await {
+            Ok(detail) => {
+                let Some(msg) = detail
+                    .messages
+                    .into_iter()
+                    .find(|m| m.id.to_string() == message_id)
+                else {
+                    last = Some(anyhow::anyhow!(
+                        "chat {chat_uid} has no message {message_id}"
+                    ));
+                    break;
+                };
+                on_event(AgentEvent::WorkflowFinished {
+                    status: recovered_status(msg.status).to_string(),
+                    references: msg.references(),
+                    further_questions: msg.further_questions(),
+                    // Only ever reported by the stream event that never came.
+                    elapsed_time: None,
+                    error_message: String::new(),
+                });
+                return Ok(());
+            }
+            Err(err) => last = Some(err),
+        }
+        tokio::time::sleep(Duration::from_secs_f64(backoff)).await;
+    }
+    Err(last
+        .unwrap_or_else(|| anyhow::anyhow!("could not read the run outcome back"))
+        .context("The run finished but its outcome could not be read back"))
+}
+
+/// Map a persisted message status onto the run-status wire string the outcome
+/// layer keys on. The read-back counterpart of [`status_str`].
+fn recovered_status(status: i32) -> &'static str {
+    match status {
+        1 => "succeeded",
+        2 => "stopped",
+        5 => "interrupted",
+        // 3 (exception), 4 (blocked by the guard rails), and anything this
+        // client has not learned yet: no usable answer came out of the run.
+        _ => "failed",
+    }
+}
+
+/// Stream a conversation through the SDK's `AgentContext`, dispatching each
+/// surfaced event to `on_event`, and keep it alive across a lost connection.
+///
+/// Every attempt is metered through the shared 10 req/s limiter, and the
+/// pre-stream handshake is retried only on a typed 429002 rate limit, so a
+/// misclassified error can never replay (and duplicate) the conversation POST.
+///
+/// Once the stream is up, a break is handled by where it happened:
+///
+/// - **Before the server named a message**, nothing exists yet — so nothing a
+///   resend could duplicate. The request goes out again.
+/// - **After it**, the run is alive on the server and a resend would start a
+///   second one beside it, so the connection is re-attached to the existing run
+///   instead (see [`reattach`]).
 pub async fn stream_conversation(
     req: ConversationRequest,
     verbose: bool,
@@ -326,41 +742,268 @@ pub async fn stream_conversation(
 ) -> Result<()> {
     ensure_oauth_auth(crate::openapi::using_api_key())?;
     let ctx = crate::openapi::agent();
-    if verbose {
-        eprintln!("* POST agent conversation (SSE)");
-    }
-    let mut stream = 'handshake: {
-        for backoff in HANDSHAKE_BACKOFF_SECS {
-            crate::openapi::global_rate_limiter().acquire().await;
-            match open_conversation_stream(ctx, &req).await {
-                Ok(s) => break 'handshake s,
-                Err(e) if is_rate_limited(&e) => {
-                    tokio::time::sleep(std::time::Duration::from_secs_f64(backoff)).await;
+    let agent_uid = req.agent_uid().to_string();
+    let mut ident = req.ident();
+
+    let mut last_err = None;
+    for backoff in RECONNECT_BACKOFF_SECS {
+        if verbose {
+            eprintln!("* POST agent conversation (SSE)");
+        }
+        let mut stream = sdk_frames(open_conversation_stream_retrying(ctx, &req).await?);
+        match drain_stream(&mut stream, on_event, &mut ident).await {
+            StreamEnd::Complete => return Ok(()),
+            StreamEnd::EndedWithoutOutcome => {
+                return match &ident {
+                    Some((chat_uid, message_id)) => {
+                        finalize_from_history(chat_uid, message_id, on_event).await
+                    }
+                    // `chat_finished` cannot arrive before `chat_started`.
+                    None => Ok(()),
+                };
+            }
+            StreamEnd::Broken(err) => {
+                if let Some((chat_uid, message_id)) = ident.clone() {
+                    return reattach(&agent_uid, &chat_uid, &message_id, err, verbose, on_event)
+                        .await;
                 }
-                Err(e) => {
-                    return Err(anyhow::Error::new(e).context("Failed to run the AI conversation"));
+                tracing::warn!("agent SSE stream broke before the run was named: {err:#}");
+                if verbose {
+                    eprintln!("* SSE stream broke before the run started ({err:#}); resending");
                 }
+                // Nothing streamed can be trusted to survive the resend.
+                on_event(AgentEvent::StreamInterrupted);
+                last_err = Some(err);
+                tokio::time::sleep(Duration::from_secs_f64(backoff)).await;
             }
         }
-        // Backoff exhausted: one final attempt, propagating whatever it yields.
-        crate::openapi::global_rate_limiter().acquire().await;
-        open_conversation_stream(ctx, &req)
-            .await
-            .context("Failed to run the AI conversation")?
-    };
+    }
+    Err(last_err
+        .unwrap_or_else(|| anyhow::anyhow!("the AI conversation could not be started"))
+        .context("Gave up starting the AI conversation"))
+}
 
-    while let Some(item) = stream.next().await {
-        let ev = item.context("SSE stream error")?;
-        if let Some(mapped) = map_event(ev) {
-            on_event(mapped);
+/// The pre-stream POST handshake, retried on a typed 429002 rate limit.
+async fn open_conversation_stream_retrying(
+    ctx: &longbridge::agent::AgentContext,
+    req: &ConversationRequest,
+) -> Result<impl Stream<Item = longbridge::Result<ConversationStreamEvent>> + Send + 'static> {
+    for backoff in HANDSHAKE_BACKOFF_SECS {
+        crate::openapi::global_rate_limiter().acquire().await;
+        match open_conversation_stream(ctx, req).await {
+            Ok(s) => return Ok(s),
+            Err(e) if is_rate_limited(&e) => {
+                tokio::time::sleep(Duration::from_secs_f64(backoff)).await;
+            }
+            Err(e) => {
+                return Err(anyhow::Error::new(e).context("Failed to run the AI conversation"))
+            }
         }
     }
-    Ok(())
+    // Backoff exhausted: one final attempt, propagating whatever it yields.
+    crate::openapi::global_rate_limiter().acquire().await;
+    open_conversation_stream(ctx, req)
+        .await
+        .context("Failed to run the AI conversation")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use longbridge::agent::{ChatStartedPayload, ConversationResponse, MessagePayload};
+
+    fn stream_of(events: Vec<ConversationStreamEvent>) -> FrameStream {
+        sdk_frames(futures::stream::iter(events.into_iter().map(Ok)))
+    }
+
+    fn chat_started() -> ConversationStreamEvent {
+        ConversationStreamEvent::ChatStarted(ChatStartedPayload {
+            chat_uid: "ct_1".into(),
+            message_id: "42".into(),
+            chat_id: 1,
+            error: String::new(),
+            error_message: String::new(),
+        })
+    }
+
+    fn answer(text: &str) -> ConversationStreamEvent {
+        ConversationStreamEvent::Message(MessagePayload {
+            text: text.into(),
+            message_type: "answer".into(),
+            ..Default::default()
+        })
+    }
+
+    fn workflow_finished() -> ConversationStreamEvent {
+        ConversationStreamEvent::WorkflowFinished(ConversationResponse {
+            chat_uid: "ct_1".into(),
+            message_id: "42".into(),
+            status: ConversationStatus::Succeeded,
+            answer: "hi".into(),
+            references: None,
+            further_questions: None,
+            elapsed_time: 1.0,
+            interrupt: None,
+            error: None,
+        })
+    }
+
+    async fn drain(events: Vec<ConversationStreamEvent>) -> (StreamEnd, Vec<AgentEvent>) {
+        let mut stream = stream_of(events);
+        let mut seen = Vec::new();
+        let mut ident = None;
+        let end = drain_stream(&mut stream, &mut |ev| seen.push(ev), &mut ident).await;
+        (end, seen)
+    }
+
+    /// A connection that closes mid-answer used to be indistinguishable from a
+    /// run that finished: the loop simply ran out of items and returned `Ok`,
+    /// so the turn was finalized as complete with a truncated answer.
+    #[tokio::test]
+    async fn closing_before_the_run_reports_an_outcome_is_a_break() {
+        let (end, seen) = drain(vec![chat_started(), answer("half an ans")]).await;
+        let StreamEnd::Broken(err) = end else {
+            panic!("expected a break");
+        };
+        let msg = format!("{err:#}");
+        assert!(msg.contains("closed before"), "unexpected message: {msg}");
+        // The break names the message the run was writing, which is what a
+        // reconnect has to address.
+        assert!(msg.contains("ct_1") && msg.contains("42"), "{msg}");
+        // Whatever did arrive is still delivered.
+        assert!(matches!(seen.last(), Some(AgentEvent::AnswerDelta { .. })));
+    }
+
+    /// Once the run has reported its outcome the connection has nothing left to
+    /// deliver, so closing is teardown rather than a lost answer.
+    #[tokio::test]
+    async fn closing_after_the_run_reports_an_outcome_is_clean() {
+        let (end, _) = drain(vec![chat_started(), answer("hi"), workflow_finished()]).await;
+        assert!(matches!(end, StreamEnd::Complete));
+    }
+
+    /// A pause for human input ends the round just as definitively as a
+    /// finished workflow: the server is waiting on us, not the other way round.
+    #[tokio::test]
+    async fn pausing_for_human_input_is_not_a_break() {
+        let mut interrupted = match workflow_finished() {
+            ConversationStreamEvent::WorkflowFinished(resp) => resp,
+            _ => unreachable!(),
+        };
+        interrupted.status = ConversationStatus::Interrupted;
+        let (end, _) = drain(vec![
+            chat_started(),
+            ConversationStreamEvent::HumanInteractionRequired(interrupted),
+        ])
+        .await;
+        assert!(matches!(end, StreamEnd::Complete));
+    }
+
+    /// Silence long enough to outlast the server's own heartbeat is a dead
+    /// connection. Before this the drain loop had no read deadline at all, so a
+    /// connection that stopped delivering hung the turn indefinitely.
+    #[tokio::test(start_paused = true)]
+    async fn silence_past_the_heartbeat_window_is_a_break() {
+        let mut stream: FrameStream = Box::pin(futures::stream::pending());
+        let mut ident = Some(("ct_1".to_string(), "42".to_string()));
+        let end = drain_stream(&mut stream, &mut |_| {}, &mut ident).await;
+        let StreamEnd::Broken(err) = end else {
+            panic!("expected a break");
+        };
+        assert!(format!("{err:#}").contains("went silent"), "{err:#}");
+    }
+
+    /// A heartbeat renders nothing, but it proves the connection is alive, so
+    /// it has to reset the idle deadline.
+    #[tokio::test]
+    async fn a_heartbeat_counts_as_liveness() {
+        let (end, seen) = drain(vec![
+            chat_started(),
+            ConversationStreamEvent::Ping,
+            answer("hi"),
+            workflow_finished(),
+        ])
+        .await;
+        assert!(matches!(end, StreamEnd::Complete));
+        // The ping itself stays invisible.
+        assert!(!seen.iter().any(|e| matches!(e, AgentEvent::Unknown { .. })));
+    }
+
+    fn chat_finished() -> ConversationStreamEvent {
+        ConversationStreamEvent::ChatFinished(longbridge::agent::ChatFinishedPayload::default())
+    }
+
+    /// Replaying a message that had already finished ends at `chat_finished`
+    /// with no `workflow_finished` — the answer is all there, but the verdict
+    /// has to be read back rather than assumed.
+    #[tokio::test]
+    async fn an_orderly_close_without_an_outcome_is_not_a_break() {
+        let (end, _) = drain(vec![chat_started(), answer("hi"), chat_finished()]).await;
+        assert!(matches!(end, StreamEnd::EndedWithoutOutcome));
+    }
+
+    /// When the outcome does arrive it wins: `chat_finished` precedes
+    /// `workflow_finished` on a live stream, so the earlier marker must not
+    /// downgrade a run that went on to report itself.
+    #[tokio::test]
+    async fn an_outcome_after_chat_finished_still_counts_as_complete() {
+        let (end, _) = drain(vec![
+            chat_started(),
+            answer("hi"),
+            chat_finished(),
+            workflow_finished(),
+        ])
+        .await;
+        assert!(matches!(end, StreamEnd::Complete));
+    }
+
+    /// The reconnect endpoint is addressed by path, and a gateway that does not
+    /// serve it says so with 404000. Retrying that cannot help, so it has to be
+    /// told apart from a request that merely failed.
+    #[test]
+    fn endpoint_missing_matches_only_404000() {
+        let absent = HttpClientError::OpenApi {
+            code: 404_000,
+            message: "api not found".into(),
+            trace_id: "t".into(),
+        };
+        assert!(endpoint_missing(&absent));
+        let other = HttpClientError::OpenApi {
+            code: 500_000,
+            message: "internal".into(),
+            trace_id: "t".into(),
+        };
+        assert!(!endpoint_missing(&other));
+    }
+
+    /// A message read back from history reports its outcome as a status code
+    /// rather than the stream's wire string.
+    #[test]
+    fn recovered_status_maps_every_terminal_state() {
+        assert_eq!(recovered_status(1), "succeeded");
+        assert_eq!(recovered_status(2), "stopped");
+        assert_eq!(recovered_status(5), "interrupted");
+        assert_eq!(recovered_status(3), "failed");
+        assert_eq!(recovered_status(4), "failed");
+        // A status this client has not learned yet is not assumed to be good.
+        assert_eq!(recovered_status(99), "failed");
+    }
+
+    /// Re-attaching replays the message from the beginning, so an aggregate
+    /// that kept the dead connection's partial answer would double its prefix.
+    #[test]
+    fn a_restart_discards_what_the_dead_connection_delivered() {
+        let mut agg = crate::cli::agent::events::ChatAggregator::default();
+        agg.push(&AgentEvent::AnswerDelta {
+            text: "Tencent's rev".into(),
+        });
+        agg.push(&AgentEvent::StreamInterrupted);
+        agg.push(&AgentEvent::AnswerDelta {
+            text: "Tencent's revenue grew 13%.".into(),
+        });
+        assert_eq!(agg.answer(), "Tencent's revenue grew 13%.");
+    }
 
     #[test]
     fn is_rate_limited_matches_only_429002() {
