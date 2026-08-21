@@ -265,11 +265,12 @@ Use a prefix to indicate the area of change. The word after the colon must be **
 
 - `cli:` — changes to CLI commands (`src/cli/`) or shared infrastructure (`src/openapi/`, `src/region.rs`, `src/auth.rs`, etc.)
 - `tui:` — changes that touch TUI-specific code (`src/tui/app.rs`, `src/tui/views/`, `src/tui/widgets/`, `src/tui/systems/`, etc.)
+- `ai:` — changes to the AI assistant (`src/ai/`): the chat runtime, answer parsing, Markdown rendering, widgets, session store, settings
 - `chore:` — other changes that don't fit the above (e.g. docs, formatting, refactors that don't modify behavior)
 
 Only use `tui:` when the diff actually modifies TUI files. Changes to shared modules that happen to be triggered by a TUI bug should still use `cli:` or a more specific prefix.
 
-Example: `cli: Add statement export command`, `tui: Fix quit confirmation dialog`
+Example: `cli: Add statement export command`, `tui: Fix quit confirmation dialog`, `ai: Stop linking currency codes as tickers`
 
 ## Keeping Docs in Sync
 
