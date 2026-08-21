@@ -471,6 +471,7 @@ Ai:
   ToolFailed: "失败"
   ToolCount: "%{count} 个工具"
   ThoughtFor: "已思考 %{secs} 秒"
+  NoUpdatesFor: "已 %{secs} 秒无更新"
   Stop: "停止"
   CustomAgent: "自定义智能体"
   WidgetComparison: "对比"

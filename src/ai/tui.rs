@@ -247,6 +247,11 @@ fn slash_lookup(typed: &str) -> Option<&'static str> {
     SLASH.iter().find(|c| c.answers_to(typed)).map(Slash::key)
 }
 
+/// How long the stream must be silent before the turn row says so. Long enough
+/// that an ordinary gap between chunks never trips it, short enough to answer
+/// "is this stuck?" before the reader gives up and asks.
+const QUIET_AFTER: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// One entry in the session's event log, with repeats folded into `count`.
 struct LoggedEvent {
     at: std::time::Instant,
@@ -263,7 +268,15 @@ const EVENT_LOG_MAX: usize = 200;
 /// Repeats of the same kind fold into a count rather than each taking a line: a
 /// turn streams hundreds of deltas, and a log full of them would push out the
 /// tool and status transitions that are the reason to read it at all.
-fn log_event(ui: &mut Ui, event: &ChatEvent) {
+fn log_event(ui: &mut Ui, event: &ChatEvent, status: &str) {
+    // A status that repeats the one already showing changes nothing, and one
+    // rides along with every delta — logging them broke up the runs of deltas so
+    // nothing folded, and the timeline drowned in `status Thinking…`.
+    if let ChatEvent::Status(new) = event {
+        if new == status {
+            return;
+        }
+    }
     let label = event_label(event);
     let kind = label.split(' ').next().unwrap_or_default().to_string();
     match ui.event_log.back_mut() {
@@ -975,7 +988,7 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
                 let Some(event) = current_turn_event(&state, turn_event) else {
                     continue;
                 };
-                log_event(&mut ui, &event);
+                log_event(&mut ui, &event, &state.status);
                 if let ChatEvent::Interrupt(interrupt) = &event {
                     let questions = runtime::interrupt_interactions(interrupt)
                         .iter()
@@ -1219,6 +1232,17 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
         task.abort();
     }
     Ok(ui.exit_note.take())
+}
+
+impl Ui {
+    /// How long the stream has been silent, once that is worth reporting.
+    ///
+    /// `None` while events are still arriving normally, so the turn row stays
+    /// quiet itself until there is something to say.
+    fn quiet_for(&self) -> Option<std::time::Duration> {
+        let since = self.event_log.back()?.at.elapsed();
+        (since >= QUIET_AFTER).then_some(since)
+    }
 }
 
 fn current_turn_event(state: &ChatState, event: runtime::TurnEvent) -> Option<ChatEvent> {
@@ -5278,6 +5302,17 @@ fn render_turn_status(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &C
             Style::default().fg(Color::DarkGray),
         ));
     }
+    // A spinner spins the same whether the agent is working or the stream has
+    // gone quiet, which is the whole of "it looks stuck". Once the silence is
+    // long enough to be worth naming, say how long it has lasted — during a slow
+    // tool call that reads as "still waiting on it", and during a stalled stream
+    // it is the only thing that says so.
+    if let Some(quiet) = ui.quiet_for() {
+        spans.push(Span::styled(
+            format!("   {}", t!("Ai.NoUpdatesFor", secs = quiet.as_secs())),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
     // The button is right-aligned, so its rect is derived from the label width.
     let label = format!("[{}]", t!("Ai.Stop"));
     let label_w = UnicodeWidthStr::width(label.as_str()) as u16;
@@ -7615,6 +7650,68 @@ mod tests {
         );
     }
 
+    /// A spinner spins the same whether the agent is working or the stream has
+    /// died. Once the silence is long enough to be worth naming, the turn row has
+    /// to say so — that is the difference between "slow" and "stuck".
+    #[test]
+    fn a_quiet_stream_says_how_long_it_has_been_quiet() {
+        let mut ui = super::Ui::new();
+        let mut state = busy_state();
+        super::log_event(
+            &mut ui,
+            &super::ChatEvent::Delta("hi".into()),
+            &state.status,
+        );
+        state.apply(super::ChatEvent::Delta("hi".into()));
+        assert!(ui.quiet_for().is_none(), "a fresh event is not a stall");
+
+        // Age the last event past the threshold.
+        if let Some(last) = ui.event_log.back_mut() {
+            last.at = std::time::Instant::now()
+                .checked_sub(super::QUIET_AFTER + std::time::Duration::from_secs(2))
+                .expect("a clock with some history");
+        }
+        let quiet = ui.quiet_for().expect("a stall worth naming");
+        assert!(quiet >= super::QUIET_AFTER);
+        let screen = frame(&mut ui, &mut state, 90, 16).join("\n");
+        assert!(
+            screen.contains(t!("Ai.NoUpdatesFor", secs = quiet.as_secs()).as_ref()),
+            "the reader is told the stream went quiet:\n{screen}"
+        );
+    }
+
+    /// The status that rides along with every delta repeats what is already
+    /// showing. Logging it broke up the runs of deltas so nothing folded, and the
+    /// timeline drowned in `status Thinking…` instead of showing the shape.
+    #[test]
+    fn a_status_that_changes_nothing_stays_out_of_the_log() {
+        let mut ui = super::Ui::new();
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        for event in [
+            super::ChatEvent::Status("Thinking…".into()),
+            super::ChatEvent::ThinkingDelta("a".into()),
+            super::ChatEvent::Status("Thinking…".into()),
+            super::ChatEvent::ThinkingDelta("b".into()),
+            super::ChatEvent::Status("Thinking…".into()),
+            super::ChatEvent::ThinkingDelta("c".into()),
+        ] {
+            super::log_event(&mut ui, &event, &state.status);
+            state.apply(event);
+        }
+        let labels: Vec<&str> = ui.event_log.iter().map(|e| e.label.as_str()).collect();
+        assert_eq!(
+            labels.iter().filter(|l| l.starts_with("status")).count(),
+            1,
+            "the status is logged once, when it changes: {labels:?}"
+        );
+        let deltas = ui
+            .event_log
+            .iter()
+            .find(|e| e.label.starts_with("thinking_delta"))
+            .expect("the deltas");
+        assert_eq!(deltas.count, 3, "and the deltas fold into one line");
+    }
+
     /// `/debug` exists so a session that misbehaved can explain itself. The
     /// symptom that prompted it — a tool row still marked running under a
     /// finished answer — has to be visible in the report, and no message text
@@ -7639,7 +7736,7 @@ mod tests {
             super::ChatEvent::ToolStarted("Get Candlestick Data".into()),
             super::ChatEvent::Delta("QCOM and SNDK diverge.".into()),
         ] {
-            super::log_event(&mut ui, &event);
+            super::log_event(&mut ui, &event, &state.status);
             state.apply(event);
         }
 

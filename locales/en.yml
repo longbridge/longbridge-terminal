@@ -471,6 +471,7 @@ Ai:
   ToolFailed: "failed"
   ToolCount: "%{count} tools"
   ThoughtFor: "Thought for %{secs}s"
+  NoUpdatesFor: "no updates for %{secs}s"
   Stop: "stop"
   CustomAgent: "custom agent"
   WidgetComparison: "Comparison"
