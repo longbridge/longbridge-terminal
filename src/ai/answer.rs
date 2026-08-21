@@ -251,16 +251,22 @@ pub fn symbol_spans(text: &str) -> Vec<std::ops::Range<usize>> {
 
 /// Words that look like tickers but are not, in a chat about markets.
 ///
-/// Every one of these is either finance jargon or a unit, and several are also
-/// real tickers — `AI`, `ET`, `AM`, `PT` among them. In this context the jargon
-/// reading is the overwhelmingly likely one, and a link that opens the wrong
-/// security's quote is worse than no link at all, so they are never candidates.
-const NOT_TICKERS: [&str; 62] = [
+/// Every one of these is either finance jargon, a unit, or a currency code, and
+/// several are also real tickers — `AI`, `ET`, `AM`, `PT`, and the currencies
+/// among them, since the server does know a `HKD.US` and a `USD.US`. In this
+/// context the jargon reading is the overwhelmingly likely one, and a link that
+/// opens the wrong security's quote is worse than no link at all, so they are
+/// never candidates.
+const NOT_TICKERS: &[&str] = &[
     "AI", "AM", "PM", "ET", "PT", "UTC", "API", "APP", "CEO", "CFO", "COO", "CTO", "IPO", "ETF",
     "SEC", "FED", "FOMC", "GDP", "CPI", "PPI", "PMI", "YOY", "QOQ", "MOM", "TTM", "YTD", "MTD",
     "QTD", "EPS", "PE", "PB", "PS", "PEG", "ROE", "ROA", "ROI", "EBIT", "DCF", "WACC", "NAV",
     "AUM", "SPAC", "ITM", "OTM", "ATM", "IV", "HV", "OI", "MACD", "RSI", "KDJ", "BOLL", "CCI",
     "BIAS", "DIF", "DEA", "EMA", "SMA", "VWAP", "GTC", "LO", "MO",
+    // Currencies. An amount names its currency far more often than an answer
+    // names a security by the same three letters.
+    "USD", "HKD", "CNY", "CNH", "SGD", "JPY", "EUR", "GBP", "AUD", "CAD", "CHF", "NZD", "MYR",
+    "THB", "TWD", "KRW", "IDR", "PHP", "VND", "INR", "RMB",
 ];
 
 /// Bare letter-bearing tokens in `text` that could be a ticker: `SPCX`, `TSLA`.
@@ -1046,6 +1052,18 @@ mod tests {
         assert!(ticker_candidates("AAPL.US 上涨").is_empty());
         // Numbers alone are not securities.
         assert!(ticker_candidates("2026 年 135 美元").is_empty());
+    }
+
+    /// An account summary is a table of amounts, each labelled with a currency —
+    /// and the server answers for `HKD.US` and `USD.US`, so without the guard
+    /// every row of it turned into a link to the wrong thing.
+    #[test]
+    fn currency_codes_are_not_tickers() {
+        let text = "净资产 HKD 687,568.58，可提取现金 USD 0.02，SGD 0，CNH 12";
+        assert!(
+            ticker_candidates(text).is_empty(),
+            "currencies label the amount, they do not name a security"
+        );
     }
 
     /// Nothing is linked until something confirms it is a security: an unresolved
