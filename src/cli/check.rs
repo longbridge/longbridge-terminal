@@ -1,13 +1,8 @@
-use std::time::{Duration, Instant};
-
 use anyhow::Result;
 use serde_json::json;
 
 use super::OutputFormat;
-use crate::region;
-
-const CONNECT_TIMEOUT_SECS: u64 = 5;
-const PROBE_COUNT: usize = 10;
+use crate::region::{self, ProbeStats, CONNECT_TIMEOUT_SECS, PROBE_COUNT};
 
 // ANSI colors
 const GREEN: &str = "\x1b[32m";
@@ -15,77 +10,6 @@ const YELLOW: &str = "\x1b[33m";
 const RED: &str = "\x1b[31m";
 const DIM: &str = "\x1b[2m";
 const RESET: &str = "\x1b[0m";
-
-/// How much faster the other access point must measure before its latency
-/// overrides the geo verdict — both an absolute and a relative margin.
-///
-/// Geolocation is only a proxy for "which access point serves you better"; the
-/// probe measures that directly. But a single sample is noisy, and a
-/// split-tunnel proxy can route geotest and the API over entirely different
-/// paths, so only a wide, unambiguous gap should repin. Sized from observed
-/// data: a same-continent 41ms / 20% edge is noise; a split-tunnel 135ms / 42%
-/// gap is not.
-const REPIN_MIN_DELTA_MS: u64 = 50;
-
-struct ProbeStats {
-    ok: bool,
-    ms: u64,
-}
-
-/// Whether measured latency should override the geo verdict, and which way.
-///
-/// `None` leaves the verdict alone.
-fn repin_from_latency(is_cn: bool, global: &ProbeStats, cn: &ProbeStats) -> Option<bool> {
-    let (active, other) = if is_cn { (cn, global) } else { (global, cn) };
-
-    // An unreachable access point is never the right one — switch whenever the
-    // alternative works. This is the case that stranded overseas clients.
-    if !active.ok {
-        return other.ok.then_some(!is_cn);
-    }
-    if !other.ok {
-        return None;
-    }
-
-    let faster_by = active.ms.checked_sub(other.ms)?;
-    // `other.ms * 4 <= active.ms * 3` is "at least 25% faster" in integers.
-    let decisive = faster_by >= REPIN_MIN_DELTA_MS && other.ms * 4 <= active.ms * 3;
-    decisive.then_some(!is_cn)
-}
-
-/// Measures HTTPS warm-connection latency with `PROBE_COUNT` requests.
-/// Sends one warm-up request first to establish the connection, then
-/// drops the fastest and slowest sample from the measured runs and averages the rest.
-async fn probe(url: &str) -> ProbeStats {
-    let Ok(client) = reqwest::Client::builder()
-        .timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
-        .build()
-    else {
-        return ProbeStats { ok: false, ms: 0 };
-    };
-    // Warm-up: establish connection, result not counted
-    if client.get(url).send().await.is_err() {
-        return ProbeStats { ok: false, ms: 0 };
-    }
-    let mut samples = Vec::with_capacity(PROBE_COUNT);
-    for _ in 0..PROBE_COUNT {
-        let start = Instant::now();
-        match client.get(url).send().await {
-            Ok(resp) => {
-                let body = resp.text().await.unwrap_or_default();
-                if body.trim() != "success" {
-                    return ProbeStats { ok: false, ms: 0 };
-                }
-            }
-            Err(_) => return ProbeStats { ok: false, ms: 0 },
-        }
-        samples.push(start.elapsed().as_millis() as u64);
-    }
-    samples.sort_unstable();
-    let trimmed = &samples[1..samples.len() - 1];
-    let ms = trimmed.iter().sum::<u64>() / trimmed.len() as u64;
-    ProbeStats { ok: true, ms }
-}
 
 fn latency_colored(ms: u64) -> String {
     let color = if ms < 100 {
@@ -143,19 +67,15 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
     }
 
     // ── Connectivity (concurrent) ─────────────────────────────────────────────
-    let global_probe_url = format!("{}/health", region::HTTP_URL_GLOBAL);
-    let cn_probe_url = format!("{}/health", region::HTTP_URL_CN);
-    let (global, cn) = tokio::join!(probe(&global_probe_url), probe(&cn_probe_url),);
+    let (global, cn) = region::probe_access_points().await;
 
     // ── Repin from measurement ───────────────────────────────────────────────
     // The latency probe measures the thing geolocation only approximates, so a
-    // decisive gap wins. Persisted, so subsequent commands follow it too.
-    let repinned = region_override
-        .is_none()
-        .then(|| repin_from_latency(is_cn, &global, &cn))
-        .flatten();
+    // decisive gap wins. Persisted, so subsequent commands follow it too — and
+    // recorded either way, so the background probe on the next startup does not
+    // immediately repeat what was just measured here.
+    let repinned = region::record_measurement(is_cn, &global, &cn);
     if let Some(measured_is_cn) = repinned {
-        region::record_region(measured_is_cn);
         is_cn = measured_is_cn;
     }
 
@@ -264,50 +184,4 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
             field("status", "string", "Compatibility status summary"),
         ],
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn ok(ms: u64) -> ProbeStats {
-        ProbeStats { ok: true, ms }
-    }
-    fn down() -> ProbeStats {
-        ProbeStats { ok: false, ms: 0 }
-    }
-
-    #[test]
-    fn repins_when_the_other_access_point_is_decisively_faster() {
-        // Measured on a split-tunnel proxy: geotest said CN, but the global
-        // endpoint was 135ms (42%) ahead of the CN one.
-        assert_eq!(repin_from_latency(true, &ok(321), &ok(456)), Some(false));
-    }
-
-    #[test]
-    fn ignores_a_narrow_lead() {
-        // Measured on a US CI runner: cn led global by 41ms (20%). Too close to
-        // act on — repinning here would undo correct geo detection.
-        assert_eq!(repin_from_latency(false, &ok(244), &ok(203)), None);
-    }
-
-    #[test]
-    fn leaves_an_already_optimal_verdict_alone() {
-        // CN proxy exit: cn is active and far ahead, nothing to do.
-        assert_eq!(repin_from_latency(true, &ok(228), &ok(46)), None);
-    }
-
-    #[test]
-    fn always_leaves_an_unreachable_access_point() {
-        // The case that stranded overseas clients on longbridge.cn.
-        assert_eq!(repin_from_latency(true, &ok(300), &down()), Some(false));
-        assert_eq!(repin_from_latency(false, &down(), &ok(300)), Some(true));
-    }
-
-    #[test]
-    fn stays_put_when_the_alternative_is_also_down() {
-        assert_eq!(repin_from_latency(true, &down(), &down()), None);
-        // A working active endpoint is kept even if the other one is dead.
-        assert_eq!(repin_from_latency(true, &down(), &ok(50)), None);
-    }
 }
