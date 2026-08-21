@@ -443,6 +443,7 @@ Ai:
   SlashAgent: "Switch agent — /agent <agent-id> · /agent reset"
   SlashHelp: "Show available commands"
   SlashCopy: "Copy the last answer"
+  SlashDebug: "Copy a diagnostic report for troubleshooting"
   NothingToCopy: "No answer to copy yet"
   SlashExit: "Exit LongbridgeAI"
   CommandsTitle: "Commands"

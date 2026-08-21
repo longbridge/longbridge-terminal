@@ -26,10 +26,11 @@ pub enum Role {
 
 /// How a tool call ended, for the transcript's tool lines.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
 pub enum ToolStatus {
-    Running,
-    Ok,
-    Failed,
+    Running = 0,
+    Ok = 1,
+    Failed = 2,
 }
 
 /// A finished reasoning phase: how long it ran, and whether the reader has
@@ -354,6 +355,7 @@ impl ChatState {
         // explicit `thinking_finished` still leaves its summary above the answer
         // rather than below it.
         self.collapse_thinking();
+        self.settle_running_tools();
         let error_free = error.is_none();
         let produced = self
             .streaming
@@ -392,6 +394,22 @@ impl ChatState {
         }
         self.busy = false;
         self.status.clear();
+    }
+
+    /// Stop any tool line still claiming to be in flight.
+    ///
+    /// The turn is over, so nothing is running — whatever the stream did or did
+    /// not say. Work delegated to a subagent reports its completion through an
+    /// event family this client does not render, which left those rows spinning
+    /// for the rest of the session under a finished, complete answer. A failure
+    /// is always reported explicitly (and recorded in [`Self::tool_failures`]),
+    /// so a call that never reported one is taken as having completed.
+    fn settle_running_tools(&mut self) {
+        for m in &mut self.messages {
+            if m.tool == Some(ToolStatus::Running) {
+                m.tool = Some(ToolStatus::Ok);
+            }
+        }
     }
 
     /// Retire the live reasoning block into the transcript, folded to one line
@@ -453,6 +471,7 @@ impl ChatState {
         // cancelled mid-reasoning does not leave its live block on screen with
         // nothing left to finish it.
         self.collapse_thinking();
+        self.settle_running_tools();
         if let Some(mut text) = self.streaming.take() {
             if text.trim().is_empty() {
                 text = cancelled_label.to_string();
@@ -538,6 +557,47 @@ mod tests {
         s.apply(ChatEvent::ThinkingDelta("about the first".into()));
         s.apply(ChatEvent::UserPrompt("second".into()));
         assert!(s.thinking.is_none());
+    }
+
+    /// Work the agent delegates to a subagent reports its completion through an
+    /// event family this client does not render, so those rows never resolved and
+    /// span for the rest of the session under a finished answer. The turn ending
+    /// is proof enough that nothing is still in flight.
+    #[test]
+    fn a_finished_turn_leaves_no_tool_claiming_to_be_running() {
+        for outcome in [None, Some("upstream unavailable".to_string())] {
+            let mut s = state();
+            s.apply(ChatEvent::UserPrompt("analyse QCOM and SNDK".into()));
+            s.apply(ChatEvent::ToolStarted("Get Ticker Region".into()));
+            s.apply(ChatEvent::ToolFinished {
+                name: "Get Ticker Region".into(),
+                ok: true,
+            });
+            // Started by a subagent, never reported finished.
+            s.apply(ChatEvent::ToolStarted("Get Candlestick Data".into()));
+            s.apply(ChatEvent::Delta("QCOM and SNDK diverge.".into()));
+            s.apply(ChatEvent::TurnFinished { error: outcome });
+            assert!(
+                !s.messages
+                    .iter()
+                    .any(|m| m.tool == Some(ToolStatus::Running)),
+                "nothing runs after the turn is over"
+            );
+        }
+    }
+
+    /// Cancelling is the same: the run is gone, so nothing it started is still
+    /// going.
+    #[test]
+    fn cancelling_leaves_no_tool_claiming_to_be_running() {
+        let mut s = state();
+        s.apply(ChatEvent::UserPrompt("analyse QCOM".into()));
+        s.apply(ChatEvent::ToolStarted("Get Candlestick Data".into()));
+        s.cancel("(cancelled)");
+        assert!(!s
+            .messages
+            .iter()
+            .any(|m| m.tool == Some(ToolStatus::Running)));
     }
 
     /// Prompts lined up during one answer go out as a single turn: the reader was

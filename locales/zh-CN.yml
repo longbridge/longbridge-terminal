@@ -443,6 +443,7 @@ Ai:
   SlashAgent: "切换智能体 —— /agent <agent-id> · /agent reset"
   SlashHelp: "显示可用命令"
   SlashCopy: "复制上一条回答"
+  SlashDebug: "复制诊断报告，用于排查问题"
   NothingToCopy: "还没有可复制的回答"
   SlashExit: "退出 LongbridgeAI"
   CommandsTitle: "命令"

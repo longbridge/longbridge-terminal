@@ -174,7 +174,7 @@ impl Slash {
     }
 }
 
-const SLASH: [Slash; 12] = [
+const SLASH: [Slash; 13] = [
     Slash {
         name: "/new",
         aliases: &["/clear"],
@@ -226,6 +226,11 @@ const SLASH: [Slash; 12] = [
         desc: "Ai.SlashLogout",
     },
     Slash {
+        name: "/debug",
+        aliases: &[],
+        desc: "Ai.SlashDebug",
+    },
+    Slash {
         name: "/help",
         aliases: &[],
         desc: "Ai.SlashHelp",
@@ -240,6 +245,79 @@ const SLASH: [Slash; 12] = [
 /// Resolve a typed `/name` to the canonical key `exec_slash` dispatches on.
 fn slash_lookup(typed: &str) -> Option<&'static str> {
     SLASH.iter().find(|c| c.answers_to(typed)).map(Slash::key)
+}
+
+/// One entry in the session's event log, with repeats folded into `count`.
+struct LoggedEvent {
+    at: std::time::Instant,
+    label: String,
+    count: u32,
+}
+
+/// How many event entries to keep. Enough to cover a long turn's whole timeline
+/// once repeats are folded, and small enough that the report stays readable.
+const EVENT_LOG_MAX: usize = 200;
+
+/// Record one applied event.
+///
+/// Repeats of the same kind fold into a count rather than each taking a line: a
+/// turn streams hundreds of deltas, and a log full of them would push out the
+/// tool and status transitions that are the reason to read it at all.
+fn log_event(ui: &mut Ui, event: &ChatEvent) {
+    let label = event_label(event);
+    let kind = label.split(' ').next().unwrap_or_default().to_string();
+    match ui.event_log.back_mut() {
+        Some(last) if last.label.starts_with(&kind) && repeatable(&kind) => {
+            last.count += 1;
+            last.at = std::time::Instant::now();
+        }
+        _ => {
+            if ui.event_log.len() >= EVENT_LOG_MAX {
+                ui.event_log.pop_front();
+            }
+            ui.event_log.push_back(LoggedEvent {
+                at: std::time::Instant::now(),
+                label,
+                count: 1,
+            });
+        }
+    }
+}
+
+/// Whether a run of this event kind is worth folding into one line.
+fn repeatable(kind: &str) -> bool {
+    matches!(kind, "answer_delta" | "thinking_delta" | "status")
+}
+
+/// A compact, content-free description of an event.
+///
+/// Lengths rather than text: the report is meant to be handed to someone else,
+/// and what went wrong is in the shape of the stream, not in what was said.
+fn event_label(event: &ChatEvent) -> String {
+    match event {
+        ChatEvent::UserPrompt(t) => format!("user_prompt ({} chars)", t.chars().count()),
+        ChatEvent::TurnStarted {
+            chat_uid,
+            message_id,
+        } => format!("turn_started chat={chat_uid} message={message_id}"),
+        ChatEvent::Delta(t) => format!("answer_delta ({} chars)", t.chars().count()),
+        ChatEvent::ThinkingDelta(t) => format!("thinking_delta ({} chars)", t.chars().count()),
+        ChatEvent::ThinkingFinished => "thinking_finished".to_string(),
+        ChatEvent::Status(s) => format!("status {s}"),
+        ChatEvent::ToolStarted(name) => format!("tool_started {name}"),
+        ChatEvent::ToolFinished { name, ok } => format!("tool_finished {name} ok={ok}"),
+        ChatEvent::Title(_) => "title".to_string(),
+        ChatEvent::Interrupt(_) => "interrupt".to_string(),
+        ChatEvent::TurnError(e) => format!("turn_error {e}"),
+        ChatEvent::Meta {
+            references,
+            further,
+        } => format!("meta refs={} further={}", references.len(), further.len()),
+        ChatEvent::TurnFinished { error } => match error {
+            Some(e) => format!("turn_finished error={e}"),
+            None => "turn_finished".to_string(),
+        },
+    }
 }
 
 /// A card being scanned for its click target: the security it is about, the row
@@ -573,6 +651,9 @@ struct Ui {
     thinking_rows: Vec<(usize, usize)>,
     /// Columns reserved for each ticker entry's price. See [`tape_spans`].
     tape_price_w: HashMap<String, usize>,
+    /// The stream events this session has applied, most recent last, capped at
+    /// [`EVENT_LOG_MAX`]. What `/debug` reports; see [`log_event`].
+    event_log: std::collections::VecDeque<LoggedEvent>,
     /// Sender for background quote fetches, so a clicked symbol can ask for its
     /// own quote the same way a finished turn asks for its cards.
     cards_tx: Option<UnboundedSender<HashMap<String, super::quotes::QuoteCardData>>>,
@@ -681,6 +762,7 @@ impl Ui {
             last_click: None,
             thinking_rows: Vec::new(),
             tape_price_w: HashMap::new(),
+            event_log: std::collections::VecDeque::new(),
             quotes: HashMap::new(),
             sessions_loading: false,
             sessions_error: false,
@@ -893,6 +975,7 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
                 let Some(event) = current_turn_event(&state, turn_event) else {
                     continue;
                 };
+                log_event(&mut ui, &event);
                 if let ChatEvent::Interrupt(interrupt) = &event {
                     let questions = runtime::interrupt_interactions(interrupt)
                         .iter()
@@ -1860,6 +1943,13 @@ fn exec_slash(name: &str, args: &str, ui: &mut Ui, state: &mut ChatState) {
                 None => ui.notice = Some(t!("Ai.NothingToCopy").to_string()),
             }
         }
+        // The report is the whole point: it goes to the clipboard so it can be
+        // pasted into a conversation with an assistant, not printed into the
+        // transcript where it would be one more thing to scroll past.
+        "debug" => {
+            let report = debug_report(ui, state);
+            copy_with_notice(ui, Some(report));
+        }
         "export" => {
             // Nothing said yet: don't drop an empty file in Downloads.
             if transcript_text(state).trim().is_empty() {
@@ -2784,6 +2874,176 @@ fn export_slug(title: &str) -> String {
 }
 
 /// Copy `text` and set a status notice reflecting the outcome.
+/// The `/debug` report: everything needed to explain a session that misbehaved,
+/// in a form that can be pasted straight into a conversation with an AI.
+///
+/// It exists because the interesting failures are in the *shape* of the stream —
+/// an event that never arrived, a row that never resolved — and none of that
+/// survives in a screenshot. Contents are summarised to lengths and counts: the
+/// report is meant to be handed to someone else, and what was said is not what
+/// went wrong.
+fn debug_report(ui: &Ui, state: &ChatState) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+    let _ = writeln!(out, "# longbridge ai — debug report\n");
+    let _ = writeln!(
+        out,
+        "Paste this to an assistant to diagnose the session. Message text is \
+         summarised as lengths, never included.\n"
+    );
+
+    let _ = writeln!(out, "## Build\n");
+    let _ = writeln!(out, "- version: {}", env!("CARGO_PKG_VERSION"));
+    let _ = writeln!(
+        out,
+        "- target: {} {} ({})",
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        }
+    );
+    let _ = writeln!(out, "- locale: {}", crate::locale::get());
+    if let Ok((cols, rows)) = crossterm::terminal::size() {
+        let _ = writeln!(out, "- terminal: {cols}x{rows}");
+    }
+
+    let _ = writeln!(out, "\n## Access point\n");
+    let _ = writeln!(
+        out,
+        "- cached verdict: {}",
+        crate::region::cached_verdict().unwrap_or("none")
+    );
+    let _ = writeln!(
+        out,
+        "- active: {}",
+        if crate::region::is_cn_cached() {
+            "CN"
+        } else {
+            "Global"
+        }
+    );
+    let _ = writeln!(
+        out,
+        "- override: {}",
+        crate::region::region_override().unwrap_or("none")
+    );
+
+    let _ = writeln!(out, "\n## Session\n");
+    let _ = writeln!(out, "- agent: {}", state.agent_uid);
+    let _ = writeln!(
+        out,
+        "- chat: {}",
+        state.chat_uid.as_deref().unwrap_or("none")
+    );
+    let _ = writeln!(
+        out,
+        "- message: {}",
+        state.message_id.as_deref().unwrap_or("none")
+    );
+    let _ = writeln!(
+        out,
+        "- parent: {}",
+        state.parent_message_id.as_deref().unwrap_or("none")
+    );
+
+    let _ = writeln!(out, "\n## Turn\n");
+    let _ = writeln!(out, "- busy: {}", state.busy);
+    let _ = writeln!(
+        out,
+        "- status: {}",
+        if state.status.is_empty() {
+            "—"
+        } else {
+            &state.status
+        }
+    );
+    if let Some(started) = ui.turn_started {
+        let _ = writeln!(out, "- elapsed: {}s", started.elapsed().as_secs());
+    }
+    let _ = writeln!(out, "- queued prompts: {}", state.queued.len());
+    let _ = writeln!(
+        out,
+        "- awaiting an answer: {}",
+        state.pending_interrupt.is_some()
+    );
+    if let Some(err) = &state.turn_error {
+        let _ = writeln!(out, "- server error: {err}");
+    }
+    if let Some(streaming) = &state.streaming {
+        let _ = writeln!(out, "- answer so far: {} chars", streaming.chars().count());
+    }
+    if let Some(thinking) = &state.thinking {
+        let _ = writeln!(
+            out,
+            "- reasoning in flight: {} chars, {}s",
+            thinking.text.chars().count(),
+            thinking.started.elapsed().as_secs()
+        );
+    }
+
+    let _ = writeln!(out, "\n## Transcript\n");
+    let _ = writeln!(out, "- messages: {}", state.messages.len());
+    // Tool rows with their status: a call still marked running under a finished
+    // answer is the single most reported symptom, and it is invisible in prose.
+    let tools: Vec<&Message> = state
+        .messages
+        .iter()
+        .filter(|m| m.role == Role::Tool)
+        .collect();
+    let _ = writeln!(out, "- tool calls: {}", tools.len());
+    for m in &tools {
+        let status = match m.tool {
+            Some(ToolStatus::Running) => "running",
+            Some(ToolStatus::Ok) => "ok",
+            Some(ToolStatus::Failed) => "failed",
+            None => "unknown",
+        };
+        let _ = writeln!(out, "  - {} — {status}", m.text);
+    }
+    let reasoning: Vec<u64> = state
+        .messages
+        .iter()
+        .filter_map(|m| m.thinking.as_ref().map(|t| t.secs))
+        .collect();
+    if !reasoning.is_empty() {
+        let _ = writeln!(
+            out,
+            "- reasoning blocks: {} ({})",
+            reasoning.len(),
+            reasoning
+                .iter()
+                .map(|s| format!("{s}s"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    if !state.tool_failures.is_empty() {
+        let _ = writeln!(out, "- failed tools: {}", state.tool_failures.join(", "));
+    }
+
+    let _ = writeln!(out, "\n## Events (oldest first)\n");
+    if ui.event_log.is_empty() {
+        let _ = writeln!(out, "_none recorded_");
+    } else {
+        let _ = writeln!(out, "```");
+        let first = ui.event_log.front().map(|e| e.at);
+        for entry in &ui.event_log {
+            let offset = first.map_or(0.0, |f| entry.at.duration_since(f).as_secs_f64());
+            let repeat = if entry.count > 1 {
+                format!(" ×{}", entry.count)
+            } else {
+                String::new()
+            };
+            let _ = writeln!(out, "{offset:7.2}s  {}{repeat}", entry.label);
+        }
+        let _ = writeln!(out, "```");
+    }
+    out
+}
+
 fn copy_with_notice(ui: &mut Ui, text: Option<String>) {
     ui.notice = Some(
         match text {
@@ -5223,10 +5483,18 @@ fn transcript_sig(state: &ChatState, width: usize) -> u64 {
     if let Some(last) = state.messages.last() {
         last.text.hash(&mut h);
     }
-    // Opening a fold changes how many rows a message takes, and the cache is
-    // keyed on shape. Without this the transcript kept its folded height and the
-    // reasoning appeared only after some unrelated edit invalidated the cache.
+    // Anything that changes what a committed row *looks like* has to be in the
+    // key, not just how many rows there are.
+    //
+    // A tool resolving from running to done changes only its own marker, and a
+    // fold opening changes only its own height — neither moves `len` or the last
+    // message's text. Without them here, a turn's later tool calls sat spinning
+    // on screen long after they had finished, until some unrelated change
+    // happened to invalidate the cache.
     for (i, m) in state.messages.iter().enumerate() {
+        if let Some(status) = m.tool {
+            (i, status as u8).hash(&mut h);
+        }
         if m.thinking.as_ref().is_some_and(|t| t.expanded) {
             i.hash(&mut h);
         }
@@ -7344,6 +7612,85 @@ mod tests {
             reasoning > answer,
             "the reasoning follows the answer it interrupted:\n{}",
             rows.join("\n")
+        );
+    }
+
+    /// `/debug` exists so a session that misbehaved can explain itself. The
+    /// symptom that prompted it — a tool row still marked running under a
+    /// finished answer — has to be visible in the report, and no message text
+    /// may be, because the report is meant to be handed to someone else.
+    #[test]
+    fn the_debug_report_shows_the_shape_of_the_stream_and_no_content() {
+        let mut ui = super::Ui::new();
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        for event in [
+            super::ChatEvent::UserPrompt("继续深入分析 QCOM, SNDK".into()),
+            super::ChatEvent::TurnStarted {
+                chat_uid: "6b4g6ojes95aq".into(),
+                message_id: "42".into(),
+            },
+            super::ChatEvent::ThinkingDelta("weighing both".into()),
+            super::ChatEvent::ToolStarted("Get Ticker Region".into()),
+            super::ChatEvent::ToolFinished {
+                name: "Get Ticker Region".into(),
+                ok: true,
+            },
+            // Delegated to a subagent: started, never reported finished.
+            super::ChatEvent::ToolStarted("Get Candlestick Data".into()),
+            super::ChatEvent::Delta("QCOM and SNDK diverge.".into()),
+        ] {
+            super::log_event(&mut ui, &event);
+            state.apply(event);
+        }
+
+        let report = super::debug_report(&ui, &state);
+        assert!(
+            report.contains("6b4g6ojes95aq"),
+            "the session it happened in:\n{report}"
+        );
+        assert!(
+            report.contains("Get Candlestick Data — running"),
+            "the row that never resolved is the whole point:\n{report}"
+        );
+        assert!(
+            report.contains("Get Ticker Region — ok"),
+            "and the ones that did:\n{report}"
+        );
+        assert!(
+            report.contains("tool_started Get Candlestick Data"),
+            "the timeline:\n{report}"
+        );
+        // Content stays out: lengths only.
+        assert!(
+            !report.contains("QCOM and SNDK diverge."),
+            "the answer text must not travel with the report:\n{report}"
+        );
+        assert!(
+            !report.contains("weighing both"),
+            "nor the reasoning:\n{report}"
+        );
+    }
+
+    /// A tool resolving changes only its own marker — not the message count, not
+    /// the last message's text. The cached transcript was keyed on those, so a
+    /// call that finished after the last shape change kept spinning on screen
+    /// under a finished answer for the rest of the session.
+    #[test]
+    fn a_tool_that_finishes_redraws_without_any_other_change() {
+        let mut ui = super::Ui::new();
+        let mut state = busy_state();
+        let running = frame(&mut ui, &mut state, 70, 16).join("\n");
+        assert!(running.contains("◌ Get Quote"), "in flight:\n{running}");
+
+        state.apply(super::ChatEvent::ToolFinished {
+            name: "Get Quote".into(),
+            ok: true,
+        });
+        let done = frame(&mut ui, &mut state, 70, 16).join("\n");
+        assert!(done.contains("⏺ Get Quote"), "resolved on screen:\n{done}");
+        assert!(
+            !done.contains("◌ Get Quote"),
+            "and no longer claiming to be running:\n{done}"
         );
     }
 
