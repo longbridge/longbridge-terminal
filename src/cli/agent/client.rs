@@ -351,6 +351,17 @@ fn is_rate_limited(err: &longbridge::Error) -> bool {
     )
 }
 
+/// True for the server's 403 rejection of a conversation. Its message field
+/// is a bare "success", so the CLI supplies the actionable context itself.
+fn is_forbidden(err: &longbridge::Error) -> bool {
+    matches!(
+        err,
+        longbridge::Error::HttpClient(longbridge::httpclient::HttpClientError::OpenApi {
+            code, ..
+        }) if *code == 403
+    )
+}
+
 /// One pre-stream POST handshake attempt, returning the raw SDK error so the
 /// caller can classify it precisely.
 // The error size is the SDK's; boxing here would strip the type the caller
@@ -840,6 +851,23 @@ async fn open_conversation_stream_retrying(
             Ok(s) => return Ok(s),
             Err(e) if is_rate_limited(&e) => {
                 tokio::time::sleep(Duration::from_secs_f64(backoff)).await;
+            }
+            // A fresh error, not `.context(...)`: the CLI's error printer
+            // downcasts to the SDK error and would show only the server's
+            // message, which for this rejection is a bare "success".
+            Err(e) if is_forbidden(&e) => {
+                let trace = match &e {
+                    longbridge::Error::HttpClient(HttpClientError::OpenApi {
+                        trace_id, ..
+                    }) if !trace_id.is_empty() => format!(" (trace_id: {trace_id})"),
+                    _ => String::new(),
+                };
+                return Err(anyhow::anyhow!(
+                    "The agent refused the conversation (HTTP 403): it is \
+                     unpublished or not open to your account. Only published \
+                     agents can chat — `longbridge agent list --format json` \
+                     shows `is_published` per agent{trace}"
+                ));
             }
             Err(e) => {
                 return Err(anyhow::Error::new(e).context("Failed to run the AI conversation"))

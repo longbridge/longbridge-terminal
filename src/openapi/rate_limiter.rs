@@ -112,7 +112,11 @@ impl RateLimiter {
         F: FnMut() -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<T, E>> + Send>>,
         E: std::fmt::Display,
     {
-        const MAX_RETRIES: u32 = 3;
+        // Five, not three: a fan-out (`agent list` issues one request per
+        // workspace plus catalog pages) can see the same call rejected
+        // several times while its siblings drain the freed quota, and each
+        // retry is cheap now that the wait honors the server's own hint.
+        const MAX_RETRIES: u32 = 5;
         let mut retry_count = 0;
         let mut backoff_duration = Duration::from_secs(1);
 
