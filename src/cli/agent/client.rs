@@ -310,6 +310,9 @@ fn is_rate_limited(err: &longbridge::Error) -> bool {
 
 /// One pre-stream POST handshake attempt, returning the raw SDK error so the
 /// caller can classify it precisely.
+// The error size is the SDK's; boxing here would strip the type the caller
+// classifies on.
+#[allow(clippy::result_large_err)]
 async fn open_conversation_stream(
     ctx: &longbridge::agent::AgentContext,
     req: &ConversationRequest,
