@@ -819,6 +819,11 @@ pub async fn refresh_if_expired() -> Result<()> {
     tracing::debug!("Refreshing expired access token via {url} (x-dc-region={dc_region})");
 
     let dynamic_client_id = effective_client_id();
+    // The token endpoint lives on the same OpenAPI host as every API call and
+    // spends the same quota; skipping the limiter here puts this POST and the
+    // command's first API call closer together than the server's minimum
+    // interval allows (code 429003).
+    crate::openapi::global_rate_limiter().acquire().await;
     let resp = http_client
         .post(&url)
         .header(longbridge::DC_REGION_HEADER, dc_region)

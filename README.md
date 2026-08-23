@@ -305,6 +305,7 @@ longbridge sharelist popular [--count 10]                         # Get popular 
 ```bash
 longbridge agent workspaces                                         # List AI workspaces
 longbridge agent list [--workspace 33] [--name 选股]                # Discover chat-capable AI agents (--all includes workflow agents)
+longbridge agent list --public                                      # Only the platform's public agent catalog
 longbridge agent chat chatbot "分析一下 TSLA"                       # `chatbot` (LongbridgeAI) is public — usable by any account
 longbridge agent chat chatbot "分析一下 TSLA"                       # Chat with an agent (SSE; --stream for live tokens)
 longbridge agent chat chatbot <CHAT_UID> <MSG_ID> "继续"            # Multi-turn follow-up

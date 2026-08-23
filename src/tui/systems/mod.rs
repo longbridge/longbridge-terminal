@@ -41,7 +41,7 @@ pub type Component = ();
 pub struct WsManager;
 
 impl WsManager {
-    #[allow(clippy::unused_async)]
+    #[allow(clippy::unused_async, clippy::unused_async_trait_impl)]
     pub async fn unmount(&self, _name: &str) -> anyhow::Result<()> {
         // TODO: Use Longbridge SDK to unsubscribe
         Ok(())

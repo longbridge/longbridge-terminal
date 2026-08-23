@@ -894,6 +894,9 @@ fn record_chat_mapping(acp_session_id: &str, chat_uid: &str) {
 /// caller's event mapping never sees the transient failure. Only the *initial*
 /// start error propagates (so the caller can degrade); a failure to start the
 /// retry is surfaced as a stream error instead.
+// The error size is the SDK's; boxing here would strip the type the caller
+// classifies on.
+#[allow(clippy::result_large_err)]
 async fn conversation_stream_with_retry(
     context: longbridge::AgentContext,
     agent_id: String,

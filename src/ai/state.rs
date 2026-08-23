@@ -482,7 +482,7 @@ impl ChatState {
         if self.queued.is_empty() {
             return None;
         }
-        Some(self.queued.drain(..).collect::<Vec<_>>().join("\n\n"))
+        Some(std::mem::take(&mut self.queued).join("\n\n"))
     }
 
     /// Cancel the active turn, folding any partial answer into the transcript.

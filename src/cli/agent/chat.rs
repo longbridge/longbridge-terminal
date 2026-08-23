@@ -1548,6 +1548,7 @@ mod tests {
         // `list` has no --interactive, so it is never rejected.
         let list = AgentCmd::List {
             workspace: None,
+            public: false,
             name: None,
             published: false,
             all: false,

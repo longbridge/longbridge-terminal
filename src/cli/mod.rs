@@ -2669,16 +2669,24 @@ pub enum AgentCmd {
     /// Only published agents can chat. Lists conversational modes (chat,
     /// agentic_chat); others such as workflow are hidden with a note on
     /// stderr saying what was withheld. Pass --all to list every mode.
-    /// Public agents usable by any account (e.g. chatbot) are shown under
-    /// workspace "Public: Longbridge"; the API cannot enumerate them, so any
-    /// published uid is worth trying even if it is absent here.
+    /// Public agents usable by any account (e.g. chatbot) are fetched from
+    /// the platform catalog and shown under workspace "Public: Longbridge";
+    /// --public lists only that catalog.
     /// Example: longbridge agent list
     /// Example: longbridge agent list --workspace 33 --name 选股
+    /// Example: longbridge agent list --public
     /// Example: longbridge agent list --all
     List {
         /// Workspace ID; omit to traverse all workspaces
         #[arg(long)]
         workspace: Option<String>,
+        /// Show only the platform's public agents (skips your workspaces)
+        // Also conflicts with the paging flags: the catalog is fetched whole,
+        // so honouring `--page`/`--count` here would be a lie. `requires` on
+        // those two is not enough — clap skips it once `--workspace`, the arg
+        // they require, is itself excluded by `--public`.
+        #[arg(long, conflicts_with_all = ["workspace", "page", "count"])]
+        public: bool,
         /// Fuzzy name filter (server-side)
         #[arg(long)]
         name: Option<String>,
@@ -2689,10 +2697,10 @@ pub enum AgentCmd {
         #[arg(long)]
         all: bool,
         /// Page number (only with --workspace)
-        #[arg(long, default_value = "1")]
+        #[arg(long, default_value = "1", requires = "workspace")]
         page: u32,
         /// Page size (only with --workspace)
-        #[arg(long, alias = "limit", default_value = "20")]
+        #[arg(long, alias = "limit", default_value = "20", requires = "workspace")]
         count: u32,
     },
 
@@ -5410,6 +5418,34 @@ mod tests {
         assert_eq!(workspace.as_deref(), Some("33"));
         assert_eq!(name.as_deref(), Some("选股"));
         assert!(published);
+    }
+
+    #[test]
+    fn test_agent_list_public_flag() {
+        let cli = parse(&["longbridge", "agent", "list", "--public"]).unwrap();
+        let Some(Commands::Agent {
+            cmd: Some(AgentCmd::List { public, .. }),
+            ..
+        }) = cli.command
+        else {
+            panic!("expected Agent List");
+        };
+        assert!(public);
+
+        // The catalog belongs to no workspace, so combining the two scopes
+        // is a contradiction clap rejects up front.
+        assert!(
+            parse(&[
+                "longbridge",
+                "agent",
+                "list",
+                "--public",
+                "--workspace",
+                "33"
+            ])
+            .is_err(),
+            "--public and --workspace must conflict"
+        );
     }
 
     #[test]
