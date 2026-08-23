@@ -393,7 +393,6 @@ Agent:
   CallingTool: "調用工具：%{name}"
   ToolDone: "工具完成：%{name}（%{status}）"
   Generating: "生成回答中…"
-  PublicChatbotDescription: "與 AI 智能助手對話，獲取專業的投資分析和建議"
   References: "參考來源"
   FurtherQuestions: "推薦追問"
   Interrupted: "Agent 需要補充資訊："

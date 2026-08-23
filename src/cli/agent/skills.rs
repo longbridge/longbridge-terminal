@@ -24,17 +24,13 @@ pub fn skills_doc() -> &'static str {
         `workflow`) are hidden because `agent chat` cannot drive them;
         chatting with one fails with a bare `status=failed`.
 
-        **You can chat with more agents than this command can list.** The
-        server enumerates agents per workspace you own, but any published
-        agent is chattable by uid. Public agents therefore appear with
-        `"workspace_id": "Public: Longbridge"` and are seeded by this CLI, not
-        returned by the API:
+        The listing merges two sources: agents in workspaces you own, and the
+        platform's public catalog (every published, publicly shared agent —
+        e.g. `chatbot`, LongbridgeAI's general investment research assistant).
+        Public agents appear with `"workspace_id": "Public: Longbridge"`.
 
-        | uid | name |
-        | --- | --- |
-        | `chatbot` | LongbridgeAI — general investment research assistant |
-
-        If you are handed a uid that is not in the list, still try it.
+        Any published agent is chattable by uid, so if you are handed a uid
+        that is not in the list, still try it.
 
         Whenever something is hidden, a `note:` line naming the modes and
         counts goes to **stderr** (never stdout, so `--format json` stays

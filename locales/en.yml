@@ -393,7 +393,6 @@ Agent:
   CallingTool: "Calling tool: %{name}"
   ToolDone: "Tool finished: %{name} (%{status})"
   Generating: "Generating answer…"
-  PublicChatbotDescription: "Chat with the AI assistant for professional investment analysis and insights"
   References: "References"
   FurtherQuestions: "Suggested follow-ups"
   Interrupted: "The agent needs more information:"

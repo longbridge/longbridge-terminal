@@ -2669,9 +2669,8 @@ pub enum AgentCmd {
     /// Only published agents can chat. Lists conversational modes (chat,
     /// agentic_chat); others such as workflow are hidden with a note on
     /// stderr saying what was withheld. Pass --all to list every mode.
-    /// Public agents usable by any account (e.g. chatbot) are shown under
-    /// workspace "Public: Longbridge"; the API cannot enumerate them, so any
-    /// published uid is worth trying even if it is absent here.
+    /// Public agents usable by any account (e.g. chatbot) are fetched from
+    /// the platform catalog and shown under workspace "Public: Longbridge".
     /// Example: longbridge agent list
     /// Example: longbridge agent list --workspace 33 --name 选股
     /// Example: longbridge agent list --all
