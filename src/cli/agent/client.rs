@@ -840,6 +840,32 @@ pub async fn stream_conversation(
         .context("Gave up starting the AI conversation"))
 }
 
+/// Turn a failed handshake into the error the CLI should print. Shared by
+/// the retry loop and the attempt that follows it, so a 403 reads the same
+/// either side of the backoff being exhausted.
+fn handshake_error(err: longbridge::Error) -> anyhow::Error {
+    if is_forbidden(&err) {
+        // A fresh error, not `.context(...)`: the CLI's error printer
+        // downcasts to the SDK error and would show only the server's
+        // message, which for this rejection is a bare "success".
+        let trace = match &err {
+            longbridge::Error::HttpClient(HttpClientError::OpenApi { trace_id, .. })
+                if !trace_id.is_empty() =>
+            {
+                format!(" (trace_id: {trace_id})")
+            }
+            _ => String::new(),
+        };
+        return anyhow::anyhow!(
+            "The agent refused the conversation (HTTP 403): it is \
+             unpublished or not open to your account. Only published \
+             agents can chat — `longbridge agent list --format json` \
+             shows `is_published` per agent{trace}"
+        );
+    }
+    anyhow::Error::new(err).context("Failed to run the AI conversation")
+}
+
 /// The pre-stream POST handshake, retried on a typed 429002 rate limit.
 async fn open_conversation_stream_retrying(
     ctx: &longbridge::agent::AgentContext,
@@ -852,33 +878,14 @@ async fn open_conversation_stream_retrying(
             Err(e) if is_rate_limited(&e) => {
                 tokio::time::sleep(Duration::from_secs_f64(backoff)).await;
             }
-            // A fresh error, not `.context(...)`: the CLI's error printer
-            // downcasts to the SDK error and would show only the server's
-            // message, which for this rejection is a bare "success".
-            Err(e) if is_forbidden(&e) => {
-                let trace = match &e {
-                    longbridge::Error::HttpClient(HttpClientError::OpenApi {
-                        trace_id, ..
-                    }) if !trace_id.is_empty() => format!(" (trace_id: {trace_id})"),
-                    _ => String::new(),
-                };
-                return Err(anyhow::anyhow!(
-                    "The agent refused the conversation (HTTP 403): it is \
-                     unpublished or not open to your account. Only published \
-                     agents can chat — `longbridge agent list --format json` \
-                     shows `is_published` per agent{trace}"
-                ));
-            }
-            Err(e) => {
-                return Err(anyhow::Error::new(e).context("Failed to run the AI conversation"))
-            }
+            Err(e) => return Err(handshake_error(e)),
         }
     }
-    // Backoff exhausted: one final attempt, propagating whatever it yields.
+    // Backoff exhausted: one final attempt, classified the same way.
     crate::openapi::global_rate_limiter().acquire().await;
     open_conversation_stream(ctx, req)
         .await
-        .context("Failed to run the AI conversation")
+        .map_err(handshake_error)
 }
 
 #[cfg(test)]
