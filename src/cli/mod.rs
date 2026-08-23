@@ -2681,7 +2681,11 @@ pub enum AgentCmd {
         #[arg(long)]
         workspace: Option<String>,
         /// Show only the platform's public agents (skips your workspaces)
-        #[arg(long, conflicts_with = "workspace")]
+        // Also conflicts with the paging flags: the catalog is fetched whole,
+        // so honouring `--page`/`--count` here would be a lie. `requires` on
+        // those two is not enough — clap skips it once `--workspace`, the arg
+        // they require, is itself excluded by `--public`.
+        #[arg(long, conflicts_with_all = ["workspace", "page", "count"])]
         public: bool,
         /// Fuzzy name filter (server-side)
         #[arg(long)]
@@ -2693,10 +2697,10 @@ pub enum AgentCmd {
         #[arg(long)]
         all: bool,
         /// Page number (only with --workspace)
-        #[arg(long, default_value = "1")]
+        #[arg(long, default_value = "1", requires = "workspace")]
         page: u32,
         /// Page size (only with --workspace)
-        #[arg(long, alias = "limit", default_value = "20")]
+        #[arg(long, alias = "limit", default_value = "20", requires = "workspace")]
         count: u32,
     },
 
