@@ -78,7 +78,9 @@ impl RateLimiter {
             if let Some(&last) = grants.back() {
                 let earliest = last + self.min_gap;
                 if earliest > now {
-                    wait = earliest - now;
+                    // `max`, not assignment: every branch here is a lower
+                    // bound on the wait, so the longest one wins.
+                    wait = wait.max(earliest - now);
                 }
             }
             if grants.len() >= self.max_per_window as usize {
@@ -319,6 +321,24 @@ mod tests {
         assert_eq!(parse_retry_after("no hint here"), None);
         assert_eq!(parse_retry_after("retry after: 0s"), None);
         assert_eq!(parse_retry_after("retry after: 9000s"), None);
+    }
+
+    #[tokio::test]
+    async fn test_a_pause_outlives_a_shorter_min_gap() {
+        // A grant is already on the books, so the min-gap branch fires too.
+        // Its wait is the shorter of the two and must not shorten the pause.
+        let limiter = RateLimiter::new(10, Duration::from_millis(20));
+        limiter.acquire().await;
+        limiter.pause_until(Instant::now() + Duration::from_millis(300));
+
+        let start = Instant::now();
+        limiter.acquire().await;
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed >= Duration::from_millis(250),
+            "the longer of the two bounds must win, got {elapsed:?}"
+        );
     }
 
     #[tokio::test]
