@@ -13,7 +13,8 @@ pub fn skills_doc() -> &'static str {
         ## 1. Discover agents
 
         ```bash
-        longbridge agent list --format json          # all workspaces, merged
+        longbridge agent list --format json          # all workspaces + public catalog, merged
+        longbridge agent list --public --format json # the public catalog alone
         longbridge agent list --name screener --format json
         ```
 

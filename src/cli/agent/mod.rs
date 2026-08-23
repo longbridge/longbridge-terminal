@@ -182,6 +182,7 @@ impl AgentListing {
 pub(crate) async fn collect_agents(
     api: &dyn AgentApi,
     workspace: Option<String>,
+    public_only: bool,
     name: Option<String>,
     published: bool,
     all_modes: bool,
@@ -189,7 +190,11 @@ pub(crate) async fn collect_agents(
     count: u32,
 ) -> Result<AgentListing> {
     let mut all = Vec::new();
-    if let Some(ws) = workspace {
+    if public_only {
+        // The catalog alone — the workspaces are not consulted. With nothing
+        // else to show, a catalog failure propagates instead of degrading.
+        all = fetch_public_agents(api, name).await?;
+    } else if let Some(ws) = workspace {
         let page_data = api.list_agents(ws.clone(), page, count, name).await?;
         all.extend(page_data.agents.into_iter().map(|mut a| {
             a.workspace_id.clone_from(&ws);
@@ -333,6 +338,7 @@ pub async fn cmd_agent(
         }
         Some(AgentCmd::List {
             workspace,
+            public,
             name,
             published,
             all,
@@ -340,7 +346,7 @@ pub async fn cmd_agent(
             count,
         }) => {
             cmd_list(
-                workspace, name, published, all, page, count, format, verbose,
+                workspace, public, name, published, all, page, count, format, verbose,
             )
             .await
         }
@@ -389,8 +395,12 @@ pub async fn cmd_agent(
     }
 }
 
+// Glue between clap's flat flags and `collect_agents`; the bools mirror the
+// CLI surface one-to-one, so bundling them into a struct would only restate it.
+#[allow(clippy::fn_params_excessive_bools)]
 async fn cmd_list(
     workspace: Option<String>,
+    public_only: bool,
     name: Option<String>,
     published: bool,
     all_modes: bool,
@@ -402,7 +412,17 @@ async fn cmd_list(
     use crate::cli::output::{print_json_value, print_table};
     use crate::cli::OutputFormat;
     let api = LbAgentApi { verbose };
-    let listing = collect_agents(&api, workspace, name, published, all_modes, page, count).await?;
+    let listing = collect_agents(
+        &api,
+        workspace,
+        public_only,
+        name,
+        published,
+        all_modes,
+        page,
+        count,
+    )
+    .await?;
     let agents = listing.agents;
     warn_about_hidden(&listing.hidden_modes);
     match format {
@@ -732,7 +752,7 @@ mod tests {
                 })
             });
         expect_public_agents(&mut api, vec![]);
-        let agents = collect_agents(&api, None, None, false, false, 1, 20)
+        let agents = collect_agents(&api, None, false, None, false, false, 1, 20)
             .await
             .unwrap()
             .agents_from_server();
@@ -766,7 +786,7 @@ mod tests {
                 })
             });
         expect_public_agents(&mut api, vec![]);
-        let agents = collect_agents(&api, None, None, false, false, 1, 20)
+        let agents = collect_agents(&api, None, false, None, false, false, 1, 20)
             .await
             .unwrap()
             .agents_from_server();
@@ -786,7 +806,7 @@ mod tests {
                     total: 100,
                 })
             });
-        let agents = collect_agents(&api, Some("33".into()), None, false, false, 2, 5)
+        let agents = collect_agents(&api, Some("33".into()), false, None, false, false, 2, 5)
             .await
             .unwrap()
             .agents_from_server();
@@ -812,7 +832,7 @@ mod tests {
             })
         });
         expect_public_agents(&mut api, vec![]);
-        let agents = collect_agents(&api, None, None, true, false, 1, 20)
+        let agents = collect_agents(&api, None, false, None, true, false, 1, 20)
             .await
             .unwrap()
             .agents_from_server();
@@ -853,7 +873,7 @@ mod tests {
 
     #[tokio::test]
     async fn collect_agents_hides_workflow_mode_by_default() {
-        let agents = collect_agents(&mixed_mode_api(), None, None, false, false, 1, 20)
+        let agents = collect_agents(&mixed_mode_api(), None, false, None, false, false, 1, 20)
             .await
             .unwrap()
             .agents_from_server();
@@ -889,7 +909,7 @@ mod tests {
             })
         });
         expect_public_agents(&mut api, vec![]);
-        let listing = collect_agents(&api, None, None, false, false, 1, 20)
+        let listing = collect_agents(&api, None, false, None, false, false, 1, 20)
             .await
             .unwrap();
 
@@ -938,7 +958,7 @@ mod tests {
     async fn public_agents_are_appended_when_listing_every_workspace() {
         let mut api = one_workspace_api(vec![agent("mine", true)]);
         expect_public_agents(&mut api, vec![public_agent("chatbot", "LongbridgeAI")]);
-        let listing = collect_agents(&api, None, None, false, false, 1, 20)
+        let listing = collect_agents(&api, None, false, None, false, false, 1, 20)
             .await
             .unwrap();
         let uids: Vec<_> = listing.agents.iter().map(|a| a.uid.as_str()).collect();
@@ -961,7 +981,7 @@ mod tests {
         real.name = "LongbridgeAI".into();
         let mut api = one_workspace_api(vec![real]);
         expect_public_agents(&mut api, vec![public_agent("chatbot", "LongbridgeAI")]);
-        let listing = collect_agents(&api, None, None, false, false, 1, 20)
+        let listing = collect_agents(&api, None, false, None, false, false, 1, 20)
             .await
             .unwrap();
         assert_eq!(
@@ -982,7 +1002,7 @@ mod tests {
             })
         });
         api.expect_list_public_agents().times(0);
-        let listing = collect_agents(&api, Some("1".into()), None, false, false, 1, 20)
+        let listing = collect_agents(&api, Some("1".into()), false, None, false, false, 1, 20)
             .await
             .unwrap();
         let uids: Vec<_> = listing.agents.iter().map(|a| a.uid.as_str()).collect();
@@ -1001,9 +1021,18 @@ mod tests {
                     total: 1,
                 })
             });
-        let listing = collect_agents(&api, None, Some("longbridge".into()), false, false, 1, 20)
-            .await
-            .unwrap();
+        let listing = collect_agents(
+            &api,
+            None,
+            false,
+            Some("longbridge".into()),
+            false,
+            false,
+            1,
+            20,
+        )
+        .await
+        .unwrap();
         assert_eq!(
             listing.agents.len(),
             1,
@@ -1017,7 +1046,7 @@ mod tests {
         api.expect_list_public_agents()
             .times(1)
             .returning(|_, _, _| Err(anyhow::anyhow!("catalog down")));
-        let listing = collect_agents(&api, None, None, false, false, 1, 20)
+        let listing = collect_agents(&api, None, false, None, false, false, 1, 20)
             .await
             .unwrap();
         let uids: Vec<_> = listing.agents.iter().map(|a| a.uid.as_str()).collect();
@@ -1025,6 +1054,36 @@ mod tests {
             uids,
             ["mine"],
             "workspace agents must survive a public-catalog failure"
+        );
+    }
+
+    #[tokio::test]
+    async fn public_only_consults_only_the_catalog() {
+        let mut api = MockAgentApi::new();
+        api.expect_list_workspaces().times(0);
+        api.expect_list_agents().times(0);
+        expect_public_agents(&mut api, vec![public_agent("chatbot", "LongbridgeAI")]);
+        let listing = collect_agents(&api, None, true, None, false, false, 1, 20)
+            .await
+            .unwrap();
+        let uids: Vec<_> = listing.agents.iter().map(|a| a.uid.as_str()).collect();
+        assert_eq!(uids, ["chatbot"], "--public lists the catalog alone");
+        assert_eq!(listing.agents[0].workspace_id, PUBLIC_WORKSPACE_LABEL);
+    }
+
+    #[tokio::test]
+    async fn public_only_propagates_a_catalog_failure() {
+        let mut api = MockAgentApi::new();
+        api.expect_list_public_agents()
+            .times(1)
+            .returning(|_, _, _| Err(anyhow::anyhow!("catalog down")));
+        let err = collect_agents(&api, None, true, None, false, false, 1, 20)
+            .await
+            .err()
+            .expect("the listing must fail");
+        assert!(
+            err.to_string().contains("catalog down"),
+            "with nothing else to show, the failure must propagate"
         );
     }
 
@@ -1044,7 +1103,7 @@ mod tests {
                     total: 60,
                 })
             });
-        let listing = collect_agents(&api, None, None, false, false, 1, 20)
+        let listing = collect_agents(&api, None, false, None, false, false, 1, 20)
             .await
             .unwrap();
         assert_eq!(listing.agents.len(), 60);
@@ -1052,7 +1111,7 @@ mod tests {
 
     #[tokio::test]
     async fn nothing_hidden_means_nothing_to_report() {
-        let listing = collect_agents(&mixed_mode_api(), None, None, false, true, 1, 20)
+        let listing = collect_agents(&mixed_mode_api(), None, false, None, false, true, 1, 20)
             .await
             .unwrap();
         assert!(
@@ -1087,7 +1146,7 @@ mod tests {
 
     #[tokio::test]
     async fn collect_agents_all_modes_reveals_workflow() {
-        let agents = collect_agents(&mixed_mode_api(), None, None, false, true, 1, 20)
+        let agents = collect_agents(&mixed_mode_api(), None, false, None, false, true, 1, 20)
             .await
             .unwrap()
             .agents_from_server();
@@ -1120,7 +1179,7 @@ mod tests {
             })
         });
         expect_public_agents(&mut api, vec![]);
-        let agents = collect_agents(&api, None, None, true, false, 1, 20)
+        let agents = collect_agents(&api, None, false, None, true, false, 1, 20)
             .await
             .unwrap()
             .agents_from_server();

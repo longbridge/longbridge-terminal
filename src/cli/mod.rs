@@ -2670,14 +2670,19 @@ pub enum AgentCmd {
     /// agentic_chat); others such as workflow are hidden with a note on
     /// stderr saying what was withheld. Pass --all to list every mode.
     /// Public agents usable by any account (e.g. chatbot) are fetched from
-    /// the platform catalog and shown under workspace "Public: Longbridge".
+    /// the platform catalog and shown under workspace "Public: Longbridge";
+    /// --public lists only that catalog.
     /// Example: longbridge agent list
     /// Example: longbridge agent list --workspace 33 --name 选股
+    /// Example: longbridge agent list --public
     /// Example: longbridge agent list --all
     List {
         /// Workspace ID; omit to traverse all workspaces
         #[arg(long)]
         workspace: Option<String>,
+        /// Show only the platform's public agents (skips your workspaces)
+        #[arg(long, conflicts_with = "workspace")]
+        public: bool,
         /// Fuzzy name filter (server-side)
         #[arg(long)]
         name: Option<String>,
@@ -5409,6 +5414,34 @@ mod tests {
         assert_eq!(workspace.as_deref(), Some("33"));
         assert_eq!(name.as_deref(), Some("选股"));
         assert!(published);
+    }
+
+    #[test]
+    fn test_agent_list_public_flag() {
+        let cli = parse(&["longbridge", "agent", "list", "--public"]).unwrap();
+        let Some(Commands::Agent {
+            cmd: Some(AgentCmd::List { public, .. }),
+            ..
+        }) = cli.command
+        else {
+            panic!("expected Agent List");
+        };
+        assert!(public);
+
+        // The catalog belongs to no workspace, so combining the two scopes
+        // is a contradiction clap rejects up front.
+        assert!(
+            parse(&[
+                "longbridge",
+                "agent",
+                "list",
+                "--public",
+                "--workspace",
+                "33"
+            ])
+            .is_err(),
+            "--public and --workspace must conflict"
+        );
     }
 
     #[test]
