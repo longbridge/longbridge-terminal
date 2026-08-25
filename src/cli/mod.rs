@@ -735,10 +735,11 @@ pub enum Commands {
         /// Filter by strategy name
         #[arg(long, value_name = "NAME")]
         strategy: Option<String>,
-        /// Filter by the catalyst name that triggered the signal
+        /// Filter by the name of the factor that triggered the signal
         ///
-        /// Matched against the triggering fact's catalyst name, falling back to
-        /// the factor name.
+        /// Takes a factor name such as `EARNINGS_RELEASED` or `macd_12_26_9` —
+        /// not the prose shown in the catalyst column, which will match
+        /// nothing.
         #[arg(long, value_name = "NAME")]
         catalyst: Option<String>,
         /// Filter by the triggering fact's type: News, Fundamental or Technical

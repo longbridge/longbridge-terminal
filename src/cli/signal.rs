@@ -31,8 +31,7 @@ fn signal_to_json(s: &Signal) -> serde_json::Value {
         "optimistic_price": s.optimistic_price,
         "outlook": s.outlook.to_string(),
         "outlook_desc": s.outlook_desc,
-        "risk_level": s.risk_level,
-        "status": s.status,
+        "status": format!("{:?}", s.status),
         "created_at": fmt_rfc3339(s.created_at),
         "updated_at": fmt_rfc3339(s.updated_at),
     })
@@ -140,9 +139,6 @@ pub async fn cmd_signal_detail(signal_id: String, format: &OutputFormat) -> Resu
     println!("{:<14}{} ({})", "Strategy", s.strategy_name, s.strategy_id);
     println!("{:<14}{}", "Catalyst", s.key_catalyst);
     println!("{:<14}{}", "Outlook", s.outlook_desc);
-    if !s.risk_level.is_empty() {
-        println!("{:<14}{}", "Risk", s.risk_level);
-    }
     println!(
         "{:<14}{} (conservative {} / benchmark {} / optimistic {})",
         "Price", s.analysis_price, s.conservative_price, s.benchmark_price, s.optimistic_price
@@ -194,6 +190,10 @@ fn fact_to_json(f: &SecurityFact) -> serde_json::Value {
                 "value": t.value,
             })).collect::<Vec<_>>(),
             "invest_anal": f.nl_info.invest_anal_tags().iter().map(|t| serde_json::json!({
+                "tag": t.tag,
+                "value": t.value,
+            })).collect::<Vec<_>>(),
+            "eli_explain": f.nl_info.eli_explain_tags().iter().map(|t| serde_json::json!({
                 "tag": t.tag,
                 "value": t.value,
             })).collect::<Vec<_>>(),
