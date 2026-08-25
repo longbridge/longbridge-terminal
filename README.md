@@ -162,6 +162,15 @@ longbridge participants                             # Market maker (participant)
 longbridge subscriptions                            # Active real-time WebSocket subscriptions for this session
 ```
 
+### Signals & Catalysts
+
+```bash
+longbridge signals [--limit 20]                  # Strategy signals: headline, outlook, target prices, triggering catalyst
+longbridge signals --symbol 700.HK               # Filter by symbol, --strategy-id, --strategy, --catalyst, --catalyst-type, --start/--end, --offset
+longbridge signal <signal_id>                    # One signal; --format json adds the full strategy analysis
+longbridge facts AAPL.US [--limit 20]            # Fact (catalyst) events behind signals; --begin/--end for a time window
+```
+
 ### News
 
 ```bash
