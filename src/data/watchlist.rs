@@ -1,7 +1,6 @@
-use super::{Counter, TradeSession};
-use rust_decimal::Decimal;
+use super::{Counter, TradeSessionExt};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 /// Watchlist group
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -79,13 +78,6 @@ impl Watchlist {
 
     /// Refresh (re-apply sorting, etc.)
     pub fn refresh(&mut self) {
-        fn market_key(market: &str) -> &str {
-            match market {
-                "SH" | "SZ" => "CN",
-                market => market,
-            }
-        }
-
         fn market_priority(market: &str) -> u8 {
             match market {
                 "US" => 0,
@@ -96,62 +88,17 @@ impl Watchlist {
             }
         }
 
-        fn session_priority(session: TradeSession) -> u8 {
-            match session {
-                TradeSession::Intraday => 0,
-                TradeSession::Pre => 1,
-                TradeSession::Post | TradeSession::Overnight => 2,
-            }
-        }
-
-        // Session is a market-level property for sorting. A few indices or
-        // synthetic counters can report Intraday while most securities in the
-        // same market are Pre, so use the market's most common session class.
-        let mut session_counts: HashMap<&str, [usize; 3]> = HashMap::new();
-        for counter in &self.counters {
-            let Some(stock) = super::STOCKS.get(counter) else {
-                continue;
-            };
-            if stock
-                .quote
-                .last_done
-                .is_none_or(|price| price <= Decimal::ZERO)
-            {
-                continue;
-            }
-            session_counts
-                .entry(market_key(counter.market()))
-                .or_default()[usize::from(session_priority(stock.trade_session))] += 1;
-        }
-        let market_sessions: HashMap<&str, u8> = session_counts
-            .into_iter()
-            .map(|(market, counts)| {
-                let mut best_rank = 0;
-                let mut best_count = counts[0];
-                for (rank, count) in counts.into_iter().enumerate().skip(1) {
-                    if count > best_count {
-                        best_rank = rank as u8;
-                        best_count = count;
-                    }
-                }
-                (market, best_rank)
-            })
-            .collect();
-
         // Snapshot sort keys before sorting. STOCKS is updated concurrently,
         // so reading it inside sort_by can yield different results for the same
         // pair on successive calls, violating total order and causing a panic.
-        let keys: Vec<(u8, u8)> = self
+        let keys: Vec<(bool, u8)> = self
             .counters
             .iter()
-            .map(|counter| {
-                (
-                    market_sessions
-                        .get(market_key(counter.market()))
-                        .copied()
-                        .unwrap_or(2),
-                    market_priority(counter.market()),
-                )
+            .map(|c| {
+                let not_trading = !super::STOCKS
+                    .get(c)
+                    .is_some_and(|s| s.trade_session.is_normal_trading());
+                (not_trading, market_priority(c.market()))
             })
             .collect();
 
@@ -180,60 +127,5 @@ impl Watchlist {
     pub fn group(&self) -> Option<&WatchlistGroup> {
         let group_id = self.group_id?;
         self.groups.iter().find(|g| g.id == group_id)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::data::{Stock, TradeSession, STOCKS};
-    use rust_decimal::Decimal;
-
-    fn counter_with_session(symbol: &str, session: TradeSession, has_quote: bool) -> Counter {
-        let counter = Counter::new(symbol);
-        let mut stock = Stock::new(counter.clone());
-        stock.trade_session = session;
-        stock.quote.last_done = has_quote.then_some(Decimal::ONE);
-        STOCKS.insert(stock);
-        counter
-    }
-
-    #[test]
-    fn refresh_sorts_by_market_session_before_market_priority() {
-        let counters = vec![
-            counter_with_session(".SPX_SORT_TEST.US", TradeSession::Intraday, true),
-            counter_with_session("AAPL_SORT_TEST.US", TradeSession::Pre, true),
-            counter_with_session("MSFT_SORT_TEST.US", TradeSession::Pre, true),
-            counter_with_session("AMD_SORT_TEST.US", TradeSession::Pre, true),
-            counter_with_session("700_SORT_TEST.HK", TradeSession::Intraday, true),
-            counter_with_session("300001_SORT_TEST.SZ", TradeSession::Intraday, true),
-            counter_with_session("600000_SORT_TEST.SH", TradeSession::Intraday, true),
-            counter_with_session("300002_SORT_TEST.SZ", TradeSession::Intraday, true),
-            counter_with_session("D05_SORT_TEST.SG", TradeSession::Intraday, false),
-        ];
-        let mut watchlist = Watchlist::new();
-        watchlist.set_counters(counters.clone());
-
-        watchlist.refresh();
-
-        let symbols: Vec<_> = watchlist.counters().iter().map(Counter::as_str).collect();
-        assert_eq!(
-            symbols,
-            [
-                "700_SORT_TEST.HK",
-                "300001_SORT_TEST.SZ",
-                "600000_SORT_TEST.SH",
-                "300002_SORT_TEST.SZ",
-                ".SPX_SORT_TEST.US",
-                "AAPL_SORT_TEST.US",
-                "MSFT_SORT_TEST.US",
-                "AMD_SORT_TEST.US",
-                "D05_SORT_TEST.SG",
-            ]
-        );
-
-        for counter in counters {
-            STOCKS.remove(&counter);
-        }
     }
 }

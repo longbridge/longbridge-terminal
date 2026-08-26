@@ -247,7 +247,6 @@ pub async fn run(
                         crate::data::STOCKS.modify(counter.clone(), |stock| {
                             stock.update_from_push_quote(&quote);
                         });
-                        systems::refresh_watchlist_order();
                         render_state.mark_dirty(DirtyFlags::NONE.mark_quote_update());
                     }
                     PushEventDetail::Depth(depth) => {
