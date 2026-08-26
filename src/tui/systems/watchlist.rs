@@ -26,6 +26,30 @@ use crate::{
 
 use super::{Command, Key, NavFooter, PopUp, StockDetail, LAST_DONE, WATCHLIST_TABLE};
 
+pub(crate) fn refresh_watchlist_order() {
+    let selected_ix = WATCHLIST_TABLE.lock().expect("poison").selected();
+    let selected = selected_ix.and_then(|ix| {
+        WATCHLIST
+            .read()
+            .expect("poison")
+            .counters()
+            .get(ix)
+            .cloned()
+    });
+
+    let next_ix = {
+        let mut watchlist = WATCHLIST.write().expect("poison");
+        watchlist.refresh();
+        selected.and_then(|counter| {
+            watchlist
+                .counters()
+                .iter()
+                .position(|candidate| candidate == &counter)
+        })
+    };
+    WATCHLIST_TABLE.lock().expect("poison").select(next_ix);
+}
+
 pub fn render_watchlist(
     mut terminal: ResMut<crate::tui::widgets::Terminal>,
     mut events: EventReader<Key>,
