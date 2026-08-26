@@ -49,6 +49,8 @@ pub(crate) static CONTENT_CTX: Slot<longbridge::ContentContext> = Slot::new();
 
 /// Global `FundamentalContext` for fundamental data (ratings, dividends, ETF allocation, etc.)
 pub(crate) static FUNDAMENTAL_CTX: Slot<longbridge::FundamentalContext> = Slot::new();
+/// Global `SignalContext` for strategy signals and catalyst facts
+pub(crate) static SIGNAL_CTX: Slot<longbridge::signal::SignalContext> = Slot::new();
 
 /// Global `AgentContext` for AI agent discovery and conversations
 pub(crate) static AGENT_CTX: Slot<longbridge::agent::AgentContext> = Slot::new();
@@ -334,6 +336,9 @@ async fn init_contexts_with_auth(
     let fundamental_ctx = longbridge::FundamentalContext::new(Arc::clone(&config));
     FUNDAMENTAL_CTX.set(fundamental_ctx);
 
+    let signal_ctx = longbridge::signal::SignalContext::new(Arc::clone(&config));
+    SIGNAL_CTX.set(signal_ctx);
+
     let agent_ctx = longbridge::agent::AgentContext::new(Arc::clone(&config));
     AGENT_CTX.set(agent_ctx);
 
@@ -488,6 +493,13 @@ pub fn fundamental() -> &'static longbridge::FundamentalContext {
     FUNDAMENTAL_CTX
         .get()
         .expect("FundamentalContext not initialized, please call init_contexts() first")
+}
+
+/// Get global `SignalContext` for strategy signals and catalyst facts
+pub fn signal() -> &'static longbridge::signal::SignalContext {
+    SIGNAL_CTX
+        .get()
+        .expect("SignalContext not initialized, please call init_contexts() first")
 }
 
 /// Whether the session authenticated with API-key env vars rather than

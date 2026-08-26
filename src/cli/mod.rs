@@ -27,6 +27,7 @@ pub mod search;
 pub mod sec_edgar;
 pub mod serve;
 pub mod sharelist;
+pub mod signal;
 pub mod statement;
 pub mod topic;
 pub mod trade;
@@ -713,6 +714,80 @@ pub enum Commands {
         /// Historical range in years (history mode, default: 1): 1 | 3 | 5 | 10
         #[arg(long)]
         range: Option<String>,
+    },
+
+    // ── Signals & Catalysts ─────────────────────────────────────────────────────
+    /// List strategy signals
+    ///
+    /// A signal is a strategy's take on a security, triggered by a catalyst: it
+    /// carries a headline, a summary, an outlook and conservative / benchmark /
+    /// optimistic target prices.
+    /// Example: longbridge signals --limit 10
+    /// Example: longbridge signals --symbol 700.HK
+    /// Example: longbridge signals --catalyst-type News --start 2026-08-01
+    Signals {
+        /// Filter by symbol in <CODE>.<MARKET> format
+        #[arg(long, value_name = "SYMBOL")]
+        symbol: Option<String>,
+        /// Filter by strategy id, e.g. buffett-value
+        #[arg(long, value_name = "ID")]
+        strategy_id: Option<String>,
+        /// Filter by strategy name
+        #[arg(long, value_name = "NAME")]
+        strategy: Option<String>,
+        /// Filter by the name of the factor that triggered the signal
+        ///
+        /// Takes a factor name such as `EARNINGS_RELEASED` or `macd_12_26_9` —
+        /// not the prose shown in the catalyst column, which will match
+        /// nothing.
+        #[arg(long, value_name = "NAME")]
+        catalyst: Option<String>,
+        /// Filter by the triggering fact's type: News, Fundamental or Technical
+        #[arg(long, value_name = "TYPE")]
+        catalyst_type: Option<String>,
+        /// Only signals created at or after this date/time
+        #[arg(long, value_name = "DATE")]
+        start: Option<String>,
+        /// Only signals created at or before this date/time
+        #[arg(long, value_name = "DATE")]
+        end: Option<String>,
+        /// Maximum number of signals to return (default 20)
+        #[arg(long)]
+        limit: Option<i32>,
+        /// Number of signals to skip, for paging
+        #[arg(long)]
+        offset: Option<i32>,
+    },
+
+    /// Show one signal, including the strategy analysis behind it
+    ///
+    /// Get the id from `longbridge signals`. Use `--format json` for the full
+    /// analysis: fit scores, valuation scenarios and evidence sources.
+    /// Example: longbridge signal `sign_992_1a00c9425c3_48ab`
+    Signal {
+        /// Signal id, e.g. `sign_992_1a00c9425c3_48ab`
+        signal_id: String,
+    },
+
+    /// List the fact (catalyst) events for a security
+    ///
+    /// Facts are what strategies react to — anomaly detections, factor readings,
+    /// data sources and a plain-language summary. A signal names the fact that
+    /// triggered it in `key_fact_id`.
+    /// Example: longbridge facts AAPL.US
+    /// Example: longbridge facts 700.HK --begin 2026-07-01 --limit 20
+    Facts {
+        /// Symbol in <CODE>.<MARKET> format
+        symbol: String,
+        /// Only facts occurring at or after this date/time
+        #[arg(long, value_name = "DATE")]
+        begin: Option<String>,
+        /// Only facts occurring at or before this date/time
+        #[arg(long, value_name = "DATE")]
+        end: Option<String>,
+        /// Maximum number of facts to return (default 100)
+        #[arg(long)]
+        limit: Option<i32>,
     },
 
     // ── News ────────────────────────────────────────────────────────────────────
@@ -4493,6 +4568,39 @@ IpoCmd::ProfitLoss { period, page, count } => {
                 ipo::cmd_ipo_us_listed(page, count, format, verbose).await
             }
         },
+
+        Commands::Signals {
+            symbol,
+            strategy_id,
+            strategy,
+            catalyst,
+            catalyst_type,
+            start,
+            end,
+            limit,
+            offset,
+        } => {
+            signal::cmd_signals(
+                symbol,
+                strategy_id,
+                strategy,
+                catalyst,
+                catalyst_type,
+                start,
+                end,
+                limit,
+                offset,
+                format,
+            )
+            .await
+        }
+        Commands::Signal { signal_id } => signal::cmd_signal_detail(signal_id, format).await,
+        Commands::Facts {
+            symbol,
+            begin,
+            end,
+            limit,
+        } => signal::cmd_security_facts(symbol, begin, end, limit, format).await,
 
         Commands::Agent { cmd, skill } => agent::cmd_agent(cmd, skill, format, verbose).await,
 

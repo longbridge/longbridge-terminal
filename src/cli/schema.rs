@@ -5,7 +5,7 @@ use std::ffi::OsString;
 
 use super::{
     agent, asset, atm, auth, check, completion, dca, fundamental, grid, init, insider_trades,
-    investors, ipo, news, quote, run_script, screener, sharelist, statement, topic, trade,
+    investors, ipo, news, quote, run_script, screener, sharelist, signal, statement, topic, trade,
     watchlist, Cli,
 };
 
@@ -394,6 +394,7 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<ResponseSchema> {
         | "macrodata"
         | "etf-docs" => fundamental::schema_for_path(path),
         "news" | "filing" => news::schema_for_path(path),
+        "signals" | "signal" | "facts" => signal::schema_for_path(path),
         "topic" => topic::schema_for_path(path),
         "watchlist" => watchlist::schema_for_path(path),
         "statement" => statement::schema_for_path(path),
@@ -622,7 +623,7 @@ mod tests {
             let paths = real_leaf_paths(&root);
             assert_eq!(
                 paths.len(),
-                160,
+                163,
                 "real command count changed; review schema coverage"
             );
 
@@ -634,5 +635,16 @@ mod tests {
 
             assert!(missing.is_empty(), "missing schema coverage: {missing:#?}");
         });
+    }
+
+    #[test]
+    fn signal_commands_describe_their_json_roots() {
+        let signals = schema_for_path(&["signals".to_string()]).expect("signals schema");
+        let signal = schema_for_path(&["signal".to_string()]).expect("signal schema");
+        let facts = schema_for_path(&["facts".to_string()]).expect("facts schema");
+
+        assert_eq!(signals.root, RootKind::Object);
+        assert_eq!(signal.root, RootKind::Object);
+        assert_eq!(facts.root, RootKind::Array);
     }
 }
