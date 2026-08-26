@@ -1,5 +1,7 @@
 use anyhow::Result;
-use longbridge::signal::{SecurityFact, SecurityFactsOptions, Signal, SignalsOptions};
+use longbridge::signal::{
+    SecurityFact, SecurityFactsOptions, Signal, SignalsOptions, SignalsResponse,
+};
 
 use super::{
     output::{parse_datetime_end, parse_datetime_start, print_table},
@@ -37,6 +39,13 @@ fn signal_to_json(s: &Signal) -> serde_json::Value {
     })
 }
 
+fn signals_to_json(resp: &SignalsResponse) -> serde_json::Value {
+    serde_json::json!({
+        "signals": resp.signals.iter().map(signal_to_json).collect::<Vec<_>>(),
+        "total": resp.total,
+    })
+}
+
 /// List strategy signals.
 pub async fn cmd_signals(
     symbol: Option<String>,
@@ -63,21 +72,16 @@ pub async fn cmd_signals(
     };
     let resp = crate::openapi::signal().signals(opts).await?;
 
-    if resp.signals.is_empty() {
-        println!("No signals found.");
+    if matches!(format, OutputFormat::Json) {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&signals_to_json(&resp)).unwrap_or_default()
+        );
         return Ok(());
     }
 
-    if matches!(format, OutputFormat::Json) {
-        let records: Vec<_> = resp.signals.iter().map(signal_to_json).collect();
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "signals": records,
-                "total": resp.total,
-            }))
-            .unwrap_or_default()
-        );
+    if resp.signals.is_empty() {
+        println!("No signals found.");
         return Ok(());
     }
 
@@ -201,6 +205,10 @@ fn fact_to_json(f: &SecurityFact) -> serde_json::Value {
     })
 }
 
+fn facts_to_json(facts: &[SecurityFact]) -> serde_json::Value {
+    serde_json::Value::Array(facts.iter().map(fact_to_json).collect())
+}
+
 /// List the fact (catalyst) events for one security.
 pub async fn cmd_security_facts(
     symbol: String,
@@ -217,17 +225,16 @@ pub async fn cmd_security_facts(
     };
     let facts = crate::openapi::signal().security_facts(opts).await?;
 
-    if facts.is_empty() {
-        println!("No facts found.");
+    if matches!(format, OutputFormat::Json) {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&facts_to_json(&facts)).unwrap_or_default()
+        );
         return Ok(());
     }
 
-    if matches!(format, OutputFormat::Json) {
-        let records: Vec<_> = facts.iter().map(fact_to_json).collect();
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&records).unwrap_or_default()
-        );
+    if facts.is_empty() {
+        println!("No facts found.");
         return Ok(());
     }
 
@@ -253,4 +260,90 @@ pub async fn cmd_security_facts(
 
     print_table(headers, rows, format);
     Ok(())
+}
+
+pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::ResponseSchema> {
+    use super::schema::{field, schema, RootKind};
+
+    match path.join(" ").as_str() {
+        "signals" => Some(schema(
+            "Strategy signal list",
+            RootKind::Object,
+            vec![
+                field("signals", "object[]", "Signals on this page"),
+                field("total", "number", "Total signals matching the filters"),
+            ],
+        )),
+        "signal" => Some(schema(
+            "Strategy signal detail",
+            RootKind::Object,
+            vec![
+                field("id", "string", "Signal ID"),
+                field("symbol", "string", "Security symbol"),
+                field("company_name", "string", "Company name"),
+                field("market", "string", "Trading market"),
+                field("title", "string", "Signal headline"),
+                field("summary", "string", "Signal summary in Markdown"),
+                field("strategy_id", "string", "Strategy ID"),
+                field("strategy_name", "string", "Strategy name"),
+                field("recommend_by", "string", "Signal recommender"),
+                field("expression", "string", "Strategy expression"),
+                field("key_fact_id", "string", "Triggering fact ID"),
+                field("key_catalyst", "string", "Triggering catalyst label"),
+                field("analysis_price", "number", "Analysis price"),
+                field("conservative_price", "number", "Conservative target price"),
+                field("benchmark_price", "number", "Benchmark target price"),
+                field("optimistic_price", "number", "Optimistic target price"),
+                field("outlook", "string", "Strategy outlook"),
+                field("outlook_desc", "string", "Localized outlook description"),
+                field("status", "string", "Signal lifecycle status"),
+                field("created_at", "string", "Creation time (RFC3339)"),
+                field("updated_at", "string", "Last update time (RFC3339)"),
+                field(
+                    "analysis",
+                    "object | string",
+                    "Full strategy-specific analysis",
+                ),
+            ],
+        )),
+        "facts" => Some(schema(
+            "Security catalyst facts",
+            RootKind::Array,
+            vec![
+                field("fact_id", "string", "Fact ID"),
+                field("fact_type", "string", "Fact type"),
+                field("direction", "string", "Fact direction"),
+                field("occur_time", "string", "Occurrence time (RFC3339)"),
+                field("symbols", "object[]", "Related securities"),
+                field("factors", "object[]", "Contributing factors"),
+                field("data_source", "object[]", "Fact data sources"),
+                field("nl_info", "object", "Natural-language fact details"),
+            ],
+        )),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn empty_signals_remain_valid_json_with_total() {
+        let response = SignalsResponse {
+            signals: Vec::new(),
+            total: 0,
+        };
+
+        assert_eq!(
+            signals_to_json(&response),
+            json!({ "signals": [], "total": 0 })
+        );
+    }
+
+    #[test]
+    fn empty_facts_remain_a_valid_json_array() {
+        assert_eq!(facts_to_json(&[]), json!([]));
+    }
 }
