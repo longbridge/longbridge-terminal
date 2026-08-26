@@ -3274,13 +3274,15 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &mut ChatState, editor: &Edi
     // button cannot be hidden by a notice — and the notice cannot be hidden by
     // it. Only while busy, so idle chrome stays one row on a short terminal.
     let has_turn = is_chat && state.busy;
-    // Idle, a blank row sits above the boxed prompt to lift it off the
-    // transcript's last line. While a turn runs, the status row already separates
-    // them, so the box drops that blank and hugs the status — the extra gap read
-    // as too much empty space between the spinner and the prompt.
+    // A blank row normally sits above the boxed prompt to lift it off the
+    // transcript's last line. But whenever the status row itself draws something
+    // — a running turn's spinner, the scrolled-up hint, a notice — that row is
+    // already the separator, so the box hugs it and drops the blank; the second
+    // gap otherwise read as too much empty space between the two.
+    let hug = has_turn || (is_chat && status_row_populated(ui, state, editor));
     let footer_h = if is_chat {
-        let extra = if has_turn { 2 } else { 3 };
-        (editor.lines().len() as u16 + extra).clamp(if has_turn { 3 } else { 4 }, 9)
+        let extra = if hug { 2 } else { 3 };
+        (editor.lines().len() as u16 + extra).clamp(if hug { 3 } else { 4 }, 9)
     } else {
         4
     };
@@ -3366,7 +3368,7 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &mut ChatState, editor: &Edi
         ui.stop_button = None;
     }
     render_status(f, status, ui, state, editor);
-    render_footer(f, footer, ui, editor, has_turn);
+    render_footer(f, footer, ui, editor, hug);
     // The command palette hangs directly off the prompt box, drawn last so it
     // floats over the status row and any chrome between the transcript and the
     // prompt rather than being anchored to the transcript's foot with a gap.
@@ -5390,6 +5392,24 @@ fn tools_this_turn(state: &ChatState) -> usize {
         .count()
 }
 
+/// Whether the status row (between the transcript and the prompt box) will draw
+/// anything. When it does, it is itself the separator, so the prompt box hugs it
+/// rather than adding a second blank row above. Kept in sync with the branches
+/// in [`render_status`]; the idle Chat case (a committed transcript, not
+/// scrolled, no notice) is the only one that leaves the row blank.
+fn status_row_populated(ui: &Ui, state: &ChatState, editor: &Editor) -> bool {
+    if !editor.attachments().is_empty() && ui.find.is_none() {
+        return true;
+    }
+    if ui.find.is_some() {
+        return true;
+    }
+    if state.scroll > 0 {
+        return true;
+    }
+    ui.notice.is_some()
+}
+
 fn render_status(f: &mut ratatui::Frame, area: Rect, ui: &Ui, state: &ChatState, editor: &Editor) {
     // Folded pastes are announced here, above the input, so a big paste is a
     // compact chip instead of a wall of text filling the box.
@@ -7004,6 +7024,78 @@ mod tests {
         assert!(
             screen.contains("11,975"),
             "the running token count should be visible on screen:\n{screen}"
+        );
+    }
+
+    /// Render the chat and return one string per row (trailing blanks trimmed).
+    fn render_rows(
+        ui: &mut super::Ui,
+        state: &mut super::ChatState,
+        w: u16,
+        h: u16,
+    ) -> Vec<String> {
+        let editor = super::Editor::new();
+        let backend = ratatui::backend::TestBackend::new(w, h);
+        let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|f| super::view(f, ui, state, &editor))
+            .expect("draw");
+        let buf = terminal.backend().buffer().clone();
+        (0..buf.area.height)
+            .map(|y| {
+                (0..buf.area.width)
+                    .map(|x| buf[(x, y)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect()
+    }
+
+    /// When the status row carries a hint (here, the scrolled-up notice), the
+    /// prompt box hugs it — the box's top border sits on the very next row, with
+    /// no blank gap between the two. Regression for a too-tall gap under the
+    /// "Scrolled up" line.
+    #[test]
+    fn the_prompt_box_hugs_a_populated_status_row() {
+        let mut ui = super::Ui::new();
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        for i in 0..20 {
+            state.apply(super::ChatEvent::UserPrompt(format!("q{i}")));
+            state.apply(super::ChatEvent::Delta(format!("a{i}")));
+            state.apply(super::ChatEvent::TurnFinished { error: None });
+        }
+        state.scroll = 5;
+        let rows = render_rows(&mut ui, &mut state, 60, 14);
+        let hint = rows
+            .iter()
+            .position(|r| r.contains("Scrolled up"))
+            .expect("the scrolled-up hint should show");
+        assert!(
+            rows[hint + 1].contains('╭'),
+            "the prompt box should hug the status row, no blank between:\n{}",
+            rows.join("\n")
+        );
+    }
+
+    /// Idle with a committed transcript, the status row is blank, so the box
+    /// keeps its blank row above to lift it off the transcript.
+    #[test]
+    fn the_prompt_box_keeps_a_blank_above_when_idle() {
+        let mut ui = super::Ui::new();
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        state.apply(super::ChatEvent::UserPrompt("hi".into()));
+        state.apply(super::ChatEvent::Delta("hello".into()));
+        state.apply(super::ChatEvent::TurnFinished { error: None });
+        let rows = render_rows(&mut ui, &mut state, 60, 14);
+        let top = rows
+            .iter()
+            .position(|r| r.contains('╭'))
+            .expect("the prompt box should render");
+        assert!(
+            rows[top - 1].trim().is_empty(),
+            "a blank row should sit above the box when idle:\n{}",
+            rows.join("\n")
         );
     }
 
