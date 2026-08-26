@@ -403,6 +403,7 @@ Agent:
   ContinueWith: "Resume with:"
   FollowUpWith: "Follow up with:"
   Elapsed: "elapsed %{secs}s"
+  Tokens: "%{total} tokens"
   PartialAnswer: "Warning: stream dropped; showing partial answer"
   Reconnecting: "Connection lost; reconnecting to the run…"
   RunFailed: "The agent run did not complete successfully"

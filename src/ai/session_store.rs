@@ -106,7 +106,9 @@ pub async fn load_detail(uid: &str) -> Option<LoadedChat> {
                 } else {
                     Role::Assistant
                 };
-                out.push(Message::new(role, text));
+                // Only assistant answers carry usage; a user line never does.
+                let usage = (role == Role::Assistant).then_some(m.token_usage).flatten();
+                out.push(Message::new(role, text).with_token_usage(usage));
             }
             out
         })

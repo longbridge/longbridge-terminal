@@ -888,8 +888,15 @@ fn print_footer(agent_uid: &str, outcome: &ChatOutcome) {
         .elapsed_time
         .map(|s| t!("Agent.Elapsed", secs = format!("{s:.1}")).to_string())
         .unwrap_or_default();
+    // Only when the run actually reported usage; a cache hit or a pre-rollout
+    // message carries none and must not print "0 tokens".
+    let tokens = outcome
+        .token_usage
+        .filter(|usage| !usage.is_empty())
+        .map(|usage| format!(" · {}", t!("Agent.Tokens", total = usage.total_tokens)))
+        .unwrap_or_default();
     println!(
-        "chat_uid: {} · message_id: {} · {elapsed}",
+        "chat_uid: {} · message_id: {} · {elapsed}{tokens}",
         strip_control_chars(&outcome.chat_uid),
         strip_control_chars(&outcome.message_id)
     );

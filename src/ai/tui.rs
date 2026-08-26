@@ -342,6 +342,7 @@ fn event_label(event: &ChatEvent) -> String {
         ChatEvent::Delta(t) => format!("answer_delta ({} chars)", t.chars().count()),
         ChatEvent::ThinkingDelta(t) => format!("thinking_delta ({} chars)", t.chars().count()),
         ChatEvent::ThinkingFinished => "thinking_finished".to_string(),
+        ChatEvent::TokenUsage(usage) => format!("token_usage total={}", usage.total_tokens),
         ChatEvent::Status(s) => format!("status {s}"),
         ChatEvent::ToolStarted(name) => format!("tool_started {name}"),
         ChatEvent::ToolFinished { name, ok } => format!("tool_finished {name} ok={ok}"),
@@ -5330,6 +5331,17 @@ fn render_turn_status(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &C
             Style::default().fg(Color::DarkGray),
         ));
     }
+    // The round's token count, rolling up as the server reports it — the same
+    // place Claude Code keeps it, inline with the timer while the turn runs.
+    if let Some(usage) = state.token_usage.filter(|u| !u.is_empty()) {
+        spans.push(Span::styled(
+            format!(
+                "   · ↑ {}",
+                t!("Agent.Tokens", total = group_thousands(usage.total_tokens))
+            ),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
     // A spinner spins the same whether the agent is working or the stream has
     // gone quiet, which is the whole of "it looks stuck". Once the silence is
     // long enough to be worth naming, say how long it has lasted — during a slow
@@ -5609,6 +5621,25 @@ fn tool_line(name: &str, status: ToolStatus, width: usize) -> Line<'static> {
         ));
     }
     Line::from(spans)
+}
+
+/// Group an integer with thousands separators, e.g. `2810` → `2,810`. Token
+/// counts read far more easily grouped than as one long run of digits, and B/M/K
+/// scaling would lose the exact figure this is meant to report.
+fn group_thousands(n: u64) -> String {
+    let digits = n.to_string();
+    let len = digits.len();
+    let mut out = String::with_capacity(len + len / 3);
+    for (i, ch) in digits.chars().enumerate() {
+        // A separator falls before a digit when a whole number of groups of
+        // three still follows it. Counting from the right avoids the underflow
+        // a left-anchored offset hits when the leading group is shorter than i.
+        if i != 0 && (len - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
 }
 
 fn push_message(
@@ -6664,6 +6695,15 @@ mod tests {
     use super::marquee;
     use unicode_width::UnicodeWidthStr;
 
+    #[test]
+    fn thousands_are_grouped() {
+        assert_eq!(super::group_thousands(0), "0");
+        assert_eq!(super::group_thousands(210), "210");
+        assert_eq!(super::group_thousands(2810), "2,810");
+        assert_eq!(super::group_thousands(11975), "11,975");
+        assert_eq!(super::group_thousands(1_000_000), "1,000,000");
+    }
+
     /// One view, one name — see the market TUI's equivalent. A duplicate would
     /// merge two views in every report without failing anywhere.
     #[test]
@@ -6925,6 +6965,45 @@ mod tests {
             flush,
             "the palette should rest on the prompt box:\n{}",
             rows.join("\n")
+        );
+    }
+
+    /// The whole point of the feature: while a turn runs, its rolling token
+    /// count shows inline with the timer on the status row (as Claude Code does).
+    /// Renders a full frame mid-turn and looks for it in the buffer.
+    #[test]
+    fn token_usage_shows_on_the_running_turn_row() {
+        use crate::openapi::chats::TokenUsage;
+        let mut ui = super::Ui::new();
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let editor = super::Editor::new();
+        // A turn in flight (busy), with a token frame already delivered.
+        state.apply(super::ChatEvent::UserPrompt("how is TSLA?".into()));
+        ui.turn_started = Some(std::time::Instant::now());
+        state.apply(super::ChatEvent::TokenUsage(TokenUsage {
+            prompt_tokens: 11939,
+            completion_tokens: 36,
+            total_tokens: 11975,
+        }));
+        state.apply(super::ChatEvent::Delta("TSLA is up.".into()));
+
+        let backend = ratatui::backend::TestBackend::new(80, 20);
+        let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|f| super::view(f, &mut ui, &mut state, &editor))
+            .expect("draw");
+        let buf = terminal.backend().buffer().clone();
+        let screen: String = (0..buf.area.height)
+            .map(|y| {
+                (0..buf.area.width)
+                    .map(|x| buf[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            screen.contains("11,975"),
+            "the running token count should be visible on screen:\n{screen}"
         );
     }
 

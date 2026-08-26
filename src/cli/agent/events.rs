@@ -8,6 +8,8 @@
 use longbridge::agent::Reference;
 use serde_json::Value;
 
+use crate::openapi::chats::TokenUsage;
+
 // `PartialEq` is intentionally not derived: `WorkflowFinished` now carries the
 // SDK's `Reference`, which is not `PartialEq`. Tests match on variants instead.
 #[derive(Debug, Clone)]
@@ -32,6 +34,10 @@ pub enum AgentEvent {
     },
     ThinkingStarted,
     ThinkingFinished,
+    /// The turn's cumulative token consumption so far. Each frame is the running
+    /// total for the round, not an increment — consumers overwrite rather than
+    /// add, so a dropped or replayed frame never skews the count.
+    TokenUsage(TokenUsage),
     ToolUseStarted {
         tool_name: String,
     },
@@ -128,6 +134,9 @@ pub fn parse_data_line(payload: &str) -> Option<AgentEvent> {
         },
         "thinking_started" => AgentEvent::ThinkingStarted,
         "thinking_finished" => AgentEvent::ThinkingFinished,
+        // A frame with no real usage (an all-zero object) carries nothing worth
+        // surfacing, so it is dropped rather than turned into a "0 tokens" event.
+        "token_usage" => return TokenUsage::from_data(&data).map(AgentEvent::TokenUsage),
         "node_tool_use_started" => AgentEvent::ToolUseStarted {
             tool_name: str_field(&data, "tool_name"),
         },
@@ -228,6 +237,9 @@ pub struct ChatOutcome {
     pub further_questions: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub elapsed_time: Option<f64>,
+    /// The round's final cumulative token usage, if the stream reported any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_usage: Option<TokenUsage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub interrupt: Option<Value>,
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -251,6 +263,9 @@ impl ChatAggregator {
                 self.outcome.message_id.clone_from(message_id);
             }
             AgentEvent::AnswerDelta { text } => self.outcome.answer.push_str(text),
+            // Cumulative for the round: overwrite, never accumulate, so a replay
+            // on reconnect cannot double the count.
+            AgentEvent::TokenUsage(usage) => self.outcome.token_usage = Some(*usage),
             // The reconnected run replays this message from the beginning, so
             // keeping the interrupted connection's partial answer would double
             // its prefix.
@@ -261,6 +276,10 @@ impl ChatAggregator {
                 self.outcome.error_message.clear();
                 self.outcome.status.clear();
                 self.outcome.interrupt = None;
+                // The replay re-emits this round's cumulative token frames, so
+                // drop the old total rather than letting a stale one linger if
+                // the replay happens not to carry one.
+                self.outcome.token_usage = None;
             }
             AgentEvent::HumanInteractionRequired { interrupt } => {
                 self.outcome.status = "interrupted".to_string();
@@ -515,6 +534,43 @@ mod tests {
     #[test]
     fn unparseable_payload_returns_none() {
         assert!(parse_data_line("not json").is_none());
+    }
+
+    #[test]
+    fn token_usage_is_parsed_from_its_inner_data() {
+        let payload = r#"{"event":"token_usage","workflow_run_id":"7431982450123456","data":{"prompt_tokens":2600,"completion_tokens":210,"total_tokens":2810}}"#;
+        let Some(AgentEvent::TokenUsage(usage)) = parse_data_line(payload) else {
+            panic!("expected TokenUsage");
+        };
+        assert_eq!(usage.prompt_tokens, 2600);
+        assert_eq!(usage.completion_tokens, 210);
+        assert_eq!(usage.total_tokens, 2810);
+    }
+
+    #[test]
+    fn an_all_zero_token_usage_frame_is_dropped() {
+        let payload = r#"{"event":"token_usage","data":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}}"#;
+        assert!(parse_data_line(payload).is_none());
+    }
+
+    /// Each frame is the running total, so the aggregate takes the latest value
+    /// rather than summing — a replay on reconnect must not double it.
+    #[test]
+    fn token_usage_overwrites_rather_than_accumulates() {
+        use crate::openapi::chats::TokenUsage;
+        let mut agg = ChatAggregator::default();
+        agg.push(&AgentEvent::TokenUsage(TokenUsage {
+            prompt_tokens: 1200,
+            completion_tokens: 80,
+            total_tokens: 1280,
+        }));
+        agg.push(&AgentEvent::TokenUsage(TokenUsage {
+            prompt_tokens: 2600,
+            completion_tokens: 210,
+            total_tokens: 2810,
+        }));
+        let outcome = agg.finish();
+        assert_eq!(outcome.token_usage.unwrap().total_tokens, 2810);
     }
 
     #[test]

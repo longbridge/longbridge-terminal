@@ -115,6 +115,7 @@ fn map_agent_event(ev: &AgentEvent) -> Vec<ChatEvent> {
             vec![ChatEvent::Status(strip_control_chars(title))]
         }
         AgentEvent::ThinkingFinished => vec![ChatEvent::ThinkingFinished],
+        AgentEvent::TokenUsage(usage) => vec![ChatEvent::TokenUsage(*usage)],
         // A tool call goes to the transcript as well as the status line: the
         // status line is overwritten by the next event, and which data an answer
         // was built from is worth keeping.

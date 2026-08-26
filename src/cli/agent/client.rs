@@ -313,6 +313,14 @@ fn map_event(ev: ConversationStreamEvent) -> Option<AgentEvent> {
         ConversationStreamEvent::ChatTitleUpdated(p) => {
             AgentEvent::ChatTitleUpdated { title: p.title }
         }
+        // The SDK has no typed variant for `token_usage`, so it arrives here as
+        // a raw event carrying the cumulative counts for the round.
+        ConversationStreamEvent::Other { event, data } if event == "token_usage" => {
+            match crate::openapi::chats::TokenUsage::from_data(&data) {
+                Some(usage) => AgentEvent::TokenUsage(usage),
+                None => return None,
+            }
+        }
         ConversationStreamEvent::Other { event, .. } => AgentEvent::Unknown { event },
         // Progress-only events the CLI does not display.
         ConversationStreamEvent::Ping
