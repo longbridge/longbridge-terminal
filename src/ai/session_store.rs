@@ -176,11 +176,12 @@ fn continuable_parent(messages: &[crate::openapi::chats::ChatMessage]) -> Option
 
 /// Restore a loaded conversation into `state`, ready for follow-ups.
 pub fn restore(loaded: LoadedChat, state: &mut ChatState) {
-    // Drop the previous conversation's in-flight turn and bump the generation:
-    // a turn of the conversation being left cannot be retracted by aborting its
-    // task, only gated out by the generation. This clears the live answer,
-    // reasoning block, status, queue, and token count in one place shared with
-    // `reset`, so the two can't drift.
+    // Drop the previous conversation's in-flight turn and invalidate its
+    // generation: a turn of the conversation being left cannot be retracted by
+    // aborting its task, only gated out. Clearing the live answer, reasoning
+    // block, status, queue, and token count runs through the same helper `reset`
+    // uses, so the two can't drift.
+    state.bump_generation();
     state.clear_turn_state();
     if !loaded.agent_uid.is_empty() {
         state.agent_uid = loaded.agent_uid;

@@ -1219,11 +1219,10 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
         // Signing out is the only action left to run here; signing in is handled
         // above, where the panel can stay open while the browser round trip runs.
         if ui.pending.take() == Some(Pending::SignOut) {
-            // A turn in flight belongs to the credentials being revoked.
-            if let Some(task) = turn.take() {
-                task.abort();
-                state.cancel(&t!("Ai.Cancelled"));
-            }
+            // A turn in flight belongs to the credentials being revoked. Abandon
+            // it through the shared path so its end (and any pending question) is
+            // reported to analytics, not just aborted.
+            cancel_turn(&mut state, &mut turn);
             match crate::auth::clear_token().await {
                 Ok(()) => {
                     // Signing out stays in the chat. The contexts cannot be torn
@@ -1260,9 +1259,9 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
         crossterm::event::DisableBracketedPaste,
         crossterm::event::DisableFocusChange,
     );
-    if let Some(turn) = turn.take() {
-        turn.abort();
-    }
+    // Quitting mid-turn abandons it like any other teardown, so its end is
+    // reported rather than left as an open turn_start in the warehouse.
+    abandon_turn(&state, &mut turn);
     if let Some(task) = login_task.take() {
         task.abort();
     }
@@ -1839,6 +1838,10 @@ fn submit(
                     retry_last(ui, state, turn, tx);
                 } else if key == "new" {
                     new_session(ui, state, turn);
+                } else if key == "agent" {
+                    // Switching agents abandons the running turn, so it needs
+                    // the turn handle `exec_slash` does not carry.
+                    switch_agent(args, ui, state, turn);
                 } else {
                     exec_slash(key, args, ui, state);
                 }
@@ -2019,7 +2022,8 @@ fn exec_slash(name: &str, args: &str, ui: &mut Ui, state: &mut ChatState) {
         }
         "resume" => open_sessions(ui),
         "settings" => ui.switch(View::Settings),
-        "agent" => switch_agent(args, ui, state),
+        // `agent` (like `new`) abandons the running turn, so it is dispatched
+        // where the turn handle lives (`submit` / `run_slash`) rather than here.
         // A panel, not a message: help is something you consult and dismiss, and as
         // a transcript entry it could not be dismissed at all.
         "help" => ui.help = Some(0),
@@ -2034,7 +2038,7 @@ fn exec_slash(name: &str, args: &str, ui: &mut Ui, state: &mut ChatState) {
 ///
 /// The uid is not validated here: only the server knows which agents the
 /// account may drive, so a bad one surfaces as that agent's first-turn error.
-fn switch_agent(args: &str, ui: &mut Ui, state: &mut ChatState) {
+fn switch_agent(args: &str, ui: &mut Ui, state: &mut ChatState, turn: &mut Option<JoinHandle<()>>) {
     if args.is_empty() {
         ui.notice = Some(t!("Ai.AgentUsage").to_string());
         return;
@@ -2060,6 +2064,10 @@ fn switch_agent(args: &str, ui: &mut Ui, state: &mut ChatState) {
     analytics::agent_switch(&state.agent_uid, &uid);
     // A conversation belongs to its agent server-side, so switching starts a
     // fresh one rather than continuing this thread under a different agent.
+    // Abandon the turn in flight first (reset only gates its events; the task
+    // still runs and would go unreported): `/agent` can be typed mid-turn, the
+    // slash dispatch running before the busy guard.
+    abandon_turn(state, turn);
     state.reset(t!("Ai.Welcome").to_string());
     state.agent_uid = uid;
     ui.reset_render();
@@ -3238,6 +3246,9 @@ fn run_slash(
     editor.clear();
     if key == "new" {
         new_session(ui, state, turn);
+    } else if key == "agent" {
+        // No argument from the palette; switch_agent notices the missing uid.
+        switch_agent("", ui, state, turn);
     } else {
         exec_slash(key, "", ui, state);
     }
@@ -5362,26 +5373,27 @@ fn render_turn_status(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &C
             .map(|s| UnicodeWidthStr::width(s.content.as_ref()) as u16)
             .sum()
     };
+    // The one bar both the token span and the [stop] button clear: content of
+    // width `used`, plus the label and a one-column gap, must fit the row. Kept
+    // in one place so the gate and the placement can't drift to different bars.
+    let fits_with_stop = |used: u16| area.width > used + label_w + 1;
     // The token count, rolling up as the server reports it — the same place
     // Claude Code keeps it. It yields to the [stop] button: on a narrow row a
     // long count would otherwise push the cancel affordance off the edge, and
     // being able to stop the turn matters more than watching its cost. So it is
-    // added only when it *and* the reserved stop label still fit.
+    // added only when it and the reserved stop label both still fit.
     if let Some(usage) = state.token_usage.filter(|u| !u.is_empty()) {
         let token = format!(
-            "   · ↑ {}",
+            "   · {}",
             t!("Agent.Tokens", total = group_thousands(usage.total_tokens))
         );
         let token_w = UnicodeWidthStr::width(token.as_str()) as u16;
-        // Mirror the stop-button placement below (`width > used + label_w + 1`)
-        // with the token span counted into `used`, so the count is added only
-        // when the row still clears the bar that keeps `[stop]` on screen.
-        if span_width(&spans) + token_w + label_w + 1 < area.width {
+        if fits_with_stop(span_width(&spans) + token_w) {
             spans.push(Span::styled(token, Style::default().fg(Color::DarkGray)));
         }
     }
     let used: u16 = span_width(&spans);
-    let rect = (area.width > used + label_w + 1).then(|| Rect {
+    let rect = fits_with_stop(used).then(|| Rect {
         x: area.x + area.width - label_w,
         y: area.y,
         width: label_w,
@@ -5417,16 +5429,10 @@ fn tools_this_turn(state: &ChatState) -> usize {
 /// in [`render_status`]; the idle Chat case (a committed transcript, not
 /// scrolled, no notice) is the only one that leaves the row blank.
 fn status_row_populated(ui: &Ui, state: &ChatState, editor: &Editor) -> bool {
-    if !editor.attachments().is_empty() && ui.find.is_none() {
-        return true;
-    }
-    if ui.find.is_some() {
-        return true;
-    }
-    if state.scroll > 0 {
-        return true;
-    }
-    ui.notice.is_some()
+    // A folded-paste chip, the find bar, the scrolled-up hint, or a notice —
+    // any one fills the row. (Attachments and the find bar don't interact for
+    // this decision: whichever is present, the row is populated.)
+    !editor.attachments().is_empty() || ui.find.is_some() || state.scroll > 0 || ui.notice.is_some()
 }
 
 fn render_status(f: &mut ratatui::Frame, area: Rect, ui: &Ui, state: &ChatState, editor: &Editor) {
@@ -7043,6 +7049,11 @@ mod tests {
         assert!(
             screen.contains("11,975"),
             "the running token count should be visible on screen:\n{screen}"
+        );
+        // The total is not input-only, so it must not carry the ↑ (sent) marker.
+        assert!(
+            !screen.contains('↑'),
+            "the total must not be labelled with the input-only ↑ marker:\n{screen}"
         );
     }
 

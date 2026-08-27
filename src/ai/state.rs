@@ -483,17 +483,25 @@ impl ChatState {
         self.messages.push(Message::thinking(thinking.text, secs));
     }
 
-    /// Drop everything tied to the turn in flight and bump the generation so
-    /// events a turn task already queued (it may still be running) are discarded
-    /// by the generation gate rather than applied to whatever comes next.
+    /// Invalidate the current turn generation so events a turn task already
+    /// queued — it may still be running after an abort, which cannot retract
+    /// them — are dropped by the generation gate instead of applied to whatever
+    /// conversation comes next. Kept separate from [`Self::clear_turn_state`]:
+    /// clearing fields is local bookkeeping, this is the concurrency gate, and
+    /// fusing them would hide a load-bearing side effect behind a tidy name.
+    pub fn bump_generation(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
+    }
+
+    /// Drop every field tied to the turn in flight. Pure field-clearing — it does
+    /// **not** touch the generation gate (call [`Self::bump_generation`] for that
+    /// when abandoning a running turn) or conversation identity (title, ids,
+    /// pending interrupt), which `reset` blanks and `restore` overwrites.
     ///
     /// Shared by [`Self::reset`] (new chat) and `session_store::restore` (switch
-    /// conversation): both abandon the running turn, so the field list lives in
-    /// one place instead of drifting between two hand-kept copies. Conversation
-    /// identity (title, ids, pending interrupt) is *not* cleared here — `reset`
-    /// blanks it, `restore` overwrites it with the loaded chat's.
+    /// conversation) so the field list lives in one place instead of drifting
+    /// between two hand-kept copies.
     pub fn clear_turn_state(&mut self) {
-        self.generation = self.generation.wrapping_add(1);
         self.streaming = None;
         self.thinking = None;
         self.status.clear();
@@ -510,6 +518,7 @@ impl ChatState {
     /// Reset to a fresh conversation, keeping the agent but dropping all
     /// messages and conversation identity. Used by the "new chat" action.
     pub fn reset(&mut self, welcome: String) {
+        self.bump_generation();
         self.clear_turn_state();
         self.messages = vec![Message::new(Role::System, welcome)];
         self.scroll = 0;
