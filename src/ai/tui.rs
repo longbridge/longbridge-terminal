@@ -1165,16 +1165,12 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
             Some(loaded) = load_rx.recv() => {
                 if let Some(loaded) = loaded {
                     // A turn still streaming belongs to the conversation being
-                    // left. Abort it before the switch — without this its
-                    // remaining events kept applying to the restored state,
-                    // committing the old conversation's answer into the new
-                    // one's transcript.
-                    if let Some(task) = turn.take() {
-                        task.abort();
-                        // An aborted turn sends no finishing event, so its end
-                        // is reported here or not at all.
-                        analytics::turn_finish(&state, analytics::Outcome::Cancelled);
-                    }
+                    // left. Abandon it before the switch (and report the turn /
+                    // any pending question) — without the abort its remaining
+                    // events kept applying to the restored state, committing the
+                    // old conversation's answer into the new one's transcript.
+                    // Read before `restore` clears the turn state.
+                    abandon_turn(&state, &mut turn);
                     analytics::session_resume();
                     session_store::restore(loaded, &mut state);
                     ui.reset_render();
@@ -1518,21 +1514,30 @@ fn on_ctrl_c(
     }
 }
 
-/// Abort the active turn and fold any partial answer into the transcript.
-fn cancel_turn(state: &mut ChatState, turn: &mut Option<JoinHandle<()>>) {
-    if let Some(turn) = turn.take() {
-        turn.abort();
-        // Aborting stops the producer, so no finishing event is coming. Reported
-        // before `cancel`, which clears the turn's start along with the rest of
-        // the in-flight state. `turn_finish` ignores an idle chat on its own, but
-        // gating on the handle keeps a bare Esc from reaching it at all.
+/// Abandon whatever turn is in flight, reporting it to analytics: the aborted
+/// producer sends no finishing event, so the turn is recorded as cancelled here
+/// or never, and a question it left pending counts as walked away from.
+///
+/// Shared by every path that drops the running turn — cancel (Esc), new chat,
+/// resuming another conversation — so none of them can forget the reporting the
+/// others do (a start with no end hangs in the warehouse forever). Reads the
+/// turn state, so callers must invoke it *before* clearing that state. The
+/// transcript is left untouched; callers that fold a partial answer (Esc) or
+/// replace it (new chat / resume) do so afterward.
+fn abandon_turn(state: &ChatState, turn: &mut Option<JoinHandle<()>>) {
+    if let Some(task) = turn.take() {
+        task.abort();
         analytics::turn_finish(state, analytics::Outcome::Cancelled);
     }
-    // `cancel` drops a pending question as unanswerable, so it counts as walked
-    // away from — reported before that happens.
     if state.pending_interrupt.is_some() {
         analytics::interrupt_answered(false);
     }
+}
+
+/// Abort the active turn and fold any partial answer into the transcript.
+fn cancel_turn(state: &mut ChatState, turn: &mut Option<JoinHandle<()>>) {
+    // Before `cancel`, which clears the turn state `abandon_turn` reads.
+    abandon_turn(state, turn);
     state.cancel(&t!("Ai.Cancelled"));
 }
 
@@ -1932,21 +1937,9 @@ fn start_turn(
 }
 
 fn new_session(ui: &mut Ui, state: &mut ChatState, turn: &mut Option<JoinHandle<()>>) {
-    if let Some(task) = turn.take() {
-        task.abort();
-        // An aborted turn sends no finishing event, so its end is reported here
-        // or not at all — and a start with no end is a turn the warehouse counts
-        // forever as still running.
-        analytics::turn_finish(state, analytics::Outcome::Cancelled);
-    }
-    // Checked apart from the turn: a question left over from a turn that already
-    // finished is the most common way one goes unanswered — the reader reads it
-    // and starts over instead of replying.
-    if state.pending_interrupt.is_some() {
-        analytics::interrupt_answered(false);
-    }
+    // Reported before the reset, which clears the turn state these read.
+    abandon_turn(state, turn);
     analytics::session_new();
-    // Reported before the reset, which clears the turn's start.
     state.reset(t!("Ai.Welcome").to_string());
     ui.reset_render();
     ui.switch(View::Chat);
@@ -5349,17 +5342,6 @@ fn render_turn_status(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &C
             Style::default().fg(Color::DarkGray),
         ));
     }
-    // The round's token count, rolling up as the server reports it — the same
-    // place Claude Code keeps it, inline with the timer while the turn runs.
-    if let Some(usage) = state.token_usage.filter(|u| !u.is_empty()) {
-        spans.push(Span::styled(
-            format!(
-                "   · ↑ {}",
-                t!("Agent.Tokens", total = group_thousands(usage.total_tokens))
-            ),
-            Style::default().fg(Color::DarkGray),
-        ));
-    }
     // A spinner spins the same whether the agent is working or the stream has
     // gone quiet, which is the whole of "it looks stuck". Once the silence is
     // long enough to be worth naming, say how long it has lasted — during a slow
@@ -5374,10 +5356,31 @@ fn render_turn_status(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &C
     // The button is right-aligned, so its rect is derived from the label width.
     let label = format!("[{}]", t!("Ai.Stop"));
     let label_w = UnicodeWidthStr::width(label.as_str()) as u16;
-    let used: u16 = spans
-        .iter()
-        .map(|s| UnicodeWidthStr::width(s.content.as_ref()) as u16)
-        .sum();
+    let span_width = |spans: &[Span]| -> u16 {
+        spans
+            .iter()
+            .map(|s| UnicodeWidthStr::width(s.content.as_ref()) as u16)
+            .sum()
+    };
+    // The token count, rolling up as the server reports it — the same place
+    // Claude Code keeps it. It yields to the [stop] button: on a narrow row a
+    // long count would otherwise push the cancel affordance off the edge, and
+    // being able to stop the turn matters more than watching its cost. So it is
+    // added only when it *and* the reserved stop label still fit.
+    if let Some(usage) = state.token_usage.filter(|u| !u.is_empty()) {
+        let token = format!(
+            "   · ↑ {}",
+            t!("Agent.Tokens", total = group_thousands(usage.total_tokens))
+        );
+        let token_w = UnicodeWidthStr::width(token.as_str()) as u16;
+        // Mirror the stop-button placement below (`width > used + label_w + 1`)
+        // with the token span counted into `used`, so the count is added only
+        // when the row still clears the bar that keeps `[stop]` on screen.
+        if span_width(&spans) + token_w + label_w + 1 < area.width {
+            spans.push(Span::styled(token, Style::default().fg(Color::DarkGray)));
+        }
+    }
+    let used: u16 = span_width(&spans);
     let rect = (area.width > used + label_w + 1).then(|| Rect {
         x: area.x + area.width - label_w,
         y: area.y,
@@ -7040,6 +7043,50 @@ mod tests {
         assert!(
             screen.contains("11,975"),
             "the running token count should be visible on screen:\n{screen}"
+        );
+    }
+
+    /// The cancel affordance outranks the token count: on a row too narrow for
+    /// both, the token span is dropped and `[stop]` stays. Renders the turn row
+    /// directly and checks the stop button was placed and the count omitted.
+    #[test]
+    fn the_stop_button_wins_the_row_over_the_token_count() {
+        use crate::openapi::chats::TokenUsage;
+        let mut ui = super::Ui::new();
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        state.apply(super::ChatEvent::UserPrompt("q".into()));
+        ui.turn_started = Some(std::time::Instant::now());
+        // Sized so the base row + `[stop]` fit a 60-col row, but adding the
+        // ~21-col token span would push `[stop]` off the edge.
+        state.status = "Reading market data for TSLA".into();
+        state.apply(super::ChatEvent::TokenUsage(TokenUsage {
+            prompt_tokens: 123_400,
+            completion_tokens: 56,
+            total_tokens: 123_456,
+        }));
+        // A narrow row: the base status + timer + stop label already nearly fill
+        // it, so the token span cannot also fit.
+        let area = super::Rect {
+            x: 0,
+            y: 0,
+            width: 60,
+            height: 1,
+        };
+        let backend = ratatui::backend::TestBackend::new(60, 1);
+        let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|f| super::render_turn_status(f, area, &mut ui, &state))
+            .expect("draw");
+        let row: String = (0..60)
+            .map(|x| terminal.backend().buffer()[(x, 0)].symbol())
+            .collect();
+        assert!(
+            ui.stop_button.is_some() && row.contains("stop"),
+            "the stop button must survive a narrow row:\n{row}"
+        );
+        assert!(
+            !row.contains("123,456"),
+            "the token count yields when it would push [stop] off:\n{row}"
         );
     }
 

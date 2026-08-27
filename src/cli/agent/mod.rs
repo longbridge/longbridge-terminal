@@ -512,6 +512,13 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<crate::cli::schema::Res
                     "Run duration in seconds; null when the run did not finish",
                 ),
                 field(
+                    "token_usage",
+                    "object | absent",
+                    "Cumulative token usage for the round: {prompt_tokens, \
+                     completion_tokens, total_tokens}. Absent when the round \
+                     consumed none (cache hit) or the server did not report it",
+                ),
+                field(
                     "interrupt",
                     "object | null",
                     "Present when status=interrupted: {tool_call_id, questions[]}. \

@@ -483,28 +483,41 @@ impl ChatState {
         self.messages.push(Message::thinking(thinking.text, secs));
     }
 
-    /// Reset to a fresh conversation, keeping the agent but dropping all
-    /// messages and conversation identity. Used by the "new chat" action.
-    pub fn reset(&mut self, welcome: String) {
+    /// Drop everything tied to the turn in flight and bump the generation so
+    /// events a turn task already queued (it may still be running) are discarded
+    /// by the generation gate rather than applied to whatever comes next.
+    ///
+    /// Shared by [`Self::reset`] (new chat) and `session_store::restore` (switch
+    /// conversation): both abandon the running turn, so the field list lives in
+    /// one place instead of drifting between two hand-kept copies. Conversation
+    /// identity (title, ids, pending interrupt) is *not* cleared here — `reset`
+    /// blanks it, `restore` overwrites it with the loaded chat's.
+    pub fn clear_turn_state(&mut self) {
         self.generation = self.generation.wrapping_add(1);
-        self.messages = vec![Message::new(Role::System, welcome)];
         self.streaming = None;
         self.thinking = None;
         self.status.clear();
         self.busy = false;
+        self.queued.clear();
+        self.tool_failures.clear();
+        self.references.clear();
+        self.further.clear();
+        self.turn_error = None;
+        self.turn_started = None;
+        self.token_usage = None;
+    }
+
+    /// Reset to a fresh conversation, keeping the agent but dropping all
+    /// messages and conversation identity. Used by the "new chat" action.
+    pub fn reset(&mut self, welcome: String) {
+        self.clear_turn_state();
+        self.messages = vec![Message::new(Role::System, welcome)];
         self.scroll = 0;
         self.title = None;
         self.chat_uid = None;
         self.message_id = None;
         self.parent_message_id = None;
         self.pending_interrupt = None;
-        self.turn_error = None;
-        self.queued.clear();
-        self.tool_failures.clear();
-        self.references.clear();
-        self.further.clear();
-        self.turn_started = None;
-        self.token_usage = None;
     }
 
     /// Take everything queued as a single prompt, or `None` if nothing waits.
