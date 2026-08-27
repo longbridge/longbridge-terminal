@@ -113,14 +113,19 @@ const TRADE_METHODS: &[&str] = &[
 /// Those three are the only methods on this seam that move real money, so they
 /// stay dry runs until the caller passes `"execute": true`. A client that omits
 /// the flag gets the parsed order back and nothing reaches the exchange.
-fn order_dry_run(preview: Value) -> Value {
-    serde_json::json!({
+fn order_dry_run(preview: Value, fingerprint: &str) -> Result<Value> {
+    let code = crate::utils::dry_run::issue(fingerprint)?;
+    Ok(serde_json::json!({
         "dry_run": true,
         "preview": preview,
-        "next_step": "DRY RUN — nothing was sent to the exchange. Show this preview to \
-                      the user and re-send the identical request with \"execute\": true \
-                      only after the user has explicitly confirmed this exact order.",
-    })
+        "confirmation_code": code,
+        "next_step": format!(
+            "DRY RUN — nothing was sent to the exchange. Show this preview to the user \
+             and re-send the identical request with \"execute\": \"{code}\" only after \
+             the user has explicitly confirmed this exact order. The code is single-use, \
+             expires in 10 minutes, and only applies to this exact request."
+        ),
+    }))
 }
 
 fn quote_api() -> crate::cli::api::LbQuoteApi {
@@ -165,10 +170,11 @@ fn session_capabilities() -> Value {
                 "trade.cancel_order",
                 "trade.replace_order",
             ],
-            "note": "Dry run unless params include \"execute\": true. Send the \
-                     request once without it, show the returned preview to the \
-                     user, and resend with \"execute\": true only after the user \
-                     has explicitly confirmed that exact order.",
+            "note": "Dry run unless params include \"execute\": \"<CODE>\". The dry \
+                     run returns a single-use confirmation_code; show the preview to \
+                     the user and resend with that code only after they explicitly \
+                     confirm. The code expires in 10 minutes and is bound to the \
+                     exact request.",
         },
     })
 }
@@ -434,29 +440,54 @@ async fn call_trade(name: &str, p: Params<'_>) -> Result<Value> {
             if let Some(v) = p.str_opt("remark")? {
                 opts = opts.remark(v);
             }
-            if !p.bool_opt("execute")? {
-                return Ok(order_dry_run(serde_json::json!({
-                    "action": "submit_order",
-                    "symbol": p.str("symbol")?,
-                    "side": p.str("side")?,
-                    "order_type": p.str("order_type")?,
-                    "quantity": p.str("quantity")?,
-                    "time_in_force": p.str("time_in_force")?,
-                    "price": p.str_opt("price")?,
-                    "trigger_price": p.str_opt("trigger_price")?,
-                    "outside_rth": p.str_opt("outside_rth")?,
-                    "remark": p.str_opt("remark")?,
-                })));
+            let fingerprint = crate::utils::dry_run::fingerprint(&[
+                "order",
+                &p.str("side")?,
+                &p.str("symbol")?,
+                &p.str("quantity")?,
+                &p.str("order_type")?,
+                &p.str("time_in_force")?,
+                &p.str_opt("price")?.unwrap_or_default(),
+                &p.str_opt("trigger_price")?.unwrap_or_default(),
+                &p.str_opt("outside_rth")?.unwrap_or_default(),
+                &p.str_opt("remark")?.unwrap_or_default(),
+            ]);
+            match p.str_opt("execute")? {
+                None => {
+                    return order_dry_run(
+                        serde_json::json!({
+                            "action": "submit_order",
+                            "symbol": p.str("symbol")?,
+                            "side": p.str("side")?,
+                            "order_type": p.str("order_type")?,
+                            "quantity": p.str("quantity")?,
+                            "time_in_force": p.str("time_in_force")?,
+                            "price": p.str_opt("price")?,
+                            "trigger_price": p.str_opt("trigger_price")?,
+                            "outside_rth": p.str_opt("outside_rth")?,
+                            "remark": p.str_opt("remark")?,
+                        }),
+                        &fingerprint,
+                    );
+                }
+                Some(code) => crate::utils::dry_run::consume(&fingerprint, &code)?,
             }
             ok(api.submit_order(opts).await?)
         }
         "cancel_order" => {
             let order_id = p.str("order_id")?;
-            if !p.bool_opt("execute")? {
-                return Ok(order_dry_run(serde_json::json!({
-                    "action": "cancel_order",
-                    "order_id": order_id,
-                })));
+            let fingerprint = crate::utils::dry_run::fingerprint(&["cancel", &order_id]);
+            match p.str_opt("execute")? {
+                None => {
+                    return order_dry_run(
+                        serde_json::json!({
+                            "action": "cancel_order",
+                            "order_id": order_id,
+                        }),
+                        &fingerprint,
+                    );
+                }
+                Some(code) => crate::utils::dry_run::consume(&fingerprint, &code)?,
             }
             api.cancel_order(order_id).await?;
             Ok(Value::Null)
@@ -469,13 +500,25 @@ async fn call_trade(name: &str, p: Params<'_>) -> Result<Value> {
             if let Some(v) = p.str_opt("price")? {
                 opts = opts.price(decimal(&v, "price")?);
             }
-            if !p.bool_opt("execute")? {
-                return Ok(order_dry_run(serde_json::json!({
-                    "action": "replace_order",
-                    "order_id": p.str("order_id")?,
-                    "new_quantity": p.str("quantity")?,
-                    "new_price": p.str_opt("price")?,
-                })));
+            let fingerprint = crate::utils::dry_run::fingerprint(&[
+                "replace",
+                &p.str("order_id")?,
+                &p.str("quantity")?,
+                &p.str_opt("price")?.unwrap_or_default(),
+            ]);
+            match p.str_opt("execute")? {
+                None => {
+                    return order_dry_run(
+                        serde_json::json!({
+                            "action": "replace_order",
+                            "order_id": p.str("order_id")?,
+                            "new_quantity": p.str("quantity")?,
+                            "new_price": p.str_opt("price")?,
+                        }),
+                        &fingerprint,
+                    );
+                }
+                Some(code) => crate::utils::dry_run::consume(&fingerprint, &code)?,
             }
             api.replace_order(opts).await?;
             Ok(Value::Null)
@@ -740,8 +783,8 @@ mod tests {
             .as_str()
             .expect("gate note must be advertised");
         assert!(
-            note.contains("\"execute\": true"),
-            "note must name the flag"
+            note.contains("confirmation_code"),
+            "note must tell clients where the code comes from"
         );
     }
 

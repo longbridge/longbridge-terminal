@@ -716,7 +716,7 @@ pub async fn cmd_submit_order(
     order_type: String,
     tif: String,
     side: OrderSide,
-    execute: bool,
+    execute: Option<String>,
     format: &OutputFormat,
 ) -> Result<()> {
     let ot = parse_order_type(&order_type)?;
@@ -786,8 +786,28 @@ pub async fn cmd_submit_order(
     if let Some(ref rth) = outside_rth {
         let _ = write!(price_display, " outside-rth: {rth}");
     }
+    // Fingerprint every field that defines the order, so a code read from one
+    // preview cannot be quoted back for a different order.
+    let fingerprint = crate::utils::dry_run::fingerprint(&[
+        "order",
+        &format!("{side:?}"),
+        &symbol,
+        &quantity.to_string(),
+        &order_type.to_uppercase(),
+        &tif.to_lowercase(),
+        price.as_deref().unwrap_or(""),
+        trigger_price.as_deref().unwrap_or(""),
+        trailing_amount.as_deref().unwrap_or(""),
+        trailing_percent.as_deref().unwrap_or(""),
+        limit_offset.as_deref().unwrap_or(""),
+        expire_date.as_deref().unwrap_or(""),
+        outside_rth.as_deref().unwrap_or(""),
+        remark.as_deref().unwrap_or(""),
+    ]);
+
     // Two-step by design: without --execute this previews and sends nothing.
-    if !execute {
+    let Some(code) = execute else {
+        let confirmation = crate::utils::dry_run::issue(&fingerprint)?;
         let last = preview_last_price(&symbol).await;
         let reference = price
             .as_deref()
@@ -814,7 +834,8 @@ pub async fn cmd_submit_order(
                     "remark": remark,
                     "last_price": last.map(|d| d.to_string()),
                     "estimated_amount": estimated.map(|d| d.to_string()),
-                    "message": crate::utils::dry_run::message(),
+                    "confirmation_code": confirmation,
+                    "message": crate::utils::dry_run::message(&confirmation),
                 });
                 println!("{}", serde_json::to_string_pretty(&val)?);
             }
@@ -833,11 +854,14 @@ pub async fn cmd_submit_order(
                 if let Some(a) = estimated {
                     println!("  {:<18}~{a}", "Est. amount");
                 }
-                crate::utils::dry_run::print_notice();
+                println!();
+                println!("  {:<18}{confirmation}", "Confirmation code");
+                crate::utils::dry_run::print_notice(&confirmation);
             }
         }
         return Ok(());
-    }
+    };
+    crate::utils::dry_run::consume(&fingerprint, &code)?;
 
     println!("Submitting {side:?} order: {quantity} {symbol} @ {price_display}");
     let ctx = crate::openapi::trade();
@@ -858,11 +882,13 @@ pub async fn cmd_submit_order(
 
 pub async fn cmd_cancel_order(
     order_id: String,
-    execute: bool,
+    execute: Option<String>,
     format: &OutputFormat,
 ) -> Result<()> {
+    let fingerprint = crate::utils::dry_run::fingerprint(&["cancel", &order_id]);
     // Two-step by design: without --execute this previews and cancels nothing.
-    if !execute {
+    let Some(code) = execute else {
+        let confirmation = crate::utils::dry_run::issue(&fingerprint)?;
         let summary = preview_order_summary(&order_id).await;
         match format {
             OutputFormat::Json => {
@@ -872,7 +898,8 @@ pub async fn cmd_cancel_order(
                     "action": "cancel",
                     "order_id": order_id,
                     "order": summary,
-                    "message": crate::utils::dry_run::message(),
+                    "confirmation_code": confirmation,
+                    "message": crate::utils::dry_run::message(&confirmation),
                 });
                 println!("{}", serde_json::to_string_pretty(&val)?);
             }
@@ -881,11 +908,14 @@ pub async fn cmd_cancel_order(
                 println!();
                 println!("  {:<18}Cancel", "Action");
                 print_order_summary(summary.as_ref(), &order_id);
-                crate::utils::dry_run::print_notice();
+                println!();
+                println!("  {:<18}{confirmation}", "Confirmation code");
+                crate::utils::dry_run::print_notice(&confirmation);
             }
         }
         return Ok(());
-    }
+    };
+    crate::utils::dry_run::consume(&fingerprint, &code)?;
 
     let ctx = crate::openapi::trade();
     ctx.cancel_order(order_id.clone()).await?;
@@ -903,7 +933,7 @@ pub async fn cmd_replace_order(
     order_id: String,
     qty: Option<u64>,
     price: Option<String>,
-    execute: bool,
+    execute: Option<String>,
     format: &OutputFormat,
 ) -> Result<()> {
     let quantity = qty.ok_or_else(|| anyhow::anyhow!("--qty is required"))?;
@@ -915,8 +945,15 @@ pub async fn cmd_replace_order(
         opts = opts.price(price_dec);
     }
 
+    let fingerprint = crate::utils::dry_run::fingerprint(&[
+        "replace",
+        &order_id,
+        &quantity.to_string(),
+        price.as_deref().unwrap_or(""),
+    ]);
     // Two-step by design: without --execute this previews and changes nothing.
-    if !execute {
+    let Some(code) = execute else {
+        let confirmation = crate::utils::dry_run::issue(&fingerprint)?;
         let summary = preview_order_summary(&order_id).await;
         match format {
             OutputFormat::Json => {
@@ -928,7 +965,8 @@ pub async fn cmd_replace_order(
                     "current": summary,
                     "new_quantity": quantity,
                     "new_price": price,
-                    "message": crate::utils::dry_run::message(),
+                    "confirmation_code": confirmation,
+                    "message": crate::utils::dry_run::message(&confirmation),
                 });
                 println!("{}", serde_json::to_string_pretty(&val)?);
             }
@@ -943,11 +981,14 @@ pub async fn cmd_replace_order(
                     "New price",
                     price.as_deref().unwrap_or("(unchanged)")
                 );
-                crate::utils::dry_run::print_notice();
+                println!();
+                println!("  {:<18}{confirmation}", "Confirmation code");
+                crate::utils::dry_run::print_notice(&confirmation);
             }
         }
         return Ok(());
-    }
+    };
+    crate::utils::dry_run::consume(&fingerprint, &code)?;
 
     let ctx = crate::openapi::trade();
     ctx.replace_order(opts).await?;

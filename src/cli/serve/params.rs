@@ -67,16 +67,6 @@ impl<'a> Params<'a> {
         }
     }
 
-    /// Optional boolean; an absent key is `false`. Used by the order-execution
-    /// gate, where "not supplied" must always mean "dry run".
-    pub fn bool_opt(self, key: &str) -> Result<bool> {
-        match self.get(key) {
-            None | Some(Value::Null) => Ok(false),
-            Some(Value::Bool(b)) => Ok(*b),
-            Some(_) => bail_param!("`{key}` must be a boolean"),
-        }
-    }
-
     pub fn strs(self, key: &str) -> Result<Vec<String>> {
         let Some(value) = self.get(key) else {
             bail_param!("missing required parameter `{key}`");
