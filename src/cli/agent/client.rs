@@ -709,6 +709,12 @@ async fn read_back_answer(
     if !text.is_empty() {
         on_event(AgentEvent::AnswerDelta { text });
     }
+    // The stored usage equals the stream's final frame (the server writes the
+    // round's cumulative total), so history restores what the dead connection
+    // never delivered — and what the restart announcement above cleared.
+    if let Some(usage) = msg.token_usage.filter(|usage| !usage.is_empty()) {
+        on_event(AgentEvent::TokenUsage(usage));
+    }
     let status = recovered_status(msg.status);
     on_event(AgentEvent::WorkflowFinished {
         status: status.to_string(),
@@ -754,6 +760,12 @@ async fn finalize_from_history(
                     ));
                     break;
                 };
+                // The frame that would have carried the round's final total is
+                // exactly what the truncated stream lost; the stored value is
+                // its equal, so supply it alongside the verdict.
+                if let Some(usage) = msg.token_usage.filter(|usage| !usage.is_empty()) {
+                    on_event(AgentEvent::TokenUsage(usage));
+                }
                 on_event(AgentEvent::WorkflowFinished {
                     status: recovered_status(msg.status).to_string(),
                     references: msg.references(),

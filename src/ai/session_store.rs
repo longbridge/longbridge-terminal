@@ -176,6 +176,10 @@ fn continuable_parent(messages: &[crate::openapi::chats::ChatMessage]) -> Option
 
 /// Restore a loaded conversation into `state`, ready for follow-ups.
 pub fn restore(loaded: LoadedChat, state: &mut ChatState) {
+    // Like `reset`: the conversation identity changes, so events a turn of the
+    // previous conversation already queued must not apply to this one —
+    // aborting its task cannot retract them, only the generation gate can.
+    state.generation = state.generation.wrapping_add(1);
     if !loaded.agent_uid.is_empty() {
         state.agent_uid = loaded.agent_uid;
     }
@@ -197,6 +201,7 @@ pub fn restore(loaded: LoadedChat, state: &mut ChatState) {
     state.busy = false;
     state.queued.clear();
     state.tool_failures.clear();
+    state.token_usage = None;
     state.messages = loaded.messages;
 }
 
@@ -211,6 +216,39 @@ mod tests {
             status,
             ..ChatMessage::default()
         }
+    }
+
+    /// Restoring changes which conversation the state describes, so a turn of
+    /// the previous conversation must lose its claim on it: the generation gate
+    /// is what discards events an aborted task had already queued, and the live
+    /// token count belongs to the turn that was just abandoned.
+    #[test]
+    fn restore_bumps_the_generation_and_drops_live_turn_state() {
+        use crate::ai::state::{ChatEvent, ChatState};
+        let mut state = ChatState::new("chatbot".into(), "welcome".into());
+        state.apply(ChatEvent::UserPrompt("still running".into()));
+        state.apply(ChatEvent::TokenUsage(crate::openapi::chats::TokenUsage {
+            prompt_tokens: 1200,
+            completion_tokens: 80,
+            total_tokens: 1280,
+        }));
+        let generation = state.generation;
+        let loaded = LoadedChat {
+            agent_uid: "chatbot".into(),
+            chat_uid: "c2".into(),
+            message_id: None,
+            parent_message_id: None,
+            title: None,
+            messages: Vec::new(),
+            pending_interrupt: None,
+        };
+        restore(loaded, &mut state);
+        assert_ne!(state.generation, generation, "stale events must be gated");
+        assert!(
+            state.token_usage.is_none(),
+            "the old turn's count is dropped"
+        );
+        assert!(!state.busy);
     }
 
     /// The bug this exists for: a conversation the reader quit while the agent was

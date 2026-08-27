@@ -1164,6 +1164,17 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
             }
             Some(loaded) = load_rx.recv() => {
                 if let Some(loaded) = loaded {
+                    // A turn still streaming belongs to the conversation being
+                    // left. Abort it before the switch — without this its
+                    // remaining events kept applying to the restored state,
+                    // committing the old conversation's answer into the new
+                    // one's transcript.
+                    if let Some(task) = turn.take() {
+                        task.abort();
+                        // An aborted turn sends no finishing event, so its end
+                        // is reported here or not at all.
+                        analytics::turn_finish(&state, analytics::Outcome::Cancelled);
+                    }
                     analytics::session_resume();
                     session_store::restore(loaded, &mut state);
                     ui.reset_render();
@@ -3373,7 +3384,7 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &mut ChatState, editor: &Edi
     // floats over the status row and any chrome between the transcript and the
     // prompt rather than being anchored to the transcript's foot with a gap.
     if ui.view == View::Chat {
-        render_slash_dropdown(f, body, footer, ui, state, editor);
+        render_slash_dropdown(f, body, footer, ui, state, editor, hug);
     } else {
         ui.slash_rows.clear();
     }
@@ -4518,6 +4529,7 @@ fn render_slash_dropdown(
     ui: &mut Ui,
     state: &ChatState,
     editor: &Editor,
+    hug: bool,
 ) {
     ui.slash_rows.clear();
     if !slash_active(editor) {
@@ -4535,12 +4547,16 @@ fn render_slash_dropdown(
         .unwrap_or(0);
     let box_h = matches.len() as u16 + 2;
     let box_w = area.width.clamp(24, 56);
-    // The prompt box's top border sits one row into the footer (a blank row above
-    // it). Hang the palette's bottom edge off that border so the two are flush,
-    // instead of anchoring to the transcript's foot with the status row between.
+    // Hang the palette's bottom edge off the prompt box's top border so the two
+    // are flush, instead of anchoring to the transcript's foot with the status
+    // row between. Where that border sits depends on the footer's layout: one
+    // row into the footer normally (a blank row above the box), or on its first
+    // row when the box hugs a populated status row — anchoring past the real
+    // border would draw the palette over it.
+    let box_top = prompt.y + u16::from(!hug);
     let box_area = Rect {
         x: area.x,
-        y: (prompt.y + 1).saturating_sub(box_h),
+        y: box_top.saturating_sub(box_h),
         width: box_w,
         height: box_h,
     };
@@ -7050,6 +7066,48 @@ mod tests {
                     .to_string()
             })
             .collect()
+    }
+
+    /// The command palette must hang off the prompt box's real top border in
+    /// the hugged layout too. Anchored one row too low, its bottom border
+    /// overwrote the box's top border whenever the palette was opened while
+    /// scrolled up (or during a turn).
+    #[test]
+    fn the_command_palette_respects_a_hugged_prompt_box() {
+        let mut ui = super::Ui::new();
+        let mut state = super::ChatState::new("chatbot".into(), "welcome".into());
+        let mut editor = super::Editor::new();
+        editor.set_text("/");
+        for i in 0..20 {
+            state.apply(super::ChatEvent::UserPrompt(format!("q{i}")));
+            state.apply(super::ChatEvent::Delta(format!("a{i}")));
+            state.apply(super::ChatEvent::TurnFinished { error: None });
+        }
+        state.scroll = 5; // hug active: the scrolled-up hint occupies the status row
+        let backend = ratatui::backend::TestBackend::new(60, 24);
+        let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|f| super::view(f, &mut ui, &mut state, &editor))
+            .expect("draw");
+        let buf = terminal.backend().buffer().clone();
+        let rows: Vec<String> = (0..buf.area.height)
+            .map(|y| {
+                (0..buf.area.width)
+                    .map(|x| buf[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect();
+        // The box's top border survives intact (its row starts with ╭, not with
+        // the palette's bottom border), and the palette sits flush above it.
+        let box_top = rows
+            .iter()
+            .rposition(|r| r.trim_start().starts_with('╭'))
+            .expect("the prompt box's top border must survive the palette");
+        assert!(
+            rows[box_top - 1].contains('╰'),
+            "the palette should sit flush above the box:\n{}",
+            rows.join("\n")
+        );
     }
 
     /// When the status row carries a hint (here, the scrolled-up notice), the
