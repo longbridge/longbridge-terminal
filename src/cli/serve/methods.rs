@@ -113,8 +113,8 @@ const TRADE_METHODS: &[&str] = &[
 /// Those three are the only methods on this seam that move real money, so they
 /// stay dry runs until the caller passes `"execute": true`. A client that omits
 /// the flag gets the parsed order back and nothing reaches the exchange.
-fn order_dry_run(preview: Value, fingerprint: &str) -> Value {
-    let code = crate::utils::dry_run::code_for(fingerprint);
+fn order_dry_run(preview: Value, scope: &crate::utils::dry_run::Scope) -> Value {
+    let code = scope.code();
     serde_json::json!({
         "dry_run": true,
         "preview": preview,
@@ -439,18 +439,12 @@ async fn call_trade(name: &str, p: Params<'_>) -> Result<Value> {
             if let Some(v) = p.str_opt("remark")? {
                 opts = opts.remark(v);
             }
-            let fingerprint = crate::utils::dry_run::fingerprint(&[
-                "order",
+            let scope = crate::utils::dry_run::Scope::order(
                 &p.str("side")?,
                 &p.str("symbol")?,
                 &p.str("quantity")?,
-                &p.str("order_type")?,
-                &p.str("time_in_force")?,
                 &p.str_opt("price")?.unwrap_or_default(),
-                &p.str_opt("trigger_price")?.unwrap_or_default(),
-                &p.str_opt("outside_rth")?.unwrap_or_default(),
-                &p.str_opt("remark")?.unwrap_or_default(),
-            ]);
+            );
             match p.str_opt("execute")? {
                 None => {
                     return Ok(order_dry_run(
@@ -466,16 +460,16 @@ async fn call_trade(name: &str, p: Params<'_>) -> Result<Value> {
                             "outside_rth": p.str_opt("outside_rth")?,
                             "remark": p.str_opt("remark")?,
                         }),
-                        &fingerprint,
+                        &scope,
                     ));
                 }
-                Some(code) => crate::utils::dry_run::verify(&fingerprint, &code)?,
+                Some(code) => scope.verify(&code)?,
             }
             ok(api.submit_order(opts).await?)
         }
         "cancel_order" => {
             let order_id = p.str("order_id")?;
-            let fingerprint = crate::utils::dry_run::fingerprint(&["cancel", &order_id]);
+            let scope = crate::utils::dry_run::Scope::on_order("cancel", &order_id);
             match p.str_opt("execute")? {
                 None => {
                     return Ok(order_dry_run(
@@ -483,10 +477,10 @@ async fn call_trade(name: &str, p: Params<'_>) -> Result<Value> {
                             "action": "cancel_order",
                             "order_id": order_id,
                         }),
-                        &fingerprint,
+                        &scope,
                     ));
                 }
-                Some(code) => crate::utils::dry_run::verify(&fingerprint, &code)?,
+                Some(code) => scope.verify(&code)?,
             }
             api.cancel_order(order_id).await?;
             Ok(Value::Null)
@@ -499,12 +493,11 @@ async fn call_trade(name: &str, p: Params<'_>) -> Result<Value> {
             if let Some(v) = p.str_opt("price")? {
                 opts = opts.price(decimal(&v, "price")?);
             }
-            let fingerprint = crate::utils::dry_run::fingerprint(&[
-                "replace",
+            let scope = crate::utils::dry_run::Scope::replace(
                 &p.str("order_id")?,
                 &p.str("quantity")?,
                 &p.str_opt("price")?.unwrap_or_default(),
-            ]);
+            );
             match p.str_opt("execute")? {
                 None => {
                     return Ok(order_dry_run(
@@ -514,10 +507,10 @@ async fn call_trade(name: &str, p: Params<'_>) -> Result<Value> {
                             "new_quantity": p.str("quantity")?,
                             "new_price": p.str_opt("price")?,
                         }),
-                        &fingerprint,
+                        &scope,
                     ));
                 }
-                Some(code) => crate::utils::dry_run::verify(&fingerprint, &code)?,
+                Some(code) => scope.verify(&code)?,
             }
             api.replace_order(opts).await?;
             Ok(Value::Null)

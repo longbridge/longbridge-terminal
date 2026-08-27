@@ -786,28 +786,16 @@ pub async fn cmd_submit_order(
     if let Some(ref rth) = outside_rth {
         let _ = write!(price_display, " outside-rth: {rth}");
     }
-    // Fingerprint every field that defines the order, so a code read from one
-    // preview cannot be quoted back for a different order.
-    let fingerprint = crate::utils::dry_run::fingerprint(&[
-        "order",
+    let scope = crate::utils::dry_run::Scope::order(
         &format!("{side:?}"),
         &symbol,
         &quantity.to_string(),
-        &order_type.to_uppercase(),
-        &tif.to_lowercase(),
         price.as_deref().unwrap_or(""),
-        trigger_price.as_deref().unwrap_or(""),
-        trailing_amount.as_deref().unwrap_or(""),
-        trailing_percent.as_deref().unwrap_or(""),
-        limit_offset.as_deref().unwrap_or(""),
-        expire_date.as_deref().unwrap_or(""),
-        outside_rth.as_deref().unwrap_or(""),
-        remark.as_deref().unwrap_or(""),
-    ]);
+    );
 
     // Two-step by design: without --execute this previews and sends nothing.
     let Some(code) = execute else {
-        let confirmation = crate::utils::dry_run::code_for(&fingerprint);
+        let confirmation = scope.code();
         let last = preview_last_price(&symbol).await;
         let reference = price
             .as_deref()
@@ -859,7 +847,7 @@ pub async fn cmd_submit_order(
         }
         return Ok(());
     };
-    crate::utils::dry_run::verify(&fingerprint, &code)?;
+    scope.verify(&code)?;
 
     println!("Submitting {side:?} order: {quantity} {symbol} @ {price_display}");
     let ctx = crate::openapi::trade();
@@ -883,10 +871,10 @@ pub async fn cmd_cancel_order(
     execute: Option<String>,
     format: &OutputFormat,
 ) -> Result<()> {
-    let fingerprint = crate::utils::dry_run::fingerprint(&["cancel", &order_id]);
+    let scope = crate::utils::dry_run::Scope::on_order("cancel", &order_id);
     // Two-step by design: without --execute this previews and cancels nothing.
     let Some(code) = execute else {
-        let confirmation = crate::utils::dry_run::code_for(&fingerprint);
+        let confirmation = scope.code();
         let summary = preview_order_summary(&order_id).await;
         match format {
             OutputFormat::Json => {
@@ -911,7 +899,7 @@ pub async fn cmd_cancel_order(
         }
         return Ok(());
     };
-    crate::utils::dry_run::verify(&fingerprint, &code)?;
+    scope.verify(&code)?;
 
     let ctx = crate::openapi::trade();
     ctx.cancel_order(order_id.clone()).await?;
@@ -941,15 +929,14 @@ pub async fn cmd_replace_order(
         opts = opts.price(price_dec);
     }
 
-    let fingerprint = crate::utils::dry_run::fingerprint(&[
-        "replace",
+    let scope = crate::utils::dry_run::Scope::replace(
         &order_id,
         &quantity.to_string(),
         price.as_deref().unwrap_or(""),
-    ]);
+    );
     // Two-step by design: without --execute this previews and changes nothing.
     let Some(code) = execute else {
-        let confirmation = crate::utils::dry_run::code_for(&fingerprint);
+        let confirmation = scope.code();
         let summary = preview_order_summary(&order_id).await;
         match format {
             OutputFormat::Json => {
@@ -982,7 +969,7 @@ pub async fn cmd_replace_order(
         }
         return Ok(());
     };
-    crate::utils::dry_run::verify(&fingerprint, &code)?;
+    scope.verify(&code)?;
 
     let ctx = crate::openapi::trade();
     ctx.replace_order(opts).await?;

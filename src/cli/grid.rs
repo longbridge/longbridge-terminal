@@ -193,18 +193,18 @@ pub async fn cmd_grid(
             limit,
         }) => cmd_triggers(order_id, page, limit, format).await,
         Some(GridCmd::Cancel { order_id, execute }) => {
-            let fingerprint = crate::utils::dry_run::fingerprint(&["grid-cancel", &order_id]);
+            let scope = crate::utils::dry_run::Scope::on_order("grid cancel", &order_id);
             // Two-step by design: without --execute this previews and sends nothing.
             let Some(code) = execute else {
                 print_grid_dry_run(
                     &serde_json::json!({ "action": "cancel", "order_id": order_id }),
-                    &fingerprint,
+                    &scope,
                     "cancel this grid order",
                     format,
                 );
                 return Ok(());
             };
-            crate::utils::dry_run::verify(&fingerprint, &code)?;
+            scope.verify(&code)?;
             openapi::grid().cancel(order_id.clone()).await?;
             print_mutation(
                 format,
@@ -214,18 +214,18 @@ pub async fn cmd_grid(
             Ok(())
         }
         Some(GridCmd::Suspend { order_id, execute }) => {
-            let fingerprint = crate::utils::dry_run::fingerprint(&["grid-suspend", &order_id]);
+            let scope = crate::utils::dry_run::Scope::on_order("grid suspend", &order_id);
             // Two-step by design: without --execute this previews and sends nothing.
             let Some(code) = execute else {
                 print_grid_dry_run(
                     &serde_json::json!({ "action": "suspend", "order_id": order_id }),
-                    &fingerprint,
+                    &scope,
                     "suspend this grid order",
                     format,
                 );
                 return Ok(());
             };
-            crate::utils::dry_run::verify(&fingerprint, &code)?;
+            scope.verify(&code)?;
             openapi::grid().suspend(order_id.clone()).await?;
             print_mutation(
                 format,
@@ -235,18 +235,18 @@ pub async fn cmd_grid(
             Ok(())
         }
         Some(GridCmd::Restart { order_id, execute }) => {
-            let fingerprint = crate::utils::dry_run::fingerprint(&["grid-restart", &order_id]);
+            let scope = crate::utils::dry_run::Scope::on_order("grid restart", &order_id);
             // Two-step by design: without --execute this previews and sends nothing.
             let Some(code) = execute else {
                 print_grid_dry_run(
                     &serde_json::json!({ "action": "restart", "order_id": order_id }),
-                    &fingerprint,
+                    &scope,
                     "restart this grid order",
                     format,
                 );
                 return Ok(());
             };
-            crate::utils::dry_run::verify(&fingerprint, &code)?;
+            scope.verify(&code)?;
             openapi::grid().restart(order_id.clone()).await?;
             print_mutation(
                 format,
@@ -374,11 +374,11 @@ fn render_orders(orders: &[longbridge::grid::GridOrder], format: &OutputFormat) 
 /// pretty mode the shared notice follows it so a human is told how to go live.
 fn print_grid_dry_run(
     payload: &serde_json::Value,
-    fingerprint: &str,
+    scope: &crate::utils::dry_run::Scope,
     action: &str,
     format: &OutputFormat,
 ) {
-    let code = crate::utils::dry_run::code_for(fingerprint);
+    let code = scope.code();
     let mut payload = payload.clone();
     if let Some(obj) = payload.as_object_mut() {
         obj.insert("dry_run".to_string(), serde_json::Value::Bool(true));
@@ -412,14 +412,8 @@ async fn cmd_submit(
     // a real submit would, before any terms prompt or gateway call.
     let built = build_rule(rule)?;
     let rule_json = serde_json::to_value(&built).unwrap_or_default();
-    // The whole rule is fingerprinted: a grid differing by one trigger price is
-    // a different strategy, and must not inherit another preview's code.
-    let fingerprint = crate::utils::dry_run::fingerprint(&[
-        "grid-submit",
-        &symbol,
-        &currency,
-        &rule_json.to_string(),
-    ]);
+    let scope =
+        crate::utils::dry_run::Scope::grid("submit", &symbol, &rule.quantity, &rule.base_price);
     // Two-step by design: without --execute this previews and sends nothing.
     let Some(code) = execute else {
         print_grid_dry_run(
@@ -429,13 +423,13 @@ async fn cmd_submit(
                 "currency": currency,
                 "rule": rule_json,
             }),
-            &fingerprint,
+            &scope,
             "submit this grid order",
             format,
         );
         return Ok(());
     };
-    crate::utils::dry_run::verify(&fingerprint, &code)?;
+    scope.verify(&code)?;
     if !agree_terms && !confirm_terms()? {
         println!("Grid order submission cancelled.");
         return Ok(());
@@ -461,8 +455,8 @@ async fn cmd_replace(
 ) -> Result<()> {
     let built = build_rule(rule)?;
     let rule_json = serde_json::to_value(&built).unwrap_or_default();
-    let fingerprint =
-        crate::utils::dry_run::fingerprint(&["grid-replace", &order_id, &rule_json.to_string()]);
+    let scope =
+        crate::utils::dry_run::Scope::grid("replace", &order_id, &rule.quantity, &rule.base_price);
     // Two-step by design: without --execute this previews and sends nothing.
     let Some(code) = execute else {
         print_grid_dry_run(
@@ -471,13 +465,13 @@ async fn cmd_replace(
                 "order_id": order_id,
                 "rule": rule_json,
             }),
-            &fingerprint,
+            &scope,
             "apply this change",
             format,
         );
         return Ok(());
     };
-    crate::utils::dry_run::verify(&fingerprint, &code)?;
+    scope.verify(&code)?;
     openapi::grid()
         .replace(longbridge::grid::ReplaceGridOrderOptions::new(
             order_id.clone(),
