@@ -807,7 +807,7 @@ pub async fn cmd_submit_order(
 
     // Two-step by design: without --execute this previews and sends nothing.
     let Some(code) = execute else {
-        let confirmation = crate::utils::dry_run::issue(&fingerprint)?;
+        let confirmation = crate::utils::dry_run::code_for(&fingerprint);
         let last = preview_last_price(&symbol).await;
         let reference = price
             .as_deref()
@@ -859,7 +859,7 @@ pub async fn cmd_submit_order(
         }
         return Ok(());
     };
-    crate::utils::dry_run::consume(&fingerprint, &code)?;
+    crate::utils::dry_run::verify(&fingerprint, &code)?;
 
     println!("Submitting {side:?} order: {quantity} {symbol} @ {price_display}");
     let ctx = crate::openapi::trade();
@@ -886,7 +886,7 @@ pub async fn cmd_cancel_order(
     let fingerprint = crate::utils::dry_run::fingerprint(&["cancel", &order_id]);
     // Two-step by design: without --execute this previews and cancels nothing.
     let Some(code) = execute else {
-        let confirmation = crate::utils::dry_run::issue(&fingerprint)?;
+        let confirmation = crate::utils::dry_run::code_for(&fingerprint);
         let summary = preview_order_summary(&order_id).await;
         match format {
             OutputFormat::Json => {
@@ -911,7 +911,7 @@ pub async fn cmd_cancel_order(
         }
         return Ok(());
     };
-    crate::utils::dry_run::consume(&fingerprint, &code)?;
+    crate::utils::dry_run::verify(&fingerprint, &code)?;
 
     let ctx = crate::openapi::trade();
     ctx.cancel_order(order_id.clone()).await?;
@@ -949,7 +949,7 @@ pub async fn cmd_replace_order(
     ]);
     // Two-step by design: without --execute this previews and changes nothing.
     let Some(code) = execute else {
-        let confirmation = crate::utils::dry_run::issue(&fingerprint)?;
+        let confirmation = crate::utils::dry_run::code_for(&fingerprint);
         let summary = preview_order_summary(&order_id).await;
         match format {
             OutputFormat::Json => {
@@ -982,7 +982,7 @@ pub async fn cmd_replace_order(
         }
         return Ok(());
     };
-    crate::utils::dry_run::consume(&fingerprint, &code)?;
+    crate::utils::dry_run::verify(&fingerprint, &code)?;
 
     let ctx = crate::openapi::trade();
     ctx.replace_order(opts).await?;

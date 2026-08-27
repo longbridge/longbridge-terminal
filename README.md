@@ -347,10 +347,11 @@ longbridge max-qty TSLA.US --side buy --price 250          # Estimate maximum bu
 > **Order commands never place anything on the first run.** `order buy`, `order sell`,
 > `order cancel`, `order replace` and every `grid` write command are dry runs by default:
 > they validate the request, print exactly what would be sent, and contact no exchange.
-> The preview ends with a three-digit confirmation code; re-run the identical command with
-> `--execute <CODE>` to go live. The code is single-use, expires in 10 minutes, and is tied
-> to that exact request — edit any field afterwards and it stops working. AI agents must
-> show the preview to the user and only quote the code back once they have confirmed it.
+> The preview ends with the exact command to run, carrying a three-digit confirmation code.
+> The code is derived from the order itself, so it only works for that exact order — edit
+> the price afterwards and it stops matching. Equivalent spellings are tolerated (`400`,
+> `400.00` and `+400` are one order). AI agents must show the preview to the user and only
+> run the printed command once they have confirmed it.
 
 ### Profit Analysis
 

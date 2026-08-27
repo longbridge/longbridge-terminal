@@ -2,45 +2,108 @@
 //!
 //! Every command that can move real money — `order buy/sell/cancel/replace`
 //! and `grid submit/replace/cancel/suspend/restart` — previews by default and
-//! acts only when the caller passes `--execute <CODE>`, where `CODE` is the
-//! three-digit confirmation code the preview printed.
+//! acts only when the caller passes `--execute <CODE>`, quoting the three-digit
+//! code the preview printed.
 //!
-//! The code is **random and stored on disk**, not derived from the request.
-//! This CLI is open source: anything computed from the arguments could be
-//! recomputed by a caller that skipped the preview, which would make the gate
-//! decorative. A random code can only be learned by reading the preview.
+//! # What it is for
 //!
-//! Three properties fall out of that, and each one exists to stop a specific
-//! mistake:
+//! Stopping the ordinary mistake: acting on an order nobody previewed, or on a
+//! *different* order than the one previewed. Change the price after reading the
+//! code and it stops matching — the user approved one order and a different one
+//! was about to be sent, which is the case worth catching.
 //!
-//! - **single use** — the file is deleted on the way through, so a code can
-//!   never be replayed into a second order.
-//! - **bound to the request** — the fingerprint covers every field that
-//!   defines the order, so editing the price after reading the code fails
-//!   instead of quietly placing something the user never saw.
-//! - **short lived** — a code left in a scrollback from an hour ago is dead.
+//! It is not a secret, and is not meant to be. The arguments are the caller's
+//! own and this file is public, so anyone set on skipping the preview can
+//! compute a code instead of asking for one. Nor does it prove a *human* saw
+//! the preview: a caller can dry-run, read the code and execute in one breath.
+//! Enforcing human review needs a control outside this process, such as a
+//! harness approval hook or account-level trade confirmation.
 //!
-//! What it does not do is prove a *human* saw the preview: a caller can run
-//! the dry run, read the code and execute in one breath. Enforcing human
-//! review needs a control outside this process, such as a harness approval
-//! hook or account-level trade confirmation.
+//! # Derived, not stored
+//!
+//! The code is three digits off a digest of the canonicalised arguments, and
+//! nothing else — no clock, no file, no per-run value. Storing a pending code
+//! instead would buy single use, and cost a list of ways to fail that have
+//! nothing to do with the order: previewing twice would strand the first code,
+//! an unwritable home directory would break the gate, and a code would die
+//! while the user was still deciding.
+//!
+//! # Tolerant on purpose
+//!
+//! Inputs are canonicalised before hashing, so a code survives the harmless
+//! rewordings between the two runs: `400` and `400.00` are the same price,
+//! `buy` and `Buy` the same side, `700.hk` and `700.HK` the same symbol. A
+//! confirmation that fails on a difference the user cannot see is worse than no
+//! confirmation at all — it teaches people to distrust the gate.
 
 use anyhow::{bail, Result};
+use rust_decimal::Decimal;
 use sha2::{Digest, Sha256};
-use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::str::FromStr;
 
-/// Long enough to read a preview and retype the code, short enough that a code
-/// scrolled off the screen is no longer live.
-const TTL_SECONDS: u64 = 600;
+/// Canonical form of one argument.
+///
+/// `Decimal` first: it collapses `400`, `400.0`, `400.00` and `+400`, which is
+/// where two runs differ most often. Anything that is not a number is trimmed
+/// and upper-cased — symbols, sides, order types and tenors are all matched
+/// case-insensitively downstream, so treating them as distinct here would
+/// reject an order the exchange considers identical. Free text (a remark)
+/// survives unchanged apart from case, because different text really is a
+/// different order.
+fn canonical(field: &str) -> String {
+    let trimmed = field.trim();
+    Decimal::from_str(trimmed)
+        .map_or_else(|_| trimmed.to_uppercase(), |n| n.normalize().to_string())
+}
+
+/// Stable identity of the action being previewed. Any argument that changes
+/// what would reach the exchange belongs in `parts`.
+pub fn fingerprint(parts: &[&str]) -> String {
+    let mut hasher = Sha256::new();
+    // Domain separator: this digest must never coincide with any other use of
+    // the same inputs elsewhere in the CLI.
+    hasher.update(b"longbridge/execute-confirmation/v1");
+    for part in parts {
+        let part = canonical(part);
+        // Length-prefixed so ["ab", "c"] and ["a", "bc"] cannot collide.
+        hasher.update(part.len().to_le_bytes());
+        hasher.update(part.as_bytes());
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+/// The code for one request.
+pub fn code_for(fingerprint: &str) -> String {
+    let digest = Sha256::digest(fingerprint.as_bytes());
+    let n = (u32::from(digest[0]) << 8) | u32::from(digest[1]);
+    format!("{:03}", n % 1000)
+}
+
+/// Check the code the caller quoted back.
+///
+/// The only way to fail is to quote a code for a *different* order. Leading
+/// zeros and stray whitespace are forgiven — a code retyped as `7` is still the
+/// code this order was given.
+pub fn verify(fingerprint: &str, code: &str) -> Result<()> {
+    let trimmed = code.trim();
+    let normalized = trimmed
+        .parse::<u32>()
+        .map_or_else(|_| trimmed.to_string(), |n| format!("{:03}", n % 1000));
+    if normalized == code_for(fingerprint) {
+        return Ok(());
+    }
+    bail!(
+        "Confirmation code {trimmed} belongs to a different order. Re-run this command \
+         without --execute, check the preview, and use the code it prints."
+    );
+}
 
 /// Re-render this invocation with `--execute <CODE>` appended, so the operator
 /// has a line to copy rather than a code to splice in by hand.
 ///
-/// Built from the real `argv`, not from the parsed values, so what is offered
-/// is exactly what was previewed. `argv[0]` is replaced with the plain binary
-/// name: the actual path may be a `target/debug/...` build the reader cannot
-/// usefully retype.
+/// Built from the real `argv`, not from the parsed values, so what is offered is
+/// exactly what was previewed. `argv[0]` is replaced with the plain binary name:
+/// the actual path may be a `target/debug/...` build nobody would retype.
 fn command_with_code(code: &str) -> String {
     let mut out = String::from("longbridge");
     for arg in std::env::args().skip(1) {
@@ -70,10 +133,8 @@ fn shell_quote(arg: &str) -> String {
 pub fn message(code: &str, action: &str) -> String {
     format!(
         "Nothing has been sent to the exchange. To {action}, re-run the identical command \
-         with --execute {code}. The code is single use, expires in {} minutes, and only \
-         works for this exact request. AI agents: show this preview to the user and only \
-         re-run once they have explicitly confirmed it.",
-        TTL_SECONDS / 60
+         with --execute {code}. The code only works for this exact order. AI agents: show \
+         this preview to the user and only re-run once they have explicitly confirmed it."
     )
 }
 
@@ -90,131 +151,9 @@ pub fn print_notice(code: &str, action: &str) {
     println!("    {}", command_with_code(code));
     println!();
     println!(
-        "Code {code} is single use, expires in {} minutes, and only works for this exact \
-         request.",
-        TTL_SECONDS / 60
-    );
-    println!(
         "AI agents: show this preview to the user and only run the command above once they \
          have explicitly confirmed it."
     );
-}
-
-#[cfg(test)]
-thread_local! {
-    /// Test-only redirect so the suite never reads or clobbers a real pending
-    /// code. Not a runtime knob — there is no way to set it outside `cfg(test)`.
-    static TEST_STORE: std::cell::RefCell<Option<PathBuf>> =
-        const { std::cell::RefCell::new(None) };
-}
-
-fn store_path() -> Result<PathBuf> {
-    #[cfg(test)]
-    if let Some(path) = TEST_STORE.with(|p| p.borrow().clone()) {
-        return Ok(path);
-    }
-    let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot locate home directory"))?;
-    Ok(home
-        .join(".longbridge")
-        .join("openapi")
-        .join("pending-execute.json"))
-}
-
-fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
-}
-
-/// Stable identity of the action being previewed. Any field that changes what
-/// would reach the exchange belongs in `parts`.
-pub fn fingerprint(parts: &[&str]) -> String {
-    let mut hasher = Sha256::new();
-    for part in parts {
-        // Length-prefixed so ["ab", "c"] and ["a", "bc"] cannot collide.
-        hasher.update(part.len().to_le_bytes());
-        hasher.update(part.as_bytes());
-    }
-    format!("{:x}", hasher.finalize())
-}
-
-/// Three digits from the OS clock's sub-nanosecond jitter plus the process id.
-/// Not a secret — an unpredictable-in-practice value that has to be read off
-/// the preview rather than guessed.
-fn random_code() -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.subsec_nanos());
-    let mut hasher = Sha256::new();
-    hasher.update(nanos.to_le_bytes());
-    hasher.update(std::process::id().to_le_bytes());
-    hasher.update(now().to_le_bytes());
-    let digest = hasher.finalize();
-    let n = u32::from(digest[0]) << 8 | u32::from(digest[1]);
-    format!("{:03}", n % 1000)
-}
-
-/// Record a pending confirmation for `fingerprint` and return the code the
-/// caller must quote back. Overwrites any earlier pending code: only the most
-/// recent preview is live, so an older code fails closed.
-pub fn issue(fingerprint: &str) -> Result<String> {
-    let code = random_code();
-    let path = store_path()?;
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let body = serde_json::json!({
-        "code": code,
-        "fingerprint": fingerprint,
-        "expires_at": now() + TTL_SECONDS,
-    });
-    std::fs::write(&path, serde_json::to_vec_pretty(&body)?)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-    }
-    Ok(code)
-}
-
-/// Validate `code` against the pending confirmation for `fingerprint`, then
-/// spend it. Every failure path leaves the caller with an explicit next step
-/// and, crucially, no order placed.
-pub fn consume(fingerprint: &str, code: &str) -> Result<()> {
-    let path = store_path()?;
-    let Ok(raw) = std::fs::read(&path) else {
-        bail!(
-            "No confirmation code is pending. Run the same command without --execute first, \
-             then re-run it with the code the preview prints."
-        );
-    };
-    // Spend the code before deciding: a rejected attempt must not leave a live
-    // code behind for a second guess.
-    let _ = std::fs::remove_file(&path);
-
-    let stored: serde_json::Value = serde_json::from_slice(&raw)
-        .map_err(|_| anyhow::anyhow!("Confirmation state is unreadable. Run the dry run again."))?;
-    let expires_at = stored["expires_at"].as_u64().unwrap_or(0);
-    if now() > expires_at {
-        bail!(
-            "That confirmation code has expired (codes last {} minutes). \
-             Run the dry run again and use the new code.",
-            TTL_SECONDS / 60
-        );
-    }
-    if stored["code"].as_str() != Some(code) {
-        bail!(
-            "Confirmation code does not match the last preview. Run the dry run again \
-             and use the code it prints."
-        );
-    }
-    if stored["fingerprint"].as_str() != Some(fingerprint) {
-        bail!(
-            "This request differs from the one that was previewed, so the confirmation \
-             code does not apply to it. Run the dry run again for the exact request you want."
-        );
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -223,99 +162,62 @@ mod tests {
 
     #[test]
     fn a_code_is_three_digits() {
-        let code = random_code();
+        let code = code_for(&fingerprint(&["buy", "700.HK"]));
         assert_eq!(code.len(), 3);
         assert!(code.chars().all(|c| c.is_ascii_digit()), "{code}");
     }
 
     #[test]
-    fn fingerprint_is_unambiguous_across_field_boundaries() {
-        // Without length prefixing these two orders would hash identically.
-        assert_ne!(fingerprint(&["ab", "c"]), fingerprint(&["a", "bc"]));
+    fn the_printed_code_verifies() {
+        let fp = fingerprint(&["buy", "700.HK", "400"]);
+        assert!(verify(&fp, &code_for(&fp)).is_ok());
     }
 
     #[test]
-    fn fingerprint_is_stable_for_the_same_request() {
-        assert_eq!(
-            fingerprint(&["buy", "700.HK", "100"]),
-            fingerprint(&["buy", "700.HK", "100"])
-        );
-    }
-
-    /// Point the store at a scratch file for the duration of `body`.
-    fn with_temp_store(name: &str, body: impl FnOnce()) {
-        let path =
-            std::env::temp_dir().join(format!("lb-pending-{name}-{}.json", std::process::id()));
-        TEST_STORE.with(|p| *p.borrow_mut() = Some(path.clone()));
-        body();
-        let _ = std::fs::remove_file(&path);
-        TEST_STORE.with(|p| *p.borrow_mut() = None);
-    }
-
-    #[test]
-    fn a_matching_code_is_accepted_exactly_once() {
-        with_temp_store("once", || {
-            let fp = fingerprint(&["buy", "700.HK"]);
-            let code = issue(&fp).expect("issue");
-            assert!(consume(&fp, &code).is_ok(), "first use must pass");
-            let err = consume(&fp, &code).expect_err("replay must fail");
-            assert!(err.to_string().contains("No confirmation code is pending"));
-        });
-    }
-
-    #[test]
-    fn a_wrong_code_is_rejected_and_still_spends_the_pending_one() {
-        // Otherwise a caller could sit and guess through all 1000 values.
-        with_temp_store("wrong", || {
-            let fp = fingerprint(&["buy", "700.HK"]);
-            let code = issue(&fp).expect("issue");
-            let wrong = if code == "000" { "001" } else { "000" };
-            assert!(consume(&fp, wrong).is_err(), "wrong code must fail");
+    fn harmless_rewordings_keep_the_same_code() {
+        // Each pair is the same order said differently. Rejecting any of them
+        // would be a confirmation failing on a difference the user cannot see.
+        for (previewed, executed) in [
+            (["buy", "700.HK", "400"], ["buy", "700.HK", "400.00"]),
+            (["buy", "700.HK", "400"], ["buy", "700.hk", "400"]),
+            (["buy", "700.HK", "400"], ["BUY", "700.HK", "400"]),
+            (["buy", "700.HK", "400"], ["buy", " 700.HK ", " 400 "]),
+            (["buy", "700.HK", "400"], ["buy", "700.HK", "+400"]),
+        ] {
+            let code = code_for(&fingerprint(&previewed));
             assert!(
-                consume(&fp, &code).is_err(),
-                "the real code must not survive a failed guess"
+                verify(&fingerprint(&executed), &code).is_ok(),
+                "{previewed:?} and {executed:?} must share a code"
             );
-        });
+        }
     }
 
     #[test]
-    fn a_code_does_not_carry_over_to_a_different_request() {
-        with_temp_store("fp", || {
-            let previewed = fingerprint(&["buy", "700.HK", "400"]);
-            let code = issue(&previewed).expect("issue");
-            let edited = fingerprint(&["buy", "700.HK", "410"]);
-            let err = consume(&edited, &code).expect_err("edited order must fail");
-            assert!(err
-                .to_string()
-                .contains("differs from the one that was previewed"));
-        });
+    fn a_mangled_code_is_still_recognised() {
+        let fp = fingerprint(&["buy", "700.HK"]);
+        let code = code_for(&fp);
+        assert!(verify(&fp, &format!("  {code} ")).is_ok());
+        let unpadded = code.trim_start_matches('0');
+        let unpadded = if unpadded.is_empty() { "0" } else { unpadded };
+        assert!(verify(&fp, unpadded).is_ok(), "code {code} as {unpadded}");
     }
 
     #[test]
-    fn an_expired_code_is_rejected() {
-        with_temp_store("expired", || {
-            let fp = fingerprint(&["buy", "700.HK"]);
-            let path = store_path().expect("path");
-            std::fs::write(
-                &path,
-                serde_json::to_vec(&serde_json::json!({
-                    "code": "123",
-                    "fingerprint": fp,
-                    "expires_at": now() - 1,
-                }))
-                .expect("serialize"),
-            )
-            .expect("write");
-            let err = consume(&fp, "123").expect_err("expired code must fail");
-            assert!(err.to_string().contains("expired"), "{err}");
-        });
+    fn a_real_change_to_the_order_invalidates_the_code() {
+        // The case worth catching: the user approved 400 and 410 was sent.
+        let code = code_for(&fingerprint(&["buy", "700.HK", "400"]));
+        assert!(verify(&fingerprint(&["buy", "700.HK", "410"]), &code).is_err());
     }
 
     #[test]
-    fn executing_without_any_preview_is_rejected() {
-        with_temp_store("none", || {
-            let err = consume(&fingerprint(&["buy"]), "123").expect_err("must fail");
-            assert!(err.to_string().contains("without --execute first"), "{err}");
-        });
+    fn fingerprint_is_unambiguous_across_field_boundaries() {
+        assert_ne!(fingerprint(&["AB", "C"]), fingerprint(&["A", "BC"]));
+    }
+
+    #[test]
+    fn an_argument_needing_quotes_gets_them() {
+        assert_eq!(shell_quote("400"), "400");
+        assert_eq!(shell_quote("700.HK"), "700.HK");
+        assert_eq!(shell_quote("my note"), "'my note'");
     }
 }

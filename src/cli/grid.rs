@@ -196,14 +196,15 @@ pub async fn cmd_grid(
             let fingerprint = crate::utils::dry_run::fingerprint(&["grid-cancel", &order_id]);
             // Two-step by design: without --execute this previews and sends nothing.
             let Some(code) = execute else {
-                return print_grid_dry_run(
+                print_grid_dry_run(
                     &serde_json::json!({ "action": "cancel", "order_id": order_id }),
                     &fingerprint,
                     "cancel this grid order",
                     format,
                 );
+                return Ok(());
             };
-            crate::utils::dry_run::consume(&fingerprint, &code)?;
+            crate::utils::dry_run::verify(&fingerprint, &code)?;
             openapi::grid().cancel(order_id.clone()).await?;
             print_mutation(
                 format,
@@ -216,14 +217,15 @@ pub async fn cmd_grid(
             let fingerprint = crate::utils::dry_run::fingerprint(&["grid-suspend", &order_id]);
             // Two-step by design: without --execute this previews and sends nothing.
             let Some(code) = execute else {
-                return print_grid_dry_run(
+                print_grid_dry_run(
                     &serde_json::json!({ "action": "suspend", "order_id": order_id }),
                     &fingerprint,
                     "suspend this grid order",
                     format,
                 );
+                return Ok(());
             };
-            crate::utils::dry_run::consume(&fingerprint, &code)?;
+            crate::utils::dry_run::verify(&fingerprint, &code)?;
             openapi::grid().suspend(order_id.clone()).await?;
             print_mutation(
                 format,
@@ -236,14 +238,15 @@ pub async fn cmd_grid(
             let fingerprint = crate::utils::dry_run::fingerprint(&["grid-restart", &order_id]);
             // Two-step by design: without --execute this previews and sends nothing.
             let Some(code) = execute else {
-                return print_grid_dry_run(
+                print_grid_dry_run(
                     &serde_json::json!({ "action": "restart", "order_id": order_id }),
                     &fingerprint,
                     "restart this grid order",
                     format,
                 );
+                return Ok(());
             };
-            crate::utils::dry_run::consume(&fingerprint, &code)?;
+            crate::utils::dry_run::verify(&fingerprint, &code)?;
             openapi::grid().restart(order_id.clone()).await?;
             print_mutation(
                 format,
@@ -374,8 +377,8 @@ fn print_grid_dry_run(
     fingerprint: &str,
     action: &str,
     format: &OutputFormat,
-) -> Result<()> {
-    let code = crate::utils::dry_run::issue(fingerprint)?;
+) {
+    let code = crate::utils::dry_run::code_for(fingerprint);
     let mut payload = payload.clone();
     if let Some(obj) = payload.as_object_mut() {
         obj.insert("dry_run".to_string(), serde_json::Value::Bool(true));
@@ -395,7 +398,6 @@ fn print_grid_dry_run(
     if matches!(format, OutputFormat::Pretty) {
         crate::utils::dry_run::print_notice(&code, action);
     }
-    Ok(())
 }
 
 async fn cmd_submit(
@@ -420,7 +422,7 @@ async fn cmd_submit(
     ]);
     // Two-step by design: without --execute this previews and sends nothing.
     let Some(code) = execute else {
-        return print_grid_dry_run(
+        print_grid_dry_run(
             &serde_json::json!({
                 "action": "submit",
                 "symbol": symbol,
@@ -431,8 +433,9 @@ async fn cmd_submit(
             "submit this grid order",
             format,
         );
+        return Ok(());
     };
-    crate::utils::dry_run::consume(&fingerprint, &code)?;
+    crate::utils::dry_run::verify(&fingerprint, &code)?;
     if !agree_terms && !confirm_terms()? {
         println!("Grid order submission cancelled.");
         return Ok(());
@@ -462,7 +465,7 @@ async fn cmd_replace(
         crate::utils::dry_run::fingerprint(&["grid-replace", &order_id, &rule_json.to_string()]);
     // Two-step by design: without --execute this previews and sends nothing.
     let Some(code) = execute else {
-        return print_grid_dry_run(
+        print_grid_dry_run(
             &serde_json::json!({
                 "action": "replace",
                 "order_id": order_id,
@@ -472,8 +475,9 @@ async fn cmd_replace(
             "apply this change",
             format,
         );
+        return Ok(());
     };
-    crate::utils::dry_run::consume(&fingerprint, &code)?;
+    crate::utils::dry_run::verify(&fingerprint, &code)?;
     openapi::grid()
         .replace(longbridge::grid::ReplaceGridOrderOptions::new(
             order_id.clone(),
