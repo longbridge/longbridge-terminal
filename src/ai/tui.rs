@@ -1219,12 +1219,15 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
         // Signing out is the only action left to run here; signing in is handled
         // above, where the panel can stay open while the browser round trip runs.
         if ui.pending.take() == Some(Pending::SignOut) {
-            // A turn in flight belongs to the credentials being revoked. Abandon
-            // it through the shared path so its end (and any pending question) is
-            // reported to analytics, not just aborted.
-            cancel_turn(&mut state, &mut turn);
             match crate::auth::clear_token().await {
                 Ok(()) => {
+                    // Only now that sign-out has actually happened: a turn in
+                    // flight belonged to the revoked credentials, so abandon it
+                    // through the shared path (reporting its end and any pending
+                    // question). Done here, not before the await, so a failed
+                    // clear_token leaves the conversation — and a paused
+                    // question's pending_interrupt — untouched.
+                    cancel_turn(&mut state, &mut turn);
                     // Signing out stays in the chat. The contexts cannot be torn
                     // down — they are process-wide singletons — so the process is
                     // marked signed out instead, and the view goes back to what an
@@ -1697,7 +1700,7 @@ fn on_chat_key(
                 return;
             }
             KeyCode::Enter if !newline => {
-                run_slash_selected(ui, state, editor, turn);
+                run_slash_selected(ui, state, editor, turn, tx);
                 return;
             }
             KeyCode::Esc => {
@@ -1960,11 +1963,9 @@ fn split_command(input: &str) -> (&str, &str) {
 /// (possibly empty) rest of the line.
 fn exec_slash(name: &str, args: &str, ui: &mut Ui, state: &mut ChatState) {
     match name {
-        "new" => {
-            state.reset(t!("Ai.Welcome").to_string());
-            ui.reset_render();
-            ui.switch(View::Chat);
-        }
+        // `new`, `retry`, and `agent` all abandon the running turn, so they are
+        // dispatched where the turn handle (and, for retry, the event sender)
+        // lives — `submit` / `run_slash` — never here.
         // Keyboard route to what a click on a symbol does. With no argument it
         // opens the security the answer mentioned last, which is usually the one
         // the reader is looking at.
@@ -2022,8 +2023,6 @@ fn exec_slash(name: &str, args: &str, ui: &mut Ui, state: &mut ChatState) {
         }
         "resume" => open_sessions(ui),
         "settings" => ui.switch(View::Settings),
-        // `agent` (like `new`) abandons the running turn, so it is dispatched
-        // where the turn handle lives (`submit` / `run_slash`) rather than here.
         // A panel, not a message: help is something you consult and dismiss, and as
         // a transcript entry it could not be dismissed at all.
         "help" => ui.help = Some(0),
@@ -2237,7 +2236,7 @@ fn on_mouse(
                     .find(|(_, r)| hit(*r, col, row))
                     .map(|(i, _)| *i)
                 {
-                    run_slash(idx, ui, state, editor, turn);
+                    run_slash(idx, ui, state, editor, turn, tx);
                 } else if hit(ui.title_bar, col, row) {
                     if let Some((chip, rect)) = ui
                         .header_chips
@@ -3226,10 +3225,11 @@ fn run_slash_selected(
     state: &mut ChatState,
     editor: &mut Editor,
     turn: &mut Option<JoinHandle<()>>,
+    tx: &UnboundedSender<runtime::TurnEvent>,
 ) {
     let matches = slash_matches(editor, state);
     if let Some(&idx) = matches.get(ui.slash_sel) {
-        run_slash(idx, ui, state, editor, turn);
+        run_slash(idx, ui, state, editor, turn, tx);
     }
 }
 
@@ -3241,10 +3241,16 @@ fn run_slash(
     state: &mut ChatState,
     editor: &mut Editor,
     turn: &mut Option<JoinHandle<()>>,
+    tx: &UnboundedSender<runtime::TurnEvent>,
 ) {
     let key = SLASH[idx].key();
     editor.clear();
-    if key == "new" {
+    // The turn-owning commands are dispatched here (not `exec_slash`) because
+    // they need the turn handle — and `retry` the event sender — to abandon or
+    // start a turn. Kept in step with the same set in `submit`.
+    if key == "retry" {
+        retry_last(ui, state, turn, tx);
+    } else if key == "new" {
         new_session(ui, state, turn);
     } else if key == "agent" {
         // No argument from the palette; switch_agent notices the missing uid.
@@ -7038,22 +7044,28 @@ mod tests {
             .draw(|f| super::view(f, &mut ui, &mut state, &editor))
             .expect("draw");
         let buf = terminal.backend().buffer().clone();
-        let screen: String = (0..buf.area.height)
+        let rows: Vec<String> = (0..buf.area.height)
             .map(|y| {
                 (0..buf.area.width)
                     .map(|x| buf[(x, y)].symbol())
                     .collect::<String>()
             })
-            .collect::<Vec<_>>()
-            .join("\n");
+            .collect();
+        let token_row = rows
+            .iter()
+            .find(|r| r.contains("11,975"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "the running token count should be visible:\n{}",
+                    rows.join("\n")
+                )
+            });
+        // The figure is the round total, not input-only, so the row that carries
+        // it must not label it with the '↑' (sent) marker. Checked on that row
+        // alone — '↑' legitimately appears in unrelated chrome elsewhere.
         assert!(
-            screen.contains("11,975"),
-            "the running token count should be visible on screen:\n{screen}"
-        );
-        // The total is not input-only, so it must not carry the ↑ (sent) marker.
-        assert!(
-            !screen.contains('↑'),
-            "the total must not be labelled with the input-only ↑ marker:\n{screen}"
+            !token_row.contains('↑'),
+            "the total must not carry the input-only ↑ marker: {token_row}"
         );
     }
 
