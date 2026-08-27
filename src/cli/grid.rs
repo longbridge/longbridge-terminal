@@ -199,6 +199,7 @@ pub async fn cmd_grid(
                 return print_grid_dry_run(
                     &serde_json::json!({ "action": "cancel", "order_id": order_id }),
                     &fingerprint,
+                    "cancel this grid order",
                     format,
                 );
             };
@@ -218,6 +219,7 @@ pub async fn cmd_grid(
                 return print_grid_dry_run(
                     &serde_json::json!({ "action": "suspend", "order_id": order_id }),
                     &fingerprint,
+                    "suspend this grid order",
                     format,
                 );
             };
@@ -237,6 +239,7 @@ pub async fn cmd_grid(
                 return print_grid_dry_run(
                     &serde_json::json!({ "action": "restart", "order_id": order_id }),
                     &fingerprint,
+                    "restart this grid order",
                     format,
                 );
             };
@@ -369,6 +372,7 @@ fn render_orders(orders: &[longbridge::grid::GridOrder], format: &OutputFormat) 
 fn print_grid_dry_run(
     payload: &serde_json::Value,
     fingerprint: &str,
+    action: &str,
     format: &OutputFormat,
 ) -> Result<()> {
     let code = crate::utils::dry_run::issue(fingerprint)?;
@@ -381,7 +385,7 @@ fn print_grid_dry_run(
         );
         obj.insert(
             "message".to_string(),
-            serde_json::Value::String(crate::utils::dry_run::message(&code)),
+            serde_json::Value::String(crate::utils::dry_run::message(&code, action)),
         );
     }
     println!(
@@ -389,7 +393,7 @@ fn print_grid_dry_run(
         serde_json::to_string_pretty(&payload).unwrap_or_default()
     );
     if matches!(format, OutputFormat::Pretty) {
-        crate::utils::dry_run::print_notice(&code);
+        crate::utils::dry_run::print_notice(&code, action);
     }
     Ok(())
 }
@@ -424,6 +428,7 @@ async fn cmd_submit(
                 "rule": rule_json,
             }),
             &fingerprint,
+            "submit this grid order",
             format,
         );
     };
@@ -464,6 +469,7 @@ async fn cmd_replace(
                 "rule": rule_json,
             }),
             &fingerprint,
+            "apply this change",
             format,
         );
     };

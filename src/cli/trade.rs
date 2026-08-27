@@ -835,7 +835,7 @@ pub async fn cmd_submit_order(
                     "last_price": last.map(|d| d.to_string()),
                     "estimated_amount": estimated.map(|d| d.to_string()),
                     "confirmation_code": confirmation,
-                    "message": crate::utils::dry_run::message(&confirmation),
+                    "message": crate::utils::dry_run::message(&confirmation, "place this order"),
                 });
                 println!("{}", serde_json::to_string_pretty(&val)?);
             }
@@ -854,9 +854,7 @@ pub async fn cmd_submit_order(
                 if let Some(a) = estimated {
                     println!("  {:<18}~{a}", "Est. amount");
                 }
-                println!();
-                println!("  {:<18}{confirmation}", "Confirmation code");
-                crate::utils::dry_run::print_notice(&confirmation);
+                crate::utils::dry_run::print_notice(&confirmation, "place this order");
             }
         }
         return Ok(());
@@ -899,7 +897,7 @@ pub async fn cmd_cancel_order(
                     "order_id": order_id,
                     "order": summary,
                     "confirmation_code": confirmation,
-                    "message": crate::utils::dry_run::message(&confirmation),
+                    "message": crate::utils::dry_run::message(&confirmation, "cancel this order"),
                 });
                 println!("{}", serde_json::to_string_pretty(&val)?);
             }
@@ -908,9 +906,7 @@ pub async fn cmd_cancel_order(
                 println!();
                 println!("  {:<18}Cancel", "Action");
                 print_order_summary(summary.as_ref(), &order_id);
-                println!();
-                println!("  {:<18}{confirmation}", "Confirmation code");
-                crate::utils::dry_run::print_notice(&confirmation);
+                crate::utils::dry_run::print_notice(&confirmation, "cancel this order");
             }
         }
         return Ok(());
@@ -966,7 +962,7 @@ pub async fn cmd_replace_order(
                     "new_quantity": quantity,
                     "new_price": price,
                     "confirmation_code": confirmation,
-                    "message": crate::utils::dry_run::message(&confirmation),
+                    "message": crate::utils::dry_run::message(&confirmation, "apply this change"),
                 });
                 println!("{}", serde_json::to_string_pretty(&val)?);
             }
@@ -981,9 +977,7 @@ pub async fn cmd_replace_order(
                     "New price",
                     price.as_deref().unwrap_or("(unchanged)")
                 );
-                println!();
-                println!("  {:<18}{confirmation}", "Confirmation code");
-                crate::utils::dry_run::print_notice(&confirmation);
+                crate::utils::dry_run::print_notice(&confirmation, "apply this change");
             }
         }
         return Ok(());

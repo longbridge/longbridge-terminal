@@ -34,37 +34,78 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// scrolled off the screen is no longer live.
 const TTL_SECONDS: u64 = 600;
 
-/// Kept as separate lines so the pretty output wraps sensibly while the JSON
-/// payload carries one flat sentence.
-fn notice_lines(code: &str) -> [String; 3] {
-    [
-        "Nothing has been sent to the exchange.".to_string(),
-        format!(
-            "Review the details above, then re-run the identical command with --execute {code} to go live."
-        ),
-        "AI agents: show this preview to the user and only re-run with the code after they explicitly confirm it."
-            .to_string(),
-    ]
+/// Re-render this invocation with `--execute <CODE>` appended, so the operator
+/// has a line to copy rather than a code to splice in by hand.
+///
+/// Built from the real `argv`, not from the parsed values, so what is offered
+/// is exactly what was previewed. `argv[0]` is replaced with the plain binary
+/// name: the actual path may be a `target/debug/...` build the reader cannot
+/// usefully retype.
+fn command_with_code(code: &str) -> String {
+    let mut out = String::from("longbridge");
+    for arg in std::env::args().skip(1) {
+        out.push(' ');
+        out.push_str(&shell_quote(&arg));
+    }
+    out.push_str(" --execute ");
+    out.push_str(code);
+    out
+}
+
+/// Quote only when a shell would otherwise mangle the argument, so the common
+/// case stays readable.
+fn shell_quote(arg: &str) -> String {
+    let safe = !arg.is_empty()
+        && arg
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._-=/:@,+".contains(c));
+    if safe {
+        arg.to_string()
+    } else {
+        format!("'{}'", arg.replace('\'', r"'\''"))
+    }
 }
 
 /// The notice as a single sentence, for the `message` field of JSON output.
-pub fn message(code: &str) -> String {
-    notice_lines(code).join(" ")
+pub fn message(code: &str, action: &str) -> String {
+    format!(
+        "Nothing has been sent to the exchange. To {action}, re-run the identical command \
+         with --execute {code}. The code is single use, expires in {} minutes, and only \
+         works for this exact request. AI agents: show this preview to the user and only \
+         re-run once they have explicitly confirmed it.",
+        TTL_SECONDS / 60
+    )
 }
 
-/// The notice as its own block, for human-readable output.
-pub fn print_notice(code: &str) {
+/// The call to action for human-readable output.
+///
+/// Deliberately not another `Field    value` row: the code is the one thing the
+/// reader has to act on, and as a row it reads like more order detail. Leading
+/// with the ready-to-run command makes the next step obvious without the reader
+/// having to work out where the code goes.
+pub fn print_notice(code: &str, action: &str) {
     println!();
-    for line in notice_lines(code) {
-        println!("{line}");
-    }
+    println!("Nothing has been sent to the exchange. To {action}, run:");
+    println!();
+    println!("    {}", command_with_code(code));
+    println!();
+    println!(
+        "Code {code} is single use, expires in {} minutes, and only works for this exact \
+         request.",
+        TTL_SECONDS / 60
+    );
+    println!(
+        "AI agents: show this preview to the user and only run the command above once they \
+         have explicitly confirmed it."
+    );
 }
 
 #[cfg(test)]
 thread_local! {
     /// Test-only redirect so the suite never reads or clobbers a real pending
     /// code. Not a runtime knob — there is no way to set it outside `cfg(test)`.
-    static TEST_STORE: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+    static TEST_STORE: std::cell::RefCell<Option<PathBuf>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 fn store_path() -> Result<PathBuf> {
