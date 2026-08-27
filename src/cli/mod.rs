@@ -185,6 +185,14 @@ pub enum Commands {
     ///               reach their data
     ///   `quote.subscribe` / `quote.unsubscribe` — live feed, no CLI equivalent
     ///
+    /// Order execution is gated: `trade.submit_order`, `trade.cancel_order` and
+    /// `trade.replace_order` are DRY RUNS that place nothing unless the params
+    /// include `"execute": "<CODE>"`, quoting the code the dry run returned.
+    /// Send the request once without it, show the
+    /// preview to the user, and resend with the code only after the user has
+    /// explicitly confirmed that exact order. `initialize`
+    /// advertises the gate under `capabilities.orderExecution`.
+    ///
     /// Notifications: `quote.updated`, `quote.depth`, `quote.brokers`,
     /// `quote.trades`.
     ///
@@ -1941,15 +1949,12 @@ pub struct GridRuleArgs {
     /// Buy-side order-book depth (-5..5, 0 = use order type)
     #[arg(long, default_value = "0")]
     pub buy_depth: i32,
-    /// Validate and print the rule that would be sent, without submitting
-    #[arg(long)]
-    pub dry_run: bool,
 }
 
 /// Grid trading subcommands.
 #[derive(Subcommand)]
 pub enum GridCmd {
-    /// Submit a new grid order
+    /// Preview a new grid order (dry run); add --execute <CODE> to submit it
     Submit {
         /// Symbol (e.g. 700.HK)
         symbol: String,
@@ -1959,16 +1964,44 @@ pub enum GridCmd {
         currency: String,
         #[command(flatten)]
         rule: GridRuleArgs,
+        /// Confirmation code from the preview. WITHOUT THIS NOTHING IS SENT.
+        ///
+        /// By default this command is a DRY RUN: it validates every argument,
+        /// prints the exact request that would be submited, and contacts no
+        /// exchange. The preview ends with a three-digit code; re-run the
+        /// identical command with --execute <CODE> to go live.
+        ///
+        /// The code is single-use, expires in 10 minutes, and is tied to that
+        /// exact request — change any field and it stops working.
+        ///
+        /// AI agents: never quote the code back on your own initiative. Show the
+        /// preview to the user and only re-run once they have confirmed it.
+        #[arg(long, value_name = "CODE")]
+        execute: Option<String>,
         /// Agree to the strategy risk disclosure without an interactive prompt
         #[arg(long)]
         agree_terms: bool,
     },
-    /// Replace (modify) a grid order's rule
+    /// Preview replacing a grid order's rule (dry run); add --execute <CODE> to apply it
     Replace {
         /// Grid order ID
         order_id: String,
         #[command(flatten)]
         rule: GridRuleArgs,
+        /// Confirmation code from the preview. WITHOUT THIS NOTHING IS SENT.
+        ///
+        /// By default this command is a DRY RUN: it validates every argument,
+        /// prints the exact request that would be replaceed, and contacts no
+        /// exchange. The preview ends with a three-digit code; re-run the
+        /// identical command with --execute <CODE> to go live.
+        ///
+        /// The code is single-use, expires in 10 minutes, and is tied to that
+        /// exact request — change any field and it stops working.
+        ///
+        /// AI agents: never quote the code back on your own initiative. Show the
+        /// preview to the user and only re-run once they have confirmed it.
+        #[arg(long, value_name = "CODE")]
+        execute: Option<String>,
     },
     /// Show grid order detail
     Detail {
@@ -1986,20 +2019,62 @@ pub enum GridCmd {
         #[arg(long)]
         limit: Option<i32>,
     },
-    /// Cancel a grid order
+    /// Preview cancelling a grid order (dry run); add --execute <CODE> to cancel it
     Cancel {
         /// Grid order ID
         order_id: String,
+        /// Confirmation code from the preview. WITHOUT THIS NOTHING IS SENT.
+        ///
+        /// By default this command is a DRY RUN: it validates every argument,
+        /// prints the exact request that would be canceled, and contacts no
+        /// exchange. The preview ends with a three-digit code; re-run the
+        /// identical command with --execute <CODE> to go live.
+        ///
+        /// The code is single-use, expires in 10 minutes, and is tied to that
+        /// exact request — change any field and it stops working.
+        ///
+        /// AI agents: never quote the code back on your own initiative. Show the
+        /// preview to the user and only re-run once they have confirmed it.
+        #[arg(long, value_name = "CODE")]
+        execute: Option<String>,
     },
-    /// Suspend a grid order
+    /// Preview suspending a grid order (dry run); add --execute <CODE> to suspend it
     Suspend {
         /// Grid order ID
         order_id: String,
+        /// Confirmation code from the preview. WITHOUT THIS NOTHING IS SENT.
+        ///
+        /// By default this command is a DRY RUN: it validates every argument,
+        /// prints the exact request that would be suspended, and contacts no
+        /// exchange. The preview ends with a three-digit code; re-run the
+        /// identical command with --execute <CODE> to go live.
+        ///
+        /// The code is single-use, expires in 10 minutes, and is tied to that
+        /// exact request — change any field and it stops working.
+        ///
+        /// AI agents: never quote the code back on your own initiative. Show the
+        /// preview to the user and only re-run once they have confirmed it.
+        #[arg(long, value_name = "CODE")]
+        execute: Option<String>,
     },
-    /// Restart a suspended grid order
+    /// Preview restarting a suspended grid order (dry run); add --execute <CODE> to restart it
     Restart {
         /// Grid order ID
         order_id: String,
+        /// Confirmation code from the preview. WITHOUT THIS NOTHING IS SENT.
+        ///
+        /// By default this command is a DRY RUN: it validates every argument,
+        /// prints the exact request that would be restarted, and contacts no
+        /// exchange. The preview ends with a three-digit code; re-run the
+        /// identical command with --execute <CODE> to go live.
+        ///
+        /// The code is single-use, expires in 10 minutes, and is tied to that
+        /// exact request — change any field and it stops working.
+        ///
+        /// AI agents: never quote the code back on your own initiative. Show the
+        /// preview to the user and only re-run once they have confirmed it.
+        #[arg(long, value_name = "CODE")]
+        execute: Option<String>,
     },
     /// Show a symbol's grid-trading info: lot size, last price, strategy authorization, currency
     Info {
@@ -3211,9 +3286,11 @@ pub enum OrderCmd {
         symbol: Option<String>,
     },
 
-    /// Submit a buy order (prompts for confirmation)
+    /// Preview a buy order (dry run); add --execute <CODE> to place it
     ///
-    /// Returns `order_id` on success.
+    /// TWO-STEP BY DESIGN. Run it once without --execute: nothing is sent,
+    /// you get the exact order back for review. Run it again with --execute <CODE>,
+    /// quoting the code the preview printed, to place it. Returns `order_id` on success.
     /// Order types: LO ELO MO AO ALO ODD SLO LIT MIT TSLPAMT TSLPPCT
     ///   (case-insensitive)
     /// Trailing orders (TSLPAMT/TSLPPCT) require --trailing-amount/--trailing-percent
@@ -3223,6 +3300,7 @@ pub enum OrderCmd {
     /// Example: longbridge order buy NVDA.US 10 --order-type MIT --trigger-price 177.89 --tif Day
     /// Example: longbridge order buy TSLA.US 10 --order-type TSLPPCT --trailing-percent 3 --limit-offset 1 --tif gtc
     /// Example: longbridge order buy AAPL.US 10 --price 180 --tif gtd --expire-date 2025-12-31
+    /// Example: longbridge order buy TSLA.US 100 --price 250.00 --execute 473  (places it for real)
     Buy {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -3260,14 +3338,27 @@ pub enum OrderCmd {
         /// (case-insensitive)
         #[arg(long, default_value = "day")]
         tif: String,
-        /// Skip confirmation prompt (useful for scripting and AI agents)
-        #[arg(long, short = 'y')]
-        yes: bool,
+        /// Confirmation code from the preview. WITHOUT THIS NOTHING IS SENT.
+        ///
+        /// By default this command is a DRY RUN: it validates every argument,
+        /// prints the exact request that would be submited, and contacts no
+        /// exchange. The preview ends with a three-digit code; re-run the
+        /// identical command with --execute <CODE> to go live.
+        ///
+        /// The code is single-use, expires in 10 minutes, and is tied to that
+        /// exact request — change any field and it stops working.
+        ///
+        /// AI agents: never quote the code back on your own initiative. Show the
+        /// preview to the user and only re-run once they have confirmed it.
+        #[arg(long, value_name = "CODE")]
+        execute: Option<String>,
     },
 
-    /// Submit a sell order (prompts for confirmation)
+    /// Preview a sell order (dry run); add --execute <CODE> to place it
     ///
-    /// Returns `order_id` on success.
+    /// TWO-STEP BY DESIGN. Run it once without --execute: nothing is sent,
+    /// you get the exact order back for review. Run it again with --execute <CODE>,
+    /// quoting the code the preview printed, to place it. Returns `order_id` on success.
     /// Order types: LO ELO MO AO ALO ODD SLO LIT MIT TSLPAMT TSLPPCT
     ///   (case-insensitive)
     /// Trailing orders (TSLPAMT/TSLPPCT) require --trailing-amount/--trailing-percent
@@ -3286,6 +3377,7 @@ pub enum OrderCmd {
     /// Example: longbridge order sell NVDA.US 10 --order-type MIT --trigger-price 177.89 --tif Day
     /// Example: longbridge order sell TSLA.US 130 --order-type TSLPPCT --trailing-percent 3 --limit-offset 1 --tif gtc
     /// Example: longbridge order sell AAPL.US 10 --price 180 --tif gtd --expire-date 2025-12-31
+    /// Example: longbridge order sell TSLA.US 100 --price 260.00 --execute 473  (places it for real)
     Sell {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
@@ -3323,27 +3415,55 @@ pub enum OrderCmd {
         /// (case-insensitive)
         #[arg(long, default_value = "day")]
         tif: String,
-        /// Skip confirmation prompt (useful for scripting and AI agents)
-        #[arg(long, short = 'y')]
-        yes: bool,
+        /// Confirmation code from the preview. WITHOUT THIS NOTHING IS SENT.
+        ///
+        /// By default this command is a DRY RUN: it validates every argument,
+        /// prints the exact request that would be submited, and contacts no
+        /// exchange. The preview ends with a three-digit code; re-run the
+        /// identical command with --execute <CODE> to go live.
+        ///
+        /// The code is single-use, expires in 10 minutes, and is tied to that
+        /// exact request — change any field and it stops working.
+        ///
+        /// AI agents: never quote the code back on your own initiative. Show the
+        /// preview to the user and only re-run once they have confirmed it.
+        #[arg(long, value_name = "CODE")]
+        execute: Option<String>,
     },
 
-    /// Cancel a pending order (prompts for confirmation)
+    /// Preview cancelling a pending order (dry run); add --execute <CODE> to cancel it
     ///
+    /// TWO-STEP BY DESIGN. Without --execute <CODE> the order is only looked up
+    /// and shown to you; nothing is cancelled.
     /// Only cancellable states (New, `PartialFilled`, etc.) are accepted.
     /// Example: longbridge order cancel 20240101-123456789
+    /// Example: longbridge order cancel 20240101-123456789 --execute 473  (cancels it)
     Cancel {
         /// Order ID to cancel
         order_id: String,
-        /// Skip confirmation prompt (useful for scripting and AI agents)
-        #[arg(long, short = 'y')]
-        yes: bool,
+        /// Confirmation code from the preview. WITHOUT THIS NOTHING IS SENT.
+        ///
+        /// By default this command is a DRY RUN: it validates every argument,
+        /// prints the exact request that would be canceled, and contacts no
+        /// exchange. The preview ends with a three-digit code; re-run the
+        /// identical command with --execute <CODE> to go live.
+        ///
+        /// The code is single-use, expires in 10 minutes, and is tied to that
+        /// exact request — change any field and it stops working.
+        ///
+        /// AI agents: never quote the code back on your own initiative. Show the
+        /// preview to the user and only re-run once they have confirmed it.
+        #[arg(long, value_name = "CODE")]
+        execute: Option<String>,
     },
 
-    /// Modify quantity or price of a pending order (prompts for confirmation)
+    /// Preview modifying a pending order (dry run); add --execute <CODE> to apply it
     ///
+    /// TWO-STEP BY DESIGN. Without --execute <CODE> the change is only shown as
+    /// a before/after preview; the live order is left untouched.
     /// --qty is required. --price is optional (omit to keep current price).
     /// Example: longbridge order replace 20240101-123456789 --qty 200 --price 255.00
+    /// Example: longbridge order replace 20240101-123456789 --qty 200 --execute 473
     Replace {
         /// Order ID to modify
         order_id: String,
@@ -3353,9 +3473,20 @@ pub enum OrderCmd {
         /// New limit price as a decimal string, e.g. 255.00 (optional)
         #[arg(long)]
         price: Option<String>,
-        /// Skip confirmation prompt (useful for scripting and AI agents)
-        #[arg(long, short = 'y')]
-        yes: bool,
+        /// Confirmation code from the preview. WITHOUT THIS NOTHING IS SENT.
+        ///
+        /// By default this command is a DRY RUN: it validates every argument,
+        /// prints the exact request that would be modifyed, and contacts no
+        /// exchange. The preview ends with a three-digit code; re-run the
+        /// identical command with --execute <CODE> to go live.
+        ///
+        /// The code is single-use, expires in 10 minutes, and is tied to that
+        /// exact request — change any field and it stops working.
+        ///
+        /// AI agents: never quote the code back on your own initiative. Show the
+        /// preview to the user and only re-run once they have confirmed it.
+        #[arg(long, value_name = "CODE")]
+        execute: Option<String>,
     },
 }
 
@@ -4154,7 +4285,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 remark,
                 order_type,
                 tif,
-                yes,
+                execute,
             }) => {
                 trade::cmd_submit_order(
                     symbol,
@@ -4170,7 +4301,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                     order_type,
                     tif,
                     longbridge::trade::OrderSide::Buy,
-                    yes,
+                    execute,
                     format,
                 )
                 .await
@@ -4188,7 +4319,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 remark,
                 order_type,
                 tif,
-                yes,
+                execute,
             }) => {
                 trade::cmd_submit_order(
                     symbol,
@@ -4204,20 +4335,20 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                     order_type,
                     tif,
                     longbridge::trade::OrderSide::Sell,
-                    yes,
+                    execute,
                     format,
                 )
                 .await
             }
-            Some(OrderCmd::Cancel { order_id, yes }) => {
-                trade::cmd_cancel_order(order_id, yes).await
+            Some(OrderCmd::Cancel { order_id, execute }) => {
+                trade::cmd_cancel_order(order_id, execute, format).await
             }
             Some(OrderCmd::Replace {
                 order_id,
                 qty,
                 price,
-                yes,
-            }) => trade::cmd_replace_order(order_id, qty, price, yes).await,
+                execute,
+            }) => trade::cmd_replace_order(order_id, qty, price, execute, format).await,
             None => trade::cmd_orders(history, start, end, symbol, action, page, limit, format, verbose).await,
         },
         Commands::Assets { currency } => trade::cmd_assets(currency, format).await,
@@ -4648,6 +4779,174 @@ mod tests {
     fn test_format_json_flag() {
         let cli = parse(&["longbridge", "quote", "TSLA.US", "--format", "json"]).unwrap();
         assert!(matches!(cli.format, OutputFormat::Json));
+    }
+
+    // ─── Order safety gate ────────────────────────────────────────────────────
+    //
+    // Order commands must stay dry-run-by-default. If any of these flip, an AI
+    // agent (or a stray script) can move real money without a human ever seeing
+    // the order, so treat a failure here as a safety regression, not a chore.
+
+    /// The confirmation code a parsed command carries, if any. `None` is a dry
+    /// run — the invariant every test below is protecting.
+    fn order_execute_code(cli: &Cli) -> Option<String> {
+        match &cli.command {
+            Some(Commands::Order { cmd: Some(cmd), .. }) => match cmd {
+                OrderCmd::Buy { execute, .. }
+                | OrderCmd::Sell { execute, .. }
+                | OrderCmd::Cancel { execute, .. }
+                | OrderCmd::Replace { execute, .. } => execute.clone(),
+                _ => panic!("expected a mutating order subcommand"),
+            },
+            Some(Commands::Grid { cmd: Some(cmd), .. }) => match cmd {
+                GridCmd::Submit { execute, .. }
+                | GridCmd::Replace { execute, .. }
+                | GridCmd::Cancel { execute, .. }
+                | GridCmd::Suspend { execute, .. }
+                | GridCmd::Restart { execute, .. } => execute.clone(),
+                _ => panic!("expected a mutating grid subcommand"),
+            },
+            _ => panic!("expected an order or grid subcommand"),
+        }
+    }
+
+    /// A minimal but valid `grid submit`, so the parse exercises the real flag set.
+    const GRID_SUBMIT: &[&str] = &[
+        "longbridge",
+        "grid",
+        "submit",
+        "700.HK",
+        "--base-price",
+        "300",
+        "--upper-price",
+        "350",
+        "--lower-price",
+        "250",
+        "--trigger-type",
+        "spread",
+        "--trigger-up",
+        "5",
+        "--trigger-down",
+        "5",
+        "--quantity",
+        "100",
+        "--upper-quantity",
+        "200",
+        "--lower-quantity",
+        "100",
+    ];
+
+    const MUTATING_ORDER_CMDS: &[&[&str]] = &[
+        &[
+            "longbridge",
+            "order",
+            "buy",
+            "TSLA.US",
+            "10",
+            "--price",
+            "250",
+        ],
+        &[
+            "longbridge",
+            "order",
+            "sell",
+            "TSLA.US",
+            "10",
+            "--price",
+            "250",
+        ],
+        &["longbridge", "order", "cancel", "20240101-1"],
+        &[
+            "longbridge",
+            "order",
+            "replace",
+            "20240101-1",
+            "--qty",
+            "20",
+        ],
+        GRID_SUBMIT,
+        &["longbridge", "grid", "cancel", "12345"],
+        &["longbridge", "grid", "suspend", "12345"],
+        &["longbridge", "grid", "restart", "12345"],
+    ];
+
+    #[test]
+    fn order_commands_are_dry_run_without_execute() {
+        for args in MUTATING_ORDER_CMDS {
+            let cli = parse(args).expect("should parse");
+            assert!(
+                order_execute_code(&cli).is_none(),
+                "{args:?} must default to a dry run"
+            );
+        }
+    }
+
+    #[test]
+    fn order_commands_go_live_only_with_a_confirmation_code() {
+        for args in MUTATING_ORDER_CMDS {
+            // A bare --execute must not parse: the code is what proves the
+            // preview was produced, so omitting it cannot mean "just do it".
+            let mut bare = args.to_vec();
+            bare.push("--execute");
+            assert!(
+                parse(&bare).is_err(),
+                "{bare:?} must require a confirmation code"
+            );
+
+            let mut coded = args.to_vec();
+            coded.extend_from_slice(&["--execute", "473"]);
+            let cli = parse(&coded).expect("should parse");
+            assert_eq!(
+                order_execute_code(&cli).as_deref(),
+                Some("473"),
+                "{coded:?} must carry the code through"
+            );
+        }
+    }
+
+    #[test]
+    fn grid_replace_is_dry_run_without_execute() {
+        let mut args = vec!["longbridge", "grid", "replace", "12345"];
+        args.extend_from_slice(&GRID_SUBMIT[4..]);
+        let cli = parse(&args).expect("should parse");
+        assert!(
+            order_execute_code(&cli).is_none(),
+            "grid replace must default to a dry run"
+        );
+
+        args.extend_from_slice(&["--execute", "473"]);
+        let cli = parse(&args).expect("should parse");
+        assert_eq!(
+            order_execute_code(&cli).as_deref(),
+            Some("473"),
+            "grid replace must honour --execute <CODE>"
+        );
+    }
+
+    #[test]
+    fn grid_no_longer_accepts_the_opt_in_dry_run_flag() {
+        // `--dry-run` was opt-in safety; the default is now safe, so the flag
+        // must be gone rather than lingering as a confusing no-op.
+        let mut args = GRID_SUBMIT.to_vec();
+        args.push("--dry-run");
+        assert!(parse(&args).is_err(), "grid submit must reject --dry-run");
+    }
+
+    #[test]
+    fn order_commands_reject_the_old_reflexive_yes_flag() {
+        // `-y` was the pre-gate "just do it" flag. Keeping it as an alias would
+        // preserve exactly the muscle-memory shortcut the gate exists to stop,
+        // so it must fail loudly instead of silently placing an order.
+        for args in MUTATING_ORDER_CMDS {
+            for flag in ["-y", "--yes"] {
+                let mut args = args.to_vec();
+                args.push(flag);
+                assert!(
+                    parse(&args).is_err(),
+                    "{args:?} must not accept the legacy {flag} flag"
+                );
+            }
+        }
     }
 
     // ─── Auth ─────────────────────────────────────────────────────────────────

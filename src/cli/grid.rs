@@ -179,15 +179,32 @@ pub async fn cmd_grid(
             currency,
             rule,
             agree_terms,
-        }) => cmd_submit(symbol, currency, &rule, agree_terms, format).await,
-        Some(GridCmd::Replace { order_id, rule }) => cmd_replace(order_id, &rule, format).await,
+            execute,
+        }) => cmd_submit(symbol, currency, &rule, agree_terms, execute, format).await,
+        Some(GridCmd::Replace {
+            order_id,
+            rule,
+            execute,
+        }) => cmd_replace(order_id, &rule, execute, format).await,
         Some(GridCmd::Detail { order_id }) => cmd_detail(order_id, format).await,
         Some(GridCmd::Triggers {
             order_id,
             page,
             limit,
         }) => cmd_triggers(order_id, page, limit, format).await,
-        Some(GridCmd::Cancel { order_id }) => {
+        Some(GridCmd::Cancel { order_id, execute }) => {
+            let scope = crate::utils::dry_run::Scope::on_order("grid cancel", &order_id);
+            // Two-step by design: without --execute this previews and sends nothing.
+            let Some(code) = execute else {
+                print_grid_dry_run(
+                    &serde_json::json!({ "action": "cancel", "order_id": order_id }),
+                    &scope,
+                    "cancel this grid order",
+                    format,
+                );
+                return Ok(());
+            };
+            scope.verify(&code)?;
             openapi::grid().cancel(order_id.clone()).await?;
             print_mutation(
                 format,
@@ -196,7 +213,19 @@ pub async fn cmd_grid(
             );
             Ok(())
         }
-        Some(GridCmd::Suspend { order_id }) => {
+        Some(GridCmd::Suspend { order_id, execute }) => {
+            let scope = crate::utils::dry_run::Scope::on_order("grid suspend", &order_id);
+            // Two-step by design: without --execute this previews and sends nothing.
+            let Some(code) = execute else {
+                print_grid_dry_run(
+                    &serde_json::json!({ "action": "suspend", "order_id": order_id }),
+                    &scope,
+                    "suspend this grid order",
+                    format,
+                );
+                return Ok(());
+            };
+            scope.verify(&code)?;
             openapi::grid().suspend(order_id.clone()).await?;
             print_mutation(
                 format,
@@ -205,7 +234,19 @@ pub async fn cmd_grid(
             );
             Ok(())
         }
-        Some(GridCmd::Restart { order_id }) => {
+        Some(GridCmd::Restart { order_id, execute }) => {
+            let scope = crate::utils::dry_run::Scope::on_order("grid restart", &order_id);
+            // Two-step by design: without --execute this previews and sends nothing.
+            let Some(code) = execute else {
+                print_grid_dry_run(
+                    &serde_json::json!({ "action": "restart", "order_id": order_id }),
+                    &scope,
+                    "restart this grid order",
+                    format,
+                );
+                return Ok(());
+            };
+            scope.verify(&code)?;
             openapi::grid().restart(order_id.clone()).await?;
             print_mutation(
                 format,
@@ -326,13 +367,37 @@ fn render_orders(orders: &[longbridge::grid::GridOrder], format: &OutputFormat) 
     }
 }
 
-/// Print the payload a write command would send, for `--dry-run`. Always JSON
-/// (both formats), since dry-run exists to be inspected by a caller or agent.
-fn print_dry_run(payload: &serde_json::Value) {
+/// Print what a grid write command would have sent.
+///
+/// The payload stays JSON in both formats — a grid rule is a deep nested object
+/// that no table renders usefully, and the dry run exists to be inspected. In
+/// pretty mode the shared notice follows it so a human is told how to go live.
+fn print_grid_dry_run(
+    payload: &serde_json::Value,
+    scope: &crate::utils::dry_run::Scope,
+    action: &str,
+    format: &OutputFormat,
+) {
+    let code = scope.code();
+    let mut payload = payload.clone();
+    if let Some(obj) = payload.as_object_mut() {
+        obj.insert("dry_run".to_string(), serde_json::Value::Bool(true));
+        obj.insert(
+            "confirmation_code".to_string(),
+            serde_json::Value::String(code.clone()),
+        );
+        obj.insert(
+            "message".to_string(),
+            serde_json::Value::String(crate::utils::dry_run::message(&code, action)),
+        );
+    }
     println!(
         "{}",
-        serde_json::to_string_pretty(payload).unwrap_or_default()
+        serde_json::to_string_pretty(&payload).unwrap_or_default()
     );
+    if matches!(format, OutputFormat::Pretty) {
+        crate::utils::dry_run::print_notice(&code, action);
+    }
 }
 
 async fn cmd_submit(
@@ -340,21 +405,31 @@ async fn cmd_submit(
     currency: String,
     rule: &GridRuleArgs,
     agree_terms: bool,
+    execute: Option<String>,
     format: &OutputFormat,
 ) -> Result<()> {
-    // Build (and validate) the rule first so --dry-run reports the same errors a
-    // real submit would, before any terms prompt or gateway call.
+    // Build (and validate) the rule first so the dry run reports the same errors
+    // a real submit would, before any terms prompt or gateway call.
     let built = build_rule(rule)?;
-    if rule.dry_run {
-        print_dry_run(&serde_json::json!({
-            "dry_run": true,
-            "action": "submit",
-            "symbol": symbol,
-            "currency": currency,
-            "rule": serde_json::to_value(&built).unwrap_or_default(),
-        }));
+    let rule_json = serde_json::to_value(&built).unwrap_or_default();
+    let scope =
+        crate::utils::dry_run::Scope::grid("submit", &symbol, &rule.quantity, &rule.base_price);
+    // Two-step by design: without --execute this previews and sends nothing.
+    let Some(code) = execute else {
+        print_grid_dry_run(
+            &serde_json::json!({
+                "action": "submit",
+                "symbol": symbol,
+                "currency": currency,
+                "rule": rule_json,
+            }),
+            &scope,
+            "submit this grid order",
+            format,
+        );
         return Ok(());
-    }
+    };
+    scope.verify(&code)?;
     if !agree_terms && !confirm_terms()? {
         println!("Grid order submission cancelled.");
         return Ok(());
@@ -372,17 +447,31 @@ async fn cmd_submit(
     Ok(())
 }
 
-async fn cmd_replace(order_id: String, rule: &GridRuleArgs, format: &OutputFormat) -> Result<()> {
+async fn cmd_replace(
+    order_id: String,
+    rule: &GridRuleArgs,
+    execute: Option<String>,
+    format: &OutputFormat,
+) -> Result<()> {
     let built = build_rule(rule)?;
-    if rule.dry_run {
-        print_dry_run(&serde_json::json!({
-            "dry_run": true,
-            "action": "replace",
-            "order_id": order_id,
-            "rule": serde_json::to_value(&built).unwrap_or_default(),
-        }));
+    let rule_json = serde_json::to_value(&built).unwrap_or_default();
+    let scope =
+        crate::utils::dry_run::Scope::grid("replace", &order_id, &rule.quantity, &rule.base_price);
+    // Two-step by design: without --execute this previews and sends nothing.
+    let Some(code) = execute else {
+        print_grid_dry_run(
+            &serde_json::json!({
+                "action": "replace",
+                "order_id": order_id,
+                "rule": rule_json,
+            }),
+            &scope,
+            "apply this change",
+            format,
+        );
         return Ok(());
-    }
+    };
+    scope.verify(&code)?;
     openapi::grid()
         .replace(longbridge::grid::ReplaceGridOrderOptions::new(
             order_id.clone(),
@@ -718,11 +807,16 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
             ],
         ),
         "grid submit" | "grid replace" => mutation(
-            "Grid mutation result. With --dry-run, instead returns the rule that would be \
-             sent: {dry_run, action, symbol?, currency?, order_id?, rule}",
+            "Grid mutation result — only with --execute. By default the command is a dry \
+             run returning the rule that would be sent: \
+             {dry_run, message, action, symbol?, currency?, order_id?, rule}",
             true,
         ),
-        "grid cancel" | "grid suspend" | "grid restart" => mutation("Grid mutation result", true),
+        "grid cancel" | "grid suspend" | "grid restart" => mutation(
+            "Grid mutation result — only with --execute. By default the command is a dry \
+             run returning {dry_run, message, action, order_id}",
+            true,
+        ),
         "grid questionnaire" => {
             mutation("Grid questionnaire submission result (status only)", false)
         }
