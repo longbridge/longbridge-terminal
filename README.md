@@ -330,10 +330,10 @@ longbridge order                                           # Today's orders, or 
 longbridge order --history [--start 2024-01-01]            # Historical orders (use --symbol to filter)
 longbridge order detail <order_id>                         # Full detail for a single order including charges and history
 longbridge order executions                                # Today's trade executions (fills), or historical with --history
-longbridge order buy TSLA.US 100 --price 250.00            # Submit a buy order (prompts for confirmation)
-longbridge order sell TSLA.US 100 --price 260.00           # Submit a sell order (prompts for confirmation)
-longbridge order cancel <order_id>                         # Cancel a pending order (prompts for confirmation)
-longbridge order replace <order_id> --qty 200 --price 255.00 # Modify quantity or price of a pending order
+longbridge order buy TSLA.US 100 --price 250.00            # Preview a buy order (dry run); add --execute to actually place it
+longbridge order sell TSLA.US 100 --price 260.00           # Preview a sell order (dry run); add --execute to actually place it
+longbridge order cancel <order_id>                         # Preview cancelling a pending order (dry run); add --execute to cancel it
+longbridge order replace <order_id> --qty 200 --price 255.00 # Preview modifying a pending order (dry run); add --execute to apply it
 longbridge assets [--currency USD]                         # Asset overview: net assets, cash, buy power, margins, and per-currency breakdown
 longbridge cash-flow [--start 2024-01-01]                  # Cash flow records (deposits, withdrawals, dividends, settlements)
 longbridge portfolio                                       # Portfolio overview: total assets, P/L, holdings, and cash breakdown
@@ -343,6 +343,12 @@ longbridge fund-positions                                  # Current fund (mutua
 longbridge margin-ratio TSLA.US                            # Margin ratio requirements for a symbol
 longbridge max-qty TSLA.US --side buy --price 250          # Estimate maximum buy or sell quantity given current account balance
 ```
+
+> **Order commands never place anything on the first run.** `order buy`, `order sell`,
+> `order cancel` and `order replace` (and every `grid` write command) are dry runs by default: they validate the request,
+> print exactly what would be sent, and contact no exchange. Pass `--execute` to go live.
+> AI agents must show the dry-run preview to the user and only re-run with `--execute`
+> after the user explicitly confirms that order.
 
 ### Profit Analysis
 
@@ -408,17 +414,21 @@ longbridge grid --symbol 700.HK --status Performing           # Filter grid orde
 longbridge grid --ids <ORDER_ID1> <ORDER_ID2>                 # Query specific grid orders by ID
 longbridge grid submit 700.HK --currency HKD --base-price 300 --upper-price 360 --lower-price 240 \
   --trigger-type percent --trigger-up 2 --trigger-down 2 --quantity 100 \
-  --upper-quantity 200 --lower-quantity 100 --order-type GMO --tif gtc   # Submit a grid strategy
-longbridge grid submit 700.HK --base-price 300 ... --dry-run  # Validate + print the rule without submitting
+  --upper-quantity 200 --lower-quantity 100 --order-type GMO --tif gtc   # Preview a grid strategy (dry run)
+longbridge grid submit 700.HK --base-price 300 ... --execute   # Actually submit it
 longbridge grid detail <ORDER_ID>                             # Grid order detail (rule, sub-orders, history)
 longbridge grid triggers <ORDER_ID>                           # Grid trigger history
-longbridge grid replace <ORDER_ID> --base-price 305 ...       # Replace (modify) a grid rule
-longbridge grid cancel <ORDER_ID>                             # Cancel a grid order
-longbridge grid suspend <ORDER_ID>                            # Suspend a grid order
-longbridge grid restart <ORDER_ID>                            # Restart a suspended grid order
+longbridge grid replace <ORDER_ID> --base-price 305 ...       # Preview replacing a grid rule; add --execute to apply it
+longbridge grid cancel <ORDER_ID>                             # Preview cancelling a grid order; add --execute to cancel it
+longbridge grid suspend <ORDER_ID>                            # Preview suspending a grid order; add --execute to suspend it
+longbridge grid restart <ORDER_ID>                            # Preview restarting a grid order; add --execute to restart it
 longbridge grid info 700.HK                                   # Symbol's grid-trading info (lot size, last price, authorization, currency)
 longbridge grid questionnaire                                 # Submit the strategy risk-disclosure questionnaire
 ```
+
+> `grid submit`, `replace`, `cancel`, `suspend` and `restart` follow the same
+> dry-run-by-default rule as the order commands above: nothing is sent until you
+> pass `--execute`.
 
 ### Short Selling
 

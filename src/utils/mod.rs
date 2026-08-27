@@ -2,6 +2,7 @@ pub mod counter;
 pub mod cycle;
 pub mod datetime;
 pub mod decimal_ext;
+pub mod dry_run;
 pub mod number;
 pub mod text;
 

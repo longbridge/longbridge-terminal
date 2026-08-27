@@ -107,6 +107,22 @@ const TRADE_METHODS: &[&str] = &[
     "estimate_max_purchase_quantity",
 ];
 
+/// The order-execution gate shared by `trade.submit_order`, `trade.cancel_order`
+/// and `trade.replace_order`.
+///
+/// Those three are the only methods on this seam that move real money, so they
+/// stay dry runs until the caller passes `"execute": true`. A client that omits
+/// the flag gets the parsed order back and nothing reaches the exchange.
+fn order_dry_run(preview: Value) -> Value {
+    serde_json::json!({
+        "dry_run": true,
+        "preview": preview,
+        "next_step": "DRY RUN — nothing was sent to the exchange. Show this preview to \
+                      the user and re-send the identical request with \"execute\": true \
+                      only after the user has explicitly confirmed this exact order.",
+    })
+}
+
 fn quote_api() -> crate::cli::api::LbQuoteApi {
     crate::cli::api::LbQuoteApi::new(crate::openapi::quote_cmd())
 }
@@ -133,6 +149,30 @@ pub fn all_methods() -> Vec<String> {
     all
 }
 
+/// The `initialize` capabilities object.
+///
+/// Split out from dispatch so the order-execution gate it advertises can be
+/// asserted without spinning up a runtime.
+fn session_capabilities() -> Value {
+    json!({
+        "subscribe": ["quote", "depth", "brokers", "trades"],
+        // `initialize` is the client's only discovery surface, so the execution
+        // gate has to be advertised here: a client that does not know about it
+        // would silently get dry runs forever.
+        "orderExecution": {
+            "gatedMethods": [
+                "trade.submit_order",
+                "trade.cancel_order",
+                "trade.replace_order",
+            ],
+            "note": "Dry run unless params include \"execute\": true. Send the \
+                     request once without it, show the returned preview to the \
+                     user, and resend with \"execute\": true only after the user \
+                     has explicitly confirmed that exact order.",
+        },
+    })
+}
+
 pub fn is_known(method: &str) -> bool {
     EXTRA_METHODS.contains(&method)
         || method
@@ -155,9 +195,7 @@ pub async fn call(method: &str, params: Option<Value>) -> Result<Value> {
         "initialize" => Ok(json!({
             "protocolVersion": PROTOCOL_VERSION,
             "serverInfo": { "name": "longbridge", "version": env!("CARGO_PKG_VERSION") },
-            "capabilities": {
-                "subscribe": ["quote", "depth", "brokers", "trades"],
-            },
+            "capabilities": session_capabilities(),
             "methods": all_methods(),
         })),
         // Handled by the run loop; listed so `is_known` accepts it.
@@ -396,10 +434,31 @@ async fn call_trade(name: &str, p: Params<'_>) -> Result<Value> {
             if let Some(v) = p.str_opt("remark")? {
                 opts = opts.remark(v);
             }
+            if !p.bool_opt("execute")? {
+                return Ok(order_dry_run(serde_json::json!({
+                    "action": "submit_order",
+                    "symbol": p.str("symbol")?,
+                    "side": p.str("side")?,
+                    "order_type": p.str("order_type")?,
+                    "quantity": p.str("quantity")?,
+                    "time_in_force": p.str("time_in_force")?,
+                    "price": p.str_opt("price")?,
+                    "trigger_price": p.str_opt("trigger_price")?,
+                    "outside_rth": p.str_opt("outside_rth")?,
+                    "remark": p.str_opt("remark")?,
+                })));
+            }
             ok(api.submit_order(opts).await?)
         }
         "cancel_order" => {
-            api.cancel_order(p.str("order_id")?).await?;
+            let order_id = p.str("order_id")?;
+            if !p.bool_opt("execute")? {
+                return Ok(order_dry_run(serde_json::json!({
+                    "action": "cancel_order",
+                    "order_id": order_id,
+                })));
+            }
+            api.cancel_order(order_id).await?;
             Ok(Value::Null)
         }
         "replace_order" => {
@@ -409,6 +468,14 @@ async fn call_trade(name: &str, p: Params<'_>) -> Result<Value> {
             );
             if let Some(v) = p.str_opt("price")? {
                 opts = opts.price(decimal(&v, "price")?);
+            }
+            if !p.bool_opt("execute")? {
+                return Ok(order_dry_run(serde_json::json!({
+                    "action": "replace_order",
+                    "order_id": p.str("order_id")?,
+                    "new_quantity": p.str("quantity")?,
+                    "new_price": p.str_opt("price")?,
+                })));
             }
             api.replace_order(opts).await?;
             Ok(Value::Null)
@@ -649,6 +716,33 @@ mod tests {
                 "{expected} missing from catalog"
             );
         }
+    }
+
+    #[test]
+    fn initialize_advertises_the_order_execution_gate() {
+        // The gate is only useful if clients can discover it; losing this entry
+        // turns every order call into a silent no-op from the client's view.
+        let caps = session_capabilities();
+        let gated = caps["orderExecution"]["gatedMethods"]
+            .as_array()
+            .expect("gatedMethods must be advertised");
+        for expected in [
+            "trade.submit_order",
+            "trade.cancel_order",
+            "trade.replace_order",
+        ] {
+            assert!(
+                gated.iter().any(|m| m == expected),
+                "{expected} must be advertised as execution-gated"
+            );
+        }
+        let note = caps["orderExecution"]["note"]
+            .as_str()
+            .expect("gate note must be advertised");
+        assert!(
+            note.contains("\"execute\": true"),
+            "note must name the flag"
+        );
     }
 
     #[test]

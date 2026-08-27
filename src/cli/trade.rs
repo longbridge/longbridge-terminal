@@ -634,6 +634,74 @@ pub fn parse_outside_rth(s: &str) -> Result<OutsideRTH> {
     }
 }
 
+/// Best-effort last traded price, used to sanity-check a previewed order.
+/// A quote failure must never block a dry run, so errors collapse to `None`.
+async fn preview_last_price(symbol: &str) -> Option<Decimal> {
+    let quotes = crate::openapi::quote_cmd()
+        .quote(&[symbol.to_string()])
+        .await
+        .ok()?;
+    quotes.first().map(|q| q.last_done)
+}
+
+/// Best-effort summary of an existing order, used by the cancel/replace previews
+/// so the operator can confirm they are acting on the order they meant.
+async fn preview_order_summary(order_id: &str) -> Option<serde_json::Value> {
+    let ctx = crate::openapi::trade();
+    let raw = if crate::openapi::is_us_account().await {
+        let resp = ctx.us_order_detail(order_id.to_string()).await.ok()?;
+        let full = serde_json::to_value(&resp).ok()?;
+        let mut order = full.get("order").cloned().unwrap_or(full);
+        if let Some(m) = order.as_object_mut() {
+            normalize_us_order_map(m);
+        }
+        order
+    } else {
+        serde_json::to_value(ctx.order_detail(order_id.to_string()).await.ok()?).ok()?
+    };
+
+    let pick = |key: &str| -> Option<String> {
+        match raw.get(key)? {
+            serde_json::Value::String(s) if !s.is_empty() => Some(s.clone()),
+            serde_json::Value::Null => None,
+            other => Some(other.to_string()),
+        }
+    };
+    Some(serde_json::json!({
+        "symbol": pick("symbol"),
+        "side": pick("side").or_else(|| pick("action")),
+        // Non-US `OrderDetail` serialises the enum verbatim ("FilledStatus");
+        // trim the suffix so previews read like the rest of the order output.
+        "status": pick("status").map(|s| s.strip_suffix("Status").unwrap_or(&s).to_string()),
+        "quantity": pick("quantity"),
+        "executed_quantity": pick("executed_quantity"),
+        "price": pick("price"),
+    }))
+}
+
+fn print_order_summary(summary: Option<&serde_json::Value>, order_id: &str) {
+    println!("  {:<18}{order_id}", "Order ID");
+    let Some(summary) = summary else {
+        println!(
+            "  {:<18}(unavailable — could not fetch order detail)",
+            "Order"
+        );
+        return;
+    };
+    for (label, key) in [
+        ("Symbol", "symbol"),
+        ("Side", "side"),
+        ("Status", "status"),
+        ("Quantity", "quantity"),
+        ("Filled", "executed_quantity"),
+        ("Price", "price"),
+    ] {
+        if let Some(v) = summary.get(key).and_then(serde_json::Value::as_str) {
+            println!("  {label:<18}{v}");
+        }
+    }
+}
+
 pub async fn cmd_submit_order(
     symbol: String,
     quantity: u64,
@@ -648,10 +716,9 @@ pub async fn cmd_submit_order(
     order_type: String,
     tif: String,
     side: OrderSide,
-    yes: bool,
+    execute: bool,
     format: &OutputFormat,
 ) -> Result<()> {
-    use std::io::Write;
     let ot = parse_order_type(&order_type)?;
     let tif_val = parse_tif(&tif)?;
     let qty = Decimal::from(quantity);
@@ -719,18 +786,60 @@ pub async fn cmd_submit_order(
     if let Some(ref rth) = outside_rth {
         let _ = write!(price_display, " outside-rth: {rth}");
     }
-    println!("Submitting {side:?} order: {quantity} {symbol} @ {price_display}");
-    if !yes {
-        print!("Confirm? [y/N] ");
-        std::io::stdout().flush()?;
-        let mut input = String::new();
-        std::io::stdin().read_line(&mut input)?;
-        if input.trim().to_lowercase() != "y" {
-            println!("Cancelled.");
-            return Ok(());
+    // Two-step by design: without --execute this previews and sends nothing.
+    if !execute {
+        let last = preview_last_price(&symbol).await;
+        let reference = price
+            .as_deref()
+            .and_then(|p| Decimal::from_str(p).ok())
+            .or(last);
+        let estimated = reference.map(|p| (p * qty).round_dp(2));
+        match format {
+            OutputFormat::Json => {
+                let val = serde_json::json!({
+                    "dry_run": true,
+                    "submitted": false,
+                    "side": format!("{side:?}"),
+                    "symbol": symbol,
+                    "quantity": quantity,
+                    "order_type": order_type.to_uppercase(),
+                    "time_in_force": tif.to_lowercase(),
+                    "price": price,
+                    "trigger_price": trigger_price,
+                    "trailing_amount": trailing_amount,
+                    "trailing_percent": trailing_percent,
+                    "limit_offset": limit_offset,
+                    "expire_date": expire_date,
+                    "outside_rth": outside_rth,
+                    "remark": remark,
+                    "last_price": last.map(|d| d.to_string()),
+                    "estimated_amount": estimated.map(|d| d.to_string()),
+                    "message": crate::utils::dry_run::message(),
+                });
+                println!("{}", serde_json::to_string_pretty(&val)?);
+            }
+            OutputFormat::Pretty => {
+                println!("DRY RUN — no order was placed.");
+                println!();
+                println!("  {:<18}{side:?}", "Action");
+                println!("  {:<18}{symbol}", "Symbol");
+                println!("  {:<18}{quantity}", "Quantity");
+                println!("  {:<18}{}", "Order type", order_type.to_uppercase());
+                println!("  {:<18}{price_display}", "Price");
+                println!("  {:<18}{}", "Time in force", tif.to_lowercase());
+                if let Some(p) = last {
+                    println!("  {:<18}{p}", "Last price");
+                }
+                if let Some(a) = estimated {
+                    println!("  {:<18}~{a}", "Est. amount");
+                }
+                crate::utils::dry_run::print_notice();
+            }
         }
+        return Ok(());
     }
 
+    println!("Submitting {side:?} order: {quantity} {symbol} @ {price_display}");
     let ctx = crate::openapi::trade();
     let resp = ctx.submit_order(opts).await?;
 
@@ -747,22 +856,46 @@ pub async fn cmd_submit_order(
     Ok(())
 }
 
-pub async fn cmd_cancel_order(order_id: String, yes: bool) -> Result<()> {
-    use std::io::Write;
-    if !yes {
-        print!("Cancel order {order_id}? [y/N] ");
-        std::io::stdout().flush()?;
-        let mut input = String::new();
-        std::io::stdin().read_line(&mut input)?;
-        if input.trim().to_lowercase() != "y" {
-            println!("Cancelled.");
-            return Ok(());
+pub async fn cmd_cancel_order(
+    order_id: String,
+    execute: bool,
+    format: &OutputFormat,
+) -> Result<()> {
+    // Two-step by design: without --execute this previews and cancels nothing.
+    if !execute {
+        let summary = preview_order_summary(&order_id).await;
+        match format {
+            OutputFormat::Json => {
+                let val = serde_json::json!({
+                    "dry_run": true,
+                    "cancelled": false,
+                    "action": "cancel",
+                    "order_id": order_id,
+                    "order": summary,
+                    "message": crate::utils::dry_run::message(),
+                });
+                println!("{}", serde_json::to_string_pretty(&val)?);
+            }
+            OutputFormat::Pretty => {
+                println!("DRY RUN — no order was cancelled.");
+                println!();
+                println!("  {:<18}Cancel", "Action");
+                print_order_summary(summary.as_ref(), &order_id);
+                crate::utils::dry_run::print_notice();
+            }
         }
+        return Ok(());
     }
 
     let ctx = crate::openapi::trade();
     ctx.cancel_order(order_id.clone()).await?;
-    println!("Order {order_id} cancelled.");
+    match format {
+        OutputFormat::Json => {
+            let val = serde_json::json!({ "order_id": order_id, "cancelled": true });
+            println!("{}", serde_json::to_string_pretty(&val)?);
+        }
+        OutputFormat::Pretty => println!("Order {order_id} cancelled."),
+    }
     Ok(())
 }
 
@@ -770,32 +903,61 @@ pub async fn cmd_replace_order(
     order_id: String,
     qty: Option<u64>,
     price: Option<String>,
-    yes: bool,
+    execute: bool,
+    format: &OutputFormat,
 ) -> Result<()> {
-    use std::io::Write;
     let quantity = qty.ok_or_else(|| anyhow::anyhow!("--qty is required"))?;
     let qty_dec = Decimal::from(quantity);
 
     let mut opts = ReplaceOrderOptions::new(order_id.clone(), qty_dec);
-    if let Some(p) = price {
-        let price_dec = Decimal::from_str(&p).map_err(|_| anyhow::anyhow!("Invalid price: {p}"))?;
+    if let Some(ref p) = price {
+        let price_dec = Decimal::from_str(p).map_err(|_| anyhow::anyhow!("Invalid price: {p}"))?;
         opts = opts.price(price_dec);
     }
 
-    if !yes {
-        print!("Modify order {order_id}? [y/N] ");
-        std::io::stdout().flush()?;
-        let mut input = String::new();
-        std::io::stdin().read_line(&mut input)?;
-        if input.trim().to_lowercase() != "y" {
-            println!("Cancelled.");
-            return Ok(());
+    // Two-step by design: without --execute this previews and changes nothing.
+    if !execute {
+        let summary = preview_order_summary(&order_id).await;
+        match format {
+            OutputFormat::Json => {
+                let val = serde_json::json!({
+                    "dry_run": true,
+                    "modified": false,
+                    "action": "replace",
+                    "order_id": order_id,
+                    "current": summary,
+                    "new_quantity": quantity,
+                    "new_price": price,
+                    "message": crate::utils::dry_run::message(),
+                });
+                println!("{}", serde_json::to_string_pretty(&val)?);
+            }
+            OutputFormat::Pretty => {
+                println!("DRY RUN — no order was modified.");
+                println!();
+                println!("  {:<18}Replace", "Action");
+                print_order_summary(summary.as_ref(), &order_id);
+                println!("  {:<18}{quantity}", "New quantity");
+                println!(
+                    "  {:<18}{}",
+                    "New price",
+                    price.as_deref().unwrap_or("(unchanged)")
+                );
+                crate::utils::dry_run::print_notice();
+            }
         }
+        return Ok(());
     }
 
     let ctx = crate::openapi::trade();
     ctx.replace_order(opts).await?;
-    println!("Order {order_id} modified.");
+    match format {
+        OutputFormat::Json => {
+            let val = serde_json::json!({ "order_id": order_id, "modified": true });
+            println!("{}", serde_json::to_string_pretty(&val)?);
+        }
+        OutputFormat::Pretty => println!("Order {order_id} modified."),
+    }
     Ok(())
 }
 
