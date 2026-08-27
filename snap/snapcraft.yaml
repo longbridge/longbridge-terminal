@@ -1,0 +1,33 @@
+name: longbridge-terminal
+base: core22
+version: '0.22.1'
+summary: AI-native CLI for Longbridge Securities
+description: |
+  longbridge-terminal is an AI-native command-line interface for Longbridge
+  Securities. It provides real-time market data, portfolio management, and
+  trading operations directly from your terminal.
+
+  Features:
+  - Real-time quotes for HK / US / A-share / Singapore markets
+  - Portfolio and account analytics
+  - Candlestick / OHLCV data and charting
+  - Watchlist management
+  - Order placement and trade history
+  - AI-assisted market research
+
+grade: stable
+confinement: classic
+architectures:
+  - build-on: amd64
+
+apps:
+  longbridge:
+    command: bin/longbridge
+
+parts:
+  longbridge:
+    plugin: dump
+    source: https://github.com/longbridge/longbridge-terminal/releases/download/v0.22.1/longbridge-terminal-linux-amd64.tar.gz
+    source-checksum: sha256/8e62bad91fe002da52b476290d1abb653beb8da1bb4d87a82b272e9f4e8d1dd8
+    organize:
+      longbridge: bin/longbridge
