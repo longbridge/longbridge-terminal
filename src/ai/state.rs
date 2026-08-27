@@ -9,6 +9,8 @@
 use longbridge::agent::Reference;
 use serde_json::Value;
 
+use crate::openapi::chats::TokenUsage;
+
 /// Who authored a transcript line.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Role {
@@ -51,6 +53,10 @@ pub struct Message {
     pub tool: Option<ToolStatus>,
     /// Set only on [`Role::Thinking`] lines.
     pub thinking: Option<ThinkingBlock>,
+    /// The round's token usage, on the [`Role::Assistant`] line that answered
+    /// it. Absent for every other line, and for answers that consumed no
+    /// tokens — see [`TokenUsage`].
+    pub token_usage: Option<TokenUsage>,
 }
 
 impl Message {
@@ -61,6 +67,7 @@ impl Message {
             text,
             tool: None,
             thinking: None,
+            token_usage: None,
         }
     }
 
@@ -71,6 +78,7 @@ impl Message {
             text: name,
             tool: Some(status),
             thinking: None,
+            token_usage: None,
         }
     }
 
@@ -84,7 +92,16 @@ impl Message {
                 secs,
                 expanded: false,
             }),
+            token_usage: None,
         }
+    }
+
+    /// Attach a round's token usage to an assistant line, dropping an empty
+    /// one so it never shows as a "0 tokens" placeholder.
+    #[must_use]
+    pub fn with_token_usage(mut self, usage: Option<TokenUsage>) -> Self {
+        self.token_usage = usage.filter(|u| !u.is_empty());
+        self
     }
 }
 
@@ -107,6 +124,10 @@ pub enum ChatEvent {
     ThinkingDelta(String),
     /// The reasoning phase ended; the live block collapses to a summary line.
     ThinkingFinished,
+    /// The turn's cumulative token usage so far. Overwrites the last value
+    /// (never accumulates), so a dropped or replayed frame keeps the count
+    /// correct.
+    TokenUsage(TokenUsage),
     /// The agent started calling a tool; appends a running tool line.
     ToolStarted(String),
     /// A tool finished; resolves its line and records failures so an empty turn
@@ -225,6 +246,10 @@ pub struct ChatState {
     pub further: Vec<String>,
     /// Where the turn in flight began, for analytics. See [`TurnStart`].
     pub turn_started: Option<TurnStart>,
+    /// The active turn's cumulative token usage, carried until the answer is
+    /// finalized and then attached to that assistant message. Overwritten by
+    /// each frame, so the value is always the round's running total.
+    pub token_usage: Option<TokenUsage>,
 }
 
 impl ChatState {
@@ -257,6 +282,7 @@ impl ChatState {
                 self.references.clear();
                 self.further.clear();
                 self.turn_error = None;
+                self.token_usage = None;
             }
             ChatEvent::TurnStarted {
                 chat_uid,
@@ -282,6 +308,8 @@ impl ChatState {
                 self.thinking.get_or_insert_with(Thinking::default).text += &text;
             }
             ChatEvent::ThinkingFinished => self.collapse_thinking(),
+            // Cumulative for the round, so replace rather than add.
+            ChatEvent::TokenUsage(usage) => self.token_usage = Some(usage),
             // A tool call is committed to the transcript rather than only
             // flashing through the status line: for a finance agent, which data
             // an answer was built from is part of the answer.
@@ -359,6 +387,8 @@ impl ChatState {
                 self.references.clear();
                 self.further.clear();
                 self.turn_error = None;
+                // The replay re-emits this round's cumulative token frames.
+                self.token_usage = None;
             }
             ChatEvent::TurnFinished { error } => {
                 // A transport error takes precedence, but a server-reported one is
@@ -377,12 +407,16 @@ impl ChatState {
         self.collapse_thinking();
         self.settle_running_tools();
         let error_free = error.is_none();
+        // Taken whether or not an answer was produced, so a turn that streamed
+        // no text never carries its usage into the next turn.
+        let usage = self.token_usage.take();
         let produced = self
             .streaming
             .take()
             .filter(|t| !t.trim().is_empty())
             .map(|text| {
-                self.messages.push(Message::new(Role::Assistant, text));
+                self.messages
+                    .push(Message::new(Role::Assistant, text).with_token_usage(usage));
             })
             .is_some();
         if let Some(err) = error {
@@ -449,27 +483,50 @@ impl ChatState {
         self.messages.push(Message::thinking(thinking.text, secs));
     }
 
-    /// Reset to a fresh conversation, keeping the agent but dropping all
-    /// messages and conversation identity. Used by the "new chat" action.
-    pub fn reset(&mut self, welcome: String) {
+    /// Invalidate the current turn generation so events a turn task already
+    /// queued — it may still be running after an abort, which cannot retract
+    /// them — are dropped by the generation gate instead of applied to whatever
+    /// conversation comes next. Kept separate from [`Self::clear_turn_state`]:
+    /// clearing fields is local bookkeeping, this is the concurrency gate, and
+    /// fusing them would hide a load-bearing side effect behind a tidy name.
+    pub fn bump_generation(&mut self) {
         self.generation = self.generation.wrapping_add(1);
-        self.messages = vec![Message::new(Role::System, welcome)];
+    }
+
+    /// Drop every field tied to the turn in flight. Pure field-clearing — it does
+    /// **not** touch the generation gate (call [`Self::bump_generation`] for that
+    /// when abandoning a running turn) or conversation identity (title, ids,
+    /// pending interrupt), which `reset` blanks and `restore` overwrites.
+    ///
+    /// Shared by [`Self::reset`] (new chat) and `session_store::restore` (switch
+    /// conversation) so the field list lives in one place instead of drifting
+    /// between two hand-kept copies.
+    pub fn clear_turn_state(&mut self) {
         self.streaming = None;
         self.thinking = None;
         self.status.clear();
         self.busy = false;
+        self.queued.clear();
+        self.tool_failures.clear();
+        self.references.clear();
+        self.further.clear();
+        self.turn_error = None;
+        self.turn_started = None;
+        self.token_usage = None;
+    }
+
+    /// Reset to a fresh conversation, keeping the agent but dropping all
+    /// messages and conversation identity. Used by the "new chat" action.
+    pub fn reset(&mut self, welcome: String) {
+        self.bump_generation();
+        self.clear_turn_state();
+        self.messages = vec![Message::new(Role::System, welcome)];
         self.scroll = 0;
         self.title = None;
         self.chat_uid = None;
         self.message_id = None;
         self.parent_message_id = None;
         self.pending_interrupt = None;
-        self.turn_error = None;
-        self.queued.clear();
-        self.tool_failures.clear();
-        self.references.clear();
-        self.further.clear();
-        self.turn_started = None;
     }
 
     /// Take everything queued as a single prompt, or `None` if nothing waits.
@@ -492,6 +549,7 @@ impl ChatState {
         // nothing left to finish it.
         self.collapse_thinking();
         self.settle_running_tools();
+        let usage = self.token_usage.take();
         if let Some(mut text) = self.streaming.take() {
             if text.trim().is_empty() {
                 text = cancelled_label.to_string();
@@ -499,7 +557,8 @@ impl ChatState {
                 text.push('\n');
                 text.push_str(cancelled_label);
             }
-            self.messages.push(Message::new(Role::Assistant, text));
+            self.messages
+                .push(Message::new(Role::Assistant, text).with_token_usage(usage));
         }
         self.busy = false;
         self.status.clear();
@@ -740,6 +799,44 @@ mod tests {
         // A blank title does not overwrite a real one.
         s.apply(ChatEvent::Title("   ".into()));
         assert_eq!(s.title.as_deref(), Some("Tesla outlook"));
+    }
+
+    /// The round's token total lands on the assistant message it belongs to,
+    /// and a fresh prompt starts the next round's count from nothing.
+    #[test]
+    fn token_usage_attaches_to_the_answer_and_resets_next_turn() {
+        use crate::openapi::chats::TokenUsage;
+        let mut s = state();
+        s.apply(ChatEvent::UserPrompt("how is TSLA?".into()));
+        s.apply(ChatEvent::TokenUsage(TokenUsage {
+            prompt_tokens: 1200,
+            completion_tokens: 80,
+            total_tokens: 1280,
+        }));
+        // A later cumulative frame overwrites the earlier one.
+        s.apply(ChatEvent::TokenUsage(TokenUsage {
+            prompt_tokens: 2600,
+            completion_tokens: 210,
+            total_tokens: 2810,
+        }));
+        s.apply(ChatEvent::Delta("TSLA is up.".into()));
+        s.apply(ChatEvent::TurnFinished { error: None });
+        let answer = s.messages.last().unwrap();
+        assert_eq!(answer.role, Role::Assistant);
+        assert_eq!(answer.token_usage.unwrap().total_tokens, 2810);
+        // The next turn does not inherit the previous round's total.
+        s.apply(ChatEvent::UserPrompt("and NVDA?".into()));
+        assert!(s.token_usage.is_none());
+    }
+
+    /// A round that consumed no tokens (a cache hit) leaves no footer to render.
+    #[test]
+    fn an_answer_without_usage_carries_none() {
+        let mut s = state();
+        s.apply(ChatEvent::UserPrompt("hi".into()));
+        s.apply(ChatEvent::Delta("hello".into()));
+        s.apply(ChatEvent::TurnFinished { error: None });
+        assert!(s.messages.last().unwrap().token_usage.is_none());
     }
 
     #[test]

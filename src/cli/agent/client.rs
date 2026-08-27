@@ -313,6 +313,14 @@ fn map_event(ev: ConversationStreamEvent) -> Option<AgentEvent> {
         ConversationStreamEvent::ChatTitleUpdated(p) => {
             AgentEvent::ChatTitleUpdated { title: p.title }
         }
+        // The SDK has no typed variant for `token_usage`, so it arrives here as
+        // a raw event carrying the cumulative counts for the round.
+        ConversationStreamEvent::Other { event, data } if event == "token_usage" => {
+            match crate::openapi::chats::TokenUsage::from_data(&data) {
+                Some(usage) => AgentEvent::TokenUsage(usage),
+                None => return None,
+            }
+        }
         ConversationStreamEvent::Other { event, .. } => AgentEvent::Unknown { event },
         // Progress-only events the CLI does not display.
         ConversationStreamEvent::Ping
@@ -701,6 +709,12 @@ async fn read_back_answer(
     if !text.is_empty() {
         on_event(AgentEvent::AnswerDelta { text });
     }
+    // The stored usage equals the stream's final frame (the server writes the
+    // round's cumulative total), so history restores what the dead connection
+    // never delivered — and what the restart announcement above cleared.
+    if let Some(usage) = msg.token_usage.filter(|usage| !usage.is_empty()) {
+        on_event(AgentEvent::TokenUsage(usage));
+    }
     let status = recovered_status(msg.status);
     on_event(AgentEvent::WorkflowFinished {
         status: status.to_string(),
@@ -746,6 +760,12 @@ async fn finalize_from_history(
                     ));
                     break;
                 };
+                // The frame that would have carried the round's final total is
+                // exactly what the truncated stream lost; the stored value is
+                // its equal, so supply it alongside the verdict.
+                if let Some(usage) = msg.token_usage.filter(|usage| !usage.is_empty()) {
+                    on_event(AgentEvent::TokenUsage(usage));
+                }
                 on_event(AgentEvent::WorkflowFinished {
                     status: recovered_status(msg.status).to_string(),
                     references: msg.references(),

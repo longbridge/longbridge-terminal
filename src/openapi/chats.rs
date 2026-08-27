@@ -35,6 +35,40 @@ pub struct ChatsResponse {
     pub chats: Vec<Chat>,
 }
 
+/// Token consumption for one assistant message / conversation round.
+///
+/// Counts are cumulative for the whole round — the main agent's tool loop, any
+/// subagents, and any delegated agents — not per model call, so the last frame
+/// of a stream equals the value read back from history. The key is omitted
+/// entirely (rather than sent as a zeroed object) whenever a round consumed no
+/// tokens — a user message, a cache hit, or a message stored before this field
+/// existed — so it is carried as an `Option` and never rendered as a
+/// "0 tokens" placeholder. See `token-usage-client-integration.md`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default)]
+pub struct TokenUsage {
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
+}
+
+impl TokenUsage {
+    /// Parse from an SSE `token_usage` frame's inner `data` object, dropping a
+    /// frame that carries no real usage. `None` — rather than a zeroed value —
+    /// so callers never render a "0 tokens" placeholder for an empty frame.
+    pub fn from_data(data: &serde_json::Value) -> Option<Self> {
+        serde_json::from_value::<Self>(data.clone())
+            .ok()
+            .filter(|usage| !usage.is_empty())
+    }
+
+    /// Whether this carries a real total worth showing. An all-zero usage is
+    /// treated the same as an absent one.
+    pub fn is_empty(&self) -> bool {
+        self.total_tokens == 0
+    }
+}
+
 /// One content chunk of a [`ChatMessage`].
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(default)]
@@ -62,6 +96,12 @@ pub struct ChatMessage {
     pub likes: i32,
     pub parent_message_id: i64,
     pub thinking_seconds: i32,
+    /// Cumulative token usage for this message's round. Absent (`None`) for
+    /// user messages, cache hits, and messages stored before this field
+    /// existed — see [`TokenUsage`]. Omitted from serialized output when absent,
+    /// matching the server's own "omit, don't zero" contract.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_usage: Option<TokenUsage>,
     pub error_code: i32,
     pub workflow_run_id: String,
     pub created_at: i64,
@@ -170,7 +210,45 @@ impl ChatMessage {
 
 #[cfg(test)]
 mod tests {
-    use super::{ChatMessage, ChatMessageChunk};
+    use super::{ChatMessage, ChatMessageChunk, TokenUsage};
+
+    /// A history message carries its round's token usage as an optional
+    /// top-level field, absent (`None`) when the round consumed none.
+    #[test]
+    fn token_usage_is_read_from_a_history_message() {
+        let with: ChatMessage = serde_json::from_value(serde_json::json!({
+            "sender": "assistant",
+            "thinking_seconds": 12,
+            "token_usage": {
+                "prompt_tokens": 2600,
+                "completion_tokens": 210,
+                "total_tokens": 2810,
+            },
+        }))
+        .unwrap();
+        assert_eq!(with.token_usage.unwrap().total_tokens, 2810);
+
+        // The key is omitted entirely when there is nothing to show.
+        let without: ChatMessage = serde_json::from_value(serde_json::json!({
+            "sender": "user",
+        }))
+        .unwrap();
+        assert!(without.token_usage.is_none());
+    }
+
+    /// An SSE frame's inner `data` parses into usage; an all-zero one is treated
+    /// as no usage at all.
+    #[test]
+    fn token_usage_from_data_drops_empty_frames() {
+        let real = TokenUsage::from_data(&serde_json::json!({
+            "prompt_tokens": 1200, "completion_tokens": 80, "total_tokens": 1280,
+        }));
+        assert_eq!(real.unwrap().total_tokens, 1280);
+        assert!(TokenUsage::from_data(&serde_json::json!({
+            "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
+        }))
+        .is_none());
+    }
 
     fn chunk(kind: &str, content: &str) -> ChatMessageChunk {
         ChatMessageChunk {

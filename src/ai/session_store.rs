@@ -106,7 +106,9 @@ pub async fn load_detail(uid: &str) -> Option<LoadedChat> {
                 } else {
                     Role::Assistant
                 };
-                out.push(Message::new(role, text));
+                // Only assistant answers carry usage; a user line never does.
+                let usage = (role == Role::Assistant).then_some(m.token_usage).flatten();
+                out.push(Message::new(role, text).with_token_usage(usage));
             }
             out
         })
@@ -174,6 +176,13 @@ fn continuable_parent(messages: &[crate::openapi::chats::ChatMessage]) -> Option
 
 /// Restore a loaded conversation into `state`, ready for follow-ups.
 pub fn restore(loaded: LoadedChat, state: &mut ChatState) {
+    // Drop the previous conversation's in-flight turn and invalidate its
+    // generation: a turn of the conversation being left cannot be retracted by
+    // aborting its task, only gated out. Clearing the live answer, reasoning
+    // block, status, queue, and token count runs through the same helper `reset`
+    // uses, so the two can't drift.
+    state.bump_generation();
+    state.clear_turn_state();
     if !loaded.agent_uid.is_empty() {
         state.agent_uid = loaded.agent_uid;
     }
@@ -184,17 +193,7 @@ pub fn restore(loaded: LoadedChat, state: &mut ChatState) {
     // and neither is something the server will build on.
     state.parent_message_id = loaded.parent_message_id;
     state.pending_interrupt = loaded.pending_interrupt;
-    state.turn_error = None;
     state.scroll = 0;
-    state.references.clear();
-    state.further.clear();
-    // Drop any transient turn state so a restored conversation never inherits a
-    // half-streamed answer, a stale status/spinner, or queued prompts.
-    state.streaming = None;
-    state.status.clear();
-    state.busy = false;
-    state.queued.clear();
-    state.tool_failures.clear();
     state.messages = loaded.messages;
 }
 
@@ -209,6 +208,51 @@ mod tests {
             status,
             ..ChatMessage::default()
         }
+    }
+
+    /// Restoring changes which conversation the state describes, so a turn of
+    /// the previous conversation must lose its claim on it: the generation gate
+    /// discards events an aborted task had already queued, and every piece of
+    /// live turn state (the running answer, the reasoning block, the token
+    /// count, the turn's start) belongs to the conversation just abandoned — not
+    /// the one being opened.
+    #[test]
+    fn restore_bumps_the_generation_and_drops_live_turn_state() {
+        use crate::ai::state::{ChatEvent, ChatState};
+        let mut state = ChatState::new("chatbot".into(), "welcome".into());
+        state.apply(ChatEvent::UserPrompt("still running".into()));
+        state.apply(ChatEvent::ThinkingDelta("mid-reasoning".into()));
+        state.apply(ChatEvent::TokenUsage(crate::openapi::chats::TokenUsage {
+            prompt_tokens: 1200,
+            completion_tokens: 80,
+            total_tokens: 1280,
+        }));
+        assert!(state.thinking.is_some() && state.turn_started.is_some());
+        let generation = state.generation;
+        let loaded = LoadedChat {
+            agent_uid: "chatbot".into(),
+            chat_uid: "c2".into(),
+            message_id: None,
+            parent_message_id: None,
+            title: None,
+            messages: Vec::new(),
+            pending_interrupt: None,
+        };
+        restore(loaded, &mut state);
+        assert_ne!(state.generation, generation, "stale events must be gated");
+        assert!(
+            state.token_usage.is_none(),
+            "the old turn's count is dropped"
+        );
+        assert!(
+            state.thinking.is_none(),
+            "the old turn's reasoning block must not leak into the restored chat"
+        );
+        assert!(
+            state.turn_started.is_none(),
+            "no turn is in flight after restore"
+        );
+        assert!(!state.busy);
     }
 
     /// The bug this exists for: a conversation the reader quit while the agent was

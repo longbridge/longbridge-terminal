@@ -884,15 +884,21 @@ fn print_footer(agent_uid: &str, outcome: &ChatOutcome) {
         }
     }
     println!("─────");
-    let elapsed = outcome
-        .elapsed_time
-        .map(|s| t!("Agent.Elapsed", secs = format!("{s:.1}")).to_string())
-        .unwrap_or_default();
-    println!(
-        "chat_uid: {} · message_id: {} · {elapsed}",
-        strip_control_chars(&outcome.chat_uid),
-        strip_control_chars(&outcome.message_id)
-    );
+    // The trailing stats are each optional (a read-back run has no elapsed
+    // time; a cache hit reports no usage — and "0 tokens" must not print), so
+    // they are collected and joined rather than concatenated, which left a
+    // dangling separator whenever an earlier one was absent.
+    let mut parts = vec![
+        format!("chat_uid: {}", strip_control_chars(&outcome.chat_uid)),
+        format!("message_id: {}", strip_control_chars(&outcome.message_id)),
+    ];
+    if let Some(secs) = outcome.elapsed_time {
+        parts.push(t!("Agent.Elapsed", secs = format!("{secs:.1}")).to_string());
+    }
+    if let Some(usage) = outcome.token_usage.filter(|usage| !usage.is_empty()) {
+        parts.push(t!("Agent.Tokens", total = usage.total_tokens).to_string());
+    }
+    println!("{}", parts.join(" · "));
     // Same treatment as `continue_hint`: this line is meant to be pasted into
     // a shell, so every server-supplied argument is stripped and quoted.
     println!(
