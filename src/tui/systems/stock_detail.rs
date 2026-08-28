@@ -27,31 +27,61 @@ use super::{Key, NavFooter, PopUp, StockDetail, KLINE_INDEX, KLINE_TYPE};
 
 const EMPTY_PLACEHOLDER: &str = "--";
 
-// Debounce state for stock refresh
-static REFRESH_STOCK_TASK: std::sync::LazyLock<Mutex<Option<JoinHandle<()>>>> =
+/// How long a stock must stay selected before it is fetched, so that holding a
+/// cursor down a watchlist does not fetch every row it passes.
+const REFRESH_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// Bumped by every refresh; a task whose number is no longer the latest has
+/// been superseded and stops.
+///
+/// This replaces an "is a refresh running" flag that turned a refresh away
+/// while another was in flight. A turned-away refresh was never retried, so the
+/// stock the reader had settled on could simply never load. A generation
+/// instead lets the newest selection always win, and makes a superseded task
+/// discard its own late answers rather than write them over the current
+/// stock's.
+static REFRESH_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// The task serving the current selection, so a superseded one can be stopped
+/// before it issues another request rather than merely before it stores an
+/// answer. The quote SDK runs one command at a time, so a request a stale task
+/// still manages to send is a full round trip the current stock waits behind.
+static REFRESH_TASK: std::sync::LazyLock<Mutex<Option<JoinHandle<()>>>> =
     std::sync::LazyLock::new(|| Mutex::new(None));
-// Flag to track if a refresh is currently executing
-static REFRESH_EXECUTING: Atomic<bool> = Atomic::new(false);
+/// How many candles the chart last asked for, which depends on how wide it was
+/// drawn. Zero until the first frame that draws a chart.
+static CHART_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// The stock the reader has actually stopped on, as opposed to the ones the
+/// cursor passed over on the way. Set once the debounce elapses.
+static SETTLED: std::sync::LazyLock<Mutex<Option<Counter>>> =
+    std::sync::LazyLock::new(|| Mutex::new(None));
 // Flag set when the API returns no data for the current symbol
 static STOCK_NOT_FOUND: Atomic<bool> = Atomic::new(false);
 
-// RAII guard to ensure REFRESH_EXECUTING is always cleared
-struct RefreshGuard;
+/// Whether this task still speaks for the stock on screen.
+fn is_current(generation: u64) -> bool {
+    REFRESH_GENERATION.load(Ordering::Relaxed) == generation
+}
 
-impl RefreshGuard {
-    fn try_acquire() -> Option<Self> {
-        if REFRESH_EXECUTING.swap(true, Ordering::Relaxed) {
-            None
-        } else {
-            Some(RefreshGuard)
-        }
+/// Ask for a frame.
+///
+/// Renders only happen when something is marked dirty, so a task that has just
+/// changed what is on screen has to say so; otherwise the change waits for
+/// whatever push or keystroke comes next.
+fn request_redraw() {
+    if let Some(tx) = crate::tui::app::UPDATE_TX.get() {
+        let _ = tx.send(bevy_ecs::system::CommandQueue::default());
     }
 }
 
-impl Drop for RefreshGuard {
-    fn drop(&mut self) {
-        REFRESH_EXECUTING.store(false, Ordering::Relaxed);
-    }
+/// Whether `counter` is the stock the detail view has settled on.
+///
+/// The candlestick store asks this before sending a request. Its reads happen
+/// inside the render closure, which runs while the cursor is still moving, so
+/// without this a walk down a watchlist queues a chart request for every row it
+/// passes — and each one delays the chart of the row the reader actually stops
+/// on, because they all queue behind each other on one connection.
+pub fn settled_on(counter: &Counter) -> bool {
+    SETTLED.lock().expect("poison").as_ref() == Some(counter)
 }
 
 pub fn render_stock(
@@ -706,6 +736,9 @@ pub(crate) fn stock_detail(
                 (width, selected / width, selected % width)
             })
             .unwrap_or_default();
+        // Remembered so the refresh task can ask for the chart itself, ahead of
+        // its own requests, instead of waiting for a frame to ask for it.
+        CHART_COUNT.store((page + 1) * width, Ordering::Relaxed);
         let samples = KLINES.by_pagination(
             counter.clone(),
             kline_type,
@@ -921,88 +954,233 @@ pub(crate) fn stock_detail(
     }
 }
 
-/// Debounced version of `refresh_stock` with 50ms delay
-/// Cancels previous pending requests if a new one arrives within the debounce window
-/// Also prevents multiple concurrent executions
-pub fn refresh_stock_debounced(counter: Counter) {
-    // Cancel previous pending task if it exists
-    if let Ok(mut task_guard) = REFRESH_STOCK_TASK.lock() {
-        if let Some(task) = task_guard.take() {
-            task.abort();
+/// The rows either side of `counter` in the watchlist, nearest-below first.
+///
+/// Empty when the stock is not in the watchlist at all — a symbol opened from
+/// search has no neighbours to read ahead of.
+fn watchlist_neighbours(counter: &Counter) -> Vec<Counter> {
+    let watchlist = crate::tui::app::WATCHLIST.read().expect("poison");
+    let counters = watchlist.counters();
+    let Some(index) = counters.iter().position(|c| c == counter) else {
+        return Vec::new();
+    };
+    [
+        Some(index + 1).filter(|i| *i < counters.len()),
+        index.checked_sub(1),
+    ]
+    .into_iter()
+    .flatten()
+    .map(|i| counters[i].clone())
+    .collect()
+}
+
+/// How long the selection must hold still, after its own stock is fully loaded,
+/// before the rows around it are fetched too.
+///
+/// A reader moving through the list is not reading it, and work started on
+/// their behalf would only sit in front of the stock they are moving towards.
+const READ_AHEAD_IDLE: std::time::Duration = std::time::Duration::from_millis(600);
+
+/// Fill the chart and trade list of the neighbouring rows while the connection
+/// would otherwise be idle.
+///
+/// This is what a stock switch costs: the quote SDK serves one request at a
+/// time, so a stock nobody has opened yet needs a chart and a trade list
+/// fetched one after the other before its panel is whole — about a second, and
+/// no amount of reordering removes it. What removes it is not needing the
+/// requests: a reader who stops on a row is, by then, several hundred
+/// milliseconds from moving to the one above or below it, and the connection is
+/// doing nothing. Every check below hands the connection straight back the
+/// moment the selection moves.
+async fn read_ahead(counter: &Counter, generation: u64, chart_count: usize) {
+    if chart_count == 0 {
+        return;
+    }
+    tokio::time::sleep(READ_AHEAD_IDLE).await;
+    let kline_type = KLINE_TYPE.load(Ordering::Relaxed);
+    for neighbour in watchlist_neighbours(counter) {
+        if !is_current(generation) {
+            return;
         }
+        KLINES
+            .ensure(
+                &neighbour,
+                kline_type,
+                crate::data::AdjustType::ForwardAdjust,
+                chart_count,
+            )
+            .await;
 
-        // Reset not-found flag whenever a new refresh starts
-        STOCK_NOT_FOUND.store(false, Ordering::Relaxed);
-
-        // Spawn a new debounced task
-        let handle = RT.get().unwrap().spawn(async move {
-            // Wait 150ms before executing to avoid firing on every stock passed during navigation
-            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-
-            // Try to acquire the execution lock (RAII guard)
-            let Some(_guard) = RefreshGuard::try_acquire() else {
-                tracing::debug!(
-                    "Skipping refresh for {} - another refresh is in progress",
-                    counter
-                );
-                return;
-            };
-
-            tracing::debug!("Starting refresh for {}", counter);
-
-            // Execute the actual refresh
-            let _ = WS
-                .quote_detail("stock_detail", std::slice::from_ref(&counter))
-                .await;
-            let _ = WS
-                .quote_trade("stock_detail", std::slice::from_ref(&counter))
-                .await;
-
-            // Get full quote data (including prev_close and trade_status)
-            let ctx = crate::openapi::quote();
-            if let Ok(quotes) = ctx.quote(&[counter.to_string()]).await {
-                if let Some(quote) = quotes.first() {
-                    STOCKS.modify(counter.clone(), |stock| {
-                        stock.update_from_security_quote(quote);
-                    });
-                } else {
-                    // API returned no data — symbol does not exist
-                    STOCK_NOT_FOUND.store(true, Ordering::Relaxed);
-                    if let Some(tx) = crate::tui::app::UPDATE_TX.get() {
-                        let _ = tx.send(bevy_ecs::system::CommandQueue::default());
-                    }
+        if !is_current(generation) {
+            return;
+        }
+        let has_trades = STOCKS.get(&neighbour).is_some_and(|s| !s.trades.is_empty());
+        if !has_trades {
+            if let Ok(trades) = openapi::quote::fetch_trades(&neighbour.to_string(), 50).await {
+                if !is_current(generation) {
+                    return;
                 }
-            }
-
-            // Get static info (if not already fetched)
-            let should_fetch = STOCKS
-                .get(&counter)
-                .is_some_and(|s| s.static_info.is_none());
-
-            if should_fetch {
-                // Async fetch static info
-                if let Ok(infos) = openapi::quote::fetch_static_info(&[counter.to_string()]).await {
-                    if let Some(info) = infos.into_iter().next() {
-                        STOCKS.modify(counter.clone(), |stock| {
-                            stock.update_from_static_info(info);
-                        });
-                    }
-                }
-            }
-
-            // Get trade records
-            if let Ok(trades) = openapi::quote::fetch_trades(&counter.to_string(), 50).await {
-                STOCKS.modify(counter.clone(), |stock| {
+                STOCKS.modify(neighbour.clone(), |stock| {
                     stock.update_from_trades(&trades);
                 });
             }
+        }
+    }
+}
 
-            tracing::debug!("Completed refresh for {}", counter);
+/// Fetch the full quote for `counter` and store it, reporting whether the stock
+/// is worth drawing at all.
+///
+/// Returns `false` when the symbol does not exist or the refresh was superseded
+/// while the request was out — in both cases there is nothing more for this
+/// task to do.
+async fn fetch_snapshot(counter: &Counter, symbol: &str, generation: u64) -> bool {
+    match crate::openapi::quote().quote([symbol]).await {
+        Ok(quotes) => {
+            if !is_current(generation) {
+                return false;
+            }
+            if let Some(quote) = quotes.first() {
+                STOCKS.modify(counter.clone(), |stock| {
+                    stock.update_from_security_quote(quote);
+                });
+                true
+            } else {
+                // API returned no data — symbol does not exist
+                STOCK_NOT_FOUND.store(true, Ordering::Relaxed);
+                request_redraw();
+                false
+            }
+        }
+        Err(err) => {
+            tracing::warn!("fail to fetch quote for {counter}: {err}");
+            false
+        }
+    }
+}
 
-            // The _guard will be dropped here, automatically clearing REFRESH_EXECUTING
-        });
+/// Load everything the detail view draws for `counter`, after a short settling
+/// delay, discarding the work as soon as another stock is selected.
+///
+/// The requests are ordered by what the reader is waiting for, and the ones
+/// that are already answered are not sent at all. That ordering is the whole
+/// point: the quote SDK runs one command at a time and awaits each round trip
+/// before starting the next, so every request here sits in front of all the
+/// ones after it. The old sequence spent its first two round trips subscribing
+/// before it asked for a single number, and measured four to seven seconds
+/// from keypress to a filled panel.
+pub fn refresh_stock_debounced(counter: Counter) {
+    let generation = REFRESH_GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
+    // Reset not-found flag whenever a new refresh starts
+    STOCK_NOT_FOUND.store(false, Ordering::Relaxed);
 
-        *task_guard = Some(handle);
+    let handle = RT.get().unwrap().spawn(async move {
+        tokio::time::sleep(REFRESH_DEBOUNCE).await;
+        if !is_current(generation) {
+            return;
+        }
+        *SETTLED.lock().expect("poison") = Some(counter.clone());
+        request_redraw();
+
+        tracing::debug!("Starting refresh for {}", counter);
+        let symbol = counter.to_string();
+
+        // A stock the watchlist has already snapshotted has a price and a
+        // previous close on screen the moment it is selected, so its snapshot
+        // is a correction rather than something the reader is waiting for, and
+        // it is sent last. Only a stock with nothing cached — one reached
+        // through search — has to wait for it, and for that one it goes first,
+        // because until it lands the panel has nothing to draw at all.
+        let has_snapshot = STOCKS
+            .get(&counter)
+            .is_some_and(|s| s.quote.prev_close.is_some() && s.quote.last_done.is_some());
+
+        if !has_snapshot && !fetch_snapshot(&counter, &symbol, generation).await {
+            return;
+        }
+
+        if !is_current(generation) {
+            return;
+        }
+        // The chart, first, because it is the largest area of the panel that is
+        // blank until its answer comes back. Asking for it here rather than
+        // leaving it to the next frame is what keeps it in front of everything
+        // below on a connection that serves one request at a time. A stock
+        // whose chart is already cached costs nothing here.
+        let count = CHART_COUNT.load(Ordering::Relaxed);
+        if count > 0 {
+            KLINES
+                .ensure(
+                    &counter,
+                    KLINE_TYPE.load(Ordering::Relaxed),
+                    crate::data::AdjustType::ForwardAdjust,
+                    count,
+                )
+                .await;
+            if !is_current(generation) {
+                return;
+            }
+            request_redraw();
+        }
+
+        if let Ok(trades) = openapi::quote::fetch_trades(&symbol, 50).await {
+            if !is_current(generation) {
+                return;
+            }
+            STOCKS.modify(counter.clone(), |stock| {
+                stock.update_from_trades(&trades);
+            });
+            request_redraw();
+        }
+
+        if !is_current(generation) {
+            return;
+        }
+        // The order book and the tick feed last of the three: it is three lines
+        // of the panel, against a chart and a trade list that are the rest of
+        // it, and the price above them is already live from the watchlist's own
+        // subscription.
+        let _ = WS
+            .quote_detail("stock_detail", std::slice::from_ref(&counter))
+            .await;
+
+        // The correction for a stock that already had a cached snapshot. Its
+        // previous close is the one field no push ever carries, so a session
+        // left running across a trading day would otherwise keep showing
+        // yesterday's change.
+        if has_snapshot && is_current(generation) {
+            fetch_snapshot(&counter, &symbol, generation).await;
+        }
+
+        // Last, because it is the only panel that never changes once fetched.
+        let needs_static_info = STOCKS
+            .get(&counter)
+            .is_some_and(|s| s.static_info.is_none());
+        if needs_static_info && is_current(generation) {
+            if let Ok(infos) = openapi::quote::fetch_static_info(&[symbol]).await {
+                if let Some(info) = infos.into_iter().next() {
+                    STOCKS.modify(counter.clone(), |stock| {
+                        stock.update_from_static_info(info);
+                    });
+                }
+            }
+        }
+
+        tracing::debug!("Completed refresh for {}", counter);
+
+        // Only now, with nothing left on screen waiting for the connection, are
+        // the stocks the cursor passed over told to stop streaming.
+        if is_current(generation) {
+            let _ = WS
+                .release_stale("stock_detail", std::slice::from_ref(&counter))
+                .await;
+        }
+
+        read_ahead(&counter, generation, count).await;
+    });
+
+    if let Some(previous) = REFRESH_TASK.lock().expect("poison").replace(handle) {
+        previous.abort();
     }
 }
 
@@ -1012,6 +1190,7 @@ pub fn enter_stock(counter: Res<StockDetail>) {
 
 pub fn exit_stock() {
     STOCK_NOT_FOUND.store(false, Ordering::Relaxed);
+    *SETTLED.lock().expect("poison") = None;
     crate::tui::systems::stock_news::reset_news_view();
     RT.get().unwrap().spawn(async move {
         _ = WS.unmount("stock_detail").await;

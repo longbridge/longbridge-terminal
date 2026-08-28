@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::RwLock};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{Mutex, RwLock},
+};
 
 use crate::data::{AdjustType, Counter, Kline, KlineType, Klines};
 use rust_decimal::Decimal;
@@ -10,13 +13,54 @@ type StoreKey = (Counter, KlineType, AdjustType);
 #[derive(Debug)]
 pub struct KlineStore {
     inner: RwLock<HashMap<StoreKey, (bool /* no more history */, Klines)>>,
+    /// Series with a request already on the wire.
+    ///
+    /// `by_pagination` is called from inside the render closure, so a series
+    /// that is not in the store yet is asked for again on every frame — thirty
+    /// times a second for as long as the fetch takes. The quote SDK runs one
+    /// command at a time and awaits each round trip, so those duplicates do not
+    /// merely waste quota: they take the single request slot away from the
+    /// quote, trades and static-info calls the same stock switch is waiting on.
+    /// One request per series at a time; the next frame re-asks if it is still
+    /// missing when the first one lands.
+    inflight: Mutex<HashSet<StoreKey>>,
+}
+
+/// Clears the in-flight mark when the request task ends, including when the
+/// task is dropped part-way through.
+struct InflightGuard(StoreKey);
+
+impl Drop for InflightGuard {
+    fn drop(&mut self) {
+        KLINES.inflight.lock().expect("poison").remove(&self.0);
+    }
 }
 
 impl KlineStore {
     fn new() -> Self {
         Self {
             inner: RwLock::default(),
+            inflight: Mutex::default(),
         }
+    }
+
+    /// The key a series is stored under: below the daily period every adjust
+    /// type shares one entry, because the adjustment is applied on read.
+    fn key(counter: &Counter, kline_type: KlineType, adjust_type: AdjustType) -> StoreKey {
+        (
+            counter.clone(),
+            kline_type,
+            Self::normalize(kline_type).unwrap_or(adjust_type),
+        )
+    }
+
+    /// Marks a series as being fetched, or reports that it already is.
+    fn begin_request(&self, key: &StoreKey) -> Option<InflightGuard> {
+        self.inflight
+            .lock()
+            .expect("poison")
+            .insert(key.clone())
+            .then(|| InflightGuard(key.clone()))
     }
 
     pub fn by_pagination(
@@ -27,19 +71,16 @@ impl KlineStore {
         page: usize,
         page_size: usize,
     ) -> Klines {
+        let key = Self::key(&counter, kline_type, adjust_type);
         let store = self.inner.read().expect("poison");
-        let Some((has_more, entries)) = store.get(&(
-            counter.clone(),
-            kline_type,
-            Self::normalize(kline_type).unwrap_or(adjust_type),
-        )) else {
-            crate::tui::app::RT.get().unwrap().spawn(Self::request(
+        let Some((has_more, entries)) = store.get(&key) else {
+            self.spawn_request(
+                key,
                 counter,
                 kline_type,
                 adjust_type,
-                0,
                 (page + 1) * page_size,
-            ));
+            );
             return Klines::default();
         };
 
@@ -52,13 +93,7 @@ impl KlineStore {
         };
 
         if *has_more && results.len() < page_size {
-            crate::tui::app::RT.get().unwrap().spawn(Self::request(
-                counter,
-                kline_type,
-                adjust_type,
-                entries.first().map(|e| e.timestamp).unwrap_or_default(),
-                page_size,
-            ));
+            self.spawn_request(key, counter, kline_type, adjust_type, page_size);
         }
 
         // Fix forward adjust
@@ -84,6 +119,53 @@ impl KlineStore {
         } else {
             results.to_vec()
         }
+    }
+
+    /// Fetch a series the caller is waiting on, unless it is already stored or
+    /// already on the wire.
+    ///
+    /// The difference from [`spawn_request`] is that this one is awaited, so a
+    /// caller can put the chart ahead of its own later requests. The quote SDK
+    /// runs one command at a time, and the chart is by far the largest thing on
+    /// the screen that is blank until its answer arrives, so it goes first.
+    pub async fn ensure(
+        &self,
+        counter: &Counter,
+        kline_type: KlineType,
+        adjust_type: AdjustType,
+        count: usize,
+    ) {
+        let key = Self::key(counter, kline_type, adjust_type);
+        if self.inner.read().expect("poison").contains_key(&key) {
+            return;
+        }
+        let Some(guard) = self.begin_request(&key) else {
+            return;
+        };
+        Self::request(counter.clone(), kline_type, adjust_type, count).await;
+        drop(guard);
+    }
+
+    /// Fetch a series, unless a request for it is already on the wire or the
+    /// reader has already moved off the stock it belongs to.
+    fn spawn_request(
+        &self,
+        key: StoreKey,
+        counter: Counter,
+        kline_type: KlineType,
+        adjust_type: AdjustType,
+        count: usize,
+    ) {
+        if !crate::tui::systems::settled_on(&counter) {
+            return;
+        }
+        let Some(guard) = self.begin_request(&key) else {
+            return;
+        };
+        crate::tui::app::RT.get().unwrap().spawn(async move {
+            Self::request(counter, kline_type, adjust_type, count).await;
+            drop(guard);
+        });
     }
 
     /// Update candlestick data
@@ -131,7 +213,6 @@ impl KlineStore {
         counter: Counter,
         kline_type: KlineType,
         adjust_type: AdjustType,
-        _before: i64,
         count: usize,
     ) {
         // Use Longbridge SDK to request candlestick data
