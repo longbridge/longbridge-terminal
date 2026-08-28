@@ -737,10 +737,15 @@ mod tests {
 }
 
 pub async fn fetch_holdings() -> anyhow::Result<Vec<Counter>> {
-    let ctx = crate::openapi::trade();
-
-    // Get holdings list
-    match ctx.stock_positions(None).await {
+    // Paced, unlike the rest of the terminal's calls, because this one does not
+    // have the quote socket's one-at-a-time discipline behind it: startup fires
+    // it against the trade connection at the same instant as the watchlist load
+    // on the quote connection, and the server's minimum interval between two
+    // calls is account-wide, not per connection. Racing them returned 429003 on
+    // 14 of 51 launches, and the error was swallowed into an empty holdings
+    // list, so the watchlist silently lost its position markers. The limiter
+    // spaces the two and retries the rejection.
+    match crate::openapi::helpers::get_stock_positions().await {
         Ok(response) => {
             // StockPositionsResponse contains positions from multiple channels
             let mut counters = Vec::new();

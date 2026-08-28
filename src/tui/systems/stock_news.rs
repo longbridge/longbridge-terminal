@@ -104,6 +104,19 @@ pub static NEWS_DETAIL_CONTENT: std::sync::LazyLock<Mutex<String>> =
 pub static NEWS_SYMBOL: std::sync::LazyLock<Mutex<String>> =
     std::sync::LazyLock::new(|| Mutex::new(String::new()));
 
+/// Bumped by every news load; a task whose number is no longer the latest is
+/// answering for a stock, or an article, the reader has already left.
+///
+/// Without it the panes are last-writer-wins across the network: walking a
+/// watchlist with the dock open starts a fetch per row, and the one that
+/// happens to answer last fills the pane — which is not the one being shown.
+static NEWS_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Whether this task still speaks for what is on screen.
+fn news_is_current(generation: u64) -> bool {
+    NEWS_GENERATION.load(Ordering::Relaxed) == generation
+}
+
 pub static NEWS_LOADING: Atomic<bool> = Atomic::new(false);
 pub static NEWS_DETAIL_LOADING: Atomic<bool> = Atomic::new(false);
 pub static NEWS_DETAIL_SCROLL: Atomic<u16> = Atomic::new(0);
@@ -171,6 +184,7 @@ pub fn ensure_news(counter: Counter, tx: mpsc::UnboundedSender<CommandQueue>) {
 }
 
 pub fn fetch_news(counter: Counter, tx: mpsc::UnboundedSender<CommandQueue>) {
+    let generation = NEWS_GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
     *NEWS_SYMBOL.lock().expect("poison") = counter.to_string();
     NEWS_LOADING.store(true, Ordering::Relaxed);
     if let Ok(mut items) = NEWS_ITEMS.lock() {
@@ -200,6 +214,9 @@ pub fn fetch_news(counter: Counter, tx: mpsc::UnboundedSender<CommandQueue>) {
                     })
                     .collect();
 
+                if !news_is_current(generation) {
+                    return;
+                }
                 if let Ok(mut stored) = NEWS_ITEMS.lock() {
                     *stored = news_items;
                 }
@@ -211,12 +228,16 @@ pub fn fetch_news(counter: Counter, tx: mpsc::UnboundedSender<CommandQueue>) {
                 tracing::error!("Failed to fetch news: {}", e);
             }
         }
+        if !news_is_current(generation) {
+            return;
+        }
         NEWS_LOADING.store(false, Ordering::Relaxed);
         let _ = tx.send(CommandQueue::default());
     });
 }
 
 pub fn fetch_news_detail(id: String, tx: mpsc::UnboundedSender<CommandQueue>) {
+    let generation = NEWS_GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
     NEWS_DETAIL_LOADING.store(true, Ordering::Relaxed);
     NEWS_DETAIL_SCROLL.store(0, Ordering::Relaxed);
     if let Ok(mut content) = NEWS_DETAIL_CONTENT.lock() {
@@ -251,12 +272,18 @@ pub fn fetch_news_detail(id: String, tx: mpsc::UnboundedSender<CommandQueue>) {
                     item.title.clone()
                 };
                 let text = format!("# {title}\n\n{}\n\n{body}", meta.join(" · "));
+                if !news_is_current(generation) {
+                    return;
+                }
                 if let Ok(mut content) = NEWS_DETAIL_CONTENT.lock() {
                     *content = prepare_article(&text);
                 }
             }
             Err(e) => {
                 tracing::error!("Failed to fetch news detail: {e}");
+                if !news_is_current(generation) {
+                    return;
+                }
                 if let Ok(mut content) = NEWS_DETAIL_CONTENT.lock() {
                     *content = t!("News.ErrorFetch", error = e.to_string()).to_string();
                 }

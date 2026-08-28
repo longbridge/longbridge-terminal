@@ -102,8 +102,8 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
                     "repinned_by_latency": repinned.is_some(),
                 },
                 "connectivity": {
-                    "global": { "url": region::HTTP_URL_GLOBAL, "ok": global.ok, "ms": global.ms },
-                    "cn":     { "url": region::HTTP_URL_CN, "ok": cn.ok, "ms": cn.ms },
+                    "global": { "url": region::QUOTE_WS_URL_GLOBAL, "ok": global.ok, "ms": global.ms },
+                    "cn":     { "url": region::QUOTE_WS_URL_CN, "ok": cn.ok, "ms": cn.ms },
                 },
             });
             println!("{}", serde_json::to_string_pretty(&value)?);
@@ -143,8 +143,11 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
 
             println!();
             println!("Connectivity {DIM}(avg of {PROBE_COUNT}){RESET}");
-            println!("{}", probe_line("global", &global, region::HTTP_URL_GLOBAL));
-            println!("{}", probe_line("cn", &cn, region::HTTP_URL_CN));
+            println!(
+                "{}",
+                probe_line("global", &global, region::QUOTE_WS_URL_GLOBAL)
+            );
+            println!("{}", probe_line("cn", &cn, region::QUOTE_WS_URL_CN));
             if let Some(measured_is_cn) = repinned {
                 let (winner, loser) = if measured_is_cn {
                     ("cn", "global")
