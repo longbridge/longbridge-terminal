@@ -1,12 +1,12 @@
 {
-  "version": "0.28.3",
+  "version": "0.28.4",
   "description": "AI-native CLI for the Longbridge trading platform — real-time market data, portfolio, and trading.",
   "homepage": "https://github.com/longbridge/longbridge-terminal",
   "license": "MIT",
   "architecture": {
     "64bit": {
-      "url": "https://github.com/longbridge/longbridge-terminal/releases/download/v0.28.3/longbridge-terminal-windows-amd64.zip",
-      "hash": "55ff20da22ed87cd0668f1b25855f4317846d3b30b67985783ff7f80bfda8903"
+      "url": "https://github.com/longbridge/longbridge-terminal/releases/download/v0.28.4/longbridge-terminal-windows-amd64.zip",
+      "hash": "4b56971452a399e74cbc4e36e079e9e854b1046884e57cf4e9e7ffc6726195b4"
     }
   },
   "bin": "longbridge.exe",
