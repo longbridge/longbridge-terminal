@@ -29,7 +29,13 @@ const EMPTY_PLACEHOLDER: &str = "--";
 
 /// How long a stock must stay selected before it is fetched, so that holding a
 /// cursor down a watchlist does not fetch every row it passes.
-const REFRESH_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(150);
+///
+/// Sized against key auto-repeat rather than against the network: a held arrow
+/// repeats every 25-50ms on the usual settings, so this swallows a held key
+/// while costing a deliberate press as little as possible. It used to be 150ms,
+/// which was most of what a switch cost once the requests behind it were down to
+/// a few hundred milliseconds — dead time in front of every one of them.
+const REFRESH_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(80);
 
 /// Bumped by every refresh; a task whose number is no longer the latest has
 /// been superseded and stops.
