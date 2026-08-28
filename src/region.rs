@@ -3,8 +3,9 @@
 /// On each startup:
 /// 1. `refresh_region_cache()` re-probes geotest.lbkrs.com if the cached
 ///    verdict is older than `CACHE_TTL_SECS`, and persists the result.
-/// 2. `spawn_latency_repin()` measures both access points in the background and
-///    repins to the better one, so a wrong verdict repairs itself.
+/// 2. `spawn_latency_repin()` measures both access points' quote hosts in the
+///    background and repins to the better one, so a wrong verdict repairs
+///    itself.
 /// 3. `is_cn_cached()` reads that verdict from disk for use in the Config
 ///    builder.
 ///
@@ -18,14 +19,14 @@ use std::{
 const GEOTEST_URL: &str = "https://geotest.lbkrs.com";
 const GEOTEST_TIMEOUT_SECS: u64 = 2;
 
-/// Timeout for one access-point health request.
+/// Timeout for one access-point probe request.
 pub const CONNECT_TIMEOUT_SECS: u64 = 5;
 
 /// How long the background probe holds off before its first request, so the
 /// command's own startup has the network and the runtime to itself.
 const PROBE_START_DELAY: Duration = Duration::from_secs(3);
 
-/// Health requests per access point, averaged after dropping the fastest and
+/// Probe requests per access point, averaged after dropping the fastest and
 /// slowest. Enough samples that one stalled request cannot decide a repin.
 pub const PROBE_COUNT: usize = 10;
 
@@ -70,6 +71,11 @@ fn repin_from_latency(is_cn: bool, global: &ProbeStats, cn: &ProbeStats) -> Opti
 /// Measures HTTPS warm-connection latency with `PROBE_COUNT` requests.
 /// Sends one warm-up request first to establish the connection, then
 /// drops the fastest and slowest sample from the measured runs and averages the rest.
+///
+/// A reply — any reply the server itself wrote — is what proves the access point
+/// reachable and times the path to it. The quote host answers a plain GET with a
+/// 400 and a WebSocket handshake complaint, and that is a healthy answer from
+/// it; only a transport failure or a timeout means unreachable.
 async fn probe(url: &str) -> ProbeStats {
     let Ok(client) = reqwest::Client::builder()
         .timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
@@ -86,10 +92,9 @@ async fn probe(url: &str) -> ProbeStats {
         let start = Instant::now();
         match client.get(url).send().await {
             Ok(resp) => {
-                let body = resp.text().await.unwrap_or_default();
-                if body.trim() != "success" {
-                    return ProbeStats { ok: false, ms: 0 };
-                }
+                // Drain the body so the timing covers the whole exchange and the
+                // connection stays reusable for the next sample.
+                let _ = resp.bytes().await;
             }
             Err(_) => return ProbeStats { ok: false, ms: 0 },
         }
@@ -103,12 +108,28 @@ async fn probe(url: &str) -> ProbeStats {
 
 /// Measure both access points at once. The pair is what a repin decision needs:
 /// either one alone says nothing about which is better.
+///
+/// The quote host is what gets measured, not `openapi.<tld>/health`, because it
+/// is the host the reader waits on: every price, chart and trade list crosses
+/// it, one request at a time. The two are not interchangeable, and on a
+/// connection where they disagree the health endpoint is the one that is wrong —
+/// measured from Shanghai, `openapi.longbridge.cn/health` answers in 58ms
+/// against 120ms for `.com` while the quote host it is standing in for is the
+/// other way round, 370ms against 215ms, and a `kline` command takes 2.5s on the
+/// access point the health check preferred against 0.85s on the other.
 pub async fn probe_access_points() -> (ProbeStats, ProbeStats) {
-    let (global, cn) = (
-        format!("{HTTP_URL_GLOBAL}/health"),
-        format!("{HTTP_URL_CN}/health"),
-    );
+    let (global, cn) = (probe_url(QUOTE_WS_URL_GLOBAL), probe_url(QUOTE_WS_URL_CN));
     tokio::join!(probe(&global), probe(&cn))
+}
+
+/// The quote endpoint as something `reqwest` can GET: same host, same port,
+/// plain HTTP scheme.
+fn probe_url(ws_url: &str) -> String {
+    match ws_url.split_once("://") {
+        Some(("wss", rest)) => format!("https://{rest}"),
+        Some(("ws", rest)) => format!("http://{rest}"),
+        _ => ws_url.to_string(),
+    }
 }
 
 /// How long a probed verdict is trusted before it is re-checked. Long enough
@@ -503,6 +524,39 @@ fn parse_geotest_country(body: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The probe has to reach the same host the quotes come from, so it takes
+    /// the endpoint the SDK uses and only swaps the scheme.
+    #[test]
+    fn the_probe_url_keeps_the_quote_host_and_path() {
+        assert_eq!(
+            probe_url("wss://openapi-quote.longbridge.com/v2"),
+            "https://openapi-quote.longbridge.com/v2"
+        );
+        assert_eq!(
+            probe_url("ws://127.0.0.1:8080/v2"),
+            "http://127.0.0.1:8080/v2"
+        );
+        // Already plain, or an unrecognised scheme: left alone rather than mangled.
+        assert_eq!(
+            probe_url("https://example.test/v2"),
+            "https://example.test/v2"
+        );
+    }
+
+    /// Both constants must stay reachable by the probe; a scheme change that
+    /// slipped past `probe_url` would make both access points look unreachable
+    /// and freeze the verdict wherever it happened to be.
+    #[test]
+    fn both_access_points_produce_http_probe_urls() {
+        for url in [QUOTE_WS_URL_GLOBAL, QUOTE_WS_URL_CN] {
+            let probed = probe_url(url);
+            assert!(
+                probed.starts_with("http://") || probed.starts_with("https://"),
+                "{url} probes as {probed}"
+            );
+        }
+    }
 
     #[test]
     fn parses_country_code_from_geotest_body() {
