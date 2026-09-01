@@ -21,7 +21,10 @@ use crate::tui::app::AppState;
 ///
 /// Normalization folds `Shift`+letter and the bare uppercase letter together
 /// so that `G` and `Shift`+`g` compare equal regardless of how the terminal
-/// reports them.
+/// reports them. It also folds Shift+Tab encodings (`Tab`+`SHIFT`,
+/// `BackTab`+`SHIFT`, bare `BackTab`) into one chord: crossterm 0.29 reports
+/// CSI Z as `BackTab` with `SHIFT`, while the kitty keyboard protocol reports
+/// `Tab` with `SHIFT`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct KeyChord {
     pub code: KeyCode,
@@ -34,7 +37,8 @@ impl KeyChord {
         Self { code, modifiers }
     }
 
-    /// Fold case/shift so `Char('G')` and `Shift`+`Char('g')` are equal.
+    /// Fold case/shift so `Char('G')` and `Shift`+`Char('g')` are equal, and
+    /// so Shift+Tab matches regardless of how the terminal reports it.
     fn normalized(self) -> Self {
         let KeyChord {
             code,
@@ -52,6 +56,14 @@ impl KeyChord {
                 // Shift+lowercase is reported as uppercase by some terminals;
                 // normalize to the uppercase form.
                 KeyCode::Char(c.to_ascii_uppercase())
+            }
+            // CSI Z (foot, xterm, …) is BackTab+SHIFT in crossterm 0.29.
+            // Kitty CSI-u Shift+Tab is Tab+SHIFT. Older parsers used BackTab
+            // with no modifiers. Fold all three onto BackTab+SHIFT.
+            KeyCode::Tab if modifiers.contains(KeyModifiers::SHIFT) => KeyCode::BackTab,
+            KeyCode::BackTab => {
+                modifiers |= KeyModifiers::SHIFT;
+                KeyCode::BackTab
             }
             other => other,
         };
@@ -539,6 +551,31 @@ mod tests {
         assert_eq!(
             km.lookup(&ev(KeyCode::Up, KeyModifiers::NONE), Context::Stock),
             Some(ActionId::Up)
+        );
+    }
+
+    #[test]
+    fn shift_tab_matches_backtab_across_terminal_encodings() {
+        let km = Keymap::default();
+        // crossterm 0.29: CSI Z → BackTab + SHIFT (foot, xterm, …).
+        assert_eq!(
+            km.lookup(&ev(KeyCode::BackTab, KeyModifiers::SHIFT), Context::Stock),
+            Some(ActionId::BackTab)
+        );
+        // Kitty keyboard protocol: Tab + SHIFT.
+        assert_eq!(
+            km.lookup(&ev(KeyCode::Tab, KeyModifiers::SHIFT), Context::Stock),
+            Some(ActionId::BackTab)
+        );
+        // Older parsers: BackTab with no modifiers.
+        assert_eq!(
+            km.lookup(&ev(KeyCode::BackTab, KeyModifiers::NONE), Context::Stock),
+            Some(ActionId::BackTab)
+        );
+        // Plain Tab must still go forward, not reverse.
+        assert_eq!(
+            km.lookup(&ev(KeyCode::Tab, KeyModifiers::NONE), Context::Stock),
+            Some(ActionId::Tab)
         );
     }
 
