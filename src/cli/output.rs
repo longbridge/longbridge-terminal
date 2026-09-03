@@ -124,14 +124,6 @@ pub fn fmt_decimal_div100(v: &Option<rust_decimal::Decimal>) -> String {
     )
 }
 
-/// Format optional decimal divided by 252 with 3 decimal places (convert annualized greek to per-trading-day, e.g. theta, vega)
-pub fn fmt_decimal_div252(v: &Option<rust_decimal::Decimal>) -> String {
-    v.map_or_else(
-        || "-".to_string(),
-        |d| format!("{:.3}", d / rust_decimal::Decimal::from(252u32)),
-    )
-}
-
 /// Format decimal
 pub fn fmt_dec(v: rust_decimal::Decimal) -> String {
     v.to_string()

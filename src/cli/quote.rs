@@ -9,10 +9,7 @@ use serde_json::Value;
 
 use super::{
     api::{http_get, http_get_dc, http_post, LbQuoteApi, QuoteApi},
-    output::{
-        fmt_date, fmt_dec, fmt_decimal, fmt_decimal_div100, fmt_decimal_div252, parse_date,
-        print_table,
-    },
+    output::{fmt_date, fmt_dec, fmt_decimal, fmt_decimal_div100, parse_date, print_table},
     OutputFormat,
 };
 use crate::utils::counter::symbol_to_counter_id;
@@ -165,7 +162,7 @@ fn calc_index_column(key: &str) -> Option<(&'static str, CalcIndexExtractor)> {
         })),
         "delta" => Some(("Delta", |r| fmt_decimal(&r.delta))),
         "gamma" => Some(("Gamma", |r| fmt_decimal(&r.gamma))),
-        "theta" => Some(("Theta", |r| fmt_decimal_div252(&r.theta))),
+        "theta" => Some(("Theta", |r| fmt_decimal(&r.theta))),
         "vega" => Some(("Vega", |r| fmt_decimal_div100(&r.vega))),
         "rho" => Some(("Rho", |r| fmt_decimal_div100(&r.rho))),
         "open_interest" | "oi" => Some(("Open Interest", |r| {
