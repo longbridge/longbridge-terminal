@@ -204,7 +204,7 @@ longbridge warrant issuers                        # Warrant issuer list (HK mark
 
 ```bash
 longbridge financial-report AAPL.US [--kind IS|BS|CF]               # Multi-period financial statements (income / balance sheet / cash flow)
-longbridge financial-report AAPL.US --latest                         # Latest financial report summary
+longbridge financial-report AAPL.US --latest                         # Latest financial report summary (--kind/--latest: AP accounts only)
 longbridge financial-report snapshot AAPL.US --report qf --year N --period N  # Earnings summary + forecast vs actual (revenue/EBIT/EPS beat/miss) + financial ratios
 longbridge financial-statement AAPL.US [--kind IS|BS|CF|ALL] [--report af|saf|qf|cumul]  # Detailed financial statement (v3 endpoint)
 longbridge institution-rating AAPL.US                                # Analyst rating distribution and consensus target price
@@ -217,7 +217,7 @@ longbridge dividend detail AAPL.US                                   # Dividend 
 longbridge forecast-eps AAPL.US                                      # Analyst EPS consensus forecast snapshots
 longbridge consensus AAPL.US                                         # Revenue / profit / EPS multi-period comparison with beat/miss markers
 longbridge valuation AAPL.US [--indicator pe|pb|ps|dvd_yld]         # Current valuation snapshot and peer comparison
-longbridge valuation AAPL.US --history [--indicator pe] [--range 5]  # Historical valuation time series (1 / 3 / 5 / 10 years)
+longbridge valuation AAPL.US --history [--indicator pe] [--range 5]  # Historical valuation time series (1 / 3 / 5 / 10 years) (AP accounts only)
 longbridge valuation-rank AAPL.US [--start 20240101] [--end 20241231] # Industry valuation percentile ranking (default: last 30 days)
 longbridge analyst-estimates AAPL.US                                 # Analyst consensus EPS estimates
 longbridge fund-holder AAPL.US [--count 20]                          # Funds and ETFs holding this stock
@@ -329,7 +329,7 @@ longbridge agent --skill                                            # Print the 
 longbridge order                                           # Today's orders, or historical with --history
 longbridge order --history [--start 2024-01-01]            # Historical orders (use --symbol to filter)
 longbridge order detail <order_id>                         # Full detail for a single order including charges and history
-longbridge order executions                                # Today's trade executions (fills), or historical with --history
+longbridge order executions                                # Today's trade executions (fills) (AP accounts only; US accounts use `order --history`)
 longbridge order buy TSLA.US 100 --price 250.00            # Preview a buy order (dry run); add --execute <CODE> to place it
 longbridge order sell TSLA.US 100 --price 260.00           # Preview a sell order (dry run); add --execute <CODE> to place it
 longbridge order cancel <order_id>                         # Preview cancelling a pending order (dry run); add --execute <CODE> to cancel it
@@ -391,6 +391,8 @@ longbridge investors changes 0001067983 --from 2024-12-31     # Compare latest v
 ```
 
 ### Recurring Investment
+
+_AP accounts only._
 
 ```bash
 longbridge dca                                                # List all recurring investment plans
