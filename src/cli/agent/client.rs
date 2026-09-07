@@ -179,21 +179,6 @@ impl AgentApi for LbAgentApi {
     }
 }
 
-/// Reject AI conversations when the process authenticated with API-key env
-/// vars. The AI conversation endpoints are only known to accept an OAuth
-/// principal; failing fast with an actionable message beats an opaque 401
-/// mid-stream. (Can be lifted once API-key auth is confirmed to work against
-/// the AI endpoints, now that requests go through the SDK's signing client.)
-fn ensure_oauth_auth(using_api_key: bool) -> Result<()> {
-    if using_api_key {
-        anyhow::bail!(
-            "agent chat requires OAuth login (API-key auth is not supported for AI \
-             conversations); run `longbridge auth login`"
-        );
-    }
-    Ok(())
-}
-
 /// A conversation to stream: either a fresh round or the resumption of an
 /// interrupted one. Mirrors the two SDK entry points
 /// ([`AgentContext::conversation_streamed`](longbridge::agent::AgentContext::conversation_streamed)
@@ -817,7 +802,12 @@ pub async fn stream_conversation(
     verbose: bool,
     on_event: &mut (dyn FnMut(AgentEvent) + Send),
 ) -> Result<()> {
-    ensure_oauth_auth(crate::openapi::using_api_key())?;
+    // No auth-mode gate here: the conversation goes through the SDK's signing
+    // `HttpClient` (`AgentContext` shares `Config::create_http_client()` with the
+    // quote/trade contexts), so an API-key principal signs AI requests the same
+    // way it signs every other endpoint. If the server declines an API-key
+    // principal, that surfaces as a typed API error rather than a client-side
+    // refusal that misreports the cause.
     let ctx = crate::openapi::agent();
     let agent_uid = req.agent_uid().to_string();
     let mut ident = req.ident();
@@ -1121,17 +1111,6 @@ mod tests {
             trace_id: "t".into(),
         });
         assert!(!is_rate_limited(&other));
-    }
-
-    #[test]
-    fn api_key_mode_is_rejected_with_actionable_message() {
-        let err = ensure_oauth_auth(true).unwrap_err().to_string();
-        assert!(err.contains("OAuth"), "unexpected message: {err}");
-        assert!(
-            err.contains("longbridge auth login"),
-            "message must be actionable: {err}"
-        );
-        ensure_oauth_auth(false).expect("OAuth mode must be allowed");
     }
 
     #[test]
