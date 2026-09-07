@@ -179,7 +179,7 @@ impl AuthenticationRequiredAgent {
         let backend = self
             .authenticated
             .get_or_try_init(|| async move {
-                let _ = super::init_oauth_contexts().await?;
+                let _ = super::init_contexts().await?;
                 Ok::<_, BackendError>(OpenApiAgent::new(super::agent().clone(), agent_id))
             })
             .await?;
