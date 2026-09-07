@@ -4,6 +4,7 @@ pub mod datetime;
 pub mod decimal_ext;
 pub mod dry_run;
 pub mod number;
+pub mod stdio;
 pub mod text;
 
 pub use decimal_ext::DecimalExt;

@@ -3,6 +3,45 @@ use clap::{CommandFactory, FromArgMatches};
 use std::io::Write;
 use std::time::Instant;
 
+/// `print!`, `println!`, `eprint!` and `eprintln!` that end the run quietly
+/// when the reader has closed the pipe, shadowing the prelude macros for the
+/// whole crate.
+///
+/// Defined before the module declarations below, which is what puts them in
+/// textual scope for every module in the binary — the only way to cover all
+/// ~700 existing call sites without rewriting each one, and the only way for
+/// new ones to be covered by default. See `utils::stdio` for why a closed
+/// stdout must not be a panic here, and why `SIGPIPE` is left ignored.
+macro_rules! print {
+    ($($arg:tt)*) => {
+        $crate::utils::stdio::write_stdout(::std::format_args!($($arg)*), false)
+    };
+}
+
+macro_rules! println {
+    () => {
+        $crate::utils::stdio::write_stdout(::std::format_args!(""), true)
+    };
+    ($($arg:tt)*) => {
+        $crate::utils::stdio::write_stdout(::std::format_args!($($arg)*), true)
+    };
+}
+
+macro_rules! eprint {
+    ($($arg:tt)*) => {
+        $crate::utils::stdio::write_stderr(::std::format_args!($($arg)*), false)
+    };
+}
+
+macro_rules! eprintln {
+    () => {
+        $crate::utils::stdio::write_stderr(::std::format_args!(""), true)
+    };
+    ($($arg:tt)*) => {
+        $crate::utils::stdio::write_stderr(::std::format_args!($($arg)*), true)
+    };
+}
+
 pub mod ai;
 /// Sensors Analytics. `analytics::core` is shared verbatim with the desktop
 /// app; everything terminal-specific lives beside it in `analytics/mod.rs`.
@@ -289,8 +328,11 @@ async fn main() {
 
     match cli.command {
         None => {
-            // No subcommand: print help and exit
-            cli::Cli::command().print_help().unwrap();
+            // No subcommand: print help and exit. Rendered to a string and
+            // printed rather than written straight to stdout by clap, so a
+            // closed reader takes the shared broken-pipe path instead of
+            // clap's `unwrap`.
+            print!("{}", cli::Cli::command().render_help());
             println!();
         }
 
