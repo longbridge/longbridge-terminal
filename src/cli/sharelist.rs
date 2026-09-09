@@ -8,7 +8,7 @@ use super::{
     output::{fmt_dec, print_table},
     OutputFormat, SharelistCmd,
 };
-use crate::utils::counter::{counter_id_to_symbol, symbol_to_counter_id};
+use crate::utils::counter::counter_id_to_symbol;
 
 pub async fn cmd_sharelist(
     cmd: Option<SharelistCmd>,
@@ -192,39 +192,27 @@ async fn cmd_delete(id: String) -> Result<()> {
 }
 
 async fn cmd_add(id: String, symbols: Vec<String>) -> Result<()> {
-    let counter_ids = symbols
-        .iter()
-        .map(|s| symbol_to_counter_id(s))
-        .collect::<Vec<_>>()
-        .join(",");
+    let symbols_param = symbols.join(",");
     let path = format!("/v1/sharelists/{id}/items");
-    let body = serde_json::json!({ "counter_ids": counter_ids });
+    let body = serde_json::json!({ "symbols": symbols_param });
     http_post(&path, body, false).await?;
     println!("Added {} stock(s) to sharelist {id}.", symbols.len());
     Ok(())
 }
 
 async fn cmd_remove(id: String, symbols: Vec<String>) -> Result<()> {
-    let counter_ids = symbols
-        .iter()
-        .map(|s| symbol_to_counter_id(s))
-        .collect::<Vec<_>>()
-        .join(",");
+    let symbols_param = symbols.join(",");
     let path = format!("/v1/sharelists/{id}/items");
-    let body = serde_json::json!({ "counter_ids": counter_ids });
+    let body = serde_json::json!({ "symbols": symbols_param });
     http_delete(&path, body, false).await?;
     println!("Removed {} stock(s) from sharelist {id}.", symbols.len());
     Ok(())
 }
 
 async fn cmd_sort(id: String, symbols: Vec<String>) -> Result<()> {
-    let counter_ids = symbols
-        .iter()
-        .map(|s| symbol_to_counter_id(s))
-        .collect::<Vec<_>>()
-        .join(",");
+    let symbols_param = symbols.join(",");
     let path = format!("/v1/sharelists/{id}/items/sort");
-    let body = serde_json::json!({ "counter_ids": counter_ids });
+    let body = serde_json::json!({ "symbols": symbols_param });
     http_post(&path, body, false).await?;
     println!("Stocks reordered in sharelist {id}.");
     Ok(())

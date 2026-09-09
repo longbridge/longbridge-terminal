@@ -4,7 +4,7 @@ use serde_json::{Map, Value};
 use super::api::http_get;
 use super::output::{print_json_value, print_table};
 use super::OutputFormat;
-use crate::utils::counter::{counter_id_to_symbol, symbol_to_counter_id};
+use crate::utils::counter::counter_id_to_symbol;
 
 fn print_json(value: &Value) {
     println!(
@@ -724,7 +724,6 @@ pub async fn cmd_ipo_detail(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     // Auto-detect market from symbol suffix (e.g. SUJA.US → US); fall back to --market arg.
     let detected = symbol.rsplit_once('.').map(|(_, m)| m.to_uppercase());
     let market = match detected.as_deref() {
@@ -733,8 +732,7 @@ pub async fn cmd_ipo_detail(
         _ => market,
     };
     let account_channel = crate::auth::account_channel_or_default();
-    let profile_result =
-        http_get("/v1/ipo/profile", &[("counter_id", cid.as_str())], verbose).await;
+    let profile_result = http_get("/v1/ipo/profile", &[("symbol", symbol.as_str())], verbose).await;
     let profile_key = if market == "US" { "us" } else { "hk" };
     let profile_data = match profile_result {
         Ok(v) => v,
@@ -757,13 +755,13 @@ pub async fn cmd_ipo_detail(
         return Ok(());
     }
     let timeline_params = [
-        ("counter_id", cid.as_str()),
+        ("symbol", symbol.as_str()),
         ("market", market),
         ("flag", "0"),
     ];
-    let eligibility_params = [("counter_id", cid.as_str())];
+    let eligibility_params = [("symbol", symbol.as_str())];
     let holdings_params = [
-        ("counter_id", cid.as_str()),
+        ("symbol", symbol.as_str()),
         ("need_realtime", "true"),
         ("account_channel", account_channel.as_str()),
     ];
@@ -997,10 +995,8 @@ pub async fn cmd_ipo_orders(
 ) -> Result<()> {
     let account_channel = crate::auth::account_channel_or_default();
     let mut active_params: Vec<(&str, &str)> = vec![("account_channel", account_channel.as_str())];
-    let cid;
     if let Some(ref sym) = symbol {
-        cid = symbol_to_counter_id(sym);
-        active_params.push(("counter_id", cid.as_str()));
+        active_params.push(("symbol", sym.as_str()));
     }
     let page_str = page.to_string();
     let count_str = count.to_string();
@@ -1042,7 +1038,7 @@ pub async fn cmd_ipo_orders(
                         .map(|o| {
                             vec![
                                 val_str(&o["id"]),
-                                counter_id_to_symbol(&val_str(&o["counter_id"])),
+                                val_str(&o["symbol"]),
                                 val_str(&o["name"]),
                                 val_str(&o["sub_qty"]),
                                 val_str(&o["status"]),
@@ -1066,7 +1062,7 @@ pub async fn cmd_ipo_orders(
                         .map(|o| {
                             vec![
                                 val_str(&o["id"]),
-                                counter_id_to_symbol(&val_str(&o["counter_id"])),
+                                val_str(&o["symbol"]),
                                 val_str(&o["name"]),
                                 val_str(&o["sub_qty"]),
                                 val_str(&o["lot_win_qty"]),

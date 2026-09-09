@@ -15,7 +15,6 @@ use super::{
     },
     OutputFormat,
 };
-use crate::utils::counter::symbol_to_counter_id;
 use crate::utils::datetime::fmt_rfc3339;
 use crate::utils::number::format_financial_value;
 
@@ -1317,7 +1316,7 @@ pub async fn cmd_warrant_list(symbol: String, format: &OutputFormat) -> Result<(
                 w.name.clone(),
                 fmt_dec(w.last_done),
                 fmt_dec(w.leverage_ratio),
-                fmt_date(w.expiry_date),
+                w.expiry_date.map_or_else(String::new, fmt_date),
                 format!("{:?}", w.warrant_type),
             ]
         })
@@ -2129,7 +2128,7 @@ pub async fn run_warrant_list(
                 w.name.clone(),
                 fmt_dec(w.last_done),
                 fmt_dec(w.leverage_ratio),
-                fmt_date(w.expiry_date),
+                w.expiry_date.map_or_else(String::new, fmt_date),
                 format!("{:?}", w.warrant_type),
             ]
         })
@@ -2275,7 +2274,6 @@ pub async fn cmd_history_intraday(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let trade_session = match session {
         "all" => "100",
         "pre" | "post" => "101",
@@ -2284,7 +2282,7 @@ pub async fn cmd_history_intraday(
     let data = http_get(
         "/v1/quote/history-timeshares",
         &[
-            ("counter_id", cid.as_str()),
+            ("symbol", symbol.as_str()),
             ("date", hist_date),
             ("trade_session", trade_session),
             ("adjust_type", "0"),
@@ -2338,7 +2336,7 @@ pub async fn cmd_constituent(
     // ETF symbols expose their composition via SEC N-PORT full holdings (US
     // ETFs, default) or the fundamental asset-allocation endpoint. Non-ETF
     // symbols (indexes) keep the original index-constituents behaviour.
-    if crate::utils::counter::is_etf(&symbol) {
+    if crate::utils::counter::is_etf(&symbol, verbose).await {
         // For US ETFs, prefer SEC EDGAR full holdings (N-PORT). This is the
         // authoritative full constituent list rather than a top-10 summary.
         if symbol.to_uppercase().ends_with(".US") {
@@ -2371,7 +2369,7 @@ pub async fn cmd_constituent(
         // No allocation data available — fall through to index-constituents.
     }
 
-    let cid = longbridge::counter::index_symbol_to_counter_id(&symbol);
+    let cid = crate::utils::counter::index_symbol_to_counter_id(&symbol);
     let limit_str = limit.to_string();
     let data = http_get(
         "/v1/quote/index-constituents",
@@ -2487,10 +2485,9 @@ pub async fn cmd_broker_holding_top(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let data = http_get_dc(
         "/v1/quote/broker-holding",
-        &[("counter_id", cid.as_str()), ("type", period)],
+        &[("symbol", symbol.as_str()), ("type", period)],
         Some(longbridge::DcRegion::Ap),
         verbose,
     )
@@ -2533,10 +2530,9 @@ pub async fn cmd_broker_holding_detail(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let data = http_get_dc(
         "/v1/quote/broker-holding/detail",
-        &[("counter_id", cid.as_str())],
+        &[("symbol", symbol.as_str())],
         Some(longbridge::DcRegion::Ap),
         verbose,
     )
@@ -2588,10 +2584,9 @@ pub async fn cmd_broker_holding_daily(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let data = http_get_dc(
         "/v1/quote/broker-holding/daily",
-        &[("counter_id", cid.as_str()), ("parti_number", broker)],
+        &[("symbol", symbol.as_str()), ("parti_number", broker)],
         Some(longbridge::DcRegion::Ap),
         verbose,
     )
@@ -2639,7 +2634,6 @@ pub async fn cmd_ah_premium_kline(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let line_type = match kline_type {
         "1m" => "1",
         "5m" => "5",
@@ -2655,7 +2649,7 @@ pub async fn cmd_ah_premium_kline(
     let data = http_get(
         "/v1/quote/ahpremium/klines",
         &[
-            ("counter_id", cid.as_str()),
+            ("symbol", symbol.as_str()),
             ("line_num", count_str.as_str()),
             ("line_type", line_type),
         ],
@@ -2696,10 +2690,9 @@ pub async fn cmd_ah_premium_intraday(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
         "/v1/quote/ahpremium/timeshares",
-        &[("counter_id", cid.as_str()), ("days", "1")],
+        &[("symbol", symbol.as_str()), ("days", "1")],
         verbose,
     )
     .await?;
@@ -2737,10 +2730,9 @@ pub async fn cmd_ah_premium_intraday(
 }
 
 pub async fn cmd_trade_stats(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
         "/v1/quote/trades-statistics",
-        &[("counter_id", cid.as_str())],
+        &[("symbol", symbol.as_str())],
         verbose,
     )
     .await?;
@@ -2832,10 +2824,8 @@ pub async fn cmd_anomaly(
         ("size", count_str.as_str()),
         ("market", market_upper.as_str()),
     ];
-    let cid;
     if let Some(ref sym) = symbol {
-        cid = symbol_to_counter_id(sym);
-        params.push(("counter_id", cid.as_str()));
+        params.push(("symbol", sym.as_str()));
     }
     let data = http_get("/v1/quote/changes", &params, verbose).await?;
     match format {
@@ -2877,10 +2867,9 @@ pub async fn cmd_option_volume_stats(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
         "/v1/quote/option-volume-stats",
-        &[("underlying_counter_id", cid.as_str())],
+        &[("symbol", symbol.as_str())],
         verbose,
     )
     .await?;
@@ -2917,7 +2906,6 @@ pub async fn cmd_option_volume_daily(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -2927,7 +2915,7 @@ pub async fn cmd_option_volume_daily(
     let data = http_get(
         "/v1/quote/option-volume-stats/daily",
         &[
-            ("counter_id", cid.as_str()),
+            ("symbol", symbol.as_str()),
             ("timestamp", now.as_str()),
             ("line_num", count_str.as_str()),
             ("direction", "1"),
@@ -2994,7 +2982,6 @@ pub async fn cmd_short_positions(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let is_hk = symbol.to_uppercase().ends_with(".HK");
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -3011,7 +2998,7 @@ pub async fn cmd_short_positions(
     let data = http_get(
         path,
         &[
-            ("counter_id", cid.as_str()),
+            ("symbol", symbol.as_str()),
             ("last_timestamp", now.as_str()),
             ("page_size", count_str.as_str()),
         ],
