@@ -3605,6 +3605,25 @@ fn print_industry_rank(data: &Value) {
 
 // ── compare ────────────────────────────────────────────────────────────────────
 
+/// Temporary CSV-free `symbol → counter_id` shim, mirroring the SDK's
+/// `valuation_comparison` workaround. Used only by [`cmd_compare`] below while
+/// the gateway does not accept `comparison_symbols` (user symbols). Leading-dot
+/// indexes map to `IX/`, everything else to `ST/`. Remove once the gateway
+/// accepts `comparison_symbols` and pass the user symbols straight through.
+fn compare_peer_counter_id(symbol: &str) -> String {
+    match symbol.rsplit_once('.') {
+        Some((code, market)) => {
+            let market = market.to_uppercase();
+            if let Some(rest) = code.strip_prefix('.') {
+                format!("IX/{market}/{rest}")
+            } else {
+                format!("ST/{market}/{code}")
+            }
+        }
+        None => symbol.to_string(),
+    }
+}
+
 pub async fn cmd_compare(
     base: &str,
     others: &[String],
@@ -3612,11 +3631,15 @@ pub async fn cmd_compare(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    // iOS serializes comparison_symbols as a JSON array string via yy_modelToJSONString
-    let comp_json = serde_json::to_string(others).unwrap_or_default();
+    // The gateway does not yet accept `comparison_symbols` (user symbols). Mirror
+    // the SDK's `valuation_comparison` shim: the base goes through as `symbol`,
+    // but the peer list is converted to counter_ids and sent as
+    // `comparison_counter_ids`. Drop this once the gateway accepts symbols.
+    let comp_cids: Vec<String> = others.iter().map(|s| compare_peer_counter_id(s)).collect();
+    let comp_json = serde_json::to_string(&comp_cids).unwrap_or_default();
     let mut params: Vec<(&str, &str)> = vec![("symbol", base), ("currency", currency)];
     if !others.is_empty() {
-        params.push(("comparison_symbols", comp_json.as_str()));
+        params.push(("comparison_counter_ids", comp_json.as_str()));
     }
     let data = http_get("/v1/quote/compare/valuation", &params, verbose).await?;
     match format {
@@ -3629,10 +3652,7 @@ pub async fn cmd_compare(
                     return Ok(());
                 }
             };
-            let symbols: Vec<String> = list
-                .iter()
-                .map(|s| crate::utils::counter::counter_id_to_symbol(&val_str(&s["counter_id"])))
-                .collect();
+            let symbols: Vec<String> = list.iter().map(|s| val_str(&s["symbol"])).collect();
             let names: Vec<String> = list.iter().map(|s| val_str(&s["name"])).collect();
             let sym_refs: Vec<&str> = symbols.iter().map(String::as_str).collect();
             let mut headers = vec!["Metric"];
