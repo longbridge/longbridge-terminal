@@ -3288,14 +3288,16 @@ pub enum OrderCmd {
         attached: bool,
     },
 
-    /// AP accounts only: today's trade executions (fills), or historical with --history
+    /// AP accounts only: today's trade executions (fills), or the full history with --history
     ///
     /// US accounts: use `order --history` instead.
-    /// Returns: `order_id`, `trade_id`, symbol, price, quantity, `trade_done_at`.
+    /// Returns: `order_id`, `trade_id`, symbol, side, price, quantity, `trade_done_at`.
+    /// With --history: every fill in the range, filtered by execution time and
+    /// paginated to completion (not capped at 1000).
     /// Example: longbridge order executions
     /// Example: longbridge order executions --history --start 2024-01-01
     Executions {
-        /// Return historical executions instead of today's
+        /// Return the full execution history (by execution time, paginated) instead of today's
         #[arg(long)]
         history: bool,
         /// Filter start date/time (local YYYY-MM-DD, local "YYYY-MM-DD HH:MM", or RFC 3339)
