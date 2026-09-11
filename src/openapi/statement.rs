@@ -27,16 +27,22 @@ struct PdfStatementList {
 }
 
 /// Response of `GET /v1/statement/pdf/download`.
+///
+/// The PDF is password-protected; the password is not part of the response
+/// but follows a fixed rule, see [`PDF_PASSWORD_RULE`].
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct PdfDownload {
     /// Presigned URL of the PDF file.
     pub url: String,
-    /// Password that unlocks the PDF.
-    #[serde(default)]
-    pub pass: String,
     #[serde(default)]
     pub cache_key: String,
 }
+
+/// How to unlock a downloaded PDF statement, shown after every download.
+pub const PDF_PASSWORD_RULE: &str = "The PDF is password-protected. Password: the last 4 digits \
+    of the mobile number used for the account + the last 4 characters of the ID used for account \
+    opening, uppercase letters and digits only (drop brackets and other symbols). Example: mobile \
+    12345678 and ID 123456(X) give 5678456X.";
 
 /// Statement kind as the PDF endpoints encode it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

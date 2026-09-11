@@ -371,7 +371,7 @@ longbridge statement export --file-key <KEY> --section equity_holdings  # Export
 longbridge statement export --file-key <KEY> --all                     # Export all non-empty sections
 ```
 
-JSON statements exist from 2024-08 onward and export as sections. Earlier statements were delivered as password-protected PDFs: `statement list` fills those periods in from the PDF list (`format` column `pdf`, `file_key` ending in `.pdf`), and `statement export` with such a key saves the PDF and prints its password.
+JSON statements exist from 2024-08 onward and export as sections. Earlier statements were delivered as password-protected PDFs: `statement list` fills those periods in from the PDF list (`format` column `pdf`, `file_key` ending in `.pdf`), and `statement export` with such a key saves the PDF and prints the password rule (last 4 digits of the mobile number + last 4 characters of the account-opening ID, e.g. mobile 12345678 and ID 123456(X) give `5678456X`).
 
 ### Insider Trades
 

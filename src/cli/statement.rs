@@ -278,8 +278,8 @@ const ALL_SECTIONS: &[StatementSection] = &[
 /// PDFs, so there is usually no JSON file behind the API for those periods.
 const PDF_STATEMENT_HINT: &str = "Statements issued before 2024-08 were delivered as \
     password-protected PDFs. Run `longbridge statement list`: periods without a JSON file \
-    are listed with a PDF file_key, and `statement export` downloads that PDF together with \
-    its password.";
+    are listed with a PDF file_key, and `statement export` downloads that PDF and explains \
+    how to unlock it.";
 
 /// Explicit `--section` values win; `--all` (the default) selects every
 /// section. `--all` defaults to true, so an explicit `--section` must be
@@ -426,6 +426,8 @@ async fn cmd_export(
     Ok(())
 }
 
+use crate::openapi::statement::PDF_PASSWORD_RULE;
+
 /// PDF statements are listed with keys ending in `.pdf`.
 fn is_pdf_key(file_key: &str) -> bool {
     file_key.trim().to_ascii_lowercase().ends_with(".pdf")
@@ -462,7 +464,7 @@ fn pdf_output_path(output: Option<&str>, file_name: &str) -> std::path::PathBuf 
     }
 }
 
-/// Download a PDF statement and save it, printing the password that opens it.
+/// Download a PDF statement and save it, printing how to unlock it.
 async fn export_pdf(
     file_key: &str,
     explicit_sections: bool,
@@ -493,13 +495,13 @@ async fn export_pdf(
     if matches!(output_format, OutputFormat::Json) {
         let out = serde_json::json!({
             "file": path.display().to_string(),
-            "password": dl.pass,
             "cache_key": dl.cache_key,
+            "password_rule": PDF_PASSWORD_RULE,
         });
         println!("{}", serde_json::to_string_pretty(&out)?);
     } else {
         println!("Saved PDF statement to {}", path.display());
-        println!("Password: {}", dl.pass);
+        println!("{PDF_PASSWORD_RULE}");
     }
     Ok(())
 }

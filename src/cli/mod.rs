@@ -875,7 +875,8 @@ pub enum Commands {
     /// Statements issued from 2024-08 onward are JSON and export as sections.
     /// Earlier statements exist only as password-protected PDFs; `statement list`
     /// fills those periods in from the PDF list and `statement export` saves the
-    /// PDF together with its password.
+    /// PDF and prints the password rule (last 4 digits of the mobile number +
+    /// last 4 characters of the account-opening ID).
     ///
     /// Example: longbridge statement
     /// Example: longbridge statement --type monthly
@@ -3237,7 +3238,8 @@ pub enum StatementCmd {
     ///
     /// A `.pdf` file key (statements issued before 2024-08, listed by
     /// `statement list` for periods without JSON) is saved as a PDF file and
-    /// its password is printed; `--section` does not apply. Older JSON files
+    /// the password rule is printed (last 4 digits of the mobile number + last
+    /// 4 characters of the account-opening ID); `--section` does not apply. Older JSON files
     /// use a legacy layout: `--section` is ignored, every populated table is
     /// exported, and `--format json` prints the raw statement document.
     ///
