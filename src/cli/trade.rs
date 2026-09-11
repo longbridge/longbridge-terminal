@@ -544,6 +544,31 @@ pub async fn cmd_order_detail(
     Ok(())
 }
 
+/// One execution row for the today / history output.
+struct ExecRow {
+    order_id: String,
+    trade_id: String,
+    symbol: String,
+    side: String,
+    price: String,
+    quantity: String,
+    time_iso: String,
+}
+
+impl ExecRow {
+    fn from_sdk(e: &longbridge::trade::Execution) -> Self {
+        Self {
+            order_id: e.order_id.clone(),
+            trade_id: e.trade_id.clone(),
+            symbol: e.symbol.clone(),
+            side: format!("{:?}", e.side),
+            price: e.price.to_string(),
+            quantity: e.quantity.to_string(),
+            time_iso: fmt_rfc3339(e.trade_done_at),
+        }
+    }
+}
+
 pub async fn cmd_executions(
     history: bool,
     start: Option<String>,
@@ -551,8 +576,6 @@ pub async fn cmd_executions(
     symbol: Option<String>,
     format: &OutputFormat,
 ) -> Result<()> {
-    use std::collections::HashMap;
-
     if crate::openapi::is_us_account().await {
         anyhow::bail!(
             "Execution history is not supported for US accounts; use 'order --history' to view filled orders"
@@ -560,68 +583,83 @@ pub async fn cmd_executions(
     }
 
     let ctx = crate::openapi::trade();
-
-    let (executions, side_map) = if history {
+    let executions = if history {
         let start_dt = start.as_deref().map(parse_datetime_start).transpose()?;
         let end_dt = end.as_deref().map(parse_datetime_end).transpose()?;
-
-        let mut exec_opts = longbridge::trade::GetHistoryExecutionsOptions::new();
-        let mut order_opts = longbridge::trade::GetHistoryOrdersOptions::new();
-        if let Some(s) = &symbol {
-            exec_opts = exec_opts.symbol(s.clone());
-            order_opts = order_opts.symbol(s.clone());
+        // v3 `/trade/execution/all` filters by execution time and caps each page
+        // at 1000 records; walk `page` until `has_more` is false.
+        let mut all: Vec<longbridge::trade::Execution> = Vec::new();
+        for page in 1..=1000u64 {
+            let mut exec_opts = longbridge::trade::GetAllExecutionsOptions::new().page(page);
+            if let Some(s) = &symbol {
+                exec_opts = exec_opts.symbol(s.clone());
+            }
+            if let Some(dt) = start_dt {
+                exec_opts = exec_opts.start_at(dt);
+            }
+            if let Some(dt) = end_dt {
+                exec_opts = exec_opts.end_at(dt);
+            }
+            let resp = ctx.all_executions(exec_opts).await?;
+            if resp.trades.is_empty() {
+                break;
+            }
+            all.extend(resp.trades);
+            if !resp.has_more {
+                break;
+            }
         }
-        if let Some(dt) = start_dt {
-            exec_opts = exec_opts.start_at(dt);
-            order_opts = order_opts.start_at(dt);
-        }
-        if let Some(dt) = end_dt {
-            exec_opts = exec_opts.end_at(dt);
-            order_opts = order_opts.end_at(dt);
-        }
-
-        let (execs, orders) = tokio::try_join!(
-            ctx.history_executions(exec_opts),
-            ctx.history_orders(order_opts)
-        )?;
-        let map: HashMap<String, OrderSide> =
-            orders.into_iter().map(|o| (o.order_id, o.side)).collect();
-        (execs, map)
+        all
     } else {
-        let mut exec_opts = longbridge::trade::GetTodayExecutionsOptions::new();
-        let mut order_opts = longbridge::trade::GetTodayOrdersOptions::new();
+        let mut exec_opts = GetTodayExecutionsOptions::new();
         if let Some(s) = &symbol {
             exec_opts = exec_opts.symbol(s.clone());
-            order_opts = order_opts.symbol(s.clone());
         }
-
-        let (execs, orders) = tokio::try_join!(
-            ctx.today_executions(exec_opts),
-            ctx.today_orders(order_opts)
-        )?;
-        let map: HashMap<String, OrderSide> =
-            orders.into_iter().map(|o| (o.order_id, o.side)).collect();
-        (execs, map)
+        ctx.today_executions(exec_opts).await?
     };
 
-    let headers = &["Order ID", "Symbol", "Side", "Price", "Quantity", "Time"];
-    let rows = executions
-        .iter()
-        .map(|e| {
-            let side = side_map
-                .get(&e.order_id)
-                .map_or("-".to_string(), |s| format!("{s:?}"));
-            vec![
-                e.order_id.clone(),
-                e.symbol.clone(),
-                side,
-                e.price.to_string(),
-                e.quantity.to_string(),
-                fmt_rfc3339(e.trade_done_at),
-            ]
-        })
-        .collect();
-    print_table(headers, rows, format);
+    let rows: Vec<ExecRow> = executions.iter().map(ExecRow::from_sdk).collect();
+
+    match format {
+        OutputFormat::Json => {
+            let arr: Vec<serde_json::Value> = rows
+                .iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "order_id": r.order_id,
+                        "trade_id": r.trade_id,
+                        "symbol": r.symbol,
+                        "side": r.side,
+                        "price": r.price,
+                        "quantity": r.quantity,
+                        "trade_done_at": r.time_iso,
+                        "time": r.time_iso,
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&arr)?);
+        }
+        OutputFormat::Pretty => {
+            let headers = &[
+                "Order ID", "Trade ID", "Symbol", "Side", "Price", "Quantity", "Time",
+            ];
+            let table_rows = rows
+                .iter()
+                .map(|r| {
+                    vec![
+                        r.order_id.clone(),
+                        r.trade_id.clone(),
+                        r.symbol.clone(),
+                        r.side.clone(),
+                        r.price.clone(),
+                        r.quantity.clone(),
+                        r.time_iso.clone(),
+                    ]
+                })
+                .collect();
+            print_table(headers, table_rows, &OutputFormat::Pretty);
+        }
+    }
     Ok(())
 }
 
