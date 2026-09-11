@@ -157,6 +157,7 @@ async fn cmd_export(
     output_path: Option<&str>,
     output_format: &OutputFormat,
 ) -> Result<()> {
+    let explicit_sections = !sections.is_empty();
     let sections = resolve_sections(all, sections)?;
 
     if file_key.trim().is_empty() {
@@ -185,7 +186,7 @@ async fn cmd_export(
     if is_legacy_statement(&value) {
         return export_legacy(
             &value,
-            sections,
+            explicit_sections,
             explicit_format,
             output_path,
             output_format,
@@ -327,12 +328,12 @@ fn is_legacy_statement(value: &Value) -> bool {
 /// not exist in that layout, so every populated table is exported.
 fn export_legacy(
     value: &Value,
-    sections: &[StatementSection],
+    explicit_sections: bool,
     explicit_format: Option<ExportFormat>,
     output_path: Option<&str>,
     output_format: &OutputFormat,
 ) -> Result<()> {
-    if !sections.is_empty() {
+    if explicit_sections {
         eprintln!(
             "Note: this statement uses the legacy layout (issued before 2022-03); \
              --section is ignored and all populated tables are exported."
