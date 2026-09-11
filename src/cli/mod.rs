@@ -3226,6 +3226,10 @@ pub enum StatementCmd {
     /// When `-o` is provided, defaults to CSV format and saves to file(s).
     /// When `-o` is omitted, defaults to markdown format and prints to stdout.
     ///
+    /// Statements issued before 2022-03 use a legacy layout: `--section` is
+    /// ignored, every populated table is exported, and `--format json` prints
+    /// the raw statement document.
+    ///
     /// Example: longbridge statement export --file-key KEY --section `equity_holdings`
     /// Example: longbridge statement export --file-key KEY --section `equity_holdings` -o holdings.csv
     Export {

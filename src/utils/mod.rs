@@ -3,6 +3,7 @@ pub mod cycle;
 pub mod datetime;
 pub mod decimal_ext;
 pub mod dry_run;
+pub mod json;
 pub mod number;
 pub mod text;
 

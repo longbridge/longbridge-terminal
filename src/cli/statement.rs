@@ -136,6 +136,19 @@ const ALL_SECTIONS: &[StatementSection] = &[
     StatementSection::GstDetails,
 ];
 
+/// Explicit `--section` values win; `--all` (the default) selects every
+/// section. `--all` defaults to true, so an explicit `--section` must be
+/// checked first or it would never take effect.
+fn resolve_sections(all: bool, sections: &[StatementSection]) -> Result<&[StatementSection]> {
+    if !sections.is_empty() {
+        Ok(sections)
+    } else if all {
+        Ok(ALL_SECTIONS)
+    } else {
+        anyhow::bail!("Specify --section or --all")
+    }
+}
+
 async fn cmd_export(
     file_key: &str,
     sections: &[StatementSection],
@@ -144,13 +157,14 @@ async fn cmd_export(
     output_path: Option<&str>,
     output_format: &OutputFormat,
 ) -> Result<()> {
-    let sections = if all {
-        ALL_SECTIONS
-    } else if sections.is_empty() {
-        anyhow::bail!("Specify --section or --all");
-    } else {
-        sections
-    };
+    let sections = resolve_sections(all, sections)?;
+
+    if file_key.trim().is_empty() {
+        anyhow::bail!(
+            "Empty --file-key: this statement has no downloadable file. \
+             Use `longbridge statement list` and pick an entry with a non-empty file_key."
+        );
+    }
 
     let ctx = crate::openapi::statement();
     let options = GetStatementOptions::new(file_key);
@@ -158,8 +172,25 @@ async fn cmd_export(
 
     // Fetch the statement JSON
     let client = reqwest::Client::new();
-    let body = client.get(&resp.url).send().await?.text().await?;
-    let value: Value = serde_json::from_str(&body)?;
+    let http = client.get(&resp.url).send().await?;
+    let status = http.status().as_u16();
+    let content_type = http
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(ToString::to_string);
+    let body = http.text().await?;
+    let value = parse_statement_body(status, content_type.as_deref(), &body)?;
+
+    if is_legacy_statement(&value) {
+        return export_legacy(
+            &value,
+            sections,
+            explicit_format,
+            output_path,
+            output_format,
+        );
+    }
     let content: CommonStatementContent = serde_json::from_value(value)?;
 
     // --format json: output all sections as a single JSON object keyed by section name.
@@ -204,7 +235,7 @@ async fn cmd_export(
 
     match output_path {
         Some(path) => {
-            if sections.len() == 1 && !all {
+            if sections.len() == 1 {
                 let data = section_to_format(&content, &sections[0], &format)?;
                 std::fs::write(path, data)?;
                 println!("Saved {:?} to {path}", sections[0]);
@@ -244,9 +275,121 @@ async fn cmd_export(
     Ok(())
 }
 
+/// Parse the downloaded statement body, reporting HTTP status, content type
+/// and a body excerpt when it is not the expected JSON document.
+///
+/// Statements issued before the current storage format (older `file_key`
+/// prefixes) resolve to a download URL whose body is an XML/HTML error page
+/// rather than JSON; surfacing that body is the only way to tell why.
+fn parse_statement_body(status: u16, content_type: Option<&str>, body: &str) -> Result<Value> {
+    let describe = || {
+        let content_type = content_type.unwrap_or("unknown");
+        let excerpt: String = body.trim().chars().take(300).collect();
+        let excerpt = if excerpt.is_empty() {
+            "(empty body)".to_string()
+        } else {
+            excerpt
+        };
+        format!("HTTP {status}, content-type: {content_type}\n{excerpt}")
+    };
+
+    if body.trim().is_empty() {
+        anyhow::bail!(
+            "Statement download returned an empty body ({}). \
+             The file behind this file_key is not available for download.",
+            describe()
+        );
+    }
+    let mut value: Value = serde_json::from_str(body).map_err(|e| {
+        anyhow::anyhow!(
+            "Statement download did not return JSON ({e}).\n{}\n\
+             No statement file exists behind this file_key (the list may show an empty \
+             file_key for that period); request it from Longbridge support.",
+            describe()
+        )
+    })?;
+    // Statements issued before 2022-12 serialize empty sections as `null`.
+    crate::utils::json::strip_nulls(&mut value);
+    Ok(value)
+}
+
+/// Statements issued before 2022-03 use a different document layout
+/// (`AssetDetail`, `CashDetails`, `StockHoldingDetails`, ...) that the
+/// section mapping in this module does not know about.
+fn is_legacy_statement(value: &Value) -> bool {
+    value
+        .as_object()
+        .is_some_and(|o| !o.contains_key("Asset") && o.contains_key("AssetDetail"))
+}
+
+/// Export a legacy-layout statement by flattening the raw document into
+/// generic tables. `--section` cannot be honored because the section names do
+/// not exist in that layout, so every populated table is exported.
+fn export_legacy(
+    value: &Value,
+    sections: &[StatementSection],
+    explicit_format: Option<ExportFormat>,
+    output_path: Option<&str>,
+    output_format: &OutputFormat,
+) -> Result<()> {
+    if !sections.is_empty() {
+        eprintln!(
+            "Note: this statement uses the legacy layout (issued before 2022-03); \
+             --section is ignored and all populated tables are exported."
+        );
+    }
+
+    if matches!(output_format, OutputFormat::Json) {
+        println!("{}", serde_json::to_string_pretty(value)?);
+        return Ok(());
+    }
+
+    let tables = crate::utils::json::flatten_tables(value);
+    let format = explicit_format.unwrap_or(if output_path.is_some() {
+        ExportFormat::Csv
+    } else {
+        ExportFormat::Md
+    });
+    let ext = match format {
+        ExportFormat::Csv => "csv",
+        ExportFormat::Md => "md",
+    };
+
+    let dir = output_path.map(std::path::Path::new);
+    if let Some(dir) = dir {
+        std::fs::create_dir_all(dir)?;
+    }
+    for table in &tables {
+        let headers: Vec<&str> = table.headers.iter().map(String::as_str).collect();
+        let rows: Vec<Vec<&str>> = table
+            .rows
+            .iter()
+            .map(|r| r.iter().map(String::as_str).collect())
+            .collect();
+        let data = SectionData {
+            title: &table.title,
+            headers: &headers,
+            rows,
+        };
+        let formatted = match format {
+            ExportFormat::Csv => data.to_csv()?,
+            ExportFormat::Md => data.to_markdown(),
+        };
+        match dir {
+            Some(dir) => {
+                let file_path = dir.join(format!("{}.{ext}", table.name));
+                std::fs::write(&file_path, formatted)?;
+                println!("Saved {} to {}", table.title, file_path.display());
+            }
+            None => print!("{formatted}"),
+        }
+    }
+    Ok(())
+}
+
 struct SectionData<'a> {
-    title: &'static str,
-    headers: &'static [&'static str],
+    title: &'a str,
+    headers: &'a [&'a str],
     rows: Vec<Vec<&'a str>>,
 }
 
@@ -320,7 +463,8 @@ fn section_data<'a>(
                     .iter()
                     .map(|b| {
                         vec![
-                            b.currency_code.as_str(), // In fact, only this one has a value, so it shows "currency" above, but this uses "currency code"
+                            // Files issued before 2024-08 carry only `Currency`.
+                            first_non_empty(&[&b.currency_code, &b.currency]),
                             b.begin_amount.as_str(),
                             b.begin_amount_as_hkd.as_str(),
                             b.change_amount.as_str(),
@@ -1260,6 +1404,70 @@ fn markdown_cell_width(cell: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_sections_override_default_all() {
+        let picked = [StatementSection::Asset];
+        assert_eq!(resolve_sections(true, &picked).unwrap().len(), 1);
+        assert_eq!(
+            resolve_sections(true, &[]).unwrap().len(),
+            ALL_SECTIONS.len()
+        );
+        assert!(resolve_sections(false, &[]).is_err());
+    }
+
+    #[test]
+    fn account_balances_fall_back_to_currency_name() {
+        let content: CommonStatementContent = serde_json::from_str(
+            r#"{"AccountBalanceSum":{"AccountBalances":[{"Currency":"美元","BeginAmount":"1"}]}}"#,
+        )
+        .unwrap();
+        let data = section_data(&content, &StatementSection::AccountBalanceSum);
+        assert_eq!(data.rows[0][0], "美元");
+    }
+
+    #[test]
+    fn parse_statement_body_rejects_non_json_with_context() {
+        let body = r#"<?xml version="1.0" encoding="UTF-8"?><Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message></Error>"#;
+        let err = parse_statement_body(404, Some("application/xml"), body).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("HTTP 404"), "{msg}");
+        assert!(msg.contains("application/xml"), "{msg}");
+        assert!(msg.contains("NoSuchKey"), "{msg}");
+    }
+
+    #[test]
+    fn parse_statement_body_reports_empty_body() {
+        let err = parse_statement_body(200, None, "").unwrap_err();
+        assert!(err.to_string().contains("empty"), "{err}");
+    }
+
+    #[test]
+    fn parse_statement_body_accepts_json() {
+        let value =
+            parse_statement_body(200, Some("application/json"), r#"{"Date":"202411"}"#).unwrap();
+        assert_eq!(value["Date"], "202411");
+    }
+
+    #[test]
+    fn parse_statement_body_tolerates_null_sections() {
+        let value = parse_statement_body(
+            200,
+            None,
+            r#"{"Asset":{"Currency":"HKD"},"Interests":null,"FundTradeSums":null}"#,
+        )
+        .unwrap();
+        let content: CommonStatementContent = serde_json::from_value(value).unwrap();
+        assert_eq!(content.asset.currency, "HKD");
+        assert!(content.interests.is_empty());
+    }
+
+    #[test]
+    fn legacy_layout_is_detected_by_asset_detail() {
+        assert!(is_legacy_statement(&serde_json::json!({"AssetDetail": {}})));
+        assert!(!is_legacy_statement(&serde_json::json!({"Asset": {}})));
+        assert!(!is_legacy_statement(&serde_json::json!({})));
+    }
 
     fn csv_record(data: &str) -> Vec<String> {
         let mut reader = csv::Reader::from_reader(data.as_bytes());
