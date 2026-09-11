@@ -158,7 +158,12 @@ async fn cmd_export(
 
     // Fetch the statement JSON
     let client = reqwest::Client::new();
-    let body = client.get(&resp.url).send().await?.text().await?;
+    let http_resp = client.get(&resp.url).send().await?;
+    let status = http_resp.status();
+    let body = http_resp.text().await?;
+    if !status.is_success() {
+        anyhow::bail!(statement_download_error(status.as_u16(), &body));
+    }
     let value: Value = serde_json::from_str(&body)?;
     let content: CommonStatementContent = serde_json::from_value(value)?;
 
@@ -1257,9 +1262,41 @@ fn markdown_cell_width(cell: &str) -> usize {
     UnicodeWidthStr::width(escape_markdown_cell(cell).as_ref())
 }
 
+/// Turn a failed statement-download HTTP response into an actionable error.
+///
+/// The download URL points at object storage that returns an XML error body
+/// (not JSON) when the object is missing. Parsing that as JSON used to surface
+/// the cryptic `expected value at line 1 column 1`, so map it to a clear
+/// message here instead.
+fn statement_download_error(status: u16, body: &str) -> String {
+    if status == 404 || body.contains("<Code>NoSuchKey</Code>") {
+        return "statement not available for this file key — Longbridge only keeps recent \
+             statements online, so older ones are no longer downloadable via the API. \
+             Get them from the Longbridge app or website (Me → Statements), or contact support."
+            .to_string();
+    }
+    format!("failed to download statement (HTTP {status})")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn download_error_for_missing_object_is_actionable() {
+        let body = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message></Error>";
+        let msg = statement_download_error(404, body);
+        // Must not leak the misleading JSON-parser error the user reported.
+        assert!(!msg.contains("expected value"));
+        // Must tell the user this statement simply isn't available.
+        assert!(msg.contains("not available"), "got: {msg}");
+    }
+
+    #[test]
+    fn download_error_for_other_status_includes_status_code() {
+        let msg = statement_download_error(403, "<Error><Code>AccessDenied</Code></Error>");
+        assert!(msg.contains("403"), "got: {msg}");
+    }
 
     fn csv_record(data: &str) -> Vec<String> {
         let mut reader = csv::Reader::from_reader(data.as_bytes());

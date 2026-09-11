@@ -3204,8 +3204,8 @@ pub enum StatementCmd {
     /// List available statements for an account
     ///
     /// Returns: date (dt), `file_key` for each statement.
-    /// Example: longbridge statement list --aaid 12345
-    /// Example: longbridge statement list --aaid 12345 --type monthly
+    /// Example: longbridge statement list
+    /// Example: longbridge statement list --type monthly
     List {
         /// Statement type: daily (default) | monthly
         #[arg(long = "type", default_value = "daily")]
