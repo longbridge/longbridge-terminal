@@ -246,7 +246,7 @@ pub enum Commands {
     /// Real-time quotes for one or more symbols
     ///
     /// Returns: symbol, `last_done`, `prev_close`, open, high, low, volume, turnover, `trade_status`.
-    /// Also returns `pre_market_quote`, `post_market_quote`, `overnight_quote` when available (US only).
+    /// Also returns `pre_market_quote`, `post_market_quote`, `overnight_quote` when available (US market only).
     /// In table format an "Extended Hours" section is appended; in JSON these are nested objects.
     /// Example: longbridge quote TSLA.US 700.HK AAPL.US
     /// Example: longbridge quote TSLA.US NVDA.US --format json
@@ -483,6 +483,9 @@ pub enum Commands {
     // ── Fundamentals ────────────────────────────────────────────────────────────
     /// Financial statements (income, balance sheet, cash flow) for a symbol
     ///
+    /// Behavior adapts to your account's region automatically; you never
+    /// pass a region. --kind/--latest apply only to AP accounts.
+    ///
     /// Subcommands: snapshot
     /// Example: longbridge financial-report TSLA.US --kind IS --report af
     /// Example: longbridge financial-report TSLA.US --kind BS --format json
@@ -493,13 +496,16 @@ pub enum Commands {
         /// Symbol in <CODE>.<MARKET> format, e.g. TSLA.US 700.HK (omit when using a subcommand)
         symbol: Option<String>,
         /// Statement type: IS (income), BS (balance sheet), CF (cash flow), ALL.
-        /// US accounts: omit to get financial summary (finn-overview).
+        /// AP accounts only. Ignored for US accounts, which always
+        /// return the finn-overview summary (the region is inferred from your account — do not pass it).
         #[arg(long, value_name = "TYPE", default_value = "")]
         kind: String,
         /// Report period: af (annual), saf (semi-annual), q1 (Q1), 3q (3 quarters), qf (quarterly)
         #[arg(long)]
         report: Option<String>,
-        /// Fetch the latest financial report summary instead of the full statement
+        /// AP accounts only: fetch the latest financial report summary
+        /// instead of the full statement. Not supported for US accounts (the region is
+        /// inferred from your account — do not pass it).
         #[arg(long)]
         latest: bool,
         #[command(subcommand)]
@@ -704,6 +710,9 @@ pub enum Commands {
 
     /// Valuation analysis: P/E, P/B, P/S, dividend yield, and peer comparison
     ///
+    /// Behavior adapts to your account's region automatically; you never
+    /// pass a region. --history/--indicator/--range apply only to AP accounts.
+    ///
     /// Default: current metrics + 5-year range + peer comparison.
     /// With --history: returns historical valuation time series (default indicator: pe).
     /// Example: longbridge valuation TSLA.US
@@ -713,13 +722,17 @@ pub enum Commands {
     Valuation {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
-        /// Show historical valuation time series instead of current snapshot
+        /// AP accounts only: show historical valuation time series
+        /// instead of current snapshot. Not supported for US accounts (the region is
+        /// inferred from your account — do not pass it).
         #[arg(long)]
         history: bool,
-        /// Valuation indicator for history mode: `pe` | `pb` | `ps` | `dvd_yld`
+        /// Valuation indicator for history mode (AP accounts only):
+        /// `pe` | `pb` | `ps` | `dvd_yld`. Not supported for US accounts.
         #[arg(long)]
         indicator: Option<String>,
-        /// Historical range in years (history mode, default: 1): 1 | 3 | 5 | 10
+        /// Historical range in years (history mode, AP accounts only,
+        /// default: 1): 1 | 3 | 5 | 10. Not supported for US accounts.
         #[arg(long)]
         range: Option<String>,
     },
@@ -891,6 +904,9 @@ pub enum Commands {
     // ── Trade ───────────────────────────────────────────────────────────────────
     /// Order management: list, detail, buy, sell, cancel, replace, executions
     ///
+    /// Behavior adapts to your account's region automatically; you never
+    /// pass a region. --action/--page/--limit apply only to US accounts.
+    ///
     /// Without a subcommand, lists today's orders (or historical with --history).
     /// Example: longbridge order
     /// Example: longbridge order --history --start 2024-01-01 --symbol TSLA.US
@@ -913,13 +929,13 @@ pub enum Commands {
         /// Filter by symbol (e.g. TSLA.US)
         #[arg(long)]
         symbol: Option<String>,
-        /// US accounts only: filter by direction (buy | sell)
+        /// US accounts only: filter by direction (buy | sell). Ignored for AP accounts (the region is inferred from your account — do not pass it).
         #[arg(long, value_name = "DIRECTION")]
         action: Option<String>,
-        /// US accounts only: page number (default: 1)
+        /// US accounts only: page number (default: 1). Ignored for AP accounts (the region is inferred from your account — do not pass it).
         #[arg(long, default_value = "1")]
         page: u32,
-        /// US accounts only: page size (default: 20)
+        /// US accounts only: page size (default: 20). Ignored for AP accounts (the region is inferred from your account — do not pass it).
         #[arg(long, default_value = "20")]
         limit: u32,
         #[command(subcommand)]
@@ -971,6 +987,9 @@ pub enum Commands {
     },
 
     /// Current stock (equity) positions across all sub-accounts
+    ///
+    /// Behavior adapts to your account's region automatically; you never
+    /// pass a region.
     ///
     /// Returns: symbol, name, quantity, `available_quantity`, `cost_price`, currency, market.
     /// Example: longbridge positions --format json
@@ -1084,7 +1103,7 @@ pub enum Commands {
         cmd: Option<IndustryValuationCmd>,
     },
 
-    /// Operating reviews and financial indicators by report period (HK stocks only)
+    /// AP accounts only: operating reviews and financial indicators by report period (HK-listed stocks)
     ///
     /// Example: longbridge operating 700.HK
     /// Example: longbridge operating 700.HK --report q1
@@ -1149,7 +1168,7 @@ pub enum Commands {
     /// Example: longbridge market-status
     MarketStatus,
 
-    /// Broker holding positions (HK market only)
+    /// AP accounts only: broker holding positions (HK-listed stocks)
     ///
     /// Currently only supports HK-listed stocks. US and other markets are not available.
     /// Example: longbridge broker-holding 700.HK
@@ -1388,7 +1407,7 @@ pub enum Commands {
     },
 
     // ── Recurring Investment ──────────────────────────────────────────────────────
-    /// Recurring Investment: automatically invest a fixed amount at regular intervals
+    /// AP accounts only: Recurring Investment — automatically invest a fixed amount at regular intervals
     ///
     /// Create and manage recurring investment plans that execute stock purchases on a daily, weekly,
     /// fortnightly, or monthly schedule. Track trade history, monitor cumulative profit,
@@ -2640,7 +2659,7 @@ pub enum FinancialReportCmd {
     /// Example: longbridge financial-report key-metrics AAPL.US
     /// Example: longbridge financial-report key-metrics AAPL.US --report annual
     KeyMetrics {
-        /// Symbol in <CODE>.<MARKET> format (US only)
+        /// Symbol in <CODE>.<MARKET> format (US market only)
         symbol: String,
         /// Report period: annual (default) | quarterly
         #[arg(long)]
@@ -3255,19 +3274,23 @@ pub enum StatementCmd {
 pub enum OrderCmd {
     /// Full detail for a single order including charges and history
     ///
+    /// Behavior adapts to your account's region automatically; you never
+    /// pass a region. --attached applies only to US accounts.
+    ///
     /// Returns all fields from `order` plus `charge_detail`, `history_details`, msg.
     /// Example: longbridge order detail 20240101-123456789
     /// Example: longbridge order detail 20240101-123456789 --attached
     Detail {
         /// Order ID (from `longbridge order` or returned by `order buy`/`order sell`)
         order_id: String,
-        /// US accounts only: query the attached child order (take-profit/stop-loss)
+        /// US accounts only: query the attached child order (take-profit/stop-loss). Ignored for AP accounts (the region is inferred from your account — do not pass it).
         #[arg(long)]
         attached: bool,
     },
 
-    /// Today's trade executions (fills), or historical with --history
+    /// AP accounts only: today's trade executions (fills), or historical with --history
     ///
+    /// US accounts: use `order --history` instead.
     /// Returns: `order_id`, `trade_id`, symbol, price, quantity, `trade_done_at`.
     /// Example: longbridge order executions
     /// Example: longbridge order executions --history --start 2024-01-01
@@ -4765,6 +4788,70 @@ mod tests {
             .expect("spawn CLI parser thread")
             .join()
             .expect("CLI parser thread")
+    }
+
+    // ─── DC-region flag hygiene ───────────────────────────────────────────────
+    //
+    // Region-scoped flags must never be `required`. The account's data-center
+    // region is inferred from the credential, never passed by the caller, so a
+    // user in the other region must be able to run the command without them. A
+    // required region flag would force every caller to supply a value that is
+    // meaningless for their region — exactly the confusion this wording fixes.
+
+    #[test]
+    fn region_scoped_flags_are_never_required() {
+        use clap::CommandFactory;
+        // Same deep-recursion caveat as `parse`: build the tree on a roomy stack.
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let cmd = Cli::command();
+                let order = cmd
+                    .get_subcommands()
+                    .find(|c| c.get_name() == "order")
+                    .expect("order command");
+                for id in ["action", "page", "limit"] {
+                    let arg = order
+                        .get_arguments()
+                        .find(|a| a.get_id() == id)
+                        .unwrap_or_else(|| panic!("order --{id} not found"));
+                    assert!(!arg.is_required_set(), "order --{id} must stay optional");
+                }
+                let detail = order
+                    .get_subcommands()
+                    .find(|c| c.get_name() == "detail")
+                    .expect("order detail command");
+                let attached = detail
+                    .get_arguments()
+                    .find(|a| a.get_id() == "attached")
+                    .expect("order detail --attached not found");
+                assert!(
+                    !attached.is_required_set(),
+                    "order detail --attached must stay optional"
+                );
+
+                // Dual-region commands that carry region-scoped flags.
+                let checks = [
+                    ("financial-report", &["kind", "latest"][..]),
+                    ("valuation", &["history", "indicator", "range"][..]),
+                ];
+                for (name, ids) in checks {
+                    let sub = cmd
+                        .get_subcommands()
+                        .find(|c| c.get_name() == name)
+                        .unwrap_or_else(|| panic!("{name} command"));
+                    for id in ids {
+                        let arg = sub
+                            .get_arguments()
+                            .find(|a| a.get_id() == *id)
+                            .unwrap_or_else(|| panic!("{name} --{id} not found"));
+                        assert!(!arg.is_required_set(), "{name} --{id} must stay optional");
+                    }
+                }
+            })
+            .expect("spawn command-introspection thread")
+            .join()
+            .expect("command-introspection thread");
     }
 
     // ─── Format flag ──────────────────────────────────────────────────────────
