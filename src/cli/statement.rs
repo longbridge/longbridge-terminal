@@ -136,6 +136,14 @@ const ALL_SECTIONS: &[StatementSection] = &[
     StatementSection::GstDetails,
 ];
 
+/// Where to find statements that predate the JSON statement service.
+///
+/// Statements issued before 2024-08 were delivered only as password-protected
+/// PDFs, so there is usually no JSON file behind the API for those periods.
+const PDF_STATEMENT_HINT: &str = "Statements issued before 2024-08 were delivered only as \
+    password-protected PDFs: download them from the Longbridge app or use the PDF attached \
+    to the statement email (the email explains the password format).";
+
 /// Explicit `--section` values win; `--all` (the default) selects every
 /// section. `--all` defaults to true, so an explicit `--section` must be
 /// checked first or it would never take effect.
@@ -163,7 +171,8 @@ async fn cmd_export(
     if file_key.trim().is_empty() {
         anyhow::bail!(
             "Empty --file-key: this statement has no downloadable file. \
-             Use `longbridge statement list` and pick an entry with a non-empty file_key."
+             Use `longbridge statement list` and pick an entry with a non-empty file_key.\n\
+             {PDF_STATEMENT_HINT}"
         );
     }
 
@@ -297,7 +306,7 @@ fn parse_statement_body(status: u16, content_type: Option<&str>, body: &str) -> 
     if body.trim().is_empty() {
         anyhow::bail!(
             "Statement download returned an empty body ({}). \
-             The file behind this file_key is not available for download.",
+             The file behind this file_key is not available for download.\n{PDF_STATEMENT_HINT}",
             describe()
         );
     }
@@ -305,7 +314,7 @@ fn parse_statement_body(status: u16, content_type: Option<&str>, body: &str) -> 
         anyhow::anyhow!(
             "Statement download did not return JSON ({e}).\n{}\n\
              No statement file exists behind this file_key (the list may show an empty \
-             file_key for that period); request it from Longbridge support.",
+             file_key for that period).\n{PDF_STATEMENT_HINT}",
             describe()
         )
     })?;

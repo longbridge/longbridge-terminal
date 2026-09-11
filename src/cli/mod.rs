@@ -871,6 +871,12 @@ pub enum Commands {
     /// Download and export account statements (daily/monthly)
     ///
     /// Without a subcommand, lists available statements (equivalent to `statement list`).
+    ///
+    /// Only statements issued from 2024-08 onward are available as JSON here.
+    /// Earlier statements were delivered as password-protected PDFs: get them
+    /// from the Longbridge app or the statement email (which explains the
+    /// password format).
+    ///
     /// Example: longbridge statement
     /// Example: longbridge statement --type monthly
     /// Example: longbridge statement export --file-key KEY --section `equity_holdings`
@@ -3203,7 +3209,11 @@ impl ConstituentOrder {
 pub enum StatementCmd {
     /// List available statements for an account
     ///
-    /// Returns: date (dt), `file_key` for each statement.
+    /// Returns: date (dt), `file_key` for each statement. An empty `file_key`
+    /// means no JSON statement exists for that period: statements issued before
+    /// 2024-08 were delivered only as password-protected PDFs, available from
+    /// the Longbridge app or the statement email (which explains the password
+    /// format).
     /// Example: longbridge statement list --aaid 12345
     /// Example: longbridge statement list --aaid 12345 --type monthly
     List {
@@ -3226,9 +3236,13 @@ pub enum StatementCmd {
     /// When `-o` is provided, defaults to CSV format and saves to file(s).
     /// When `-o` is omitted, defaults to markdown format and prints to stdout.
     ///
-    /// Statements issued before 2022-03 use a legacy layout: `--section` is
-    /// ignored, every populated table is exported, and `--format json` prints
-    /// the raw statement document.
+    /// Only statements issued from 2024-08 onward are available as JSON.
+    /// Earlier periods were delivered as password-protected PDFs (Longbridge
+    /// app, or the statement email, which explains the password format); an
+    /// entry with an empty `file_key` cannot be exported here. Where an older
+    /// JSON file does exist it uses a legacy layout: `--section` is ignored,
+    /// every populated table is exported, and `--format json` prints the raw
+    /// statement document.
     ///
     /// Example: longbridge statement export --file-key KEY --section `equity_holdings`
     /// Example: longbridge statement export --file-key KEY --section `equity_holdings` -o holdings.csv

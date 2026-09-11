@@ -371,6 +371,8 @@ longbridge statement export --file-key <KEY> --section equity_holdings  # Export
 longbridge statement export --file-key <KEY> --all                     # Export all non-empty sections
 ```
 
+JSON statements exist only from 2024-08 onward. Earlier statements were delivered as password-protected PDFs: download them from the Longbridge app or use the PDF attached to the statement email (the email explains the password format). An entry with an empty `file_key` in `statement list` has no exportable file.
+
 ### Insider Trades
 
 ```bash
