@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 
 use crate::data::statement::CommonStatementContent;
+use crate::openapi::statement::{PdfStatementItem, PdfStatementKind};
 use anyhow::Result;
 use longbridge::asset::{GetStatementListOptions, GetStatementOptions, StatementType};
 use serde_json::Value;
@@ -83,8 +84,8 @@ pub async fn cmd_statement(cmd: StatementCmd, format: &OutputFormat) -> Result<(
 
 async fn cmd_list(
     statement_type: &str,
-    page: i32,
-    page_size: i32,
+    start_date: i32,
+    limit: i32,
     format: &OutputFormat,
 ) -> Result<()> {
     let st = match statement_type.to_lowercase().as_str() {
@@ -95,18 +96,153 @@ async fn cmd_list(
 
     let ctx = crate::openapi::statement();
     let options = GetStatementListOptions::new(st)
-        .page(page)
-        .page_size(page_size);
+        .page(start_date)
+        .page_size(limit);
     let resp = ctx.statements(options).await?;
-
-    let headers = &["Date", "File Key"];
-    let rows: Vec<Vec<String>> = resp
+    let json: Vec<(i32, String)> = resp
         .list
-        .iter()
-        .map(|item| vec![item.dt.to_string(), item.file_key.clone()])
+        .into_iter()
+        .map(|item| (item.dt, item.file_key))
+        .collect();
+
+    // PDFs only fill in what the JSON list cannot provide, and only for
+    // periods that predate the JSON statement service.
+    let now = OffsetDateTime::now_utc();
+    let now_month = format!("{}{:02}", now.year(), now.month() as u8);
+    let pdf = match pdf_fill_window(start_date, &json, limit, &now_month) {
+        Some((from, to)) => {
+            let kind = match st {
+                StatementType::Daily => PdfStatementKind::Daily,
+                StatementType::Monthly => PdfStatementKind::Monthly,
+            };
+            crate::openapi::statement::pdf_statements(kind, &from, &to).await?
+        }
+        None => Vec::new(),
+    };
+    let rows = merge_statement_rows(&json, &pdf, limit);
+
+    let headers = &["Date", "File Key", "Format"];
+    let rows: Vec<Vec<String>> = rows
+        .into_iter()
+        .map(|r| vec![r.date, r.file_key, r.format.to_string()])
         .collect();
     print_table(headers, rows, format);
     Ok(())
+}
+
+/// Last month for which a statement may exist only as a PDF. From 2025-01 on
+/// every statement has a JSON file, so the PDF list is never consulted there.
+const LAST_PDF_ONLY_MONTH: &str = "202412";
+
+/// The `yyyyMM` range to ask the PDF list for, or `None` when the JSON list
+/// already covers the request.
+///
+/// The PDF endpoint is consulted only when the window starts on or before
+/// [`LAST_PDF_ONLY_MONTH`] and the JSON list is short of the request: an
+/// entry without a file, fewer entries than asked for, or (monthly) a month
+/// missing from the middle of the window.
+fn pdf_fill_window(
+    start_date: i32,
+    json: &[(i32, String)],
+    limit: i32,
+    now_month: &str,
+) -> Option<(String, String)> {
+    let from = yyyymm(start_date);
+    if from.as_str() > LAST_PDF_ONLY_MONTH {
+        return None;
+    }
+    let short = json.len() < usize::try_from(limit).unwrap_or(usize::MAX);
+    let to = if short {
+        now_month.to_string()
+    } else {
+        json.iter().map(|(dt, _)| yyyymm(*dt)).max()?
+    };
+    let to = if to.as_str() > LAST_PDF_ONLY_MONTH {
+        LAST_PDF_ONLY_MONTH.to_string()
+    } else {
+        to
+    };
+    if to < from {
+        return None;
+    }
+    let has_gap = json.iter().any(|(_, key)| key.is_empty()) || short || {
+        // Monthly dates are exactly `yyyyMM`; a missing month in the window is a gap.
+        let monthly = json.iter().all(|(dt, _)| *dt < 1_000_000);
+        monthly && {
+            let months: std::collections::BTreeSet<String> =
+                json.iter().map(|(dt, _)| dt.to_string()).collect();
+            months_between(&from, &to).any(|m| !months.contains(&m))
+        }
+    };
+    has_gap.then_some((from, to))
+}
+
+/// `yyyyMMdd` or `yyyyMM` -> `yyyyMM`.
+fn yyyymm(date: i32) -> String {
+    if date >= 1_000_000 {
+        format!("{:06}", date / 100)
+    } else {
+        format!("{date:06}")
+    }
+}
+
+fn months_between(from: &str, to: &str) -> impl Iterator<Item = String> {
+    let parse = |m: &str| -> Option<i32> {
+        let y: i32 = m.get(..4)?.parse().ok()?;
+        let mo: i32 = m.get(4..6)?.parse().ok()?;
+        Some(y * 12 + mo - 1)
+    };
+    let (a, b) = (parse(from).unwrap_or(0), parse(to).unwrap_or(-1));
+    (a..=b).map(|n| format!("{}{:02}", n / 12, n % 12 + 1))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StatementRow {
+    date: String,
+    file_key: String,
+    /// `json`, `pdf`, or empty when no file exists in either form.
+    format: &'static str,
+}
+
+/// Merge the JSON list with PDF entries: a PDF only fills a date whose JSON
+/// entry is missing or has no file. Sorted by date, at most `limit` rows.
+fn merge_statement_rows(
+    json: &[(i32, String)],
+    pdf: &[PdfStatementItem],
+    limit: i32,
+) -> Vec<StatementRow> {
+    let mut rows: std::collections::BTreeMap<String, StatementRow> = json
+        .iter()
+        .map(|(dt, key)| {
+            let date = dt.to_string();
+            let format = if key.is_empty() { "" } else { "json" };
+            (
+                date.clone(),
+                StatementRow {
+                    date,
+                    file_key: key.clone(),
+                    format,
+                },
+            )
+        })
+        .collect();
+    for item in pdf {
+        let date = item.display_name.replace('.', "");
+        let filled = rows.get(&date).is_some_and(|r| !r.file_key.is_empty());
+        if !filled {
+            rows.insert(
+                date.clone(),
+                StatementRow {
+                    date,
+                    file_key: item.key.clone(),
+                    format: "pdf",
+                },
+            );
+        }
+    }
+    rows.into_values()
+        .take(usize::try_from(limit).unwrap_or(usize::MAX))
+        .collect()
 }
 
 const ALL_SECTIONS: &[StatementSection] = &[
@@ -138,11 +274,12 @@ const ALL_SECTIONS: &[StatementSection] = &[
 
 /// Where to find statements that predate the JSON statement service.
 ///
-/// Statements issued before 2024-08 were delivered only as password-protected
+/// Statements issued before 2024-08 were delivered as password-protected
 /// PDFs, so there is usually no JSON file behind the API for those periods.
-const PDF_STATEMENT_HINT: &str = "Statements issued before 2024-08 were delivered only as \
-    password-protected PDFs: download them from the Longbridge app or use the PDF attached \
-    to the statement email (the email explains the password format).";
+const PDF_STATEMENT_HINT: &str = "Statements issued before 2024-08 were delivered as \
+    password-protected PDFs. Run `longbridge statement list`: periods without a JSON file \
+    are listed with a PDF file_key, and `statement export` downloads that PDF together with \
+    its password.";
 
 /// Explicit `--section` values win; `--all` (the default) selects every
 /// section. `--all` defaults to true, so an explicit `--section` must be
@@ -174,6 +311,10 @@ async fn cmd_export(
              Use `longbridge statement list` and pick an entry with a non-empty file_key.\n\
              {PDF_STATEMENT_HINT}"
         );
+    }
+
+    if is_pdf_key(file_key) {
+        return export_pdf(file_key, explicit_sections, output_path, output_format).await;
     }
 
     let ctx = crate::openapi::statement();
@@ -285,6 +426,84 @@ async fn cmd_export(
     Ok(())
 }
 
+/// PDF statements are listed with keys ending in `.pdf`.
+fn is_pdf_key(file_key: &str) -> bool {
+    file_key.trim().to_ascii_lowercase().ends_with(".pdf")
+}
+
+/// File name for a PDF key such as
+/// `*lb-statement*lb*1*202403*statement-monthly-202403-H10062184.pdf`.
+fn pdf_file_name(file_key: &str) -> String {
+    let last = file_key
+        .trim()
+        .rsplit(['*', '/'])
+        .next()
+        .unwrap_or("")
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        .collect::<String>();
+    if last.is_empty() || last == ".pdf" {
+        "statement.pdf".to_string()
+    } else {
+        last
+    }
+}
+
+/// Where to write the PDF: `-o` names a directory (existing, or ending in
+/// `/`) to drop the file into, or the file path itself; without `-o` the file
+/// lands in the current directory under its own name.
+fn pdf_output_path(output: Option<&str>, file_name: &str) -> std::path::PathBuf {
+    match output {
+        None => std::path::PathBuf::from(file_name),
+        Some(dir) if dir.ends_with('/') || std::path::Path::new(dir).is_dir() => {
+            std::path::Path::new(dir).join(file_name)
+        }
+        Some(path) => std::path::PathBuf::from(path),
+    }
+}
+
+/// Download a PDF statement and save it, printing the password that opens it.
+async fn export_pdf(
+    file_key: &str,
+    explicit_sections: bool,
+    output_path: Option<&str>,
+    output_format: &OutputFormat,
+) -> Result<()> {
+    if explicit_sections {
+        eprintln!(
+            "Note: this statement is a PDF; --section does not apply and the whole file is saved."
+        );
+    }
+    let dl = crate::openapi::statement::pdf_download(file_key).await?;
+
+    let http = reqwest::Client::new().get(&dl.url).send().await?;
+    let status = http.status().as_u16();
+    let bytes = http.bytes().await?;
+    if !(200..300).contains(&status) || !bytes.starts_with(b"%PDF") {
+        let excerpt: String = String::from_utf8_lossy(&bytes[..bytes.len().min(300)]).into();
+        anyhow::bail!("PDF statement download failed (HTTP {status}):\n{excerpt}");
+    }
+
+    let path = pdf_output_path(output_path, &pdf_file_name(file_key));
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, &bytes)?;
+
+    if matches!(output_format, OutputFormat::Json) {
+        let out = serde_json::json!({
+            "file": path.display().to_string(),
+            "password": dl.pass,
+            "cache_key": dl.cache_key,
+        });
+        println!("{}", serde_json::to_string_pretty(&out)?);
+    } else {
+        println!("Saved PDF statement to {}", path.display());
+        println!("Password: {}", dl.pass);
+    }
+    Ok(())
+}
+
 /// Parse the downloaded statement body, reporting HTTP status, content type
 /// and a body excerpt when it is not the expected JSON document.
 ///
@@ -313,8 +532,7 @@ fn parse_statement_body(status: u16, content_type: Option<&str>, body: &str) -> 
     let mut value: Value = serde_json::from_str(body).map_err(|e| {
         anyhow::anyhow!(
             "Statement download did not return JSON ({e}).\n{}\n\
-             No statement file exists behind this file_key (the list may show an empty \
-             file_key for that period).\n{PDF_STATEMENT_HINT}",
+             No JSON statement exists behind this file_key.\n{PDF_STATEMENT_HINT}",
             describe()
         )
     })?;
@@ -1305,7 +1523,9 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
 
     let command = path.join(" ");
     let schema = match command.as_str() {
-        "statement" | "statement list" => array("Available statements", &["date", "file_key"]),
+        "statement" | "statement list" => {
+            array("Available statements", &["date", "file_key", "format"])
+        }
         "statement export" => object("Exported statement sections", statement_section_fields()),
         _ => return None,
     };
@@ -1414,6 +1634,99 @@ fn markdown_cell_width(cell: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pdf(display_name: &str, key: &str) -> PdfStatementItem {
+        PdfStatementItem {
+            display_name: display_name.to_string(),
+            key: key.to_string(),
+            cache_key: String::new(),
+        }
+    }
+
+    #[test]
+    fn pdf_fills_only_dates_without_a_json_file() {
+        let json = vec![
+            (202403, String::new()),
+            (202408, "/statement_data/x/202408.json".to_string()),
+        ];
+        let pdf = vec![
+            pdf("2024.03", "*a*202403.pdf"),
+            pdf("2024.05", "*a*202405.pdf"),
+            pdf("2024.08", "*a*202408.pdf"),
+        ];
+        let rows = merge_statement_rows(&json, &pdf, 10);
+        let got: Vec<(&str, &str, &str)> = rows
+            .iter()
+            .map(|r| (r.date.as_str(), r.file_key.as_str(), r.format))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("202403", "*a*202403.pdf", "pdf"),
+                ("202405", "*a*202405.pdf", "pdf"),
+                ("202408", "/statement_data/x/202408.json", "json"),
+            ]
+        );
+        assert_eq!(merge_statement_rows(&json, &pdf, 2).len(), 2);
+    }
+
+    #[test]
+    fn pdf_window_skips_periods_that_always_have_json() {
+        let full = vec![(202501, "k".to_string()), (202502, "k".to_string())];
+        assert_eq!(pdf_fill_window(20250101, &full, 2, "202609"), None);
+        // Complete JSON coverage inside 2024 needs no PDF lookup either.
+        let complete = vec![(202411, "k".to_string()), (202412, "k".to_string())];
+        assert_eq!(pdf_fill_window(20241101, &complete, 2, "202609"), None);
+    }
+
+    #[test]
+    fn pdf_window_covers_gaps_and_caps_at_last_pdf_month() {
+        // Empty key -> gap; JSON window runs into 2025 but PDFs stop at 2024-12.
+        let json = vec![(202403, String::new()), (202501, "k".to_string())];
+        assert_eq!(
+            pdf_fill_window(20240301, &json, 2, "202609"),
+            Some(("202403".to_string(), "202412".to_string()))
+        );
+        // A month missing from the middle of a full-length list is a gap.
+        let holes = vec![(202404, "k".to_string()), (202407, "k".to_string())];
+        assert_eq!(
+            pdf_fill_window(20240401, &holes, 2, "202609"),
+            Some(("202404".to_string(), "202407".to_string()))
+        );
+        // Fewer rows than asked for: window extends to now, capped at 2024-12.
+        let short = vec![(20240319, "k".to_string())];
+        assert_eq!(
+            pdf_fill_window(20240301, &short, 30, "202609"),
+            Some(("202403".to_string(), "202412".to_string()))
+        );
+    }
+
+    #[test]
+    fn pdf_key_detection_and_file_name() {
+        let key = "*lb-statement*lb*1*202403*statement-monthly-202403-H10062184.pdf";
+        assert!(is_pdf_key(key));
+        assert!(!is_pdf_key(
+            "/statement_data/data/lb/1/202411/10000104.json"
+        ));
+        assert_eq!(pdf_file_name(key), "statement-monthly-202403-H10062184.pdf");
+        assert_eq!(pdf_file_name("*.pdf"), "statement.pdf");
+    }
+
+    #[test]
+    fn pdf_output_path_treats_trailing_slash_as_directory() {
+        assert_eq!(
+            pdf_output_path(None, "a.pdf"),
+            std::path::PathBuf::from("a.pdf")
+        );
+        assert_eq!(
+            pdf_output_path(Some("out/"), "a.pdf"),
+            std::path::PathBuf::from("out/a.pdf")
+        );
+        assert_eq!(
+            pdf_output_path(Some("out/x.pdf"), "a.pdf"),
+            std::path::PathBuf::from("out/x.pdf")
+        );
+    }
 
     #[test]
     fn explicit_sections_override_default_all() {

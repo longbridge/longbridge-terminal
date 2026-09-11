@@ -872,10 +872,10 @@ pub enum Commands {
     ///
     /// Without a subcommand, lists available statements (equivalent to `statement list`).
     ///
-    /// Only statements issued from 2024-08 onward are available as JSON here.
-    /// Earlier statements were delivered as password-protected PDFs: get them
-    /// from the Longbridge app or the statement email (which explains the
-    /// password format).
+    /// Statements issued from 2024-08 onward are JSON and export as sections.
+    /// Earlier statements exist only as password-protected PDFs; `statement list`
+    /// fills those periods in from the PDF list and `statement export` saves the
+    /// PDF together with its password.
     ///
     /// Example: longbridge statement
     /// Example: longbridge statement --type monthly
@@ -3209,11 +3209,10 @@ impl ConstituentOrder {
 pub enum StatementCmd {
     /// List available statements for an account
     ///
-    /// Returns: date (dt), `file_key` for each statement. An empty `file_key`
-    /// means no JSON statement exists for that period: statements issued before
-    /// 2024-08 were delivered only as password-protected PDFs, available from
-    /// the Longbridge app or the statement email (which explains the password
-    /// format).
+    /// Returns: date (dt), `file_key` and `format` (`json` or `pdf`) for each
+    /// statement. Periods without a JSON file (statements issued before 2024-08
+    /// were delivered as password-protected PDFs) are filled in from the PDF
+    /// list, so their `file_key` ends in `.pdf`.
     /// Example: longbridge statement list --aaid 12345
     /// Example: longbridge statement list --aaid 12345 --type monthly
     List {
@@ -3236,13 +3235,11 @@ pub enum StatementCmd {
     /// When `-o` is provided, defaults to CSV format and saves to file(s).
     /// When `-o` is omitted, defaults to markdown format and prints to stdout.
     ///
-    /// Only statements issued from 2024-08 onward are available as JSON.
-    /// Earlier periods were delivered as password-protected PDFs (Longbridge
-    /// app, or the statement email, which explains the password format); an
-    /// entry with an empty `file_key` cannot be exported here. Where an older
-    /// JSON file does exist it uses a legacy layout: `--section` is ignored,
-    /// every populated table is exported, and `--format json` prints the raw
-    /// statement document.
+    /// A `.pdf` file key (statements issued before 2024-08, listed by
+    /// `statement list` for periods without JSON) is saved as a PDF file and
+    /// its password is printed; `--section` does not apply. Older JSON files
+    /// use a legacy layout: `--section` is ignored, every populated table is
+    /// exported, and `--format json` prints the raw statement document.
     ///
     /// Example: longbridge statement export --file-key KEY --section `equity_holdings`
     /// Example: longbridge statement export --file-key KEY --section `equity_holdings` -o holdings.csv
