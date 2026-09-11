@@ -3233,8 +3233,8 @@ pub enum StatementCmd {
     /// statement. Periods without a JSON file (statements issued before 2024-08
     /// were delivered as password-protected PDFs) are filled in from the PDF
     /// list, so their `file_key` ends in `.pdf`.
-    /// Example: longbridge statement list --aaid 12345
-    /// Example: longbridge statement list --aaid 12345 --type monthly
+    /// Example: longbridge statement list
+    /// Example: longbridge statement list --type monthly
     List {
         /// Statement type: daily (default) | monthly
         #[arg(long = "type", default_value = "daily")]
