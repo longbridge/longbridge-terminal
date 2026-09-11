@@ -2,7 +2,6 @@ use anyhow::Result;
 use serde_json::Value;
 
 use super::{api::http_get, api::http_post, output::print_table, OutputFormat};
-use crate::utils::counter::symbol_to_counter_id;
 use crate::utils::number::format_financial_value;
 
 const DEFAULT_RETURNS: &[&str] = &[
@@ -371,10 +370,8 @@ pub async fn cmd_screener_indicators(
     verbose: bool,
 ) -> Result<()> {
     let mut params: Vec<(&str, &str)> = vec![];
-    let cid;
     if let Some(ref sym) = symbol {
-        cid = symbol_to_counter_id(sym);
-        params.push(("counter_id", cid.as_str()));
+        params.push(("symbol", sym.as_str()));
     }
     let data = http_get("/v1/quote/ai/screener/indicators", &params, verbose).await?;
     let groups = match data.get("groups").and_then(|v| v.as_array()) {
