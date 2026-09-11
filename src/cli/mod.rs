@@ -884,6 +884,13 @@ pub enum Commands {
     /// Download and export account statements (daily/monthly)
     ///
     /// Without a subcommand, lists available statements (equivalent to `statement list`).
+    ///
+    /// Statements issued from 2024-08 onward are JSON and export as sections.
+    /// Earlier statements exist only as password-protected PDFs; `statement list`
+    /// fills those periods in from the PDF list and `statement export` saves the
+    /// PDF and prints the password rule (last 4 digits of the mobile number +
+    /// last 4 characters of the account-opening ID).
+    ///
     /// Example: longbridge statement
     /// Example: longbridge statement --type monthly
     /// Example: longbridge statement export --file-key KEY --section `equity_holdings`
@@ -3222,7 +3229,10 @@ impl ConstituentOrder {
 pub enum StatementCmd {
     /// List available statements for an account
     ///
-    /// Returns: date (dt), `file_key` for each statement.
+    /// Returns: date (dt), `file_key` and `format` (`json` or `pdf`) for each
+    /// statement. Periods without a JSON file (statements issued before 2024-08
+    /// were delivered as password-protected PDFs) are filled in from the PDF
+    /// list, so their `file_key` ends in `.pdf`.
     /// Example: longbridge statement list --aaid 12345
     /// Example: longbridge statement list --aaid 12345 --type monthly
     List {
@@ -3244,6 +3254,13 @@ pub enum StatementCmd {
     ///
     /// When `-o` is provided, defaults to CSV format and saves to file(s).
     /// When `-o` is omitted, defaults to markdown format and prints to stdout.
+    ///
+    /// A `.pdf` file key (statements issued before 2024-08, listed by
+    /// `statement list` for periods without JSON) is saved as a PDF file and
+    /// the password rule is printed (last 4 digits of the mobile number + last
+    /// 4 characters of the account-opening ID); `--section` does not apply. Older JSON files
+    /// use a legacy layout: `--section` is ignored, every populated table is
+    /// exported, and `--format json` prints the raw statement document.
     ///
     /// Example: longbridge statement export --file-key KEY --section `equity_holdings`
     /// Example: longbridge statement export --file-key KEY --section `equity_holdings` -o holdings.csv

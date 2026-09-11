@@ -8,6 +8,7 @@ pub mod news;
 pub mod quote;
 pub mod rate_limiter;
 pub mod search;
+pub mod statement;
 pub mod wrapper;
 
 pub use agent::{AuthenticationRequiredAgent, OpenApiAgent};
