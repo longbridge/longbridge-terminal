@@ -151,6 +151,41 @@ fn print_json(value: &Value) {
     );
 }
 
+/// Recursively drop `counter_id` fields for JSON output, preserving the sibling
+/// `symbol` field (deriving it from the `counter_id` when absent) and rewriting
+/// `leading_counter_id` to `leading_symbol`, so no `counter_id` strings leak
+/// while the leader's market suffix is retained.
+fn strip_counter_ids(v: &mut Value) {
+    match v {
+        Value::Object(map) => {
+            if let Some(cid) = map.remove("counter_id") {
+                map.entry("symbol").or_insert_with(|| {
+                    Value::String(cid.as_str().map(counter_id_to_symbol).unwrap_or_default())
+                });
+            }
+            if let Some(lcid) = map.remove("leading_counter_id") {
+                let sym = lcid.as_str().map(counter_id_to_symbol).unwrap_or_default();
+                map.insert("leading_symbol".to_string(), Value::String(sym));
+            }
+            for val in map.values_mut() {
+                strip_counter_ids(val);
+            }
+        }
+        Value::Array(arr) => {
+            for val in arr.iter_mut() {
+                strip_counter_ids(val);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn print_json_no_counter_id(data: &Value) {
+    let mut v = data.clone();
+    strip_counter_ids(&mut v);
+    print_json(&v);
+}
+
 /// Print a JSON value as a human-readable table.
 ///
 /// Objects are split into scalar rows (rendered as a key/value table) and
@@ -3527,7 +3562,7 @@ pub async fn cmd_industry_rank(
     )
     .await?;
     match format {
-        OutputFormat::Json => print_json(&data),
+        OutputFormat::Json => print_json_no_counter_id(&data),
         OutputFormat::Pretty => print_industry_rank(&data),
     }
     Ok(())
@@ -3751,7 +3786,7 @@ pub async fn cmd_industry_peers(
     )
     .await?;
     match format {
-        OutputFormat::Json => print_json(&data),
+        OutputFormat::Json => print_json_no_counter_id(&data),
         OutputFormat::Pretty => print_industry_peers(&data),
     }
     Ok(())
