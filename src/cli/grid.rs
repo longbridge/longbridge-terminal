@@ -149,7 +149,9 @@ fn parse_expire(s: &str) -> Result<i64> {
 fn print_mutation(format: &OutputFormat, json: &serde_json::Value, human: &str) {
     match format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(json).unwrap_or_default());
+            let mut v = json.clone();
+            super::output::strip_counter_ids(&mut v);
+            println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
         }
         OutputFormat::Pretty => println!("{human}"),
     }
@@ -319,10 +321,11 @@ async fn cmd_by_ids(ids: Vec<String>, format: &OutputFormat) -> Result<()> {
 
 fn render_orders(orders: &[longbridge::grid::GridOrder], format: &OutputFormat) {
     match format {
-        OutputFormat::Json => println!(
-            "{}",
-            serde_json::to_string_pretty(orders).unwrap_or_default()
-        ),
+        OutputFormat::Json => {
+            let mut v = serde_json::to_value(orders).unwrap_or_default();
+            super::output::strip_counter_ids(&mut v);
+            println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
+        }
         OutputFormat::Pretty => {
             if orders.is_empty() {
                 println!("No grid orders found.");

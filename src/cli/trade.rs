@@ -1757,7 +1757,9 @@ fn val_str(v: &serde_json::Value) -> String {
 }
 
 fn print_json_value(data: &serde_json::Value) {
-    println!("{}", serde_json::to_string_pretty(data).unwrap_or_default());
+    let mut v = data.clone();
+    super::output::strip_counter_ids(&mut v);
+    println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
 }
 
 pub async fn cmd_alert_list(
@@ -2062,7 +2064,9 @@ pub async fn cmd_positions(format: &OutputFormat) -> Result<()> {
 }
 
 fn print_json_us(data: &serde_json::Value) {
-    println!("{}", serde_json::to_string_pretty(data).unwrap_or_default());
+    let mut v = data.clone();
+    super::output::strip_counter_ids(&mut v);
+    println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
 }
 
 async fn cmd_us_positions(format: &OutputFormat) -> Result<()> {

@@ -38,7 +38,9 @@ async fn cmd_list(count: u32, format: &OutputFormat) -> Result<()> {
 
     match format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&resp)?);
+            let mut v = serde_json::to_value(&resp)?;
+            super::output::strip_counter_ids(&mut v);
+            println!("{}", serde_json::to_string_pretty(&v)?);
         }
         OutputFormat::Pretty => {
             let sharelists = resp["sharelists"].as_array().cloned().unwrap_or_default();
@@ -86,7 +88,9 @@ async fn cmd_detail(id: String, format: &OutputFormat) -> Result<()> {
 
     match format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&resp)?);
+            let mut v = serde_json::to_value(&resp)?;
+            super::output::strip_counter_ids(&mut v);
+            println!("{}", serde_json::to_string_pretty(&v)?);
         }
         OutputFormat::Pretty => {
             let sl = &resp["sharelist"];
@@ -223,7 +227,9 @@ async fn cmd_popular(count: u32, format: &OutputFormat) -> Result<()> {
 
     match format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&sharelists)?);
+            let mut v = serde_json::to_value(&sharelists)?;
+            super::output::strip_counter_ids(&mut v);
+            println!("{}", serde_json::to_string_pretty(&v)?);
         }
         OutputFormat::Pretty => {
             if sharelists.is_empty() {

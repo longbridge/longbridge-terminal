@@ -6,7 +6,6 @@ use unicode_width::UnicodeWidthStr;
 
 use super::OutputFormat;
 
-use crate::utils::counter::counter_id_to_symbol;
 use crate::utils::datetime::format_date;
 use crate::utils::number::format_financial_value;
 use crate::utils::text::strip_html;
@@ -145,42 +144,9 @@ async fn http_get_dc(
 }
 
 fn print_json(value: &Value) {
-    println!(
-        "{}",
-        serde_json::to_string_pretty(value).unwrap_or_default()
-    );
-}
-
-/// Recursively drop `counter_id` fields for JSON output, preserving the sibling
-/// `symbol` field (deriving it from the `counter_id` when absent) and dropping
-/// `leading_counter_id` outright — the leader is already identified by the
-/// `leading_ticker` field — so no `counter_id` strings leak.
-fn strip_counter_ids(v: &mut Value) {
-    match v {
-        Value::Object(map) => {
-            if let Some(cid) = map.remove("counter_id") {
-                map.entry("symbol").or_insert_with(|| {
-                    Value::String(cid.as_str().map(counter_id_to_symbol).unwrap_or_default())
-                });
-            }
-            map.remove("leading_counter_id");
-            for val in map.values_mut() {
-                strip_counter_ids(val);
-            }
-        }
-        Value::Array(arr) => {
-            for val in arr.iter_mut() {
-                strip_counter_ids(val);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn print_json_no_counter_id(data: &Value) {
-    let mut v = data.clone();
-    strip_counter_ids(&mut v);
-    print_json(&v);
+    let mut v = value.clone();
+    super::output::strip_counter_ids(&mut v);
+    println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
 }
 
 /// Print a JSON value as a human-readable table.
@@ -3551,7 +3517,7 @@ pub async fn cmd_industry_rank(
     )
     .await?;
     match format {
-        OutputFormat::Json => print_json_no_counter_id(&data),
+        OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => print_industry_rank(&data),
     }
     Ok(())
@@ -3629,25 +3595,6 @@ fn print_industry_rank(data: &Value) {
 
 // ── compare ────────────────────────────────────────────────────────────────────
 
-/// Temporary CSV-free `symbol → counter_id` shim, mirroring the SDK's
-/// `valuation_comparison` workaround. Used only by [`cmd_compare`] below while
-/// the gateway does not accept `comparison_symbols` (user symbols). Leading-dot
-/// indexes map to `IX/`, everything else to `ST/`. Remove once the gateway
-/// accepts `comparison_symbols` and pass the user symbols straight through.
-fn compare_peer_counter_id(symbol: &str) -> String {
-    match symbol.rsplit_once('.') {
-        Some((code, market)) => {
-            let market = market.to_uppercase();
-            if let Some(rest) = code.strip_prefix('.') {
-                format!("IX/{market}/{rest}")
-            } else {
-                format!("ST/{market}/{code}")
-            }
-        }
-        None => symbol.to_string(),
-    }
-}
-
 pub async fn cmd_compare(
     base: &str,
     others: &[String],
@@ -3655,15 +3602,12 @@ pub async fn cmd_compare(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    // The gateway does not yet accept `comparison_symbols` (user symbols). Mirror
-    // the SDK's `valuation_comparison` shim: the base goes through as `symbol`,
-    // but the peer list is converted to counter_ids and sent as
-    // `comparison_counter_ids`. Drop this once the gateway accepts symbols.
-    let comp_cids: Vec<String> = others.iter().map(|s| compare_peer_counter_id(s)).collect();
-    let comp_json = serde_json::to_string(&comp_cids).unwrap_or_default();
+    // Peers are sent as repeated `comparison_symbols` query params (the gateway's
+    // symbol2CounterID rule converts them server-side); the base goes through as
+    // `symbol`.
     let mut params: Vec<(&str, &str)> = vec![("symbol", base), ("currency", currency)];
-    if !others.is_empty() {
-        params.push(("comparison_counter_ids", comp_json.as_str()));
+    for peer in others {
+        params.push(("comparison_symbols", peer.as_str()));
     }
     let data = http_get("/v1/quote/compare/valuation", &params, verbose).await?;
     match format {
@@ -3775,7 +3719,7 @@ pub async fn cmd_industry_peers(
     )
     .await?;
     match format {
-        OutputFormat::Json => print_json_no_counter_id(&data),
+        OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => print_industry_peers(&data),
     }
     Ok(())

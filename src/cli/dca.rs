@@ -115,7 +115,9 @@ async fn cmd_list(
 
     match format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&plans)?);
+            let mut v = serde_json::to_value(&plans)?;
+            super::output::strip_counter_ids(&mut v);
+            println!("{}", serde_json::to_string_pretty(&v)?);
         }
         OutputFormat::Pretty => {
             if plans.is_empty() {
@@ -291,7 +293,9 @@ async fn cmd_records(plan_id: String, page: u32, limit: u32, format: &OutputForm
 
     match format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&records)?);
+            let mut v = serde_json::to_value(&records)?;
+            super::output::strip_counter_ids(&mut v);
+            println!("{}", serde_json::to_string_pretty(&v)?);
         }
         OutputFormat::Pretty => {
             if records.is_empty() {
@@ -346,7 +350,9 @@ async fn cmd_stats(symbol: Option<&str>, format: &OutputFormat) -> Result<()> {
 
     match format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&resp)?);
+            let mut v = serde_json::to_value(&resp)?;
+            super::output::strip_counter_ids(&mut v);
+            println!("{}", serde_json::to_string_pretty(&v)?);
         }
         OutputFormat::Pretty => {
             print_json_value(
@@ -409,7 +415,9 @@ async fn cmd_calc_date(
 
     match format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&resp)?);
+            let mut v = serde_json::to_value(&resp)?;
+            super::output::strip_counter_ids(&mut v);
+            println!("{}", serde_json::to_string_pretty(&v)?);
         }
         OutputFormat::Pretty => {
             let trade_date = resp["trade_date"].as_str().unwrap_or("-");

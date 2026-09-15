@@ -17,6 +17,39 @@ pub fn item_symbol(item: &Value) -> String {
     }
 }
 
+/// Recursively normalize a response for JSON output so no `counter_id` string
+/// leaks: for every object, ensure a `symbol` field (prefer an existing one,
+/// otherwise derive it from `counter_id`) then drop `counter_id`, and drop
+/// `leading_counter_id` outright (the leader is already named by
+/// `leading_ticker`). The gateway's `counterID2Symbol` rule adds `symbol` but
+/// leaves `counter_id` in place, so this makes CLI JSON consistently
+/// symbol-only across every command.
+pub fn strip_counter_ids(v: &mut Value) {
+    match v {
+        Value::Object(map) => {
+            if let Some(cid) = map.remove("counter_id") {
+                map.entry("symbol").or_insert_with(|| {
+                    Value::String(
+                        cid.as_str()
+                            .map(crate::utils::counter::counter_id_to_symbol)
+                            .unwrap_or_default(),
+                    )
+                });
+            }
+            map.remove("leading_counter_id");
+            for val in map.values_mut() {
+                strip_counter_ids(val);
+            }
+        }
+        Value::Array(arr) => {
+            for val in arr.iter_mut() {
+                strip_counter_ids(val);
+            }
+        }
+        _ => {}
+    }
+}
+
 // ANSI colors for the account-type banner.
 const GREEN: &str = "\x1b[32m";
 const YELLOW: &str = "\x1b[33m";
@@ -97,10 +130,9 @@ pub fn print_table(headers: &[&str], rows: Vec<Vec<String>>, format: &OutputForm
 pub fn print_json_value(value: &serde_json::Value, format: &OutputFormat) {
     match format {
         OutputFormat::Json => {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(value).unwrap_or_default()
-            );
+            let mut v = value.clone();
+            strip_counter_ids(&mut v);
+            println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
         }
         OutputFormat::Pretty => {
             if let serde_json::Value::Object(map) = value {

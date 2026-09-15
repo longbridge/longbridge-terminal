@@ -2233,37 +2233,8 @@ fn val_str(v: &Value) -> String {
 }
 
 fn print_json(data: &Value) {
-    println!("{}", serde_json::to_string_pretty(data).unwrap_or_default());
-}
-
-/// Recursively replace every `"counter_id"` key in a JSON value with
-/// `"symbol"`, converting the value via `counter_id_to_symbol`.
-fn replace_counter_ids(v: &mut Value) {
-    match v {
-        Value::Object(map) => {
-            if let Some(cid) = map.remove("counter_id") {
-                let sym = cid
-                    .as_str()
-                    .map(crate::utils::counter::counter_id_to_symbol)
-                    .unwrap_or_default();
-                map.insert("symbol".to_string(), Value::String(sym));
-            }
-            for val in map.values_mut() {
-                replace_counter_ids(val);
-            }
-        }
-        Value::Array(arr) => {
-            for val in arr.iter_mut() {
-                replace_counter_ids(val);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn print_json_with_symbols(data: &Value) {
     let mut v = data.clone();
-    replace_counter_ids(&mut v);
+    super::output::strip_counter_ids(&mut v);
     println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
 }
 
@@ -3005,7 +2976,7 @@ pub async fn cmd_short_positions(
     )
     .await?;
     match format {
-        OutputFormat::Json => print_json_with_symbols(&data),
+        OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => {
             let mut items = match data.get("data").and_then(|v| v.as_array()) {
                 Some(a) if !a.is_empty() => a.clone(),
@@ -3178,7 +3149,7 @@ pub async fn cmd_top_movers(
     });
     let data = http_post("/v1/quote/market/stock-events", body, verbose).await?;
     match format {
-        OutputFormat::Json => print_json_with_symbols(&data),
+        OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => {
             if let Some(ts) = data.get("updated_at").and_then(serde_json::Value::as_i64) {
                 println!("Updated: {}\n", fmt_ts(&ts.to_string()));
@@ -3336,7 +3307,7 @@ pub async fn cmd_rank(
             )
             .await?;
             match format {
-                OutputFormat::Json => print_json_with_symbols(&data),
+                OutputFormat::Json => print_json(&data),
                 OutputFormat::Pretty => {
                     let lists = match data.get("lists").and_then(|v| v.as_array()) {
                         Some(a) if !a.is_empty() => a,

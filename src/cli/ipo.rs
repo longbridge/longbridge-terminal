@@ -7,10 +7,9 @@ use super::OutputFormat;
 use crate::utils::counter::counter_id_to_symbol;
 
 fn print_json(value: &Value) {
-    println!(
-        "{}",
-        serde_json::to_string_pretty(value).unwrap_or_default()
-    );
+    let mut v = value.clone();
+    super::output::strip_counter_ids(&mut v);
+    println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
 }
 
 fn optional_detail_result(result: Result<Value>, endpoint: &str, verbose: bool) -> Value {
