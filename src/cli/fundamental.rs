@@ -3609,6 +3609,12 @@ pub async fn cmd_compare(
     for peer in others {
         params.push(("comparison_symbols", peer.as_str()));
     }
+    // The gateway only treats `comparison_symbols` as a list when 2+ repeated
+    // keys are present; a lone peer is dropped. Duplicate it so single-peer
+    // compare still returns the peer (the response de-duplicates).
+    if others.len() == 1 {
+        params.push(("comparison_symbols", others[0].as_str()));
+    }
     let data = http_get("/v1/quote/compare/valuation", &params, verbose).await?;
     match format {
         OutputFormat::Json => print_json(&data),
