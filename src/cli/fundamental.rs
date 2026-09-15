@@ -152,9 +152,9 @@ fn print_json(value: &Value) {
 }
 
 /// Recursively drop `counter_id` fields for JSON output, preserving the sibling
-/// `symbol` field (deriving it from the `counter_id` when absent) and rewriting
-/// `leading_counter_id` to `leading_symbol`, so no `counter_id` strings leak
-/// while the leader's market suffix is retained.
+/// `symbol` field (deriving it from the `counter_id` when absent) and dropping
+/// `leading_counter_id` outright — the leader is already identified by the
+/// `leading_ticker` field — so no `counter_id` strings leak.
 fn strip_counter_ids(v: &mut Value) {
     match v {
         Value::Object(map) => {
@@ -163,10 +163,7 @@ fn strip_counter_ids(v: &mut Value) {
                     Value::String(cid.as_str().map(counter_id_to_symbol).unwrap_or_default())
                 });
             }
-            if let Some(lcid) = map.remove("leading_counter_id") {
-                let sym = lcid.as_str().map(counter_id_to_symbol).unwrap_or_default();
-                map.insert("leading_symbol".to_string(), Value::String(sym));
-            }
+            map.remove("leading_counter_id");
             for val in map.values_mut() {
                 strip_counter_ids(val);
             }
