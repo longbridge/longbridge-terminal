@@ -2369,12 +2369,11 @@ pub async fn cmd_constituent(
         // No allocation data available — fall through to index-constituents.
     }
 
-    let cid = crate::utils::counter::index_symbol_to_counter_id(&symbol);
     let limit_str = limit.to_string();
     let data = http_get(
         "/v1/quote/index-constituents",
         &[
-            ("counter_id", cid.as_str()),
+            ("symbol", symbol.as_str()),
             ("offset", "0"),
             ("limit", limit_str.as_str()),
             ("indicator", sort.as_indicator()),

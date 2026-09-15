@@ -5,9 +5,9 @@
 //! user-facing symbols directly to the backend on every request. The helpers
 //! that remain here do **not** depend on the deleted tables:
 //!
-//! * [`counter_id_to_symbol`] and [`index_symbol_to_counter_id`] are pure
-//!   string transforms over the `counter_id` the backend still returns (in
-//!   responses) and still accepts (for the index-constituents endpoint).
+//! * [`counter_id_to_symbol`] is a pure string transform over the `counter_id`
+//!   the backend still includes in responses (its symbol-conversion rules add a
+//!   `symbol` field but leave the original `counter_id` in place).
 //! * [`is_etf`] classifies a symbol by resolving it through the backend
 //!   `POST /v1/quote/symbol-to-counter-ids` endpoint instead of a local table.
 
@@ -25,19 +25,6 @@ pub fn counter_id_to_symbol(counter_id: &str) -> String {
         format!("{code}.{market}")
     } else {
         counter_id.to_string()
-    }
-}
-
-/// Convert an index symbol (e.g. `HSI.HK`, `.DJI.US`) to a `counter_id`
-/// (e.g. `IX/HK/HSI`, `IX/US/.DJI`), always using the `IX/` prefix.
-///
-/// Pure string transform — the index-constituents endpoint still keys on
-/// `counter_id`.
-pub fn index_symbol_to_counter_id(symbol: &str) -> String {
-    if let Some((code, market)) = symbol.rsplit_once('.') {
-        format!("IX/{}/{code}", market.to_uppercase())
-    } else {
-        symbol.to_string()
     }
 }
 
