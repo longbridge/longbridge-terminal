@@ -2411,7 +2411,7 @@ pub async fn cmd_constituent(
                 .iter()
                 .map(|item| {
                     vec![
-                        crate::utils::counter::counter_id_to_symbol(&val_str(&item["counter_id"])),
+                        super::output::item_symbol(item),
                         val_str(&item["name"]),
                         val_str(&item["last_done"]),
                         val_str(&item["prev_close"]),
@@ -2849,7 +2849,7 @@ pub async fn cmd_anomaly(
                     };
                     vec![
                         val_str(&item["alert_time"]),
-                        crate::utils::counter::counter_id_to_symbol(&val_str(&item["counter_id"])),
+                        super::output::item_symbol(item),
                         val_str(&item["name"]),
                         val_str(&item["alert_name"]),
                         emotion.to_string(),
@@ -3360,9 +3360,7 @@ pub async fn cmd_rank(
                         .iter()
                         .enumerate()
                         .map(|(i, s)| {
-                            let sym = crate::utils::counter::counter_id_to_symbol(&val_str(
-                                &s["counter_id"],
-                            ));
+                            let sym = super::output::item_symbol(s);
                             vec![
                                 (i + 1).to_string(),
                                 sym,

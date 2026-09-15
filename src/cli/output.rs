@@ -1,6 +1,21 @@
+use serde_json::Value;
 use tabled::{builder::Builder, settings::Style};
 
 use super::OutputFormat;
+
+/// Resolve a security symbol from a gateway response object: prefer the
+/// `symbol` field, falling back to converting `counter_id` for the few
+/// endpoints whose response is not yet symbol-normalized by the gateway.
+pub fn item_symbol(item: &Value) -> String {
+    match item.get("symbol").and_then(Value::as_str) {
+        Some(s) if !s.is_empty() && s != "-" => s.to_string(),
+        _ => crate::utils::counter::counter_id_to_symbol(
+            item.get("counter_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        ),
+    }
+}
 
 // ANSI colors for the account-type banner.
 const GREEN: &str = "\x1b[32m";

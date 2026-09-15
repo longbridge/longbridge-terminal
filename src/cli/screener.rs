@@ -299,8 +299,7 @@ async fn print_screener_results(
             let rows: Vec<Vec<String>> = stocks
                 .iter()
                 .map(|s| {
-                    let sym =
-                        crate::utils::counter::counter_id_to_symbol(&val_str(&s["counter_id"]));
+                    let sym = super::output::item_symbol(s);
                     let mut row = vec![sym, val_str(&s["name"])];
                     if let Some(indicators) = s["indicators"].as_array() {
                         row.extend(indicators.iter().map(|ind| {
@@ -327,8 +326,7 @@ async fn print_screener_results(
             let items: Vec<serde_json::Value> = stocks
                 .iter()
                 .map(|s| {
-                    let sym =
-                        crate::utils::counter::counter_id_to_symbol(&val_str(&s["counter_id"]));
+                    let sym = super::output::item_symbol(s);
                     let mut map = serde_json::Map::new();
                     map.insert("symbol".to_string(), serde_json::Value::String(sym));
                     map.insert(

@@ -1418,7 +1418,7 @@ fn print_fund_holders(data: &Value) {
     let rows: Vec<Vec<String>> = items
         .iter()
         .map(|item| {
-            let symbol = counter_id_to_symbol(&val_str(&item["counter_id"]));
+            let symbol = super::output::item_symbol(item);
             let weight_raw = val_str(&item["position_ratio"]);
             let weight = weight_raw
                 .parse::<f64>()
@@ -1470,10 +1470,7 @@ fn print_shareholders(data: &Value, limit: usize) {
             let symbol = item["stocks"]
                 .as_array()
                 .and_then(|s| s.first())
-                .map_or_else(
-                    || "-".to_string(),
-                    |s| counter_id_to_symbol(&val_str(&s["counter_id"])),
-                );
+                .map_or_else(|| "-".to_string(), super::output::item_symbol);
 
             let pct_raw = val_str(&item["percent_of_shares"]);
             let pct = pct_raw
@@ -1815,7 +1812,7 @@ fn print_finance_calendar(payload: &Value) {
             let type_label = finance_calendar_type_label(event_type);
             let content = val_str(&info["content"]);
             let name = val_str(&info["counter_name"]);
-            let symbol = counter_id_to_symbol(info["counter_id"].as_str().unwrap_or(""));
+            let symbol = super::output::item_symbol(info);
             let market = val_str(&info["market"]);
             let date_type = val_str(&info["date_type"]);
             let star = info["star"].as_u64().unwrap_or(0);
@@ -2422,7 +2419,7 @@ pub async fn cmd_industry_valuation(
                         &item_cur
                     };
                     vec![
-                        counter_id_to_symbol(&val_str(&item["counter_id"])),
+                        super::output::item_symbol(item),
                         val_str(&item["name"]),
                         fmt_amount(&val_str(&item["market_value"]), c),
                         format!("{c}{}", val_str(&item["price_close"])),
@@ -2802,12 +2799,7 @@ fn print_invest_relation(data: &Value) {
     let rows: Vec<Vec<String>> = items
         .iter()
         .map(|item| {
-            let sym = val_str(&item["counter_id"]);
-            let display_sym = if sym.is_empty() || sym == "-" {
-                "-".to_string()
-            } else {
-                counter_id_to_symbol(&sym)
-            };
+            let display_sym = super::output::item_symbol(item);
             let raw_val = val_str(&item["shares_value"]);
             let cur = val_str(&item["currency"]);
             vec![

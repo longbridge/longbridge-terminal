@@ -8,7 +8,6 @@ use super::{
     output::{fmt_dec, print_table},
     OutputFormat, SharelistCmd,
 };
-use crate::utils::counter::counter_id_to_symbol;
 
 pub async fn cmd_sharelist(
     cmd: Option<SharelistCmd>,
@@ -121,8 +120,8 @@ async fn cmd_detail(id: String, format: &OutputFormat) -> Result<()> {
             if !stocks.is_empty() {
                 let symbols: Vec<String> = stocks
                     .iter()
-                    .filter_map(|s| s["counter_id"].as_str())
-                    .map(counter_id_to_symbol)
+                    .map(super::output::item_symbol)
+                    .filter(|s| !s.is_empty())
                     .collect();
 
                 let quote_map: HashMap<String, (String, String)> = {
@@ -150,9 +149,7 @@ async fn cmd_detail(id: String, format: &OutputFormat) -> Result<()> {
                 let rows: Vec<Vec<String>> = stocks
                     .iter()
                     .map(|s| {
-                        let symbol = s["counter_id"]
-                            .as_str()
-                            .map_or_else(|| "-".to_string(), counter_id_to_symbol);
+                        let symbol = super::output::item_symbol(s);
                         let (price, chg) = quote_map
                             .get(&symbol)
                             .cloned()

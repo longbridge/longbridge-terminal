@@ -324,7 +324,7 @@ pub async fn cmd_ipo_subscriptions(format: &OutputFormat, verbose: bool) -> Resu
                             let max_lev = extract_tag(tags, "杠杆");
                             vec![
                                 val_str(&item["name"]),
-                                counter_id_to_symbol(&val_str(&item["counter_id"])),
+                                super::output::item_symbol(item),
                                 val_str(&item["currency"]),
                                 val_str(&item["entrance_fee"]),
                                 val_str(&item["rate_forcast"]),
@@ -360,7 +360,7 @@ pub async fn cmd_ipo_subscriptions(format: &OutputFormat, verbose: bool) -> Resu
                             let stage = state_stage_label(&item["state_stage"]).to_string();
                             vec![
                                 val_str(&item["name"]),
-                                counter_id_to_symbol(&val_str(&item["counter_id"])),
+                                super::output::item_symbol(item),
                                 val_str(&item["currency"]),
                                 val_str(&item["issue_price"]),
                                 fmt_ts(&item["sub_deadline"]),
@@ -403,7 +403,7 @@ pub async fn cmd_ipo_wait_listing(format: &OutputFormat, verbose: bool) -> Resul
     let wait_list_row = |item: &Value| -> Vec<String> {
         vec![
             val_str(&item["name"]),
-            counter_id_to_symbol(&val_str(&item["counter_id"])),
+            super::output::item_symbol(item),
             val_str(&item["issue_price"]),
             fmt_date_opt(&item["ipo_date"]),
             state_stage_label(&item["state_stage"]).to_string(),
@@ -460,7 +460,7 @@ fn hk_listed_row(item: &Value) -> Vec<String> {
     );
     vec![
         val_str(&item["name"]),
-        counter_id_to_symbol(&val_str(&item["counter_id"])),
+        super::output::item_symbol(item),
         val_str(&item["issue_price"]),
         val_str(&item["last_done"]),
         val_str(&item["prev_close"]),
@@ -478,7 +478,7 @@ fn us_listed_row(item: &Value) -> Vec<String> {
     );
     vec![
         val_str(&item["name"]),
-        counter_id_to_symbol(&val_str(&item["counter_id"])),
+        super::output::item_symbol(item),
         val_str(&item["issue_price"]),
         val_str(&item["last_done"]),
         val_str(&item["prev_close"]),
@@ -601,7 +601,7 @@ fn flatten_ipo_calendar(data: &Value) -> Vec<Value> {
             let mut obj = Map::new();
             obj.insert(
                 "symbol".to_string(),
-                Value::String(counter_id_to_symbol(&val_str(&info["counter_id"]))),
+                Value::String(super::output::item_symbol(info)),
             );
             obj.insert(
                 "name".to_string(),
@@ -1103,10 +1103,7 @@ pub async fn cmd_ipo_order_detail(
             let kv = |label: &str, value: &str| {
                 println!("{:<24}{value}", format!("{label}:"));
             };
-            kv(
-                "Symbol",
-                &counter_id_to_symbol(&val_str(&data["counter_id"])),
-            );
+            kv("Symbol", &super::output::item_symbol(&data));
             kv("Name", &val_str(&data["name"]));
             kv("Market", &val_str(&data["market"]));
             let ipo_date = fmt_date_opt(&data["ipo_date"]);
@@ -1242,7 +1239,7 @@ pub async fn cmd_ipo_profit_loss(
                         .iter()
                         .map(|item| {
                             vec![
-                                counter_id_to_symbol(&val_str(&item["counter_id"])),
+                                super::output::item_symbol(item),
                                 val_str(&item["name"]),
                                 val_str(&item["qty"]),
                                 val_str(&item["cost_price"]),
@@ -1295,7 +1292,7 @@ pub async fn cmd_ipo_us_subscriptions(format: &OutputFormat, verbose: bool) -> R
                         let stage = state_stage_label(&item["state_stage"]).to_string();
                         vec![
                             val_str(&item["name"]),
-                            counter_id_to_symbol(&val_str(&item["counter_id"])),
+                            super::output::item_symbol(item),
                             val_str(&item["currency"]),
                             val_str(&item["issue_price"]),
                             fmt_ts(&item["sub_deadline"]),
@@ -1336,7 +1333,7 @@ pub async fn cmd_ipo_us_wait_listing(format: &OutputFormat, verbose: bool) -> Re
                     .map(|item| {
                         vec![
                             val_str(&item["name"]),
-                            counter_id_to_symbol(&val_str(&item["counter_id"])),
+                            super::output::item_symbol(item),
                             val_str(&item["issue_price"]),
                             fmt_date_opt(&item["ipo_date"]),
                             state_stage_label(&item["state_stage"]).to_string(),

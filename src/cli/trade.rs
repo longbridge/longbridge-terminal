@@ -1787,8 +1787,7 @@ pub async fn cmd_alert_list(
             let headers = ["id", "symbol", "price", "alert", "enabled", "frequency"];
             let mut rows: Vec<Vec<String>> = Vec::new();
             for stock in stocks {
-                let sym =
-                    crate::utils::counter::counter_id_to_symbol(&val_str(&stock["counter_id"]));
+                let sym = super::output::item_symbol(stock);
                 let price = val_str(&stock["price"]);
                 let Some(indicators) = stock.get("indicators").and_then(|v| v.as_array()) else {
                     continue;
