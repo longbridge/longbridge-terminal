@@ -2902,25 +2902,25 @@ pub async fn cmd_financial_statement(
 ) -> Result<()> {
     let kind_upper = kind.to_uppercase();
     let report_lower = report.to_lowercase();
+    // Neither the US SDK nor the REST endpoint has an all-statements mode, so a
+    // kind outside IS/BS/CF just returns an empty list. Reject it up front with a
+    // clear message instead of silently printing nothing.
+    if !matches!(kind_upper.as_str(), "IS" | "BS" | "CF") {
+        anyhow::bail!("Invalid --kind '{kind}': expected IS, BS, or CF");
+    }
     let mut data = if crate::openapi::is_us_account().await {
-        // The SDK now takes a typed `FinancialStatementKind` (IS/BS/CF only).
-        // The US endpoint has no all-statements mode and returns an empty list
-        // for ALL/unknown kinds, so preserve that by short-circuiting to empty.
+        // The SDK takes a typed `FinancialStatementKind`; kind is validated above.
         use longbridge::fundamental::FinancialStatementKind;
         let sdk_kind = match kind_upper.as_str() {
-            "IS" => Some(FinancialStatementKind::IncomeStatement),
-            "BS" => Some(FinancialStatementKind::BalanceSheet),
-            "CF" => Some(FinancialStatementKind::CashFlow),
-            _ => None,
+            "IS" => FinancialStatementKind::IncomeStatement,
+            "BS" => FinancialStatementKind::BalanceSheet,
+            _ => FinancialStatementKind::CashFlow,
         };
-        match sdk_kind {
-            Some(k) => to_value(
-                crate::openapi::fundamental()
-                    .us_financial_statement(symbol.clone(), k, report_lower.as_str())
-                    .await?,
-            )?,
-            None => serde_json::json!({ "list": [] }),
-        }
+        to_value(
+            crate::openapi::fundamental()
+                .us_financial_statement(symbol.clone(), sdk_kind, report_lower.as_str())
+                .await?,
+        )?
     } else {
         http_get(
             "/v1/quote/financials/statements",

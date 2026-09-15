@@ -1552,7 +1552,7 @@ pub enum Commands {
     FinancialStatement {
         /// Symbol in <CODE>.<MARKET> format
         symbol: String,
-        /// Statement type: IS (income), BS (balance sheet), CF (cash flow), ALL
+        /// Statement type: IS (income), BS (balance sheet), CF (cash flow)
         #[arg(long, value_name = "TYPE", default_value = "IS")]
         kind: String,
         /// Report period: af (annual), saf (semi-annual), qf (quarterly), cumul (cumulative)

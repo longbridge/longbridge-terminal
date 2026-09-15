@@ -44,19 +44,33 @@ pub fn index_symbol_to_counter_id(symbol: &str) -> String {
 /// Whether `symbol` resolves to an ETF, per the backend `counter_id` directory.
 ///
 /// Resolves the symbol via `POST /v1/quote/symbol-to-counter-ids` and checks
-/// whether the returned `counter_id` carries the `ETF/` prefix. Returns `false`
-/// when the backend does not recognize the symbol or the request fails, so
-/// callers fall back to the stock / index path.
+/// whether the returned `counter_id` carries the `ETF/` prefix. A successful
+/// response is authoritative (unknown symbol → `false`). The classification
+/// drives a branch (ETF vs stock / index path), so a *transient* request
+/// failure must not silently misroute a genuine ETF: retry a few times with a
+/// short backoff before falling back to `false`.
 pub async fn is_etf(symbol: &str, verbose: bool) -> bool {
     let body = json!({ "ticker_regions": [symbol] });
-    crate::cli::api::http_post("/v1/quote/symbol-to-counter-ids", body, verbose)
-        .await
-        .ok()
-        .and_then(|v| {
-            v.get("list")
-                .and_then(|list| list.get(symbol))
-                .and_then(|cid| cid.as_str())
-                .map(|cid| cid.starts_with("ETF/"))
-        })
-        .unwrap_or(false)
+    for attempt in 0..3 {
+        match crate::cli::api::http_post("/v1/quote/symbol-to-counter-ids", body.clone(), verbose)
+            .await
+        {
+            Ok(v) => {
+                return v
+                    .get("list")
+                    .and_then(|list| list.get(symbol))
+                    .and_then(|cid| cid.as_str())
+                    .is_some_and(|cid| cid.starts_with("ETF/"));
+            }
+            Err(e) => {
+                if verbose {
+                    eprintln!("  is_etf probe attempt {} failed: {e}", attempt + 1);
+                }
+                if attempt < 2 {
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                }
+            }
+        }
+    }
+    false
 }
