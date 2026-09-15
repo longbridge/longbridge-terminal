@@ -529,8 +529,8 @@ pub enum Commands {
 
     /// Industry ranking list by market and indicator
     ///
-    /// Returns a ranked list of industries. The "Counter ID" column contains BK
-    /// `counter_ids` (e.g. BK/US/IN00258) that can be passed directly to `industry-peers`
+    /// Returns a ranked list of industries. The "Symbol" column contains industry
+    /// symbols (e.g. IN00258.US) that can be passed directly to `industry-peers`
     /// to explore the sub-sector hierarchy for that industry.
     ///
     /// Example: longbridge industry-rank --market US
@@ -551,17 +551,17 @@ pub enum Commands {
         count: u32,
     },
 
-    /// Industry peer group tree for a BK `counter_id`
+    /// Industry peer group tree for an industry symbol
     ///
     /// Returns the hierarchical sub-sector tree for an industry group, with stock
     /// count, daily change, and YTD change at each level.
     ///
-    /// Use `industry-rank` to discover industry Counter IDs, then pass one here.
+    /// Use `industry-rank` to discover industry symbols, then pass one here.
     ///
-    /// Example: longbridge industry-peers BK/US/IN00258
-    /// Example: longbridge industry-peers BK/HK/IN20337
+    /// Example: longbridge industry-peers IN00258.US
+    /// Example: longbridge industry-peers IN20337.HK
     IndustryPeers {
-        /// BK `counter_id` from `industry-rank`, e.g. BK/US/IN00258
+        /// Industry symbol from `industry-rank`, e.g. IN00258.US
         symbol: String,
         /// Market override (default: inferred from symbol suffix)
         #[arg(long)]

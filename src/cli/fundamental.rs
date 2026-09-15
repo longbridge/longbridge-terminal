@@ -3552,7 +3552,7 @@ fn print_industry_rank(data: &Value) {
 
     let mut headers = vec![
         "Industry",
-        "Counter ID",
+        "Symbol",
         "Chg%",
         "Leading Stock",
         "Leading Chg%",
@@ -3565,7 +3565,7 @@ fn print_industry_rank(data: &Value) {
         .iter()
         .map(|sub| {
             let name = val_str(&sub["name"]);
-            let sym = val_str(&sub["counter_id"]);
+            let sym = val_str(&sub["symbol"]);
             let chg = val_str(&sub["chg"]);
             let chg_display = if !chg.is_empty() && chg != "-" {
                 fmt_rate(&chg)
@@ -3770,7 +3770,7 @@ fn print_industry_peers(data: &Value) {
     }
     let name = val_str(&chain["name"]);
     let stock_num = chain["stock_num"].as_u64().unwrap_or(0);
-    let cid = val_str(&chain["counter_id"]);
+    let cid = val_str(&chain["symbol"]);
     let cid_part = if cid.is_empty() {
         String::new()
     } else {
@@ -3818,7 +3818,7 @@ fn print_industry_peers_node(node: &Value, prefix: &str, is_last: bool) {
     let extension = if is_last { "    " } else { "│   " };
     let name = val_str(&node["name"]);
     let stock_num = node["stock_num"].as_u64().unwrap_or(0);
-    let cid = val_str(&node["counter_id"]);
+    let cid = val_str(&node["symbol"]);
     let cid_part = if cid.is_empty() {
         String::new()
     } else {
