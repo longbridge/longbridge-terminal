@@ -5,7 +5,6 @@ use super::{
     output::{parse_datetime_end, parse_datetime_start, print_json_value},
     quant_render, OutputFormat,
 };
-use crate::utils::counter::symbol_to_counter_id;
 
 /// Map CLI period string to the numeric `line_type` expected by the API.
 fn period_to_line_type(period: &str) -> Result<i32> {
@@ -44,7 +43,6 @@ pub async fn cmd_run_script(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let counter_id = symbol_to_counter_id(&symbol);
     let line_type = period_to_line_type(period)?;
     let language = language_to_code(language);
 
@@ -83,7 +81,7 @@ pub async fn cmd_run_script(
 
     let exclude_chart = matches!(format, OutputFormat::Json);
     let body = serde_json::json!({
-        "counter_id": counter_id,
+        "symbol": symbol,
         "start_time": start_time,
         "end_time": end_time,
         "script": script,
@@ -94,7 +92,7 @@ pub async fn cmd_run_script(
     });
 
     if verbose {
-        eprintln!("* counter_id: {counter_id}");
+        eprintln!("* symbol: {symbol}");
         eprintln!("* line_type: {line_type}");
         eprintln!("* start_time: {start_time}  end_time: {end_time}");
     }

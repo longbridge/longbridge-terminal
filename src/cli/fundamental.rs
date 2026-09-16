@@ -6,7 +6,6 @@ use unicode_width::UnicodeWidthStr;
 
 use super::OutputFormat;
 
-use crate::utils::counter::{counter_id_to_symbol, symbol_to_counter_id};
 use crate::utils::datetime::format_date;
 use crate::utils::number::format_financial_value;
 use crate::utils::text::strip_html;
@@ -145,10 +144,9 @@ async fn http_get_dc(
 }
 
 fn print_json(value: &Value) {
-    println!(
-        "{}",
-        serde_json::to_string_pretty(value).unwrap_or_default()
-    );
+    let mut v = value.clone();
+    super::output::strip_counter_ids(&mut v);
+    println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
 }
 
 /// Print a JSON value as a human-readable table.
@@ -391,7 +389,6 @@ pub async fn cmd_financial_report(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     // US accounts always use finn-overview; --kind is only valid for HK/CN.
     if crate::openapi::is_us_account().await {
         if !kind.is_empty() {
@@ -415,7 +412,7 @@ pub async fn cmd_financial_report(
     } else {
         kind.as_str()
     };
-    let mut params: Vec<(&str, &str)> = vec![("counter_id", cid.as_str()), ("kind", kind_param)];
+    let mut params: Vec<(&str, &str)> = vec![("symbol", symbol.as_str()), ("kind", kind_param)];
     if let Some(ref r) = report {
         params.push(("report", r.as_str()));
     }
@@ -642,16 +639,15 @@ pub async fn cmd_institution_rating(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let ratings = http_get(
         "/v1/quote/institution-rating-latest",
-        &[("counter_id", cid.as_str())],
+        &[("symbol", symbol.as_str())],
         verbose,
     )
     .await?;
     let instratings = http_get(
         "/v1/quote/institution-ratings",
-        &[("counter_id", cid.as_str())],
+        &[("symbol", symbol.as_str())],
         verbose,
     )
     .await?;
@@ -671,10 +667,9 @@ pub async fn cmd_institution_rating_detail(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
         "/v1/quote/institution-ratings/detail",
-        &[("counter_id", cid.as_str())],
+        &[("symbol", symbol.as_str())],
         verbose,
     )
     .await?;
@@ -736,11 +731,11 @@ pub async fn cmd_dividend(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
+    let symbol_is_etf = crate::utils::counter::is_etf(&symbol, verbose).await;
     // US: route to ETF or stock-specific dividend endpoint
     if crate::openapi::is_us_account().await {
         let ctx = crate::openapi::fundamental();
-        let mut data = if crate::utils::counter::is_etf(&symbol) {
+        let mut data = if symbol_is_etf {
             to_value(ctx.us_etf_dividend_info(symbol.clone()).await?)? // interface 33
         } else {
             to_value(ctx.us_company_dividends(symbol.clone()).await?)? // interface 36
@@ -752,7 +747,7 @@ pub async fn cmd_dividend(
             OutputFormat::Pretty => {
                 let currency = data["currency"].as_str().unwrap_or("USD");
                 let empty = vec![];
-                if crate::utils::counter::is_etf(&symbol) {
+                if symbol_is_etf {
                     let rows: Vec<Vec<String>> = data["fiscal_year_info"]
                         .as_array()
                         .unwrap_or(&empty)
@@ -822,7 +817,7 @@ pub async fn cmd_dividend(
     let page_str = page.to_string();
     let year_str = year.map(|y| y.to_string());
     let mut params = vec![
-        ("counter_id", cid.as_str()),
+        ("symbol", symbol.as_str()),
         ("size", "50"),
         ("page", &page_str),
     ];
@@ -1005,10 +1000,9 @@ fn print_consensus(data: &Value) {
 
 /// Fetch EPS forecasts and analyst consensus estimates.
 pub async fn cmd_forecast_eps(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
         "/v1/quote/forecast-eps",
-        &[("counter_id", cid.as_str())],
+        &[("symbol", symbol.as_str())],
         verbose,
     )
     .await?;
@@ -1021,7 +1015,6 @@ pub async fn cmd_forecast_eps(symbol: String, format: &OutputFormat, verbose: bo
 
 /// Fetch financial consensus detail.
 pub async fn cmd_consensus(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let is_us = crate::openapi::is_us_account().await;
     let data = if is_us {
         let mut d = to_value(
@@ -1034,7 +1027,7 @@ pub async fn cmd_consensus(symbol: String, format: &OutputFormat, verbose: bool)
     } else {
         http_get(
             "/v1/quote/financial-consensus-detail",
-            &[("counter_id", cid.as_str())],
+            &[("symbol", symbol.as_str())],
             verbose,
         )
         .await?
@@ -1245,11 +1238,10 @@ pub async fn cmd_valuation(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let ind = indicator.as_deref().unwrap_or("pe");
     let range_val = range.as_deref().unwrap_or("1");
     let params: Vec<(&str, &str)> = vec![
-        ("counter_id", cid.as_str()),
+        ("symbol", symbol.as_str()),
         ("indicator", ind),
         ("range", range_val),
     ];
@@ -1322,8 +1314,7 @@ pub async fn cmd_valuation_detail(
         }
         return Ok(());
     }
-    let cid = symbol_to_counter_id(&symbol);
-    let mut params: Vec<(&str, &str)> = vec![("counter_id", cid.as_str())];
+    let mut params: Vec<(&str, &str)> = vec![("symbol", symbol.as_str())];
     if let Some(ref ind) = indicator {
         params.push(("indicator", ind.as_str()));
     }
@@ -1366,10 +1357,9 @@ pub async fn cmd_dividend_detail(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
         "/v1/quote/dividends/details",
-        &[("counter_id", cid.as_str())],
+        &[("symbol", symbol.as_str())],
         verbose,
     )
     .await?;
@@ -1394,7 +1384,7 @@ fn print_fund_holders(data: &Value) {
     let rows: Vec<Vec<String>> = items
         .iter()
         .map(|item| {
-            let symbol = counter_id_to_symbol(&val_str(&item["counter_id"]));
+            let symbol = super::output::item_symbol(item);
             let weight_raw = val_str(&item["position_ratio"]);
             let weight = weight_raw
                 .parse::<f64>()
@@ -1446,10 +1436,7 @@ fn print_shareholders(data: &Value, limit: usize) {
             let symbol = item["stocks"]
                 .as_array()
                 .and_then(|s| s.first())
-                .map_or_else(
-                    || "-".to_string(),
-                    |s| counter_id_to_symbol(&val_str(&s["counter_id"])),
-                );
+                .map_or_else(|| "-".to_string(), super::output::item_symbol);
 
             let pct_raw = val_str(&item["percent_of_shares"]);
             let pct = pct_raw
@@ -1492,10 +1479,9 @@ pub async fn cmd_shareholders_top(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
         "/v1/quote/shareholders/top",
-        &[("counter_id", cid.as_str())],
+        &[("symbol", symbol.as_str())],
         verbose,
     )
     .await?;
@@ -1604,11 +1590,10 @@ pub async fn cmd_shareholder_detail(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let oid = object_id.to_string();
     let data = http_get(
         "/v1/quote/shareholders/holding",
-        &[("counter_id", cid.as_str()), ("object_id", oid.as_str())],
+        &[("symbol", symbol.as_str()), ("object_id", oid.as_str())],
         verbose,
     )
     .await?;
@@ -1713,11 +1698,10 @@ pub async fn cmd_shareholders(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
         "/v1/quote/shareholders",
         &[
-            ("counter_id", cid.as_str()),
+            ("symbol", symbol.as_str()),
             ("position", "detail"),
             ("range", range.as_str()),
             ("sort_field", sort_field.as_str()),
@@ -1740,11 +1724,10 @@ pub async fn cmd_fund_holders(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let limit = count.to_string();
     let data = http_get(
         "/v1/quote/fund-holders",
-        &[("counter_id", cid.as_str()), ("limit", limit.as_str())],
+        &[("symbol", symbol.as_str()), ("limit", limit.as_str())],
         verbose,
     )
     .await?;
@@ -1795,7 +1778,7 @@ fn print_finance_calendar(payload: &Value) {
             let type_label = finance_calendar_type_label(event_type);
             let content = val_str(&info["content"]);
             let name = val_str(&info["counter_name"]);
-            let symbol = counter_id_to_symbol(info["counter_id"].as_str().unwrap_or(""));
+            let symbol = super::output::item_symbol(info);
             let market = val_str(&info["market"]);
             let date_type = val_str(&info["date_type"]);
             let star = info["star"].as_u64().unwrap_or(0);
@@ -1891,7 +1874,7 @@ async fn finance_calendar_request(
         params.push(("types[]", t));
     }
     for c in cids {
-        params.push(("counter_ids[]", c.as_str()));
+        params.push(("symbols[]", c.as_str()));
     }
     if let Some(m) = market {
         params.push(("markets[]", m));
@@ -2018,10 +2001,7 @@ pub async fn cmd_finance_calendar(
         }
     }
 
-    let cids: Vec<String> = all_symbols
-        .iter()
-        .map(|s| symbol_to_counter_id(s))
-        .collect();
+    let cids: Vec<String> = all_symbols.iter().map(String::clone).collect();
 
     let market_ref = market.as_deref();
     let end_ref = end.as_deref();
@@ -2093,7 +2073,6 @@ pub async fn cmd_finance_calendar(
 // ── Pending commands ─────────────────────────────────────────────────────────
 
 pub async fn cmd_company(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let is_us = crate::openapi::is_us_account().await;
     let data = if is_us {
         to_value(
@@ -2104,7 +2083,7 @@ pub async fn cmd_company(symbol: String, format: &OutputFormat, verbose: bool) -
     } else {
         http_get(
             "/v1/quote/comp-overview",
-            &[("counter_id", cid.as_str())],
+            &[("symbol", symbol.as_str())],
             verbose,
         )
         .await?
@@ -2188,10 +2167,9 @@ fn print_company(data: &Value) {
 }
 
 pub async fn cmd_executive(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
         "/v1/quote/company-professionals",
-        &[("counter_ids", cid.as_str())],
+        &[("symbols", symbol.as_str())],
         verbose,
     )
     .await?;
@@ -2225,10 +2203,9 @@ fn print_executives(data: &Value) {
 }
 
 pub async fn cmd_buyback(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
         "/v1/quote/buy-backs",
-        &[("counter_id", cid.as_str())],
+        &[("symbol", symbol.as_str())],
         verbose,
     )
     .await?;
@@ -2368,10 +2345,9 @@ pub async fn cmd_industry_valuation(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
         "/v1/quote/industry-valuation-comparison",
-        &[("counter_id", cid.as_str()), ("currency", currency)],
+        &[("symbol", symbol.as_str()), ("currency", currency)],
         verbose,
     )
     .await?;
@@ -2409,7 +2385,7 @@ pub async fn cmd_industry_valuation(
                         &item_cur
                     };
                     vec![
-                        counter_id_to_symbol(&val_str(&item["counter_id"])),
+                        super::output::item_symbol(item),
                         val_str(&item["name"]),
                         fmt_amount(&val_str(&item["market_value"]), c),
                         format!("{c}{}", val_str(&item["price_close"])),
@@ -2438,10 +2414,9 @@ pub async fn cmd_industry_valuation_dist(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
         "/v1/quote/industry-valuation-distribution",
-        &[("counter_id", cid.as_str())],
+        &[("symbol", symbol.as_str())],
         verbose,
     )
     .await?;
@@ -2502,8 +2477,7 @@ pub async fn cmd_operating(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
-    let mut params = vec![("counter_id", cid.as_str())];
+    let mut params = vec![("symbol", symbol.as_str())];
     let report_val;
     if let Some(ref r) = report {
         report_val = r.clone();
@@ -2609,13 +2583,7 @@ pub async fn cmd_rating_history(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
-    let data = http_get(
-        "/v1/quote/ratings",
-        &[("counter_id", cid.as_str())],
-        verbose,
-    )
-    .await?;
+    let data = http_get("/v1/quote/ratings", &[("symbol", symbol.as_str())], verbose).await?;
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => print_rating_history(&data),
@@ -2703,11 +2671,10 @@ pub async fn cmd_corp_action(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let mut data = http_get(
         "/v1/quote/company-act",
         &[
-            ("counter_id", cid.as_str()),
+            ("symbol", symbol.as_str()),
             ("req_type", "1"),
             ("version", "3"),
         ],
@@ -2764,10 +2731,9 @@ pub async fn cmd_invest_relation(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
         "/v1/quote/invest-relations",
-        &[("counter_id", cid.as_str()), ("count", "0")],
+        &[("symbol", symbol.as_str()), ("count", "0")],
         verbose,
     )
     .await?;
@@ -2799,12 +2765,7 @@ fn print_invest_relation(data: &Value) {
     let rows: Vec<Vec<String>> = items
         .iter()
         .map(|item| {
-            let sym = val_str(&item["counter_id"]);
-            let display_sym = if sym.is_empty() || sym == "-" {
-                "-".to_string()
-            } else {
-                counter_id_to_symbol(&sym)
-            };
+            let display_sym = super::output::item_symbol(item);
             let raw_val = val_str(&item["shares_value"]);
             let cur = val_str(&item["currency"]);
             vec![
@@ -2905,20 +2866,32 @@ pub async fn cmd_financial_statement(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let kind_upper = kind.to_uppercase();
     let report_lower = report.to_lowercase();
+    // Neither the US SDK nor the REST endpoint has an all-statements mode, so a
+    // kind outside IS/BS/CF just returns an empty list. Reject it up front with a
+    // clear message instead of silently printing nothing.
+    if !matches!(kind_upper.as_str(), "IS" | "BS" | "CF") {
+        anyhow::bail!("Invalid --kind '{kind}': expected IS, BS, or CF");
+    }
     let mut data = if crate::openapi::is_us_account().await {
+        // The SDK takes a typed `FinancialStatementKind`; kind is validated above.
+        use longbridge::fundamental::FinancialStatementKind;
+        let sdk_kind = match kind_upper.as_str() {
+            "IS" => FinancialStatementKind::IncomeStatement,
+            "BS" => FinancialStatementKind::BalanceSheet,
+            _ => FinancialStatementKind::CashFlow,
+        };
         to_value(
             crate::openapi::fundamental()
-                .us_financial_statement(symbol.clone(), kind_upper.as_str(), report_lower.as_str())
+                .us_financial_statement(symbol.clone(), sdk_kind, report_lower.as_str())
                 .await?,
         )?
     } else {
         http_get(
             "/v1/quote/financials/statements",
             &[
-                ("counter_id", cid.as_str()),
+                ("symbol", symbol.as_str()),
                 ("kind", kind_upper.as_str()),
                 ("report", report_lower.as_str()),
             ],
@@ -3048,10 +3021,9 @@ pub async fn cmd_financial_report_latest(
     if crate::openapi::is_us_account().await {
         anyhow::bail!("financial-report --latest is not supported for US accounts");
     }
-    let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
         "/v1/quote/financials/latest-report",
-        &[("counter_id", cid.as_str())],
+        &[("symbol", symbol.as_str())],
         verbose,
     )
     .await?;
@@ -3088,11 +3060,10 @@ pub async fn cmd_valuation_rank(
         },
         str::to_string,
     );
-    let counter_id = symbol_to_counter_id(&symbol);
     let data = http_get(
         "/v1/quote/valuation/rank",
         &[
-            ("counter_id", counter_id.as_str()),
+            ("symbol", symbol.as_str()),
             ("start_date", start_date.as_str()),
             ("end_date", end_date.as_str()),
         ],
@@ -3183,10 +3154,9 @@ pub async fn cmd_institution_rating_history(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
         "/v1/quote/ratings/history",
-        &[("counter_id", cid.as_str())],
+        &[("symbol", symbol.as_str())],
         verbose,
     )
     .await?;
@@ -3305,13 +3275,12 @@ pub async fn cmd_institution_rating_industry_rank(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let page_str = page.to_string();
     let size_str = limit.to_string();
     let data = http_get(
         "/v1/quote/institution-ratings/industry-rank",
         &[
-            ("counter_id", cid.as_str()),
+            ("symbol", symbol.as_str()),
             ("page", page_str.as_str()),
             ("size", size_str.as_str()),
         ],
@@ -3329,14 +3298,8 @@ pub async fn cmd_institution_rating_industry_rank(
                             let mut o = Map::new();
                             if let Some(m) = item.as_object() {
                                 for (ik, iv) in m {
-                                    if ik == "counter_id" {
-                                        o.insert(
-                                            "symbol".to_string(),
-                                            Value::String(counter_id_to_symbol(
-                                                iv.as_str().unwrap_or(""),
-                                            )),
-                                        );
-                                    } else {
+                                    // Pass the response's own `symbol` field through; drop counter_id.
+                                    if ik != "counter_id" {
                                         o.insert(ik.clone(), iv.clone());
                                     }
                                 }
@@ -3369,9 +3332,8 @@ pub async fn cmd_business_segments(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     if history {
-        let mut params: Vec<(&str, &str)> = vec![("counter_id", cid.as_str())];
+        let mut params: Vec<(&str, &str)> = vec![("symbol", symbol.as_str())];
         if let Some(ref r) = report {
             params.push(("report", r.as_str()));
         }
@@ -3391,7 +3353,7 @@ pub async fn cmd_business_segments(
     } else {
         let data = http_get(
             "/v1/quote/fundamentals/business-segments",
-            &[("counter_id", cid.as_str())],
+            &[("symbol", symbol.as_str())],
             verbose,
         )
         .await?;
@@ -3480,10 +3442,9 @@ pub async fn cmd_institution_rating_views(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
         "/v1/quote/ratings/institutional",
-        &[("counter_id", cid.as_str())],
+        &[("symbol", symbol.as_str())],
         verbose,
     )
     .await?;
@@ -3581,7 +3542,7 @@ fn print_industry_rank(data: &Value) {
 
     let mut headers = vec![
         "Industry",
-        "Counter ID",
+        "Symbol",
         "Chg%",
         "Leading Stock",
         "Leading Chg%",
@@ -3594,7 +3555,7 @@ fn print_industry_rank(data: &Value) {
         .iter()
         .map(|sub| {
             let name = val_str(&sub["name"]);
-            let sym = val_str(&sub["counter_id"]);
+            let sym = val_str(&sub["symbol"]);
             let chg = val_str(&sub["chg"]);
             let chg_display = if !chg.is_empty() && chg != "-" {
                 fmt_rate(&chg)
@@ -3641,14 +3602,18 @@ pub async fn cmd_compare(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let base_cid = symbol_to_counter_id(base);
-    let comp_cids: Vec<String> = others.iter().map(|s| symbol_to_counter_id(s)).collect();
-    // iOS serializes comparison_counter_ids as a JSON array string via yy_modelToJSONString
-    let comp_json = serde_json::to_string(&comp_cids).unwrap_or_default();
-    let mut params: Vec<(&str, &str)> =
-        vec![("counter_id", base_cid.as_str()), ("currency", currency)];
-    if !comp_cids.is_empty() {
-        params.push(("comparison_counter_ids", comp_json.as_str()));
+    // Peers are sent as repeated `comparison_symbols` query params (the gateway's
+    // symbol2CounterID rule converts them server-side); the base goes through as
+    // `symbol`.
+    let mut params: Vec<(&str, &str)> = vec![("symbol", base), ("currency", currency)];
+    for peer in others {
+        params.push(("comparison_symbols", peer.as_str()));
+    }
+    // The gateway only treats `comparison_symbols` as a list when 2+ repeated
+    // keys are present; a lone peer is dropped. Duplicate it so single-peer
+    // compare still returns the peer (the response de-duplicates).
+    if others.len() == 1 {
+        params.push(("comparison_symbols", others[0].as_str()));
     }
     let data = http_get("/v1/quote/compare/valuation", &params, verbose).await?;
     match format {
@@ -3661,10 +3626,7 @@ pub async fn cmd_compare(
                     return Ok(());
                 }
             };
-            let symbols: Vec<String> = list
-                .iter()
-                .map(|s| crate::utils::counter::counter_id_to_symbol(&val_str(&s["counter_id"])))
-                .collect();
+            let symbols: Vec<String> = list.iter().map(|s| val_str(&s["symbol"])).collect();
             let names: Vec<String> = list.iter().map(|s| val_str(&s["name"])).collect();
             let sym_refs: Vec<&str> = symbols.iter().map(String::as_str).collect();
             let mut headers = vec!["Metric"];
@@ -3751,19 +3713,13 @@ pub async fn cmd_industry_peers(
             .rsplit_once('.')
             .map_or_else(|| "US".to_string(), |(_, m)| m.to_uppercase())
     });
-    // Accept counter_ids (e.g. BK/US/IN00297) directly; otherwise convert from symbol.
-    let cid = if symbol.contains('/') {
-        symbol.clone()
-    } else {
-        crate::utils::counter::symbol_to_counter_id(&symbol)
-    };
     let data = http_get(
         "/v1/quote/industries/peers",
         &[
             ("type", "1"),
             ("market", mkt.as_str()),
             ("industry_id", ""),
-            ("counter_id", cid.as_str()),
+            ("symbol", symbol.as_str()),
         ],
         verbose,
     )
@@ -3788,7 +3744,7 @@ fn print_industry_peers(data: &Value) {
     }
     let name = val_str(&chain["name"]);
     let stock_num = chain["stock_num"].as_u64().unwrap_or(0);
-    let cid = val_str(&chain["counter_id"]);
+    let cid = val_str(&chain["symbol"]);
     let cid_part = if cid.is_empty() {
         String::new()
     } else {
@@ -3836,7 +3792,7 @@ fn print_industry_peers_node(node: &Value, prefix: &str, is_last: bool) {
     let extension = if is_last { "    " } else { "│   " };
     let name = val_str(&node["name"]);
     let stock_num = node["stock_num"].as_u64().unwrap_or(0);
-    let cid = val_str(&node["counter_id"]);
+    let cid = val_str(&node["symbol"]);
     let cid_part = if cid.is_empty() {
         String::new()
     } else {
@@ -3863,9 +3819,8 @@ pub async fn cmd_financial_report_snapshot(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let year_str = year.map(|y| y.to_string());
-    let mut params: Vec<(&str, &str)> = vec![("counter_id", cid.as_str())];
+    let mut params: Vec<(&str, &str)> = vec![("symbol", symbol.as_str())];
     if let Some(ref r) = report {
         params.push(("report", r.as_str()));
     }

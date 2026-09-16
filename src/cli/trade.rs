@@ -1795,7 +1795,9 @@ fn val_str(v: &serde_json::Value) -> String {
 }
 
 fn print_json_value(data: &serde_json::Value) {
-    println!("{}", serde_json::to_string_pretty(data).unwrap_or_default());
+    let mut v = data.clone();
+    super::output::strip_counter_ids(&mut v);
+    println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
 }
 
 pub async fn cmd_alert_list(
@@ -1804,10 +1806,8 @@ pub async fn cmd_alert_list(
     verbose: bool,
 ) -> Result<()> {
     let mut params: Vec<(&str, &str)> = vec![];
-    let cid;
     if let Some(ref sym) = symbol {
-        cid = crate::utils::counter::symbol_to_counter_id(sym);
-        params.push(("counter_id", cid.as_str()));
+        params.push(("symbol", sym.as_str()));
     }
     let data = super::api::http_get("/v1/notify/reminders", &params, verbose).await?;
     match format {
@@ -1827,8 +1827,7 @@ pub async fn cmd_alert_list(
             let headers = ["id", "symbol", "price", "alert", "enabled", "frequency"];
             let mut rows: Vec<Vec<String>> = Vec::new();
             for stock in stocks {
-                let sym =
-                    crate::utils::counter::counter_id_to_symbol(&val_str(&stock["counter_id"]));
+                let sym = super::output::item_symbol(stock);
                 let price = val_str(&stock["price"]);
                 let Some(indicators) = stock.get("indicators").and_then(|v| v.as_array()) else {
                     continue;
@@ -1875,7 +1874,6 @@ pub async fn cmd_alert_add(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = crate::utils::counter::symbol_to_counter_id(&symbol);
     // indicator_id: 1=price_rise, 2=price_fall, 3=change%_rise, 4=change%_fall
     let indicator_id: i32 = match (alert_type, direction) {
         ("percent", "fall" | "down") => 4,
@@ -1893,7 +1891,7 @@ pub async fn cmd_alert_add(
         _ => "price",
     };
     let body = serde_json::json!({
-        "counter_id": cid,
+        "symbol": symbol,
         "indicator_id": indicator_id.to_string(),
         "value_map": { setting_key: price },
         "frequency": freq,
@@ -2104,7 +2102,9 @@ pub async fn cmd_positions(format: &OutputFormat) -> Result<()> {
 }
 
 fn print_json_us(data: &serde_json::Value) {
-    println!("{}", serde_json::to_string_pretty(data).unwrap_or_default());
+    let mut v = data.clone();
+    super::output::strip_counter_ids(&mut v);
+    println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
 }
 
 async fn cmd_us_positions(format: &OutputFormat) -> Result<()> {

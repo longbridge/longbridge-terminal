@@ -8,7 +8,6 @@ use super::{
     output::{fmt_dec, print_table},
     OutputFormat, SharelistCmd,
 };
-use crate::utils::counter::{counter_id_to_symbol, symbol_to_counter_id};
 
 pub async fn cmd_sharelist(
     cmd: Option<SharelistCmd>,
@@ -39,7 +38,9 @@ async fn cmd_list(count: u32, format: &OutputFormat) -> Result<()> {
 
     match format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&resp)?);
+            let mut v = serde_json::to_value(&resp)?;
+            super::output::strip_counter_ids(&mut v);
+            println!("{}", serde_json::to_string_pretty(&v)?);
         }
         OutputFormat::Pretty => {
             let sharelists = resp["sharelists"].as_array().cloned().unwrap_or_default();
@@ -87,7 +88,9 @@ async fn cmd_detail(id: String, format: &OutputFormat) -> Result<()> {
 
     match format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&resp)?);
+            let mut v = serde_json::to_value(&resp)?;
+            super::output::strip_counter_ids(&mut v);
+            println!("{}", serde_json::to_string_pretty(&v)?);
         }
         OutputFormat::Pretty => {
             let sl = &resp["sharelist"];
@@ -121,8 +124,8 @@ async fn cmd_detail(id: String, format: &OutputFormat) -> Result<()> {
             if !stocks.is_empty() {
                 let symbols: Vec<String> = stocks
                     .iter()
-                    .filter_map(|s| s["counter_id"].as_str())
-                    .map(counter_id_to_symbol)
+                    .map(super::output::item_symbol)
+                    .filter(|s| !s.is_empty())
                     .collect();
 
                 let quote_map: HashMap<String, (String, String)> = {
@@ -150,9 +153,7 @@ async fn cmd_detail(id: String, format: &OutputFormat) -> Result<()> {
                 let rows: Vec<Vec<String>> = stocks
                     .iter()
                     .map(|s| {
-                        let symbol = s["counter_id"]
-                            .as_str()
-                            .map_or_else(|| "-".to_string(), counter_id_to_symbol);
+                        let symbol = super::output::item_symbol(s);
                         let (price, chg) = quote_map
                             .get(&symbol)
                             .cloned()
@@ -192,39 +193,27 @@ async fn cmd_delete(id: String) -> Result<()> {
 }
 
 async fn cmd_add(id: String, symbols: Vec<String>) -> Result<()> {
-    let counter_ids = symbols
-        .iter()
-        .map(|s| symbol_to_counter_id(s))
-        .collect::<Vec<_>>()
-        .join(",");
+    let symbols_param = symbols.join(",");
     let path = format!("/v1/sharelists/{id}/items");
-    let body = serde_json::json!({ "counter_ids": counter_ids });
+    let body = serde_json::json!({ "symbols": symbols_param });
     http_post(&path, body, false).await?;
     println!("Added {} stock(s) to sharelist {id}.", symbols.len());
     Ok(())
 }
 
 async fn cmd_remove(id: String, symbols: Vec<String>) -> Result<()> {
-    let counter_ids = symbols
-        .iter()
-        .map(|s| symbol_to_counter_id(s))
-        .collect::<Vec<_>>()
-        .join(",");
+    let symbols_param = symbols.join(",");
     let path = format!("/v1/sharelists/{id}/items");
-    let body = serde_json::json!({ "counter_ids": counter_ids });
+    let body = serde_json::json!({ "symbols": symbols_param });
     http_delete(&path, body, false).await?;
     println!("Removed {} stock(s) from sharelist {id}.", symbols.len());
     Ok(())
 }
 
 async fn cmd_sort(id: String, symbols: Vec<String>) -> Result<()> {
-    let counter_ids = symbols
-        .iter()
-        .map(|s| symbol_to_counter_id(s))
-        .collect::<Vec<_>>()
-        .join(",");
+    let symbols_param = symbols.join(",");
     let path = format!("/v1/sharelists/{id}/items/sort");
-    let body = serde_json::json!({ "counter_ids": counter_ids });
+    let body = serde_json::json!({ "symbols": symbols_param });
     http_post(&path, body, false).await?;
     println!("Stocks reordered in sharelist {id}.");
     Ok(())
@@ -238,7 +227,9 @@ async fn cmd_popular(count: u32, format: &OutputFormat) -> Result<()> {
 
     match format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&sharelists)?);
+            let mut v = serde_json::to_value(&sharelists)?;
+            super::output::strip_counter_ids(&mut v);
+            println!("{}", serde_json::to_string_pretty(&v)?);
         }
         OutputFormat::Pretty => {
             if sharelists.is_empty() {

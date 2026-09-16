@@ -4,13 +4,12 @@ use serde_json::{Map, Value};
 use super::api::http_get;
 use super::output::{print_json_value, print_table};
 use super::OutputFormat;
-use crate::utils::counter::{counter_id_to_symbol, symbol_to_counter_id};
+use crate::utils::counter::counter_id_to_symbol;
 
 fn print_json(value: &Value) {
-    println!(
-        "{}",
-        serde_json::to_string_pretty(value).unwrap_or_default()
-    );
+    let mut v = value.clone();
+    super::output::strip_counter_ids(&mut v);
+    println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
 }
 
 fn optional_detail_result(result: Result<Value>, endpoint: &str, verbose: bool) -> Value {
@@ -324,7 +323,7 @@ pub async fn cmd_ipo_subscriptions(format: &OutputFormat, verbose: bool) -> Resu
                             let max_lev = extract_tag(tags, "杠杆");
                             vec![
                                 val_str(&item["name"]),
-                                counter_id_to_symbol(&val_str(&item["counter_id"])),
+                                super::output::item_symbol(item),
                                 val_str(&item["currency"]),
                                 val_str(&item["entrance_fee"]),
                                 val_str(&item["rate_forcast"]),
@@ -360,7 +359,7 @@ pub async fn cmd_ipo_subscriptions(format: &OutputFormat, verbose: bool) -> Resu
                             let stage = state_stage_label(&item["state_stage"]).to_string();
                             vec![
                                 val_str(&item["name"]),
-                                counter_id_to_symbol(&val_str(&item["counter_id"])),
+                                super::output::item_symbol(item),
                                 val_str(&item["currency"]),
                                 val_str(&item["issue_price"]),
                                 fmt_ts(&item["sub_deadline"]),
@@ -403,7 +402,7 @@ pub async fn cmd_ipo_wait_listing(format: &OutputFormat, verbose: bool) -> Resul
     let wait_list_row = |item: &Value| -> Vec<String> {
         vec![
             val_str(&item["name"]),
-            counter_id_to_symbol(&val_str(&item["counter_id"])),
+            super::output::item_symbol(item),
             val_str(&item["issue_price"]),
             fmt_date_opt(&item["ipo_date"]),
             state_stage_label(&item["state_stage"]).to_string(),
@@ -460,7 +459,7 @@ fn hk_listed_row(item: &Value) -> Vec<String> {
     );
     vec![
         val_str(&item["name"]),
-        counter_id_to_symbol(&val_str(&item["counter_id"])),
+        super::output::item_symbol(item),
         val_str(&item["issue_price"]),
         val_str(&item["last_done"]),
         val_str(&item["prev_close"]),
@@ -478,7 +477,7 @@ fn us_listed_row(item: &Value) -> Vec<String> {
     );
     vec![
         val_str(&item["name"]),
-        counter_id_to_symbol(&val_str(&item["counter_id"])),
+        super::output::item_symbol(item),
         val_str(&item["issue_price"]),
         val_str(&item["last_done"]),
         val_str(&item["prev_close"]),
@@ -601,7 +600,7 @@ fn flatten_ipo_calendar(data: &Value) -> Vec<Value> {
             let mut obj = Map::new();
             obj.insert(
                 "symbol".to_string(),
-                Value::String(counter_id_to_symbol(&val_str(&info["counter_id"]))),
+                Value::String(super::output::item_symbol(info)),
             );
             obj.insert(
                 "name".to_string(),
@@ -724,7 +723,6 @@ pub async fn cmd_ipo_detail(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     // Auto-detect market from symbol suffix (e.g. SUJA.US → US); fall back to --market arg.
     let detected = symbol.rsplit_once('.').map(|(_, m)| m.to_uppercase());
     let market = match detected.as_deref() {
@@ -733,8 +731,7 @@ pub async fn cmd_ipo_detail(
         _ => market,
     };
     let account_channel = crate::auth::account_channel_or_default();
-    let profile_result =
-        http_get("/v1/ipo/profile", &[("counter_id", cid.as_str())], verbose).await;
+    let profile_result = http_get("/v1/ipo/profile", &[("symbol", symbol.as_str())], verbose).await;
     let profile_key = if market == "US" { "us" } else { "hk" };
     let profile_data = match profile_result {
         Ok(v) => v,
@@ -757,13 +754,13 @@ pub async fn cmd_ipo_detail(
         return Ok(());
     }
     let timeline_params = [
-        ("counter_id", cid.as_str()),
+        ("symbol", symbol.as_str()),
         ("market", market),
         ("flag", "0"),
     ];
-    let eligibility_params = [("counter_id", cid.as_str())];
+    let eligibility_params = [("symbol", symbol.as_str())];
     let holdings_params = [
-        ("counter_id", cid.as_str()),
+        ("symbol", symbol.as_str()),
         ("need_realtime", "true"),
         ("account_channel", account_channel.as_str()),
     ];
@@ -997,10 +994,8 @@ pub async fn cmd_ipo_orders(
 ) -> Result<()> {
     let account_channel = crate::auth::account_channel_or_default();
     let mut active_params: Vec<(&str, &str)> = vec![("account_channel", account_channel.as_str())];
-    let cid;
     if let Some(ref sym) = symbol {
-        cid = symbol_to_counter_id(sym);
-        active_params.push(("counter_id", cid.as_str()));
+        active_params.push(("symbol", sym.as_str()));
     }
     let page_str = page.to_string();
     let count_str = count.to_string();
@@ -1042,7 +1037,7 @@ pub async fn cmd_ipo_orders(
                         .map(|o| {
                             vec![
                                 val_str(&o["id"]),
-                                counter_id_to_symbol(&val_str(&o["counter_id"])),
+                                val_str(&o["symbol"]),
                                 val_str(&o["name"]),
                                 val_str(&o["sub_qty"]),
                                 val_str(&o["status"]),
@@ -1066,7 +1061,7 @@ pub async fn cmd_ipo_orders(
                         .map(|o| {
                             vec![
                                 val_str(&o["id"]),
-                                counter_id_to_symbol(&val_str(&o["counter_id"])),
+                                val_str(&o["symbol"]),
                                 val_str(&o["name"]),
                                 val_str(&o["sub_qty"]),
                                 val_str(&o["lot_win_qty"]),
@@ -1107,10 +1102,7 @@ pub async fn cmd_ipo_order_detail(
             let kv = |label: &str, value: &str| {
                 println!("{:<24}{value}", format!("{label}:"));
             };
-            kv(
-                "Symbol",
-                &counter_id_to_symbol(&val_str(&data["counter_id"])),
-            );
+            kv("Symbol", &super::output::item_symbol(&data));
             kv("Name", &val_str(&data["name"]));
             kv("Market", &val_str(&data["market"]));
             let ipo_date = fmt_date_opt(&data["ipo_date"]);
@@ -1246,7 +1238,7 @@ pub async fn cmd_ipo_profit_loss(
                         .iter()
                         .map(|item| {
                             vec![
-                                counter_id_to_symbol(&val_str(&item["counter_id"])),
+                                super::output::item_symbol(item),
                                 val_str(&item["name"]),
                                 val_str(&item["qty"]),
                                 val_str(&item["cost_price"]),
@@ -1299,7 +1291,7 @@ pub async fn cmd_ipo_us_subscriptions(format: &OutputFormat, verbose: bool) -> R
                         let stage = state_stage_label(&item["state_stage"]).to_string();
                         vec![
                             val_str(&item["name"]),
-                            counter_id_to_symbol(&val_str(&item["counter_id"])),
+                            super::output::item_symbol(item),
                             val_str(&item["currency"]),
                             val_str(&item["issue_price"]),
                             fmt_ts(&item["sub_deadline"]),
@@ -1340,7 +1332,7 @@ pub async fn cmd_ipo_us_wait_listing(format: &OutputFormat, verbose: bool) -> Re
                     .map(|item| {
                         vec![
                             val_str(&item["name"]),
-                            counter_id_to_symbol(&val_str(&item["counter_id"])),
+                            super::output::item_symbol(item),
                             val_str(&item["issue_price"]),
                             fmt_date_opt(&item["ipo_date"]),
                             state_stage_label(&item["state_stage"]).to_string(),

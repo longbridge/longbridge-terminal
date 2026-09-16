@@ -12,7 +12,6 @@ use super::{
     output::{fmt_date, fmt_dec, fmt_decimal, fmt_decimal_div100, parse_date, print_table},
     OutputFormat,
 };
-use crate::utils::counter::symbol_to_counter_id;
 use crate::utils::datetime::fmt_rfc3339;
 use crate::utils::number::format_financial_value;
 
@@ -1314,7 +1313,7 @@ pub async fn cmd_warrant_list(symbol: String, format: &OutputFormat) -> Result<(
                 w.name.clone(),
                 fmt_dec(w.last_done),
                 fmt_dec(w.leverage_ratio),
-                fmt_date(w.expiry_date),
+                w.expiry_date.map_or_else(String::new, fmt_date),
                 format!("{:?}", w.warrant_type),
             ]
         })
@@ -2126,7 +2125,7 @@ pub async fn run_warrant_list(
                 w.name.clone(),
                 fmt_dec(w.last_done),
                 fmt_dec(w.leverage_ratio),
-                fmt_date(w.expiry_date),
+                w.expiry_date.map_or_else(String::new, fmt_date),
                 format!("{:?}", w.warrant_type),
             ]
         })
@@ -2231,37 +2230,8 @@ fn val_str(v: &Value) -> String {
 }
 
 fn print_json(data: &Value) {
-    println!("{}", serde_json::to_string_pretty(data).unwrap_or_default());
-}
-
-/// Recursively replace every `"counter_id"` key in a JSON value with
-/// `"symbol"`, converting the value via `counter_id_to_symbol`.
-fn replace_counter_ids(v: &mut Value) {
-    match v {
-        Value::Object(map) => {
-            if let Some(cid) = map.remove("counter_id") {
-                let sym = cid
-                    .as_str()
-                    .map(crate::utils::counter::counter_id_to_symbol)
-                    .unwrap_or_default();
-                map.insert("symbol".to_string(), Value::String(sym));
-            }
-            for val in map.values_mut() {
-                replace_counter_ids(val);
-            }
-        }
-        Value::Array(arr) => {
-            for val in arr.iter_mut() {
-                replace_counter_ids(val);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn print_json_with_symbols(data: &Value) {
     let mut v = data.clone();
-    replace_counter_ids(&mut v);
+    super::output::strip_counter_ids(&mut v);
     println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
 }
 
@@ -2272,7 +2242,6 @@ pub async fn cmd_history_intraday(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let trade_session = match session {
         "all" => "100",
         "pre" | "post" => "101",
@@ -2281,7 +2250,7 @@ pub async fn cmd_history_intraday(
     let data = http_get(
         "/v1/quote/history-timeshares",
         &[
-            ("counter_id", cid.as_str()),
+            ("symbol", symbol.as_str()),
             ("date", hist_date),
             ("trade_session", trade_session),
             ("adjust_type", "0"),
@@ -2335,7 +2304,7 @@ pub async fn cmd_constituent(
     // ETF symbols expose their composition via SEC N-PORT full holdings (US
     // ETFs, default) or the fundamental asset-allocation endpoint. Non-ETF
     // symbols (indexes) keep the original index-constituents behaviour.
-    if crate::utils::counter::is_etf(&symbol) {
+    if crate::utils::counter::is_etf(&symbol, verbose).await {
         // For US ETFs, prefer SEC EDGAR full holdings (N-PORT). This is the
         // authoritative full constituent list rather than a top-10 summary.
         if symbol.to_uppercase().ends_with(".US") {
@@ -2368,12 +2337,11 @@ pub async fn cmd_constituent(
         // No allocation data available — fall through to index-constituents.
     }
 
-    let cid = longbridge::counter::index_symbol_to_counter_id(&symbol);
     let limit_str = limit.to_string();
     let data = http_get(
         "/v1/quote/index-constituents",
         &[
-            ("counter_id", cid.as_str()),
+            ("symbol", symbol.as_str()),
             ("offset", "0"),
             ("limit", limit_str.as_str()),
             ("indicator", sort.as_indicator()),
@@ -2410,7 +2378,7 @@ pub async fn cmd_constituent(
                 .iter()
                 .map(|item| {
                     vec![
-                        crate::utils::counter::counter_id_to_symbol(&val_str(&item["counter_id"])),
+                        super::output::item_symbol(item),
                         val_str(&item["name"]),
                         val_str(&item["last_done"]),
                         val_str(&item["prev_close"]),
@@ -2484,10 +2452,9 @@ pub async fn cmd_broker_holding_top(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let data = http_get_dc(
         "/v1/quote/broker-holding",
-        &[("counter_id", cid.as_str()), ("type", period)],
+        &[("symbol", symbol.as_str()), ("type", period)],
         Some(longbridge::DcRegion::Ap),
         verbose,
     )
@@ -2530,10 +2497,9 @@ pub async fn cmd_broker_holding_detail(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let data = http_get_dc(
         "/v1/quote/broker-holding/detail",
-        &[("counter_id", cid.as_str())],
+        &[("symbol", symbol.as_str())],
         Some(longbridge::DcRegion::Ap),
         verbose,
     )
@@ -2585,10 +2551,9 @@ pub async fn cmd_broker_holding_daily(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let data = http_get_dc(
         "/v1/quote/broker-holding/daily",
-        &[("counter_id", cid.as_str()), ("parti_number", broker)],
+        &[("symbol", symbol.as_str()), ("parti_number", broker)],
         Some(longbridge::DcRegion::Ap),
         verbose,
     )
@@ -2636,7 +2601,6 @@ pub async fn cmd_ah_premium_kline(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let line_type = match kline_type {
         "1m" => "1",
         "5m" => "5",
@@ -2652,7 +2616,7 @@ pub async fn cmd_ah_premium_kline(
     let data = http_get(
         "/v1/quote/ahpremium/klines",
         &[
-            ("counter_id", cid.as_str()),
+            ("symbol", symbol.as_str()),
             ("line_num", count_str.as_str()),
             ("line_type", line_type),
         ],
@@ -2693,10 +2657,9 @@ pub async fn cmd_ah_premium_intraday(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
         "/v1/quote/ahpremium/timeshares",
-        &[("counter_id", cid.as_str()), ("days", "1")],
+        &[("symbol", symbol.as_str()), ("days", "1")],
         verbose,
     )
     .await?;
@@ -2734,10 +2697,9 @@ pub async fn cmd_ah_premium_intraday(
 }
 
 pub async fn cmd_trade_stats(symbol: String, format: &OutputFormat, verbose: bool) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
         "/v1/quote/trades-statistics",
-        &[("counter_id", cid.as_str())],
+        &[("symbol", symbol.as_str())],
         verbose,
     )
     .await?;
@@ -2829,10 +2791,8 @@ pub async fn cmd_anomaly(
         ("size", count_str.as_str()),
         ("market", market_upper.as_str()),
     ];
-    let cid;
     if let Some(ref sym) = symbol {
-        cid = symbol_to_counter_id(sym);
-        params.push(("counter_id", cid.as_str()));
+        params.push(("symbol", sym.as_str()));
     }
     let data = http_get("/v1/quote/changes", &params, verbose).await?;
     match format {
@@ -2856,7 +2816,7 @@ pub async fn cmd_anomaly(
                     };
                     vec![
                         val_str(&item["alert_time"]),
-                        crate::utils::counter::counter_id_to_symbol(&val_str(&item["counter_id"])),
+                        super::output::item_symbol(item),
                         val_str(&item["name"]),
                         val_str(&item["alert_name"]),
                         emotion.to_string(),
@@ -2874,10 +2834,9 @@ pub async fn cmd_option_volume_stats(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let data = http_get(
         "/v1/quote/option-volume-stats",
-        &[("underlying_counter_id", cid.as_str())],
+        &[("symbol", symbol.as_str())],
         verbose,
     )
     .await?;
@@ -2914,7 +2873,6 @@ pub async fn cmd_option_volume_daily(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -2924,7 +2882,7 @@ pub async fn cmd_option_volume_daily(
     let data = http_get(
         "/v1/quote/option-volume-stats/daily",
         &[
-            ("counter_id", cid.as_str()),
+            ("symbol", symbol.as_str()),
             ("timestamp", now.as_str()),
             ("line_num", count_str.as_str()),
             ("direction", "1"),
@@ -2991,7 +2949,6 @@ pub async fn cmd_short_positions(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = symbol_to_counter_id(&symbol);
     let is_hk = symbol.to_uppercase().ends_with(".HK");
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -3008,7 +2965,7 @@ pub async fn cmd_short_positions(
     let data = http_get(
         path,
         &[
-            ("counter_id", cid.as_str()),
+            ("symbol", symbol.as_str()),
             ("last_timestamp", now.as_str()),
             ("page_size", count_str.as_str()),
         ],
@@ -3016,7 +2973,7 @@ pub async fn cmd_short_positions(
     )
     .await?;
     match format {
-        OutputFormat::Json => print_json_with_symbols(&data),
+        OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => {
             let mut items = match data.get("data").and_then(|v| v.as_array()) {
                 Some(a) if !a.is_empty() => a.clone(),
@@ -3189,7 +3146,7 @@ pub async fn cmd_top_movers(
     });
     let data = http_post("/v1/quote/market/stock-events", body, verbose).await?;
     match format {
-        OutputFormat::Json => print_json_with_symbols(&data),
+        OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => {
             if let Some(ts) = data.get("updated_at").and_then(serde_json::Value::as_i64) {
                 println!("Updated: {}\n", fmt_ts(&ts.to_string()));
@@ -3347,7 +3304,7 @@ pub async fn cmd_rank(
             )
             .await?;
             match format {
-                OutputFormat::Json => print_json_with_symbols(&data),
+                OutputFormat::Json => print_json(&data),
                 OutputFormat::Pretty => {
                     let lists = match data.get("lists").and_then(|v| v.as_array()) {
                         Some(a) if !a.is_empty() => a,
@@ -3370,9 +3327,7 @@ pub async fn cmd_rank(
                         .iter()
                         .enumerate()
                         .map(|(i, s)| {
-                            let sym = crate::utils::counter::counter_id_to_symbol(&val_str(
-                                &s["counter_id"],
-                            ));
+                            let sym = super::output::item_symbol(s);
                             vec![
                                 (i + 1).to_string(),
                                 sym,
