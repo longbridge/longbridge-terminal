@@ -206,7 +206,7 @@ longbridge warrant issuers                        # Warrant issuer list (HK mark
 longbridge financial-report AAPL.US [--kind IS|BS|CF]               # Multi-period financial statements (income / balance sheet / cash flow)
 longbridge financial-report AAPL.US --latest                         # Latest financial report summary (--kind/--latest: AP accounts only)
 longbridge financial-report snapshot AAPL.US --report qf --year N --period N  # Earnings summary + forecast vs actual (revenue/EBIT/EPS beat/miss) + financial ratios
-longbridge financial-statement AAPL.US [--kind IS|BS|CF|ALL] [--report af|saf|qf|cumul]  # Detailed financial statement (v3 endpoint)
+longbridge financial-statement AAPL.US [--kind IS|BS|CF] [--report af|saf|qf|cumul]  # Detailed financial statement (v3 endpoint)
 longbridge institution-rating AAPL.US                                # Analyst rating distribution and consensus target price
 longbridge institution-rating AAPL.US --history                      # Rating and target price change history
 longbridge institution-rating AAPL.US --industry-rank [--page 1] [--limit 20]  # Industry-wide institution rating ranking

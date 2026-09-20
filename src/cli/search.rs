@@ -16,10 +16,9 @@ fn fmt_ts(v: &serde_json::Value) -> String {
 }
 
 fn print_json(value: &Value) {
-    println!(
-        "{}",
-        serde_json::to_string_pretty(value).unwrap_or_default()
-    );
+    let mut v = value.clone();
+    super::output::strip_counter_ids(&mut v);
+    println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
 }
 
 fn val_str(v: &Value) -> String {

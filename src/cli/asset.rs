@@ -7,10 +7,9 @@ use super::OutputFormat;
 use crate::utils::datetime::fmt_rfc3339;
 
 fn print_json(value: &Value) {
-    println!(
-        "{}",
-        serde_json::to_string_pretty(value).unwrap_or_default()
-    );
+    let mut v = value.clone();
+    super::output::strip_counter_ids(&mut v);
+    println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
 }
 
 fn val_str(v: &Value) -> String {
@@ -238,14 +237,12 @@ pub async fn cmd_profit_analysis_detail(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let cid = crate::utils::counter::symbol_to_counter_id(symbol);
-
     // Build shared start/end timestamps
     let start_ts = start.map(parse_datetime_start_timestamp).transpose()?;
     let end_ts = end.map(parse_datetime_end_timestamp).transpose()?;
 
     // Build params
-    let mut detail_params: Vec<(&str, String)> = vec![("counter_id", cid.clone())];
+    let mut detail_params: Vec<(&str, String)> = vec![("symbol", symbol.to_string())];
     if let Some(c) = currency {
         detail_params.push(("currency", c.to_owned()));
     }
@@ -261,7 +258,7 @@ pub async fn cmd_profit_analysis_detail(
         .collect();
 
     let mut flows_params: Vec<(&str, String)> = vec![
-        ("counter_id", cid),
+        ("symbol", symbol.to_string()),
         ("page", page.to_string()),
         ("size", size.to_string()),
         ("derivative", derivative.to_string()),

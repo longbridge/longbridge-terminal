@@ -6,7 +6,7 @@ use super::{
     DcaCmd, DcaDayOfWeek, DcaFrequency, DcaReminderHours, OutputFormat,
 };
 
-use crate::utils::counter::{counter_id_to_symbol, symbol_to_counter_id};
+use crate::utils::counter::counter_id_to_symbol;
 use crate::utils::datetime::format_timestamp;
 
 // Recurring investment (DCA) is served only by the AP data center. These
@@ -105,7 +105,7 @@ async fn cmd_list(
         params.push(("status", s.to_string()));
     }
     if let Some(s) = symbol {
-        params.push(("counter_id", symbol_to_counter_id(s)));
+        params.push(("symbol", s.to_string()));
     }
 
     let param_refs: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
@@ -115,7 +115,9 @@ async fn cmd_list(
 
     match format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&plans)?);
+            let mut v = serde_json::to_value(&plans)?;
+            super::output::strip_counter_ids(&mut v);
+            println!("{}", serde_json::to_string_pretty(&v)?);
         }
         OutputFormat::Pretty => {
             if plans.is_empty() {
@@ -213,7 +215,7 @@ async fn cmd_create(
     }
 
     let mut body = serde_json::json!({
-        "counter_id": symbol_to_counter_id(&symbol),
+        "symbol": symbol,
         "per_invest_amount": amount,
         "invest_frequency": frequency.as_api_str(),
     });
@@ -291,7 +293,9 @@ async fn cmd_records(plan_id: String, page: u32, limit: u32, format: &OutputForm
 
     match format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&records)?);
+            let mut v = serde_json::to_value(&records)?;
+            super::output::strip_counter_ids(&mut v);
+            println!("{}", serde_json::to_string_pretty(&v)?);
         }
         OutputFormat::Pretty => {
             if records.is_empty() {
@@ -337,10 +341,8 @@ async fn cmd_records(plan_id: String, page: u32, limit: u32, format: &OutputForm
 }
 
 async fn cmd_stats(symbol: Option<&str>, format: &OutputFormat) -> Result<()> {
-    let counter_id_str;
     let params: Vec<(&str, &str)> = if let Some(s) = symbol {
-        counter_id_str = symbol_to_counter_id(s);
-        vec![("counter_id", counter_id_str.as_str())]
+        vec![("symbol", s)]
     } else {
         vec![]
     };
@@ -348,7 +350,9 @@ async fn cmd_stats(symbol: Option<&str>, format: &OutputFormat) -> Result<()> {
 
     match format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&resp)?);
+            let mut v = serde_json::to_value(&resp)?;
+            super::output::strip_counter_ids(&mut v);
+            println!("{}", serde_json::to_string_pretty(&v)?);
         }
         OutputFormat::Pretty => {
             print_json_value(
@@ -396,7 +400,7 @@ async fn cmd_calc_date(
     format: &OutputFormat,
 ) -> Result<()> {
     let mut body = serde_json::json!({
-        "counter_id": symbol_to_counter_id(&symbol),
+        "symbol": symbol,
         "invest_frequency": frequency.as_api_str(),
     });
 
@@ -411,7 +415,9 @@ async fn cmd_calc_date(
 
     match format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&resp)?);
+            let mut v = serde_json::to_value(&resp)?;
+            super::output::strip_counter_ids(&mut v);
+            println!("{}", serde_json::to_string_pretty(&v)?);
         }
         OutputFormat::Pretty => {
             let trade_date = resp["trade_date"].as_str().unwrap_or("-");
@@ -425,8 +431,7 @@ async fn cmd_calc_date(
 }
 
 async fn cmd_check(symbols: Vec<String>, format: &OutputFormat) -> Result<()> {
-    let counter_ids: Vec<String> = symbols.iter().map(|s| symbol_to_counter_id(s)).collect();
-    let body = serde_json::json!({ "counter_ids": counter_ids });
+    let body = serde_json::json!({ "symbols": symbols });
     let resp = http_post("/v1/dailycoins/batch-check-support", body, false).await?;
 
     let infos = resp["infos"].as_array().cloned().unwrap_or_default();
