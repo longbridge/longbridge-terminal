@@ -9,6 +9,7 @@ pub mod auth;
 pub mod check;
 pub mod completion;
 pub mod dca;
+pub mod fund;
 pub mod fundamental;
 pub mod grid;
 pub mod init;
@@ -1006,6 +1007,23 @@ pub enum Commands {
     ///
     /// Returns: symbol, name, `current_net_asset_value`, `cost_net_asset_value`, currency, `holding_units`.
     FundPositions,
+
+    /// Fund (mutual fund) channel — catalog, NAV, holdings, positions, orders, trading
+    ///
+    /// A full binding of the Longbridge fund `OpenAPI`. Funds are addressed by
+    /// their `counter_id` (e.g. UT/FD/HK0000384492), passed as a positional
+    /// argument. Order-placing subcommands (`submit-order`, `cancel-order`) ask
+    /// for confirmation unless `--yes` is given.
+    ///
+    /// Example: longbridge fund hot
+    /// Example: longbridge fund detail UT/FD/HK0000384492
+    /// Example: longbridge fund nav UT/FD/HK0000384492 --format json
+    /// Example: longbridge fund orders
+    /// Example: longbridge fund submit-order UT/FD/KYG3861F1019 --action buy --currency USD --amount 100 --yes
+    Fund {
+        #[command(subcommand)]
+        cmd: fund::FundCommands,
+    },
 
     /// Margin ratio requirements for a symbol
     ///
@@ -4402,6 +4420,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         },
         Commands::Positions => trade::cmd_positions(format).await,
         Commands::FundPositions => trade::cmd_fund_positions(format).await,
+        Commands::Fund { cmd } => fund::run(cmd, format).await,
         Commands::MarginRatio { symbol } => trade::cmd_margin_ratio(symbol, format).await,
         Commands::MaxQty {
             symbol,

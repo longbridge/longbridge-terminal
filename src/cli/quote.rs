@@ -2013,7 +2013,41 @@ pub async fn run_option_chain_strikes(
     expiry_date: Date,
     format: &OutputFormat,
 ) -> Result<()> {
-    let strikes = api.option_chain_info_by_date(symbol, expiry_date).await?;
+    // The OpenAPI endpoint returns a flat list of individual contracts; regroup
+    // them by strike price into (call, put) pairs for the strike-ladder table.
+    struct StrikeRow {
+        price: rust_decimal::Decimal,
+        call_symbol: String,
+        put_symbol: String,
+        standard: bool,
+    }
+
+    let contracts = api.option_chain_info_by_date(symbol, expiry_date).await?;
+
+    let mut by_strike: std::collections::BTreeMap<rust_decimal::Decimal, StrikeRow> =
+        std::collections::BTreeMap::new();
+    for c in &contracts {
+        let row = by_strike
+            .entry(c.strike_price)
+            .or_insert_with(|| StrikeRow {
+                price: c.strike_price,
+                call_symbol: String::new(),
+                put_symbol: String::new(),
+                standard: false,
+            });
+        match c.direction {
+            longbridge::quote::OptionDirection::Call => row.call_symbol.clone_from(&c.symbol),
+            longbridge::quote::OptionDirection::Put => row.put_symbol.clone_from(&c.symbol),
+            longbridge::quote::OptionDirection::Unknown => {}
+        }
+        if matches!(
+            c.standard_attr,
+            longbridge::quote::OptionStandardAttr::Normal
+        ) {
+            row.standard = true;
+        }
+    }
+    let strikes: Vec<StrikeRow> = by_strike.into_values().collect();
 
     let all_symbols: Vec<String> = strikes
         .iter()
