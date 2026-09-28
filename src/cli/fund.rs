@@ -263,9 +263,9 @@ pub enum FundCommands {
     // ── Orders / trading ──────────────────────────────────────────────────
     /// My fund orders (also the trade/execution record)
     Orders {
-        /// Filter by fund symbol / counter id (repeatable)
-        #[arg(long = "symbol", value_name = "SYMBOL")]
-        symbol: Vec<String>,
+        /// Filter by fund counter id (repeatable)
+        #[arg(long = "counter-id", value_name = "COUNTER_ID")]
+        counter_id: Vec<String>,
         /// Filter by action(s), comma-separated (e.g. buy,sell)
         #[arg(long)]
         action: Option<String>,
@@ -649,7 +649,7 @@ pub async fn run(cmd: FundCommands, format: &OutputFormat) -> Result<()> {
 
         // ── Orders / trading ─────────────────────────────────────────────
         FundCommands::Orders {
-            symbol,
+            counter_id,
             action,
             state,
             currency,
@@ -659,8 +659,8 @@ pub async fn run(cmd: FundCommands, format: &OutputFormat) -> Result<()> {
             size,
         } => {
             let mut opts = GetFundOrdersOptions::new();
-            if !symbol.is_empty() {
-                opts = opts.symbols(symbol);
+            if !counter_id.is_empty() {
+                opts = opts.counter_ids(counter_id);
             }
             if let Some(a) = action {
                 opts = opts.actions(a);
