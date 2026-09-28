@@ -191,10 +191,10 @@ pub enum FundCommands {
         /// Account id
         #[arg(long)]
         aaid: Option<i64>,
-        /// Range start
+        /// Range start (YYYY-MM-DD or RFC 3339)
         #[arg(long)]
         start: Option<String>,
-        /// Range end
+        /// Range end (YYYY-MM-DD or RFC 3339)
         #[arg(long)]
         end: Option<String>,
     },
