@@ -810,22 +810,23 @@ pub async fn run(cmd: FundCommands, format: &OutputFormat) -> Result<()> {
                 OutputFormat::Json => {
                     let mut json = serde_json::to_value(&detail)?;
                     strip_private_fields(&mut json);
+                    let state = detail.order.as_ref().map(|o| o.state.clone());
                     println!(
                         "{}",
                         serde_json::to_string_pretty(&serde_json::json!({
                             "order_id": order_id,
                             "cancelled": true,
-                            "state": detail.order.state,
+                            "state": state,
                             "detail": json,
                         }))?
                     );
                 }
                 OutputFormat::Pretty => {
                     println!("Order {order_id} cancel requested.");
-                    println!(
-                        "State: {} ({})",
-                        detail.order.state, detail.order.state_desc
-                    );
+                    match &detail.order {
+                        Some(o) => println!("State: {} ({})", o.state, o.state_desc),
+                        None => println!("State: (order detail unavailable)"),
+                    }
                 }
             }
             Ok(())
