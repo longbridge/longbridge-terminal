@@ -405,6 +405,7 @@ fn output<T: Serialize>(value: &T, format: &OutputFormat) -> Result<()> {
 fn output_cols<T: Serialize>(value: &T, format: &OutputFormat, cols: &[&str]) -> Result<()> {
     let mut json = serde_json::to_value(value)?;
     strip_private_fields(&mut json);
+    format_timestamps(&mut json);
     match format {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&json)?);
@@ -422,6 +423,59 @@ fn output_cols<T: Serialize>(value: &T, format: &OutputFormat, cols: &[&str]) ->
         },
     }
     Ok(())
+}
+
+/// Whether a field name denotes a unix-second timestamp that should be rendered
+/// as RFC 3339 (matching the trade / quote channels). `cut_off_time` (a
+/// time-of-day string) and `*_format` fields are excluded by the value guard in
+/// [`unix_to_rfc3339`], not here.
+fn is_timestamp_key(k: &str) -> bool {
+    k.ends_with("_at")
+        || k.ends_with("_time")
+        || k == "recent_trading_day"
+        || k == "recent_tradingday"
+}
+
+/// Convert a unix-second value (serialised by the fund SDK as a numeric string
+/// or a number) to an RFC 3339 string. Returns `None` for anything that isn't a
+/// plausible unix-seconds timestamp (guards `0`, small ints, and non-numeric
+/// values such as `cut_off_time` = `22:00`).
+fn unix_to_rfc3339(v: &serde_json::Value) -> Option<String> {
+    let ts = match v {
+        serde_json::Value::String(s) => s.parse::<i64>().ok()?,
+        serde_json::Value::Number(n) => n.as_i64()?,
+        _ => return None,
+    };
+    if ts < 1_000_000_000 {
+        return None;
+    }
+    let dt = time::OffsetDateTime::from_unix_timestamp(ts).ok()?;
+    Some(crate::utils::datetime::fmt_rfc3339(dt))
+}
+
+/// Recursively rewrite unix-second timestamp fields to RFC 3339, so fund output
+/// matches the RFC-3339 convention used by the other CLI channels (in both
+/// `--format json` and table output).
+fn format_timestamps(v: &mut serde_json::Value) {
+    match v {
+        serde_json::Value::Object(map) => {
+            for (k, val) in map.iter_mut() {
+                if is_timestamp_key(k) {
+                    if let Some(s) = unix_to_rfc3339(val) {
+                        *val = serde_json::Value::String(s);
+                        continue;
+                    }
+                }
+                format_timestamps(val);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for item in arr.iter_mut() {
+                format_timestamps(item);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Render a JSON array of objects as a table. Falls back to raw JSON for shapes
