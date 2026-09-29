@@ -19,8 +19,7 @@ use longbridge::fund::{
 use serde::Serialize;
 
 use super::output::{
-    parse_datetime_end_timestamp, parse_datetime_start_timestamp, print_json_value, print_table,
-    strip_private_fields,
+    parse_datetime_end_timestamp, parse_datetime_start_timestamp, print_table, strip_private_fields,
 };
 use super::OutputFormat;
 
@@ -404,7 +403,13 @@ fn output<T: Serialize>(value: &T, format: &OutputFormat) -> Result<()> {
         }
         OutputFormat::Pretty => match &json {
             serde_json::Value::Array(arr) => print_array_table(arr),
-            serde_json::Value::Object(_) => print_json_value(&json, format),
+            serde_json::Value::Object(map) => {
+                // Field/value table; nested collections are summarised by `cell`
+                // so a heavy field doesn't blow up the row.
+                let rows: Vec<Vec<String>> =
+                    map.iter().map(|(k, v)| vec![k.clone(), cell(v)]).collect();
+                print_table(&["Field", "Value"], rows, format);
+            }
             other => println!("{other}"),
         },
     }
@@ -437,12 +442,29 @@ fn print_array_table(arr: &[serde_json::Value]) {
 }
 
 /// Flatten a JSON value into a single table cell.
+///
+/// Nested arrays and objects are summarised (`[N items]` / `{N fields}`) rather
+/// than dumped as raw JSON, so a heavy column (e.g. a fund's embedded NAV series)
+/// doesn't blow up the table width. Use `--format json` for the full payload.
 fn cell(v: &serde_json::Value) -> String {
     match v {
         serde_json::Value::String(s) => s.clone(),
         serde_json::Value::Null => "-".to_string(),
         serde_json::Value::Number(_) | serde_json::Value::Bool(_) => v.to_string(),
-        other => other.to_string(),
+        serde_json::Value::Array(a) => {
+            if a.is_empty() {
+                "-".to_string()
+            } else {
+                format!("[{} items]", a.len())
+            }
+        }
+        serde_json::Value::Object(o) => {
+            if o.is_empty() {
+                "-".to_string()
+            } else {
+                format!("{{{} fields}}", o.len())
+            }
+        }
     }
 }
 
@@ -793,7 +815,11 @@ pub async fn run(cmd: FundCommands, format: &OutputFormat) -> Result<()> {
                 OutputFormat::Pretty => {
                     println!("Order submitted successfully.");
                     println!("Order ID: {}", resp.id);
-                    print_json_value(&json, format);
+                    if let serde_json::Value::Object(map) = &json {
+                        let rows: Vec<Vec<String>> =
+                            map.iter().map(|(k, v)| vec![k.clone(), cell(v)]).collect();
+                        print_table(&["Field", "Value"], rows, format);
+                    }
                 }
             }
             Ok(())
