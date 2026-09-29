@@ -439,7 +439,8 @@ fn is_timestamp_key(k: &str) -> bool {
 /// Convert a unix-second value (serialised by the fund SDK as a numeric string
 /// or a number) to an RFC 3339 string. Returns `None` for anything that isn't a
 /// plausible unix-seconds timestamp (guards `0`, small ints, and non-numeric
-/// values such as `cut_off_time` = `22:00`).
+/// values such as `cut_off_time` = `22:00`); the actual formatting reuses the
+/// shared [`crate::utils::datetime::format_timestamp`] helper.
 fn unix_to_rfc3339(v: &serde_json::Value) -> Option<String> {
     let ts = match v {
         serde_json::Value::String(s) => s.parse::<i64>().ok()?,
@@ -449,8 +450,7 @@ fn unix_to_rfc3339(v: &serde_json::Value) -> Option<String> {
     if ts < 1_000_000_000 {
         return None;
     }
-    let dt = time::OffsetDateTime::from_unix_timestamp(ts).ok()?;
-    Some(crate::utils::datetime::fmt_rfc3339(dt))
+    Some(crate::utils::datetime::format_timestamp(ts))
 }
 
 /// Recursively rewrite unix-second timestamp fields to RFC 3339, so fund output
