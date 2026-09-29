@@ -395,6 +395,14 @@ pub enum FundCommands {
 /// stripped); table output renders an array of objects as a table and a single
 /// object as a field/value table.
 fn output<T: Serialize>(value: &T, format: &OutputFormat) -> Result<()> {
+    output_cols(value, format, &[])
+}
+
+/// Like [`output`], but for an array result the table view is restricted (and
+/// ordered) to `cols` when they are present — keeping wide list responses (e.g.
+/// `list` / `transactions`) to a readable set of columns. `--format json` still
+/// returns every field.
+fn output_cols<T: Serialize>(value: &T, format: &OutputFormat, cols: &[&str]) -> Result<()> {
     let mut json = serde_json::to_value(value)?;
     strip_private_fields(&mut json);
     match format {
@@ -402,7 +410,7 @@ fn output<T: Serialize>(value: &T, format: &OutputFormat) -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&json)?);
         }
         OutputFormat::Pretty => match &json {
-            serde_json::Value::Array(arr) => print_array_table(arr),
+            serde_json::Value::Array(arr) => print_array_table(arr, cols),
             serde_json::Value::Object(map) => {
                 // Field/value table; nested collections are summarised by `cell`
                 // so a heavy field doesn't blow up the row.
@@ -418,7 +426,10 @@ fn output<T: Serialize>(value: &T, format: &OutputFormat) -> Result<()> {
 
 /// Render a JSON array of objects as a table. Falls back to raw JSON for shapes
 /// that are not a uniform list of objects.
-fn print_array_table(arr: &[serde_json::Value]) {
+///
+/// When `cols` is non-empty the table is restricted to those columns, in that
+/// order (any not present in the data are skipped); otherwise every key is shown.
+fn print_array_table(arr: &[serde_json::Value], cols: &[&str]) {
     if arr.is_empty() {
         println!("(no records)");
         return;
@@ -437,7 +448,14 @@ fn print_array_table(arr: &[serde_json::Value]) {
         print_table(&["Field", "Value"], rows, &OutputFormat::Pretty);
         return;
     }
-    let headers: Vec<String> = first.keys().cloned().collect();
+    let headers: Vec<String> = if cols.is_empty() {
+        first.keys().cloned().collect()
+    } else {
+        cols.iter()
+            .filter(|c| first.contains_key(**c))
+            .map(|c| (*c).to_string())
+            .collect()
+    };
     let header_refs: Vec<&str> = headers.iter().map(String::as_str).collect();
     let rows: Vec<Vec<String>> = arr
         .iter()
@@ -535,7 +553,19 @@ pub async fn run(cmd: FundCommands, format: &OutputFormat) -> Result<()> {
             if !time_interval.is_empty() {
                 opts = opts.time_interval(time_interval);
             }
-            output(&ctx.funds(opts).await?, format)
+            output_cols(
+                &ctx.funds(opts).await?,
+                format,
+                &[
+                    "counter_id",
+                    "name",
+                    "currency",
+                    "asset_class_name",
+                    "risk_level_name",
+                    "unit_value",
+                    "purchase_amount",
+                ],
+            )
         }
         FundCommands::Filters => output(&ctx.filters().await?, format),
         FundCommands::Detail { counter_id } => output(&ctx.detail(counter_id).await?, format),
@@ -766,7 +796,18 @@ pub async fn run(cmd: FundCommands, format: &OutputFormat) -> Result<()> {
             if let Some(s) = size {
                 opts = opts.size(s);
             }
-            output(&ctx.transactions(opts).await?, format)
+            output_cols(
+                &ctx.transactions(opts).await?,
+                format,
+                &[
+                    "done_at",
+                    "tx_type",
+                    "type_name",
+                    "amount",
+                    "currency",
+                    "description",
+                ],
+            )
         }
         FundCommands::ValidateOrder {
             counter_id,
