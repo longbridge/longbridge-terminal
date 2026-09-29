@@ -441,14 +441,31 @@ fn print_array_table(arr: &[serde_json::Value]) {
     print_table(&header_refs, rows, &OutputFormat::Pretty);
 }
 
+/// Longest string a table cell renders before it is truncated with `…`.
+const MAX_CELL_CHARS: usize = 80;
+
+/// Collapse whitespace/newlines to single spaces and truncate to
+/// [`MAX_CELL_CHARS`] so a long prose field (e.g. a fund's `introduce` /
+/// `profile`) doesn't blow up the column width. Counts by `char`, not bytes.
+fn truncate_cell(s: &str) -> String {
+    let collapsed = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.chars().count() <= MAX_CELL_CHARS {
+        collapsed
+    } else {
+        let head: String = collapsed.chars().take(MAX_CELL_CHARS - 1).collect();
+        format!("{head}…")
+    }
+}
+
 /// Flatten a JSON value into a single table cell.
 ///
-/// Nested arrays and objects are summarised (`[N items]` / `{N fields}`) rather
-/// than dumped as raw JSON, so a heavy column (e.g. a fund's embedded NAV series)
-/// doesn't blow up the table width. Use `--format json` for the full payload.
+/// Nested arrays and objects are summarised (`[N items]` / `{N fields}`) and
+/// long strings are truncated, so a heavy field (an embedded NAV series or a
+/// paragraph-long description) doesn't blow up the table width. Use
+/// `--format json` for the full payload.
 fn cell(v: &serde_json::Value) -> String {
     match v {
-        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::String(s) => truncate_cell(s),
         serde_json::Value::Null => "-".to_string(),
         serde_json::Value::Number(_) | serde_json::Value::Bool(_) => v.to_string(),
         serde_json::Value::Array(a) => {
