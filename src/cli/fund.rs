@@ -427,6 +427,16 @@ fn print_array_table(arr: &[serde_json::Value]) {
         println!("{}", serde_json::to_string_pretty(arr).unwrap_or_default());
         return;
     };
+    // A single-row result (e.g. one fund's ~30 performance metrics) is far more
+    // readable transposed as a field/value table than as one very wide row.
+    if arr.len() == 1 {
+        let rows: Vec<Vec<String>> = first
+            .iter()
+            .map(|(k, v)| vec![k.clone(), cell(v)])
+            .collect();
+        print_table(&["Field", "Value"], rows, &OutputFormat::Pretty);
+        return;
+    }
     let headers: Vec<String> = first.keys().cloned().collect();
     let header_refs: Vec<&str> = headers.iter().map(String::as_str).collect();
     let rows: Vec<Vec<String>> = arr
