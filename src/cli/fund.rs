@@ -394,6 +394,25 @@ pub enum FundCommands {
 /// JSON output pretty-prints the value (with internal fields such as `aaid`
 /// stripped); table output renders an array of objects as a table and a single
 /// object as a field/value table.
+/// Column allowlist for the net-value list commands (`nav`, `nav-history`,
+/// `nav-range`), which return the 12-field [`FundNavValue`]; the table view is
+/// trimmed to the figures a user actually reads (`--format json` still returns
+/// every field).
+const NAV_COLS: &[&str] = &["date_format", "value", "change", "change_percent", "currency"];
+
+/// Column allowlist for the holdings rows inside `fund positions`, so the
+/// overview renders each held fund as a real table row instead of collapsing
+/// the whole list to `[N items]` (`--format json` still returns every field).
+const POSITION_COLS: &[&str] = &[
+    "counter_id",
+    "name",
+    "currency",
+    "holding_units",
+    "amount",
+    "holding_profit",
+    "recent_profit",
+];
+
 fn output<T: Serialize>(value: &T, format: &OutputFormat) -> Result<()> {
     output_cols(value, format, &[])
 }
@@ -658,14 +677,16 @@ pub async fn run(cmd: FundCommands, format: &OutputFormat) -> Result<()> {
             let opts = period.map(|p| GetFundAnalysisOptions::new().period(p));
             output(&ctx.performance_comparison(counter_id, opts).await?, format)
         }
-        FundCommands::Nav { counter_id } => output(&ctx.nav(counter_id).await?, format),
+        FundCommands::Nav { counter_id } => {
+            output_cols(&ctx.nav(counter_id).await?, format, NAV_COLS)
+        }
         FundCommands::NavHistory {
             counter_id,
             page,
             size,
         } => {
             let opts = page_options(page, size);
-            output(&ctx.nav_history(counter_id, opts).await?, format)
+            output_cols(&ctx.nav_history(counter_id, opts).await?, format, NAV_COLS)
         }
         FundCommands::NavRange {
             counter_id,
@@ -673,7 +694,7 @@ pub async fn run(cmd: FundCommands, format: &OutputFormat) -> Result<()> {
             year_before,
         } => {
             let opts = nav_range_options(month_before, year_before);
-            output(&ctx.nav_range(counter_id, opts).await?, format)
+            output_cols(&ctx.nav_range(counter_id, opts).await?, format, NAV_COLS)
         }
         FundCommands::Holdings { counter_id, scene } => {
             let opts = scene.map(|s| GetFundHoldingsOptions::new().scene(s));
@@ -696,7 +717,34 @@ pub async fn run(cmd: FundCommands, format: &OutputFormat) -> Result<()> {
             if let Some(a) = aaid {
                 opts = opts.aaid(a);
             }
-            output(&ctx.positions(opts).await?, format)
+            let positions = ctx.positions(opts).await?;
+            let mut json = serde_json::to_value(&positions)?;
+            strip_private_fields(&mut json);
+            format_timestamps(&mut json);
+            match format {
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&json)?),
+                OutputFormat::Pretty => {
+                    if let serde_json::Value::Object(map) = &json {
+                        // Account-level summary (everything except the holdings list).
+                        let rows: Vec<Vec<String>> = map
+                            .iter()
+                            .filter(|(k, _)| k.as_str() != "list")
+                            .map(|(k, v)| vec![k.clone(), cell(v)])
+                            .collect();
+                        if !rows.is_empty() {
+                            print_table(&["Field", "Value"], rows, format);
+                        }
+                        // The holdings themselves as a real table, not "[N items]".
+                        match map.get("list") {
+                            Some(serde_json::Value::Array(arr)) => {
+                                print_array_table(arr, POSITION_COLS);
+                            }
+                            _ => print_array_table(&[], POSITION_COLS),
+                        }
+                    }
+                }
+            }
+            Ok(())
         }
         FundCommands::Position {
             counter_id,
@@ -816,7 +864,21 @@ pub async fn run(cmd: FundCommands, format: &OutputFormat) -> Result<()> {
             if let Some(s) = size {
                 opts = opts.size(s);
             }
-            output(&ctx.orders(opts).await?, format)
+            output_cols(
+                &ctx.orders(opts).await?,
+                format,
+                &[
+                    "created_at",
+                    "action",
+                    "counter_id",
+                    "fund_name",
+                    "amount",
+                    "units",
+                    "currency",
+                    "state",
+                    "state_desc",
+                ],
+            )
         }
         FundCommands::Order { order_id } => output(&ctx.order(order_id).await?, format),
         FundCommands::Transactions {
@@ -930,6 +992,7 @@ pub async fn run(cmd: FundCommands, format: &OutputFormat) -> Result<()> {
             let resp = ctx.submit_order(opts).await?;
             let mut json = serde_json::to_value(&resp)?;
             strip_private_fields(&mut json);
+            format_timestamps(&mut json);
             match format {
                 OutputFormat::Json => {
                     println!("{}", serde_json::to_string_pretty(&json)?);
@@ -958,6 +1021,7 @@ pub async fn run(cmd: FundCommands, format: &OutputFormat) -> Result<()> {
                 OutputFormat::Json => {
                     let mut json = serde_json::to_value(&detail)?;
                     strip_private_fields(&mut json);
+                    format_timestamps(&mut json);
                     let state = detail.order.as_ref().map(|o| o.state.clone());
                     println!(
                         "{}",

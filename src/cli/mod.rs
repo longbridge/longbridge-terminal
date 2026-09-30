@@ -1005,7 +1005,7 @@ pub enum Commands {
 
     /// Current fund (mutual fund) positions across all sub-accounts
     ///
-    /// Returns: symbol, name, `current_net_asset_value`, `cost_net_asset_value`, currency, `holding_units`.
+    /// Returns: `counter_id`, name, `current_net_asset_value`, `cost_net_asset_value`, currency, `holding_units`.
     FundPositions,
 
     /// Fund (mutual fund) channel — catalog, NAV, holdings, positions, orders, trading
