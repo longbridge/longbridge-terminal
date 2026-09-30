@@ -1469,3 +1469,90 @@ fn nav_range_options(
     }
     Some(opts)
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn truncate_cell_collapses_whitespace_and_keeps_short() {
+        assert_eq!(truncate_cell("  a\n b\t c  "), "a b c");
+        assert_eq!(truncate_cell("short"), "short");
+    }
+
+    #[test]
+    fn truncate_cell_truncates_long_on_char_boundary() {
+        let long = "x".repeat(200);
+        let out = truncate_cell(&long);
+        assert_eq!(out.chars().count(), MAX_CELL_CHARS);
+        assert!(out.ends_with('…'));
+
+        // Multibyte input must not panic or split a code point.
+        let cjk = "长".repeat(200);
+        let out = truncate_cell(&cjk);
+        assert_eq!(out.chars().count(), MAX_CELL_CHARS);
+        assert!(out.ends_with('…'));
+    }
+
+    #[test]
+    fn is_timestamp_key_matches_suffixes_and_special_cases() {
+        assert!(is_timestamp_key("created_at"));
+        assert!(is_timestamp_key("last_update_time"));
+        assert!(is_timestamp_key("recent_trading_day"));
+        assert!(is_timestamp_key("recent_tradingday"));
+        // `cut_off_time` matches by key; the value guard (not the key) rejects it.
+        assert!(is_timestamp_key("cut_off_time"));
+        assert!(!is_timestamp_key("counter_id"));
+        assert!(!is_timestamp_key("value"));
+    }
+
+    #[test]
+    fn unix_to_rfc3339_accepts_plausible_epochs() {
+        // 2023-11-14T22:13:20Z — accepts both numeric and string encodings.
+        let expected = crate::utils::datetime::format_timestamp(1_700_000_000);
+        assert_eq!(unix_to_rfc3339(&json!(1_700_000_000_i64)), Some(expected.clone()));
+        assert_eq!(unix_to_rfc3339(&json!("1700000000")), Some(expected.clone()));
+        assert!(expected.starts_with("2023-11-14T") && expected.ends_with('Z'));
+    }
+
+    #[test]
+    fn unix_to_rfc3339_rejects_non_epochs() {
+        assert_eq!(unix_to_rfc3339(&json!(0)), None);
+        assert_eq!(unix_to_rfc3339(&json!(123)), None);
+        // A time-of-day string such as `cut_off_time` = "22:00" is not an epoch.
+        assert_eq!(unix_to_rfc3339(&json!("22:00")), None);
+        assert_eq!(unix_to_rfc3339(&json!(true)), None);
+    }
+
+    #[test]
+    fn format_timestamps_rewrites_only_real_timestamps_recursively() {
+        let mut v = json!({
+            "created_at": "1700000000",
+            "cut_off_time": "22:00",
+            "value": "10.4",
+            "list": [ { "processed_at": 1_700_000_000_i64, "name": "A" } ],
+        });
+        format_timestamps(&mut v);
+        assert_eq!(v["created_at"], json!("2023-11-14T22:13:20Z"));
+        // Non-epoch and non-timestamp fields are left untouched.
+        assert_eq!(v["cut_off_time"], json!("22:00"));
+        assert_eq!(v["value"], json!("10.4"));
+        // Recurses into nested arrays/objects.
+        assert_eq!(v["list"][0]["processed_at"], json!("2023-11-14T22:13:20Z"));
+        assert_eq!(v["list"][0]["name"], json!("A"));
+    }
+
+    #[test]
+    fn cell_summarizes_by_kind() {
+        assert_eq!(cell(&json!("hi")), "hi");
+        assert_eq!(cell(&json!(null)), "-");
+        assert_eq!(cell(&json!(42)), "42");
+        assert_eq!(cell(&json!(true)), "true");
+        assert_eq!(cell(&json!([])), "-");
+        assert_eq!(cell(&json!([1, 2, 3])), "[3 items]");
+        assert_eq!(cell(&json!({})), "-");
+        assert_eq!(cell(&json!({ "a": 1, "b": 2 })), "{2 fields}");
+    }
+}

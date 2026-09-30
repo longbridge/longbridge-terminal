@@ -353,6 +353,56 @@ longbridge max-qty TSLA.US --side buy --price 250          # Estimate maximum bu
 > `400.00` and `+400` are one order). AI agents must show the preview to the user and only
 > run the printed command once they have confirmed it.
 
+### Funds
+
+Longbridge HK mutual-fund ("基金") channel. Funds are addressed by their
+`counter_id` (e.g. `UT/FD/HK0000384492`) — which contains `/` and is **not** a
+stock symbol — passed as a positional argument. The last `/`-separated segment
+is usually, but not always, the ISIN.
+
+```bash
+# Catalog / market data (no login required)
+longbridge fund hot                                         # Hot-selling funds
+longbridge fund list [--quick-id <ID>] [--time-interval 1y] # Fund list (repeatable filters)
+longbridge fund filters                                     # Available list filter options
+longbridge fund detail UT/FD/HK0000384492                  # Fund detail (name, ISIN, fees, …)
+longbridge fund analysis UT/FD/HK0000384492 [--period N]  # Analysis level 1
+longbridge fund analysis-detail UT/FD/HK0000384492        # Analysis level 2
+longbridge fund trend UT/FD/HK0000384492 [--period N]     # Trend chart
+longbridge fund annual-returns UT/FD/HK0000384492         # Annual returns (paged)
+longbridge fund quarterly-returns UT/FD/HK0000384492      # Quarterly returns (paged)
+longbridge fund performance UT/FD/HK0000384492            # Daily performance figures
+longbridge fund performance-comparison UT/FD/HK0000384492 # Performance vs benchmark
+longbridge fund nav UT/FD/HK0000384492                    # Latest net value (NAV)
+longbridge fund nav-history UT/FD/HK0000384492 [--page N] # Historical NAV (paged)
+longbridge fund nav-range UT/FD/HK0000384492 [--month-before 6] # NAV by relative range
+longbridge fund holdings UT/FD/HK0000384492               # Top-10 holdings
+longbridge fund stock-holdings UT/FD/HK0000384492 [--limit N]   # Stocks held (reverse lookup)
+
+# My positions (requires login)
+longbridge fund positions                                  # Positions overview (account summary + holdings)
+longbridge fund position UT/FD/HK0000384492               # Single position detail
+longbridge fund position-performance UT/FD/HK0000384492   # Performance of a held fund
+longbridge fund position-profits UT/FD/HK0000384492       # Cumulative-profit series
+longbridge fund position-nav UT/FD/HK0000384492           # NAV history of a held fund
+longbridge fund position-dividends UT/FD/HK0000384492     # Dividend records
+
+# Orders / trading (requires login)
+longbridge fund orders [--counter-id UT/FD/HK0000384492] [--action buy]  # My orders (also the execution record)
+longbridge fund order <order_id>                           # Single order detail
+longbridge fund transactions [--currencies USD]           # Cash-flow records
+longbridge fund validate-order UT/FD/HK0000384492 --action buy --currency USD --amount 1000  # Validate only (no order placed)
+longbridge fund submit-order UT/FD/HK0000384492 --action buy --currency USD --amount 1000    # Submit (asks to confirm unless --yes)
+longbridge fund cancel-order <order_id>                    # Cancel/withdraw (asks to confirm unless --yes)
+```
+
+> **Fund order commands ask before acting.** `submit-order` and `cancel-order`
+> print what will be sent and require an interactive `y` confirmation; pass
+> `--yes` to skip it (e.g. for scripting). Use `validate-order` to check an order
+> without placing it. Wide list commands (`list`, `orders`, `transactions`,
+> `nav*`, `positions`) show a trimmed set of columns in table view; add
+> `--format json` for every field.
+
 ### Profit Analysis
 
 ```bash
