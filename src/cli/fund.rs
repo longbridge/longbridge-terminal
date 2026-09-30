@@ -446,11 +446,14 @@ fn output_cols<T: Serialize>(value: &T, format: &OutputFormat, cols: &[&str]) ->
 
 /// Whether a field name denotes a unix-second timestamp that should be rendered
 /// as RFC 3339 (matching the trade / quote channels). `cut_off_time` (a
-/// time-of-day string) and `*_format` fields are excluded by the value guard in
-/// [`unix_to_rfc3339`], not here.
+/// time-of-day string), string dates such as `report_date` = `"2024-03-31"`,
+/// and `*_format` fields are excluded by the value guard in
+/// [`unix_to_rfc3339`] (they fail the `i64` parse), not here.
 fn is_timestamp_key(k: &str) -> bool {
     k.ends_with("_at")
         || k.ends_with("_time")
+        || k == "date"
+        || k.ends_with("_date")
         || k == "recent_trading_day"
         || k == "recent_tradingday"
 }
@@ -1502,10 +1505,16 @@ mod tests {
         assert!(is_timestamp_key("last_update_time"));
         assert!(is_timestamp_key("recent_trading_day"));
         assert!(is_timestamp_key("recent_tradingday"));
-        // `cut_off_time` matches by key; the value guard (not the key) rejects it.
+        // Bare `date` and `*_date` epoch fields (position profits / dividends).
+        assert!(is_timestamp_key("date"));
+        assert!(is_timestamp_key("lastest_date"));
+        // `cut_off_time` / `report_date` match by key; the value guard (not the
+        // key) rejects their non-epoch values.
         assert!(is_timestamp_key("cut_off_time"));
+        assert!(is_timestamp_key("report_date"));
         assert!(!is_timestamp_key("counter_id"));
         assert!(!is_timestamp_key("value"));
+        assert!(!is_timestamp_key("date_format"));
     }
 
     #[test]
@@ -1530,14 +1539,20 @@ mod tests {
     fn format_timestamps_rewrites_only_real_timestamps_recursively() {
         let mut v = json!({
             "created_at": "1700000000",
+            "lastest_date": 1_700_000_000_i64,
             "cut_off_time": "22:00",
+            "report_date": "2024-03-31",
             "value": "10.4",
-            "list": [ { "processed_at": 1_700_000_000_i64, "name": "A" } ],
+            "list": [ { "processed_at": 1_700_000_000_i64, "date": 1_700_000_000_i64, "name": "A" } ],
         });
         format_timestamps(&mut v);
         assert_eq!(v["created_at"], json!("2023-11-14T22:13:20Z"));
-        // Non-epoch and non-timestamp fields are left untouched.
+        // `*_date` / bare `date` epoch fields are converted too.
+        assert_eq!(v["lastest_date"], json!("2023-11-14T22:13:20Z"));
+        assert_eq!(v["list"][0]["date"], json!("2023-11-14T22:13:20Z"));
+        // Non-epoch and non-timestamp fields are left untouched (value guard).
         assert_eq!(v["cut_off_time"], json!("22:00"));
+        assert_eq!(v["report_date"], json!("2024-03-31"));
         assert_eq!(v["value"], json!("10.4"));
         // Recurses into nested arrays/objects.
         assert_eq!(v["list"][0]["processed_at"], json!("2023-11-14T22:13:20Z"));
