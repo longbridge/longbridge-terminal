@@ -1183,7 +1183,7 @@ pub async fn cmd_fund_positions(format: &OutputFormat) -> Result<()> {
 
     print_account_banner(format);
     let headers = &[
-        "Symbol",
+        "Counter ID",
         "Name",
         "Net Asset Value",
         "Cost Net Asset Value",
@@ -1194,7 +1194,7 @@ pub async fn cmd_fund_positions(format: &OutputFormat) -> Result<()> {
     for channel in &resp.channels {
         for pos in &channel.positions {
             rows.push(vec![
-                pos.symbol.clone(),
+                pos.counter_id.clone(),
                 pos.symbol_name.clone(),
                 pos.current_net_asset_value.to_string(),
                 pos.cost_net_asset_value.to_string(),
@@ -1714,7 +1714,7 @@ pub async fn run_positions(api: &dyn TradeApi, format: &OutputFormat) -> Result<
 pub async fn run_fund_positions(api: &dyn TradeApi, format: &OutputFormat) -> Result<()> {
     let resp = api.fund_positions().await?;
     let headers = &[
-        "Symbol",
+        "Counter ID",
         "Name",
         "Net Asset Value",
         "Cost NAV",
@@ -1725,7 +1725,7 @@ pub async fn run_fund_positions(api: &dyn TradeApi, format: &OutputFormat) -> Re
     for channel in &resp.channels {
         for pos in &channel.positions {
             rows.push(vec![
-                pos.symbol.clone(),
+                pos.counter_id.clone(),
                 pos.symbol_name.clone(),
                 pos.current_net_asset_value.to_string(),
                 pos.cost_net_asset_value.to_string(),

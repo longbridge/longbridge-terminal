@@ -13,7 +13,7 @@ pub mod wrapper;
 
 pub use agent::{AuthenticationRequiredAgent, OpenApiAgent};
 pub use context::{
-    agent, content, fundamental, grid, http_client, init_contexts, is_ready, is_us_account,
+    agent, content, fund, fundamental, grid, http_client, init_contexts, is_ready, is_us_account,
     mark_signed_out, oauth_credentials_available, quote, quote_cmd, quote_limited, signal,
     statement, track_quote_cmd, trade, trade_limited,
 };
