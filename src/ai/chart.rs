@@ -18,6 +18,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use serde_json::Value;
 
+use super::theme::pal;
 use crate::utils::text::{display_width, pad_display, strip_control_chars, truncate_width};
 
 /// The price/value line.
@@ -43,8 +44,6 @@ fn series_color(i: usize) -> Color {
 }
 /// The volume histogram under it.
 const VOLUME: Color = Color::Blue;
-/// Axes, ticks and legend.
-const AXIS: Color = Color::DarkGray;
 
 /// Braille rows given to the line plot and to the volume histogram below it.
 const LINE_ROWS: usize = 6;
@@ -88,7 +87,7 @@ pub fn render(spec: &Value, width: usize) -> Vec<Line<'static>> {
     if !title.is_empty() {
         out.push(Line::from(Span::styled(
             format!("  {}", truncate_width(&title, width.saturating_sub(2))),
-            Style::default().fg(AXIS),
+            Style::default().fg(pal().dim),
         )));
     }
     out.extend(match chart_type {
@@ -126,7 +125,7 @@ pub fn render(spec: &Value, width: usize) -> Vec<Line<'static>> {
         out.truncate(MAX_ROWS);
         out.push(Line::from(Span::styled(
             format!("  ⋯ +{hidden}"),
-            Style::default().fg(AXIS),
+            Style::default().fg(pal().dim),
         )));
     }
     out
@@ -298,7 +297,7 @@ fn line_chart(
         return table_chart(categories, series);
     };
     let geo = Geometry { gutter, plot_w };
-    let axis = Style::default().fg(AXIS);
+    let axis = Style::default().fg(pal().dim);
 
     let mut out = Vec::new();
     if let Some((min, max)) = scale {
@@ -621,7 +620,7 @@ fn legend_lines(
     geo: &Geometry,
     width: usize,
 ) -> Vec<Line<'static>> {
-    let axis = Style::default().fg(AXIS);
+    let axis = Style::default().fg(pal().dim);
     let indent = geo.gutter + 1;
     let avail = width.saturating_sub(indent);
     // A marker plus a space is the minimum an entry occupies.
@@ -804,10 +803,10 @@ fn bar_chart(categories: &[String], series: &[ChartSeries], width: usize) -> Vec
             out.push(Line::from(vec![
                 Span::styled(
                     format!("  {}   ", pad_display(&label, label_w)),
-                    Style::default().fg(AXIS),
+                    Style::default().fg(pal().dim),
                 ),
                 Span::styled(bar_blocks(v.abs() / max, bar_w), Style::default().fg(color)),
-                Span::styled(format!("  {}", num(v)), Style::default().fg(AXIS)),
+                Span::styled(format!("  {}", num(v)), Style::default().fg(pal().dim)),
             ]));
         }
     }
@@ -907,7 +906,7 @@ fn vertical_bar_chart(
                 .clamp(1.0, (V_ROWS * 8) as f64) as usize
         })
         .collect();
-    let axis = Style::default().fg(AXIS);
+    let axis = Style::default().fg(pal().dim);
     let mut out = Vec::new();
     for (r, label) in labels.iter().enumerate() {
         let base = (V_ROWS - 1 - r) * 8;
@@ -1013,7 +1012,7 @@ fn pie_chart(categories: &[String], series: &[ChartSeries], width: usize) -> Vec
         angle = end;
     }
     // The donut rows, each with its slice of the legend to the right.
-    let axis = Style::default().fg(AXIS);
+    let axis = Style::default().fg(pal().dim);
     let mut out = Vec::new();
     for (r, row) in canvas.iter().enumerate() {
         let mut spans = colored_row(row);
@@ -1063,7 +1062,7 @@ fn table_chart(categories: &[String], series: &[ChartSeries]) -> Vec<Line<'stati
                 .collect();
             Line::from(Span::styled(
                 format!("  {}  {}", pad_display(cat, label_w), values.join("  ")),
-                Style::default().fg(AXIS),
+                Style::default().fg(pal().dim),
             ))
         })
         .collect()
@@ -1106,10 +1105,10 @@ fn bar_row(
     Line::from(vec![
         Span::styled(
             format!("  {}   ", pad_display(label, label_w)),
-            Style::default().fg(AXIS),
+            Style::default().fg(pal().dim),
         ),
         Span::styled(bar, Style::default().fg(color)),
-        Span::styled(format!("  {value}"), Style::default().fg(AXIS)),
+        Span::styled(format!("  {value}"), Style::default().fg(pal().dim)),
     ])
 }
 
@@ -1196,11 +1195,11 @@ fn funnel_chart(categories: &[String], series: &[ChartSeries], width: usize) -> 
         out.push(Line::from(vec![
             Span::styled(
                 format!("  {} ", pad_display(&cat, label_w)),
-                Style::default().fg(AXIS),
+                Style::default().fg(pal().dim),
             ),
             Span::raw(" ".repeat(pad)),
             Span::styled("█".repeat(n), Style::default().fg(PLOT)),
-            Span::styled(format!(" {}{conv}", num(v)), Style::default().fg(AXIS)),
+            Span::styled(format!(" {}{conv}", num(v)), Style::default().fg(pal().dim)),
         ]));
         prev = Some(v);
     }
@@ -1275,7 +1274,7 @@ fn radar_chart(categories: &[String], series: &[ChartSeries], width: usize) -> V
             let color = if cell.bits != 0 {
                 series_color(cell.owner)
             } else {
-                AXIS
+                pal().dim
             };
             let glyph = braille(cell.bits | grid[r][c]);
             if run_color == Some(color) {
@@ -1307,7 +1306,7 @@ fn radar_chart(categories: &[String], series: &[ChartSeries], width: usize) -> V
         let color = if series.len() > 1 {
             series_color(si)
         } else {
-            AXIS
+            pal().dim
         };
         out.push(Line::from(Span::styled(
             format!("  {}", truncate_width(&listing, width.saturating_sub(2))),
@@ -1504,9 +1503,9 @@ fn boxplot_chart(spec: &Value, width: usize) -> Vec<Line<'static>> {
                 Line::from(vec![
                     Span::styled(
                         format!("  {}   ", pad_display(&b.label, label_w)),
-                        Style::default().fg(AXIS),
+                        Style::default().fg(pal().dim),
                     ),
-                    Span::styled(stats(b), Style::default().fg(AXIS)),
+                    Span::styled(stats(b), Style::default().fg(pal().dim)),
                 ])
             })
             .collect();
@@ -1531,13 +1530,13 @@ fn boxplot_chart(spec: &Value, width: usize) -> Vec<Line<'static>> {
             Line::from(vec![
                 Span::styled(
                     format!("  {} ", pad_display(&b.label, label_w)),
-                    Style::default().fg(AXIS),
+                    Style::default().fg(pal().dim),
                 ),
                 Span::styled(
                     cells.into_iter().collect::<String>(),
                     Style::default().fg(PLOT),
                 ),
-                Span::styled(format!("  {}", stats(b)), Style::default().fg(AXIS)),
+                Span::styled(format!("  {}", stats(b)), Style::default().fg(pal().dim)),
             ])
         })
         .collect()
@@ -1593,7 +1592,7 @@ fn scatter_chart(spec: &Value, width: usize) -> Vec<Line<'static>> {
         let dy = ((ymax - y) / yspan * (LINE_ROWS * 4 - 1) as f64).round() as usize;
         plot(&mut canvas, dx, dy);
     }
-    let axis = Style::default().fg(AXIS);
+    let axis = Style::default().fg(pal().dim);
     let mut out = Vec::new();
     for (r, row) in canvas.iter().enumerate() {
         let label = labels.get(r).cloned().unwrap_or_default();
@@ -1720,7 +1719,7 @@ fn push_tree_node(
         let branch = if is_last { "└─ " } else { "├─ " };
         out.push(Line::from(Span::styled(
             truncate_width(&format!("  {prefix}{branch}{label}"), width),
-            Style::default().fg(AXIS),
+            Style::default().fg(pal().dim),
         )));
     }
     if let Some(children) = node.get("children").and_then(Value::as_array) {
@@ -1752,7 +1751,7 @@ fn structured_chart(
     series: &[ChartSeries],
     width: usize,
 ) -> Vec<Line<'static>> {
-    let axis = Style::default().fg(AXIS);
+    let axis = Style::default().fg(pal().dim);
     // The graph/tree kinds nest their payload under `data` as an object; the
     // flow/word kinds put an array there. Resolve whichever is present.
     let payload = spec.get("data").unwrap_or(spec);

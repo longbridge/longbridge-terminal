@@ -31,6 +31,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use super::editor::Editor;
 use super::session_store::{self, SessionSummary};
 use super::state::{ChatEvent, ChatState, Message, Role, ToolStatus};
+use super::theme::pal;
 use super::{analytics, markdown, runtime};
 use crate::cli::agent::client::ConversationRequest;
 use crate::cli::agent::DEFAULT_AGENT_UID;
@@ -86,15 +87,9 @@ const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "�
 /// pulse is symmetric instead of snapping back to the smallest glyph.
 const THINKING_PULSE: [&str; 8] = ["·", "✢", "✳", "∗", "✻", "∗", "✳", "✢"];
 
-/// The reader's own turns get a band of their own so a long transcript is
-/// scannable. Foreground is set alongside the background: there is no theme
-/// layer yet, and a background alone would be unreadable against a light
-/// terminal's default dark text.
-const USER_BG: Color = Color::Rgb(38, 45, 60);
-const USER_FG: Color = Color::Rgb(226, 232, 240);
-
-// History list palette: a subtle selected-row background and index badge tints.
-const SEL_BG: Color = Color::Rgb(45, 50, 62);
+// History list palette: index badge tints. The selected-row background, the
+// reader's own message band, and the other theme-dependent grounds live in
+// `super::theme`, which picks them from the terminal's real background.
 const IDX: Color = Color::Rgb(110, 140, 190);
 const IDX_SEL: Color = Color::Rgb(240, 150, 90);
 
@@ -974,6 +969,10 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
         crossterm::event::EnableBracketedPaste,
         crossterm::event::EnableFocusChange,
     );
+    // Pick the palette from the terminal's real background before anything reads
+    // stdin: this queries the terminal (OSC 11) and reads its reply, which the
+    // event thread below would otherwise swallow as an input event.
+    super::theme::detect();
     // Read terminal events on a blocking thread into a channel we own. Unlike
     // crossterm's async `EventStream`, a tokio receiver can be drained with
     // `try_recv`, so a fast wheel-scroll's burst is coalesced into one redraw
@@ -3270,7 +3269,7 @@ fn view(f: &mut ratatui::Frame, ui: &mut Ui, state: &mut ChatState, editor: &Edi
     if area.width < 24 || area.height < 6 {
         f.render_widget(
             Paragraph::new(t!("Ai.WindowTooSmall").to_string())
-                .style(Style::default().fg(Color::DarkGray))
+                .style(Style::default().fg(pal().dim))
                 .alignment(ratatui::layout::Alignment::Center),
             area,
         );
@@ -3424,7 +3423,7 @@ fn render_login_panel(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, spin: usi
     let Some(login) = &ui.login else {
         return;
     };
-    let dim = Style::default().fg(Color::DarkGray);
+    let dim = Style::default().fg(pal().dim);
     let inner_w = 64usize.min(area.width.saturating_sub(8) as usize).max(20);
     let mut body = vec![Line::from(Span::styled(
         if login.browser_opened {
@@ -3432,7 +3431,7 @@ fn render_login_panel(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, spin: usi
         } else {
             t!("Ai.LoginOpenUrl").to_string()
         },
-        Style::default().fg(Color::Gray),
+        Style::default().fg(pal().muted),
     ))];
     body.push(Line::from(""));
     // The URL is long and the reader may need to type it, so it wraps rather than
@@ -3512,7 +3511,7 @@ fn render_help(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
-        .border_style(Style::default().fg(Color::DarkGray))
+        .border_style(Style::default().fg(pal().dim))
         .padding(Padding::horizontal(2))
         .title(Span::styled(
             format!(" {} ", t!("Ai.Help")),
@@ -3529,7 +3528,7 @@ fn render_help(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
                 } else {
                     close_label()
                 },
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(pal().dim),
             ))
             .right_aligned(),
         );
@@ -3551,7 +3550,7 @@ fn render_help(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
                 Line::from(Span::styled(
                     right,
                     Style::default()
-                        .fg(Color::Gray)
+                        .fg(pal().muted)
                         .add_modifier(Modifier::BOLD),
                 ))
             } else {
@@ -3559,7 +3558,7 @@ fn render_help(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
                 Line::from(vec![
                     Span::styled(left, Style::default().fg(Color::Cyan)),
                     Span::raw(pad),
-                    Span::styled(right, Style::default().fg(Color::Gray)),
+                    Span::styled(right, Style::default().fg(pal().muted)),
                 ])
             }
         })
@@ -3596,7 +3595,7 @@ fn render_quote_panel(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
         Some(card) => card_lines(card, path, detail),
         None => vec![Line::from(Span::styled(
             t!("Ai.QuoteLoading").to_string(),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(pal().dim),
         ))],
     };
     // The first row is custom-drawn after the frame so its left and right actions
@@ -3672,14 +3671,14 @@ fn render_quote_panel(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
         height: 1,
     };
     let web_fg = if hovering(ui, open_rect) {
-        Color::White
+        pal().strong
     } else {
         Color::Blue
     };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
-        .border_style(Style::default().fg(Color::DarkGray))
+        .border_style(Style::default().fg(pal().dim))
         .padding(Padding::horizontal(2));
     f.render_widget(Paragraph::new(Text::from(body)).block(block), rect);
     let draw_text =
@@ -3868,7 +3867,7 @@ fn render_title(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatSta
     if state.agent_uid != DEFAULT_AGENT_UID {
         left.push(Span::styled(
             format!("  {}", t!("Ai.CustomAgent")),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(pal().dim),
         ));
     }
     // Reaching an earlier conversation was `/resume` and nothing else, which only
@@ -3885,9 +3884,9 @@ fn render_title(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatSta
     left.push(Span::styled(
         sessions.clone(),
         if hovering(ui, sessions_rect) {
-            Style::default().fg(Color::White)
+            Style::default().fg(pal().strong)
         } else {
-            Style::default().fg(Color::DarkGray)
+            Style::default().fg(pal().dim)
         },
     ));
     ui.header_chips.push((Chip::Sessions, sessions_rect));
@@ -3950,13 +3949,13 @@ fn render_title(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &ChatSta
         height: 1,
     };
     let toggle_style = if !ui.tape.is_empty() && hovering(ui, toggle_rect) {
-        Style::default().fg(Color::White)
+        Style::default().fg(pal().strong)
     } else if super::settings::tape() {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(pal().dim)
     } else {
         // Collapsed, it is the only thing saying the ticker is there at all, so it
         // is not dim.
-        Style::default().fg(Color::Gray)
+        Style::default().fg(pal().muted)
     };
     spans.push(Span::styled(toggle, toggle_style));
     if !ui.tape.is_empty() {
@@ -3990,7 +3989,7 @@ fn tape_spans(ui: &mut Ui, area: Rect, start_x: Option<u16>, room: usize) -> Vec
                 price_chip(card),
                 change_color(card.direction),
             ),
-            None => (symbol.clone(), String::new(), Color::DarkGray),
+            None => (symbol.clone(), String::new(), pal().dim),
         })
         .collect();
     if entries.is_empty() || room == 0 {
@@ -4032,7 +4031,7 @@ fn tape_spans(ui: &mut Ui, area: Rect, start_x: Option<u16>, room: usize) -> Vec
             break;
         }
         if used > 0 {
-            spans.push(Span::styled(GAP, Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled(GAP, Style::default().fg(pal().dim)));
         }
         // Every entry is a button. `None` is the measuring pass: the ticker is
         // right-aligned, so its first column is not known until its width is.
@@ -4052,14 +4051,14 @@ fn tape_spans(ui: &mut Ui, area: Rect, start_x: Option<u16>, room: usize) -> Vec
         // gets the lighter cue every clickable does. Selected wins over hover.
         let selected = ui.quote_panel.as_deref() == Some(symbol.as_str());
         let bg = if selected {
-            Some(TAB_BG)
+            Some(pal().tab_bg)
         } else if rect.is_some_and(|r| hovering(ui, r)) {
-            Some(HOVER_BG)
+            Some(pal().hover_bg)
         } else {
             None
         };
         let mut symbol_style =
-            Style::default().fg(if selected { Color::White } else { Color::Gray });
+            Style::default().fg(if selected { pal().strong } else { pal().muted });
         if selected {
             symbol_style = symbol_style.add_modifier(Modifier::BOLD);
         }
@@ -4134,9 +4133,9 @@ fn render_view_header(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, label_key
         Paragraph::new(Span::styled(
             close,
             if hovering(ui, close_rect) {
-                Style::default().fg(Color::White)
+                Style::default().fg(pal().strong)
             } else {
-                Style::default().fg(Color::DarkGray)
+                Style::default().fg(pal().dim)
             },
         )),
         close_rect,
@@ -4231,8 +4230,8 @@ fn render_chat(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &mut Chat
                 " ".repeat(indent)
             };
             tail.push(Line::from(vec![
-                Span::styled(lead, Style::default().fg(Color::DarkGray)),
-                Span::styled(wrapped, Style::default().fg(Color::DarkGray)),
+                Span::styled(lead, Style::default().fg(pal().dim)),
+                Span::styled(wrapped, Style::default().fg(pal().dim)),
             ]));
         }
     }
@@ -4243,7 +4242,7 @@ fn render_chat(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &mut Chat
     if !state.busy && !state.references.is_empty() {
         tail.push(Line::from(Span::styled(
             format!("{}:", t!("Agent.References")),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(pal().dim),
         )));
         for (i, r) in state.references.iter().enumerate() {
             ref_rows.push((cache_len + tail.len(), i));
@@ -4412,7 +4411,7 @@ fn render_empty_state(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
         Line::from(""),
         Line::from(Span::styled(
             t!("Ai.Welcome").to_string(),
-            Style::default().fg(Color::Gray),
+            Style::default().fg(pal().muted),
         )),
         Line::from(""),
     ];
@@ -4426,13 +4425,13 @@ fn render_empty_state(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
         // invitation rather than fine print.
         content.push(Line::from(vec![
             Span::styled("❯ ", Style::default().fg(Color::Cyan)),
-            Span::styled(t!(key).to_string(), Style::default().fg(Color::Gray)),
+            Span::styled(t!(key).to_string(), Style::default().fg(pal().muted)),
         ]));
     }
     content.push(Line::from(""));
     content.push(Line::from(Span::styled(
         t!("Ai.EmptyHint").to_string(),
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(pal().dim),
     )));
     // The brand mark goes above the copy, but only when the area can hold both:
     // the welcome text and the example prompts are what make the empty state
@@ -4524,11 +4523,6 @@ fn coalesce_cells(cells: &[(char, Style)]) -> Line<'static> {
     Line::from(spans)
 }
 
-const HOVER_BG: Color = Color::Rgb(48, 48, 48);
-/// The ground under the ticker entry whose drawer is open — a selected-tab tint,
-/// lifted toward the accent so it reads as chosen rather than merely hovered.
-const TAB_BG: Color = Color::Rgb(30, 58, 66);
-
 /// The slash-command palette: a rounded, bordered menu of matching commands
 /// floating above the prompt. ↑/↓ move the highlight, Enter/click runs it, and
 /// the command names are column-aligned with dimmed descriptions.
@@ -4605,11 +4599,11 @@ fn render_slash_dropdown(
                     .add_modifier(Modifier::BOLD),
             ))
         } else {
-            let bg = hovering(ui, rect).then_some(HOVER_BG);
+            let bg = hovering(ui, rect).then_some(pal().hover_bg);
             let mut name_style = Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD);
-            let mut desc_style = Style::default().fg(Color::DarkGray);
+            let mut desc_style = Style::default().fg(pal().dim);
             if let Some(bg) = bg {
                 name_style = name_style.bg(bg);
                 desc_style = desc_style.bg(bg);
@@ -4654,7 +4648,7 @@ fn render_sessions(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 t!("Ai.SessionsLoading").to_string(),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(pal().dim),
             ))),
             area,
         );
@@ -4690,7 +4684,7 @@ fn render_sessions(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
         let (msg, color) = if crate::openapi::is_ready() {
             (t!("Ai.SessionsError"), Color::Red)
         } else {
-            (t!("Ai.SessionsSignedOut"), Color::DarkGray)
+            (t!("Ai.SessionsSignedOut"), pal().dim)
         };
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
@@ -4705,7 +4699,7 @@ fn render_sessions(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 t!("Ai.SessionsNoMatch").to_string(),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(pal().dim),
             ))),
             list_area,
         );
@@ -4719,7 +4713,7 @@ fn render_sessions(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 t!("Ai.SessionsEmpty").to_string(),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(pal().dim),
             ))),
             note,
         );
@@ -4752,9 +4746,9 @@ fn render_sessions(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
         };
         let selected = i == ui.sel;
         let bg = if selected {
-            Some(SEL_BG)
+            Some(pal().sel_bg)
         } else if hovering(ui, rect) {
-            Some(HOVER_BG)
+            Some(pal().hover_bg)
         } else {
             None
         };
@@ -4767,7 +4761,7 @@ fn render_sessions(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
                     Span::styled(" +  ", with_bg(Style::default().fg(IDX), bg)),
                     Span::styled(
                         t!("Ai.NewSessionAction").to_string(),
-                        with_bg(Style::default().fg(Color::Gray), bg),
+                        with_bg(Style::default().fg(pal().muted), bg),
                     ),
                 ],
                 width,
@@ -4791,7 +4785,7 @@ fn push_session_entry(
     bg: Option<Color>,
 ) {
     let idx_color = if selected { IDX_SEL } else { IDX };
-    let mut title_style = Style::default().fg(if selected { Color::White } else { Color::Gray });
+    let mut title_style = Style::default().fg(if selected { pal().strong } else { pal().muted });
     if selected {
         title_style = title_style.add_modifier(Modifier::BOLD);
     }
@@ -4810,7 +4804,7 @@ fn push_session_entry(
             Span::styled(title, with_bg(title_style, bg)),
             Span::styled(
                 format!("{}{subtitle}", " ".repeat(gap)),
-                with_bg(Style::default().fg(Color::DarkGray), bg),
+                with_bg(Style::default().fg(pal().dim), bg),
             ),
         ],
         width,
@@ -4928,7 +4922,7 @@ fn render_settings(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
                     .saturating_sub(UnicodeWidthStr::width(value.as_str()) + 2);
                 ListItem::new(vec![
                     Line::from(vec![
-                        Span::styled(format!("  {label}"), Style::default().fg(Color::Gray)),
+                        Span::styled(format!("  {label}"), Style::default().fg(pal().muted)),
                         Span::raw(" ".repeat(gap)),
                         Span::styled(
                             value,
@@ -4939,7 +4933,7 @@ fn render_settings(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
                     ]),
                     Line::from(Span::styled(
                         truncate_width(&format!("  {}", t!(meta.description)), width),
-                        Style::default().fg(Color::DarkGray),
+                        Style::default().fg(pal().dim),
                     )),
                 ])
             }
@@ -4953,7 +4947,7 @@ fn render_settings(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
                 if ui.confirm_sign_out {
                     Color::Red
                 } else {
-                    Color::Gray
+                    pal().muted
                 },
                 width,
             ),
@@ -4964,7 +4958,7 @@ fn render_settings(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
         .collect();
     let mut list_state = ListState::default().with_selected(Some(ui.sel));
     f.render_stateful_widget(
-        List::new(items).highlight_style(Style::default().bg(SEL_BG)),
+        List::new(items).highlight_style(Style::default().bg(pal().sel_bg)),
         list_area,
         &mut list_state,
     );
@@ -5008,14 +5002,14 @@ fn action_item<'a>(
         )),
         Line::from(Span::styled(
             truncate_width(&format!("  {hint}"), width),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(pal().dim),
         )),
     ])
 }
 
 /// The session header: who, where, and how long the credentials last.
 fn session_lines(session: &super::account::Session) -> Vec<Line<'static>> {
-    let dim = Style::default().fg(Color::DarkGray);
+    let dim = Style::default().fg(pal().dim);
     let (status, color) = match session.status {
         "valid" | "present" => (t!("Ai.SessionValid").to_string(), Color::Green),
         "refresh_pending" => (t!("Ai.SessionRefreshing").to_string(), Color::Yellow),
@@ -5030,7 +5024,7 @@ fn session_lines(session: &super::account::Session) -> Vec<Line<'static>> {
     if let Some(id) = &session.member_id {
         first.push(Span::styled(
             format!("   #{id}"),
-            Style::default().fg(Color::Gray),
+            Style::default().fg(pal().muted),
         ));
     }
     let mut second = vec![Span::styled(
@@ -5114,14 +5108,14 @@ fn render_question(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
     let mut block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
-        .border_style(Style::default().fg(Color::DarkGray))
+        .border_style(Style::default().fg(pal().dim))
         .padding(Padding::horizontal(1));
     if total > 1 {
         // Only worth a counter when there is more than one to get through.
         block = block.title_top(
             Line::from(Span::styled(
                 format!(" {}/{total} ", qi + 1),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(pal().dim),
             ))
             .right_aligned(),
         );
@@ -5197,18 +5191,17 @@ fn render_rows(
         let selected = *idx == ui.sel;
         let hovered = hovering(ui, rect);
         let bg = if selected {
-            Some(SEL_BG)
+            Some(pal().sel_bg)
         } else if hovered {
-            Some(HOVER_BG)
+            Some(pal().hover_bg)
         } else {
             None
         };
-        let marker_color =
-            semantic_color.unwrap_or(if selected { IDX_SEL } else { Color::DarkGray });
+        let marker_color = semantic_color.unwrap_or(if selected { IDX_SEL } else { pal().dim });
         let mut text_style = Style::default().fg(semantic_color.unwrap_or(if selected {
-            Color::White
+            pal().strong
         } else {
-            Color::Gray
+            pal().muted
         }));
         if selected {
             text_style = text_style.add_modifier(Modifier::BOLD);
@@ -5349,14 +5342,14 @@ fn render_turn_status(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &C
     if tools > 0 {
         spans.push(Span::styled(
             format!("   · {}", t!("Ai.ToolCount", count = tools)),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(pal().dim),
         ));
     }
     if let Some(started) = ui.turn_started {
         let secs = started.elapsed().as_secs();
         spans.push(Span::styled(
             format!("   {}:{:02}", secs / 60, secs % 60),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(pal().dim),
         ));
     }
     // A spinner spins the same whether the agent is working or the stream has
@@ -5367,7 +5360,7 @@ fn render_turn_status(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &C
     if let Some(quiet) = ui.quiet_for() {
         spans.push(Span::styled(
             format!("   {}", t!("Ai.NoUpdatesFor", secs = quiet.as_secs())),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(pal().dim),
         ));
     }
     // The button is right-aligned, so its rect is derived from the label width.
@@ -5395,7 +5388,7 @@ fn render_turn_status(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &C
         );
         let token_w = UnicodeWidthStr::width(token.as_str()) as u16;
         if fits_with_stop(span_width(&spans) + token_w) {
-            spans.push(Span::styled(token, Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled(token, Style::default().fg(pal().dim)));
         }
     }
     let used: u16 = span_width(&spans);
@@ -5412,7 +5405,7 @@ fn render_turn_status(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, state: &C
         let hot = hovering(ui, rect);
         spans.push(Span::styled(
             label,
-            Style::default().fg(if hot { Color::Red } else { Color::DarkGray }),
+            Style::default().fg(if hot { Color::Red } else { pal().dim }),
         ));
     }
     f.render_widget(Paragraph::new(Line::from(spans)), area);
@@ -5510,7 +5503,7 @@ fn render_status(f: &mut ratatui::Frame, area: Rect, ui: &Ui, state: &ChatState,
             View::Settings => t!("Ai.SettingsHint"),
             View::Question => t!("Ai.QuestionHint"),
         };
-        (hint.to_string(), Style::default().fg(Color::DarkGray))
+        (hint.to_string(), Style::default().fg(pal().dim))
     };
     f.render_widget(Paragraph::new(Line::from(Span::styled(text, style))), area);
 }
@@ -5529,7 +5522,7 @@ fn render_footer(f: &mut ratatui::Frame, area: Rect, ui: &Ui, editor: &Editor, h
     };
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::DarkGray));
+        .border_style(Style::default().fg(pal().dim));
     let inner = block.inner(boxed);
     f.render_widget(block, boxed);
     let marker_style = if focused {
@@ -5537,7 +5530,7 @@ fn render_footer(f: &mut ratatui::Frame, area: Rect, ui: &Ui, editor: &Editor, h
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(pal().dim)
     };
     // Inside the box, the `❯` the reader's own turns carry in the transcript, so
     // the line being typed looks like the line it will become.
@@ -5555,7 +5548,7 @@ fn render_footer(f: &mut ratatui::Frame, area: Rect, ui: &Ui, editor: &Editor, h
         // Dim placeholder when nothing has been typed yet.
         lines.push(Line::from(Span::styled(
             t!("Ai.Placeholder").to_string(),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(pal().dim),
         )));
     } else {
         lines.extend(editor.lines().iter().map(|l| Line::from(l.clone())));
@@ -5574,7 +5567,7 @@ fn render_footer(f: &mut ratatui::Frame, area: Rect, ui: &Ui, editor: &Editor, h
                     if i == 0 && top == 0 {
                         Line::from(Span::styled(USER_MARKER, marker_style))
                     } else if i == 0 {
-                        Line::from(Span::styled(" ⋯ ", Style::default().fg(Color::DarkGray)))
+                        Line::from(Span::styled(" ⋯ ", Style::default().fg(pal().dim)))
                     } else {
                         Line::from("")
                     }
@@ -5654,7 +5647,7 @@ fn is_tool_line(line: &Line<'_>) -> bool {
 
 fn tool_line(name: &str, status: ToolStatus, width: usize) -> Line<'static> {
     let (marker, color) = match status {
-        ToolStatus::Running => ("◌", Color::DarkGray),
+        ToolStatus::Running => ("◌", pal().dim),
         ToolStatus::Ok => ("⏺", Color::Green),
         ToolStatus::Failed => ("⚠", Color::Red),
     };
@@ -5662,7 +5655,7 @@ fn tool_line(name: &str, status: ToolStatus, width: usize) -> Line<'static> {
         Span::styled(format!("  {marker} "), Style::default().fg(color)),
         Span::styled(
             truncate_width(name, width.saturating_sub(6)),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(pal().dim),
         ),
     ];
     if status == ToolStatus::Failed {
@@ -5750,7 +5743,7 @@ fn push_message(
                 for wrapped in wrap(logical, width) {
                     lines.push(Line::from(Span::styled(
                         wrapped,
-                        Style::default().fg(Color::DarkGray),
+                        Style::default().fg(pal().dim),
                     )));
                 }
             }
@@ -5765,11 +5758,11 @@ const THINKING_MARKER: &str = "  ✻ ";
 /// One muted, italic row led by `marker`.
 fn thinking_line(marker: &str, text: &str) -> Line<'static> {
     Line::from(vec![
-        Span::styled(format!("  {marker} "), Style::default().fg(Color::DarkGray)),
+        Span::styled(format!("  {marker} "), Style::default().fg(pal().dim)),
         Span::styled(
             text.to_string(),
             Style::default()
-                .fg(Color::DarkGray)
+                .fg(pal().dim)
                 .add_modifier(Modifier::ITALIC),
         ),
     ])
@@ -5804,7 +5797,7 @@ fn indented_reasoning(text: &str, width: usize) -> Vec<Line<'static>> {
     let indent = UnicodeWidthStr::width(THINKING_MARKER);
     let body_w = width.saturating_sub(indent).max(1);
     let style = Style::default()
-        .fg(Color::DarkGray)
+        .fg(pal().dim)
         .add_modifier(Modifier::ITALIC);
     let mut out = Vec::new();
     for logical in text.split('\n') {
@@ -5839,7 +5832,7 @@ fn live_thinking_lines(text: &str, width: usize, tick: u64) -> Vec<Line<'static>
 fn user_lines(text: &str, width: usize) -> Vec<Line<'static>> {
     let indent = usize::from(MARKER_W);
     let body_w = width.saturating_sub(indent).max(1);
-    let band = Style::default().fg(USER_FG).bg(USER_BG);
+    let band = Style::default().fg(pal().user_fg).bg(pal().user_bg);
     let mut out = Vec::new();
     for logical in text.split('\n') {
         for wrapped in wrap(logical, body_w) {
@@ -6176,7 +6169,7 @@ fn render_widget(
         // Not a widget URL at all; show the text rather than dropping it.
         return vec![Line::from(Span::styled(
             strip_control_chars(src),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(pal().dim),
         ))];
     };
     match &widget {
@@ -6227,7 +6220,7 @@ fn render_widget(
             // strings, so the comparison is reliable.
             let mut spans = vec![Span::styled(
                 format!("  {}  ", t!("Ai.WidgetOrderTicket")),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(pal().dim),
             )];
             if !ticket.side.is_empty() {
                 let ordering = if ticket.side == t!("Trade.Buy") {
@@ -6256,13 +6249,13 @@ fn render_widget(
         WidgetRef::OrderDetail { order_id } => vec![Line::from(vec![
             Span::styled(
                 format!("  {}  ", t!("Ai.WidgetOrderDetail")),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(pal().dim),
             ),
             Span::raw(order_id.clone()),
         ])],
         WidgetRef::Other { path } => vec![Line::from(Span::styled(
             format!("  → {path}"),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(pal().dim),
         ))],
     }
 }
@@ -6283,7 +6276,7 @@ fn pending_ref(symbol: &str) -> Line<'static> {
 fn change_color(direction: i8) -> Color {
     match crate::tui::ui::styles::up_color(direction.cmp(&0)) {
         // `up_color` returns Reset for no change; the transcript wants it dim.
-        Color::Reset => Color::Gray,
+        Color::Reset => pal().muted,
         c => c,
     }
 }
@@ -6314,7 +6307,7 @@ fn symbol_cell(symbol: &str) -> Vec<Span<'static>> {
 /// spans plus the display width they occupy — measuring inside would mean
 /// re-measuring every span, and a wrong count shows up as a ragged border.
 fn framed(rows: Vec<(Vec<Span<'static>>, usize)>, inner: usize) -> Vec<Line<'static>> {
-    let dim = Style::default().fg(Color::DarkGray);
+    let dim = Style::default().fg(pal().dim);
     let border = |left: &str, right: &str| {
         Line::from(Span::styled(
             format!("{left}{}{right}", "─".repeat(inner + 2)),
@@ -6340,7 +6333,7 @@ fn card_lines(
     path: &[f64],
     detail: Option<&super::quotes::QuoteDetail>,
 ) -> Vec<Line<'static>> {
-    let dim = Style::default().fg(Color::DarkGray);
+    let dim = Style::default().fg(pal().dim);
     let dir = change_color(card.direction);
     let mut out = Vec::new();
     if !card.name.is_empty() {
@@ -6547,10 +6540,10 @@ fn quote_card(card: &super::quotes::QuoteCardData, width: usize) -> Vec<Line<'st
     let border = |left: &str, right: &str| {
         Line::from(Span::styled(
             format!("{left}{}{right}", "─".repeat(inner + 2)),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(pal().dim),
         ))
     };
-    let bar = || Span::styled("│", Style::default().fg(Color::DarkGray));
+    let bar = || Span::styled("│", Style::default().fg(pal().dim));
     let row = |spans: Vec<Span<'static>>, used: usize| {
         let mut all = vec![bar(), Span::raw(" ")];
         all.extend(spans);
@@ -6568,7 +6561,7 @@ fn quote_card(card: &super::quotes::QuoteCardData, width: usize) -> Vec<Line<'st
                         inner.saturating_sub(UnicodeWidthStr::width(card.symbol.as_str()) + 3);
                     spans.push(Span::styled(
                         format!("  {}", truncate_width(&card.name, room)),
-                        Style::default().fg(Color::DarkGray),
+                        Style::default().fg(pal().dim),
                     ));
                 }
                 spans
@@ -6592,17 +6585,11 @@ fn quote_card(card: &super::quotes::QuoteCardData, width: usize) -> Vec<Line<'st
             UnicodeWidthStr::width(price.as_str()),
         ),
         row(
-            vec![Span::styled(
-                range.clone(),
-                Style::default().fg(Color::DarkGray),
-            )],
+            vec![Span::styled(range.clone(), Style::default().fg(pal().dim))],
             UnicodeWidthStr::width(range.as_str()),
         ),
         row(
-            vec![Span::styled(
-                flow.clone(),
-                Style::default().fg(Color::DarkGray),
-            )],
+            vec![Span::styled(flow.clone(), Style::default().fg(pal().dim))],
             UnicodeWidthStr::width(flow.as_str()),
         ),
         border("╰", "╯"),
@@ -6652,7 +6639,7 @@ fn comparison_card(
     let mut rows: Vec<(Vec<Span<'static>>, usize)> = vec![(
         vec![Span::styled(
             header.to_string(),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(pal().dim),
         )],
         w(header),
     )];
@@ -6681,7 +6668,7 @@ fn comparison_card(
                 used += 2 + w(&name);
                 spans.push(Span::styled(
                     format!("  {name}"),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(pal().dim),
                 ));
             }
         } else {
@@ -6689,7 +6676,7 @@ fn comparison_card(
             // not jump when the quote lands.
             spans.push(Span::styled(
                 format!("  {:>last_w$}", "…"),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(pal().dim),
             ));
             used += 2 + last_w;
         }
@@ -8495,14 +8482,18 @@ mod tests {
         );
         let banded: Vec<&ratatui::text::Line> = lines
             .iter()
-            .filter(|l| l.spans.iter().any(|s| s.style.bg == Some(super::USER_BG)))
+            .filter(|l| {
+                l.spans
+                    .iter()
+                    .any(|s| s.style.bg == Some(crate::ai::theme::pal().user_bg))
+            })
             .collect();
         assert!(!banded.is_empty(), "the user's text should be banded");
         for line in banded {
             let w: usize = line
                 .spans
                 .iter()
-                .filter(|s| s.style.bg == Some(super::USER_BG))
+                .filter(|s| s.style.bg == Some(crate::ai::theme::pal().user_bg))
                 .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
                 .sum();
             assert_eq!(w, 40, "the band should span the width");
@@ -9728,10 +9719,7 @@ mod tests {
         let button = ui.open_button.expect("the link should be clickable");
         assert!(button.height == 1 && button.width > 0 && button.y == header_row as u16);
         let name = super::card_lines(ui.quotes.get("SPCX.US").unwrap(), &[], None);
-        assert_eq!(
-            name[0].spans[0].style.fg,
-            Some(ratatui::style::Color::DarkGray)
-        );
+        assert_eq!(name[0].spans[0].style.fg, Some(crate::ai::theme::pal().dim));
     }
 
     #[test]

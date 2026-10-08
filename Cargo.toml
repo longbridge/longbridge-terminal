@@ -96,6 +96,7 @@ machine-uid = "0.6"
 hostname = "0.4"
 sha2 = "0.10"
 whoami = "1.5"
+terminal-colorsaurus = "1.0.3"
 
 [dev-dependencies]
 mockall = "0.13"
