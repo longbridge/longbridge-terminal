@@ -7,31 +7,39 @@
 //!
 //! Detection runs once at startup — [`detect`] queries the terminal's actual
 //! background colour (OSC 11, via `terminal-colorsaurus`) and picks the dark or
-//! light [`Palette`]. Everything reads it through [`pal`], which falls back to
-//! the dark palette until detection lands (and in tests, which never call
-//! `detect`), so the default matches the historical look.
+//! light palette. A terminal that won't answer (Apple Terminal, or not a tty)
+//! falls back to the dark palette — the look the app is tuned for, and what a
+//! dark terminal (the common case) wants anyway.
+//!
+//! Everything reads it through [`pal`], which returns the dark palette until
+//! detection lands (and in tests, which never call `detect`), so the default
+//! matches the historical look.
 //!
 //! Only the roles that actually break with the background are routed here.
 //! Brand-accent cyan is an ANSI colour the terminal already maps to its theme,
 //! and self-contained pairs that set both `fg` and `bg` (the code-block shading
-//! in `markdown`, the index badges) read on any background, so they stay put.
+//! in `markdown`, the index badges, the welcome logo) read on any background,
+//! so they stay put.
 
 use std::sync::OnceLock;
 
-use ratatui::style::Color;
+use ratatui::style::{Color, Style};
+
+/// Which background the palette is tuned for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Dark,
+    Light,
+}
 
 /// The theme-dependent colours the chat chrome draws with.
+///
+/// The background grounds are plain colours; the text roles ([`dim`](Self::dim)
+/// / [`muted`](Self::muted) / [`strong`](Self::strong)) come as both a bare
+/// `Color` (`*_fg`, for the few sites that need one) and a ready [`Style`].
 #[derive(Clone, Copy)]
 pub struct Palette {
-    /// Faint chrome: hints, placeholders, inactive borders, disabled labels.
-    /// Replaces `Color::DarkGray`, which sat too close to a dark background.
-    pub dim: Color,
-    /// Readable secondary text: welcome copy, sample prompts, field labels.
-    /// Replaces `Color::Gray`, which vanished on a light background.
-    pub muted: Color,
-    /// The strongest emphasis: selected / hovered / active rows and values.
-    /// Replaces `Color::White`, which vanished on a light background.
-    pub strong: Color,
+    mode: Mode,
     /// The reader's own message band, and the light text set on it.
     pub user_bg: Color,
     pub user_fg: Color,
@@ -44,13 +52,10 @@ pub struct Palette {
 }
 
 impl Palette {
-    /// Tuned for a dark terminal. `dim`/`muted`/`strong` are lifted off the
-    /// old ANSI names so faint text stays legible instead of melting into black.
+    /// Tuned for a dark terminal.
     pub const fn dark() -> Self {
         Self {
-            dim: Color::Rgb(122, 130, 140),
-            muted: Color::Rgb(190, 196, 204),
-            strong: Color::Rgb(240, 242, 245),
+            mode: Mode::Dark,
             user_bg: Color::Rgb(38, 45, 60),
             user_fg: Color::Rgb(226, 232, 240),
             sel_bg: Color::Rgb(45, 50, 62),
@@ -59,18 +64,65 @@ impl Palette {
         }
     }
 
-    /// Tuned for a light terminal: dark text on pale grounds so nothing washes
-    /// out against a white background.
+    /// Tuned for a light terminal: dark text on pale grounds.
     pub const fn light() -> Self {
         Self {
-            dim: Color::Rgb(122, 128, 136),
-            muted: Color::Rgb(74, 80, 88),
-            strong: Color::Rgb(17, 20, 26),
+            mode: Mode::Light,
             user_bg: Color::Rgb(224, 231, 242),
             user_fg: Color::Rgb(28, 38, 54),
             sel_bg: Color::Rgb(219, 226, 238),
             hover_bg: Color::Rgb(226, 229, 234),
             tab_bg: Color::Rgb(207, 231, 240),
+        }
+    }
+
+    /// Foreground colour of the faint-chrome role (hints, placeholders,
+    /// inactive borders). Replaces `Color::DarkGray`.
+    pub fn dim_fg(&self) -> Color {
+        match self.mode {
+            Mode::Dark => Color::Rgb(122, 130, 140),
+            Mode::Light => Color::Rgb(122, 128, 136),
+        }
+    }
+
+    /// Foreground colour of readable secondary text (welcome copy, sample
+    /// prompts, field labels). Replaces `Color::Gray`.
+    pub fn muted_fg(&self) -> Color {
+        match self.mode {
+            Mode::Dark => Color::Rgb(190, 196, 204),
+            Mode::Light => Color::Rgb(74, 80, 88),
+        }
+    }
+
+    /// Foreground colour of the strongest emphasis (selected / hovered / active
+    /// rows and values). Replaces `Color::White`.
+    pub fn strong_fg(&self) -> Color {
+        match self.mode {
+            Mode::Dark => Color::Rgb(240, 242, 245),
+            Mode::Light => Color::Rgb(17, 20, 26),
+        }
+    }
+
+    /// Faint chrome as a full style.
+    pub fn dim(&self) -> Style {
+        Style::new().fg(self.dim_fg())
+    }
+
+    /// Readable secondary text as a full style.
+    pub fn muted(&self) -> Style {
+        Style::new().fg(self.muted_fg())
+    }
+
+    /// The strongest emphasis as a full style.
+    pub fn strong(&self) -> Style {
+        Style::new().fg(self.strong_fg())
+    }
+
+    /// Name of the chosen mode, for the detection log.
+    fn mode_name(&self) -> &'static str {
+        match self.mode {
+            Mode::Dark => "dark",
+            Mode::Light => "light",
         }
     }
 }
@@ -85,15 +137,25 @@ pub fn pal() -> Palette {
 
 /// Query the terminal's background once and latch the matching palette. Must run
 /// before the event-reader thread is spawned, or the terminal's OSC 11 reply is
-/// swallowed as an input event. A terminal that does not answer (or is not a
-/// tty) leaves the dark fallback in place.
+/// swallowed as an input event. A light background latches the light palette;
+/// anything else — a dark background, or a terminal that won't answer (Apple
+/// Terminal, non-tty) — latches the dark palette.
 pub fn detect() {
     use terminal_colorsaurus::{theme_mode, QueryOptions, ThemeMode};
 
-    let palette = match theme_mode(QueryOptions::default()) {
+    let result = theme_mode(QueryOptions::default());
+    let palette = match result {
         Ok(ThemeMode::Light) => Palette::light(),
         _ => Palette::dark(),
     };
+    // Logged so a "colours look wrong in terminal X" report can be traced to
+    // which branch ran, without guessing.
+    tracing::info!(
+        "ai theme: TERM_PROGRAM={:?} colorsaurus={:?} -> {}",
+        std::env::var("TERM_PROGRAM").ok(),
+        result,
+        palette.mode_name(),
+    );
     let _ = PALETTE.set(palette);
 }
 
@@ -105,18 +167,18 @@ mod tests {
     /// dark palette stands in, so the historical look is the default.
     #[test]
     fn the_palette_defaults_to_dark() {
-        assert_eq!(pal().dim, Palette::dark().dim);
+        assert_eq!(pal().dim(), Palette::dark().dim());
         assert_eq!(pal().user_bg, Palette::dark().user_bg);
     }
 
-    /// The two palettes are genuinely different: swapping in the light one has to
-    /// actually change the chrome colours, or a light terminal is no better off.
+    /// The two palettes are genuinely different: swapping in the light one has
+    /// to actually change the chrome, or a light terminal is no better off.
     #[test]
     fn dark_and_light_disagree_on_every_role() {
         let (d, l) = (Palette::dark(), Palette::light());
-        assert_ne!(d.dim, l.dim);
-        assert_ne!(d.muted, l.muted);
-        assert_ne!(d.strong, l.strong);
+        assert_ne!(d.dim(), l.dim());
+        assert_ne!(d.muted(), l.muted());
+        assert_ne!(d.strong(), l.strong());
         assert_ne!(d.user_bg, l.user_bg);
         assert_ne!(d.user_fg, l.user_fg);
         assert_ne!(d.sel_bg, l.sel_bg);

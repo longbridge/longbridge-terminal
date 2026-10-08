@@ -374,7 +374,7 @@ fn render_heading(level: u8, text: &str, width: usize, out: &mut Vec<Line<'stati
         // answer, so they share the accent; the rule below h1 separates them.
         1 | 2 => Style::default().fg(HEADING).add_modifier(Modifier::BOLD),
         3 => Style::default().add_modifier(Modifier::BOLD),
-        _ => Style::default().fg(pal().dim).add_modifier(Modifier::BOLD),
+        _ => pal().dim().add_modifier(Modifier::BOLD),
     };
     // The heading's own emphasis wins over any inline styling inside it, so the
     // whole line reads as one heading rather than as a sentence with bold words.
@@ -390,7 +390,7 @@ fn render_heading(level: u8, text: &str, width: usize, out: &mut Vec<Line<'stati
     if level == 1 {
         out.push(Line::from(Span::styled(
             "─".repeat(width.max(1)),
-            Style::default().fg(pal().dim),
+            pal().dim(),
         )));
     }
 }
@@ -413,7 +413,7 @@ fn render_quote(lines: &[String], width: usize, out: &mut Vec<Line<'static>>) {
         for s in line.spans {
             spans.push(Span::styled(
                 s.content.into_owned(),
-                s.style.fg(pal().muted),
+                s.style.fg(pal().muted_fg()),
             ));
         }
         out.push(Line::from(spans));
@@ -494,7 +494,9 @@ fn render_code(lang: &str, lines: &[String], width: usize, out: &mut Vec<Line<'s
             format!(" {lang} "),
             Style::default()
                 .fg(Color::Black)
-                .bg(pal().dim)
+                // Self-contained chip (black text on a fixed mid-grey), so it
+                // reads on any terminal background without the palette.
+                .bg(Color::Rgb(122, 130, 140))
                 .add_modifier(Modifier::BOLD),
         )));
     }
@@ -655,10 +657,10 @@ fn render_table(rows: &[Vec<String>], width: usize, out: &mut Vec<Line<'static>>
         let segs: Vec<String> = widths.iter().map(|w| "─".repeat(w + 2)).collect();
         Line::from(Span::styled(
             format!("{left}{}{right}", segs.join(mid)),
-            Style::default().fg(pal().dim),
+            pal().dim(),
         ))
     };
-    let bar = || Span::styled("│", Style::default().fg(pal().dim));
+    let bar = || Span::styled("│", pal().dim());
 
     out.push(border("┌", "┬", "┐"));
     for (r, row) in cells.iter().enumerate() {
@@ -858,7 +860,7 @@ fn render_math(lines: &[String], width: usize, out: &mut Vec<Line<'static>>) {
             &mut wrapped,
         );
         for line in wrapped {
-            let mut spans = vec![Span::styled("  │ ", Style::default().fg(pal().dim))];
+            let mut spans = vec![Span::styled("  │ ", pal().dim())];
             spans.extend(line.spans);
             out.push(Line::from(spans));
         }
