@@ -4,9 +4,9 @@ use serde_json::{json, Map, Value};
 use std::ffi::OsString;
 
 use super::{
-    agent, asset, atm, auth, check, completion, dca, fund, fundamental, grid, init, insider_trades,
-    investors, ipo, news, quote, run_script, screener, sharelist, signal, statement, topic, trade,
-    watchlist, Cli,
+    agent, asset, atm, auth, check, completion, dca, forex, fund, fundamental, grid, init,
+    insider_trades, investors, ipo, news, quote, run_script, screener, sharelist, signal,
+    statement, topic, trade, watchlist, Cli,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -411,6 +411,7 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<ResponseSchema> {
         "dca" => dca::schema_for_path(path),
         "grid" => grid::schema_for_path(path),
         "fund" => fund::schema_for_path(path),
+        "forex" => forex::schema_for_path(path),
         "sharelist" => sharelist::schema_for_path(path),
         "quant" => run_script::schema_for_path(path),
         "screener" => screener::schema_for_path(path),
@@ -624,7 +625,7 @@ mod tests {
             let paths = real_leaf_paths(&root);
             assert_eq!(
                 paths.len(),
-                191,
+                194,
                 "real command count changed; review schema coverage"
             );
 
