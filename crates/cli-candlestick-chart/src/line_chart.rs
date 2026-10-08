@@ -25,6 +25,16 @@ fn braille_char(bits: u8) -> char {
     char::from_u32(0x2800 + u32::from(bits)).unwrap_or(' ')
 }
 
+/// Half-block glyph for a block-mode curve cell: bit 0x01 is its top half,
+/// 0x02 its bottom half (the same bits `dot_bit` gives column 0, rows 0-1).
+fn block_char(bits: u8) -> char {
+    match bits & 0x03 {
+        0x01 => '\u{2580}', // ▀
+        0x02 => '\u{2584}', // ▄
+        _ => '\u{2588}',    // █
+    }
+}
+
 /// Shade block for the area wash, `depth` character rows below the curve.
 ///
 /// Shading rather than a blended background colour: a smooth gradient needs
@@ -44,6 +54,8 @@ fn shade_char(depth: usize) -> char {
 /// Uses Unicode braille characters (2×4 dot grid per char) to render a price
 /// curve with 4× the vertical resolution of block-character approaches.
 /// The area below the price line is filled with a gradient background.
+/// With braille off (see [`LineChart::set_braille`]) the curve is drawn with
+/// half blocks instead, at 1×2 resolution per char.
 pub struct LineChart {
     pub bullish_color: Color,
     pub bearish_color: Color,
@@ -51,6 +63,7 @@ pub struct LineChart {
     pub vol_bearish_color: Color,
     candles: Vec<Candle>,
     size: (u16, u16),
+    braille: bool,
 }
 
 impl LineChart {
@@ -62,7 +75,17 @@ impl LineChart {
             vol_bearish_color: Color::BrightRed,
             candles,
             size,
+            braille: true,
         }
+    }
+
+    /// Draws the price curve with braille dots (the default) or, when
+    /// `false`, with half blocks. Half blocks suit terminals whose font can't
+    /// hold the 256 braille patterns, such as the Linux console: its fonts
+    /// have 256 or 512 glyphs in total, so braille shows as replacement
+    /// glyphs or, at best, as coarse blocks.
+    pub fn set_braille(&mut self, braille: bool) {
+        self.braille = braille;
     }
 
     pub fn set_bull_color(&mut self, color: Color) {
@@ -114,8 +137,11 @@ impl LineChart {
         let close_prices: Vec<f64> = self.candles.iter().map(|c| c.close).collect();
         let n = close_prices.len();
 
-        let px_h = chart_char_height * 4;
-        let px_w = chart_char_width * 2;
+        // Curve pixels per character cell: braille's 2×4 dots, or half
+        // blocks' 1×2.
+        let (sub_x, sub_y) = if self.braille { (2, 4) } else { (1, 2) };
+        let px_h = chart_char_height * sub_y;
+        let px_w = chart_char_width * sub_x;
 
         // px_y: maps price → pixel row from top (0 = top of chart, px_h-1 = bottom)
         let px_y = |v: f64| -> usize {
@@ -123,7 +149,7 @@ impl LineChart {
             ((1.0 - norm) * (px_h - 1) as f64).round() as usize
         };
 
-        // The price curve keeps braille's 2x4 resolution. The area under it does
+        // The price curve keeps its glyphs' resolution. The area under it does
         // NOT: braille can only set a foreground, so a braille "fill" is a dot
         // texture, which is what made this chart read as stippled rather than
         // filled. The area is drawn with shade blocks instead — full-cell,
@@ -141,22 +167,22 @@ impl LineChart {
                 let i1 = (((px_x + 1) as f64 * step) as usize).min(n - 1);
                 let y0 = px_y(close_prices[i0]);
                 let y1 = px_y(close_prices[i1]);
-                let col = px_x / 2;
-                let dx = px_x % 2;
+                let col = px_x / sub_x;
+                let dx = px_x % sub_x;
 
                 // Fill vertical stroke between adjacent samples to avoid gaps
                 for y in y0.min(y1)..=y0.max(y1) {
-                    let char_row = y / 4;
-                    let dy = y % 4;
+                    let char_row = y / sub_y;
+                    let dy = y % sub_y;
                     if char_row < chart_char_height {
                         line_bits[char_row][col] |= dot_bit(dx, dy);
                     }
                 }
 
-                // The wash starts under the lowest dot of the stroke. A cell
-                // spans two pixel columns, so the shallower of the two wins and
-                // the wash meets the curve instead of notching it.
-                let start = (y0.max(y1) + 1) / 4;
+                // The wash starts under the lowest dot of the stroke. A braille
+                // cell spans two pixel columns, so the shallower of the two
+                // wins and the wash meets the curve instead of notching it.
+                let start = (y0.max(y1) + 1) / sub_y;
                 fill_from[col] = fill_from[col].min(start.min(chart_char_height));
             }
         }
@@ -192,7 +218,12 @@ impl LineChart {
             for (col, lb) in line_row.iter().enumerate() {
                 if *lb != 0 {
                     // The curve wins the cell.
-                    output += &braille_char(*lb).to_string().color(line_color).to_string();
+                    let glyph = if self.braille {
+                        braille_char(*lb)
+                    } else {
+                        block_char(*lb)
+                    };
+                    output += &glyph.to_string().color(line_color).to_string();
                 } else if row >= fill_from[col] {
                     output += &shade_char(row - fill_from[col])
                         .to_string()
@@ -216,10 +247,12 @@ impl LineChart {
             let mut vol_fill = vec![0usize; chart_char_width];
             let mut vol_is_bullish = vec![true; chart_char_width];
 
-            if max_vol > 0.0 && px_w > 0 {
-                let step = n as f64 / px_w as f64;
+            // Two sample columns per cell, whatever the curve's resolution.
+            let vol_px_w = chart_char_width * 2;
+            if max_vol > 0.0 && vol_px_w > 0 {
+                let step = n as f64 / vol_px_w as f64;
 
-                for px_x in 0..px_w {
+                for px_x in 0..vol_px_w {
                     let i = ((px_x as f64 * step) as usize).min(n.saturating_sub(1));
                     let candle = &self.candles[i];
                     let vol = candle.volume.unwrap_or(0.0);
@@ -303,5 +336,57 @@ impl LineChart {
         );
 
         output
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn candles() -> Vec<Candle> {
+        [10.0, 12.0, 11.0, 15.0, 13.0, 9.0, 14.0, 16.0]
+            .iter()
+            .map(|&close| Candle {
+                open: close,
+                high: close,
+                low: close,
+                close,
+                volume: Some(100.0),
+                timestamp: None,
+            })
+            .collect()
+    }
+
+    fn is_braille(c: char) -> bool {
+        ('\u{2800}'..='\u{28FF}').contains(&c)
+    }
+
+    #[test]
+    fn draws_the_curve_with_braille_by_default() {
+        let chart = LineChart::new_with_size(candles(), (60, 20));
+        assert!(chart.render().chars().any(is_braille));
+    }
+
+    #[test]
+    fn draws_the_curve_with_half_blocks_without_braille() {
+        let mut chart = LineChart::new_with_size(candles(), (60, 20));
+        chart.set_braille(false);
+        let output = chart.render();
+        assert!(!output.chars().any(is_braille));
+        assert!(output.contains(['\u{2580}', '\u{2584}']));
+    }
+
+    #[test]
+    fn keeps_the_volume_pane_independent_of_the_curve_glyphs() {
+        // The rows between the curve and the separator above the info bar.
+        let volume_rows = |braille: bool| {
+            let mut chart = LineChart::new_with_size(candles(), (60, 20));
+            chart.set_braille(braille);
+            let output = chart.render();
+            let lines: Vec<&str> = output.lines().collect();
+            let separator = lines.iter().position(|l| l.starts_with('─')).unwrap();
+            lines[separator - 3..separator].join("\n")
+        };
+        assert_eq!(volume_rows(true), volume_rows(false));
     }
 }
