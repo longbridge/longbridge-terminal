@@ -3,9 +3,10 @@ use async_trait::async_trait;
 use longbridge::quote::{
     AdjustType, CalcIndex, Candlestick, CapitalDistributionResponse, CapitalFlowLine,
     HistoryMarketTemperatureResponse, IssuerInfo, MarketTemperature, MarketTradingDays,
-    MarketTradingSession, OptionQuote, ParticipantInfo, Period, RequestUpdateWatchlistGroup,
-    Security, SecurityBrokers, SecurityCalcIndex, SecurityDepth, SecurityQuote, SecurityStaticInfo,
-    StrikePriceInfo, Subscription, Trade, WarrantInfo, WarrantQuote, WatchlistGroup,
+    MarketTradingSession, OptionChainContract, OptionQuote, ParticipantInfo, Period,
+    RequestUpdateWatchlistGroup, Security, SecurityBrokers, SecurityCalcIndex, SecurityDepth,
+    SecurityQuote, SecurityStaticInfo, Subscription, Trade, WarrantInfo, WarrantQuote,
+    WatchlistGroup,
 };
 use longbridge::trade::{
     AccountBalance, CashFlow, EstimateMaxPurchaseQuantityOptions,
@@ -83,7 +84,7 @@ pub trait QuoteApi: Send + Sync {
         &self,
         symbol: String,
         expiry_date: Date,
-    ) -> Result<Vec<StrikePriceInfo>>;
+    ) -> Result<Vec<OptionChainContract>>;
     async fn warrant_quote(&self, symbols: Vec<String>) -> Result<Vec<WarrantQuote>>;
     async fn warrant_list(&self, symbol: String) -> Result<Vec<WarrantInfo>>;
     async fn warrant_issuers(&self) -> Result<Vec<IssuerInfo>>;
@@ -290,10 +291,10 @@ impl QuoteApi for LbQuoteApi {
         &self,
         symbol: String,
         expiry_date: Date,
-    ) -> Result<Vec<StrikePriceInfo>> {
+    ) -> Result<Vec<OptionChainContract>> {
         Ok(self
             .ctx
-            .option_chain_info_by_date(symbol, expiry_date)
+            .option_chain_info_by_date(symbol, expiry_date, false)
             .await?)
     }
 

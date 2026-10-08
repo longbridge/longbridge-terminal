@@ -55,6 +55,9 @@ pub(crate) static SIGNAL_CTX: Slot<longbridge::signal::SignalContext> = Slot::ne
 /// Global `AgentContext` for AI agent discovery and conversations
 pub(crate) static AGENT_CTX: Slot<longbridge::agent::AgentContext> = Slot::new();
 
+/// Global `FundContext` for the mutual-fund channel (REST-only)
+pub(crate) static FUND_CTX: Slot<longbridge::fund::FundContext> = Slot::new();
+
 /// Global `HttpClient` for making authenticated requests to the Longbridge `OpenAPI`
 pub(crate) static HTTP_CLIENT: Slot<longbridge::httpclient::HttpClient> = Slot::new();
 
@@ -286,6 +289,9 @@ pub async fn init_contexts() -> Result<(
     let agent_ctx = longbridge::agent::AgentContext::new(Arc::clone(&config));
     AGENT_CTX.set(agent_ctx);
 
+    let fund_ctx = longbridge::fund::FundContext::new(Arc::clone(&config));
+    FUND_CTX.set(fund_ctx);
+
     // Also inject into the standalone HttpClient used for direct REST calls.
     // Unlike the SDK contexts (whose config carries `.language(...)`), the raw
     // client has no language field — forward the effective content language
@@ -450,6 +456,13 @@ pub fn agent() -> &'static longbridge::agent::AgentContext {
     AGENT_CTX
         .get()
         .expect("AgentContext not initialized, please call init_contexts() first")
+}
+
+/// Get global `FundContext` for the mutual-fund channel
+pub fn fund() -> &'static longbridge::fund::FundContext {
+    FUND_CTX
+        .get()
+        .expect("FundContext not initialized, please call init_contexts() first")
 }
 
 /// Get the global authenticated `HttpClient` for direct `OpenAPI` requests
