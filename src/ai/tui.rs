@@ -969,10 +969,9 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
         crossterm::event::EnableBracketedPaste,
         crossterm::event::EnableFocusChange,
     );
-    // Pick the palette from the terminal's real background before anything reads
-    // stdin: this queries the terminal (OSC 11) and reads its reply, which the
-    // event thread below would otherwise swallow as an input event.
-    super::theme::detect();
+    // The palette was detected in `main`, before full-screen setup enabled mouse
+    // capture and focus reporting — those corrupt the OSC 11 reply mid-read, so
+    // the query has to happen while the terminal input is still quiet.
     // Read terminal events on a blocking thread into a channel we own. Unlike
     // crossterm's async `EventStream`, a tokio receiver can be drained with
     // `try_recv`, so a fast wheel-scroll's burst is coalesced into one redraw
@@ -3477,7 +3476,7 @@ fn render_login_panel(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui, spin: usi
     blank_straddling_glyphs(f.buffer_mut(), rect, area);
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
+        .border_type(BorderType::Plain)
         .border_style(Style::default().fg(Color::Cyan))
         .padding(Padding::horizontal(2))
         .title(Line::from(Span::styled(
@@ -4585,7 +4584,7 @@ fn render_slash_dropdown(
         height: box_h,
     };
     let block = Block::bordered()
-        .border_type(BorderType::Rounded)
+        .border_type(BorderType::Plain)
         .border_style(Style::default().fg(Color::Cyan))
         .title(Span::styled(
             format!(" {} ", t!("Ai.CommandsTitle")),
@@ -5543,7 +5542,7 @@ fn render_footer(f: &mut ratatui::Frame, area: Rect, ui: &Ui, editor: &Editor, h
         ..area
     };
     let block = Block::bordered()
-        .border_type(BorderType::Rounded)
+        .border_type(BorderType::Plain)
         .border_style(pal().dim());
     let inner = block.inner(boxed);
     f.render_widget(block, boxed);
