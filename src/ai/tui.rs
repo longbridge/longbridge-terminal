@@ -6993,7 +6993,7 @@ mod tests {
         let flush = rows
             .iter()
             .zip(rows.iter().skip(1))
-            .any(|(a, b)| a.contains('╰') && b.contains('╭'));
+            .any(|(a, b)| a.contains('└') && b.contains('┌'));
         assert!(
             flush,
             "the palette should rest on the prompt box:\n{}",
@@ -7149,14 +7149,14 @@ mod tests {
                     .collect::<String>()
             })
             .collect();
-        // The box's top border survives intact (its row starts with ╭, not with
+        // The box's top border survives intact (its row starts with ┌, not with
         // the palette's bottom border), and the palette sits flush above it.
         let box_top = rows
             .iter()
-            .rposition(|r| r.trim_start().starts_with('╭'))
+            .rposition(|r| r.trim_start().starts_with('┌'))
             .expect("the prompt box's top border must survive the palette");
         assert!(
-            rows[box_top - 1].contains('╰'),
+            rows[box_top - 1].contains('┘') || rows[box_top - 1].contains('└'),
             "the palette should sit flush above the box:\n{}",
             rows.join("\n")
         );
@@ -7182,7 +7182,7 @@ mod tests {
             .position(|r| r.contains("Scrolled up"))
             .expect("the scrolled-up hint should show");
         assert!(
-            rows[hint + 1].contains('╭'),
+            rows[hint + 1].contains('┌'),
             "the prompt box should hug the status row, no blank between:\n{}",
             rows.join("\n")
         );
@@ -7200,7 +7200,7 @@ mod tests {
         let rows = render_rows(&mut ui, &mut state, 60, 14);
         let top = rows
             .iter()
-            .position(|r| r.contains('╭'))
+            .position(|r| r.contains('┌'))
             .expect("the prompt box should render");
         assert!(
             rows[top - 1].trim().is_empty(),
@@ -7891,10 +7891,14 @@ mod tests {
             "the drawer stays low, opened at row {top} of {}",
             rows.len()
         );
-        // Directly above the input, which is the last block on screen.
+        // Directly above the input, which is the last block on screen. The input
+        // box is now square too, so its `└` would be the last one — take the
+        // drawer's own closing border (the first `└` at or below its top).
         let bottom = rows
             .iter()
-            .rposition(|r| r.contains('└'))
+            .skip(top)
+            .position(|r| r.contains('└'))
+            .map(|i| i + top)
             .expect("a closed frame");
         assert!(
             bottom < rows.len() - 3,
@@ -8335,7 +8339,7 @@ mod tests {
             .expect("the turn row");
         let box_top = rows
             .iter()
-            .position(|l| l.contains('╭'))
+            .position(|l| l.contains('┌'))
             .expect("the prompt box");
         assert!(box_top > turn, "the box sits below the turn row");
         assert!(
@@ -9398,7 +9402,7 @@ mod tests {
         // The box stays, dim, with a blank row between it and the transcript.
         let top = rows
             .iter()
-            .position(|r| r.contains('╭'))
+            .position(|r| r.contains('┌'))
             .expect("the input keeps its frame");
         assert!(
             rows[top - 1].trim().is_empty(),
