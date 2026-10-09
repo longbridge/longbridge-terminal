@@ -342,6 +342,7 @@ longbridge positions                                       # Current stock (equi
 longbridge fund-positions                                  # Current fund (mutual fund) positions across all sub-accounts
 longbridge margin-ratio TSLA.US                            # Margin ratio requirements for a symbol
 longbridge max-qty TSLA.US --side buy --price 250          # Estimate maximum buy or sell quantity given current account balance
+longbridge estimate-multileg --side buy --strategy VerticalCallSpread --quantity 1 --leg QQQ260731C764000.US --leg QQQ260731C767000.US --price 1.5  # Estimate a US multi-leg option combination's tradable quantity and margin impact
 ```
 
 > **Order commands never place anything on the first run.** `order buy`, `order sell`,
