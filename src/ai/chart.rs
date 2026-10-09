@@ -815,9 +815,16 @@ fn bar_chart(categories: &[String], series: &[ChartSeries], width: usize) -> Vec
 
 /// A horizontal bar `fraction` of `cells` wide, drawn to eighth-cell precision so
 /// two close values are distinguishable even when they round to the same cell.
+///
+/// On a terminal without truecolour (Apple Terminal) the eighth-cell end block
+/// renders as a lighter, misaligned sliver, so there the bar snaps to whole
+/// cells — coarser, but clean and solid.
 #[allow(clippy::cast_precision_loss, clippy::cast_sign_loss)]
 fn bar_blocks(fraction: f64, cells: usize) -> String {
-    let eighths = (fraction.clamp(0.0, 1.0) * (cells * 8) as f64).round() as usize;
+    let mut eighths = (fraction.clamp(0.0, 1.0) * (cells * 8) as f64).round() as usize;
+    if !super::theme::supports_truecolor() {
+        eighths = ((eighths + 4) / 8).max(usize::from(eighths > 0)).min(cells) * 8;
+    }
     let mut out = "█".repeat(eighths / 8);
     let rem = eighths % 8;
     if rem > 0 {
@@ -897,13 +904,21 @@ fn vertical_bar_chart(
     let gap = 1usize;
     let bar_w = ((avail + gap) / n).saturating_sub(gap).clamp(1, 10);
     let plot_w = n * bar_w + (n - 1) * gap;
+    // On a terminal without truecolour (Apple Terminal), the fractional top cell
+    // renders as a lighter sliver, so snap each bar to whole rows there.
+    let truecolor = super::theme::supports_truecolor();
     let fills: Vec<usize> = s
         .values
         .iter()
         .map(|v| {
-            ((v.abs() / max) * (V_ROWS * 8) as f64)
+            let eighths = ((v.abs() / max) * (V_ROWS * 8) as f64)
                 .round()
-                .clamp(1.0, (V_ROWS * 8) as f64) as usize
+                .clamp(1.0, (V_ROWS * 8) as f64) as usize;
+            if truecolor {
+                eighths
+            } else {
+                ((eighths + 4) / 8).clamp(1, V_ROWS) * 8
+            }
         })
         .collect();
     let axis = pal().dim();

@@ -7,19 +7,19 @@
 //!
 //! Detection runs once at startup — [`detect`] queries the terminal's actual
 //! background colour (OSC 11, via `terminal-colorsaurus`) and picks the dark or
-//! light palette. A terminal that won't answer (Apple Terminal, or not a tty)
-//! falls back to the dark palette — the look the app is tuned for, and what a
-//! dark terminal (the common case) wants anyway.
+//! light palette. A terminal that won't answer (non-tty) falls back to the dark
+//! palette — the look the app is tuned for, and what a dark terminal wants.
 //!
-//! Everything reads it through [`pal`], which returns the dark palette until
-//! detection lands (and in tests, which never call `detect`), so the default
-//! matches the historical look.
+//! Colour depth: the palette is authored in 24-bit RGB. A terminal that does
+//! not advertise truecolour via `COLORTERM` (notably Apple Terminal, which
+//! renders RGB sequences as washed greyscale) has every RGB cell downgraded to
+//! the nearest xterm-256 colour once per frame in [`downgrade_buffer`] — a
+//! single pass over the finished buffer, so it covers every view, not just the
+//! palette. Truecolour terminals keep the exact RGB.
 //!
-//! Only the roles that actually break with the background are routed here.
-//! Brand-accent cyan is an ANSI colour the terminal already maps to its theme,
-//! and self-contained pairs that set both `fg` and `bg` (the code-block shading
-//! in `markdown`, the index badges, the welcome logo) read on any background,
-//! so they stay put.
+//! Everything reads it through [`pal`]. Brand-accent cyan is an ANSI colour the
+//! terminal already maps to its theme, and self-contained `fg`+`bg` pairs (the
+//! code-block shading in `markdown`, the index badges) stay put.
 
 use std::sync::OnceLock;
 
@@ -33,14 +33,16 @@ enum Mode {
 }
 
 /// The theme-dependent colours the chat chrome draws with.
-///
-/// The background grounds are plain colours; the text roles ([`dim`](Self::dim)
-/// / [`muted`](Self::muted) / [`strong`](Self::strong)) come as both a bare
-/// `Color` (`*_fg`, for the few sites that need one) and a ready [`Style`].
 #[derive(Clone, Copy)]
 pub struct Palette {
     mode: Mode,
-    /// The reader's own message band, and the light text set on it.
+    /// Faint chrome: hints, placeholders, inactive borders. Was `DarkGray`.
+    dim: Color,
+    /// Readable secondary text: welcome copy, labels. Was `Gray`.
+    muted: Color,
+    /// Strongest emphasis: selected / hovered / active. Was `White`.
+    strong: Color,
+    /// The reader's own message band, and the text set on it.
     pub user_bg: Color,
     pub user_fg: Color,
     /// A selected history row.
@@ -56,6 +58,9 @@ impl Palette {
     pub const fn dark() -> Self {
         Self {
             mode: Mode::Dark,
+            dim: Color::Rgb(122, 130, 140),
+            muted: Color::Rgb(190, 196, 204),
+            strong: Color::Rgb(240, 242, 245),
             user_bg: Color::Rgb(38, 45, 60),
             user_fg: Color::Rgb(226, 232, 240),
             sel_bg: Color::Rgb(45, 50, 62),
@@ -68,6 +73,9 @@ impl Palette {
     pub const fn light() -> Self {
         Self {
             mode: Mode::Light,
+            dim: Color::Rgb(122, 128, 136),
+            muted: Color::Rgb(74, 80, 88),
+            strong: Color::Rgb(17, 20, 26),
             user_bg: Color::Rgb(224, 231, 242),
             user_fg: Color::Rgb(28, 38, 54),
             sel_bg: Color::Rgb(219, 226, 238),
@@ -76,46 +84,41 @@ impl Palette {
         }
     }
 
-    /// Foreground colour of the faint-chrome role (hints, placeholders,
-    /// inactive borders). Replaces `Color::DarkGray`.
+    /// Foreground colour of the faint-chrome role. Replaces `Color::DarkGray`.
     pub fn dim_fg(&self) -> Color {
-        match self.mode {
-            Mode::Dark => Color::Rgb(122, 130, 140),
-            Mode::Light => Color::Rgb(122, 128, 136),
-        }
+        self.dim
     }
 
-    /// Foreground colour of readable secondary text (welcome copy, sample
-    /// prompts, field labels). Replaces `Color::Gray`.
+    /// Foreground colour of readable secondary text. Replaces `Color::Gray`.
     pub fn muted_fg(&self) -> Color {
-        match self.mode {
-            Mode::Dark => Color::Rgb(190, 196, 204),
-            Mode::Light => Color::Rgb(74, 80, 88),
-        }
+        self.muted
     }
 
-    /// Foreground colour of the strongest emphasis (selected / hovered / active
-    /// rows and values). Replaces `Color::White`.
+    /// Foreground colour of the strongest emphasis. Replaces `Color::White`.
     pub fn strong_fg(&self) -> Color {
-        match self.mode {
-            Mode::Dark => Color::Rgb(240, 242, 245),
-            Mode::Light => Color::Rgb(17, 20, 26),
-        }
+        self.strong
     }
 
     /// Faint chrome as a full style.
     pub fn dim(&self) -> Style {
-        Style::new().fg(self.dim_fg())
+        Style::new().fg(self.dim)
     }
 
     /// Readable secondary text as a full style.
     pub fn muted(&self) -> Style {
-        Style::new().fg(self.muted_fg())
+        Style::new().fg(self.muted)
     }
 
     /// The strongest emphasis as a full style.
     pub fn strong(&self) -> Style {
-        Style::new().fg(self.strong_fg())
+        Style::new().fg(self.strong)
+    }
+
+    /// Whether a light background was detected. The welcome logo uses this to
+    /// pick the official icon variant: its white bars become black on a light
+    /// terminal (as in `app-icon-dark.svg`) so they don't vanish.
+    pub fn is_light(&self) -> bool {
+        self.mode == Mode::Light
     }
 
     /// Name of the chosen mode, for the detection log.
@@ -125,6 +128,84 @@ impl Palette {
             Mode::Light => "light",
         }
     }
+}
+
+/// Whether the terminal advertises 24-bit colour through `COLORTERM`. Apple
+/// Terminal does not, and renders RGB sequences as washed greyscale — so when
+/// this is false, colours are downgraded to xterm-256 (which it does render).
+pub fn supports_truecolor() -> bool {
+    truecolor_from(std::env::var("COLORTERM").ok().as_deref())
+}
+
+fn truecolor_from(colorterm: Option<&str>) -> bool {
+    matches!(colorterm, Some("truecolor" | "24bit"))
+}
+
+/// Downgrade every RGB cell in the frame to its nearest xterm-256 colour, for a
+/// terminal that renders 256 colours but not 24-bit RGB (Apple Terminal). A
+/// single pass over the finished buffer, so it covers *every* view — welcome,
+/// sessions, charts, markdown, the ticker — not just the palette. No-op on a
+/// truecolour terminal, which keeps the exact RGB.
+pub fn downgrade_buffer(frame: &mut ratatui::Frame) {
+    if supports_truecolor() {
+        return;
+    }
+    for cell in &mut frame.buffer_mut().content {
+        // A full block (`█`) doesn't cover its whole cell on Apple Terminal,
+        // leaving gaps — so bars (charts, treemap, columns) read as separated
+        // squares. Backing each full block with its own colour fills the cell.
+        // Partial blocks (`▊`, `▄`, …) are left alone: their partial coverage
+        // encodes a fractional value or shape.
+        if cell.symbol() == "█" && cell.bg == Color::Reset {
+            cell.bg = cell.fg;
+        }
+        cell.fg = to_256(cell.fg);
+        cell.bg = to_256(cell.bg);
+    }
+}
+
+/// Nearest xterm-256 colour to an RGB value (a no-op for non-RGB colours).
+/// Maps near-greys onto the 232–255 ramp and everything else onto the 6×6×6
+/// cube — the standard reduction, good enough for chrome tints and the logo.
+pub fn to_256(color: Color) -> Color {
+    // The 6×6×6 colour cube's per-axis levels.
+    const LEVELS: [u8; 6] = [0, 95, 135, 175, 215, 255];
+    let Color::Rgb(red, green, blue) = color else {
+        return color;
+    };
+    let nearest_level = |value: u8| -> usize {
+        LEVELS
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, level)| (i16::from(**level) - i16::from(value)).abs())
+            .map_or(0, |(idx, _)| idx)
+    };
+    let (ri, gi, bi) = (
+        nearest_level(red),
+        nearest_level(green),
+        nearest_level(blue),
+    );
+    let cube = 16 + 36 * ri + 6 * gi + bi;
+    // The 232–255 greyscale ramp runs value 8..=238 in steps of 10.
+    let gray_step = (((u16::from(red) + u16::from(green) + u16::from(blue)) / 3).saturating_sub(8)
+        / 10)
+        .min(23) as u8;
+    let gray_value = 8 + 10 * gray_step;
+    // Pick the cube colour or the grey, whichever is actually closer — so a near
+    // grey stays grey instead of snapping to a tinted cube cell.
+    let dist2 = |cr: u8, cg: u8, cb: u8| {
+        let dr = i32::from(cr) - i32::from(red);
+        let dg = i32::from(cg) - i32::from(green);
+        let db = i32::from(cb) - i32::from(blue);
+        dr * dr + dg * dg + db * db
+    };
+    let idx =
+        if dist2(LEVELS[ri], LEVELS[gi], LEVELS[bi]) <= dist2(gray_value, gray_value, gray_value) {
+            cube as u8
+        } else {
+            232 + gray_step
+        };
+    Color::Indexed(idx)
 }
 
 static PALETTE: OnceLock<Palette> = OnceLock::new();
@@ -138,8 +219,8 @@ pub fn pal() -> Palette {
 /// Query the terminal's background once and latch the matching palette. Must run
 /// before the event-reader thread is spawned, or the terminal's OSC 11 reply is
 /// swallowed as an input event. A light background latches the light palette;
-/// anything else — a dark background, or a terminal that won't answer (Apple
-/// Terminal, non-tty) — latches the dark palette.
+/// anything else latches the dark palette. On a terminal without truecolour the
+/// palette is downgraded to xterm-256 so its colours still render.
 pub fn detect() {
     use terminal_colorsaurus::{theme_mode, QueryOptions, ThemeMode};
 
@@ -149,12 +230,19 @@ pub fn detect() {
         _ => Palette::dark(),
     };
     // Logged so a "colours look wrong in terminal X" report can be traced to
-    // which branch ran, without guessing.
+    // which branch ran, without guessing. The RGB→256 downgrade for terminals
+    // without truecolour happens per-frame in `downgrade_buffer`, not here.
     tracing::info!(
-        "ai theme: TERM_PROGRAM={:?} colorsaurus={:?} -> {}",
+        "ai theme: TERM_PROGRAM={:?} COLORTERM={:?} colorsaurus={:?} -> {} ({})",
         std::env::var("TERM_PROGRAM").ok(),
+        std::env::var("COLORTERM").ok(),
         result,
         palette.mode_name(),
+        if supports_truecolor() {
+            "truecolor"
+        } else {
+            "256"
+        },
     );
     let _ = PALETTE.set(palette);
 }
@@ -184,5 +272,29 @@ mod tests {
         assert_ne!(d.sel_bg, l.sel_bg);
         assert_ne!(d.hover_bg, l.hover_bg);
         assert_ne!(d.tab_bg, l.tab_bg);
+    }
+
+    #[test]
+    fn truecolor_is_recognised_only_from_the_known_colorterm_values() {
+        assert!(truecolor_from(Some("truecolor")));
+        assert!(truecolor_from(Some("24bit")));
+        assert!(!truecolor_from(Some("256")));
+        assert!(!truecolor_from(None));
+    }
+
+    /// The 256-downgrade turns every RGB colour into an indexed one (so a
+    /// no-truecolour terminal shows colour), and leaves non-RGB colours alone.
+    #[test]
+    fn the_indexed_downgrade_maps_rgb_onto_the_256_palette() {
+        for c in [
+            Palette::dark().dim,
+            Palette::dark().strong,
+            Palette::dark().user_bg,
+        ] {
+            assert!(matches!(to_256(c), Color::Indexed(_)));
+        }
+        assert_eq!(to_256(Color::Cyan), Color::Cyan);
+        // A pure grey lands on the 232–255 greyscale ramp.
+        assert!(matches!(to_256(Color::Rgb(128, 128, 128)), Color::Indexed(n) if n >= 232));
     }
 }

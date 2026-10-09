@@ -987,7 +987,13 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
     });
 
     loop {
-        terminal.draw(|f| view(f, &mut ui, &mut state, &editor))?;
+        terminal.draw(|f| {
+            view(f, &mut ui, &mut state, &editor);
+            // One pass over the finished frame: on a terminal without truecolour
+            // (Apple Terminal), every RGB cell is reduced to xterm-256 so colours
+            // render instead of washing to greyscale. Covers all views at once.
+            super::theme::downgrade_buffer(f);
+        })?;
         tokio::select! {
             _ = ticker.tick(), if ui.animating => {
                 ui.tick = ui.tick.wrapping_add(1);
@@ -4442,6 +4448,20 @@ fn render_empty_state(f: &mut ratatui::Frame, area: Rect, ui: &mut Ui) {
     let mut offset = 0usize;
     if area.height as usize >= mark_h + content.len() + 2 && area.width >= assets::mark_width() {
         let mut with_logo = assets::logo_mark();
+        // The brand icon ships two variants: white bars on a dark ground, and —
+        // for a light ground — the same mark with the white bars turned black
+        // (`app-icon-dark.svg`). On a light terminal, do the same so the white
+        // bars don't vanish; the other colours read on both. Bars carry their
+        // colour as both fg and bg (so they're solid), so swap both.
+        if pal().is_light() {
+            for line in &mut with_logo {
+                for span in &mut line.spans {
+                    if span.style.fg == Some(Color::Rgb(255, 255, 255)) {
+                        span.style = span.style.fg(Color::Black).bg(Color::Black);
+                    }
+                }
+            }
+        }
         with_logo.push(Line::from(""));
         offset = with_logo.len();
         with_logo.extend(content);
