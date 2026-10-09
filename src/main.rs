@@ -409,6 +409,12 @@ async fn main() {
                 hook(info);
             }));
 
+            // Detect the terminal background before full-screen setup turns on
+            // mouse capture and focus reporting: their event bytes otherwise
+            // corrupt the OSC 11 reply while it's being read (Ghostty then comes
+            // back as "unsupported" and the palette wrongly falls back to dark).
+            // Latches the palette once for the whole AI session.
+            ai::theme::detect();
             Terminal::enter_full_screen();
             let result = ai::run(agent, quote_receiver).await;
             Terminal::exit_full_screen();

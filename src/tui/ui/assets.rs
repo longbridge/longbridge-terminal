@@ -70,6 +70,18 @@ static MARK: std::sync::LazyLock<Vec<ratatui::text::Line<'static>>> =
             if pad > 0 {
                 line.spans.push(Span::raw(" ".repeat(usize::from(pad))));
             }
+            // Fill every coloured cell's background with its own colour. Only
+            // the bars carry a foreground colour (the gaps between them are
+            // plain spaces), so this paints each bar as a solid, flat-topped
+            // rectangle — matching the app icon. Without it the block glyphs
+            // (`█`, and the half-block `▄` tip) don't cover their cells edge to
+            // edge on every terminal (Apple Terminal leaves gaps and a seam
+            // under the tip), and the bars read as stacks of separated squares.
+            for span in &mut line.spans {
+                if let Some(fg) = span.style.fg {
+                    span.style = span.style.bg(fg);
+                }
+            }
         }
         lines
     });

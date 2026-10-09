@@ -40,17 +40,23 @@ pub fn render_vis_chart(spec: &Value, width: usize, color: bool) -> String {
     out
 }
 
-/// SGR foreground code for the colors the chart renderer uses.
-fn sgr(color: Color) -> u8 {
+/// SGR foreground parameters for the colors the chart and markdown renderers use.
+///
+/// Those renderers are shared with the TUI, where dim chrome now comes from a
+/// theme-aware [`super::theme`] palette (an `Rgb` value) rather than an ANSI
+/// name — so an `Rgb` is emitted as a truecolor sequence to keep the piped
+/// output faithful instead of collapsing to the default foreground.
+fn sgr(color: Color) -> String {
     match color {
-        Color::Cyan => 36,
-        Color::Blue => 34,
-        Color::DarkGray => 90,
-        Color::Red => 31,
-        Color::Green => 32,
-        Color::Yellow => 33,
-        Color::Magenta => 35,
-        _ => 39, // default foreground
+        Color::Cyan => "36".to_string(),
+        Color::Blue => "34".to_string(),
+        Color::DarkGray => "90".to_string(),
+        Color::Red => "31".to_string(),
+        Color::Green => "32".to_string(),
+        Color::Yellow => "33".to_string(),
+        Color::Magenta => "35".to_string(),
+        Color::Rgb(r, g, b) => format!("38;2;{r};{g};{b}"),
+        _ => "39".to_string(), // default foreground
     }
 }
 
