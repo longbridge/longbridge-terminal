@@ -1052,6 +1052,32 @@ pub enum Commands {
         order_type: String,
     },
 
+    /// Estimate a US multi-leg option combination's tradable quantity and margin impact
+    ///
+    /// Returns: `max_open_qty`, `unit_margin`, `initial_margin_change`, `maintenance_margin_change`.
+    /// Pass each leg's symbol with a repeated `--leg`.
+    /// Example: longbridge estimate-multileg --side buy --strategy `VerticalCallSpread` --quantity 1 --leg QQQ260731C764000.US --leg QQQ260731C767000.US --price 1.5
+    EstimateMultileg {
+        /// Order side: buy | sell  (case-insensitive, REQUIRED)
+        #[arg(long)]
+        side: String,
+        /// Multi-leg strategy, e.g. `VerticalCallSpread`, Straddle, Collar  (REQUIRED)
+        #[arg(long)]
+        strategy: String,
+        /// Number of combinations as a decimal string, e.g. 1  (REQUIRED)
+        #[arg(long)]
+        quantity: String,
+        /// Leg symbol in <CODE>.<MARKET> format; repeat --leg for each leg  (REQUIRED)
+        #[arg(long = "leg", required = true)]
+        legs: Vec<String>,
+        /// Order type: LO | MO | ELO | ALO  (case-insensitive, default: LO)
+        #[arg(long, default_value = "LO")]
+        order_type: String,
+        /// Limit price as a decimal string (required for LO orders)
+        #[arg(long)]
+        price: Option<String>,
+    },
+
     /// Exchange rates for all supported currencies
     ///
     /// Example: longbridge exchange-rate
@@ -4428,6 +4454,25 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             price,
             order_type,
         } => trade::cmd_max_qty(symbol, &side, price, &order_type, format).await,
+        Commands::EstimateMultileg {
+            side,
+            strategy,
+            quantity,
+            legs,
+            order_type,
+            price,
+        } => {
+            trade::cmd_estimate_multileg(
+                &side,
+                &strategy,
+                &quantity,
+                legs,
+                &order_type,
+                price,
+                format,
+            )
+            .await
+        }
         Commands::ExchangeRate => asset::cmd_exchange_rate(format, verbose).await,
 
         Commands::Shareholder {

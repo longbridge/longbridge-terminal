@@ -1,9 +1,10 @@
 use anyhow::{bail, Result};
 use longbridge::trade::{
-    EstimateMaxPurchaseQuantityOptions, GetCashFlowOptions, GetHistoryExecutionsOptions,
+    EstimateMaxPurchaseQuantityOptions, EstimateMultiLegAvailableQuantityOptions,
+    EstimateMultiLegOrderLeg, GetCashFlowOptions, GetHistoryExecutionsOptions,
     GetHistoryOrdersOptions, GetTodayExecutionsOptions, GetTodayOrdersOptions,
-    GetUSRealizedPLOptions, OrderSide, OrderType, OutsideRTH, ReplaceOrderOptions,
-    SubmitOrderOptions, TimeInForceType,
+    GetUSRealizedPLOptions, MultiLegStrategy, OrderSide, OrderType, OutsideRTH,
+    ReplaceOrderOptions, SubmitOrderOptions, TimeInForceType,
 };
 use rust_decimal::Decimal;
 use std::fmt::Write as _;
@@ -1277,6 +1278,66 @@ pub async fn cmd_max_qty(
     Ok(())
 }
 
+/// Estimate a US multi-leg option combination's tradable quantity and margin
+/// impact before submitting the order.
+#[allow(clippy::too_many_arguments)]
+pub async fn cmd_estimate_multileg(
+    side: &str,
+    strategy: &str,
+    quantity: &str,
+    legs: Vec<String>,
+    order_type: &str,
+    price: Option<String>,
+    format: &OutputFormat,
+) -> Result<()> {
+    let ctx = crate::openapi::trade();
+    let side_val = match side.to_lowercase().as_str() {
+        "buy" => OrderSide::Buy,
+        "sell" => OrderSide::Sell,
+        _ => bail!("Unknown side '{side}'. Use: Buy Sell"),
+    };
+    let ot = parse_order_type(order_type)?;
+    let strategy_val = MultiLegStrategy::from_str(strategy).map_err(|_| {
+        anyhow::anyhow!(
+            "Unknown strategy '{strategy}'. Use one of: CoveredCall CoveredPut \
+             VerticalCallSpread VerticalPutSpread Collar Straddle Strangle \
+             CalendarCallSpread CalendarPutSpread"
+        )
+    })?;
+    let qty =
+        Decimal::from_str(quantity).map_err(|_| anyhow::anyhow!("Invalid quantity: {quantity}"))?;
+    let price_dec = price
+        .as_deref()
+        .map(|p| Decimal::from_str(p).map_err(|_| anyhow::anyhow!("Invalid price: {p}")))
+        .transpose()?;
+
+    let legs_opts = legs.into_iter().map(EstimateMultiLegOrderLeg::new);
+    let mut opts =
+        EstimateMultiLegAvailableQuantityOptions::new(side_val, ot, qty, strategy_val, legs_opts);
+    if let Some(p) = price_dec {
+        opts = opts.submitted_price(p);
+    }
+
+    let resp = ctx.estimate_multileg_available_quantity(opts).await?;
+
+    let headers = &["Field", "Value"];
+    let rows = vec![
+        vec!["Max Open Qty".to_string(), resp.max_open_qty.to_string()],
+        vec!["Unit Margin".to_string(), resp.unit_margin.to_string()],
+        vec![
+            "Initial Margin Change".to_string(),
+            resp.initial_margin_change.to_string(),
+        ],
+        vec![
+            "Maintenance Margin Change".to_string(),
+            resp.maintenance_margin_change.to_string(),
+        ],
+    ];
+
+    print_table(headers, rows, format);
+    Ok(())
+}
+
 pub async fn cmd_portfolio(format: &OutputFormat) -> Result<()> {
     // Portfolio reaches QuoteContext (WS) through the shared `account` helper, so
     // record the WS quote operation here at the CLI entry point.
@@ -2049,6 +2110,15 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
         "margin-ratio" | "max-qty" => {
             array("Key/value account calculation result", &["field", "value"])
         }
+        "estimate-multileg" => object(
+            "Multi-leg option combination estimate",
+            &[
+                "max_open_qty",
+                "unit_margin",
+                "initial_margin_change",
+                "maintenance_margin_change",
+            ],
+        ),
         "alert" => object("Price alert list", &["lists"]),
         "alert add" | "alert delete" => {
             object("Price alert mutation result", &["id", "status", "data"])
