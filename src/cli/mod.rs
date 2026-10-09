@@ -9,6 +9,7 @@ pub mod auth;
 pub mod check;
 pub mod completion;
 pub mod dca;
+pub mod forex;
 pub mod fund;
 pub mod fundamental;
 pub mod grid;
@@ -1023,6 +1024,19 @@ pub enum Commands {
     Fund {
         #[command(subcommand)]
         cmd: fund::FundCommands,
+    },
+
+    /// Forex (currency exchange) channel — quote a rate, submit & inspect FX orders
+    ///
+    /// Convert cash between two currencies inside your account. `submit-order`
+    /// asks for confirmation unless `--yes` is given.
+    ///
+    /// Example: longbridge forex quote USD HKD --amount 1000
+    /// Example: longbridge forex submit-order <quote_id> <client_order_id> --yes
+    /// Example: longbridge forex order <client_order_id>
+    Forex {
+        #[command(subcommand)]
+        cmd: forex::ForexCommands,
     },
 
     /// Margin ratio requirements for a symbol
@@ -4421,6 +4435,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         Commands::Positions => trade::cmd_positions(format).await,
         Commands::FundPositions => trade::cmd_fund_positions(format).await,
         Commands::Fund { cmd } => fund::run(cmd, format).await,
+        Commands::Forex { cmd } => forex::run(cmd, format).await,
         Commands::MarginRatio { symbol } => trade::cmd_margin_ratio(symbol, format).await,
         Commands::MaxQty {
             symbol,

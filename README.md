@@ -403,6 +403,23 @@ longbridge fund cancel-order <order_id>                    # Cancel/withdraw (as
 > `nav*`, `positions`) show a trimmed set of columns in table view; add
 > `--format json` for every field.
 
+### Forex
+
+```bash
+# Convert cash between two currencies inside your account (asynchronous flow)
+longbridge forex quote USD HKD --amount 1000              # Lock a rate, get a quote_id
+longbridge forex quote USD HKD --target-amount 7800       # Quote by the convert-in amount instead
+longbridge forex submit-order <quote_id> <client_order_id>   # Submit (asks to confirm unless --yes)
+longbridge forex order <client_order_id>                  # Order state (poll until terminal)
+```
+
+> **Forex is asynchronous and `submit-order` asks before acting.** A quote locks
+> a rate for a short window; `submit-order` only means the order was **accepted**
+> — poll `forex order <client_order_id>` until the state is success/failed. It
+> prints what will be sent and requires an interactive `y` confirmation; pass
+> `--yes` to skip it. Give either `--amount` (convert-out side) or
+> `--target-amount` (convert-in side). Add `--format json` for every field.
+
 ### Profit Analysis
 
 ```bash

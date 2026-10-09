@@ -58,6 +58,9 @@ pub(crate) static AGENT_CTX: Slot<longbridge::agent::AgentContext> = Slot::new()
 /// Global `FundContext` for the mutual-fund channel (REST-only)
 pub(crate) static FUND_CTX: Slot<longbridge::fund::FundContext> = Slot::new();
 
+/// Global `ForexContext` for the currency-exchange channel (REST-only)
+pub(crate) static FOREX_CTX: Slot<longbridge::forex::ForexContext> = Slot::new();
+
 /// Global `HttpClient` for making authenticated requests to the Longbridge `OpenAPI`
 pub(crate) static HTTP_CLIENT: Slot<longbridge::httpclient::HttpClient> = Slot::new();
 
@@ -292,6 +295,9 @@ pub async fn init_contexts() -> Result<(
     let fund_ctx = longbridge::fund::FundContext::new(Arc::clone(&config));
     FUND_CTX.set(fund_ctx);
 
+    let forex_ctx = longbridge::forex::ForexContext::new(Arc::clone(&config));
+    FOREX_CTX.set(forex_ctx);
+
     // Also inject into the standalone HttpClient used for direct REST calls.
     // Unlike the SDK contexts (whose config carries `.language(...)`), the raw
     // client has no language field — forward the effective content language
@@ -463,6 +469,13 @@ pub fn fund() -> &'static longbridge::fund::FundContext {
     FUND_CTX
         .get()
         .expect("FundContext not initialized, please call init_contexts() first")
+}
+
+/// Get global `ForexContext` for the currency-exchange channel
+pub fn forex() -> &'static longbridge::forex::ForexContext {
+    FOREX_CTX
+        .get()
+        .expect("ForexContext not initialized, please call init_contexts() first")
 }
 
 /// Get the global authenticated `HttpClient` for direct `OpenAPI` requests
