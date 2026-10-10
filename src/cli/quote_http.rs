@@ -118,6 +118,20 @@ fn convert_unix_default_paths(value: &mut Value, paths: &[&str]) {
     }
 }
 
+/// Replace an empty-string value with `repl` at each `*`-aware path. Used for
+/// fields that need a targeted empty→null (`Option` columns) or empty→"0"
+/// (non-`Option` columns) where a recursive pass would be too broad.
+fn set_empty_at(value: &mut Value, paths: &[&str], repl: &Value) {
+    for p in paths {
+        let segs: Vec<&str> = p.split('.').collect();
+        walk(value, &segs, &|v| {
+            if v.as_str() == Some("") {
+                *v = repl.clone();
+            }
+        });
+    }
+}
+
 /// Convert a numeric string to a JSON integer at each path. The gateway sends
 /// `int64` fields as strings; the SDK's integer fields need real numbers.
 fn numify_paths(value: &mut Value, paths: &[&str]) {
@@ -469,6 +483,23 @@ impl HttpQuoteApi {
     fn reshape_depth(mut value: Value) -> Result<SecurityDepth> {
         rename_keys(&mut value, &[("ask", "asks"), ("bid", "bids")]);
         drop_keys(&mut value, &["symbol", "volume_str"]);
+        // An empty depth level comes back with `price: ""` (and "0" counts);
+        // `Depth::price` is `Option<Decimal>` so "" must become null (not "0",
+        // which would decode to `Some(0)` — a real 0 price). The non-`Option`
+        // `position`/`volume`/`order_num` are zeroed then numified.
+        set_empty_at(&mut value, &["asks.*.price", "bids.*.price"], &Value::Null);
+        set_empty_at(
+            &mut value,
+            &[
+                "asks.*.order_num",
+                "asks.*.volume",
+                "asks.*.position",
+                "bids.*.order_num",
+                "bids.*.volume",
+                "bids.*.position",
+            ],
+            &Value::String("0".into()),
+        );
         numify_paths(
             &mut value,
             &[
@@ -1498,6 +1529,21 @@ mod tests {
         assert_eq!(depth.asks[0].volume, 908_200);
         assert_eq!(depth.asks[0].order_num, 272);
         assert_eq!(depth.asks[0].price.unwrap().to_string(), "425.000");
+    }
+
+    #[test]
+    fn reshape_depth_empty_level_nulls_price() {
+        // An empty ask level (`price: ""`, "0" counts) must decode: price→None,
+        // counts→0 (regression for the round-2 TSLA.US case).
+        let raw: Value = serde_json::from_str(
+            r#"{"ask":[{"order_num":"0","position":1,"price":"","volume":"0","volume_str":""}],"bid":[]}"#,
+        )
+        .unwrap();
+        let d = HttpQuoteApi::reshape_depth(raw).expect("reshape depth empty");
+        assert_eq!(d.asks.len(), 1);
+        assert!(d.asks[0].price.is_none());
+        assert_eq!(d.asks[0].volume, 0);
+        assert_eq!(d.asks[0].order_num, 0);
     }
 
     #[test]
