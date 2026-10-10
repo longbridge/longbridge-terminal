@@ -210,6 +210,18 @@ fn warrant_status(n: i64) -> Option<Value> {
     serde_json::to_value(e).ok()
 }
 
+/// The gateway's `calc_index` wire value for an SDK `CalcIndex`: the proto
+/// `CalcIndex` enumeration, which is the SDK enum's declaration order shifted by
+/// one (proto reserves 0 for `Unknown`), e.g. proto `LastDone` = 1 = SDK
+/// `LastDone`(0) + 1. A fieldless enum casts to its discriminant, so this mirrors
+/// the SDK's `From<CalcIndex> for proto::CalcIndex` without depending on the
+/// proto crate. This is an implicit order coupling: `calc_index_wire_matches_proto`
+/// pins known values so any SDK reordering fails loudly in tests, not silently
+/// at the gateway.
+fn calc_index_wire(index: longbridge::quote::CalcIndex) -> i32 {
+    (index as i32) + 1
+}
+
 /// Replace a string code at each path with the SDK enum `E`'s serialized name
 /// via its `FromStr` (strum) parse — e.g. option `direction` `"C"` → `"Call"`,
 /// `standard_attr` `""` → `"Normal"`. Leaves unparseable values unchanged.
@@ -287,27 +299,49 @@ fn empty_str_to_null(value: &mut Value) {
     }
 }
 
-/// Recursively replace empty-string values with `"0"`, except for keys in
-/// `skip` (symbol/enum/string fields). The gateway sends untraded decimal fields
-/// as `""`; the WS path parses those via `unwrap_or_default()` → `0`, and the
-/// SDK's **non-`Option`** `Decimal` fields reject `""`, so this mirrors the WS
-/// behaviour for quote endpoints whose price fields are not optional.
-fn empty_str_to_zero_skip(value: &mut Value, skip: &[&str]) {
-    match value {
-        Value::Object(map) => {
-            for (k, v) in map.iter_mut() {
-                match v {
-                    Value::String(s) if s.is_empty() && !skip.contains(&k.as_str()) => {
-                        *v = Value::String("0".to_string());
-                    }
-                    _ => empty_str_to_zero_skip(v, skip),
-                }
-            }
-        }
-        Value::Array(arr) => arr.iter_mut().for_each(|v| empty_str_to_zero_skip(v, skip)),
-        _ => {}
-    }
+/// Replace `""` with `"0"` at exactly the listed numeric paths. The gateway sends
+/// untraded decimal/count fields as `""`; the WS path parses those via
+/// `unwrap_or_default()` → `0`, and the SDK's **non-`Option`** `Decimal`/`i64`
+/// fields reject `""`. This is an explicit allow-list of the numeric fields per
+/// struct (rather than "zero every empty string except a skip-list"), so a
+/// string field that legitimately carries `""` can never be corrupted to `"0"`,
+/// and adding a field to a struct is a deliberate edit here. Must run before
+/// `numify_paths` so `""` → `"0"` → number for integer fields.
+fn zero_empty_numeric(value: &mut Value, paths: &[&str]) {
+    set_empty_at(value, paths, &Value::String("0".into()));
 }
+
+// Non-`Option` numeric fields per SDK struct (the ones `zero_empty_numeric` may
+// legitimately turn `""` into 0). Keep in sync with the struct definitions.
+const QUOTE_NUMERIC: &[&str] = &[
+    "*.last_done", "*.prev_close", "*.open", "*.high", "*.low", "*.volume", "*.turnover",
+    // extended-session `PrePostQuote` blocks (non-`Option` fields inside)
+    "*.pre_market_quote.last_done", "*.pre_market_quote.prev_close", "*.pre_market_quote.high",
+    "*.pre_market_quote.low", "*.pre_market_quote.volume", "*.pre_market_quote.turnover",
+    "*.post_market_quote.last_done", "*.post_market_quote.prev_close", "*.post_market_quote.high",
+    "*.post_market_quote.low", "*.post_market_quote.volume", "*.post_market_quote.turnover",
+    "*.overnight_quote.last_done", "*.overnight_quote.prev_close", "*.overnight_quote.high",
+    "*.overnight_quote.low", "*.overnight_quote.volume", "*.overnight_quote.turnover",
+];
+const TRADE_NUMERIC: &[&str] = &["*.price", "*.volume"];
+const INTRADAY_NUMERIC: &[&str] = &["*.price", "*.volume", "*.turnover", "*.avg_price"];
+const CANDLE_NUMERIC: &[&str] = &["*.close", "*.open", "*.low", "*.high", "*.volume", "*.turnover"];
+const STATIC_NUMERIC: &[&str] = &[
+    "*.lot_size", "*.total_shares", "*.circulating_shares", "*.hk_shares",
+    "*.eps", "*.eps_ttm", "*.bps", "*.dividend_yield",
+];
+const CAPITAL_FLOW_NUMERIC: &[&str] = &["*.inflow"];
+const OPTION_QUOTE_NUMERIC: &[&str] = &[
+    "*.last_done", "*.prev_close", "*.open", "*.high", "*.low", "*.volume", "*.turnover",
+    "*.implied_volatility", "*.open_interest", "*.strike_price", "*.contract_multiplier",
+    "*.contract_size", "*.historical_volatility",
+];
+const WARRANT_QUOTE_NUMERIC: &[&str] = &[
+    "*.last_done", "*.prev_close", "*.open", "*.high", "*.low", "*.volume", "*.turnover",
+    "*.implied_volatility", "*.outstanding_ratio", "*.outstanding_quantity",
+    "*.conversion_ratio", "*.strike_price", "*.upper_strike_price",
+    "*.lower_strike_price", "*.call_price",
+];
 
 /// Divide the decimal-string `vega`/`rho` greeks by 100 at each array element —
 /// the REST payload reports them 100× the SDK/WS scale.
@@ -459,7 +493,7 @@ impl HttpQuoteApi {
         // non-`Option` `Decimal`/`i64`s need a real 0 (matching the WS
         // `unwrap_or_default`). Runs before `numify` so "" → "0" → number.
         // `symbol` is the only string field; timestamps are already converted.
-        empty_str_to_zero_skip(&mut value, &["symbol"]);
+        zero_empty_numeric(&mut value, QUOTE_NUMERIC);
         numify_paths(
             &mut value,
             &[
@@ -544,7 +578,7 @@ impl HttpQuoteApi {
         // `price` is the only non-`Option` `Decimal`; `trade_type` "" is a
         // meaningful value (automatch normal) so it is preserved. Runs before
         // `numify`/enum-map (which operate on ints, never "").
-        empty_str_to_zero_skip(&mut value, &["trade_type", "direction", "trade_session"]);
+        zero_empty_numeric(&mut value, TRADE_NUMERIC);
         numify_paths(&mut value, &["*.volume"]);
         map_int_enum(&mut value, &["*.direction"], &trade_direction);
         map_int_enum(&mut value, &["*.trade_session"], &trade_session);
@@ -566,9 +600,7 @@ impl HttpQuoteApi {
         unwrap(&mut value, "lines");
         drop_keys(&mut value, &["volume_str"]);
         convert_unix_paths(&mut value, &["*.timestamp"]);
-        // `IntradayLine` has no string fields; zero any "" decimal/volume before
-        // numify.
-        empty_str_to_zero_skip(&mut value, &[]);
+        zero_empty_numeric(&mut value, INTRADAY_NUMERIC);
         numify_paths(&mut value, &["*.volume"]);
         from_value(value)
     }
@@ -615,9 +647,7 @@ impl HttpQuoteApi {
         drop_keys(&mut value, &["volume_str"]);
         convert_unix_paths(&mut value, &["*.timestamp"]);
         map_int_enum(&mut value, &["*.trade_session"], &trade_session);
-        // `Candlestick` has no string fields; zero any "" decimal/volume
-        // (matching WS) before numify.
-        empty_str_to_zero_skip(&mut value, &[]);
+        zero_empty_numeric(&mut value, CANDLE_NUMERIC);
         numify_paths(&mut value, &["*.volume"]);
         // The REST payload omits the SDK's `open_updated` flag; the WS path
         // leaves it `false` for historical bars, so default it here.
@@ -720,13 +750,8 @@ impl HttpQuoteApi {
         drop_keys(&mut value, &["listing_date"]);
         // Securities without earnings data return "" for eps/bps/etc. and the
         // share counts; the SDK's non-`Option` `Decimal`/`i64`s need a real 0.
-        // Runs before `numify` so "" → "0" → number. String/enum fields skipped.
-        empty_str_to_zero_skip(
-            &mut value,
-            &[
-                "symbol", "name_cn", "name_en", "name_hk", "exchange", "currency", "board",
-            ],
-        );
+        // Runs before `numify` so "" → "0" → number.
+        zero_empty_numeric(&mut value, STATIC_NUMERIC);
         numify_paths(
             &mut value,
             &[
@@ -777,8 +802,7 @@ impl HttpQuoteApi {
         unwrap(&mut value, "capital_flow_lines");
         drop_keys(&mut value, &["symbol"]);
         convert_unix_default_paths(&mut value, &["*.timestamp"]);
-        // `inflow` is a non-`Option` `Decimal`; zero any "".
-        empty_str_to_zero_skip(&mut value, &[]);
+        zero_empty_numeric(&mut value, CAPITAL_FLOW_NUMERIC);
         from_value(value)
     }
 
@@ -973,11 +997,8 @@ impl HttpQuoteApi {
         convert_unix_paths(&mut value, &["*.timestamp"]);
         // Untraded price fields come back as "" — the SDK's non-`Option`
         // `Decimal`/`i64`s need a real 0 (matching the WS `unwrap_or_default`).
-        // Before numify so "" → "0" → number. String/enum-code fields skipped.
-        empty_str_to_zero_skip(
-            &mut value,
-            &["symbol", "underlying_symbol", "contract_type", "direction"],
-        );
+        // Before numify so "" → "0" → number.
+        zero_empty_numeric(&mut value, OPTION_QUOTE_NUMERIC);
         numify_paths(&mut value, &["*.volume", "*.open_interest"]);
         map_int_enum(&mut value, &["*.trade_status"], &trade_status);
         map_str_enum::<longbridge::quote::OptionType>(&mut value, &["*.contract_type"]);
@@ -1011,7 +1032,7 @@ impl HttpQuoteApi {
         // Untraded price fields come back as "" — the SDK's non-`Option`
         // `Decimal`/`i64`s need a real 0 (matching the WS `unwrap_or_default`).
         // Before numify so "" → "0" → number.
-        empty_str_to_zero_skip(&mut value, &["symbol", "underlying_symbol", "category"]);
+        zero_empty_numeric(&mut value, WARRANT_QUOTE_NUMERIC);
         numify_paths(&mut value, &["*.volume", "*.outstanding_quantity"]);
         map_int_enum(&mut value, &["*.trade_status"], &trade_status);
         reformat_ymd(&mut value, &["*.expiry_date", "*.last_trade_date"]);
@@ -1119,13 +1140,7 @@ impl HttpQuoteApi {
         symbols: Vec<String>,
         indexes: Vec<longbridge::quote::CalcIndex>,
     ) -> Result<Vec<SecurityCalcIndex>> {
-        // The gateway's `calc_index` wire values are the proto `CalcIndex`
-        // enumeration, which is the SDK `CalcIndex` order shifted by one (proto
-        // reserves 0 for `Unknown`): proto `LastDone` = 1 = SDK `LastDone`(0) + 1.
-        // A fieldless enum casts to its discriminant, so this mirrors the SDK's
-        // `From<CalcIndex> for proto::CalcIndex` without depending on the proto
-        // crate.
-        let index_ints: Vec<i32> = indexes.iter().map(|i| (*i as i32) + 1).collect();
+        let index_ints: Vec<i32> = indexes.iter().map(|i| calc_index_wire(*i)).collect();
         let value = http_post(
             "/quote/calc-indexes",
             serde_json::json!({ "symbols": symbols, "calc_index": index_ints }),
@@ -1450,6 +1465,30 @@ mod tests {
         "vega": "", "volume": ""
       }]
     }"#;
+
+    #[test]
+    fn calc_index_wire_matches_proto() {
+        // Pin the SDK→proto `CalcIndex` wire mapping to the real proto
+        // enumeration values (longbridge.quote.v1 CalcIndex). If the SDK enum is
+        // ever reordered, this fails here instead of sending wrong indexes.
+        use longbridge::quote::CalcIndex as C;
+        for (idx, wire) in [
+            (C::LastDone, 1),
+            (C::ChangeValue, 2),
+            (C::ChangeRate, 3),
+            (C::Volume, 4),
+            (C::Turnover, 5),
+            (C::PeTtmRatio, 12),
+            (C::PbRatio, 13),
+            (C::DividendRatioTtm, 14),
+            (C::ExpiryDate, 19),
+            (C::OpenInterest, 35),
+            (C::Delta, 36),
+            (C::Rho, 40),
+        ] {
+            assert_eq!(calc_index_wire(idx), wire, "{idx:?} must map to proto {wire}");
+        }
+    }
 
     #[test]
     fn reshape_static_info_degrades_unknown_board() {
