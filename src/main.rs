@@ -92,6 +92,13 @@ fn print_cli_error(e: &anyhow::Error) {
                 if !trace_id.is_empty() {
                     eprintln!("  trace_id: {}", sanitize_server_text(trace_id));
                 }
+                // Mirror the WS branch: when the HTTP quote path reports
+                // `301604 no quote access` for an option-quote command, append
+                // the OPRA-permission guidance so the migration to HTTP does not
+                // lose the hint the WebSocket path showed.
+                if let Some(guidance) = http_openapi_guidance(*code, std::env::args()) {
+                    eprintln!("\n{guidance}");
+                }
                 return;
             }
             LbError::WsClient(WsClientError::ResponseError {
@@ -165,6 +172,17 @@ fn is_option_quote_command(args: impl IntoIterator<Item = impl AsRef<str>>) -> b
     positional
         .windows(2)
         .any(|pair| pair[0] == "option" && pair[1] == "quote")
+}
+
+/// Guidance for an HTTP `OpenApi` error. The HTTP response envelope carries the
+/// business code as an `i32`; map it to the shared [`option_quote_permission_guidance`]
+/// (used by both the WS and HTTP error branches) so an option-quote `301604`
+/// keeps its OPRA hint over HTTP. A negative/garbage code yields no guidance.
+fn http_openapi_guidance(
+    code: i32,
+    args: impl IntoIterator<Item = impl AsRef<str>>,
+) -> Option<&'static str> {
+    option_quote_permission_guidance(u64::try_from(code).unwrap_or(0), args)
 }
 
 fn option_quote_permission_guidance(
@@ -705,7 +723,7 @@ mod command_path_tests {
 
 #[cfg(test)]
 mod error_guidance_tests {
-    use super::{is_option_quote_command, option_quote_permission_guidance};
+    use super::{http_openapi_guidance, is_option_quote_command, option_quote_permission_guidance};
 
     #[test]
     fn detects_option_quote_command() {
@@ -730,6 +748,30 @@ mod error_guidance_tests {
             "chain",
             "AAPL.US",
         ]));
+    }
+
+    #[test]
+    fn http_openapi_branch_keeps_opra_guidance() {
+        // The HTTP `OpenApi` error carries the code as i32; the HTTP branch must
+        // surface the same OPRA guidance the WS branch does for option quote.
+        let guidance = http_openapi_guidance(
+            301_604,
+            ["longbridge", "option", "quote", "AAPL260722C320000.US"],
+        )
+        .expect("http option-quote 301604 should yield OPRA guidance");
+        assert!(guidance.contains("OPRA US Options"));
+    }
+
+    #[test]
+    fn http_openapi_branch_no_guidance_for_other_cases() {
+        // Different code, non-option command, and a negative/garbage code must
+        // not produce guidance (and must not panic on the i32→u64 conversion).
+        assert!(http_openapi_guidance(301_604, ["longbridge", "quote", "AAPL.US"]).is_none());
+        assert!(
+            http_openapi_guidance(500, ["longbridge", "option", "quote", "X.US"]).is_none(),
+            "a 500 must not be mistaken for the permission code"
+        );
+        assert!(http_openapi_guidance(-1, ["longbridge", "option", "quote", "X.US"]).is_none());
     }
 
     #[test]
