@@ -1062,20 +1062,39 @@ impl HttpQuoteApi {
     }
 
     pub async fn warrant_list(&self, symbol: String) -> Result<Vec<WarrantInfo>> {
-        let value = http_post(
-            "/quote/warrants",
-            serde_json::json!({
-                "symbol": symbol,
-                // sort_by=LastDone(0), sort_order=Descending(1) — matches the
-                // existing CLI/`LbQuoteApi` warrant_list defaults.
-                "filter_config": {
-                    "sort_by": 0, "sort_order": 1, "sort_offset": 0, "sort_count": 20,
-                },
-                "language": 1,
-            }),
-        )
-        .await?;
-        Self::reshape_warrant_list(value)
+        // The WS path returns the full warrant set in one call; the shim caps
+        // `sort_count` at 500, so page through `sort_offset` and concatenate to
+        // preserve parity (sort_by=LastDone(0), sort_order=Descending(1)).
+        const PAGE: usize = 500;
+        let mut rows: Vec<Value> = Vec::new();
+        let mut offset: usize = 0;
+        loop {
+            let resp = http_post(
+                "/quote/warrants",
+                serde_json::json!({
+                    "symbol": symbol,
+                    "filter_config": {
+                        "sort_by": 0, "sort_order": 1,
+                        "sort_offset": offset, "sort_count": PAGE,
+                    },
+                    "language": 1,
+                }),
+            )
+            .await?;
+            let total = resp.get("total_count").and_then(Value::as_u64).unwrap_or(0) as usize;
+            let page = resp
+                .get("warrant_list")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let got = page.len();
+            rows.extend(page);
+            offset += got;
+            if got == 0 || offset >= total {
+                break;
+            }
+        }
+        Self::reshape_warrant_list(serde_json::json!({ "warrant_list": rows }))
     }
 
     /// Reshape `/quote/calc-indexes` into `Vec<SecurityCalcIndex>` (unwrap
