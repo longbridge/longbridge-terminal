@@ -675,8 +675,9 @@ pub fn parse_outside_rth(s: &str) -> Result<OutsideRTH> {
 /// Best-effort last traded price, used to sanity-check a previewed order.
 /// A quote failure must never block a dry run, so errors collapse to `None`.
 async fn preview_last_price(symbol: &str) -> Option<Decimal> {
-    let quotes = crate::openapi::quote_cmd()
-        .quote(&[symbol.to_string()])
+    crate::openapi::track_quote_cmd();
+    let quotes = crate::cli::quote_http::HttpQuoteApi
+        .quote(vec![symbol.to_string()])
         .await
         .ok()?;
     quotes.first().map(|q| q.last_done)
@@ -1281,7 +1282,13 @@ pub async fn cmd_portfolio(format: &OutputFormat) -> Result<()> {
     // Portfolio reaches QuoteContext (WS) through the shared `account` helper, so
     // record the WS quote operation here at the CLI entry point.
     crate::openapi::track_quote_cmd();
-    let portfolio = crate::openapi::account::fetch_portfolio().await?;
+    // Enrich holdings with quotes over HTTP REST (the TUI's own call to
+    // `fetch_portfolio()` keeps the WebSocket context).
+    let portfolio = crate::openapi::account::fetch_portfolio_with(|symbols| async move {
+        let api = crate::cli::quote_http::HttpQuoteApi;
+        api.quote(symbols).await
+    })
+    .await?;
 
     print_account_banner(format);
     match format {

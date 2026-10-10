@@ -21,6 +21,7 @@ pub mod news;
 pub mod output;
 pub mod quant_render;
 pub mod quote;
+pub mod quote_http;
 pub mod run_script;
 pub mod schema;
 pub mod screener;
