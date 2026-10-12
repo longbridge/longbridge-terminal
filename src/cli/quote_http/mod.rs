@@ -53,21 +53,16 @@ use reshape::*;
 /// A rate-limit rejection (`429002`) is retried with exponential backoff — the
 /// gateway's limit is per second, so a short wait clears it. Any other error is
 /// returned immediately.
+///
+/// An endpoint served by one data center only ([`endpoint_region`]) is
+/// restricted to it: a session in another region gets the SDK's
+/// `DcRegionRestricted` error before any request is sent, the same short-circuit
+/// the WS `QuoteContext` applies.
 async fn http_post(path: &str, body: Value) -> Result<Value> {
-    http_post_in(path, body, None).await
-}
-
-/// [`http_post`] for an endpoint served by one data center only: a session in
-/// another region gets the SDK's `DcRegionRestricted` error before any request
-/// is sent, the same short-circuit the WS `QuoteContext` applies.
-async fn http_post_in(
-    path: &str,
-    body: Value,
-    region: Option<longbridge::DcRegion>,
-) -> Result<Value> {
     const MAX_ATTEMPTS: u32 = 4;
     const BASE_DELAY_MS: u64 = 250;
 
+    let region = endpoint_region(path);
     let client = crate::openapi::http_client();
     let mut attempt = 1;
     loop {
@@ -90,6 +85,15 @@ async fn http_post_in(
             }
             Err(err) => return Err(err),
         }
+    }
+}
+
+/// The only data center that serves `path`, if it is restricted to one. The
+/// broker queue is AP-only, as `QuoteContext::brokers` enforces on the WS path.
+fn endpoint_region(path: &str) -> Option<longbridge::DcRegion> {
+    match path {
+        "/quote/brokers" => Some(longbridge::DcRegion::Ap),
+        _ => None,
     }
 }
 
@@ -315,13 +319,7 @@ impl HttpQuoteApi {
     }
 
     pub async fn brokers(&self, symbol: String) -> Result<SecurityBrokers> {
-        // The broker queue is served by the AP data center only.
-        let value = http_post_in(
-            "/quote/brokers",
-            serde_json::json!({ "symbol": symbol }),
-            Some(longbridge::DcRegion::Ap),
-        )
-        .await?;
+        let value = http_post("/quote/brokers", serde_json::json!({ "symbol": symbol })).await?;
         Self::reshape_brokers(value)
     }
 
@@ -913,6 +911,11 @@ impl HttpQuoteApi {
             &mut value,
             &["*.volume", "*.outstanding_qty", "*.open_interest"],
         );
+        // proto-JSON may also omit a default-0 field or send `null`; WS still
+        // reads it as 0 for a requested index.
+        for key in ["volume", "outstanding_qty", "open_interest"] {
+            default_null_or_missing(&mut value, key, &Value::from(0));
+        }
         reformat_ymd(&mut value, &["*.expiry_date"]);
         empty_str_to_null(&mut value, &["symbol"]);
         keep_requested_indexes(&mut value, requested);
@@ -944,14 +947,17 @@ fn from_value<T: DeserializeOwned>(value: Value) -> Result<T> {
 /// the WS→HTTP shim (`market_temperature`, `security_list`, `watchlist`,
 /// `subscriptions`, `us_crypto_overview`, …) — mirrors longbridge-mcp#162, which
 /// likewise keeps those on the `QuoteContext`. Uses the tracking `quote_cmd()`
-/// accessor (never the raw `quote()`), so the `/v1/quote/cmd` beacon still fires.
+/// accessor, as every `src/cli` access must (enforced by
+/// `cli_uses_only_tracking_quote_accessor`); the one path that reaches it today,
+/// `static` on a `.BKKT` symbol, therefore fires the beacon twice.
 fn ws() -> crate::cli::api::LbQuoteApi {
     crate::cli::api::LbQuoteApi::new(crate::openapi::quote_cmd())
 }
 
-/// Full `QuoteApi` so the trait-object path (`run_static`, the JSON-RPC serve
-/// layer) shares the same HTTP backend as the direct command entry points.
-/// Shim-migrated methods hit HTTP; the rest delegate to [`ws`].
+/// Full `QuoteApi` so the trait-object path (`run_static`, `run_option_chain`)
+/// shares the same HTTP backend as the direct command entry points. Shim-migrated
+/// methods hit HTTP; the rest delegate to [`ws`] — the trait requires them, though
+/// today only `us_crypto_overview` (via `run_static`) is reached that way.
 #[async_trait::async_trait]
 impl crate::cli::api::QuoteApi for HttpQuoteApi {
     async fn quote(&self, symbols: Vec<String>) -> Result<Vec<SecurityQuote>> {
@@ -1452,7 +1458,8 @@ mod tests {
         assert_eq!(c[0].direction, longbridge::quote::OptionDirection::Call); // "C"
         assert_eq!(c[0].days_to_expiry, 7);
         assert_eq!(c[0].expiry_date.to_string(), "2026-10-16"); // reformatted
-                                                                // "" cycle type / standard attr are the common case: Monthly / Normal.
+
+        // "" cycle type / standard attr are the common case: Monthly / Normal.
         assert_eq!(
             c[0].option_type,
             longbridge::quote::OptionExpiryCycleType::Monthly
@@ -1831,6 +1838,33 @@ mod tests {
             calc_index_field(CalcIndex::FiveMinutesChangeRate),
             "five_minutes_change_rate"
         );
+    }
+
+    #[test]
+    fn brokers_is_restricted_to_the_ap_data_center() {
+        // Mirrors `QuoteContext::brokers`, which rejects non-AP sessions.
+        assert_eq!(
+            endpoint_region("/quote/brokers"),
+            Some(longbridge::DcRegion::Ap)
+        );
+        assert_eq!(endpoint_region("/quote/depth"), None);
+        assert_eq!(endpoint_region("/quote/quotes"), None);
+    }
+
+    #[test]
+    fn calc_index_requested_integer_missing_or_null_is_zero() {
+        use longbridge::quote::CalcIndex;
+        let raw = serde_json::json!({"security_calc_index": [
+            {"symbol": "A.US", "volume": null},
+            {"symbol": "B.US"}
+        ]});
+        let requested = [CalcIndex::Volume, CalcIndex::OpenInterest];
+        let r = HttpQuoteApi::reshape_calc_indexes(raw, &requested).expect("reshape");
+        assert_eq!(r[0].volume, Some(0));
+        assert_eq!(r[1].volume, Some(0));
+        assert_eq!(r[1].open_interest, Some(0));
+        // Not requested → stays None even though it was defaulted first.
+        assert!(r[1].outstanding_qty.is_none());
     }
 
     #[test]

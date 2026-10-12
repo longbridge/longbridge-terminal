@@ -389,7 +389,7 @@ pub fn grid() -> &'static longbridge::grid::GridContext {
 /// the server can count quote commands by name (`x-cli-cmd`) whichever transport
 /// served them. It was introduced because WS quote calls never reach the HTTP
 /// access log; commands now served by the `/quote/*` HTTP shim also log those
-/// requests, but still fire this once so the per-command count stays continuous.
+/// requests, but still fire this so the per-command count stays continuous.
 /// The path only needs to exist server-side to be logged.
 pub(crate) const QUOTE_CMD_PATH: &str = "/v1/quote/cmd";
 

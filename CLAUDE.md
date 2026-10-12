@@ -36,9 +36,9 @@ Check `Cargo.toml` / `Cargo.lock` rather than this list before relying on a vers
   - Uses `OnceLock` for global singleton
 - One-shot CLI quote commands do **not** use the WS `QuoteContext`: they go
   through `cli::quote_http::HttpQuoteApi`, which POSTs the gateway's `/quote/*`
-  HTTP shim and reshapes its proto-JSON into the SDK types. Endpoints without a
-  shim (market temperature, security list, watchlist, subscriptions, …) fall
-  back to the WS context via `ws()`. The TUI and `longbridge serve` keep the WS
+  HTTP shim and reshapes its proto-JSON into the SDK types. Commands without a
+  shim (market temperature, security list, watchlist, subscriptions, …) call
+  the WS context through `quote_cmd()`. The TUI and `longbridge serve` keep the WS
   `QuoteContext`.
 
 #### 3. `src/data/` - Data Layer
