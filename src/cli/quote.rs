@@ -2033,7 +2033,7 @@ pub async fn run_option_chain_strikes(
     expiry_date: Date,
     format: &OutputFormat,
 ) -> Result<()> {
-    // The OpenAPI endpoint returns a flat list of individual contracts; regroup
+    // The strikes endpoint returns a flat list of individual contracts; regroup
     // them by strike price into (call, put) pairs for the strike-ladder table.
     struct StrikeRow {
         price: rust_decimal::Decimal,

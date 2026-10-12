@@ -31,8 +31,16 @@ Check `Cargo.toml` / `Cargo.lock` rather than this list before relying on a vers
 - `context.rs` - Global context management
   - `init_contexts()` - Initialize QuoteContext and TradeContext with OAuth token, returns WebSocket receiver
   - `quote()` - Get global QuoteContext (for quotes, subscriptions)
+  - `quote_cmd()` - Same, and fires the `/v1/quote/cmd` beacon; use it at WS-backed CLI quote entry points
+  - `track_quote_cmd()` - Fires the beacon alone; HTTP-backed CLI quote entry points call it directly
   - `trade()` - Get global TradeContext (for trading operations)
   - Uses `OnceLock` for global singleton
+- One-shot CLI quote commands do **not** use the WS `QuoteContext`: they go
+  through `cli::quote_http::HttpQuoteApi`, which POSTs the gateway's `/quote/*`
+  HTTP shim and reshapes its proto-JSON into the SDK types. Commands without a
+  shim (market temperature, security list, watchlist, subscriptions, …) call
+  the WS context through `quote_cmd()`. The TUI and `longbridge serve` keep the WS
+  `QuoteContext`.
 
 #### 3. `src/data/` - Data Layer
 

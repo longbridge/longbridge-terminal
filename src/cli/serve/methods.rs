@@ -128,13 +128,11 @@ fn order_dry_run(preview: Value, scope: &crate::utils::dry_run::Scope) -> Value 
     })
 }
 
-/// The quote backend for the JSON-RPC methods. Returns `impl QuoteApi` so
-/// callers resolve the trait methods (not `HttpQuoteApi`'s wider inherent
-/// signatures). Fires the `/v1/quote/cmd` beacon, as `quote_cmd()` did, and
-/// uses the same HTTP REST backend as the one-shot CLI commands.
-fn quote_api() -> impl QuoteApi {
-    crate::openapi::track_quote_cmd();
-    crate::cli::quote_http::HttpQuoteApi
+/// The quote backend for the JSON-RPC methods: the WS `QuoteContext`, by design.
+/// `serve` is long-lived and already holds the WebSocket open for subscriptions,
+/// so it does not use the one-shot HTTP transport (`cli::quote_http`).
+fn quote_api() -> crate::cli::api::LbQuoteApi {
+    crate::cli::api::LbQuoteApi::new(crate::openapi::quote_cmd())
 }
 
 fn trade_api() -> crate::cli::api::LbTradeApi {
