@@ -194,3 +194,4 @@ clap = { version = "4", features = ["derive"] }  # Upgrade from v3 for derive ma
 | `margin_ratio`                   | `longbridge margin-ratio <symbol>`   |
 | `order_detail`                   | `longbridge order <order_id>`        |
 | `estimate_max_purchase_quantity` | `longbridge max-qty <symbol>`        |
+| `estimate_multileg_available_quantity` | `longbridge estimate-multileg` |

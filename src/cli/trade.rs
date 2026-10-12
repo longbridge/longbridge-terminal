@@ -1327,6 +1327,31 @@ fn order_type_requires_price(order_type: OrderType) -> bool {
     )
 }
 
+/// Parse `--quantity`, which must be a positive number of combinations.
+fn parse_multileg_quantity(quantity: &str) -> Result<Decimal> {
+    let qty =
+        Decimal::from_str(quantity).map_err(|_| anyhow::anyhow!("Invalid quantity: {quantity}"))?;
+    if qty <= Decimal::ZERO {
+        bail!("--quantity must be greater than 0, got {quantity}");
+    }
+    Ok(qty)
+}
+
+/// The gateway answers a strategy whose legs don't fit it (e.g. two calls sent
+/// as `VerticalPutSpread`) with an `i64::MAX` quantity and a zero margin
+/// instead of an error; never print that as a real estimate.
+fn ensure_usable_estimate(
+    resp: &longbridge::trade::EstimateMultiLegAvailableQuantityResponse,
+) -> Result<()> {
+    if resp.max_open_qty >= Decimal::from(i64::MAX) {
+        bail!(
+            "The legs do not form the given strategy (the server returned no usable estimate); \
+             check --strategy, --side and each leg's call/put type, strike and expiry"
+        );
+    }
+    Ok(())
+}
+
 /// Estimate a US multi-leg option combination's tradable quantity and margin
 /// impact before submitting the order.
 #[allow(clippy::too_many_arguments)]
@@ -1347,8 +1372,7 @@ pub async fn cmd_estimate_multileg(
     };
     let ot = parse_order_type(order_type)?;
     let strategy_val = parse_multileg_strategy(strategy)?;
-    let qty =
-        Decimal::from_str(quantity).map_err(|_| anyhow::anyhow!("Invalid quantity: {quantity}"))?;
+    let qty = parse_multileg_quantity(quantity)?;
     let price_dec = price
         .as_deref()
         .map(|p| Decimal::from_str(p).map_err(|_| anyhow::anyhow!("Invalid price: {p}")))
@@ -1365,6 +1389,7 @@ pub async fn cmd_estimate_multileg(
     }
 
     let resp = ctx.estimate_multileg_available_quantity(opts).await?;
+    ensure_usable_estimate(&resp)?;
     super::output::print_json_value(&serde_json::to_value(&resp)?, format);
     Ok(())
 }
@@ -2485,6 +2510,29 @@ mod tests {
             .to_string();
         assert!(err.contains("CalendarPutSpread"), "{err}");
         assert!(parse_multileg_strategy("Unknown").is_err());
+    }
+
+    #[test]
+    fn multileg_quantity_must_be_positive() {
+        assert_eq!(parse_multileg_quantity("2").unwrap(), Decimal::from(2));
+        assert!(parse_multileg_quantity("0").is_err());
+        assert!(parse_multileg_quantity("-1").is_err());
+        assert!(parse_multileg_quantity("abc").is_err());
+    }
+
+    #[test]
+    fn multileg_rejects_sentinel_estimate() {
+        let parse = |qty: &str| -> longbridge::trade::EstimateMultiLegAvailableQuantityResponse {
+            serde_json::from_value(serde_json::json!({
+                "max_open_qty": qty,
+                "unit_margin": "0.00",
+                "initial_margin_change": "0.00",
+                "maintenance_margin_change": "0.00",
+            }))
+            .unwrap()
+        };
+        assert!(ensure_usable_estimate(&parse("9223372036854775807")).is_err());
+        assert!(ensure_usable_estimate(&parse("46003")).is_ok());
     }
 
     #[test]
