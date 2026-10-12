@@ -54,15 +54,28 @@ use reshape::*;
 /// gateway's limit is per second, so a short wait clears it. Any other error is
 /// returned immediately.
 async fn http_post(path: &str, body: Value) -> Result<Value> {
+    http_post_in(path, body, None).await
+}
+
+/// [`http_post`] for an endpoint served by one data center only: a session in
+/// another region gets the SDK's `DcRegionRestricted` error before any request
+/// is sent, the same short-circuit the WS `QuoteContext` applies.
+async fn http_post_in(
+    path: &str,
+    body: Value,
+    region: Option<longbridge::DcRegion>,
+) -> Result<Value> {
     const MAX_ATTEMPTS: u32 = 4;
     const BASE_DELAY_MS: u64 = 250;
 
     let client = crate::openapi::http_client();
     let mut attempt = 1;
     loop {
-        let result = client
-            .request(Method::POST, path)
-            .body(Json(body.clone()))
+        let mut request = client.request(Method::POST, path).body(Json(body.clone()));
+        if let Some(region) = region {
+            request = request.dc_restrict(region);
+        }
+        let result = request
             .response::<Json<Value>>()
             .send()
             .await
@@ -180,6 +193,13 @@ fn order_by_last_done_desc(mut rows: Vec<Value>) -> Vec<Value> {
     rows
 }
 
+/// Union of two warrant fetches, keyed by symbol (first occurrence wins), so a
+/// row either pass missed at a page boundary is recovered.
+fn merge_warrant_passes(mut first: Vec<Value>, second: Vec<Value>) -> Vec<Value> {
+    first.extend(second);
+    dedupe_by_symbol(first)
+}
+
 /// `sort_offset`s for the pages after the first: `page, 2·page, …` below
 /// `total`, at most `max_pages - 1` of them (the first page is fetched
 /// separately to learn `total`).
@@ -295,7 +315,13 @@ impl HttpQuoteApi {
     }
 
     pub async fn brokers(&self, symbol: String) -> Result<SecurityBrokers> {
-        let value = http_post("/quote/brokers", serde_json::json!({ "symbol": symbol })).await?;
+        // The broker queue is served by the AP data center only.
+        let value = http_post_in(
+            "/quote/brokers",
+            serde_json::json!({ "symbol": symbol }),
+            Some(longbridge::DcRegion::Ap),
+        )
+        .await?;
         Self::reshape_brokers(value)
     }
 
@@ -695,9 +721,21 @@ impl HttpQuoteApi {
     }
 
     /// Reshape `/quote/options/strikes` into `Vec<OptionChainContract>` (unwrap
-    /// `list`; map the string-code enums; `YYYYMMDD` → `YYYY-MM-DD`).
+    /// `list`; default empty/null fields; map the string-code enums;
+    /// `YYYYMMDD` → `YYYY-MM-DD`).
     fn reshape_option_chain(mut value: Value) -> Result<Vec<OptionChainContract>> {
         unwrap(&mut value, "list");
+        if value.is_null() {
+            value = Value::Array(Vec::new());
+        }
+        // Tolerate what the SDK's own option-chain decoder tolerates: `""`
+        // strike → 0, and `null`/missing symbol, cycle type, standard attr and
+        // days-to-expiry → their defaults, rather than failing the whole chain.
+        set_empty_at(&mut value, &["*.strike_price"], &Value::String("0".into()));
+        for key in ["symbol", "option_type", "standard_attr"] {
+            default_null_or_missing(&mut value, key, &Value::String(String::new()));
+        }
+        default_null_or_missing(&mut value, "days_to_expiry", &Value::from(0));
         map_str_enum::<longbridge::quote::OptionDirection>(&mut value, &["*.direction"]);
         map_str_enum::<longbridge::quote::OptionExpiryCycleType>(&mut value, &["*.option_type"]);
         map_str_enum::<longbridge::quote::OptionStandardAttr>(&mut value, &["*.standard_attr"]);
@@ -835,13 +873,19 @@ impl HttpQuoteApi {
         // price descending to match the WS output.
         let (total, rows) = fetch_warrant_pages(&symbol).await?;
         let mut rows = dedupe_by_symbol(rows);
-        if rows.len() < total.min(WARRANT_MAX_ROWS) {
+        let expected = total.min(WARRANT_MAX_ROWS);
+        if rows.len() < expected {
             // Expiry dates repeat, so inside one date the gateway's tiebreak
             // decides the order and a row can still slip across a page boundary.
             // A short read is a missing warrant: take a second pass and merge it.
             let (_, retry) = fetch_warrant_pages(&symbol).await?;
-            rows.extend(retry);
-            rows = dedupe_by_symbol(rows);
+            rows = merge_warrant_passes(rows, retry);
+            if rows.len() < expected {
+                tracing::warn!(
+                    "warrant list for {symbol}: {} of {expected} rows after two passes",
+                    rows.len()
+                );
+            }
         }
         Self::reshape_warrant_list(
             serde_json::json!({ "warrant_list": order_by_last_done_desc(rows) }),
@@ -859,6 +903,12 @@ impl HttpQuoteApi {
         unwrap(&mut value, "security_calc_index");
         rename_keys(&mut value, &[("change_val", "change_value")]);
         drop_keys(&mut value, &["volume_str"]);
+        // WS reports a requested integer index as `Some(n)` even when the wire
+        // value is empty (proto default 0); unrequested ones are nulled below.
+        zero_empty_numeric(
+            &mut value,
+            &["*.volume", "*.outstanding_qty", "*.open_interest"],
+        );
         numify_paths(
             &mut value,
             &["*.volume", "*.outstanding_qty", "*.open_interest"],
@@ -1402,6 +1452,15 @@ mod tests {
         assert_eq!(c[0].direction, longbridge::quote::OptionDirection::Call); // "C"
         assert_eq!(c[0].days_to_expiry, 7);
         assert_eq!(c[0].expiry_date.to_string(), "2026-10-16"); // reformatted
+                                                                // "" cycle type / standard attr are the common case: Monthly / Normal.
+        assert_eq!(
+            c[0].option_type,
+            longbridge::quote::OptionExpiryCycleType::Monthly
+        );
+        assert_eq!(
+            c[0].standard_attr,
+            longbridge::quote::OptionStandardAttr::Normal
+        );
     }
 
     #[test]
@@ -1417,7 +1476,8 @@ mod tests {
         let r = HttpQuoteApi::reshape_calc_indexes(raw, &requested).expect("reshape calc_indexes");
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].pe_ttm_ratio.unwrap().to_string(), "14.24");
-        assert!(r[0].volume.is_none()); // "" → null → None
+        // A requested integer index that is empty on the wire is `Some(0)`, as WS.
+        assert_eq!(r[0].volume, Some(0));
         assert!(r[0].amplitude.is_none());
         assert_eq!(r[0].change_value.unwrap().to_string(), "13.400"); // change_val rename
                                                                       // Sent by the gateway but not requested → None, as on the WS path.
@@ -1771,6 +1831,108 @@ mod tests {
             calc_index_field(CalcIndex::FiveMinutesChangeRate),
             "five_minutes_change_rate"
         );
+    }
+
+    #[test]
+    fn warrant_passes_merge_recovers_rows_missed_by_either() {
+        let row = |s: &str| serde_json::json!({"symbol": s});
+        let merged = merge_warrant_passes(
+            vec![row("A"), row("B"), row("D")],
+            vec![row("A"), row("C"), row("D")],
+        );
+        let syms: Vec<&str> = merged
+            .iter()
+            .map(|r| r["symbol"].as_str().unwrap())
+            .collect();
+        assert_eq!(syms, ["A", "B", "D", "C"]);
+    }
+
+    #[test]
+    fn reshape_option_chain_tolerates_empty_and_null_fields() {
+        // What the SDK's own decoder accepts: "" strike, null symbol and
+        // days-to-expiry, missing cycle/attr — and a null list.
+        let raw = serde_json::json!({"list": [
+            {"days_to_expiry": null, "direction": "P", "expiry_date": "20261016",
+             "strike_price": "", "symbol": null}
+        ]});
+        let c = HttpQuoteApi::reshape_option_chain(raw).expect("tolerant decode");
+        assert!(c[0].strike_price.is_zero());
+        assert_eq!(c[0].symbol, "");
+        assert_eq!(c[0].days_to_expiry, 0);
+        assert_eq!(
+            c[0].option_type,
+            longbridge::quote::OptionExpiryCycleType::Monthly
+        );
+        assert_eq!(
+            c[0].standard_attr,
+            longbridge::quote::OptionStandardAttr::Normal
+        );
+        let empty = HttpQuoteApi::reshape_option_chain(serde_json::json!({"list": null}))
+            .expect("null list");
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn calc_index_field_covers_every_sdk_field() {
+        // Every `CalcIndex` must name a real `SecurityCalcIndex` field, or
+        // `keep_requested_indexes` would null a requested value.
+        use longbridge::quote::CalcIndex::*;
+        let blank: longbridge::quote::SecurityCalcIndex =
+            serde_json::from_value(serde_json::json!({"symbol": "X"})).unwrap();
+        let fields = serde_json::to_value(blank).unwrap();
+        assert!(
+            fields.get("pe_ttm_ratio").is_some(),
+            "None fields must serialize as keys"
+        );
+        let all = [
+            LastDone,
+            ChangeValue,
+            ChangeRate,
+            Volume,
+            Turnover,
+            YtdChangeRate,
+            TurnoverRate,
+            TotalMarketValue,
+            CapitalFlow,
+            Amplitude,
+            VolumeRatio,
+            PeTtmRatio,
+            PbRatio,
+            DividendRatioTtm,
+            FiveDayChangeRate,
+            TenDayChangeRate,
+            HalfYearChangeRate,
+            FiveMinutesChangeRate,
+            ExpiryDate,
+            StrikePrice,
+            UpperStrikePrice,
+            LowerStrikePrice,
+            OutstandingQty,
+            OutstandingRatio,
+            Premium,
+            ItmOtm,
+            ImpliedVolatility,
+            WarrantDelta,
+            CallPrice,
+            ToCallPrice,
+            EffectiveLeverage,
+            LeverageRatio,
+            ConversionRatio,
+            BalancePoint,
+            OpenInterest,
+            Delta,
+            Gamma,
+            Theta,
+            Vega,
+            Rho,
+        ];
+        for index in all {
+            let field = calc_index_field(index);
+            assert!(
+                fields.get(&field).is_some(),
+                "{index:?} → `{field}` is not a field"
+            );
+        }
     }
 
     #[test]

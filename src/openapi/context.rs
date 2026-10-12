@@ -385,10 +385,12 @@ pub fn grid() -> &'static longbridge::grid::GridContext {
         .expect("GridContext not initialized, please call init_contexts() first")
 }
 
-/// Server-side beacon endpoint. Quote operations flow over the WebSocket quote
-/// channel and never reach the HTTP access log; a request to this fake path lets
-/// the server record (and count) that a WS-backed quote command ran. The path
-/// only needs to exist server-side to be logged.
+/// Server-side beacon endpoint: one access-log entry per CLI quote command, so
+/// the server can count quote commands by name (`x-cli-cmd`) whichever transport
+/// served them. It was introduced because WS quote calls never reach the HTTP
+/// access log; commands now served by the `/quote/*` HTTP shim also log those
+/// requests, but still fire this once so the per-command count stays continuous.
+/// The path only needs to exist server-side to be logged.
 pub(crate) const QUOTE_CMD_PATH: &str = "/v1/quote/cmd";
 
 /// Send the tracking beacon over `client`. The (empty) body and any transport
@@ -403,8 +405,8 @@ pub(crate) async fn send_quote_cmd(client: &longbridge::httpclient::HttpClient) 
         .await;
 }
 
-/// Fire a best-effort `GET /v1/quote/cmd` so the server records a log entry for a
-/// WS-backed quote operation. It reuses the global `HttpClient`, which already
+/// Fire a best-effort `GET /v1/quote/cmd` so the server records one log entry for
+/// a CLI quote command (see [`QUOTE_CMD_PATH`]). It reuses the global `HttpClient`, which already
 /// carries the tracking headers (`user-agent`, `x-cli-cmd`, `x-cli-args`) and the
 /// OAuth token, so no extra payload is needed. Fire-and-forget: spawned on the
 /// runtime with its result and errors ignored, never blocking or delaying the
@@ -417,9 +419,9 @@ pub fn track_quote_cmd() {
     tokio::spawn(send_quote_cmd(client));
 }
 
-/// Get the global `QuoteContext` and record the WS quote operation server-side.
-/// Use this at every CLI quote command entry point instead of [`quote`] so the
-/// otherwise-unlogged WebSocket request is counted. See [`track_quote_cmd`].
+/// Get the global `QuoteContext` and record the quote command server-side.
+/// Use this at every WS-backed CLI quote entry point instead of [`quote`] so the
+/// command is counted. See [`track_quote_cmd`].
 pub fn quote_cmd() -> &'static longbridge::quote::QuoteContext {
     track_quote_cmd();
     quote()

@@ -494,6 +494,23 @@ pub(super) fn insert_missing(value: &mut Value, key: &str, default: &Value) {
     }
 }
 
+/// Like [`insert_missing`], but an explicit `null` is replaced too — for fields
+/// the SDK's own decoder reads with `null_as_default`.
+pub(super) fn default_null_or_missing(value: &mut Value, key: &str, default: &Value) {
+    match value {
+        Value::Array(arr) => arr
+            .iter_mut()
+            .for_each(|v| default_null_or_missing(v, key, default)),
+        Value::Object(map) => {
+            let slot = map.entry(key.to_string()).or_insert(Value::Null);
+            if slot.is_null() {
+                *slot = default.clone();
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Recursively drop object keys (every depth).
 pub(super) fn drop_keys(value: &mut Value, keys: &[&str]) {
     match value {
