@@ -128,6 +128,9 @@ fn order_dry_run(preview: Value, scope: &crate::utils::dry_run::Scope) -> Value 
     })
 }
 
+/// The quote backend for the JSON-RPC methods: the WS `QuoteContext`, by design.
+/// `serve` is long-lived and already holds the WebSocket open for subscriptions,
+/// so it does not use the one-shot HTTP transport (`cli::quote_http`).
 fn quote_api() -> crate::cli::api::LbQuoteApi {
     crate::cli::api::LbQuoteApi::new(crate::openapi::quote_cmd())
 }

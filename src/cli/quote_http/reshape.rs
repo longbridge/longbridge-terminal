@@ -300,7 +300,8 @@ pub(super) fn empty_str_to_null(value: &mut Value, keep: &[&str]) {
 /// Replace `""` with `"0"` at exactly the listed numeric paths. The gateway sends
 /// untraded decimal/count fields as `""`; the WS path parses those via
 /// `unwrap_or_default()` → `0`, and the SDK's **non-`Option`** `Decimal`/`i64`
-/// fields reject `""`. This is an explicit allow-list of the numeric fields per
+/// fields reject `""`. Also used for the few `Option` fields where WS yields
+/// `Some(0)` rather than `None` (requested calc-index counts). This is an explicit allow-list of the numeric fields per
 /// struct (rather than "zero every empty string except a skip-list"), so a
 /// string field that legitimately carries `""` can never be corrupted to `"0"`,
 /// and adding a field to a struct is a deliberate edit here. Must run before

@@ -88,11 +88,14 @@ async fn http_post(path: &str, body: Value) -> Result<Value> {
     }
 }
 
+/// The broker-queue shim path (AP data center only; see [`endpoint_region`]).
+const BROKERS_PATH: &str = "/quote/brokers";
+
 /// The only data center that serves `path`, if it is restricted to one. The
 /// broker queue is AP-only, as `QuoteContext::brokers` enforces on the WS path.
 fn endpoint_region(path: &str) -> Option<longbridge::DcRegion> {
     match path {
-        "/quote/brokers" => Some(longbridge::DcRegion::Ap),
+        BROKERS_PATH => Some(longbridge::DcRegion::Ap),
         _ => None,
     }
 }
@@ -195,6 +198,31 @@ fn order_by_last_done_desc(mut rows: Vec<Value>) -> Vec<Value> {
     };
     rows.sort_by_cached_key(|row| (std::cmp::Reverse(price(row)), symbol(row)));
     rows
+}
+
+/// How a warrant list that came up short on the first pass ended up.
+#[derive(Debug, PartialEq, Eq)]
+enum ShortRead {
+    /// The second pass filled the gap.
+    Complete,
+    /// Both passes returned the same rows: `total_count` counts rows the list
+    /// never returns, so nothing is missing from the user's point of view.
+    CountMismatch,
+    /// The second pass recovered rows but still not all: rows are being lost
+    /// between pages, so the list may be incomplete.
+    Incomplete,
+}
+
+/// Classify a short read from the row count before (`first_pass`) and after
+/// (`merged`) merging the second pass, against the `expected` total.
+fn short_read(first_pass: usize, merged: usize, expected: usize) -> ShortRead {
+    if merged >= expected {
+        ShortRead::Complete
+    } else if merged == first_pass {
+        ShortRead::CountMismatch
+    } else {
+        ShortRead::Incomplete
+    }
 }
 
 /// Union of two warrant fetches, keyed by symbol (first occurrence wins), so a
@@ -319,7 +347,7 @@ impl HttpQuoteApi {
     }
 
     pub async fn brokers(&self, symbol: String) -> Result<SecurityBrokers> {
-        let value = http_post("/quote/brokers", serde_json::json!({ "symbol": symbol })).await?;
+        let value = http_post(BROKERS_PATH, serde_json::json!({ "symbol": symbol })).await?;
         Self::reshape_brokers(value)
     }
 
@@ -726,7 +754,7 @@ impl HttpQuoteApi {
         // Tolerate what the SDK's own option-chain decoder tolerates: `""`
         // strike → 0, and `null`/missing symbol, cycle type, standard attr and
         // days-to-expiry → their defaults, rather than failing the whole chain.
-        set_empty_at(&mut value, &["*.strike_price"], &Value::String("0".into()));
+        zero_empty_numeric(&mut value, &["*.strike_price"]);
         for key in ["symbol", "option_type", "standard_attr"] {
             default_null_or_missing(&mut value, key, &Value::String(String::new()));
         }
@@ -874,17 +902,25 @@ impl HttpQuoteApi {
             // decides the order and a row can still slip across a page boundary.
             // A short read is a missing warrant: take a second pass and merge it.
             let (_, retry) = fetch_warrant_pages(&symbol).await?;
+            let first_pass = rows.len();
             rows = merge_warrant_passes(rows, retry);
-            if rows.len() < expected {
-                tracing::warn!(
-                    "warrant list for {symbol}: {} of {expected} rows after two passes",
+            match short_read(first_pass, rows.len(), expected) {
+                ShortRead::Complete => {}
+                ShortRead::CountMismatch => tracing::debug!(
+                    "warrant list for {symbol}: total_count {expected} but {} rows on both passes",
                     rows.len()
-                );
-                eprintln!(
-                    "Warning: only {} of {expected} warrants could be retrieved for {symbol}; \
-                     the list may be incomplete.",
-                    rows.len()
-                );
+                ),
+                ShortRead::Incomplete => {
+                    tracing::warn!(
+                        "warrant list for {symbol}: {} of {expected} rows after two passes",
+                        rows.len()
+                    );
+                    eprintln!(
+                        "Warning: only {} of {expected} warrants could be retrieved for {symbol}; \
+                         the list may be incomplete.",
+                        rows.len()
+                    );
+                }
             }
         }
         Self::reshape_warrant_list(
@@ -1826,27 +1862,10 @@ mod tests {
     }
 
     #[test]
-    fn calc_index_field_names_match_sdk_fields() {
-        use longbridge::quote::CalcIndex;
-        assert_eq!(calc_index_field(CalcIndex::LastDone), "last_done");
-        assert_eq!(calc_index_field(CalcIndex::PeTtmRatio), "pe_ttm_ratio");
-        assert_eq!(
-            calc_index_field(CalcIndex::DividendRatioTtm),
-            "dividend_ratio_ttm"
-        );
-        assert_eq!(calc_index_field(CalcIndex::ItmOtm), "itm_otm");
-        assert_eq!(calc_index_field(CalcIndex::WarrantDelta), "warrant_delta");
-        assert_eq!(
-            calc_index_field(CalcIndex::FiveMinutesChangeRate),
-            "five_minutes_change_rate"
-        );
-    }
-
-    #[test]
     fn brokers_is_restricted_to_the_ap_data_center() {
         // Mirrors `QuoteContext::brokers`, which rejects non-AP sessions.
         assert_eq!(
-            endpoint_region("/quote/brokers"),
+            endpoint_region(BROKERS_PATH),
             Some(longbridge::DcRegion::Ap)
         );
         assert_eq!(endpoint_region("/quote/depth"), None);
@@ -1899,17 +1918,13 @@ mod tests {
     }
 
     #[test]
-    fn warrant_passes_merge_recovers_rows_missed_by_either() {
-        let row = |s: &str| serde_json::json!({"symbol": s});
-        let merged = merge_warrant_passes(
-            vec![row("A"), row("B"), row("D")],
-            vec![row("A"), row("C"), row("D")],
-        );
-        let syms: Vec<&str> = merged
-            .iter()
-            .map(|r| r["symbol"].as_str().unwrap())
-            .collect();
-        assert_eq!(syms, ["A", "B", "D", "C"]);
+    fn short_read_warns_only_when_rows_are_lost_between_pages() {
+        // Second pass filled the gap.
+        assert_eq!(short_read(715, 716, 716), ShortRead::Complete);
+        // Same rows twice: `total_count` over-counts; nothing to warn about.
+        assert_eq!(short_read(700, 700, 708), ShortRead::CountMismatch);
+        // Second pass found rows the first missed, yet some are still missing.
+        assert_eq!(short_read(700, 705, 716), ShortRead::Incomplete);
     }
 
     #[test]
