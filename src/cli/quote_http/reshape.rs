@@ -8,6 +8,18 @@ use serde_json::Value;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 // ── reshape primitives ───────────────────────────────────────────────────────
 
+/// Lift a repeated container field out of the response as an array; a missing
+/// or `null` field (proto3 JSON omits an empty repeated field) is an empty list,
+/// as the SDK's `#[serde(default, deserialize_with = "null_as_default")]` reads it.
+pub(super) fn unwrap_list(value: &mut Value, key: &str) {
+    let inner = value.get_mut(key).map_or(Value::Null, Value::take);
+    *value = if inner.is_null() {
+        Value::Array(Vec::new())
+    } else {
+        inner
+    };
+}
+
 /// Lift the single container field (e.g. `secu_quote`) out of the gateway's
 /// response object, so the root matches the SDK's array- or object-rooted shape.
 pub(super) fn unwrap(value: &mut Value, key: &str) {
@@ -398,8 +410,8 @@ pub(super) fn calc_index_field(index: longbridge::quote::CalcIndex) -> String {
 
 /// Null every index field of each row that is not in `requested`, keeping
 /// `symbol`. The gateway returns whatever it computed; the WS path fills only
-/// the requested indexes and leaves the rest `None`, and `serve` returns the
-/// whole struct, so extra fields would leak into its JSON.
+/// the requested indexes and leaves the rest `None`, so extra fields would
+/// otherwise leak into anything that serializes the whole struct.
 pub(super) fn keep_requested_indexes(
     value: &mut Value,
     requested: &[longbridge::quote::CalcIndex],

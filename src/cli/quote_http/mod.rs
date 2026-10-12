@@ -722,10 +722,7 @@ impl HttpQuoteApi {
     /// `list`; default empty/null fields; map the string-code enums;
     /// `YYYYMMDD` → `YYYY-MM-DD`).
     fn reshape_option_chain(mut value: Value) -> Result<Vec<OptionChainContract>> {
-        unwrap(&mut value, "list");
-        if value.is_null() {
-            value = Value::Array(Vec::new());
-        }
+        unwrap_list(&mut value, "list");
         // Tolerate what the SDK's own option-chain decoder tolerates: `""`
         // strike → 0, and `null`/missing symbol, cycle type, standard attr and
         // days-to-expiry → their defaults, rather than failing the whole chain.
@@ -883,6 +880,11 @@ impl HttpQuoteApi {
                     "warrant list for {symbol}: {} of {expected} rows after two passes",
                     rows.len()
                 );
+                eprintln!(
+                    "Warning: the gateway returned {} of {expected} warrants for {symbol}; \
+                     the list may be incomplete.",
+                    rows.len()
+                );
             }
         }
         Self::reshape_warrant_list(
@@ -898,7 +900,7 @@ impl HttpQuoteApi {
         mut value: Value,
         requested: &[longbridge::quote::CalcIndex],
     ) -> Result<Vec<SecurityCalcIndex>> {
-        unwrap(&mut value, "security_calc_index");
+        unwrap_list(&mut value, "security_calc_index");
         rename_keys(&mut value, &[("change_val", "change_value")]);
         drop_keys(&mut value, &["volume_str"]);
         // WS reports a requested integer index as `Some(n)` even when the wire
@@ -1852,6 +1854,26 @@ mod tests {
     }
 
     #[test]
+    fn omitted_or_null_lists_decode_as_empty() {
+        // proto3 JSON drops an empty repeated field entirely.
+        assert!(HttpQuoteApi::reshape_option_chain(serde_json::json!({}))
+            .unwrap()
+            .is_empty());
+        let none: [longbridge::quote::CalcIndex; 0] = [];
+        assert!(
+            HttpQuoteApi::reshape_calc_indexes(serde_json::json!({}), &none)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(HttpQuoteApi::reshape_calc_indexes(
+            serde_json::json!({"security_calc_index": null}),
+            &none
+        )
+        .unwrap()
+        .is_empty());
+    }
+
+    #[test]
     fn calc_index_requested_integer_missing_or_null_is_zero() {
         use longbridge::quote::CalcIndex;
         let raw = serde_json::json!({"security_calc_index": [
@@ -1910,7 +1932,54 @@ mod tests {
     fn calc_index_field_covers_every_sdk_field() {
         // Every `CalcIndex` must name a real `SecurityCalcIndex` field, or
         // `keep_requested_indexes` would null a requested value.
-        use longbridge::quote::CalcIndex::*;
+        use longbridge::quote::CalcIndex::{self, *};
+        // No wildcard arm: a variant added to the SDK fails to compile here,
+        // forcing it into `all` below.
+        #[allow(clippy::match_same_arms)]
+        fn listed(index: CalcIndex) {
+            match index {
+                LastDone
+                | ChangeValue
+                | ChangeRate
+                | Volume
+                | Turnover
+                | YtdChangeRate
+                | TurnoverRate
+                | TotalMarketValue
+                | CapitalFlow
+                | Amplitude
+                | VolumeRatio
+                | PeTtmRatio
+                | PbRatio
+                | DividendRatioTtm
+                | FiveDayChangeRate
+                | TenDayChangeRate
+                | HalfYearChangeRate
+                | FiveMinutesChangeRate
+                | ExpiryDate
+                | StrikePrice
+                | UpperStrikePrice
+                | LowerStrikePrice
+                | OutstandingQty
+                | OutstandingRatio
+                | Premium
+                | ItmOtm
+                | ImpliedVolatility
+                | WarrantDelta
+                | CallPrice
+                | ToCallPrice
+                | EffectiveLeverage
+                | LeverageRatio
+                | ConversionRatio
+                | BalancePoint
+                | OpenInterest
+                | Delta
+                | Gamma
+                | Theta
+                | Vega
+                | Rho => {}
+            }
+        }
         let blank: longbridge::quote::SecurityCalcIndex =
             serde_json::from_value(serde_json::json!({"symbol": "X"})).unwrap();
         let fields = serde_json::to_value(blank).unwrap();
@@ -1961,6 +2030,7 @@ mod tests {
             Rho,
         ];
         for index in all {
+            listed(index);
             let field = calc_index_field(index);
             assert!(
                 fields.get(&field).is_some(),
