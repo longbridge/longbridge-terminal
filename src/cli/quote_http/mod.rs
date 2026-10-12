@@ -50,9 +50,9 @@ use reshape::*;
 
 /// POST the given shim `path` with `body`, returning the raw gateway JSON.
 ///
-/// A rate-limit rejection (`429002` / HTTP 429) is retried with exponential
-/// backoff — the gateway's limit is per second, so a short wait clears it.
-/// Any other error is returned immediately.
+/// A rate-limit rejection (`429002`) is retried with exponential backoff — the
+/// gateway's limit is per second, so a short wait clears it. Any other error is
+/// returned immediately.
 async fn http_post(path: &str, body: Value) -> Result<Value> {
     const MAX_ATTEMPTS: u32 = 4;
     const BASE_DELAY_MS: u64 = 250;
@@ -80,21 +80,26 @@ async fn http_post(path: &str, body: Value) -> Result<Value> {
     }
 }
 
-/// Whether `err` is the gateway's rate-limit rejection: business code `429002`
-/// or a bare HTTP 429.
+/// Whether `err` is the gateway's rate-limit rejection, business code
+/// `429002`. A bare HTTP 429 is not matched: the SDK's `send()` already retries
+/// that itself, and retrying it here too would nest the two loops.
 fn is_rate_limited(err: &anyhow::Error) -> bool {
     use longbridge::httpclient::HttpClientError;
     const RATE_LIMIT_CODE: i32 = 429_002;
-    match err.downcast_ref::<longbridge::Error>() {
-        Some(longbridge::Error::HttpClient(HttpClientError::OpenApi { code, .. })) => {
-            *code == RATE_LIMIT_CODE
-        }
-        Some(longbridge::Error::HttpClient(HttpClientError::BadStatus(status))) => {
-            status.as_u16() == 429
-        }
-        _ => false,
-    }
+    matches!(
+        err.downcast_ref::<longbridge::Error>(),
+        Some(longbridge::Error::HttpClient(HttpClientError::OpenApi { code, .. }))
+            if *code == RATE_LIMIT_CODE
+    )
 }
+
+/// `/quote/warrants` page size: the shim's `sort_count` cap valid on every
+/// gateway (see [`fetch_warrant_pages`]).
+const WARRANT_PAGE: usize = 100;
+/// Runaway guard against a bogus `total_count`.
+const WARRANT_MAX_PAGES: usize = 200;
+/// The most rows [`fetch_warrant_pages`] will return.
+const WARRANT_MAX_ROWS: usize = WARRANT_PAGE * WARRANT_MAX_PAGES;
 
 /// Fetch every page of `/quote/warrants` for `symbol`, sorted by the static
 /// expiry-date key. Returns `(total_count, raw rows)`.
@@ -107,23 +112,24 @@ fn is_rate_limited(err: &anyhow::Error) -> bool {
 async fn fetch_warrant_pages(symbol: &str) -> Result<(usize, Vec<Value>)> {
     use futures::{StreamExt, TryStreamExt};
 
-    const PAGE: usize = 100;
-    // Runaway guard against a bogus `total_count`: 20 000 rows.
-    const MAX_PAGES: usize = 200;
     const CONCURRENCY: usize = 3;
     // `WarrantSortBy::ExpiryDate` / `SortOrderType::Descending`. The order is
     // replaced locally afterwards; the key only has to be stable while paging.
+    // Many warrants share an expiry, so the gateway's tiebreak still decides
+    // the order inside a group — `warrant_list` merges a second pass when the
+    // first comes up short.
     const SORT_BY_EXPIRY_DATE: i32 = 5;
     const SORT_DESCENDING: i32 = 1;
 
+    let language = crate::openapi::api_language() as i32;
     let body = |offset: usize| {
         serde_json::json!({
             "symbol": symbol,
             "filter_config": {
                 "sort_by": SORT_BY_EXPIRY_DATE, "sort_order": SORT_DESCENDING,
-                "sort_offset": offset, "sort_count": PAGE,
+                "sort_offset": offset, "sort_count": WARRANT_PAGE,
             },
-            "language": 1,
+            "language": language,
         })
     };
     let page_rows = |resp: &Value| {
@@ -140,7 +146,7 @@ async fn fetch_warrant_pages(symbol: &str) -> Result<(usize, Vec<Value>)> {
         .unwrap_or(0) as usize;
     let mut rows = page_rows(&first);
     let rest: Vec<Value> = futures::stream::iter(
-        page_offsets(total, PAGE, MAX_PAGES)
+        page_offsets(total, WARRANT_PAGE, WARRANT_MAX_PAGES)
             .into_iter()
             .map(|offset| http_post("/quote/warrants", body(offset))),
     )
@@ -155,8 +161,8 @@ async fn fetch_warrant_pages(symbol: &str) -> Result<(usize, Vec<Value>)> {
 
 /// Order raw warrant rows by `last_done` descending — the order the WS
 /// `warrant_list` returns — comparing numerically (string order would put
-/// "9.5" above "10"). Stable, so equal prices keep their fetch order and the
-/// output is deterministic. A missing/empty price sorts as 0.
+/// "9.5" above "10"). Equal prices are ordered by symbol so the output does not
+/// depend on the gateway's paging tiebreak. A missing/empty price sorts as 0.
 fn order_by_last_done_desc(mut rows: Vec<Value>) -> Vec<Value> {
     let price = |row: &Value| {
         row.get("last_done")
@@ -164,7 +170,13 @@ fn order_by_last_done_desc(mut rows: Vec<Value>) -> Vec<Value> {
             .and_then(|s| s.parse::<rust_decimal::Decimal>().ok())
             .unwrap_or_default()
     };
-    rows.sort_by_key(|row| std::cmp::Reverse(price(row)));
+    let symbol = |row: &Value| {
+        row.get("symbol")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    rows.sort_by_cached_key(|row| (std::cmp::Reverse(price(row)), symbol(row)));
     rows
 }
 
@@ -367,9 +379,10 @@ impl HttpQuoteApi {
         map_int_enum(&mut value, &["*.trade_session"], &trade_session);
         zero_empty_numeric(&mut value, CANDLE_NUMERIC);
         numify_paths(&mut value, &["*.volume"]);
-        // The REST payload omits the SDK's `open_updated` flag; the WS path
-        // leaves it `false` for historical bars, so default it here.
-        insert_missing(&mut value, "open_updated", &Value::Bool(false));
+        // The REST payload omits the SDK's `open_updated` flag; the WS path's
+        // `TryFrom<quote::Candlestick>` sets it `true` for every bar it returns,
+        // so default it the same way.
+        insert_missing(&mut value, "open_updated", &Value::Bool(true));
         from_value(value)
     }
 
@@ -752,7 +765,13 @@ impl HttpQuoteApi {
         rename_keys(&mut value, &[("outstanding_qty", "outstanding_quantity")]);
         convert_unix_paths(&mut value, &["*.timestamp"]);
         // `category` already arrives as the SDK `WarrantType` name ("Bull"), so it
-        // is not int-mapped (unlike `warrant_list`, whose `type` is an int).
+        // is not int-mapped (unlike `warrant_list`, whose `type` is an int); an
+        // unknown or empty name degrades to `Unknown` like the WS path.
+        default_unparseable_enum::<longbridge::quote::WarrantType>(
+            &mut value,
+            &["*.category"],
+            "Unknown",
+        );
         // Untraded price fields come back as "" — the SDK's non-`Option`
         // `Decimal`/`i64`s need a real 0 (matching the WS `unwrap_or_default`).
         // Before numify so "" → "0" → number.
@@ -802,7 +821,7 @@ impl HttpQuoteApi {
         );
         numify_paths(&mut value, &["*.volume", "*.outstanding_qty"]);
         reformat_ymd(&mut value, &["*.expiry_date"]);
-        empty_str_to_null(&mut value);
+        empty_str_to_null(&mut value, &["symbol", "name"]);
         from_value(value)
     }
 
@@ -812,18 +831,17 @@ impl HttpQuoteApi {
         // by last price (what WS sorts by) is unsafe because prices move
         // between page fetches and a warrant can slide across a page boundary —
         // fetched twice or skipped entirely (observed: 715 of 716). Expiry date
-        // does not move intraday and pages deterministically, so fetch by that,
-        // then order locally by last price descending to match the WS output.
+        // does not move intraday, so fetch by that, then order locally by last
+        // price descending to match the WS output.
         let (total, rows) = fetch_warrant_pages(&symbol).await?;
         let mut rows = dedupe_by_symbol(rows);
-        if rows.len() < total {
-            // Belt and braces: the static key should make this unreachable, but a
-            // short read is a missing warrant, so take one more full pass.
+        if rows.len() < total.min(WARRANT_MAX_ROWS) {
+            // Expiry dates repeat, so inside one date the gateway's tiebreak
+            // decides the order and a row can still slip across a page boundary.
+            // A short read is a missing warrant: take a second pass and merge it.
             let (_, retry) = fetch_warrant_pages(&symbol).await?;
-            let retry = dedupe_by_symbol(retry);
-            if retry.len() > rows.len() {
-                rows = retry;
-            }
+            rows.extend(retry);
+            rows = dedupe_by_symbol(rows);
         }
         Self::reshape_warrant_list(
             serde_json::json!({ "warrant_list": order_by_last_done_desc(rows) }),
@@ -832,18 +850,22 @@ impl HttpQuoteApi {
 
     /// Reshape `/quote/calc-indexes` into `Vec<SecurityCalcIndex>` (unwrap
     /// `security_calc_index`; rename `change_val`→`change_value`; drop
-    /// `volume_str`; scale greeks; numify counts; dates; `""`→null).
-    fn reshape_calc_indexes(mut value: Value) -> Result<Vec<SecurityCalcIndex>> {
+    /// `volume_str`; numify counts; dates; `""`→null; null the
+    /// indexes that were not requested).
+    fn reshape_calc_indexes(
+        mut value: Value,
+        requested: &[longbridge::quote::CalcIndex],
+    ) -> Result<Vec<SecurityCalcIndex>> {
         unwrap(&mut value, "security_calc_index");
         rename_keys(&mut value, &[("change_val", "change_value")]);
         drop_keys(&mut value, &["volume_str"]);
-        scale_greeks(&mut value);
         numify_paths(
             &mut value,
             &["*.volume", "*.outstanding_qty", "*.open_interest"],
         );
         reformat_ymd(&mut value, &["*.expiry_date"]);
-        empty_str_to_null(&mut value);
+        empty_str_to_null(&mut value, &["symbol"]);
+        keep_requested_indexes(&mut value, requested);
         from_value(value)
     }
 
@@ -858,7 +880,7 @@ impl HttpQuoteApi {
             serde_json::json!({ "symbols": symbols, "calc_index": index_ints }),
         )
         .await?;
-        Self::reshape_calc_indexes(value)
+        Self::reshape_calc_indexes(value, &indexes)
     }
 }
 
@@ -1054,7 +1076,7 @@ impl crate::cli::api::QuoteApi for HttpQuoteApi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use longbridge::quote::TradeStatus;
+    use longbridge::quote::{TradeSession, TradeStatus};
 
     /// A real `/quote/quotes` response captured from the test gateway
     /// (700.HK + AAPL.US), proving the reshape round-trips into the typed SDK
@@ -1224,7 +1246,9 @@ mod tests {
             })
         };
         assert!(is_rate_limited(&api(429_002)));
-        assert!(is_rate_limited(&to_cli_error(HttpClientError::BadStatus(
+        // A bare HTTP 429 is retried inside the SDK's `send()`; matching it here
+        // would nest the two retry loops.
+        assert!(!is_rate_limited(&to_cli_error(HttpClientError::BadStatus(
             reqwest::StatusCode::TOO_MANY_REQUESTS
         ))));
         assert!(!is_rate_limited(&api(301_604)));
@@ -1258,8 +1282,8 @@ mod tests {
             page_offsets(716, 100, 200),
             vec![100, 200, 300, 400, 500, 600, 700]
         );
-        assert!(page_offsets(100, 100, 200).is_empty()); // exactly one page
-        assert!(page_offsets(0, 100, 200).is_empty()); // empty list
+        assert_eq!(page_offsets(100, 100, 200), Vec::<usize>::new()); // exactly one page
+        assert_eq!(page_offsets(0, 100, 200), Vec::<usize>::new()); // empty list
         assert_eq!(page_offsets(1_000_000, 100, 200).len(), 199); // runaway cap
     }
 
@@ -1331,7 +1355,7 @@ mod tests {
         let raw: Value = serde_json::from_str(r#"{"trade_day":["20261012","20261013"]}"#).unwrap();
         let days = HttpQuoteApi::reshape_trading_days(raw).expect("reshape trading_days");
         assert_eq!(days.trading_days.len(), 2);
-        assert!(days.half_trading_days.is_empty());
+        assert_eq!(days.half_trading_days, Vec::<time::Date>::new());
     }
 
     #[test]
@@ -1382,13 +1406,22 @@ mod tests {
 
     #[test]
     fn reshape_calc_indexes_round_trips() {
+        use longbridge::quote::CalcIndex;
         let raw: Value = serde_json::from_str(CALC_INDEX_FIXTURE).unwrap();
-        let r = HttpQuoteApi::reshape_calc_indexes(raw).expect("reshape calc_indexes");
+        let requested = [
+            CalcIndex::PeTtmRatio,
+            CalcIndex::Volume,
+            CalcIndex::Amplitude,
+            CalcIndex::ChangeValue,
+        ];
+        let r = HttpQuoteApi::reshape_calc_indexes(raw, &requested).expect("reshape calc_indexes");
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].pe_ttm_ratio.unwrap().to_string(), "14.24");
         assert!(r[0].volume.is_none()); // "" → null → None
         assert!(r[0].amplitude.is_none());
         assert_eq!(r[0].change_value.unwrap().to_string(), "13.400"); // change_val rename
+                                                                      // Sent by the gateway but not requested → None, as on the WS path.
+        assert!(r[0].change_rate.is_none());
     }
 
     #[test]
@@ -1448,5 +1481,309 @@ mod tests {
         assert_eq!(overnight.volume, 79_180);
         // trade_status wire int 0 → SDK `Normal`.
         assert_eq!(apple.trade_status, TradeStatus::Normal);
+    }
+
+    // ── reshape fixtures captured from the production gateway (TSLA.US) ──────
+
+    fn ts(secs: i64) -> time::OffsetDateTime {
+        time::OffsetDateTime::from_unix_timestamp(secs).unwrap()
+    }
+
+    #[test]
+    fn reshape_trades_round_trips() {
+        let raw = serde_json::json!({"symbol": "TSLA.US", "trades": [
+            {"direction": 0, "price": "319.450", "timestamp": "1786046372", "trade_session": 0,
+             "trade_type": "I", "volume": "20", "volume_str": ""},
+            {"direction": 2, "price": "", "timestamp": "1786046373", "trade_session": 3,
+             "trade_type": "", "volume": "", "volume_str": ""}
+        ]});
+        let t = HttpQuoteApi::reshape_trades(raw).expect("reshape trades");
+        assert_eq!(t.len(), 2);
+        assert_eq!(t[0].price.to_string(), "319.450");
+        assert_eq!(t[0].volume, 20);
+        assert_eq!(t[0].timestamp, ts(1_786_046_372));
+        assert_eq!(t[0].trade_type, "I");
+        assert_eq!(t[0].trade_session, TradeSession::Intraday);
+        // Untraded "" price/volume → 0; `trade_type` stays an empty string.
+        assert!(t[1].price.is_zero());
+        assert_eq!(t[1].volume, 0);
+        assert_eq!(t[1].trade_type, "");
+        assert_eq!(t[1].direction, longbridge::quote::TradeDirection::Up);
+        assert_eq!(t[1].trade_session, TradeSession::Overnight);
+    }
+
+    #[test]
+    fn reshape_intraday_round_trips() {
+        let raw = serde_json::json!({"symbol": "TSLA.US", "lines": [
+            {"avg_price": "382.063219", "price": "382.330", "timestamp": "1791552600",
+             "turnover": "191223787.501", "volume": "500503", "volume_str": ""},
+            {"avg_price": "", "price": "", "timestamp": "1791552660",
+             "turnover": "", "volume": "", "volume_str": ""}
+        ]});
+        let l = HttpQuoteApi::reshape_intraday(raw).expect("reshape intraday");
+        assert_eq!(l[0].price.to_string(), "382.330");
+        assert_eq!(l[0].avg_price.to_string(), "382.063219");
+        assert_eq!(l[0].volume, 500_503);
+        assert_eq!(l[0].turnover.to_string(), "191223787.501");
+        assert_eq!(l[0].timestamp, ts(1_791_552_600));
+        assert!(l[1].price.is_zero() && l[1].avg_price.is_zero() && l[1].turnover.is_zero());
+        assert_eq!(l[1].volume, 0);
+    }
+
+    #[test]
+    fn reshape_candlesticks_round_trips() {
+        let raw = serde_json::json!({"symbol": "TSLA.US", "candlesticks": [
+            {"close": "377.810", "high": "382.350", "low": "374.430", "open": "378.445",
+             "timestamp": "1791345600", "trade_session": 0, "turnover": "9646485110.000",
+             "volume": "25594563", "volume_str": ""},
+            {"close": "375.000", "high": "375.960", "low": "368.030", "open": "374.120",
+             "timestamp": "1791432000", "trade_session": 1, "turnover": "10594751818.000",
+             "volume": "28394945", "volume_str": ""}
+        ]});
+        let c = HttpQuoteApi::reshape_candlesticks(raw).expect("reshape candlesticks");
+        assert_eq!(c.len(), 2);
+        assert_eq!(c[0].close.to_string(), "377.810");
+        assert_eq!(c[0].open.to_string(), "378.445");
+        assert_eq!(c[0].volume, 25_594_563);
+        assert_eq!(c[0].timestamp, ts(1_791_345_600));
+        assert_eq!(c[1].trade_session, TradeSession::Pre);
+        // `open_updated` is absent on the wire; WS sets it `true` for every bar.
+        let json = serde_json::to_value(c[0]).unwrap();
+        assert_eq!(json["open_updated"], Value::Bool(true));
+    }
+
+    #[test]
+    fn reshape_capital_flow_round_trips() {
+        let raw = serde_json::json!({"symbol": "TSLA.US", "capital_flow_lines": [
+            {"inflow": "-4950686.083", "timestamp": "1786023000"},
+            {"inflow": "", "timestamp": "1786023060"}
+        ]});
+        let f = HttpQuoteApi::reshape_capital_flow(raw).expect("reshape capital_flow");
+        assert_eq!(f[0].inflow.to_string(), "-4950686.083");
+        assert_eq!(f[0].timestamp, ts(1_786_023_000));
+        assert!(f[1].inflow.is_zero());
+    }
+
+    #[test]
+    fn reshape_capital_distribution_round_trips() {
+        let raw = serde_json::json!({
+            "capital_in": {"large": "137206566.683", "medium": "316790323.900", "small": "591924592.784"},
+            "capital_out": {"large": "80653650.205", "medium": "292432740.398", "small": "551508397.027"},
+            "symbol": "TSLA.US", "timestamp": "1786046400"
+        });
+        let d =
+            HttpQuoteApi::reshape_capital_distribution(raw).expect("reshape capital_distribution");
+        assert_eq!(d.timestamp, ts(1_786_046_400));
+        assert_eq!(d.capital_in.large.to_string(), "137206566.683");
+        assert_eq!(d.capital_out.small.to_string(), "551508397.027");
+    }
+
+    #[test]
+    fn reshape_capital_distribution_zero_timestamp() {
+        // Outside trading hours the gateway sends all zeros, timestamp "0".
+        let raw = serde_json::json!({
+            "capital_in": {"large": "0", "medium": "0", "small": "0"},
+            "capital_out": {"large": "0", "medium": "0", "small": "0"},
+            "symbol": "700.HK", "timestamp": "0"
+        });
+        let d = HttpQuoteApi::reshape_capital_distribution(raw).expect("reshape zero distribution");
+        assert_eq!(d.timestamp, ts(0));
+        assert!(d.capital_in.large.is_zero());
+    }
+
+    #[test]
+    fn reshape_trading_sessions_round_trips() {
+        let raw = serde_json::json!({"market_trade_session": [
+            {"market": "US", "trade_session": [
+                {"beg_time": 400, "end_time": 930, "trade_session": 1},
+                {"beg_time": 930, "end_time": 1600, "trade_session": 0},
+                {"beg_time": 1600, "end_time": 2000, "trade_session": 2}]},
+            {"market": "HK", "trade_session": [
+                {"beg_time": 930, "end_time": 1200, "trade_session": 0}]},
+            {"market": "XX", "trade_session": []}
+        ]});
+        let m = HttpQuoteApi::reshape_trading_sessions(raw).expect("reshape trading_sessions");
+        assert_eq!(m.len(), 3);
+        assert_eq!(m[0].market, longbridge::Market::US);
+        let pre = &m[0].trade_sessions[0];
+        assert_eq!(pre.begin_time, time::macros::time!(4:00));
+        assert_eq!(pre.end_time, time::macros::time!(9:30));
+        assert_eq!(pre.trade_session, TradeSession::Pre);
+        assert_eq!(m[0].trade_sessions[2].end_time, time::macros::time!(20:00));
+        assert_eq!(m[1].market, longbridge::Market::HK);
+        // An unknown market degrades instead of failing the batch.
+        assert_eq!(m[2].market, longbridge::Market::Unknown);
+    }
+
+    #[test]
+    fn reshape_participants_round_trips() {
+        let raw = serde_json::json!({"participant_broker_numbers": [
+            {"broker_ids": [4208], "participant_name_cn": "汇丰证券经纪亚洲",
+             "participant_name_en": "HSBC Securities Brokers (Asia) Limited",
+             "participant_name_hk": "匯豐証券經紀亞洲"},
+            {"broker_ids": [3718, 3760], "participant_name_cn": "金利丰",
+             "participant_name_en": "Kingston", "participant_name_hk": "金利豐"}
+        ]});
+        let p = HttpQuoteApi::reshape_participants(raw).expect("reshape participants");
+        assert_eq!(p.len(), 2);
+        assert_eq!(p[0].broker_ids, vec![4208]);
+        assert_eq!(p[0].name_en, "HSBC Securities Brokers (Asia) Limited");
+        assert_eq!(p[1].name_cn, "金利丰");
+        assert_eq!(p[1].name_hk, "金利豐");
+    }
+
+    #[test]
+    fn reshape_warrant_issuers_round_trips() {
+        let raw = serde_json::json!({"issuer_info": [
+            {"id": 15, "name_cn": "瑞银", "name_en": "UB", "name_hk": "瑞銀"},
+            {"id": 14, "name_cn": "汇丰", "name_en": "HS", "name_hk": "匯豐"}
+        ]});
+        let i = HttpQuoteApi::reshape_warrant_issuers(raw).expect("reshape warrant_issuers");
+        assert_eq!(i[0].issuer_id, 15);
+        assert_eq!(i[0].name_en, "UB");
+        assert_eq!(i[1].name_hk, "匯豐");
+    }
+
+    #[test]
+    fn reshape_expiry_dates_round_trips() {
+        let raw = serde_json::json!({"expiry_date": ["20261007", "20261009", "20261012"]});
+        let d = HttpQuoteApi::reshape_expiry_dates(raw).expect("reshape expiry_dates");
+        assert_eq!(
+            d,
+            vec![
+                time::macros::date!(2026 - 10 - 07),
+                time::macros::date!(2026 - 10 - 09),
+                time::macros::date!(2026 - 10 - 12),
+            ]
+        );
+    }
+
+    #[test]
+    fn reshape_quotes_zeroes_empty_prices_in_every_session() {
+        // A halted/illiquid name: "" prices in the regular and extended blocks.
+        let raw = serde_json::json!({"secu_quote": [{
+            "high": "", "last_done": "", "low": "", "open": "", "prev_close": "1.00",
+            "symbol": "HALT.US", "timestamp": "1791590400", "trade_status": 0,
+            "turnover": "", "volume": "", "volume_str": "",
+            "pre_market_quote": {"high": "", "last_done": "", "low": "", "prev_close": "",
+                                 "timestamp": "1791552600", "turnover": "", "volume": ""},
+            "post_market_quote": null, "over_night_quote": null
+        }]});
+        let q = HttpQuoteApi::reshape_quotes(raw).expect("reshape empty quote");
+        assert!(q[0].last_done.is_zero() && q[0].open.is_zero() && q[0].high.is_zero());
+        assert_eq!(q[0].volume, 0);
+        assert_eq!(q[0].prev_close.to_string(), "1.00");
+        let pre = q[0].pre_market_quote.as_ref().expect("pre-market block");
+        assert!(pre.last_done.is_zero() && pre.turnover.is_zero());
+        assert_eq!(pre.volume, 0);
+        assert_eq!(pre.timestamp, ts(1_791_552_600));
+    }
+
+    #[test]
+    fn reshape_warrant_list_keeps_empty_name_and_degrades_unknown_enums() {
+        // One row with an empty `name` must not fail the whole list (the String
+        // field keeps "", only `Option` fields become None), and unknown
+        // type/status ints degrade to `Unknown`.
+        let raw = serde_json::json!({"warrant_list": [
+            {"balance_point": "", "call_price": "", "change_rate": "", "change_val": "",
+             "conversion_ratio": "", "delta": "", "effective_leverage": "", "expiry_date": "",
+             "implied_volatility": "", "itm_otm": "", "last_done": "", "leverage_ratio": "",
+             "lower_strike_price": "", "name": "", "outstanding_qty": "", "outstanding_ratio": "",
+             "premium": "", "status": 99, "strike_price": "", "symbol": "12345.HK",
+             "to_call_price": "", "turnover": "", "type": 99, "upper_strike_price": "", "volume": ""},
+            {"balance_point": "463.2", "call_price": "820", "change_rate": "-0.0137",
+             "change_val": "-0.01", "conversion_ratio": "500", "delta": "0",
+             "effective_leverage": "0", "expiry_date": "20280802", "implied_volatility": "0",
+             "itm_otm": "0.48", "last_done": "0.72", "leverage_ratio": "1.18",
+             "lower_strike_price": "0", "name": "UB#TENCTRP2808D", "outstanding_qty": "0",
+             "outstanding_ratio": "0", "premium": "-0.09", "status": 4, "strike_price": "823.2",
+             "symbol": "61304.HK", "to_call_price": "-0.48", "turnover": "0", "type": 0,
+             "upper_strike_price": "0", "volume": "0"}
+        ]});
+        let w =
+            HttpQuoteApi::reshape_warrant_list(raw).expect("one empty name must not fail the list");
+        assert_eq!(w.len(), 2);
+        assert_eq!(w[0].name, "");
+        assert!(w[0].last_done.is_zero());
+        assert!(w[0].expiry_date.is_none() && w[0].strike_price.is_none());
+        assert_eq!(w[0].warrant_type, longbridge::quote::WarrantType::Unknown);
+        assert_eq!(w[0].status, longbridge::quote::WarrantStatus::Unknown);
+        assert_eq!(w[1].name, "UB#TENCTRP2808D");
+        assert_eq!(w[1].expiry_date, Some(time::macros::date!(2028 - 08 - 02)));
+        assert_eq!(w[1].call_price.unwrap().to_string(), "820");
+    }
+
+    #[test]
+    fn reshape_option_enums_degrade_unknown_codes() {
+        use longbridge::quote::{OptionDirection, OptionExpiryCycleType, OptionStandardAttr};
+        // New/unknown string codes must degrade to `Unknown`, not fail the batch.
+        let raw = serde_json::json!({"list": [{
+            "days_to_expiry": 7, "direction": "X", "expiry_date": "20261016",
+            "option_type": "M", "standard_attr": "new", "strike_price": "130",
+            "symbol": "AAPL261016C130000.US"
+        }]});
+        let c = HttpQuoteApi::reshape_option_chain(raw).expect("unknown codes must not fail");
+        assert_eq!(c[0].direction, OptionDirection::Unknown);
+        assert_eq!(c[0].option_type, OptionExpiryCycleType::Unknown);
+        assert_eq!(c[0].standard_attr, OptionStandardAttr::Unknown);
+    }
+
+    #[test]
+    fn calc_index_greeks_pass_through_unscaled() {
+        // Verified against v0.29.0 (WS) on the same contracts: the REST greeks
+        // are already on the WS scale, so vega/rho must not be rescaled.
+        use longbridge::quote::CalcIndex;
+        let raw = serde_json::json!({"security_calc_index": [{
+            "symbol": "AAPL261016C250000.US", "delta": "0.999", "gamma": "0.001",
+            "theta": "-0.043", "vega": "0.001", "rho": "0.047",
+            "implied_volatility": "70.31", "open_interest": "1256", "pe_ttm_ratio": "31.2"
+        }]});
+        let requested = [
+            CalcIndex::Delta,
+            CalcIndex::Gamma,
+            CalcIndex::Theta,
+            CalcIndex::Vega,
+            CalcIndex::Rho,
+            CalcIndex::OpenInterest,
+        ];
+        let r = HttpQuoteApi::reshape_calc_indexes(raw, &requested).expect("reshape greeks");
+        assert_eq!(r[0].vega.unwrap().to_string(), "0.001");
+        assert_eq!(r[0].rho.unwrap().to_string(), "0.047");
+        assert_eq!(r[0].delta.unwrap().to_string(), "0.999");
+        assert_eq!(r[0].open_interest, Some(1256));
+        // Returned by the gateway but not requested.
+        assert!(r[0].pe_ttm_ratio.is_none());
+        assert!(r[0].implied_volatility.is_none());
+    }
+
+    #[test]
+    fn calc_index_field_names_match_sdk_fields() {
+        use longbridge::quote::CalcIndex;
+        assert_eq!(calc_index_field(CalcIndex::LastDone), "last_done");
+        assert_eq!(calc_index_field(CalcIndex::PeTtmRatio), "pe_ttm_ratio");
+        assert_eq!(
+            calc_index_field(CalcIndex::DividendRatioTtm),
+            "dividend_ratio_ttm"
+        );
+        assert_eq!(calc_index_field(CalcIndex::ItmOtm), "itm_otm");
+        assert_eq!(calc_index_field(CalcIndex::WarrantDelta), "warrant_delta");
+        assert_eq!(
+            calc_index_field(CalcIndex::FiveMinutesChangeRate),
+            "five_minutes_change_rate"
+        );
+    }
+
+    #[test]
+    fn warrant_order_breaks_price_ties_by_symbol() {
+        let rows = vec![
+            serde_json::json!({"symbol": "B", "last_done": "0.5"}),
+            serde_json::json!({"symbol": "A", "last_done": "0.5"}),
+            serde_json::json!({"symbol": "C", "last_done": "1"}),
+        ];
+        let syms: Vec<String> = order_by_last_done_desc(rows)
+            .iter()
+            .map(|r| r["symbol"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(syms, ["C", "A", "B"]);
     }
 }

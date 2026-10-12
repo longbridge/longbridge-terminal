@@ -336,6 +336,37 @@ pub fn member_id() -> Option<String> {
     member_id_from_claims(&claims)
 }
 
+/// The member id to send as a request parameter, from the local access token.
+///
+/// Stricter than [`member_id`], which is an analytics identity and accepts any
+/// user-ish claim: this takes only a real member-id claim — the top-level `mid`,
+/// or `member_id`/`memberId` inside `sub` — and only a positive integer. A token
+/// without one yields `None`, so the caller asks the server instead of sending
+/// an account or user id where a member id belongs.
+pub fn request_member_id() -> Option<i64> {
+    let full = crate::secure_storage::EncryptedFileTokenStorage::load_full(&effective_client_id())?;
+    let claims = decode_jwt_payload(full["access_token"].as_str()?)?;
+    request_member_id_from_claims(&claims)
+}
+
+fn request_member_id_from_claims(claims: &serde_json::Value) -> Option<i64> {
+    let positive = |v: &serde_json::Value| -> Option<i64> {
+        match v {
+            serde_json::Value::Number(n) => n.as_i64(),
+            serde_json::Value::String(s) => s.parse().ok(),
+            _ => None,
+        }
+        .filter(|id| *id > 0)
+    };
+    if let Some(id) = positive(&claims["mid"]) {
+        return Some(id);
+    }
+    let sub: serde_json::Value = serde_json::from_str(claims["sub"].as_str()?).ok()?;
+    ["member_id", "memberId"]
+        .iter()
+        .find_map(|key| positive(&sub[*key]))
+}
+
 /// Pulls the member id out of a decoded `sub` claim.
 ///
 /// Takes numbers as well as strings. A member id is a number in every system
@@ -367,7 +398,7 @@ fn member_id_from_claims(claims: &serde_json::Value) -> Option<String> {
 
 #[cfg(test)]
 mod member_id_claim_tests {
-    use super::member_id_from_claims;
+    use super::{member_id_from_claims, request_member_id_from_claims};
     use serde_json::json;
 
     #[test]
@@ -401,6 +432,38 @@ mod member_id_claim_tests {
     fn none_when_no_member_id_anywhere() {
         assert!(member_id_from_claims(&json!({"sub": "access_token"})).is_none());
         assert!(member_id_from_claims(&json!({})).is_none());
+    }
+
+    #[test]
+    fn request_member_id_reads_mid_and_sub_member_id() {
+        assert_eq!(
+            request_member_id_from_claims(&json!({"mid": 3162})),
+            Some(3162)
+        );
+        assert_eq!(
+            request_member_id_from_claims(&json!({"mid": "3162"})),
+            Some(3162)
+        );
+        let sub = json!({"sub": "{\"member_id\":\"42\"}"});
+        assert_eq!(request_member_id_from_claims(&sub), Some(42));
+    }
+
+    /// An account or user id must never be sent as `member_id`: without a real
+    /// member-id claim the caller has to ask the server instead.
+    #[test]
+    fn request_member_id_ignores_non_member_claims() {
+        let sub = json!({"sub": "{\"account_id\":\"99\",\"uid\":\"98\",\"user_id\":\"97\"}"});
+        assert_eq!(request_member_id_from_claims(&sub), None);
+    }
+
+    #[test]
+    fn request_member_id_rejects_non_positive_ids() {
+        assert_eq!(request_member_id_from_claims(&json!({"mid": 0})), None);
+        assert_eq!(request_member_id_from_claims(&json!({"mid": -5})), None);
+        assert_eq!(request_member_id_from_claims(&json!({"mid": ""})), None);
+        // A bad `mid` falls through to `sub`.
+        let claims = json!({"mid": 0, "sub": "{\"member_id\":42}"});
+        assert_eq!(request_member_id_from_claims(&claims), Some(42));
     }
 }
 

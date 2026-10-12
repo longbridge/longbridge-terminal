@@ -201,7 +201,9 @@ pub(super) fn dedupe_by_symbol(rows: Vec<Value>) -> Vec<Value> {
 
 /// Replace a string code at each path with the SDK enum `E`'s serialized name
 /// via its `FromStr` (strum) parse — e.g. option `direction` `"C"` → `"Call"`,
-/// `standard_attr` `""` → `"Normal"`. Leaves unparseable values unchanged.
+/// `standard_attr` `""` → `"Normal"`. An unparseable code becomes `Unknown`
+/// (every option enum has that variant), mirroring the WS path's
+/// `parse().unwrap_or_default()` — left raw it would fail the whole batch.
 pub(super) fn map_str_enum<E>(value: &mut Value, paths: &[&str])
 where
     E: std::str::FromStr + serde::Serialize,
@@ -210,11 +212,11 @@ where
         let segs: Vec<&str> = p.split('.').collect();
         walk(value, &segs, &|v| {
             if let Value::String(s) = v {
-                if let Ok(e) = s.parse::<E>() {
-                    if let Ok(mapped) = serde_json::to_value(e) {
-                        *v = mapped;
-                    }
-                }
+                *v = s
+                    .parse::<E>()
+                    .ok()
+                    .and_then(|e| serde_json::to_value(e).ok())
+                    .unwrap_or_else(|| Value::String("Unknown".to_string()));
             }
         });
     }
@@ -262,15 +264,19 @@ where
 }
 
 /// Recursively replace empty-string values with `null` (so the SDK's `Option`
-/// fields deserialize as `None` rather than failing to parse `""` as a decimal).
-pub(super) fn empty_str_to_null(value: &mut Value) {
+/// fields deserialize as `None` rather than failing to parse `""` as a decimal),
+/// except under the object keys in `keep` — the struct's `String` fields, where
+/// `""` is a valid value and `null` would fail the whole batch decode.
+pub(super) fn empty_str_to_null(value: &mut Value, keep: &[&str]) {
     match value {
         Value::Object(map) => {
-            for v in map.values_mut() {
-                empty_str_to_null(v);
+            for (k, v) in map.iter_mut() {
+                if !keep.contains(&k.as_str()) {
+                    empty_str_to_null(v, keep);
+                }
             }
         }
-        Value::Array(arr) => arr.iter_mut().for_each(empty_str_to_null),
+        Value::Array(arr) => arr.iter_mut().for_each(|v| empty_str_to_null(v, keep)),
         Value::String(s) if s.is_empty() => *value = Value::Null,
         _ => {}
     }
@@ -372,25 +378,43 @@ pub(super) const WARRANT_QUOTE_NUMERIC: &[&str] = &[
     "*.call_price",
 ];
 
-/// Divide the decimal-string `vega`/`rho` greeks by 100 at each array element —
-/// the REST payload reports them 100× the SDK/WS scale.
-pub(super) fn scale_greeks(value: &mut Value) {
-    let Some(arr) = value.as_array_mut() else {
+/// The `SecurityCalcIndex` field a `CalcIndex` fills: the variant name in
+/// `snake_case` (`PeTtmRatio` → `pe_ttm_ratio`), which is how the SDK names every
+/// field it sets in `SecurityCalcIndex::from_proto`.
+pub(super) fn calc_index_field(index: longbridge::quote::CalcIndex) -> String {
+    let mut field = String::new();
+    for (i, ch) in format!("{index:?}").chars().enumerate() {
+        if ch.is_ascii_uppercase() {
+            if i > 0 {
+                field.push('_');
+            }
+            field.push(ch.to_ascii_lowercase());
+        } else {
+            field.push(ch);
+        }
+    }
+    field
+}
+
+/// Null every index field of each row that is not in `requested`, keeping
+/// `symbol`. The gateway returns whatever it computed; the WS path fills only
+/// the requested indexes and leaves the rest `None`, and `serve` returns the
+/// whole struct, so extra fields would leak into its JSON.
+pub(super) fn keep_requested_indexes(
+    value: &mut Value,
+    requested: &[longbridge::quote::CalcIndex],
+) {
+    let keep: Vec<String> = requested.iter().map(|i| calc_index_field(*i)).collect();
+    let Some(rows) = value.as_array_mut() else {
         return;
     };
-    for row in arr.iter_mut() {
+    for row in rows {
         let Some(obj) = row.as_object_mut() else {
             continue;
         };
-        for k in ["vega", "rho"] {
-            let scaled = obj
-                .get(k)
-                .and_then(Value::as_str)
-                .filter(|s| !s.is_empty())
-                .and_then(|s| s.parse::<rust_decimal::Decimal>().ok())
-                .map(|d| d / rust_decimal::Decimal::ONE_HUNDRED);
-            if let Some(d) = scaled {
-                obj.insert(k.to_string(), Value::String(d.to_string()));
+        for (k, v) in obj.iter_mut() {
+            if k != "symbol" && !keep.iter().any(|f| f == k) {
+                *v = Value::Null;
             }
         }
     }

@@ -1279,8 +1279,8 @@ pub async fn cmd_max_qty(
 }
 
 pub async fn cmd_portfolio(format: &OutputFormat) -> Result<()> {
-    // Portfolio reaches QuoteContext (WS) through the shared `account` helper, so
-    // record the WS quote operation here at the CLI entry point.
+    // Portfolio fetches quotes for its holdings, so record the quote operation
+    // here at the CLI entry point.
     crate::openapi::track_quote_cmd();
     // Enrich holdings with quotes over HTTP REST (the TUI's own call to
     // `fetch_portfolio()` keeps the WebSocket context).

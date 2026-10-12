@@ -69,8 +69,10 @@ pub(crate) static RATE_LIMITED_QUOTE_CTX: Slot<RateLimitedQuoteContext> = Slot::
 /// Global rate-limited `TradeContext` wrapper
 pub(crate) static RATE_LIMITED_TRADE_CTX: Slot<RateLimitedTradeContext> = Slot::new();
 
-/// Map the effective content language to the SDK Language enum.
-fn get_api_language() -> longbridge::Language {
+/// Map the effective content language to the SDK Language enum — the language
+/// the WS contexts are configured with, and that HTTP requests carrying a
+/// `language` field must send to match them.
+pub fn api_language() -> longbridge::Language {
     match crate::locale::get() {
         "zh-CN" => longbridge::Language::ZH_CN,
         "zh-HK" => longbridge::Language::ZH_HK,
@@ -161,7 +163,7 @@ pub async fn init_contexts() -> Result<(
     };
 
     let mut config_builder = longbridge::Config::from_oauth(oauth.clone())
-        .language(get_api_language())
+        .language(api_language())
         .dont_print_quote_packages();
 
     let mut http_client_config = longbridge::httpclient::HttpClientConfig::from_oauth(oauth);
@@ -434,14 +436,11 @@ pub fn quote_cmd() -> &'static longbridge::quote::QuoteContext {
 /// parameter (the server still authenticates the request by the token itself).
 /// Do not use it as a trusted identity for any authorization decision.
 pub async fn member_id() -> anyhow::Result<i64> {
-    if let Some(id) = crate::auth::member_id().and_then(|s| s.parse::<i64>().ok()) {
-        tracing::info!(
-            member_id = id,
-            "member id resolved from access-token claims (no WebSocket)"
-        );
+    if let Some(id) = crate::auth::request_member_id() {
+        tracing::debug!("member id resolved from access-token claims (no WebSocket)");
         return Ok(id);
     }
-    tracing::info!(
+    tracing::debug!(
         "member id not in access-token claims; falling back to the WebSocket user profile"
     );
     quote_cmd().member_id().await.map_err(anyhow::Error::from)
