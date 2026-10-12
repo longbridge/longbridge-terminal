@@ -11,12 +11,15 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 /// Lift a repeated container field out of the response as an array; a missing
 /// or `null` field (proto3 JSON omits an empty repeated field) is an empty list,
 /// as the SDK's `#[serde(default, deserialize_with = "null_as_default")]` reads it.
+/// A root that is not an object is left as-is, so a wrongly shaped response
+/// still fails to decode instead of reading as an empty list.
 pub(super) fn unwrap_list(value: &mut Value, key: &str) {
-    let inner = value.get_mut(key).map_or(Value::Null, Value::take);
-    *value = if inner.is_null() {
-        Value::Array(Vec::new())
-    } else {
-        inner
+    let Some(map) = value.as_object_mut() else {
+        return;
+    };
+    *value = match map.remove(key) {
+        None | Some(Value::Null) => Value::Array(Vec::new()),
+        Some(inner) => inner,
     };
 }
 

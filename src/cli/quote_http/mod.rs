@@ -881,7 +881,7 @@ impl HttpQuoteApi {
                     rows.len()
                 );
                 eprintln!(
-                    "Warning: the gateway returned {} of {expected} warrants for {symbol}; \
+                    "Warning: only {} of {expected} warrants could be retrieved for {symbol}; \
                      the list may be incomplete.",
                     rows.len()
                 );
@@ -1874,6 +1874,15 @@ mod tests {
     }
 
     #[test]
+    fn non_object_list_root_still_fails_to_decode() {
+        // Only a missing/null field inside an object reads as empty; a response
+        // of the wrong shape must not silently become an empty list.
+        let none: [longbridge::quote::CalcIndex; 0] = [];
+        assert!(HttpQuoteApi::reshape_calc_indexes(serde_json::json!("oops"), &none).is_err());
+        assert!(HttpQuoteApi::reshape_option_chain(serde_json::json!(42)).is_err());
+    }
+
+    #[test]
     fn calc_index_requested_integer_missing_or_null_is_zero() {
         use longbridge::quote::CalcIndex;
         let raw = serde_json::json!({"security_calc_index": [
@@ -1933,8 +1942,8 @@ mod tests {
         // Every `CalcIndex` must name a real `SecurityCalcIndex` field, or
         // `keep_requested_indexes` would null a requested value.
         use longbridge::quote::CalcIndex::{self, *};
-        // No wildcard arm: a variant added to the SDK fails to compile here,
-        // forcing it into `all` below.
+        // No wildcard arm: a variant added to the SDK fails to compile here —
+        // a reminder to add it to `all` below as well.
         #[allow(clippy::match_same_arms)]
         fn listed(index: CalcIndex) {
             match index {
