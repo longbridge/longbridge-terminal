@@ -333,9 +333,7 @@ pub fn account_channel() -> Option<String> {
 pub fn member_id() -> Option<String> {
     let full = crate::secure_storage::EncryptedFileTokenStorage::load_full(&effective_client_id())?;
     let claims = decode_jwt_payload(full["access_token"].as_str()?)?;
-    let sub_str = claims["sub"].as_str()?;
-    let sub: serde_json::Value = serde_json::from_str(sub_str).ok()?;
-    member_id_from_sub(&sub)
+    member_id_from_claims(&claims)
 }
 
 /// Pulls the member id out of a decoded `sub` claim.
@@ -352,6 +350,55 @@ fn member_id_from_sub(sub: &serde_json::Value) -> Option<String> {
             serde_json::Value::Number(value) => Some(value.to_string()),
             _ => None,
         })
+}
+
+/// Member id from a decoded access-token payload: the top-level `mid` claim
+/// (what current tokens carry, as a number) first, then the legacy spellings
+/// nested in the `sub` JSON. `None` when the token carries none.
+fn member_id_from_claims(claims: &serde_json::Value) -> Option<String> {
+    match &claims["mid"] {
+        serde_json::Value::Number(n) => return Some(n.to_string()),
+        serde_json::Value::String(s) if !s.is_empty() => return Some(s.clone()),
+        _ => {}
+    }
+    let sub: serde_json::Value = serde_json::from_str(claims["sub"].as_str()?).ok()?;
+    member_id_from_sub(&sub)
+}
+
+#[cfg(test)]
+mod member_id_claim_tests {
+    use super::member_id_from_claims;
+    use serde_json::json;
+
+    #[test]
+    fn reads_top_level_numeric_mid() {
+        let claims = json!({"mid": 3162, "sub": "access_token"});
+        assert_eq!(member_id_from_claims(&claims).as_deref(), Some("3162"));
+    }
+
+    #[test]
+    fn reads_top_level_string_mid() {
+        let claims = json!({"mid": "1007833987"});
+        assert_eq!(member_id_from_claims(&claims).as_deref(), Some("1007833987"));
+    }
+
+    #[test]
+    fn falls_back_to_sub_member_id() {
+        let claims = json!({"sub": "{\"member_id\":\"42\",\"account_channel\":\"lb\"}"});
+        assert_eq!(member_id_from_claims(&claims).as_deref(), Some("42"));
+    }
+
+    #[test]
+    fn top_level_mid_wins_over_sub() {
+        let claims = json!({"mid": 7, "sub": "{\"member_id\":\"42\"}"});
+        assert_eq!(member_id_from_claims(&claims).as_deref(), Some("7"));
+    }
+
+    #[test]
+    fn none_when_no_member_id_anywhere() {
+        assert!(member_id_from_claims(&json!({"sub": "access_token"})).is_none());
+        assert!(member_id_from_claims(&json!({})).is_none());
+    }
 }
 
 /// [`account_channel`] with a fallback to [`DEFAULT_ACCOUNT_CHANNEL`].

@@ -423,6 +423,23 @@ pub fn quote_cmd() -> &'static longbridge::quote::QuoteContext {
     quote()
 }
 
+/// The signed-in member id for one-shot commands. Read locally from the access
+/// token's JWT claims first (zero network, no WebSocket), falling back to the
+/// `QueryUserQuoteProfile` round trip over the WS `QuoteContext` only when the
+/// token carries no usable id. Keeps `auth status` / `ipo` from opening a
+/// WebSocket just to learn who is signed in.
+pub async fn member_id() -> anyhow::Result<i64> {
+    if let Some(id) = crate::auth::member_id().and_then(|s| s.parse::<i64>().ok()) {
+        tracing::info!(member_id = id, "member id resolved from access-token claims (no WebSocket)");
+        return Ok(id);
+    }
+    tracing::info!("member id not in access-token claims; falling back to the WebSocket user profile");
+    quote_cmd()
+        .member_id()
+        .await
+        .map_err(anyhow::Error::from)
+}
+
 /// Get rate-limited `QuoteContext` (recommended for all API calls)
 pub fn quote_limited() -> &'static RateLimitedQuoteContext {
     RATE_LIMITED_QUOTE_CTX
