@@ -379,7 +379,10 @@ mod member_id_claim_tests {
     #[test]
     fn reads_top_level_string_mid() {
         let claims = json!({"mid": "1007833987"});
-        assert_eq!(member_id_from_claims(&claims).as_deref(), Some("1007833987"));
+        assert_eq!(
+            member_id_from_claims(&claims).as_deref(),
+            Some("1007833987")
+        );
     }
 
     #[test]

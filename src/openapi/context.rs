@@ -435,14 +435,16 @@ pub fn quote_cmd() -> &'static longbridge::quote::QuoteContext {
 /// Do not use it as a trusted identity for any authorization decision.
 pub async fn member_id() -> anyhow::Result<i64> {
     if let Some(id) = crate::auth::member_id().and_then(|s| s.parse::<i64>().ok()) {
-        tracing::info!(member_id = id, "member id resolved from access-token claims (no WebSocket)");
+        tracing::info!(
+            member_id = id,
+            "member id resolved from access-token claims (no WebSocket)"
+        );
         return Ok(id);
     }
-    tracing::info!("member id not in access-token claims; falling back to the WebSocket user profile");
-    quote_cmd()
-        .member_id()
-        .await
-        .map_err(anyhow::Error::from)
+    tracing::info!(
+        "member id not in access-token claims; falling back to the WebSocket user profile"
+    );
+    quote_cmd().member_id().await.map_err(anyhow::Error::from)
 }
 
 /// Get rate-limited `QuoteContext` (recommended for all API calls)

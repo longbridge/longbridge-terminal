@@ -49,16 +49,133 @@ use reshape::*;
 // ── HTTP transport ───────────────────────────────────────────────────────────
 
 /// POST the given shim `path` with `body`, returning the raw gateway JSON.
+///
+/// A rate-limit rejection (`429002` / HTTP 429) is retried with exponential
+/// backoff — the gateway's limit is per second, so a short wait clears it.
+/// Any other error is returned immediately.
 async fn http_post(path: &str, body: Value) -> Result<Value> {
+    const MAX_ATTEMPTS: u32 = 4;
+    const BASE_DELAY_MS: u64 = 250;
+
     let client = crate::openapi::http_client();
-    let resp = client
-        .request(Method::POST, path)
-        .body(Json(body))
-        .response::<Json<Value>>()
-        .send()
-        .await
-        .map_err(to_cli_error)?;
-    Ok(resp.0)
+    let mut attempt = 1;
+    loop {
+        let result = client
+            .request(Method::POST, path)
+            .body(Json(body.clone()))
+            .response::<Json<Value>>()
+            .send()
+            .await
+            .map_err(to_cli_error);
+        match result {
+            Ok(resp) => return Ok(resp.0),
+            Err(err) if attempt < MAX_ATTEMPTS && is_rate_limited(&err) => {
+                let delay = BASE_DELAY_MS << (attempt - 1);
+                tracing::debug!("{path}: rate limited, retry {attempt} in {delay}ms");
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                attempt += 1;
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+/// Whether `err` is the gateway's rate-limit rejection: business code `429002`
+/// or a bare HTTP 429.
+fn is_rate_limited(err: &anyhow::Error) -> bool {
+    use longbridge::httpclient::HttpClientError;
+    const RATE_LIMIT_CODE: i32 = 429_002;
+    match err.downcast_ref::<longbridge::Error>() {
+        Some(longbridge::Error::HttpClient(HttpClientError::OpenApi { code, .. })) => {
+            *code == RATE_LIMIT_CODE
+        }
+        Some(longbridge::Error::HttpClient(HttpClientError::BadStatus(status))) => {
+            status.as_u16() == 429
+        }
+        _ => false,
+    }
+}
+
+/// Fetch every page of `/quote/warrants` for `symbol`, sorted by the static
+/// expiry-date key. Returns `(total_count, raw rows)`.
+///
+/// The shim caps `sort_count` per request — 100 on the test gateway (anything
+/// above is `301607 requst too many sort count`) and 500 on production — so the
+/// page size is one valid on both. The first page reports `total_count`; the
+/// rest are fetched concurrently, bounded so a large list does not burst the
+/// gateway's rate limit, and kept in request order.
+async fn fetch_warrant_pages(symbol: &str) -> Result<(usize, Vec<Value>)> {
+    use futures::{StreamExt, TryStreamExt};
+
+    const PAGE: usize = 100;
+    // Runaway guard against a bogus `total_count`: 20 000 rows.
+    const MAX_PAGES: usize = 200;
+    const CONCURRENCY: usize = 3;
+    // `WarrantSortBy::ExpiryDate` / `SortOrderType::Descending`. The order is
+    // replaced locally afterwards; the key only has to be stable while paging.
+    const SORT_BY_EXPIRY_DATE: i32 = 5;
+    const SORT_DESCENDING: i32 = 1;
+
+    let body = |offset: usize| {
+        serde_json::json!({
+            "symbol": symbol,
+            "filter_config": {
+                "sort_by": SORT_BY_EXPIRY_DATE, "sort_order": SORT_DESCENDING,
+                "sort_offset": offset, "sort_count": PAGE,
+            },
+            "language": 1,
+        })
+    };
+    let page_rows = |resp: &Value| {
+        resp.get("warrant_list")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    };
+
+    let first = http_post("/quote/warrants", body(0)).await?;
+    let total = first
+        .get("total_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as usize;
+    let mut rows = page_rows(&first);
+    let rest: Vec<Value> = futures::stream::iter(
+        page_offsets(total, PAGE, MAX_PAGES)
+            .into_iter()
+            .map(|offset| http_post("/quote/warrants", body(offset))),
+    )
+    .buffered(CONCURRENCY)
+    .try_collect()
+    .await?;
+    for resp in &rest {
+        rows.extend(page_rows(resp));
+    }
+    Ok((total, rows))
+}
+
+/// Order raw warrant rows by `last_done` descending — the order the WS
+/// `warrant_list` returns — comparing numerically (string order would put
+/// "9.5" above "10"). Stable, so equal prices keep their fetch order and the
+/// output is deterministic. A missing/empty price sorts as 0.
+fn order_by_last_done_desc(mut rows: Vec<Value>) -> Vec<Value> {
+    let price = |row: &Value| {
+        row.get("last_done")
+            .and_then(Value::as_str)
+            .and_then(|s| s.parse::<rust_decimal::Decimal>().ok())
+            .unwrap_or_default()
+    };
+    rows.sort_by_key(|row| std::cmp::Reverse(price(row)));
+    rows
+}
+
+/// `sort_offset`s for the pages after the first: `page, 2·page, …` below
+/// `total`, at most `max_pages - 1` of them (the first page is fetched
+/// separately to learn `total`).
+fn page_offsets(total: usize, page: usize, max_pages: usize) -> Vec<usize> {
+    (1..max_pages)
+        .map(|i| i * page)
+        .take_while(|&offset| offset < total)
+        .collect()
 }
 
 /// Wrap the SDK HTTP error as a `longbridge::Error` before it enters `anyhow`.
@@ -409,7 +526,11 @@ impl HttpQuoteApi {
     }
 
     pub async fn capital_flow(&self, symbol: String) -> Result<Vec<CapitalFlowLine>> {
-        let value = http_post("/quote/capital-flow", serde_json::json!({ "symbol": symbol })).await?;
+        let value = http_post(
+            "/quote/capital-flow",
+            serde_json::json!({ "symbol": symbol }),
+        )
+        .await?;
         Self::reshape_capital_flow(value)
     }
 
@@ -459,7 +580,8 @@ impl HttpQuoteApi {
         // exist to avoid a `missing field` decode error.
         if let Some(obj) = value.as_object_mut() {
             for k in ["trading_days", "half_trading_days"] {
-                obj.entry(k.to_string()).or_insert_with(|| Value::Array(vec![]));
+                obj.entry(k.to_string())
+                    .or_insert_with(|| Value::Array(vec![]));
             }
         }
         reformat_ymd(&mut value, &["trading_days.*", "half_trading_days.*"]);
@@ -685,42 +807,27 @@ impl HttpQuoteApi {
     }
 
     pub async fn warrant_list(&self, symbol: String) -> Result<Vec<WarrantInfo>> {
-        // The WS path returns the full warrant set in one call; the shim caps
-        // `sort_count` at 500, so page through `sort_offset` and concatenate to
-        // preserve parity (sort_by=LastDone(0), sort_order=Descending(1)).
-        const PAGE: usize = 500;
-        // Hard stop so a gateway that ignored `sort_offset` (always returning
-        // page 1) or reported a bogus `total_count` cannot loop unbounded.
-        const MAX_PAGES: usize = 50;
-        let mut rows: Vec<Value> = Vec::new();
-        let mut offset: usize = 0;
-        for _ in 0..MAX_PAGES {
-            let resp = http_post(
-                "/quote/warrants",
-                serde_json::json!({
-                    "symbol": symbol,
-                    "filter_config": {
-                        "sort_by": 0, "sort_order": 1,
-                        "sort_offset": offset, "sort_count": PAGE,
-                    },
-                    "language": 1,
-                }),
-            )
-            .await?;
-            let total = resp.get("total_count").and_then(Value::as_u64).unwrap_or(0) as usize;
-            let page = resp
-                .get("warrant_list")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
-            let got = page.len();
-            rows.extend(page);
-            offset += got;
-            if got == 0 || offset >= total {
-                break;
+        // The WS path returns the whole list in one consistent snapshot. Over
+        // the shim it has to be paged, which needs a *static* sort key: paging
+        // by last price (what WS sorts by) is unsafe because prices move
+        // between page fetches and a warrant can slide across a page boundary —
+        // fetched twice or skipped entirely (observed: 715 of 716). Expiry date
+        // does not move intraday and pages deterministically, so fetch by that,
+        // then order locally by last price descending to match the WS output.
+        let (total, rows) = fetch_warrant_pages(&symbol).await?;
+        let mut rows = dedupe_by_symbol(rows);
+        if rows.len() < total {
+            // Belt and braces: the static key should make this unreachable, but a
+            // short read is a missing warrant, so take one more full pass.
+            let (_, retry) = fetch_warrant_pages(&symbol).await?;
+            let retry = dedupe_by_symbol(retry);
+            if retry.len() > rows.len() {
+                rows = retry;
             }
         }
-        Self::reshape_warrant_list(serde_json::json!({ "warrant_list": dedupe_by_symbol(rows) }))
+        Self::reshape_warrant_list(
+            serde_json::json!({ "warrant_list": order_by_last_done_desc(rows) }),
+        )
     }
 
     /// Reshape `/quote/calc-indexes` into `Vec<SecurityCalcIndex>` (unwrap
@@ -853,10 +960,7 @@ impl crate::cli::api::QuoteApi for HttpQuoteApi {
     async fn capital_flow(&self, symbol: String) -> Result<Vec<CapitalFlowLine>> {
         HttpQuoteApi::capital_flow(self, symbol).await
     }
-    async fn capital_distribution(
-        &self,
-        symbol: String,
-    ) -> Result<CapitalDistributionResponse> {
+    async fn capital_distribution(&self, symbol: String) -> Result<CapitalDistributionResponse> {
         HttpQuoteApi::capital_distribution(self, symbol).await
     }
     async fn trading_session(&self) -> Result<Vec<MarketTradingSession>> {
@@ -1095,12 +1199,68 @@ mod tests {
             trace_id: "trace-1".into(),
         });
         match err.downcast_ref::<longbridge::Error>() {
-            Some(longbridge::Error::HttpClient(HttpClientError::OpenApi { code, trace_id, .. })) => {
+            Some(longbridge::Error::HttpClient(HttpClientError::OpenApi {
+                code,
+                trace_id,
+                ..
+            })) => {
                 assert_eq!(*code, 301_604);
                 assert_eq!(trace_id, "trace-1");
             }
-            other => panic!("HTTP error did not downcast to longbridge::Error::HttpClient: {other:?}"),
+            other => {
+                panic!("HTTP error did not downcast to longbridge::Error::HttpClient: {other:?}")
+            }
         }
+    }
+
+    #[test]
+    fn rate_limit_errors_are_detected() {
+        use longbridge::httpclient::HttpClientError;
+        let api = |code| {
+            to_cli_error(HttpClientError::OpenApi {
+                code,
+                message: String::new(),
+                trace_id: String::new(),
+            })
+        };
+        assert!(is_rate_limited(&api(429_002)));
+        assert!(is_rate_limited(&to_cli_error(HttpClientError::BadStatus(
+            reqwest::StatusCode::TOO_MANY_REQUESTS
+        ))));
+        assert!(!is_rate_limited(&api(301_604)));
+        assert!(!is_rate_limited(&to_cli_error(HttpClientError::BadStatus(
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR
+        ))));
+        assert!(!is_rate_limited(&anyhow::anyhow!("other")));
+    }
+
+    #[test]
+    fn order_by_last_done_desc_is_numeric_and_stable() {
+        let rows = vec![
+            serde_json::json!({"symbol": "A", "last_done": "9.5"}),
+            serde_json::json!({"symbol": "B", "last_done": "10"}),
+            serde_json::json!({"symbol": "C", "last_done": "0.01"}),
+            serde_json::json!({"symbol": "D", "last_done": "0.01"}), // tie with C
+            serde_json::json!({"symbol": "E", "last_done": ""}),     // empty → 0
+        ];
+        let syms: Vec<String> = order_by_last_done_desc(rows)
+            .iter()
+            .map(|r| r["symbol"].as_str().unwrap().to_owned())
+            .collect();
+        // Numeric, not lexicographic ("10" above "9.5"); C stays before D.
+        assert_eq!(syms, ["B", "A", "C", "D", "E"]);
+    }
+
+    #[test]
+    fn page_offsets_cover_total_and_respect_cap() {
+        // 716 warrants at 100/page: page 1 + offsets 100..=700.
+        assert_eq!(
+            page_offsets(716, 100, 200),
+            vec![100, 200, 300, 400, 500, 600, 700]
+        );
+        assert!(page_offsets(100, 100, 200).is_empty()); // exactly one page
+        assert!(page_offsets(0, 100, 200).is_empty()); // empty list
+        assert_eq!(page_offsets(1_000_000, 100, 200).len(), 199); // runaway cap
     }
 
     #[test]
@@ -1109,7 +1269,7 @@ mod tests {
             serde_json::json!({"symbol": "A.HK", "n": 1}),
             serde_json::json!({"symbol": "B.HK", "n": 2}),
             serde_json::json!({"symbol": "A.HK", "n": 3}), // repeated page row
-            serde_json::json!({"n": 4}),                    // no symbol: kept
+            serde_json::json!({"n": 4}),                   // no symbol: kept
         ];
         let out = dedupe_by_symbol(rows);
         let ns: Vec<i64> = out.iter().map(|r| r["n"].as_i64().unwrap()).collect();
@@ -1136,7 +1296,11 @@ mod tests {
             (C::Delta, 36),
             (C::Rho, 40),
         ] {
-            assert_eq!(calc_index_wire(idx), wire, "{idx:?} must map to proto {wire}");
+            assert_eq!(
+                calc_index_wire(idx),
+                wire,
+                "{idx:?} must map to proto {wire}"
+            );
         }
     }
 
@@ -1164,8 +1328,7 @@ mod tests {
     #[test]
     fn reshape_trading_days_defaults_missing_half_days() {
         // Gateway omits the empty `half_trade_day` array → must not fail.
-        let raw: Value =
-            serde_json::from_str(r#"{"trade_day":["20261012","20261013"]}"#).unwrap();
+        let raw: Value = serde_json::from_str(r#"{"trade_day":["20261012","20261013"]}"#).unwrap();
         let days = HttpQuoteApi::reshape_trading_days(raw).expect("reshape trading_days");
         assert_eq!(days.trading_days.len(), 2);
         assert!(days.half_trading_days.is_empty());
@@ -1278,7 +1441,10 @@ mod tests {
         let apple = &quotes[1];
         assert_eq!(apple.symbol, "AAPL.US");
         assert_eq!(apple.volume, 35_332_449);
-        let overnight = apple.overnight_quote.as_ref().expect("AAPL overnight present");
+        let overnight = apple
+            .overnight_quote
+            .as_ref()
+            .expect("AAPL overnight present");
         assert_eq!(overnight.volume, 79_180);
         // trade_status wire int 0 → SDK `Normal`.
         assert_eq!(apple.trade_status, TradeStatus::Normal);

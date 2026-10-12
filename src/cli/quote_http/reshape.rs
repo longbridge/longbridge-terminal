@@ -291,33 +291,85 @@ pub(super) fn zero_empty_numeric(value: &mut Value, paths: &[&str]) {
 // Non-`Option` numeric fields per SDK struct (the ones `zero_empty_numeric` may
 // legitimately turn `""` into 0). Keep in sync with the struct definitions.
 pub(super) const QUOTE_NUMERIC: &[&str] = &[
-    "*.last_done", "*.prev_close", "*.open", "*.high", "*.low", "*.volume", "*.turnover",
+    "*.last_done",
+    "*.prev_close",
+    "*.open",
+    "*.high",
+    "*.low",
+    "*.volume",
+    "*.turnover",
     // extended-session `PrePostQuote` blocks (non-`Option` fields inside)
-    "*.pre_market_quote.last_done", "*.pre_market_quote.prev_close", "*.pre_market_quote.high",
-    "*.pre_market_quote.low", "*.pre_market_quote.volume", "*.pre_market_quote.turnover",
-    "*.post_market_quote.last_done", "*.post_market_quote.prev_close", "*.post_market_quote.high",
-    "*.post_market_quote.low", "*.post_market_quote.volume", "*.post_market_quote.turnover",
-    "*.overnight_quote.last_done", "*.overnight_quote.prev_close", "*.overnight_quote.high",
-    "*.overnight_quote.low", "*.overnight_quote.volume", "*.overnight_quote.turnover",
+    "*.pre_market_quote.last_done",
+    "*.pre_market_quote.prev_close",
+    "*.pre_market_quote.high",
+    "*.pre_market_quote.low",
+    "*.pre_market_quote.volume",
+    "*.pre_market_quote.turnover",
+    "*.post_market_quote.last_done",
+    "*.post_market_quote.prev_close",
+    "*.post_market_quote.high",
+    "*.post_market_quote.low",
+    "*.post_market_quote.volume",
+    "*.post_market_quote.turnover",
+    "*.overnight_quote.last_done",
+    "*.overnight_quote.prev_close",
+    "*.overnight_quote.high",
+    "*.overnight_quote.low",
+    "*.overnight_quote.volume",
+    "*.overnight_quote.turnover",
 ];
 pub(super) const TRADE_NUMERIC: &[&str] = &["*.price", "*.volume"];
 pub(super) const INTRADAY_NUMERIC: &[&str] = &["*.price", "*.volume", "*.turnover", "*.avg_price"];
-pub(super) const CANDLE_NUMERIC: &[&str] = &["*.close", "*.open", "*.low", "*.high", "*.volume", "*.turnover"];
+pub(super) const CANDLE_NUMERIC: &[&str] = &[
+    "*.close",
+    "*.open",
+    "*.low",
+    "*.high",
+    "*.volume",
+    "*.turnover",
+];
 pub(super) const STATIC_NUMERIC: &[&str] = &[
-    "*.lot_size", "*.total_shares", "*.circulating_shares", "*.hk_shares",
-    "*.eps", "*.eps_ttm", "*.bps", "*.dividend_yield",
+    "*.lot_size",
+    "*.total_shares",
+    "*.circulating_shares",
+    "*.hk_shares",
+    "*.eps",
+    "*.eps_ttm",
+    "*.bps",
+    "*.dividend_yield",
 ];
 pub(super) const CAPITAL_FLOW_NUMERIC: &[&str] = &["*.inflow"];
 pub(super) const OPTION_QUOTE_NUMERIC: &[&str] = &[
-    "*.last_done", "*.prev_close", "*.open", "*.high", "*.low", "*.volume", "*.turnover",
-    "*.implied_volatility", "*.open_interest", "*.strike_price", "*.contract_multiplier",
-    "*.contract_size", "*.historical_volatility",
+    "*.last_done",
+    "*.prev_close",
+    "*.open",
+    "*.high",
+    "*.low",
+    "*.volume",
+    "*.turnover",
+    "*.implied_volatility",
+    "*.open_interest",
+    "*.strike_price",
+    "*.contract_multiplier",
+    "*.contract_size",
+    "*.historical_volatility",
 ];
 pub(super) const WARRANT_QUOTE_NUMERIC: &[&str] = &[
-    "*.last_done", "*.prev_close", "*.open", "*.high", "*.low", "*.volume", "*.turnover",
-    "*.implied_volatility", "*.outstanding_ratio", "*.outstanding_quantity",
-    "*.conversion_ratio", "*.strike_price", "*.upper_strike_price",
-    "*.lower_strike_price", "*.call_price",
+    "*.last_done",
+    "*.prev_close",
+    "*.open",
+    "*.high",
+    "*.low",
+    "*.volume",
+    "*.turnover",
+    "*.implied_volatility",
+    "*.outstanding_ratio",
+    "*.outstanding_quantity",
+    "*.conversion_ratio",
+    "*.strike_price",
+    "*.upper_strike_price",
+    "*.lower_strike_price",
+    "*.call_price",
 ];
 
 /// Divide the decimal-string `vega`/`rho` greeks by 100 at each array element —
@@ -411,7 +463,8 @@ pub(super) fn insert_missing(value: &mut Value, key: &str, default: &Value) {
     match value {
         Value::Array(arr) => arr.iter_mut().for_each(|v| insert_missing(v, key, default)),
         Value::Object(map) => {
-            map.entry(key.to_string()).or_insert_with(|| default.clone());
+            map.entry(key.to_string())
+                .or_insert_with(|| default.clone());
         }
         _ => {}
     }

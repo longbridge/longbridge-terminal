@@ -984,7 +984,9 @@ pub async fn cmd_market_temp(
 
 pub async fn cmd_trading_session(format: &OutputFormat) -> Result<()> {
     crate::openapi::track_quote_cmd();
-    let sessions = crate::cli::quote_http::HttpQuoteApi.trading_session().await?;
+    let sessions = crate::cli::quote_http::HttpQuoteApi
+        .trading_session()
+        .await?;
 
     match format {
         OutputFormat::Json => {
@@ -1341,7 +1343,9 @@ pub async fn cmd_warrant_list(symbol: String, format: &OutputFormat) -> Result<(
 
 pub async fn cmd_warrant_issuers(format: &OutputFormat) -> Result<()> {
     crate::openapi::track_quote_cmd();
-    let issuers = crate::cli::quote_http::HttpQuoteApi.warrant_issuers().await?;
+    let issuers = crate::cli::quote_http::HttpQuoteApi
+        .warrant_issuers()
+        .await?;
 
     let headers = &["ID", "Name EN", "Name CN"];
     let rows = issuers
