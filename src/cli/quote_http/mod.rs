@@ -57,8 +57,17 @@ async fn http_post(path: &str, body: Value) -> Result<Value> {
         .response::<Json<Value>>()
         .send()
         .await
-        .map_err(anyhow::Error::from)?;
+        .map_err(to_cli_error)?;
     Ok(resp.0)
+}
+
+/// Wrap the SDK HTTP error as a `longbridge::Error` before it enters `anyhow`.
+/// `main.rs` renders errors by downcasting to `longbridge::Error`; a bare
+/// `HttpClientError` misses that match and falls through to the generic
+/// renderer, losing the `API error (code …)` form, the trace id, and the
+/// option-quote OPRA permission guidance.
+fn to_cli_error(err: longbridge::httpclient::HttpClientError) -> anyhow::Error {
+    anyhow::Error::from(longbridge::Error::from(err))
 }
 
 // ── typed API ────────────────────────────────────────────────────────────────
@@ -1073,6 +1082,26 @@ mod tests {
         "vega": "", "volume": ""
       }]
     }"#;
+
+    #[test]
+    fn http_errors_reach_the_main_error_renderer() {
+        // `main.rs` matches `longbridge::Error::HttpClient(HttpClientError::OpenApi
+        // { .. })` to print `API error (code N)`, the trace id and the OPRA
+        // guidance. The HTTP backend's errors must downcast to exactly that.
+        use longbridge::httpclient::HttpClientError;
+        let err = to_cli_error(HttpClientError::OpenApi {
+            code: 301_604,
+            message: "no quote access".into(),
+            trace_id: "trace-1".into(),
+        });
+        match err.downcast_ref::<longbridge::Error>() {
+            Some(longbridge::Error::HttpClient(HttpClientError::OpenApi { code, trace_id, .. })) => {
+                assert_eq!(*code, 301_604);
+                assert_eq!(trace_id, "trace-1");
+            }
+            other => panic!("HTTP error did not downcast to longbridge::Error::HttpClient: {other:?}"),
+        }
+    }
 
     #[test]
     fn dedupe_by_symbol_keeps_first_and_order() {
