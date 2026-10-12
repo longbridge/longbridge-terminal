@@ -1062,7 +1062,7 @@ pub enum Commands {
         /// Order side: buy | sell  (case-insensitive, REQUIRED)
         #[arg(long)]
         side: String,
-        /// Multi-leg strategy, e.g. `VerticalCallSpread`, Straddle, Collar  (REQUIRED)
+        /// Multi-leg strategy, e.g. `VerticalCallSpread`, Straddle, Collar (case-insensitive, REQUIRED)
         #[arg(long)]
         strategy: String,
         /// Number of combinations as a decimal string, e.g. 1  (REQUIRED)

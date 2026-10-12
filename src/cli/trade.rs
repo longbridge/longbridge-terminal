@@ -1279,6 +1279,54 @@ pub async fn cmd_max_qty(
     Ok(())
 }
 
+/// Multi-leg strategies accepted by `estimate-multileg`.
+const MULTILEG_STRATEGIES: &[&str] = &[
+    "CoveredCall",
+    "CoveredPut",
+    "VerticalCallSpread",
+    "VerticalPutSpread",
+    "Collar",
+    "Straddle",
+    "Strangle",
+    "CalendarCallSpread",
+    "CalendarPutSpread",
+];
+
+/// Parse a multi-leg strategy name leniently: case, `_`, `-` and spaces are
+/// ignored, so `vertical_call_spread` resolves to `VerticalCallSpread`.
+fn parse_multileg_strategy(s: &str) -> Result<MultiLegStrategy> {
+    let norm = |v: &str| {
+        v.chars()
+            .filter(|c| !matches!(c, '_' | '-' | ' '))
+            .collect::<String>()
+            .to_ascii_lowercase()
+    };
+    let wanted = norm(s);
+    MULTILEG_STRATEGIES
+        .iter()
+        .find(|name| norm(name) == wanted)
+        .and_then(|name| MultiLegStrategy::from_str(name).ok())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Unknown strategy '{s}'. Use one of: {}",
+                MULTILEG_STRATEGIES.join(" ")
+            )
+        })
+}
+
+/// Whether an order type is priced by `--price` (limit-style orders).
+fn order_type_requires_price(order_type: OrderType) -> bool {
+    matches!(
+        order_type,
+        OrderType::LO
+            | OrderType::ELO
+            | OrderType::ALO
+            | OrderType::ODD
+            | OrderType::SLO
+            | OrderType::LIT
+    )
+}
+
 /// Estimate a US multi-leg option combination's tradable quantity and margin
 /// impact before submitting the order.
 #[allow(clippy::too_many_arguments)]
@@ -1298,19 +1346,16 @@ pub async fn cmd_estimate_multileg(
         _ => bail!("Unknown side '{side}'. Use: Buy Sell"),
     };
     let ot = parse_order_type(order_type)?;
-    let strategy_val = MultiLegStrategy::from_str(strategy).map_err(|_| {
-        anyhow::anyhow!(
-            "Unknown strategy '{strategy}'. Use one of: CoveredCall CoveredPut \
-             VerticalCallSpread VerticalPutSpread Collar Straddle Strangle \
-             CalendarCallSpread CalendarPutSpread"
-        )
-    })?;
+    let strategy_val = parse_multileg_strategy(strategy)?;
     let qty =
         Decimal::from_str(quantity).map_err(|_| anyhow::anyhow!("Invalid quantity: {quantity}"))?;
     let price_dec = price
         .as_deref()
         .map(|p| Decimal::from_str(p).map_err(|_| anyhow::anyhow!("Invalid price: {p}")))
         .transpose()?;
+    if order_type_requires_price(ot) && price_dec.is_none() {
+        bail!("--price is required for order type {ot}");
+    }
 
     let legs_opts = legs.into_iter().map(EstimateMultiLegOrderLeg::new);
     let mut opts =
@@ -1320,22 +1365,7 @@ pub async fn cmd_estimate_multileg(
     }
 
     let resp = ctx.estimate_multileg_available_quantity(opts).await?;
-
-    let headers = &["Field", "Value"];
-    let rows = vec![
-        vec!["Max Open Qty".to_string(), resp.max_open_qty.to_string()],
-        vec!["Unit Margin".to_string(), resp.unit_margin.to_string()],
-        vec![
-            "Initial Margin Change".to_string(),
-            resp.initial_margin_change.to_string(),
-        ],
-        vec![
-            "Maintenance Margin Change".to_string(),
-            resp.maintenance_margin_change.to_string(),
-        ],
-    ];
-
-    print_table(headers, rows, format);
+    super::output::print_json_value(&serde_json::to_value(&resp)?, format);
     Ok(())
 }
 
@@ -2435,6 +2465,54 @@ pub async fn cmd_us_realized_pl(
 mod tests {
     use super::*;
     use crate::cli::api::MockTradeApi;
+
+    #[test]
+    fn multileg_strategy_parse_is_lenient() {
+        for s in [
+            "VerticalCallSpread",
+            "verticalcallspread",
+            "vertical_call_spread",
+            "Vertical-Call-Spread",
+        ] {
+            assert_eq!(
+                parse_multileg_strategy(s).unwrap(),
+                MultiLegStrategy::VerticalCallSpread,
+                "{s}"
+            );
+        }
+        let err = parse_multileg_strategy("IronCondor")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("CalendarPutSpread"), "{err}");
+        assert!(parse_multileg_strategy("Unknown").is_err());
+    }
+
+    #[test]
+    fn multileg_limit_order_types_require_price() {
+        assert!(order_type_requires_price(OrderType::LO));
+        assert!(!order_type_requires_price(OrderType::MO));
+    }
+
+    #[test]
+    fn multileg_response_json_matches_schema() {
+        let resp: longbridge::trade::EstimateMultiLegAvailableQuantityResponse =
+            serde_json::from_str(
+                r#"{"max_open_qty":"46003","unit_margin":"217.00","initial_margin_change":"0.00","maintenance_margin_change":"0.00"}"#,
+            )
+            .unwrap();
+        let v = serde_json::to_value(&resp).unwrap();
+        let obj = v
+            .as_object()
+            .expect("estimate-multileg emits a single object");
+        for key in [
+            "max_open_qty",
+            "unit_margin",
+            "initial_margin_change",
+            "maintenance_margin_change",
+        ] {
+            assert!(obj.contains_key(key), "missing {key}");
+        }
+    }
 
     fn make_submit_opts() -> SubmitOrderOptions {
         SubmitOrderOptions::new(
