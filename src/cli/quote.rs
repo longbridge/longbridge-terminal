@@ -3338,7 +3338,6 @@ pub async fn cmd_rank(
             } else {
                 format!("ib_{raw_k}")
             };
-            let count_str = count.to_string();
             // Derive market from key suffix (e.g. ib_hot_all-hk → HK); fall back to --market.
             let key_market = k
                 .rsplit_once('-')
@@ -3352,11 +3351,11 @@ pub async fn cmd_rank(
                     ("delay_bmp", "false"),
                     ("need_article", "true"),
                     ("market", key_market.as_str()),
-                    ("size", count_str.as_str()),
                 ],
                 verbose,
             )
             .await?;
+            let data = truncate_rank_lists(data, count as usize);
             match format {
                 OutputFormat::Json => print_json(&data),
                 OutputFormat::Pretty => {
@@ -3399,6 +3398,20 @@ pub async fn cmd_rank(
         }
     }
     Ok(())
+}
+
+/// Keep only the first `count` rows of a `rank/list` response.
+///
+/// The endpoint takes no page-size parameter and always returns the whole
+/// board (typically 50 rows), so `--count` is applied here.
+fn truncate_rank_lists(mut data: serde_json::Value, count: usize) -> serde_json::Value {
+    if let Some(lists) = data
+        .get_mut("lists")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        lists.truncate(count);
+    }
+    data
 }
 
 /// Human-readable label for an ETF asset-allocation group type.
@@ -4362,5 +4375,17 @@ mod tests {
     #[test]
     fn test_parse_market_invalid() {
         assert!(parse_market("XX").is_err());
+    }
+
+    #[test]
+    fn test_truncate_rank_lists() {
+        let rows: Vec<_> = (0..50)
+            .map(|i| serde_json::json!({"symbol": format!("S{i}.US")}))
+            .collect();
+        let data = truncate_rank_lists(serde_json::json!({"bmp": false, "lists": rows}), 2);
+        assert_eq!(
+            data,
+            serde_json::json!({"bmp": false, "lists": [{"symbol": "S0.US"}, {"symbol": "S1.US"}]})
+        );
     }
 }
