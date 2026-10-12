@@ -428,6 +428,11 @@ pub fn quote_cmd() -> &'static longbridge::quote::QuoteContext {
 /// `QueryUserQuoteProfile` round trip over the WS `QuoteContext` only when the
 /// token carries no usable id. Keeps `auth status` / `ipo` from opening a
 /// WebSocket just to learn who is signed in.
+///
+/// The claim is decoded **without signature verification** — it is the user's
+/// own locally stored token, so this is fine for display and as a request
+/// parameter (the server still authenticates the request by the token itself).
+/// Do not use it as a trusted identity for any authorization decision.
 pub async fn member_id() -> anyhow::Result<i64> {
     if let Some(id) = crate::auth::member_id().and_then(|s| s.parse::<i64>().ok()) {
         tracing::info!(member_id = id, "member id resolved from access-token claims (no WebSocket)");

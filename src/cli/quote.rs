@@ -651,8 +651,15 @@ pub async fn cmd_kline_history(
     let candles = if let (Some(s), Some(e)) = (start, end) {
         let start_date = parse_date(&s)?;
         let end_date = parse_date(&e)?;
-        api.history_candlesticks_by_date(symbol, p, adj, Some(start_date), Some(end_date))
-            .await?
+        api.history_candlesticks_by_date(
+            symbol,
+            p,
+            adj,
+            Some(start_date),
+            Some(end_date),
+            trade_sessions,
+        )
+        .await?
     } else {
         api.history_candlesticks_by_offset(symbol, p, adj, false, None, 100, trade_sessions)
             .await?

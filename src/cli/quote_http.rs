@@ -222,6 +222,20 @@ fn calc_index_wire(index: longbridge::quote::CalcIndex) -> i32 {
     (index as i32) + 1
 }
 
+/// Drop rows whose `symbol` was already seen, keeping first occurrence and
+/// order. Guards paged results against a gateway that repeats a page (e.g.
+/// ignores `sort_offset`), which would otherwise surface duplicate warrants.
+/// Rows without a `symbol` are kept as-is.
+fn dedupe_by_symbol(rows: Vec<Value>) -> Vec<Value> {
+    let mut seen = std::collections::HashSet::new();
+    rows.into_iter()
+        .filter(|row| match row.get("symbol").and_then(Value::as_str) {
+            Some(sym) => seen.insert(sym.to_owned()),
+            None => true,
+        })
+        .collect()
+}
+
 /// Replace a string code at each path with the SDK enum `E`'s serialized name
 /// via its `FromStr` (strum) parse — e.g. option `direction` `"C"` → `"Call"`,
 /// `standard_attr` `""` → `"Normal"`. Leaves unparseable values unchanged.
@@ -684,6 +698,7 @@ impl HttpQuoteApi {
         adjust: longbridge::quote::AdjustType,
         start: Option<time::Date>,
         end: Option<time::Date>,
+        sessions: longbridge::quote::TradeSessions,
     ) -> Result<Vec<Candlestick>> {
         let ymd = |d: time::Date| format!("{:04}{:02}{:02}", d.year(), d.month() as u8, d.day());
         let value = http_post(
@@ -697,7 +712,7 @@ impl HttpQuoteApi {
                     "start_date": start.map(ymd).unwrap_or_default(),
                     "end_date": end.map(ymd).unwrap_or_default(),
                 },
-                "trade_session": longbridge::quote::TradeSessions::Intraday as i32,
+                "trade_session": sessions as i32,
             }),
         )
         .await?;
@@ -1087,9 +1102,12 @@ impl HttpQuoteApi {
         // `sort_count` at 500, so page through `sort_offset` and concatenate to
         // preserve parity (sort_by=LastDone(0), sort_order=Descending(1)).
         const PAGE: usize = 500;
+        // Hard stop so a gateway that ignored `sort_offset` (always returning
+        // page 1) or reported a bogus `total_count` cannot loop unbounded.
+        const MAX_PAGES: usize = 50;
         let mut rows: Vec<Value> = Vec::new();
         let mut offset: usize = 0;
-        loop {
+        for _ in 0..MAX_PAGES {
             let resp = http_post(
                 "/quote/warrants",
                 serde_json::json!({
@@ -1115,7 +1133,7 @@ impl HttpQuoteApi {
                 break;
             }
         }
-        Self::reshape_warrant_list(serde_json::json!({ "warrant_list": rows }))
+        Self::reshape_warrant_list(serde_json::json!({ "warrant_list": dedupe_by_symbol(rows) }))
     }
 
     /// Reshape `/quote/calc-indexes` into `Vec<SecurityCalcIndex>` (unwrap
@@ -1210,7 +1228,18 @@ impl crate::cli::api::QuoteApi for HttpQuoteApi {
         start: Option<time::Date>,
         end: Option<time::Date>,
     ) -> Result<Vec<Candlestick>> {
-        HttpQuoteApi::history_candlesticks_by_date(self, symbol, period, adjust, start, end).await
+        // The trait carries no session parameter (parity with `LbQuoteApi`,
+        // which also queries the regular session only).
+        HttpQuoteApi::history_candlesticks_by_date(
+            self,
+            symbol,
+            period,
+            adjust,
+            start,
+            end,
+            longbridge::quote::TradeSessions::Intraday,
+        )
+        .await
     }
     async fn history_candlesticks_by_offset(
         &self,
@@ -1465,6 +1494,19 @@ mod tests {
         "vega": "", "volume": ""
       }]
     }"#;
+
+    #[test]
+    fn dedupe_by_symbol_keeps_first_and_order() {
+        let rows = vec![
+            serde_json::json!({"symbol": "A.HK", "n": 1}),
+            serde_json::json!({"symbol": "B.HK", "n": 2}),
+            serde_json::json!({"symbol": "A.HK", "n": 3}), // repeated page row
+            serde_json::json!({"n": 4}),                    // no symbol: kept
+        ];
+        let out = dedupe_by_symbol(rows);
+        let ns: Vec<i64> = out.iter().map(|r| r["n"].as_i64().unwrap()).collect();
+        assert_eq!(ns, vec![1, 2, 4]);
+    }
 
     #[test]
     fn calc_index_wire_matches_proto() {
