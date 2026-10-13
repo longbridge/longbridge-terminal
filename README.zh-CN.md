@@ -310,6 +310,7 @@ longbridge positions # 所有子账户的当前股票（权益类）持仓
 longbridge fund-positions # 所有子账户的当前基金（公募基金）持仓
 longbridge margin-ratio TSLA.US # 某股票的保证金比例要求
 longbridge max-qty TSLA.US --side buy --price 250 # 根据当前账户余额估算最大可买或可卖数量
+longbridge estimate-multileg --side buy --strategy VerticalCallSpread --quantity 1 --leg QQQ270115C760000.US --leg QQQ270115C765000.US --price 1.5 # 估算美股多腿期权组合的最大可交易数量及保证金变化
 ```
 
 ### 盈亏分析

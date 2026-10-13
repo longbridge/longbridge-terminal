@@ -1053,6 +1053,36 @@ pub enum Commands {
         order_type: String,
     },
 
+    /// Estimate a US multi-leg option combination's tradable quantity and margin impact
+    ///
+    /// Returns: `max_open_qty` (most combinations the account can open), `unit_margin` (funds per
+    /// combination: net debit at market for debit combos, margin requirement for credit/short combos),
+    /// `initial_margin_change` / `maintenance_margin_change` (account margin change for `--quantity`
+    /// combinations; 0 for debit combos, which consume cash instead). Computed from current market
+    /// prices, not `--price`.
+    /// Pass each leg's symbol with a repeated `--leg`; leg order does not matter.
+    /// Example: longbridge estimate-multileg --side buy --strategy `VerticalCallSpread` --quantity 1 --leg QQQ270115C760000.US --leg QQQ270115C765000.US --price 1.5
+    EstimateMultileg {
+        /// Order side: buy | sell  (case-insensitive, REQUIRED)
+        #[arg(long)]
+        side: String,
+        /// Multi-leg strategy, e.g. `VerticalCallSpread`, Straddle, Collar (case-insensitive, REQUIRED)
+        #[arg(long)]
+        strategy: String,
+        /// Number of combinations (> 0) as a decimal string, e.g. 1  (REQUIRED)
+        #[arg(long)]
+        quantity: String,
+        /// Leg symbol in <CODE>.<MARKET> format (options, plus the underlying for covered strategies); repeat --leg for each leg  (REQUIRED)
+        #[arg(long = "leg", required = true)]
+        legs: Vec<String>,
+        /// Order type: LO | MO | ELO | ALO | AO  (case-insensitive, default: LO; MO / AO need no --price)
+        #[arg(long, default_value = "LO")]
+        order_type: String,
+        /// Net limit price for the combination as a decimal string (required for limit types LO / ELO / ALO; not used by the estimate itself)
+        #[arg(long)]
+        price: Option<String>,
+    },
+
     /// Exchange rates for all supported currencies
     ///
     /// Example: longbridge exchange-rate
@@ -4429,6 +4459,25 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             price,
             order_type,
         } => trade::cmd_max_qty(symbol, &side, price, &order_type, format).await,
+        Commands::EstimateMultileg {
+            side,
+            strategy,
+            quantity,
+            legs,
+            order_type,
+            price,
+        } => {
+            trade::cmd_estimate_multileg(
+                &side,
+                &strategy,
+                &quantity,
+                legs,
+                &order_type,
+                price,
+                format,
+            )
+            .await
+        }
         Commands::ExchangeRate => asset::cmd_exchange_rate(format, verbose).await,
 
         Commands::Shareholder {

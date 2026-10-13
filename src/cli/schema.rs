@@ -402,7 +402,9 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<ResponseSchema> {
             asset::schema_for_path(path)
         }
         "order" | "assets" | "cash-flow" | "portfolio" | "positions" | "fund-positions"
-        | "margin-ratio" | "max-qty" | "alert" => trade::schema_for_path(path),
+        | "margin-ratio" | "max-qty" | "estimate-multileg" | "alert" => {
+            trade::schema_for_path(path)
+        }
         "exchange-rate" | "profit-analysis" | "profit-analysis realized" => {
             asset::schema_for_path(path)
         }
@@ -624,7 +626,7 @@ mod tests {
             let paths = real_leaf_paths(&root);
             assert_eq!(
                 paths.len(),
-                191,
+                192,
                 "real command count changed; review schema coverage"
             );
 

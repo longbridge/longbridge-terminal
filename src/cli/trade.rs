@@ -1,9 +1,10 @@
 use anyhow::{bail, Result};
 use longbridge::trade::{
-    EstimateMaxPurchaseQuantityOptions, GetCashFlowOptions, GetHistoryExecutionsOptions,
+    EstimateMaxPurchaseQuantityOptions, EstimateMultiLegAvailableQuantityOptions,
+    EstimateMultiLegOrderLeg, GetCashFlowOptions, GetHistoryExecutionsOptions,
     GetHistoryOrdersOptions, GetTodayExecutionsOptions, GetTodayOrdersOptions,
-    GetUSRealizedPLOptions, OrderSide, OrderType, OutsideRTH, ReplaceOrderOptions,
-    SubmitOrderOptions, TimeInForceType,
+    GetUSRealizedPLOptions, MultiLegStrategy, OrderSide, OrderType, OutsideRTH,
+    ReplaceOrderOptions, SubmitOrderOptions, TimeInForceType,
 };
 use rust_decimal::Decimal;
 use std::fmt::Write as _;
@@ -1278,6 +1279,121 @@ pub async fn cmd_max_qty(
     Ok(())
 }
 
+/// Multi-leg strategies accepted by `estimate-multileg`.
+const MULTILEG_STRATEGIES: &[&str] = &[
+    "CoveredCall",
+    "CoveredPut",
+    "VerticalCallSpread",
+    "VerticalPutSpread",
+    "Collar",
+    "Straddle",
+    "Strangle",
+    "CalendarCallSpread",
+    "CalendarPutSpread",
+];
+
+/// Parse a multi-leg strategy name leniently: case, `_`, `-` and spaces are
+/// ignored, so `vertical_call_spread` resolves to `VerticalCallSpread`.
+fn parse_multileg_strategy(s: &str) -> Result<MultiLegStrategy> {
+    let norm = |v: &str| {
+        v.chars()
+            .filter(|c| !matches!(c, '_' | '-' | ' '))
+            .collect::<String>()
+            .to_ascii_lowercase()
+    };
+    let wanted = norm(s);
+    MULTILEG_STRATEGIES
+        .iter()
+        .find(|name| norm(name) == wanted)
+        .and_then(|name| MultiLegStrategy::from_str(name).ok())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Unknown strategy '{s}'. Use one of: {}",
+                MULTILEG_STRATEGIES.join(" ")
+            )
+        })
+}
+
+/// Whether an order type is priced by `--price` (limit-style orders).
+fn order_type_requires_price(order_type: OrderType) -> bool {
+    matches!(
+        order_type,
+        OrderType::LO
+            | OrderType::ELO
+            | OrderType::ALO
+            | OrderType::ODD
+            | OrderType::SLO
+            | OrderType::LIT
+    )
+}
+
+/// Parse `--quantity`, which must be a positive number of combinations.
+fn parse_multileg_quantity(quantity: &str) -> Result<Decimal> {
+    let qty =
+        Decimal::from_str(quantity).map_err(|_| anyhow::anyhow!("Invalid quantity: {quantity}"))?;
+    if qty <= Decimal::ZERO {
+        bail!("--quantity must be greater than 0, got {quantity}");
+    }
+    Ok(qty)
+}
+
+/// The gateway answers a strategy whose legs don't fit it (e.g. two calls sent
+/// as `VerticalPutSpread`) with an `i64::MAX` quantity and a zero margin
+/// instead of an error; never print that as a real estimate.
+fn ensure_usable_estimate(
+    resp: &longbridge::trade::EstimateMultiLegAvailableQuantityResponse,
+) -> Result<()> {
+    if resp.max_open_qty >= Decimal::from(i64::MAX) {
+        bail!(
+            "The legs do not form the given strategy (the server returned no usable estimate); \
+             check --strategy, --side and each leg's call/put type, strike and expiry"
+        );
+    }
+    Ok(())
+}
+
+/// Estimate a US multi-leg option combination's tradable quantity and margin
+/// impact before submitting the order.
+#[allow(clippy::too_many_arguments)]
+pub async fn cmd_estimate_multileg(
+    side: &str,
+    strategy: &str,
+    quantity: &str,
+    legs: Vec<String>,
+    order_type: &str,
+    price: Option<String>,
+    format: &OutputFormat,
+) -> Result<()> {
+    let ctx = crate::openapi::trade();
+    let side_val = match side.to_lowercase().as_str() {
+        "buy" => OrderSide::Buy,
+        "sell" => OrderSide::Sell,
+        _ => bail!("Unknown side '{side}'. Use: Buy Sell"),
+    };
+    let ot = parse_order_type(order_type)?;
+    let strategy_val = parse_multileg_strategy(strategy)?;
+    let qty = parse_multileg_quantity(quantity)?;
+    let price_dec = price
+        .as_deref()
+        .map(|p| Decimal::from_str(p).map_err(|_| anyhow::anyhow!("Invalid price: {p}")))
+        .transpose()?;
+    if order_type_requires_price(ot) && price_dec.is_none() {
+        bail!("--price is required for order type {ot}");
+    }
+
+    let legs_opts = legs.into_iter().map(EstimateMultiLegOrderLeg::new);
+    let mut opts =
+        EstimateMultiLegAvailableQuantityOptions::new(side_val, ot, qty, strategy_val, legs_opts);
+    if let Some(p) = price_dec {
+        opts = opts.submitted_price(p);
+    }
+
+    let resp = ctx.estimate_multileg_available_quantity(opts).await?;
+    ensure_usable_estimate(&resp)?;
+    super::output::print_json_value(&serde_json::to_value(&resp)?, format);
+    Ok(())
+}
+
 pub async fn cmd_portfolio(format: &OutputFormat) -> Result<()> {
     // Portfolio fetches quotes for its holdings, so record the quote operation
     // here at the CLI entry point.
@@ -2056,6 +2172,15 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
         "margin-ratio" | "max-qty" => {
             array("Key/value account calculation result", &["field", "value"])
         }
+        "estimate-multileg" => object(
+            "Multi-leg option combination estimate",
+            &[
+                "max_open_qty",
+                "unit_margin",
+                "initial_margin_change",
+                "maintenance_margin_change",
+            ],
+        ),
         "alert" => object("Price alert list", &["lists"]),
         "alert add" | "alert delete" => {
             object("Price alert mutation result", &["id", "status", "data"])
@@ -2365,6 +2490,77 @@ pub async fn cmd_us_realized_pl(
 mod tests {
     use super::*;
     use crate::cli::api::MockTradeApi;
+
+    #[test]
+    fn multileg_strategy_parse_is_lenient() {
+        for s in [
+            "VerticalCallSpread",
+            "verticalcallspread",
+            "vertical_call_spread",
+            "Vertical-Call-Spread",
+        ] {
+            assert_eq!(
+                parse_multileg_strategy(s).unwrap(),
+                MultiLegStrategy::VerticalCallSpread,
+                "{s}"
+            );
+        }
+        let err = parse_multileg_strategy("IronCondor")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("CalendarPutSpread"), "{err}");
+        assert!(parse_multileg_strategy("Unknown").is_err());
+    }
+
+    #[test]
+    fn multileg_quantity_must_be_positive() {
+        assert_eq!(parse_multileg_quantity("2").unwrap(), Decimal::from(2));
+        assert!(parse_multileg_quantity("0").is_err());
+        assert!(parse_multileg_quantity("-1").is_err());
+        assert!(parse_multileg_quantity("abc").is_err());
+    }
+
+    #[test]
+    fn multileg_rejects_sentinel_estimate() {
+        let parse = |qty: &str| -> longbridge::trade::EstimateMultiLegAvailableQuantityResponse {
+            serde_json::from_value(serde_json::json!({
+                "max_open_qty": qty,
+                "unit_margin": "0.00",
+                "initial_margin_change": "0.00",
+                "maintenance_margin_change": "0.00",
+            }))
+            .unwrap()
+        };
+        assert!(ensure_usable_estimate(&parse("9223372036854775807")).is_err());
+        assert!(ensure_usable_estimate(&parse("46003")).is_ok());
+    }
+
+    #[test]
+    fn multileg_limit_order_types_require_price() {
+        assert!(order_type_requires_price(OrderType::LO));
+        assert!(!order_type_requires_price(OrderType::MO));
+    }
+
+    #[test]
+    fn multileg_response_json_matches_schema() {
+        let resp: longbridge::trade::EstimateMultiLegAvailableQuantityResponse =
+            serde_json::from_str(
+                r#"{"max_open_qty":"46003","unit_margin":"217.00","initial_margin_change":"0.00","maintenance_margin_change":"0.00"}"#,
+            )
+            .unwrap();
+        let v = serde_json::to_value(&resp).unwrap();
+        let obj = v
+            .as_object()
+            .expect("estimate-multileg emits a single object");
+        for key in [
+            "max_open_qty",
+            "unit_margin",
+            "initial_margin_change",
+            "maintenance_margin_change",
+        ] {
+            assert!(obj.contains_key(key), "missing {key}");
+        }
+    }
 
     fn make_submit_opts() -> SubmitOrderOptions {
         SubmitOrderOptions::new(
