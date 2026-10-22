@@ -33,6 +33,7 @@ pub mod signal;
 pub mod statement;
 pub mod topic;
 pub mod trade;
+pub mod us_asset;
 pub mod watchlist;
 
 #[derive(ValueEnum, Clone, Default, Debug)]
@@ -956,6 +957,10 @@ pub enum Commands {
     /// Returns: currency, `net_assets`, `total_cash`, `buy_power`, `max_finance_amount`,
     /// `remaining_finance_amount`, `init_margin`, `maintenance_margin`, `margin_call`, `risk_level`,
     /// and a `cash_infos` array with per-currency available/frozen/settling/withdrawable amounts.
+    /// US accounts instead return cash and buying power: `buy_limit_info` (cash, overnight,
+    /// day-trade, option, crypto buy power), a `cash_list` array (total, available, withdrawable,
+    /// frozen, settled, outstanding per currency) and `margin_status` (null for cash accounts).
+    /// Behavior adapts to your account's region automatically; you never pass a region.
     /// Example: longbridge assets
     /// Example: longbridge assets --currency HKD
     Assets {
@@ -967,6 +972,8 @@ pub enum Commands {
     /// Cash flow records (deposits, withdrawals, dividends, settlements)
     ///
     /// Returns: `flow_name`, symbol, `business_type`, balance, currency, `business_time`, description.
+    /// US accounts return the account transaction history instead: title, amount, currency,
+    /// symbol, time, remark (all pages in the date range).
     /// Defaults to last 30 days if no dates provided.
     /// Example: longbridge cash-flow --start 2024-01-01 --end 2024-03-31
     CashFlow {
@@ -985,6 +992,8 @@ pub enum Commands {
     ///
     /// Returns: overview (`total_asset`, `market_cap`, `total_cash`, `total_pl`, `total_today_pl`,
     /// `margin_call`, `risk_level`, `credit_limit`, currency), holdings table, and cash balances.
+    /// US accounts return the US asset overview (stock / option / crypto holdings, cash) plus
+    /// `cash_and_buy_power` (buying power, per-currency cash, margin status).
     ///
     /// Without subcommand: shows full portfolio overview.
     /// Subcommands: short-margin
@@ -1007,6 +1016,7 @@ pub enum Commands {
     /// Current fund (mutual fund) positions across all sub-accounts
     ///
     /// Returns: `counter_id`, name, `current_net_asset_value`, `cost_net_asset_value`, currency, `holding_units`.
+    /// Not available for US accounts.
     FundPositions,
 
     /// Fund (mutual fund) channel — catalog, NAV, holdings, positions, orders, trading
@@ -1029,6 +1039,7 @@ pub enum Commands {
     /// Margin ratio requirements for a symbol
     ///
     /// Returns: `im_factor` (initial), `mm_factor` (maintenance), `fm_factor` (forced liquidation).
+    /// Not available for US accounts.
     /// Example: longbridge margin-ratio TSLA.US
     MarginRatio {
         /// Symbol in <CODE>.<MARKET> format
@@ -1055,6 +1066,8 @@ pub enum Commands {
 
     /// Exchange rates for all supported currencies
     ///
+    /// Behavior adapts to your account's region automatically (US accounts read the
+    /// US exchange-rate table); you never pass a region.
     /// Example: longbridge exchange-rate
     /// Example: longbridge exchange-rate --format json
     ExchangeRate,

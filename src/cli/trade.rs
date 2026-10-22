@@ -10,7 +10,7 @@ use std::fmt::Write as _;
 use std::str::FromStr;
 
 use super::{
-    api::TradeApi,
+    api::{LbTradeApi, TradeApi},
     output::{
         fmt_decimal, parse_datetime_end, parse_datetime_start, print_account_banner, print_table,
     },
@@ -1121,6 +1121,10 @@ fn print_assets(balances: &[longbridge::trade::AccountBalance], format: &OutputF
 }
 
 pub async fn cmd_assets(currency: Option<String>, format: &OutputFormat) -> Result<()> {
+    if crate::openapi::is_us_account().await {
+        let api = LbTradeApi::new(crate::openapi::trade());
+        return super::us_asset::run_us_assets(&api, currency, format).await;
+    }
     let ctx = crate::openapi::trade();
     let balances = ctx.account_balance(currency.as_deref()).await?;
     print_account_banner(format);
@@ -1133,8 +1137,6 @@ pub async fn cmd_cash_flow(
     end: Option<String>,
     format: &OutputFormat,
 ) -> Result<()> {
-    let ctx = crate::openapi::trade();
-
     let now = time::OffsetDateTime::now_utc();
     let start_at = start
         .as_deref()
@@ -1147,6 +1149,12 @@ pub async fn cmd_cash_flow(
         .transpose()?
         .unwrap_or(now);
 
+    if crate::openapi::is_us_account().await {
+        let api = LbTradeApi::new(crate::openapi::trade());
+        return super::us_asset::run_us_cash_flow(&api, start_at, end_at, format).await;
+    }
+
+    let ctx = crate::openapi::trade();
     let opts = longbridge::trade::GetCashFlowOptions::new(start_at, end_at);
     let flows = ctx.cash_flow(opts).await?;
 
@@ -1179,6 +1187,7 @@ pub async fn cmd_cash_flow(
 }
 
 pub async fn cmd_fund_positions(format: &OutputFormat) -> Result<()> {
+    super::us_asset::ensure_not_us(crate::openapi::is_us_account().await, "Fund positions")?;
     let ctx = crate::openapi::trade();
     let resp = ctx.fund_positions(None).await?;
 
@@ -1210,6 +1219,7 @@ pub async fn cmd_fund_positions(format: &OutputFormat) -> Result<()> {
 }
 
 pub async fn cmd_margin_ratio(symbol: String, format: &OutputFormat) -> Result<()> {
+    super::us_asset::ensure_not_us(crate::openapi::is_us_account().await, "Margin ratio")?;
     let ctx = crate::openapi::trade();
     let ratio = ctx.margin_ratio(symbol.clone()).await?;
 
@@ -1279,6 +1289,10 @@ pub async fn cmd_max_qty(
 }
 
 pub async fn cmd_portfolio(format: &OutputFormat) -> Result<()> {
+    if crate::openapi::is_us_account().await {
+        let api = LbTradeApi::new(crate::openapi::trade());
+        return super::us_asset::run_us_portfolio(&api, format).await;
+    }
     // Portfolio fetches quotes for its holdings, so record the quote operation
     // here at the CLI entry point.
     crate::openapi::track_quote_cmd();
@@ -1991,7 +2005,7 @@ pub async fn cmd_alert_set_enabled(
 }
 
 pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::ResponseSchema> {
-    use super::schema::{array, object, text};
+    use super::schema::{array, field, fields, object, schema, text, RootKind};
 
     let command = path.join(" ");
     let schema = match command.as_str() {
@@ -2007,25 +2021,47 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
         ),
         "order buy" | "order sell" => object("Submitted order", &["order_id"]),
         "order cancel" | "order replace" => text("Order mutation status message"),
-        "assets" => array(
-            "Account asset overview",
-            &[
-                "currency",
-                "net_assets",
-                "total_cash",
-                "buy_power",
-                "max_finance_amount",
-                "remaining_finance_amount",
-                "init_margin",
-                "maintenance_margin",
-                "margin_call",
-                "risk_level",
-                "cash_infos",
-            ],
+        "assets" => schema(
+            "Account asset overview. HK/CN accounts: array of per-currency balances. US accounts: object {buy_limit_info, cash_list, margin_status}",
+            RootKind::Json,
+            [
+                fields(&[
+                    "currency",
+                    "net_assets",
+                    "total_cash",
+                    "buy_power",
+                    "max_finance_amount",
+                    "remaining_finance_amount",
+                    "init_margin",
+                    "maintenance_margin",
+                    "margin_call",
+                    "risk_level",
+                    "cash_infos",
+                ]),
+                vec![
+                    field(
+                        "buy_limit_info",
+                        "object",
+                        "US accounts: buying power (cash_buy_power, overnight_buy_power, day_trade_buy_power, instant_buy_power, intraday_margin_buy_power, option_buy_power, crypto_buy_power, mme)",
+                    ),
+                    field(
+                        "cash_list",
+                        "object[]",
+                        "US accounts: cash per currency (total_amount, available_cash, withdraw_cash, frozen_cash, settled_cash, outstanding, external_amount)",
+                    ),
+                    field(
+                        "margin_status",
+                        "object | null",
+                        "US accounts: margin status (nlv, margin_equity, margin_maintenance_excess, mmr, reg_t_excess, sma); null for cash accounts",
+                    ),
+                ],
+            ]
+            .concat(),
         ),
-        "cash-flow" => array(
-            "Cash flow records",
-            &[
+        "cash-flow" => schema(
+            "Cash flow records. HK/CN accounts: {flow_name, symbol, business_type, balance, currency, time, description}. US accounts (account transaction history): {title, amount, currency, symbol, time, remark}",
+            RootKind::Array,
+            fields(&[
                 "flow_name",
                 "symbol",
                 "business_type",
@@ -2033,17 +2069,47 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
                 "currency",
                 "time",
                 "description",
-            ],
+                "title",
+                "amount",
+                "remark",
+            ]),
         ),
-        "portfolio" => object(
-            "Portfolio overview",
-            &["overview", "holdings", "cash_balances", "market_accounts"],
+        "portfolio" => schema(
+            "Portfolio overview. HK/CN accounts: {overview, holdings, cash_balances, market_accounts}. US accounts: the US asset overview (as `positions` prints it) plus cash_and_buy_power",
+            RootKind::Object,
+            [
+                fields(&["overview", "holdings", "cash_balances", "market_accounts"]),
+                fields(&[
+                    "account_type",
+                    "currency",
+                    "asset_timestamp",
+                    "cash_buy_power",
+                    "overnight_buy_power",
+                ]),
+                vec![
+                    field("stock_list", "object[]", "US accounts: stock positions"),
+                    field("option_list", "object[]", "US accounts: option positions"),
+                    field("crypto_list", "object[]", "US accounts: crypto holdings"),
+                    field("cash_list", "object[]", "US accounts: cash per currency"),
+                    field(
+                        "multi_leg",
+                        "object | object[] | null",
+                        "US accounts: multi-leg option strategies",
+                    ),
+                    field(
+                        "cash_and_buy_power",
+                        "object",
+                        "US accounts: {buy_limit_info, cash_list, margin_status}, as `assets --format json` prints it",
+                    ),
+                ],
+            ]
+            .concat(),
         ),
         "positions" => text(
             "US accounts: object {account_type, cash_buy_power, stock_list, option_list, crypto_list, cash_list}; HK/CN accounts: array of {symbol, name, quantity, available, cost_price, currency, market}",
         ),
         "fund-positions" => array(
-            "Current fund positions",
+            "Current fund positions (HK/CN accounts only; US accounts get an error)",
             &[
                 "symbol",
                 "name",
@@ -2053,9 +2119,11 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
                 "holding_units",
             ],
         ),
-        "margin-ratio" | "max-qty" => {
-            array("Key/value account calculation result", &["field", "value"])
-        }
+        "margin-ratio" => array(
+            "Key/value margin ratio result (HK/CN accounts only; US accounts get an error)",
+            &["field", "value"],
+        ),
+        "max-qty" => array("Key/value account calculation result", &["field", "value"]),
         "alert" => object("Price alert list", &["lists"]),
         "alert add" | "alert delete" => {
             object("Price alert mutation result", &["id", "status", "data"])
@@ -2108,15 +2176,33 @@ pub async fn cmd_positions(format: &OutputFormat) -> Result<()> {
     }
 }
 
-fn print_json_us(data: &serde_json::Value) {
+pub(crate) fn print_json_us(data: &serde_json::Value) {
     let mut v = data.clone();
     super::output::strip_counter_ids(&mut v);
     println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
 }
 
 async fn cmd_us_positions(format: &OutputFormat) -> Result<()> {
-    let resp = crate::openapi::trade().us_asset_overview().await?;
-    let mut data = serde_json::to_value(&resp)?;
+    let api = LbTradeApi::new(crate::openapi::trade());
+    run_us_positions(&api, format).await
+}
+
+/// `longbridge positions` for US accounts, through the [`TradeApi`] seam.
+pub async fn run_us_positions(api: &dyn TradeApi, format: &OutputFormat) -> Result<()> {
+    let data = normalize_us_overview(&api.us_asset_overview().await?)?;
+    match format {
+        OutputFormat::Json => print_json_us(&data),
+        OutputFormat::Pretty => print_us_positions_pretty(&data),
+    }
+    Ok(())
+}
+
+/// `--format json` shape of the US asset overview, shared by `positions` and
+/// `portfolio`.
+pub(crate) fn normalize_us_overview(
+    resp: &longbridge::trade::USAssetOverview,
+) -> Result<serde_json::Value> {
+    let mut data = serde_json::to_value(resp)?;
     // Normalize for AI agent: account_type code → readable string, timestamp string → int
     if let Some(map) = data.as_object_mut() {
         if let Some(s) = map.get("account_type").and_then(|v| v.as_str()) {
@@ -2145,19 +2231,11 @@ async fn cmd_us_positions(format: &OutputFormat) -> Result<()> {
             }
         }
     }
-    match format {
-        OutputFormat::Json => print_json_us(&data),
-        OutputFormat::Pretty => print_us_positions_pretty(&data),
-    }
-    Ok(())
+    Ok(data)
 }
 
 fn print_us_positions_pretty(data: &serde_json::Value) {
-    let val = |v: &serde_json::Value| match v {
-        serde_json::Value::String(s) => s.clone(),
-        serde_json::Value::Number(n) => n.to_string(),
-        _ => "-".to_string(),
-    };
+    let val = us_val;
     let acct_type = data["account_type"].as_str().unwrap_or("-");
     println!("Account Type:   {acct_type}");
     println!("Cash Buy Power: {}", val(&data["cash_buy_power"]));
@@ -2186,7 +2264,34 @@ fn print_us_positions_pretty(data: &serde_json::Value) {
         );
     }
 
-    // Stock positions — counter_id field contains the already-converted symbol (USStockEntry.full_symbol)
+    print_us_holdings_pretty(data);
+}
+
+/// The holding value of a raw JSON field, `-` when absent.
+fn us_val(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Number(n) => n.to_string(),
+        _ => "-".to_string(),
+    }
+}
+
+/// The user-facing symbol of a US holding: stock entries carry it as
+/// `full_symbol` (`symbol` is the bare ticker), crypto entries as `symbol`, and
+/// raw option entries as `counter_id`.
+fn us_holding_symbol(p: &serde_json::Value) -> String {
+    ["full_symbol", "symbol", "counter_id"]
+        .iter()
+        .find_map(|k| p[*k].as_str().filter(|s| !s.is_empty()))
+        .map_or_else(|| "-".to_string(), str::to_string)
+}
+
+/// Stock / option / crypto tables of a normalized US asset overview, shared by
+/// `positions` and `portfolio`.
+pub(crate) fn print_us_holdings_pretty(data: &serde_json::Value) {
+    let val = us_val;
+    let empty = vec![];
+
     let stock_list = data["stock_list"].as_array().unwrap_or(&empty);
     if !stock_list.is_empty() {
         println!("── Stocks ──────────────────────────────────────────────────────");
@@ -2196,7 +2301,7 @@ fn print_us_positions_pretty(data: &serde_json::Value) {
                 .iter()
                 .map(|p| {
                     vec![
-                        val(&p["counter_id"]),
+                        us_holding_symbol(p),
                         val(&p["quantity"]),
                         val(&p["average_cost"]),
                         val(&p["last_done"]),
@@ -2218,7 +2323,7 @@ fn print_us_positions_pretty(data: &serde_json::Value) {
                 .iter()
                 .map(|p| {
                     vec![
-                        val(&p["counter_id"]),
+                        us_holding_symbol(p),
                         val(&p["underlying_counter_id"]),
                         val(&p["quantity"]),
                         val(&p["average_cost"]),
@@ -2238,7 +2343,7 @@ fn print_us_positions_pretty(data: &serde_json::Value) {
                 .iter()
                 .map(|p| {
                     vec![
-                        val(&p["counter_id"]),
+                        us_holding_symbol(p),
                         val(&p["asset_type"]),
                         val(&p["average_cost"]),
                         val(&p["currency"]),
@@ -2512,6 +2617,34 @@ mod tests {
         run_margin_ratio(&mock, "TSLA.US".to_string(), &OutputFormat::Pretty)
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_run_us_positions_uses_the_us_overview() {
+        // No `stock_positions` expectation: calling the AP endpoint panics.
+        let mut mock = MockTradeApi::new();
+        mock.expect_us_asset_overview()
+            .times(1)
+            .returning(|| Ok(longbridge::trade::USAssetOverview::default()));
+        run_us_positions(&mock, &OutputFormat::Json).await.unwrap();
+    }
+
+    #[test]
+    fn test_us_holding_symbol_prefers_the_qualified_symbol() {
+        use serde_json::json;
+        assert_eq!(
+            us_holding_symbol(&json!({"symbol": "AAPL", "full_symbol": "AAPL.US"})),
+            "AAPL.US"
+        );
+        assert_eq!(
+            us_holding_symbol(&json!({"symbol": "BTCUSD.BKKT", "full_symbol": ""})),
+            "BTCUSD.BKKT"
+        );
+        assert_eq!(
+            us_holding_symbol(&json!({"counter_id": "AAPL261120C345000.US"})),
+            "AAPL261120C345000.US"
+        );
+        assert_eq!(us_holding_symbol(&json!({})), "-");
     }
 
     #[test]

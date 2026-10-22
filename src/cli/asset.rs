@@ -25,8 +25,16 @@ fn val_str(v: &Value) -> String {
 // ── exchange rate ─────────────────────────────────────────────────────────────
 
 /// Fetch exchange rates for all supported currencies.
+///
+/// US accounts read `/v1/us/assets/exchange-rates` (the AP endpoint is not
+/// deployed in the US data center); the output keeps the same `exchanges` list.
 pub async fn cmd_exchange_rate(format: &OutputFormat, verbose: bool) -> Result<()> {
-    let data = http_get("/v1/asset/exchange_rates", &[], verbose).await?;
+    let data = if crate::openapi::is_us_account().await {
+        let api = super::api::LbTradeApi::new(crate::openapi::trade());
+        super::us_asset::us_exchange_rates_json(&api).await?
+    } else {
+        http_get("/v1/asset/exchange_rates", &[], verbose).await?
+    };
     match format {
         OutputFormat::Json => print_json(&data),
         OutputFormat::Pretty => print_exchange_rates(&data),
@@ -523,7 +531,10 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
 
     let command = path.join(" ");
     let schema = match command.as_str() {
-        "exchange-rate" => object("Exchange rates", &["exchanges"]),
+        "exchange-rate" => object(
+            "Exchange rates; each entry has base_currency, other_currency, bid_rate, offer_rate, average_rate (US accounts also universal_key, spec_key)",
+            &["exchanges"],
+        ),
         "portfolio short-margin" => object("Short-selling margin details", &["short_list"]),
         "profit-analysis" => object("Account profit analysis", profit_analysis_schema_fields()),
         "profit-analysis detail" => object(
