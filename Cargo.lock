@@ -2705,6 +2705,7 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 [[package]]
 name = "longbridge"
 version = "5.2.2"
+source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fus-asset-apis#f8877d2ab83e8ebbf7c91772ae3c1182272a829d"
 dependencies = [
  "anyhow",
  "bitflags 2.10.0",
@@ -2757,6 +2758,7 @@ dependencies = [
 [[package]]
 name = "longbridge-candlesticks"
 version = "5.2.2"
+source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fus-asset-apis#f8877d2ab83e8ebbf7c91772ae3c1182272a829d"
 dependencies = [
  "bitflags 2.10.0",
  "num-traits",
@@ -2768,6 +2770,7 @@ dependencies = [
 [[package]]
 name = "longbridge-geo"
 version = "5.2.2"
+source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fus-asset-apis#f8877d2ab83e8ebbf7c91772ae3c1182272a829d"
 dependencies = [
  "reqwest 0.12.28",
 ]
@@ -2775,6 +2778,7 @@ dependencies = [
 [[package]]
 name = "longbridge-httpcli"
 version = "5.2.2"
+source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fus-asset-apis#f8877d2ab83e8ebbf7c91772ae3c1182272a829d"
 dependencies = [
  "dotenv",
  "eventsource-stream",
@@ -2797,6 +2801,7 @@ dependencies = [
 [[package]]
 name = "longbridge-oauth"
 version = "5.2.2"
+source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fus-asset-apis#f8877d2ab83e8ebbf7c91772ae3c1182272a829d"
 dependencies = [
  "dirs 6.0.0",
  "futures-util",
@@ -2813,6 +2818,7 @@ dependencies = [
 [[package]]
 name = "longbridge-proto"
 version = "5.2.2"
+source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fus-asset-apis#f8877d2ab83e8ebbf7c91772ae3c1182272a829d"
 dependencies = [
  "prost 0.14.3",
  "serde",
@@ -2895,6 +2901,7 @@ dependencies = [
 [[package]]
 name = "longbridge-wscli"
 version = "5.2.2"
+source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fus-asset-apis#f8877d2ab83e8ebbf7c91772ae3c1182272a829d"
 dependencies = [
  "byteorder",
  "flate2",
