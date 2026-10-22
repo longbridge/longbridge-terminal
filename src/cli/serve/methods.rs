@@ -105,7 +105,33 @@ const TRADE_METHODS: &[&str] = &[
     "fund_positions",
     "margin_ratio",
     "estimate_max_purchase_quantity",
+    "us_asset_overview",
+    "us_cash_and_buy_power",
+    "us_available_holding",
+    "us_transaction_history",
+    "us_exchange_rates",
 ];
+
+/// AP-only `trade.*` methods whose backend is not deployed in the US data
+/// center, with the error a US session gets instead. Where a US counterpart
+/// exists the error names it; results keep their SDK shape, so a US session is
+/// pointed at the US method rather than silently answered in another shape.
+fn ap_only_method_error(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "account_balance" => {
+            "trade.account_balance is not available for US accounts; use trade.us_cash_and_buy_power"
+        }
+        "cash_flow" => {
+            "trade.cash_flow is not available for US accounts; use trade.us_transaction_history"
+        }
+        "stock_positions" => {
+            "trade.stock_positions is not available for US accounts; use trade.us_asset_overview"
+        }
+        "fund_positions" => "trade.fund_positions is not available for US accounts",
+        "margin_ratio" => "trade.margin_ratio is not available for US accounts",
+        _ => return None,
+    })
+}
 
 /// The order-execution gate shared by `trade.submit_order`, `trade.cancel_order`
 /// and `trade.replace_order`.
@@ -377,8 +403,14 @@ async fn call_trade(name: &str, p: Params<'_>) -> Result<Value> {
     use longbridge::trade::{
         EstimateMaxPurchaseQuantityOptions, GetCashFlowOptions, GetHistoryExecutionsOptions,
         GetHistoryOrdersOptions, GetTodayExecutionsOptions, GetTodayOrdersOptions,
-        ReplaceOrderOptions, SubmitOrderOptions,
+        GetUSAvailableHoldingOptions, GetUSTransactionHistoryOptions, ReplaceOrderOptions,
+        SubmitOrderOptions,
     };
+    if let Some(msg) = ap_only_method_error(name) {
+        if crate::openapi::is_us_account().await {
+            bail!(msg);
+        }
+    }
     let api = trade_api();
     match name {
         "today_orders" => {
@@ -540,7 +572,36 @@ async fn call_trade(name: &str, p: Params<'_>) -> Result<Value> {
             }
             ok(api.estimate_max_purchase_quantity(opts).await?)
         }
+        "us_asset_overview" => ok(api.us_asset_overview().await?),
+        "us_cash_and_buy_power" => ok(api.us_cash_and_buy_power(p.str_opt("currency")?).await?),
+        "us_available_holding" => ok(api
+            .us_available_holding(GetUSAvailableHoldingOptions {
+                symbol: p.str("symbol")?,
+                equity_type: p.str_opt("equity_type")?.unwrap_or_default(),
+                position_side: p.str_opt("position_side")?.unwrap_or_default(),
+            })
+            .await?),
+        "us_transaction_history" => {
+            let mut opts = GetUSTransactionHistoryOptions::new(
+                crate::cli::output::parse_datetime_start(&p.str("start")?)?,
+                crate::cli::output::parse_datetime_end(&p.str("end")?)?,
+            );
+            opts.page = page_param(p, "page", 1)?;
+            opts.size = page_param(p, "size", 20)?;
+            opts.types = p.strs_opt("types")?;
+            opts.currency = p.str_opt("currency")?.unwrap_or_default();
+            ok(api.us_transaction_history(opts).await?)
+        }
+        "us_exchange_rates" => ok(api.us_exchange_rates().await?),
         other => bail!("unknown method `{TRADE_PREFIX}{other}`"),
+    }
+}
+
+/// A positive page number / page size that fits the SDK's `i32`.
+fn page_param(p: Params<'_>, key: &str, default: usize) -> Result<i32> {
+    match i32::try_from(p.usize_or(key, default)?) {
+        Ok(n) if n > 0 => Ok(n),
+        _ => bail_param!("`{key}` must be a positive integer"),
     }
 }
 
@@ -845,6 +906,38 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("obliterate"));
+    }
+
+    #[test]
+    fn ap_only_methods_point_us_sessions_at_the_us_method() {
+        for (name, hint) in [
+            ("account_balance", Some("trade.us_cash_and_buy_power")),
+            ("cash_flow", Some("trade.us_transaction_history")),
+            ("stock_positions", Some("trade.us_asset_overview")),
+            ("fund_positions", None),
+            ("margin_ratio", None),
+        ] {
+            let msg =
+                ap_only_method_error(name).unwrap_or_else(|| panic!("{name} must be AP-only"));
+            assert!(msg.contains("not available for US accounts"), "{msg}");
+            if let Some(hint) = hint {
+                assert!(msg.contains(hint), "{name}: {msg}");
+                assert!(is_known(hint), "{hint} must be a real method");
+            }
+        }
+        for name in ["us_cash_and_buy_power", "today_orders", "submit_order"] {
+            assert!(ap_only_method_error(name).is_none(), "{name}");
+        }
+    }
+
+    #[test]
+    fn page_params_default_and_reject_zero() {
+        let v = json!({});
+        assert_eq!(page_param(Params(Some(&v)), "page", 1).unwrap(), 1);
+        let v = json!({"size": 50});
+        assert_eq!(page_param(Params(Some(&v)), "size", 20).unwrap(), 50);
+        let v = json!({"page": 0});
+        assert!(page_param(Params(Some(&v)), "page", 1).is_err());
     }
 
     #[test]

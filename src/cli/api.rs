@@ -12,8 +12,10 @@ use longbridge::trade::{
     AccountBalance, CashFlow, EstimateMaxPurchaseQuantityOptions,
     EstimateMaxPurchaseQuantityResponse, Execution, FundPositionsResponse, GetCashFlowOptions,
     GetHistoryExecutionsOptions, GetHistoryOrdersOptions, GetTodayExecutionsOptions,
-    GetTodayOrdersOptions, MarginRatio, Order, OrderDetail, ReplaceOrderOptions,
-    StockPositionsResponse, SubmitOrderOptions, SubmitOrderResponse,
+    GetTodayOrdersOptions, GetUSAvailableHoldingOptions, GetUSTransactionHistoryOptions,
+    MarginRatio, Order, OrderDetail, ReplaceOrderOptions, StockPositionsResponse,
+    SubmitOrderOptions, SubmitOrderResponse, USAssetOverview, USAvailableHolding,
+    USCashAndBuyPower, USExchangeRates, USTransactionHistory,
 };
 use longbridge::{quote::IntradayLine, Market};
 use time::Date;
@@ -116,6 +118,22 @@ pub trait TradeApi: Send + Sync {
         &self,
         opts: EstimateMaxPurchaseQuantityOptions,
     ) -> Result<EstimateMaxPurchaseQuantityResponse>;
+    /// US accounts only: stock / option / crypto positions plus cash.
+    async fn us_asset_overview(&self) -> Result<USAssetOverview>;
+    /// US accounts only: cash per currency, buying power and margin status.
+    async fn us_cash_and_buy_power(&self, currency: Option<String>) -> Result<USCashAndBuyPower>;
+    /// US accounts only: quantity of a holding available to trade.
+    async fn us_available_holding(
+        &self,
+        opts: GetUSAvailableHoldingOptions,
+    ) -> Result<USAvailableHolding>;
+    /// US accounts only: one page of the account transaction history.
+    async fn us_transaction_history(
+        &self,
+        opts: GetUSTransactionHistoryOptions,
+    ) -> Result<USTransactionHistory>;
+    /// US accounts only: exchange rates used by the account.
+    async fn us_exchange_rates(&self) -> Result<USExchangeRates>;
 }
 
 // ──── Production implementations ────────────────────────────────────────────
@@ -417,6 +435,32 @@ impl TradeApi for LbTradeApi {
         opts: EstimateMaxPurchaseQuantityOptions,
     ) -> Result<EstimateMaxPurchaseQuantityResponse> {
         Ok(self.ctx.estimate_max_purchase_quantity(opts).await?)
+    }
+
+    async fn us_asset_overview(&self) -> Result<USAssetOverview> {
+        Ok(self.ctx.us_asset_overview().await?)
+    }
+
+    async fn us_cash_and_buy_power(&self, currency: Option<String>) -> Result<USCashAndBuyPower> {
+        Ok(self.ctx.us_cash_and_buy_power(currency.as_deref()).await?)
+    }
+
+    async fn us_available_holding(
+        &self,
+        opts: GetUSAvailableHoldingOptions,
+    ) -> Result<USAvailableHolding> {
+        Ok(self.ctx.us_available_holding(opts).await?)
+    }
+
+    async fn us_transaction_history(
+        &self,
+        opts: GetUSTransactionHistoryOptions,
+    ) -> Result<USTransactionHistory> {
+        Ok(self.ctx.us_transaction_history(opts).await?)
+    }
+
+    async fn us_exchange_rates(&self) -> Result<USExchangeRates> {
+        Ok(self.ctx.us_exchange_rates().await?)
     }
 }
 
