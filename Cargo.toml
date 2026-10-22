@@ -139,3 +139,8 @@ needless_pass_by_value = "allow"
 pedantic = { level = "deny", priority = -1 }
 too_many_arguments = "allow"
 too_many_lines = "allow"
+
+# TEMP: build against the unpublished SDK branch `feat/us-asset-apis` (US asset
+# APIs). Drop this section before merge, once that SDK release is published.
+[patch.crates-io]
+longbridge = { path = "/private/tmp/claude-501/-Users-hogan-work-longbridge-longbridge-mcp/26ecef02-dd5f-4310-a8cb-70625219e796/scratchpad/sdk-us-asset/rust" }
