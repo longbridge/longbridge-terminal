@@ -17,7 +17,6 @@ use crate::cli::api::TradeApi;
 use crate::cli::output::{print_account_banner, print_table};
 use crate::cli::trade::{normalize_us_overview, print_json_us, print_us_holdings_pretty};
 use crate::cli::OutputFormat;
-use crate::utils::counter::counter_id_to_symbol;
 use crate::utils::datetime::fmt_rfc3339;
 
 /// Page size used to walk `us_transaction_history`.
@@ -239,7 +238,7 @@ pub async fn run_us_cash_flow(
                 t.title.clone(),
                 t.amount.clone(),
                 t.currency.clone(),
-                counter_id_to_symbol(&t.symbol),
+                t.symbol.clone(),
                 t.done_at
                     .or(t.create_at)
                     .map(fmt_rfc3339)

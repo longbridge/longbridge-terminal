@@ -2230,6 +2230,25 @@ pub(crate) fn normalize_us_overview(
                 map.insert((*list_key).to_string(), serde_json::Value::Array(vec![]));
             }
         }
+        // Crypto entries carry the bare pair code (`BTCUSD`) and the market
+        // (`BKKT`); add the user-facing `full_symbol` (`BTCUSD.BKKT`), as
+        // stock entries have it.
+        if let Some(cryptos) = map
+            .get_mut("crypto_list")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            for entry in cryptos
+                .iter_mut()
+                .filter_map(serde_json::Value::as_object_mut)
+            {
+                let symbol = entry.get("symbol").and_then(|v| v.as_str()).unwrap_or("");
+                let market = entry.get("market").and_then(|v| v.as_str()).unwrap_or("");
+                if !symbol.is_empty() && !market.is_empty() && !symbol.contains('.') {
+                    let full = format!("{symbol}.{market}");
+                    entry.insert("full_symbol".to_string(), serde_json::Value::String(full));
+                }
+            }
+        }
     }
     Ok(data)
 }
@@ -2277,8 +2296,9 @@ fn us_val(v: &serde_json::Value) -> String {
 }
 
 /// The user-facing symbol of a US holding: stock entries carry it as
-/// `full_symbol` (`symbol` is the bare ticker), crypto entries as `symbol`, and
-/// raw option entries as `counter_id`.
+/// `full_symbol` (`symbol` is the bare ticker), crypto entries get a
+/// `full_symbol` from [`normalize_us_overview`] (`symbol` is the bare pair
+/// code), and raw option entries carry it as `counter_id`.
 fn us_holding_symbol(p: &serde_json::Value) -> String {
     ["full_symbol", "symbol", "counter_id"]
         .iter()
@@ -2338,16 +2358,16 @@ pub(crate) fn print_us_holdings_pretty(data: &serde_json::Value) {
     if !cryptos.is_empty() {
         println!("── Crypto ──────────────────────────────────────────────────────");
         print_table(
-            &["Symbol", "Type", "Avg Cost", "Currency", "Industry"],
+            &["Symbol", "Qty", "Cost", "Last", "Today P&L"],
             cryptos
                 .iter()
                 .map(|p| {
                     vec![
                         us_holding_symbol(p),
-                        val(&p["asset_type"]),
+                        val(&p["quantity"]),
                         val(&p["average_cost"]),
-                        val(&p["currency"]),
-                        val(&p["industry_name"]),
+                        val(&p["last_done"]),
+                        val(&p["today_pl"]),
                     ]
                 })
                 .collect(),
@@ -2645,6 +2665,27 @@ mod tests {
             "AAPL261120C345000.US"
         );
         assert_eq!(us_holding_symbol(&json!({})), "-");
+    }
+
+    #[test]
+    fn test_normalize_us_overview_qualifies_crypto_symbols() {
+        let overview: longbridge::trade::USAssetOverview =
+            serde_json::from_value(serde_json::json!({
+                "account_type": "1",
+                "stock_list": [{"symbol": "MULL", "full_symbol": "MULL.US", "market": "US"}],
+                "crypto_list": [
+                    {"symbol": "BTCUSD", "market": "BKKT", "quantity": "0.5"},
+                    {"symbol": "ETHUSD", "market": ""}
+                ]
+            }))
+            .unwrap();
+        let v = normalize_us_overview(&overview).unwrap();
+        assert_eq!(v["crypto_list"][0]["full_symbol"], "BTCUSD.BKKT");
+        assert_eq!(v["crypto_list"][0]["symbol"], "BTCUSD");
+        assert_eq!(v["crypto_list"][0]["quantity"], "0.5");
+        assert!(v["crypto_list"][1].get("full_symbol").is_none());
+        assert_eq!(us_holding_symbol(&v["crypto_list"][0]), "BTCUSD.BKKT");
+        assert_eq!(us_holding_symbol(&v["stock_list"][0]), "MULL.US");
     }
 
     #[test]

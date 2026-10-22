@@ -44,26 +44,42 @@ pub async fn cmd_exchange_rate(format: &OutputFormat, verbose: bool) -> Result<(
 
 fn print_exchange_rates(data: &Value) {
     if let Some(list) = data["exchanges"].as_array() {
+        // US accounts get one row per rate type (`spec_key`, e.g. `am` and
+        // `reference`) for the same pair; show it so the rows are told apart.
+        let with_rate_type = list
+            .iter()
+            .any(|item| item["spec_key"].as_str().is_some_and(|s| !s.is_empty()));
         let rows: Vec<Vec<String>> = list
             .iter()
             .map(|item| {
-                vec![
-                    format!(
-                        "{} → {}",
-                        val_str(&item["base_currency"]),
-                        val_str(&item["other_currency"])
-                    ),
+                let mut row = vec![format!(
+                    "{} → {}",
+                    val_str(&item["base_currency"]),
+                    val_str(&item["other_currency"])
+                )];
+                if with_rate_type {
+                    row.push(val_str(&item["spec_key"]));
+                }
+                row.extend([
                     val_str(&item["average_rate"]),
                     val_str(&item["bid_rate"]),
                     val_str(&item["offer_rate"]),
-                ]
+                ]);
+                row
             })
             .collect();
-        super::output::print_table(
-            &["pair", "average_rate", "bid_rate", "offer_rate"],
-            rows,
-            &OutputFormat::Pretty,
-        );
+        let headers: &[&str] = if with_rate_type {
+            &[
+                "pair",
+                "rate_type",
+                "average_rate",
+                "bid_rate",
+                "offer_rate",
+            ]
+        } else {
+            &["pair", "average_rate", "bid_rate", "offer_rate"]
+        };
+        super::output::print_table(headers, rows, &OutputFormat::Pretty);
     } else {
         print_json(data);
     }
@@ -532,7 +548,7 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
     let command = path.join(" ");
     let schema = match command.as_str() {
         "exchange-rate" => object(
-            "Exchange rates; each entry has base_currency, other_currency, bid_rate, offer_rate, average_rate (US accounts also universal_key, spec_key)",
+            "Exchange rates; each entry has base_currency, other_currency, bid_rate, offer_rate, average_rate. US accounts: rates are numeric strings, and each entry also has universal_key (the account channel, e.g. us_lb_apex) and spec_key (the rate type, e.g. am or reference)",
             &["exchanges"],
         ),
         "portfolio short-margin" => object("Short-selling margin details", &["short_list"]),
