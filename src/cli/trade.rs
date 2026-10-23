@@ -1,13 +1,14 @@
 use anyhow::{bail, Result};
 use longbridge::trade::{
-    EstimateMaxPurchaseQuantityOptions, GetCashFlowOptions, GetHistoryExecutionsOptions,
-    GetHistoryOrdersOptions, GetTodayExecutionsOptions, GetTodayOrdersOptions,
-    GetUSRealizedPLOptions, OrderSide, OrderType, OutsideRTH, ReplaceOrderOptions,
-    SubmitOrderOptions, TimeInForceType,
+    AllExecutionsResponse, EstimateMaxPurchaseQuantityOptions, Execution, GetAllExecutionsOptions,
+    GetCashFlowOptions, GetHistoryExecutionsOptions, GetHistoryOrdersOptions,
+    GetTodayExecutionsOptions, GetTodayOrdersOptions, GetUSRealizedPLOptions, OrderSide, OrderType,
+    OutsideRTH, ReplaceOrderOptions, SubmitOrderOptions, TimeInForceType,
 };
 use rust_decimal::Decimal;
 use std::fmt::Write as _;
 use std::str::FromStr;
+use time::OffsetDateTime;
 
 use super::{
     api::{LbTradeApi, TradeApi},
@@ -382,14 +383,20 @@ pub async fn cmd_order_detail(
                 } else {
                     val("id")
                 };
-                let sym_val = val("symbol");
+                // No symbol from the gateway: show the raw counter_id instead.
+                let (sym_key, sym_val) =
+                    if data["symbol"].is_null() && !data["counter_id"].is_null() {
+                        ("counter_id", val("counter_id"))
+                    } else {
+                        ("symbol", val("symbol"))
+                    };
                 let side_val = if data["action"].is_null() {
                     val("side")
                 } else {
                     val("action")
                 };
                 println!("  {:<20} {}", "order_id", id_val);
-                println!("  {:<20} {}", "symbol", sym_val);
+                println!("  {sym_key:<20} {sym_val}");
                 println!("  {:<20} {}", "side", side_val);
                 for key in &["status", "order_type", "quantity", "price"] {
                     println!("  {key:<20} {}", val(key));
@@ -526,7 +533,7 @@ struct ExecRow {
 }
 
 impl ExecRow {
-    fn from_sdk(e: &longbridge::trade::Execution) -> Self {
+    fn from_sdk(e: &Execution) -> Self {
         Self {
             order_id: e.order_id.clone(),
             trade_id: e.trade_id.clone(),
@@ -539,6 +546,63 @@ impl ExecRow {
     }
 }
 
+/// Executions between `start` and `end` (optionally one `symbol`), every page.
+///
+/// US accounts read `GET /v1/trade/execution/history`, which the SDK pages
+/// through `has_more` itself (`/v3/trade/execution/all` answers HTTP 500 for
+/// US accounts). AP accounts read `/v3/trade/execution/all`, filtered by
+/// execution time, through `all_page` (one page per call), walking `page`
+/// until `has_more` is false.
+async fn fetch_history_executions<F, Fut>(
+    api: &dyn TradeApi,
+    is_us: bool,
+    start: Option<OffsetDateTime>,
+    end: Option<OffsetDateTime>,
+    symbol: Option<&str>,
+    mut all_page: F,
+) -> Result<Vec<Execution>>
+where
+    F: FnMut(GetAllExecutionsOptions) -> Fut,
+    Fut: std::future::Future<Output = Result<AllExecutionsResponse>>,
+{
+    if is_us {
+        let mut opts = GetHistoryExecutionsOptions::new();
+        if let Some(s) = symbol {
+            opts = opts.symbol(s);
+        }
+        if let Some(dt) = start {
+            opts = opts.start_at(dt);
+        }
+        if let Some(dt) = end {
+            opts = opts.end_at(dt);
+        }
+        return api.history_executions(opts).await;
+    }
+    // Each v3 page holds at most 1000 records; bounded as a runaway guard.
+    let mut all: Vec<Execution> = Vec::new();
+    for page in 1..=1000u64 {
+        let mut opts = GetAllExecutionsOptions::new().page(page);
+        if let Some(s) = symbol {
+            opts = opts.symbol(s);
+        }
+        if let Some(dt) = start {
+            opts = opts.start_at(dt);
+        }
+        if let Some(dt) = end {
+            opts = opts.end_at(dt);
+        }
+        let resp = all_page(opts).await?;
+        if resp.trades.is_empty() {
+            break;
+        }
+        all.extend(resp.trades);
+        if !resp.has_more {
+            break;
+        }
+    }
+    Ok(all)
+}
+
 pub async fn cmd_executions(
     history: bool,
     start: Option<String>,
@@ -546,40 +610,27 @@ pub async fn cmd_executions(
     symbol: Option<String>,
     format: &OutputFormat,
 ) -> Result<()> {
-    let ctx = crate::openapi::trade();
+    let api = LbTradeApi::new(crate::openapi::trade());
     let executions = if history {
         let start_dt = start.as_deref().map(parse_datetime_start).transpose()?;
         let end_dt = end.as_deref().map(parse_datetime_end).transpose()?;
-        // v3 `/trade/execution/all` filters by execution time and caps each page
-        // at 1000 records; walk `page` until `has_more` is false.
-        let mut all: Vec<longbridge::trade::Execution> = Vec::new();
-        for page in 1..=1000u64 {
-            let mut exec_opts = longbridge::trade::GetAllExecutionsOptions::new().page(page);
-            if let Some(s) = &symbol {
-                exec_opts = exec_opts.symbol(s.clone());
-            }
-            if let Some(dt) = start_dt {
-                exec_opts = exec_opts.start_at(dt);
-            }
-            if let Some(dt) = end_dt {
-                exec_opts = exec_opts.end_at(dt);
-            }
-            let resp = ctx.all_executions(exec_opts).await?;
-            if resp.trades.is_empty() {
-                break;
-            }
-            all.extend(resp.trades);
-            if !resp.has_more {
-                break;
-            }
-        }
-        all
+        let is_us = crate::openapi::is_us_account().await;
+        let ctx = crate::openapi::trade();
+        fetch_history_executions(
+            &api,
+            is_us,
+            start_dt,
+            end_dt,
+            symbol.as_deref(),
+            |opts| async move { Ok(ctx.all_executions(opts).await?) },
+        )
+        .await?
     } else {
         let mut exec_opts = GetTodayExecutionsOptions::new();
         if let Some(s) = &symbol {
             exec_opts = exec_opts.symbol(s.clone());
         }
-        ctx.today_executions(exec_opts).await?
+        api.today_executions(exec_opts).await?
     };
 
     let rows: Vec<ExecRow> = executions.iter().map(ExecRow::from_sdk).collect();
@@ -672,21 +723,48 @@ where
     F: FnOnce(String) -> Fut,
     Fut: std::future::Future<Output = Result<serde_json::Value>>,
 {
-    if !super::api::is_us_order_id(order_id) {
-        bail!(
-            "invalid order ID `{order_id}`: US order IDs are digits only; no confirmation code was issued"
-        );
-    }
+    ensure_valid_order_id(true, order_id)
+        .map_err(|e| anyhow::anyhow!("{e}; no confirmation code was issued"))?;
     let full = fetch(order_id.to_string()).await.map_err(|e| {
-        anyhow::anyhow!(
-            "order {order_id} not found or its detail could not be fetched ({e}); no confirmation code was issued"
-        )
+        if is_not_found(&e) {
+            anyhow::anyhow!("order {order_id} not found ({e}); no confirmation code was issued")
+        } else {
+            anyhow::anyhow!(
+                "could not fetch order {order_id}: {e}; no confirmation code was issued"
+            )
+        }
     })?;
-    let order = full.get("order").filter(|o| o.is_object()).unwrap_or(&full);
-    if order.as_object().is_none_or(serde_json::Map::is_empty) {
+    // `{order: ...}`: the order must be an object; a null or scalar `order`
+    // means there is none. Otherwise the body is the order itself.
+    let order = match full.get("order") {
+        Some(o) => o.as_object(),
+        None => full.as_object(),
+    };
+    if order.is_none_or(serde_json::Map::is_empty) {
         bail!("order {order_id} not found; no confirmation code was issued");
     }
     Ok(us_order_summary(&full))
+}
+
+/// Refuses an order ID a US account cannot use: US order IDs are decimal
+/// digits only. AP order IDs are not checked.
+fn ensure_valid_order_id(is_us: bool, order_id: &str) -> Result<()> {
+    if is_us && !super::api::is_us_order_id(order_id) {
+        bail!("invalid order ID `{order_id}`: US order IDs are digits only");
+    }
+    Ok(())
+}
+
+/// Whether a failed order fetch means the order does not exist (HTTP 404).
+fn is_not_found(err: &anyhow::Error) -> bool {
+    use longbridge::httpclient::HttpClientError;
+    match err.downcast_ref::<HttpClientError>() {
+        Some(
+            HttpClientError::BadStatus(status)
+            | HttpClientError::UnexpectedHttpResponse { status, .. },
+        ) => status.as_u16() == 404,
+        _ => false,
+    }
 }
 
 /// Best-effort AP summary of an existing order: `None` when the detail cannot
@@ -969,6 +1047,7 @@ pub async fn cmd_cancel_order(
         return Ok(());
     };
     scope.verify(&code)?;
+    ensure_valid_order_id(crate::openapi::is_us_account().await, &order_id)?;
 
     let ctx = crate::openapi::trade();
     ctx.cancel_order(order_id.clone()).await?;
@@ -1039,6 +1118,7 @@ pub async fn cmd_replace_order(
         return Ok(());
     };
     scope.verify(&code)?;
+    ensure_valid_order_id(crate::openapi::is_us_account().await, &order_id)?;
 
     let ctx = crate::openapi::trade();
     ctx.replace_order(opts).await?;
@@ -2044,13 +2124,15 @@ pub async fn cmd_alert_set_enabled(
     Ok(())
 }
 
-/// `--schema` field notes for the US-only keys of `order` rows.
 /// `--schema` description of an option order's underlying symbol.
 const UNDERLYING_SYMBOL_DESC: &str =
     "(US only) Option orders: underlying symbol, when the gateway returns one";
 /// `--schema` description of the raw underlying counter ID fallback.
 const UNDERLYING_COUNTER_ID_DESC: &str = "(US only) Option orders: raw underlying counter ID, only when the gateway returns no underlying_symbol";
+/// `--schema` description of the raw counter ID fallback for the security.
+const COUNTER_ID_DESC: &str = "(US only) Raw counter ID, present only when no symbol is returned";
 
+/// `--schema` field notes for the US-only keys of `order` rows.
 const US_ORDER_LEGEND: &[(&str, &str)] = &[
     ("updated_at", "(US only) Last update time"),
     ("stock_name", "(US only) Security name"),
@@ -2062,6 +2144,7 @@ const US_ORDER_LEGEND: &[(&str, &str)] = &[
     ("gtd", "(US only) Good-till date"),
     ("operate_direction", "(US only) OPEN / CLOSE"),
     ("security_type", "(US only) Raw US security type code"),
+    ("counter_id", COUNTER_ID_DESC),
     ("underlying_symbol", UNDERLYING_SYMBOL_DESC),
     ("underlying_counter_id", UNDERLYING_COUNTER_ID_DESC),
     (
@@ -2083,6 +2166,7 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
                 fields(&[
                     "order_id",
                     "symbol",
+                    "counter_id",
                     "side",
                     "order_type",
                     "status",
@@ -2117,6 +2201,7 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
                     "order_id",
                     "stock_name",
                     "symbol",
+                    "counter_id",
                     "side",
                     "order_type",
                     "status",
@@ -2158,14 +2243,28 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
                 ("last_done", "(US only) Last done price"),
                 ("operate_direction", "(US only) OPEN / CLOSE"),
                 ("security_type", "(US only) Raw US security type code"),
+                ("counter_id", COUNTER_ID_DESC),
                 ("underlying_symbol", UNDERLYING_SYMBOL_DESC),
                 ("underlying_counter_id", UNDERLYING_COUNTER_ID_DESC),
             ],
         ),
-        "order executions" => array(
-            "Order executions",
+        "order executions" => with_legend(
+            array(
+                "Order executions (today, or --history). Same array shape for HK/CN and US accounts",
+                &[
+                    "order_id",
+                    "trade_id",
+                    "symbol",
+                    "side",
+                    "price",
+                    "quantity",
+                    "trade_done_at",
+                    "time",
+                ],
+            ),
             &[
-                "order_id", "trade_id", "symbol", "price", "quantity", "time",
+                ("trade_done_at", "Execution time (RFC 3339)"),
+                ("time", "Same value as trade_done_at"),
             ],
         ),
         "order buy" | "order sell" => object("Submitted order", &["order_id"]),
@@ -3178,17 +3277,44 @@ mod tests {
             assert!(err.contains("invalid order ID"), "{bad}: {err}");
             assert!(err.contains("no confirmation code"), "{err}");
         }
-        // Fetch failure: the reason is named.
+        // HTTP 404: the order does not exist.
         let err = us_preview_order_summary("701276261045858304", |_| async {
-            Err(anyhow::anyhow!("HTTP 404"))
+            Err(
+                longbridge::httpclient::HttpClientError::BadStatus(reqwest::StatusCode::NOT_FOUND)
+                    .into(),
+            )
+        })
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("not found") && err.contains("404"), "{err}");
+        assert!(err.contains("no confirmation code"), "{err}");
+        // Any other failure: not claimed as missing, the reason is named.
+        let err = us_preview_order_summary("701276261045858304", |_| async {
+            Err(anyhow::anyhow!("request timeout"))
         })
         .await
         .unwrap_err()
         .to_string();
         assert!(
-            err.contains("not found") && err.contains("HTTP 404"),
+            err.contains("could not fetch order 701276261045858304: request timeout"),
             "{err}"
         );
+        assert!(!err.contains("not found"), "{err}");
+        assert!(err.contains("no confirmation code"), "{err}");
+        // `order` present but null or not an object: no order.
+        for body in [
+            serde_json::json!({"order": null}),
+            serde_json::json!({"order": "x"}),
+            serde_json::json!({"order": {}}),
+        ] {
+            let err = us_preview_order_summary("701276261045858304", |_| async move { Ok(body) })
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("not found"), "{err}");
+            assert!(err.contains("no confirmation code"), "{err}");
+        }
         // Empty body: no order.
         let err = us_preview_order_summary("701276261045858304", |_| async {
             Ok(serde_json::json!({}))
@@ -3274,6 +3400,8 @@ mod tests {
             ("order detail", "us_time_in_force", "(US only)"),
             ("order detail", "us_tag", "(US only)"),
             ("order", "us_tag", "(US only)"),
+            ("order", "counter_id", "(US only)"),
+            ("order detail", "counter_id", "(US only)"),
             ("order", "underlying_symbol", "(US only)"),
             ("order", "underlying_counter_id", "(US only)"),
             ("order detail", "underlying_symbol", "(US only)"),
@@ -3289,5 +3417,104 @@ mod tests {
         }
         assert!(desc("assets", "net_assets").contains("absent"));
         assert!(desc("portfolio", "overview").contains("absent"));
+    }
+
+    #[test]
+    fn execute_validates_us_order_ids() {
+        assert!(ensure_valid_order_id(true, "701276261045858304").is_ok());
+        for bad in ["", "20240101-123456789", "../1", "１２３"] {
+            let err = ensure_valid_order_id(true, bad).unwrap_err().to_string();
+            assert!(err.contains("invalid order ID"), "{bad}: {err}");
+        }
+        // AP order IDs are not checked.
+        assert!(ensure_valid_order_id(false, "20240101-123456789").is_ok());
+    }
+
+    fn exec(trade_id: &str) -> Execution {
+        Execution {
+            order_id: "1".to_string(),
+            trade_id: trade_id.to_string(),
+            symbol: "EXMP.US".to_string(),
+            trade_done_at: time::OffsetDateTime::UNIX_EPOCH,
+            quantity: Decimal::ONE,
+            price: Decimal::ONE,
+            side: OrderSide::Buy,
+        }
+    }
+
+    #[tokio::test]
+    async fn us_history_executions_use_v1_history() {
+        let mut mock = MockTradeApi::new();
+        // No all_executions expectation: a v3 call would fail the test.
+        mock.expect_history_executions()
+            .times(1)
+            .withf(|opts| {
+                let v = serde_json::to_value(opts).expect("options serialise");
+                v["symbol"] == "EXMP.US" && v.get("start_at").is_some() && v.get("end_at").is_some()
+            })
+            .returning(|_| Ok(vec![exec("t1"), exec("t2")]));
+        let start = parse_datetime_start("2026-01-01").unwrap();
+        let end = parse_datetime_end("2026-01-31").unwrap();
+        let got = fetch_history_executions(
+            &mock,
+            true,
+            Some(start),
+            Some(end),
+            Some("EXMP.US"),
+            |_| async { panic!("US accounts must not call /v3/trade/execution/all") },
+        )
+        .await
+        .unwrap();
+        assert_eq!(got.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn ap_history_executions_page_v3_until_no_more() {
+        // No history_executions expectation: a v1 call would fail the test.
+        let mock = MockTradeApi::new();
+        let mut pages = Vec::new();
+        let got = fetch_history_executions(&mock, false, None, None, Some("EXMP.US"), |opts| {
+            let v = serde_json::to_value(&opts).expect("options serialise");
+            pages.push(v["page"].as_u64().expect("page set"));
+            assert_eq!(v["symbol"], "EXMP.US");
+            let page = pages.len();
+            async move {
+                Ok(AllExecutionsResponse {
+                    has_more: page < 2,
+                    trades: vec![exec(&format!("t{page}"))],
+                })
+            }
+        })
+        .await
+        .unwrap();
+        let ids: Vec<&str> = got.iter().map(|e| e.trade_id.as_str()).collect();
+        assert_eq!(ids, ["t1", "t2"]);
+        assert_eq!(pages, [1, 2]);
+    }
+
+    #[test]
+    fn schema_lists_emitted_fields() {
+        let names = |cmd: &str| -> Vec<String> {
+            let path: Vec<String> = cmd.split(' ').map(str::to_string).collect();
+            schema_for_path(&path)
+                .unwrap_or_else(|| panic!("schema for {cmd}"))
+                .fields
+                .into_iter()
+                .map(|f| f.name)
+                .collect()
+        };
+        let execs = names("order executions");
+        for key in [
+            "order_id",
+            "trade_id",
+            "symbol",
+            "side",
+            "price",
+            "quantity",
+            "trade_done_at",
+            "time",
+        ] {
+            assert!(execs.iter().any(|n| n == key), "order executions: {key}");
+        }
     }
 }
