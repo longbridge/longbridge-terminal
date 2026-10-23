@@ -3361,8 +3361,12 @@ pub enum OrderCmd {
     /// Today's trade executions (fills), or the full history with --history (AP and US accounts, same output)
     ///
     /// Returns: `order_id`, `trade_id`, symbol, side, price, quantity, `trade_done_at`.
-    /// With --history: every fill in the range, filtered by execution time and
-    /// paginated to completion (not capped at 1000).
+    /// With --history: every fill in the range, paginated to completion (not
+    /// capped at 1000). AP accounts filter by execution time. US accounts read
+    /// the v1 history, which is not filtered by execution time and can lag
+    /// across days, so fills near the range edges may be missing or extra.
+    /// US side: filled from the account's orders when the execution lacks it;
+    /// null (`-`) when the order is not found.
     /// Example: longbridge order executions
     /// Example: longbridge order executions --history --start 2024-01-01
     Executions {

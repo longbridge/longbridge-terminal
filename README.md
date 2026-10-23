@@ -329,7 +329,7 @@ longbridge agent --skill                                            # Print the 
 longbridge order                                           # Today's orders, or historical with --history
 longbridge order --history [--start 2024-01-01]            # Historical orders (use --symbol to filter)
 longbridge order detail <order_id>                         # Full detail for a single order including charges and history
-longbridge order executions                                # Today's trade executions (fills); `--history` for past fills (AP and US accounts)
+longbridge order executions                                # Today's trade executions (fills); `--history` for past fills (AP and US accounts; US history comes from v1: not filtered by execution time, can lag across days near range edges; US side is filled from orders)
 longbridge order buy TSLA.US 100 --price 250.00            # Preview a buy order (dry run); add --execute <CODE> to place it
 longbridge order sell TSLA.US 100 --price 260.00           # Preview a sell order (dry run); add --execute <CODE> to place it
 longbridge order cancel <order_id>                         # Preview cancelling a pending order (dry run); add --execute <CODE> to cancel it
