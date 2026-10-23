@@ -294,13 +294,12 @@ pub fn order_detail_json(raw: &Value) -> Value {
 
 /// One `cash-flow` row for a US transaction, keyed like the AP row
 /// (`flow_name`, `symbol`, `balance`, `currency`, `time`, `description`)
-/// plus `direction` and the US extras. AP's `business_type` has no US source
-/// and is omitted; `biz_code` / `biz_code_name` classify the row instead.
+/// plus `direction` and the US extras. `balance` is the signed amount, as AP
+/// balances are (zero for crypto transfers and fees, whose sign is only in
+/// `direction` / `quantity`). AP's `business_type` has no US source and is
+/// omitted; `biz_code` / `biz_code_name` classify the row instead.
 pub fn cash_flow_item(t: &USTransaction) -> Value {
-    let balance = Decimal::from_str(t.amount.trim()).map_or_else(
-        |_| t.amount.trim_start_matches('-').to_string(),
-        |d| d.abs().to_string(),
-    );
+    let balance = t.amount.trim().to_string();
     let mut m = Map::new();
     m.insert("flow_name".into(), t.title.clone().into());
     m.insert("symbol".into(), t.symbol.clone().into());
@@ -749,6 +748,35 @@ mod tests {
     }
 
     #[test]
+    fn cash_flow_balance_keeps_the_sign() {
+        let row = |amount: &str, quantity: &str| {
+            cash_flow_item(&USTransaction {
+                amount: amount.to_string(),
+                quantity: quantity.to_string(),
+                ..Default::default()
+            })
+        };
+        let buy = row("-60.02", "60.0012");
+        assert_eq!(
+            (buy["balance"].as_str(), buy["direction"].as_str()),
+            (Some("-60.02"), Some("Out"))
+        );
+        let sell = row("59.99", "-60.0012");
+        assert_eq!(
+            (sell["balance"].as_str(), sell["direction"].as_str()),
+            (Some("59.99"), Some("In"))
+        );
+        let crypto_out = row("0.00", "-0.5");
+        assert_eq!(
+            (
+                crypto_out["balance"].as_str(),
+                crypto_out["direction"].as_str()
+            ),
+            (Some("0.00"), Some("Out"))
+        );
+    }
+
+    #[test]
     fn direction_follows_amount_then_quantity() {
         assert_eq!(cash_flow_direction("59.99", "-60"), "In");
         assert_eq!(cash_flow_direction("-60.02", "60"), "Out");
@@ -780,7 +808,7 @@ mod tests {
         assert_eq!(
             cash_flow_json(&page.items),
             json!([
-                {"flow_name": "Withdrawal", "symbol": "", "direction": "Out", "balance": "100.00",
+                {"flow_name": "Withdrawal", "symbol": "", "direction": "Out", "balance": "-100.00",
                  "currency": "USD", "time": "2026-09-21T14:14:20Z", "description": "",
                  "biz_code": "LCWD", "biz_code_name": "Cash withdrawal", "ref_no": "R1"},
                 {"flow_name": "Crypto in: BTCUSD", "symbol": "BTCUSD.BKKT", "direction": "In",

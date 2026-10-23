@@ -983,7 +983,8 @@ pub enum Commands {
     ///
     /// Returns: `flow_name`, symbol, `business_type`, balance, currency, `business_time`, description.
     /// US accounts: same keys from the account transaction history (all pages in range),
-    /// plus `direction` (In/Out) and `biz_code`; no `business_type`.
+    /// with a signed `balance`, plus `direction` (In/Out; from the quantity sign when the
+    /// amount is 0, e.g. crypto transfers) and `biz_code`; no `business_type`.
     /// Defaults to last 30 days if no dates provided.
     /// Example: longbridge cash-flow --start 2024-01-01 --end 2024-03-31
     CashFlow {

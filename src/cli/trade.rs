@@ -2046,7 +2046,7 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
             .concat(),
         ),
         "cash-flow" => schema(
-            "Cash flow records, same array shape for HK/CN and US accounts. US rows come from the account transaction history: balance is unsigned, direction (In/Out, from the amount sign or, for zero-amount crypto transfers, the quantity sign) carries the sign; business_type has no US source and is absent (biz_code / biz_code_name classify the row); extras quantity, quantity_description, ref_no, equity_type",
+            "Cash flow records, same array shape for HK/CN and US accounts. US rows come from the account transaction history: balance is the signed amount (0 for crypto transfers and fees), direction is In/Out from the amount sign or, when the amount is 0, the quantity sign; business_type has no US source and is absent (biz_code / biz_code_name classify the row); extras quantity, quantity_description, ref_no, equity_type",
             RootKind::Array,
             fields(&[
                 "flow_name",
