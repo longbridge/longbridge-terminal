@@ -188,6 +188,11 @@ pub enum Commands {
     ///               reach their data
     ///   `quote.subscribe` / `quote.unsubscribe` — live feed, no CLI equivalent
     ///
+    /// US accounts: AP-only trade methods return an error naming the US
+    /// method to call instead — orders via `trade.us_query_orders` and
+    /// `trade.us_order_detail`, assets via `trade.us_asset_overview`,
+    /// `trade.us_cash_and_buy_power` and `trade.us_transaction_history`.
+    ///
     /// Order execution is gated: `trade.submit_order`, `trade.cancel_order` and
     /// `trade.replace_order` are DRY RUNS that place nothing unless the params
     /// include `"execute": "<CODE>"`, quoting the code the dry run returned.

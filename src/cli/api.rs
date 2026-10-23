@@ -12,10 +12,11 @@ use longbridge::trade::{
     AccountBalance, CashFlow, EstimateMaxPurchaseQuantityOptions,
     EstimateMaxPurchaseQuantityResponse, Execution, FundPositionsResponse, GetCashFlowOptions,
     GetHistoryExecutionsOptions, GetHistoryOrdersOptions, GetTodayExecutionsOptions,
-    GetTodayOrdersOptions, GetUSAvailableHoldingOptions, GetUSTransactionHistoryOptions,
-    MarginRatio, Order, OrderDetail, ReplaceOrderOptions, StockPositionsResponse,
-    SubmitOrderOptions, SubmitOrderResponse, USAssetOverview, USAvailableHolding,
-    USCashAndBuyPower, USExchangeRates, USTransactionHistory,
+    GetTodayOrdersOptions, GetUSAvailableHoldingOptions, GetUSHistoryOrders,
+    GetUSTransactionHistoryOptions, MarginRatio, Order, OrderDetail, QueryUSOrdersResponse,
+    ReplaceOrderOptions, StockPositionsResponse, SubmitOrderOptions, SubmitOrderResponse,
+    USAssetOverview, USAvailableHolding, USCashAndBuyPower, USExchangeRates, USOrderDetailResponse,
+    USTransactionHistory,
 };
 use longbridge::{quote::IntradayLine, Market};
 use time::Date;
@@ -134,6 +135,10 @@ pub trait TradeApi: Send + Sync {
     ) -> Result<USTransactionHistory>;
     /// US accounts only: exchange rates used by the account.
     async fn us_exchange_rates(&self) -> Result<USExchangeRates>;
+    /// US accounts only: one page of the order list (open and historical).
+    async fn us_query_orders(&self, opts: GetUSHistoryOrders) -> Result<QueryUSOrdersResponse>;
+    /// US accounts only: one order with its history and attached order.
+    async fn us_order_detail(&self, order_id: String) -> Result<USOrderDetailResponse>;
 }
 
 // ──── Production implementations ────────────────────────────────────────────
@@ -461,6 +466,14 @@ impl TradeApi for LbTradeApi {
 
     async fn us_exchange_rates(&self) -> Result<USExchangeRates> {
         Ok(self.ctx.us_exchange_rates().await?)
+    }
+
+    async fn us_query_orders(&self, opts: GetUSHistoryOrders) -> Result<QueryUSOrdersResponse> {
+        Ok(self.ctx.us_query_orders(opts).await?)
+    }
+
+    async fn us_order_detail(&self, order_id: String) -> Result<USOrderDetailResponse> {
+        Ok(self.ctx.us_order_detail(order_id).await?)
     }
 }
 

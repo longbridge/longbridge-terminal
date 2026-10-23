@@ -110,14 +110,37 @@ const TRADE_METHODS: &[&str] = &[
     "us_available_holding",
     "us_transaction_history",
     "us_exchange_rates",
+    "us_query_orders",
+    "us_order_detail",
 ];
 
 /// AP-only `trade.*` methods whose backend is not deployed in the US data
 /// center, with the error a US session gets instead. Where a US counterpart
 /// exists the error names it; results keep their SDK shape, so a US session is
 /// pointed at the US method rather than silently answered in another shape.
+///
+/// The order and execution methods mirror the CLI: `order` and `order <id>`
+/// are rerouted to the US order APIs on US accounts (`/v1/trade/order` returns
+/// HTTP 500 there), and `order executions` is refused outright.
 fn ap_only_method_error(name: &str) -> Option<&'static str> {
     Some(match name {
+        "today_orders" => {
+            "trade.today_orders is not available for US accounts; use trade.us_query_orders"
+        }
+        "history_orders" => {
+            "trade.history_orders is not available for US accounts; use trade.us_query_orders"
+        }
+        "order_detail" => {
+            "trade.order_detail is not available for US accounts; use trade.us_order_detail"
+        }
+        "today_executions" => {
+            "trade.today_executions is not available for US accounts; use trade.us_query_orders \
+             (filled orders)"
+        }
+        "history_executions" => {
+            "trade.history_executions is not available for US accounts; use \
+             trade.us_query_orders (filled orders)"
+        }
         "account_balance" => {
             "trade.account_balance is not available for US accounts; use trade.us_cash_and_buy_power"
         }
@@ -403,8 +426,8 @@ async fn call_trade(name: &str, p: Params<'_>) -> Result<Value> {
     use longbridge::trade::{
         EstimateMaxPurchaseQuantityOptions, GetCashFlowOptions, GetHistoryExecutionsOptions,
         GetHistoryOrdersOptions, GetTodayExecutionsOptions, GetTodayOrdersOptions,
-        GetUSAvailableHoldingOptions, GetUSTransactionHistoryOptions, ReplaceOrderOptions,
-        SubmitOrderOptions,
+        GetUSAvailableHoldingOptions, GetUSHistoryOrders, GetUSTransactionHistoryOptions,
+        OrderSide, ReplaceOrderOptions, SubmitOrderOptions,
     };
     if let Some(msg) = ap_only_method_error(name) {
         if crate::openapi::is_us_account().await {
@@ -593,6 +616,32 @@ async fn call_trade(name: &str, p: Params<'_>) -> Result<Value> {
             ok(api.us_transaction_history(opts).await?)
         }
         "us_exchange_rates" => ok(api.us_exchange_rates().await?),
+        "us_query_orders" => {
+            let start_at = match p.str_opt("start")? {
+                Some(s) => crate::cli::output::parse_datetime_start(&s)?.unix_timestamp(),
+                None => 0,
+            };
+            let end_at = match p.str_opt("end")? {
+                Some(e) => crate::cli::output::parse_datetime_end(&e)?.unix_timestamp(),
+                None => 0,
+            };
+            let side = match p.str_opt("side")? {
+                Some(s) => parse_side(&s)?,
+                None => OrderSide::Unknown,
+            };
+            ok(api
+                .us_query_orders(GetUSHistoryOrders {
+                    symbol: p.str_opt("symbol")?,
+                    side,
+                    start_at,
+                    end_at,
+                    query_type: query_type_param(p)?,
+                    page: page_param(p, "page", 1)?,
+                    limit: page_param(p, "limit", 20)?,
+                })
+                .await?)
+        }
+        "us_order_detail" => ok(api.us_order_detail(p.str("order_id")?).await?),
         other => bail!("unknown method `{TRADE_PREFIX}{other}`"),
     }
 }
@@ -602,6 +651,16 @@ fn page_param(p: Params<'_>, key: &str, default: usize) -> Result<i32> {
     match i32::try_from(p.usize_or(key, default)?) {
         Ok(n) if n > 0 => Ok(n),
         _ => bail_param!("`{key}` must be a positive integer"),
+    }
+}
+
+/// The US order list filter: 0 = all, 1 = pending, 2 = history (filled only).
+fn query_type_param(p: Params<'_>) -> Result<i32> {
+    match p.usize_or("query_type", 0)? {
+        n @ 0..=2 => Ok(i32::try_from(n).unwrap_or_default()),
+        other => {
+            bail_param!("`query_type` must be 0 (all), 1 (pending) or 2 (filled), got {other}")
+        }
     }
 }
 
@@ -916,6 +975,11 @@ mod tests {
             ("stock_positions", Some("trade.us_asset_overview")),
             ("fund_positions", None),
             ("margin_ratio", None),
+            ("today_orders", Some("trade.us_query_orders")),
+            ("history_orders", Some("trade.us_query_orders")),
+            ("order_detail", Some("trade.us_order_detail")),
+            ("today_executions", Some("trade.us_query_orders")),
+            ("history_executions", Some("trade.us_query_orders")),
         ] {
             let msg =
                 ap_only_method_error(name).unwrap_or_else(|| panic!("{name} must be AP-only"));
@@ -925,9 +989,36 @@ mod tests {
                 assert!(is_known(hint), "{hint} must be a real method");
             }
         }
-        for name in ["us_cash_and_buy_power", "today_orders", "submit_order"] {
+        for name in [
+            "us_cash_and_buy_power",
+            "us_query_orders",
+            "us_order_detail",
+            "submit_order",
+        ] {
             assert!(ap_only_method_error(name).is_none(), "{name}");
         }
+    }
+
+    #[test]
+    fn us_order_methods_are_advertised() {
+        let catalog = all_methods();
+        for method in ["trade.us_query_orders", "trade.us_order_detail"] {
+            assert!(is_known(method), "{method} must be routable");
+            assert!(
+                catalog.contains(&method.to_string()),
+                "{method} missing from catalog"
+            );
+        }
+    }
+
+    #[test]
+    fn query_type_defaults_to_all_and_rejects_unknown() {
+        let v = json!({});
+        assert_eq!(query_type_param(Params(Some(&v))).unwrap(), 0);
+        let v = json!({"query_type": 2});
+        assert_eq!(query_type_param(Params(Some(&v))).unwrap(), 2);
+        let v = json!({"query_type": 3});
+        assert!(query_type_param(Params(Some(&v))).is_err());
     }
 
     #[test]
