@@ -3342,7 +3342,7 @@ pub enum OrderCmd {
     ///
     /// Returns all fields from `order` plus `charge_detail`, `history_details`, msg.
     /// US accounts: same `--format json` keys except `time_in_force` / `outside_rth`
-    /// (raw code as `us_time_in_force`); symbol derived from the US counter ID.
+    /// (raw code as `us_time_in_force`); `counter_id` replaces symbol until the gateway converts it.
     /// Example: longbridge order detail 20240101-123456789
     /// Example: longbridge order detail 20240101-123456789 --attached
     Detail {

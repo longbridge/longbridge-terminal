@@ -17,10 +17,9 @@ use longbridge::trade::{
 use rust_decimal::Decimal;
 use serde_json::{json, Map, Value};
 
-use crate::cli::output::{fmt_decimal, header_to_json_key, strip_counter_ids};
+use crate::cli::output::{fmt_decimal, header_to_json_key};
 use crate::cli::trade::normalize_us_overview;
 use crate::cli::us_asset::margin_status_is_empty;
-use crate::utils::counter::counter_id_to_symbol;
 use crate::utils::datetime::{fmt_rfc3339, format_timestamp};
 
 /// Table rows for the pretty view of an array of mapped rows: one cell per
@@ -125,26 +124,23 @@ fn order_side(action: Option<&Value>) -> &'static str {
     }
 }
 
-/// `symbol_key` of a US order when the server sent it (the gateway renames
-/// `counter_id` → `symbol` once its symbol conversion is deployed), else
-/// derived from `counter_id_key` (`ST/US/INTC` → `INTC.US`).
-fn symbol_or_derived(raw: &Map<String, Value>, symbol_key: &str, counter_id_key: &str) -> String {
+/// Put the user-facing symbol of a US order under `symbol_key` when the
+/// response carries it. Symbol <-> counter ID conversion belongs to the
+/// gateway (it renames `counter_id` -> `symbol` on these endpoints once its
+/// conversion is deployed); until then the raw `counter_id_key` is passed
+/// through instead and `symbol_key` is omitted.
+fn put_symbol(
+    m: &mut Map<String, Value>,
+    raw: &Map<String, Value>,
+    symbol_key: &str,
+    counter_id_key: &str,
+) {
     let symbol = text(raw.get(symbol_key));
-    if !symbol.is_empty() {
-        return symbol;
-    }
-    let counter_id = text(raw.get(counter_id_key));
-    if counter_id.is_empty() {
-        String::new()
+    if symbol.is_empty() {
+        put(m, counter_id_key, &text(raw.get(counter_id_key)));
     } else {
-        counter_id_to_symbol(&counter_id)
+        m.insert(symbol_key.into(), symbol.into());
     }
-}
-
-/// The user-facing symbol of a US order: its `symbol` when present, else
-/// derived from `counter_id`.
-pub fn order_symbol(raw: &Map<String, Value>) -> String {
-    symbol_or_derived(raw, "symbol", "counter_id")
 }
 
 /// US-only order fields kept as extras (raw values), when present.
@@ -161,11 +157,7 @@ const ORDER_EXTRAS: &[&str] = &[
 
 fn put_order_extras(m: &mut Map<String, Value>, raw: &Map<String, Value>) {
     put(m, "stock_name", &text(raw.get("name")));
-    put(
-        m,
-        "underlying_symbol",
-        &symbol_or_derived(raw, "underlying_symbol", "underlying_counter_id"),
-    );
+    put_symbol(m, raw, "underlying_symbol", "underlying_counter_id");
     for key in ORDER_EXTRAS {
         put(m, key, &text(raw.get(*key)));
     }
@@ -187,7 +179,7 @@ pub fn order_item(raw: &Value) -> Value {
     };
     let mut m = Map::new();
     m.insert("order_id".into(), text(raw.get("id")).into());
-    m.insert("symbol".into(), order_symbol(raw).into());
+    put_symbol(&mut m, raw, "symbol", "counter_id");
     m.insert("side".into(), order_side(raw.get("action")).into());
     m.insert("order_type".into(), text(raw.get("order_type")).into());
     m.insert(
@@ -236,7 +228,7 @@ pub fn order_detail_json(raw: &Value) -> Value {
     };
     let mut m = Map::new();
     m.insert("order_id".into(), text(o.get("id")).into());
-    m.insert("symbol".into(), order_symbol(o).into());
+    put_symbol(&mut m, o, "symbol", "counter_id");
     m.insert("side".into(), order_side(o.get("action")).into());
     m.insert("order_type".into(), text(o.get("order_type")).into());
     m.insert("status".into(), order_status(&text(o.get("status"))).into());
@@ -285,9 +277,7 @@ pub fn order_detail_json(raw: &Value) -> Value {
         .get("attached_orders")
         .filter(|v| v.as_array().is_some_and(|a| !a.is_empty()))
     {
-        let mut attached = attached.clone();
-        strip_counter_ids(&mut attached);
-        m.insert("attached_orders".into(), attached);
+        m.insert("attached_orders".into(), attached.clone());
     }
     Value::Object(m)
 }
@@ -382,15 +372,14 @@ pub fn exchange_rates_json(rates: &USExchangeRates) -> Value {
     json!({ "exchanges": exchanges })
 }
 
-/// The user-facing symbol of a US holding (`MULL.US`, `BTCUSD.BKKT`).
+/// The user-facing symbol of a US holding from the response: `full_symbol`
+/// (stocks, `MULL.US`), else `symbol` qualified by `market` (crypto entries
+/// carry the bare pair, `BTCUSD` + `BKKT`). Never derived from `counter_id`;
+/// empty when the response has neither.
 fn holding_symbol(raw: &Map<String, Value>) -> String {
     let full = text(raw.get("full_symbol"));
     if !full.is_empty() {
         return full;
-    }
-    let counter_id = text(raw.get("counter_id"));
-    if !counter_id.is_empty() {
-        return counter_id_to_symbol(&counter_id);
     }
     let symbol = text(raw.get("symbol"));
     let market = text(raw.get("market"));
@@ -404,13 +393,18 @@ fn holding_symbol(raw: &Map<String, Value>) -> String {
 /// One holding keyed like the AP `positions` row (`symbol`, `name`,
 /// `quantity`, `cost_price`, `currency`, `market`), followed by the
 /// remaining non-empty US fields. AP's `available` has no source in the
-/// overview and is omitted.
+/// overview and is omitted. Without a symbol in the response, `symbol` is
+/// omitted and the raw `counter_id` stays.
 fn holding_item(raw: Value) -> Value {
     let Value::Object(mut raw) = raw else {
         return raw;
     };
     let mut m = Map::new();
-    m.insert("symbol".into(), holding_symbol(&raw).into());
+    let symbol = holding_symbol(&raw);
+    if !symbol.is_empty() {
+        m.insert("symbol".into(), symbol.into());
+        raw.remove("counter_id");
+    }
     for (to, from) in [
         ("name", "name"),
         ("quantity", "quantity"),
@@ -421,14 +415,7 @@ fn holding_item(raw: Value) -> Value {
         m.insert(to.into(), text(raw.get(from)).into());
         raw.remove(from);
     }
-    if let Some(u) = raw.remove("underlying_counter_id") {
-        put(
-            &mut m,
-            "underlying_symbol",
-            &counter_id_to_symbol(&text(Some(&u))),
-        );
-    }
-    for key in ["symbol", "full_symbol", "counter_id", "industry_counter_id"] {
+    for key in ["symbol", "full_symbol", "industry_counter_id"] {
         raw.remove(key);
     }
     for (k, v) in raw {
@@ -605,7 +592,7 @@ mod tests {
             "id": "900000000000000001", "status": "FilledStatus", "name": "Example Corp",
             "price": "20.5", "quantity": "2", "executed_price": "20.48", "executed_qty": "2",
             "submitted_at": "1790000000", "updated_at": "1790000060", "action": 2,
-            "counter_id": "ST/US/EXMP", "code": "EXMP", "order_type": "LO", "msg": "",
+            "symbol": "EXMP.US", "code": "EXMP", "order_type": "LO", "msg": "",
             "tag": 1, "currency": "USD", "time_in_force": 0, "gtd": "2026-10-02",
             "trigger_price": "", "last_done": "", "security_type": "CS",
             "operate_direction": "CLOSE", "executed_amount": "40.96"
@@ -613,28 +600,8 @@ mod tests {
     }
 
     #[test]
-    fn counter_id_derives_the_order_symbol() {
-        for (cid, want) in [
-            ("ST/US/INTC", "INTC.US"),
-            ("ETF/US/MULL", "MULL.US"),
-            ("VA/BKKT/BTCUSD", "BTCUSD.BKKT"),
-        ] {
-            let raw = json!({ "counter_id": cid });
-            assert_eq!(order_symbol(raw.as_object().unwrap()), want);
-        }
-        // Once the gateway converts, `symbol` is sent (and `counter_id` may
-        // be gone); it wins over any `counter_id`.
-        let raw = json!({ "symbol": "AAPL.US", "counter_id": "ST/US/OTHER" });
-        assert_eq!(order_symbol(raw.as_object().unwrap()), "AAPL.US");
-        let raw = json!({ "symbol": "AAPL.US" });
-        assert_eq!(order_symbol(raw.as_object().unwrap()), "AAPL.US");
-        let raw = json!({ "symbol": "", "counter_id": "ST/US/INTC" });
-        assert_eq!(order_symbol(raw.as_object().unwrap()), "INTC.US");
-        assert_eq!(order_symbol(json!({}).as_object().unwrap()), "");
-    }
-
-    #[test]
-    fn order_underlying_symbol_prefers_the_server_value() {
+    fn order_symbols_come_from_the_gateway_only() {
+        // Gateway-converted response: `symbol` / `underlying_symbol` are used.
         let converted = json!({
             "id": "1", "symbol": "AAPL261120C345000.US", "underlying_symbol": "AAPL.US",
             "action": 1, "status": "NewStatus"
@@ -642,27 +609,53 @@ mod tests {
         let item = order_item(&converted);
         assert_eq!(item["symbol"], "AAPL261120C345000.US");
         assert_eq!(item["underlying_symbol"], "AAPL.US");
+        assert!(item.get("counter_id").is_none());
 
+        // Unconverted response: no symbol is derived; the raw counter IDs pass
+        // through and `symbol` is omitted.
         let raw = json!({
             "id": "1", "counter_id": "OP/US/AAPL261120C345000",
             "underlying_counter_id": "ST/US/AAPL", "action": 1, "status": "NewStatus"
         });
         let item = order_item(&raw);
-        assert_eq!(item["symbol"], "AAPL261120C345000.US");
-        assert_eq!(item["underlying_symbol"], "AAPL.US");
-        assert!(order_item(&raw_order()).get("underlying_symbol").is_none());
+        assert!(item.get("symbol").is_none());
+        assert!(item.get("underlying_symbol").is_none());
+        assert_eq!(item["counter_id"], "OP/US/AAPL261120C345000");
+        assert_eq!(item["underlying_counter_id"], "ST/US/AAPL");
+
+        let raw = json!({ "id": "1", "symbol": "", "counter_id": "ST/US/INTC" });
+        let item = order_item(&raw);
+        assert!(item.get("symbol").is_none());
+        assert_eq!(item["counter_id"], "ST/US/INTC");
     }
 
     #[test]
-    fn us_order_detail_uses_a_converted_symbol() {
+    fn us_order_detail_without_a_symbol_keeps_the_counter_id() {
         let mut order = raw_order();
         let m = order.as_object_mut().unwrap();
-        m.remove("counter_id");
-        m.insert("symbol".into(), json!("EXMP.US"));
+        m.remove("symbol");
+        m.insert("counter_id".into(), json!("ST/US/EXMP"));
         let got = order_detail_json(&json!({ "order": order }));
-        assert_eq!(got["symbol"], "EXMP.US");
-        let got = order_detail_json(&json!({ "order": raw_order() }));
-        assert_eq!(got["symbol"], "EXMP.US");
+        assert!(got.get("symbol").is_none());
+        assert_eq!(got["counter_id"], "ST/US/EXMP");
+    }
+
+    #[test]
+    fn holdings_without_a_symbol_keep_the_counter_id() {
+        let option = holding_item(json!({
+            "counter_id": "OP/US/AAPL261120C345000", "underlying_counter_id": "ST/US/AAPL",
+            "quantity": "1", "average_cost": "2.5", "currency": "USD", "market": "US"
+        }));
+        assert!(option.get("symbol").is_none());
+        assert_eq!(option["counter_id"], "OP/US/AAPL261120C345000");
+        assert_eq!(option["underlying_counter_id"], "ST/US/AAPL");
+        let converted = holding_item(json!({
+            "full_symbol": "AAPL261120C345000.US", "counter_id": "OP/US/AAPL261120C345000",
+            "underlying_symbol": "AAPL.US", "quantity": "1"
+        }));
+        assert_eq!(converted["symbol"], "AAPL261120C345000.US");
+        assert_eq!(converted["underlying_symbol"], "AAPL.US");
+        assert!(converted.get("counter_id").is_none());
     }
 
     #[test]
@@ -688,7 +681,7 @@ mod tests {
         let market = json!({
             "id": "900000000000000002", "status": "RejectedStatus", "name": "Bitcoin",
             "price": "", "quantity": "0.001", "executed_price": "0", "executed_qty": "0",
-            "submitted_at": "1790000100", "action": 1, "counter_id": "VA/BKKT/BTCUSD",
+            "submitted_at": "1790000100", "action": 1, "symbol": "BTCUSD.BKKT",
             "order_type": "MO", "msg": "insufficient", "tag": 2, "currency": "USD",
             "time_in_force": 1
         });

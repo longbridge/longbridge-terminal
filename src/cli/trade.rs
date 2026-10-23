@@ -313,8 +313,9 @@ pub async fn cmd_order_detail(
 ) -> Result<()> {
     // US accounts always use the US order detail (interface 16).
     if crate::openapi::is_us_account().await {
-        // Read the raw body: the typed SDK answer drops `counter_id`, the only
-        // symbol source the endpoint returns.
+        // Read the raw body: the typed SDK answer drops `counter_id`, which is
+        // all the endpoint identifies the security by until the gateway's
+        // counter_id -> symbol conversion covers it.
         let full = super::api::http_get_dc(
             &format!("/v1/us/orders/{order_id}"),
             &[],
@@ -1973,7 +1974,7 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
     let command = path.join(" ");
     let schema = match command.as_str() {
         "order" => schema(
-            "Orders (today, or --history). Same array shape for HK/CN and US accounts. US rows add stock_name, updated_at, currency, msg, trigger_price, last_done, executed_amount, gtd, operate_direction, security_type, us_time_in_force and us_tag (raw US codes, not the AP enums); US symbols are derived from counter_id",
+            "Orders (today, or --history). Same array shape for HK/CN and US accounts. US rows add stock_name, updated_at, currency, msg, trigger_price, last_done, executed_amount, gtd, operate_direction, security_type, us_time_in_force and us_tag (raw US codes, not the AP enums). US symbols come from the gateway; until it converts these endpoints, US rows carry the raw counter_id instead of symbol",
             RootKind::Array,
             fields(&[
                 "order_id",
@@ -1989,7 +1990,7 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
             ]),
         ),
         "order detail" => schema(
-            "Order detail. Same object shape for HK/CN and US accounts; US omits time_in_force and outside_rth (no verified US source) and adds us_time_in_force, us_tag, gtd, trigger_price, last_done, operate_direction, security_type, attached_orders. With --attached, US prints the raw attached order",
+            "Order detail. Same object shape for HK/CN and US accounts; US omits time_in_force and outside_rth (no verified US source), carries counter_id instead of symbol until the gateway converts it, and adds us_time_in_force, us_tag, gtd, trigger_price, last_done, operate_direction, security_type, attached_orders. With --attached, US prints the raw attached order",
             RootKind::Object,
             fields(&[
                 "order_id",
