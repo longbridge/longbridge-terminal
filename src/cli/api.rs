@@ -641,3 +641,28 @@ pub async fn http_put(
     super::output::strip_private_fields(&mut v);
     Ok(v)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn us_order_id_is_ascii_digits_only() {
+        assert!(is_us_order_id("701276261045858304"));
+        assert!(is_us_order_id("1"));
+        for bad in [
+            "",
+            "20240101-123456789",
+            "-1",
+            "../1",
+            "1/../2",
+            "12 3",
+            "123?x=1",
+            // Unicode digits are not ASCII digits.
+            "١٢٣",
+            "１２３",
+        ] {
+            assert!(!is_us_order_id(bad), "{bad:?} must be rejected");
+        }
+    }
+}

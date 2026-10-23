@@ -44,8 +44,8 @@ pub async fn cmd_exchange_rate(format: &OutputFormat, verbose: bool) -> Result<(
 
 fn print_exchange_rates(data: &Value) {
     if let Some(list) = data["exchanges"].as_array() {
-        // US accounts get one row per rate type (`spec_key`, e.g. `am` and
-        // `reference`) for the same pair; show it so the rows are told apart.
+        // US accounts get one row per currency pair, tagged with its rate
+        // type (`spec_key`, e.g. `am` or `reference`); show it as a column.
         let with_rate_type = list
             .iter()
             .any(|item| item["spec_key"].as_str().is_some_and(|s| !s.is_empty()));

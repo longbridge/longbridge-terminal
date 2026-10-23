@@ -146,14 +146,16 @@ fn normalize_us_order_map(m: &mut serde_json::Map<String, serde_json::Value>) {
             );
         }
     }
-    if let Some(cid) = m.remove("counter_id") {
-        if !m.contains_key("symbol") {
-            let sym = cid.as_str().map_or_else(
-                || cid.clone(),
-                |s| serde_json::Value::String(crate::utils::counter::counter_id_to_symbol(s)),
-            );
-            m.insert("symbol".to_string(), sym);
-        }
+    // The symbol comes from the gateway only: when the response has one the
+    // raw counter_id is dropped, otherwise counter_id is kept as is (never
+    // converted to a symbol here).
+    if m.get("symbol")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|s| !s.is_empty())
+    {
+        m.remove("counter_id");
+    } else if m.contains_key("counter_id") {
+        m.remove("symbol");
     }
     for key in INTERNAL_ORDER_FIELDS {
         m.remove(*key);
@@ -271,11 +273,21 @@ pub async fn cmd_orders(
     Ok(())
 }
 
-/// The stderr note for a US order page that is not the last one: `None` when
-/// page `page` (of `limit` rows, holding `shown`) reaches `total`.
+/// The stderr note for a US order page: past the last page when page `page`
+/// came back empty after page 1, more pages when `total` exceeds the rows
+/// through this one, `None` otherwise. The server may not honour `limit`, so
+/// the page size is the larger of `limit` and the `shown` rows it returned.
 fn us_orders_page_note(page: u32, limit: u32, shown: usize, total: i64) -> Option<String> {
-    let before = u64::from(page.saturating_sub(1)) * u64::from(limit);
-    let through = before + u64::try_from(shown).unwrap_or(u64::MAX);
+    if shown == 0 && page > 1 {
+        return Some(format!(
+            "Note: page {page} is past the last page (total {total})"
+        ));
+    }
+    let shown_u = u64::try_from(shown).unwrap_or(u64::MAX);
+    let page_size = u64::from(limit).max(shown_u);
+    let through = u64::from(page.saturating_sub(1))
+        .saturating_mul(page_size)
+        .saturating_add(shown_u);
     let total_u = u64::try_from(total).unwrap_or_default();
     (total_u > through).then(|| {
         format!("Note: page {page} shows {shown} of {total} orders; use --page / --limit for more")
@@ -534,12 +546,6 @@ pub async fn cmd_executions(
     symbol: Option<String>,
     format: &OutputFormat,
 ) -> Result<()> {
-    if crate::openapi::is_us_account().await {
-        anyhow::bail!(
-            "Execution history is not supported for US accounts; use 'order --history' to view filled orders"
-        );
-    }
-
     let ctx = crate::openapi::trade();
     let executions = if history {
         let start_dt = start.as_deref().map(parse_datetime_start).transpose()?;
@@ -641,13 +647,51 @@ async fn preview_last_price(symbol: &str) -> Option<Decimal> {
     quotes.first().map(|q| q.last_done)
 }
 
-/// Best-effort summary of an existing order, used by the cancel/replace previews
-/// so the operator can confirm they are acting on the order they meant.
-async fn preview_order_summary(order_id: &str) -> Option<serde_json::Value> {
+/// Summary of an existing order, used by the cancel/replace previews so the
+/// operator can confirm they are acting on the order they meant.
+///
+/// US accounts: the order must be fetched, so an invalid ID or a missing order
+/// is an error and no confirmation code is issued. AP accounts: best effort,
+/// `Ok(None)` when the detail cannot be fetched.
+async fn preview_order_summary(order_id: &str) -> Result<Option<serde_json::Value>> {
     if crate::openapi::is_us_account().await {
-        let full = super::api::us_order_detail_raw(order_id).await.ok()?;
-        return Some(us_order_summary(&full));
+        return us_preview_order_summary(order_id, |id| async move {
+            super::api::us_order_detail_raw(&id).await
+        })
+        .await
+        .map(Some);
     }
+    Ok(ap_preview_order_summary(order_id).await)
+}
+
+/// The US cancel/replace preview summary of `order_id`, read with `fetch`
+/// (`GET /v1/us/orders/{id}`). Fails, naming the reason, when the ID is not a
+/// US order ID, the order cannot be fetched, or the body holds no order.
+async fn us_preview_order_summary<F, Fut>(order_id: &str, fetch: F) -> Result<serde_json::Value>
+where
+    F: FnOnce(String) -> Fut,
+    Fut: std::future::Future<Output = Result<serde_json::Value>>,
+{
+    if !super::api::is_us_order_id(order_id) {
+        bail!(
+            "invalid order ID `{order_id}`: US order IDs are digits only; no confirmation code was issued"
+        );
+    }
+    let full = fetch(order_id.to_string()).await.map_err(|e| {
+        anyhow::anyhow!(
+            "order {order_id} not found or its detail could not be fetched ({e}); no confirmation code was issued"
+        )
+    })?;
+    let order = full.get("order").filter(|o| o.is_object()).unwrap_or(&full);
+    if order.as_object().is_none_or(serde_json::Map::is_empty) {
+        bail!("order {order_id} not found; no confirmation code was issued");
+    }
+    Ok(us_order_summary(&full))
+}
+
+/// Best-effort AP summary of an existing order: `None` when the detail cannot
+/// be fetched.
+async fn ap_preview_order_summary(order_id: &str) -> Option<serde_json::Value> {
     let ctx = crate::openapi::trade();
     let raw = serde_json::to_value(ctx.order_detail(order_id.to_string()).await.ok()?).ok()?;
 
@@ -672,8 +716,8 @@ async fn preview_order_summary(order_id: &str) -> Option<serde_json::Value> {
 
 /// The cancel/replace preview summary of a raw `/v1/us/orders/{id}` body
 /// (`{order: {...}}` or the order itself). The security is the response's
-/// `symbol`, or its raw `counter_id` when there is no symbol (shown as is,
-/// never converted), so the user sees which security they are acting on.
+/// `symbol`, or, when there is no symbol, its raw value under `counter_id`
+/// (never converted), so the user sees which security they are acting on.
 fn us_order_summary(full: &serde_json::Value) -> serde_json::Value {
     let order = full.get("order").filter(|o| o.is_object()).unwrap_or(full);
     let pick = |key: &str| -> Option<String> {
@@ -688,14 +732,19 @@ fn us_order_summary(full: &serde_json::Value) -> serde_json::Value {
         Some(2) => Some("Sell".to_string()),
         _ => None,
     };
-    serde_json::json!({
-        "symbol": pick("symbol").or_else(|| pick("counter_id")),
+    let mut summary = serde_json::json!({
         "side": side,
         "status": pick("status").map(|s| super::us_shape::order_status(&s)),
         "quantity": pick("quantity"),
         "executed_quantity": pick("executed_qty"),
         "price": pick("price"),
-    })
+    });
+    let (key, security) = match pick("symbol") {
+        Some(symbol) => ("symbol", Some(symbol)),
+        None => ("counter_id", pick("counter_id")),
+    };
+    summary[key] = security.into();
+    summary
 }
 
 fn print_order_summary(summary: Option<&serde_json::Value>, order_id: &str) {
@@ -709,6 +758,7 @@ fn print_order_summary(summary: Option<&serde_json::Value>, order_id: &str) {
     };
     for (label, key) in [
         ("Symbol", "symbol"),
+        ("Counter ID", "counter_id"),
         ("Side", "side"),
         ("Status", "status"),
         ("Quantity", "quantity"),
@@ -893,8 +943,8 @@ pub async fn cmd_cancel_order(
     let scope = crate::utils::dry_run::Scope::on_order("cancel", &order_id);
     // Two-step by design: without --execute this previews and cancels nothing.
     let Some(code) = execute else {
+        let summary = preview_order_summary(&order_id).await?;
         let confirmation = scope.code();
-        let summary = preview_order_summary(&order_id).await;
         match format {
             OutputFormat::Json => {
                 let val = serde_json::json!({
@@ -955,8 +1005,8 @@ pub async fn cmd_replace_order(
     );
     // Two-step by design: without --execute this previews and changes nothing.
     let Some(code) = execute else {
+        let summary = preview_order_summary(&order_id).await?;
         let confirmation = scope.code();
-        let summary = preview_order_summary(&order_id).await;
         match format {
             OutputFormat::Json => {
                 let val = serde_json::json!({
@@ -1995,6 +2045,12 @@ pub async fn cmd_alert_set_enabled(
 }
 
 /// `--schema` field notes for the US-only keys of `order` rows.
+/// `--schema` description of an option order's underlying symbol.
+const UNDERLYING_SYMBOL_DESC: &str =
+    "(US only) Option orders: underlying symbol, when the gateway returns one";
+/// `--schema` description of the raw underlying counter ID fallback.
+const UNDERLYING_COUNTER_ID_DESC: &str = "(US only) Option orders: raw underlying counter ID, only when the gateway returns no underlying_symbol";
+
 const US_ORDER_LEGEND: &[(&str, &str)] = &[
     ("updated_at", "(US only) Last update time"),
     ("stock_name", "(US only) Security name"),
@@ -2006,6 +2062,8 @@ const US_ORDER_LEGEND: &[(&str, &str)] = &[
     ("gtd", "(US only) Good-till date"),
     ("operate_direction", "(US only) OPEN / CLOSE"),
     ("security_type", "(US only) Raw US security type code"),
+    ("underlying_symbol", UNDERLYING_SYMBOL_DESC),
+    ("underlying_counter_id", UNDERLYING_COUNTER_ID_DESC),
     (
         "us_time_in_force",
         "(US only) Raw US time-in-force code, not the AP enum",
@@ -2043,6 +2101,8 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
                     "gtd",
                     "operate_direction",
                     "security_type",
+                    "underlying_symbol",
+                    "underlying_counter_id",
                     "us_time_in_force",
                     "us_tag",
                 ]),
@@ -2079,6 +2139,8 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
                     "last_done",
                     "operate_direction",
                     "security_type",
+                    "underlying_symbol",
+                    "underlying_counter_id",
                     "attached_orders",
                 ]),
             ),
@@ -2096,6 +2158,8 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
                 ("last_done", "(US only) Last done price"),
                 ("operate_direction", "(US only) OPEN / CLOSE"),
                 ("security_type", "(US only) Raw US security type code"),
+                ("underlying_symbol", UNDERLYING_SYMBOL_DESC),
+                ("underlying_counter_id", UNDERLYING_COUNTER_ID_DESC),
             ],
         ),
         "order executions" => array(
@@ -2203,7 +2267,7 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
         ),
         "positions" => with_legend(
             schema(
-                "Stock positions, same array shape for HK/CN and US accounts; fields marked (AP only) / (US only) appear on that region only. US rows list stock, option and crypto holdings together and add last_done, market_price, prev_close, today_pl, position_side and other US fields",
+                "Stock positions, same array shape for HK/CN and US accounts; fields marked (AP only) / (US only) appear on that region only. US rows list stock, option and crypto holdings together and add the (US only) fields plus other raw US fields",
                 RootKind::Array,
                 fields(&[
                     "symbol",
@@ -2214,11 +2278,21 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
                     "currency",
                     "market",
                     "asset_type",
+                    "last_done",
+                    "market_price",
+                    "prev_close",
+                    "today_pl",
+                    "position_side",
                 ]),
             ),
             &[
                 ("available", "(AP only) Quantity available to sell"),
                 ("asset_type", "(US only) STOCK / OPTION / CRYPTO"),
+                ("last_done", "(US only) Last done price"),
+                ("market_price", "(US only) Market price used to value the holding"),
+                ("prev_close", "(US only) Previous close price"),
+                ("today_pl", "(US only) Today's profit and loss"),
+                ("position_side", "(US only) LONG / SHORT"),
             ],
         ),
         "fund-positions" => array(
@@ -3086,8 +3160,73 @@ mod tests {
             "id": "1", "symbol": "", "counter_id": "ST/US/EXMP", "action": 1
         }});
         let got = us_order_summary(&full);
-        assert_eq!(got["symbol"], "ST/US/EXMP");
+        assert_eq!(got["counter_id"], "ST/US/EXMP");
+        assert!(got.get("symbol").is_none(), "{got}");
         assert_eq!(got["side"], "Buy");
+    }
+
+    #[tokio::test]
+    async fn us_cancel_preview_refuses_without_the_order() {
+        // Invalid ID: refused before any fetch.
+        for bad in ["", "20240101-123456789", "../1", "１２３"] {
+            let err = us_preview_order_summary(bad, |_| async {
+                panic!("an invalid order ID must not be fetched")
+            })
+            .await
+            .unwrap_err()
+            .to_string();
+            assert!(err.contains("invalid order ID"), "{bad}: {err}");
+            assert!(err.contains("no confirmation code"), "{err}");
+        }
+        // Fetch failure: the reason is named.
+        let err = us_preview_order_summary("701276261045858304", |_| async {
+            Err(anyhow::anyhow!("HTTP 404"))
+        })
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("not found") && err.contains("HTTP 404"),
+            "{err}"
+        );
+        // Empty body: no order.
+        let err = us_preview_order_summary("701276261045858304", |_| async {
+            Ok(serde_json::json!({}))
+        })
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("not found"), "{err}");
+        // Found: the summary of the fetched order.
+        let got = us_preview_order_summary("701276261045858304", |id| async move {
+            assert_eq!(id, "701276261045858304");
+            Ok(serde_json::json!({"order": {"symbol": "EXMP.US", "action": 1}}))
+        })
+        .await
+        .unwrap();
+        assert_eq!(got["symbol"], "EXMP.US");
+        assert_eq!(got["side"], "Buy");
+    }
+
+    #[test]
+    fn us_attached_order_keeps_gateway_symbol_and_never_derives_one() {
+        let norm = |v: serde_json::Value| {
+            let mut m = v
+                .as_object()
+                .cloned()
+                .expect("test order must be an object");
+            normalize_us_order_map(&mut m);
+            serde_json::Value::Object(m)
+        };
+        let got = norm(serde_json::json!({"symbol": "EXMP.US", "counter_id": "ST/US/EXMP"}));
+        assert_eq!(got["symbol"], "EXMP.US");
+        assert!(got.get("counter_id").is_none(), "{got}");
+        let got = norm(serde_json::json!({"symbol": "", "counter_id": "ST/US/EXMP"}));
+        assert_eq!(got["counter_id"], "ST/US/EXMP");
+        assert!(got.get("symbol").is_none(), "{got}");
+        let got = norm(serde_json::json!({"counter_id": "ST/US/EXMP"}));
+        assert_eq!(got["counter_id"], "ST/US/EXMP");
+        assert!(got.get("symbol").is_none(), "{got}");
     }
 
     #[test]
@@ -3098,6 +3237,15 @@ mod tests {
         assert!(us_orders_page_note(3, 20, 5, 45).is_none());
         assert!(us_orders_page_note(1, 20, 3, 3).is_none());
         assert!(us_orders_page_note(1, 20, 0, 0).is_none());
+        // Past the last page: noted whatever limit the server applied.
+        let note = us_orders_page_note(5, 20, 0, 45).expect("past-last note");
+        assert!(
+            note.contains("page 5 is past the last page (total 45)"),
+            "{note}"
+        );
+        assert!(us_orders_page_note(2, 20, 0, 0).is_some());
+        // Server ignored limit and returned all 45 rows on page 1.
+        assert!(us_orders_page_note(1, 20, 45, 45).is_none());
     }
 
     #[test]
@@ -3126,6 +3274,15 @@ mod tests {
             ("order detail", "us_time_in_force", "(US only)"),
             ("order detail", "us_tag", "(US only)"),
             ("order", "us_tag", "(US only)"),
+            ("order", "underlying_symbol", "(US only)"),
+            ("order", "underlying_counter_id", "(US only)"),
+            ("order detail", "underlying_symbol", "(US only)"),
+            ("order detail", "underlying_counter_id", "(US only)"),
+            ("positions", "last_done", "(US only)"),
+            ("positions", "market_price", "(US only)"),
+            ("positions", "prev_close", "(US only)"),
+            ("positions", "today_pl", "(US only)"),
+            ("positions", "position_side", "(US only)"),
             ("assets", "risk_level", "(AP only)"),
         ] {
             assert!(desc(cmd, key).starts_with(marker), "{cmd} {key}");

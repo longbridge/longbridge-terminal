@@ -329,7 +329,7 @@ longbridge agent --skill                                            # Print the 
 longbridge order                                           # Today's orders, or historical with --history
 longbridge order --history [--start 2024-01-01]            # Historical orders (use --symbol to filter)
 longbridge order detail <order_id>                         # Full detail for a single order including charges and history
-longbridge order executions                                # Today's trade executions (fills) (AP accounts only; US accounts use `order --history`)
+longbridge order executions                                # Today's trade executions (fills); `--history` for past fills (AP and US accounts)
 longbridge order buy TSLA.US 100 --price 250.00            # Preview a buy order (dry run); add --execute <CODE> to place it
 longbridge order sell TSLA.US 100 --price 260.00           # Preview a sell order (dry run); add --execute <CODE> to place it
 longbridge order cancel <order_id>                         # Preview cancelling a pending order (dry run); add --execute <CODE> to cancel it
@@ -681,11 +681,11 @@ method to call instead: `trade.today_orders` / `trade.history_orders` →
 `trade.us_query_orders` (`symbol`, `side`, `start`, `end`, `query_type` 0 = all / 1 =
 pending / 2 = filled, `page`, `limit`); `trade.order_detail` → `trade.us_order_detail`
 (`order_id`, digits only; returns the untouched `GET /v1/us/orders/{order_id}` body);
-`trade.today_executions` / `trade.history_executions` →
-`trade.us_query_orders` (filled orders); `trade.account_balance` →
+`trade.account_balance` →
 `trade.us_cash_and_buy_power`; `trade.cash_flow` → `trade.us_transaction_history`;
 `trade.stock_positions` → `trade.us_asset_overview`. `trade.fund_positions` and
-`trade.margin_ratio` have no US counterpart.
+`trade.margin_ratio` have no US counterpart. `trade.today_executions` /
+`trade.history_executions` work on US accounts unchanged, in the AP shape.
 
 A test asserts every `QuoteApi`/`TradeApi` method is reachable over RPC, so adding one
 without exposing it fails the build — `serve` cannot drift behind the CLI.

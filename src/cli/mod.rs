@@ -933,11 +933,11 @@ pub enum Commands {
     /// Without a subcommand, lists today's orders (or historical with --history).
     /// Example: longbridge order
     /// Example: longbridge order --history --start 2024-01-01 --symbol TSLA.US
-    /// Example: longbridge order detail 20240101-123456789
+    /// Example: longbridge order detail 701276261045858304
     /// Example: longbridge order buy TSLA.US 100 --price 250.00
     /// Example: longbridge order sell TSLA.US 100 --price 260.00
-    /// Example: longbridge order cancel 20240101-123456789
-    /// Example: longbridge order replace 20240101-123456789 --qty 200 --price 255.00
+    /// Example: longbridge order cancel 701276261045858304
+    /// Example: longbridge order replace 701276261045858304 --qty 200 --price 255.00
     /// Example: longbridge order executions --history --start 2024-01-01
     Order {
         /// Return historical orders instead of today's (list mode only)
@@ -3348,8 +3348,8 @@ pub enum OrderCmd {
     /// Returns all fields from `order` plus `charge_detail`, `history_details`, msg.
     /// US accounts: same `--format json` keys except `time_in_force` / `outside_rth`
     /// (raw code as `us_time_in_force`), plus US-only extras (see `--schema`).
-    /// Example: longbridge order detail 20240101-123456789
-    /// Example: longbridge order detail 20240101-123456789 --attached
+    /// Example: longbridge order detail 701276261045858304
+    /// Example: longbridge order detail 701276261045858304 --attached
     Detail {
         /// Order ID (from `longbridge order` or returned by `order buy`/`order sell`)
         order_id: String,
@@ -3358,9 +3358,8 @@ pub enum OrderCmd {
         attached: bool,
     },
 
-    /// AP accounts only: today's trade executions (fills), or the full history with --history
+    /// Today's trade executions (fills), or the full history with --history (AP and US accounts, same output)
     ///
-    /// US accounts: use `order --history` instead.
     /// Returns: `order_id`, `trade_id`, symbol, side, price, quantity, `trade_done_at`.
     /// With --history: every fill in the range, filtered by execution time and
     /// paginated to completion (not capped at 1000).
@@ -3531,8 +3530,8 @@ pub enum OrderCmd {
     /// TWO-STEP BY DESIGN. Without --execute <CODE> the order is only looked up
     /// and shown to you; nothing is cancelled.
     /// Only cancellable states (New, `PartialFilled`, etc.) are accepted.
-    /// Example: longbridge order cancel 20240101-123456789
-    /// Example: longbridge order cancel 20240101-123456789 --execute 473  (cancels it)
+    /// Example: longbridge order cancel 701276261045858304
+    /// Example: longbridge order cancel 701276261045858304 --execute 473  (cancels it)
     Cancel {
         /// Order ID to cancel
         order_id: String,
@@ -3557,8 +3556,8 @@ pub enum OrderCmd {
     /// TWO-STEP BY DESIGN. Without --execute <CODE> the change is only shown as
     /// a before/after preview; the live order is left untouched.
     /// --qty is required. --price is optional (omit to keep current price).
-    /// Example: longbridge order replace 20240101-123456789 --qty 200 --price 255.00
-    /// Example: longbridge order replace 20240101-123456789 --qty 200 --execute 473
+    /// Example: longbridge order replace 701276261045858304 --qty 200 --price 255.00
+    /// Example: longbridge order replace 701276261045858304 --qty 200 --execute 473
     Replace {
         /// Order ID to modify
         order_id: String,

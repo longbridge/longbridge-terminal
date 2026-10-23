@@ -119,9 +119,10 @@ const TRADE_METHODS: &[&str] = &[
 /// exists the error names it; results keep their SDK shape, so a US session is
 /// pointed at the US method rather than silently answered in another shape.
 ///
-/// The order and execution methods mirror the CLI: `order` and `order <id>`
-/// are rerouted to the US order APIs on US accounts (`/v1/trade/order` returns
-/// HTTP 500 there), and `order executions` is refused outright.
+/// The order methods mirror the CLI: `order` and `order <id>` are rerouted to
+/// the US order APIs on US accounts (`/v1/trade/order` returns HTTP 500
+/// there). The execution methods are not listed: `/v1/trade/execution/*`
+/// serves US accounts with the AP shape.
 fn ap_only_method_error(name: &str) -> Option<&'static str> {
     Some(match name {
         "today_orders" => {
@@ -132,14 +133,6 @@ fn ap_only_method_error(name: &str) -> Option<&'static str> {
         }
         "order_detail" => {
             "trade.order_detail is not available for US accounts; use trade.us_order_detail"
-        }
-        "today_executions" => {
-            "trade.today_executions is not available for US accounts; use trade.us_query_orders \
-             (filled orders)"
-        }
-        "history_executions" => {
-            "trade.history_executions is not available for US accounts; use \
-             trade.us_query_orders (filled orders)"
         }
         "account_balance" => {
             "trade.account_balance is not available for US accounts; use trade.us_cash_and_buy_power"
@@ -643,15 +636,19 @@ async fn call_trade(name: &str, p: Params<'_>) -> Result<Value> {
         }
         // The untouched `GET /v1/us/orders/{order_id}` body: the SDK type has
         // no instrument identifier.
-        "us_order_detail" => {
-            let order_id = p.str("order_id")?;
-            if !crate::cli::api::is_us_order_id(&order_id) {
-                bail_param!("`order_id` must be a US order ID (digits only), got `{order_id}`");
-            }
-            Ok(api.us_order_detail(order_id).await?)
-        }
+        "us_order_detail" => Ok(api.us_order_detail(us_order_id_param(p)?).await?),
         other => bail!("unknown method `{TRADE_PREFIX}{other}`"),
     }
+}
+
+/// The `order_id` of a US order method: digits only, so it can go into the
+/// request path as is.
+fn us_order_id_param(p: Params<'_>) -> Result<String> {
+    let order_id = p.str("order_id")?;
+    if !crate::cli::api::is_us_order_id(&order_id) {
+        bail_param!("`order_id` must be a US order ID (digits only), got `{order_id}`");
+    }
+    Ok(order_id)
 }
 
 /// A positive page number / page size that fits the SDK's `i32`.
@@ -986,8 +983,6 @@ mod tests {
             ("today_orders", Some("trade.us_query_orders")),
             ("history_orders", Some("trade.us_query_orders")),
             ("order_detail", Some("trade.us_order_detail")),
-            ("today_executions", Some("trade.us_query_orders")),
-            ("history_executions", Some("trade.us_query_orders")),
         ] {
             let msg =
                 ap_only_method_error(name).unwrap_or_else(|| panic!("{name} must be AP-only"));
@@ -998,6 +993,8 @@ mod tests {
             }
         }
         for name in [
+            "today_executions",
+            "history_executions",
             "us_cash_and_buy_power",
             "us_query_orders",
             "us_order_detail",
@@ -1015,6 +1012,30 @@ mod tests {
             assert!(
                 catalog.contains(&method.to_string()),
                 "{method} missing from catalog"
+            );
+        }
+    }
+
+    #[test]
+    fn us_order_id_rejects_non_digit_ids_as_param_errors() {
+        let v = json!({"order_id": "701276261045858304"});
+        assert_eq!(
+            us_order_id_param(Params(Some(&v))).unwrap(),
+            "701276261045858304"
+        );
+        for bad in [
+            json!({}),
+            json!({"order_id": ""}),
+            json!({"order_id": "123-456"}),
+            json!({"order_id": "../123"}),
+            json!({"order_id": "١٢٣"}),
+            json!({"order_id": 123}),
+        ] {
+            let err = us_order_id_param(Params(Some(&bad))).unwrap_err();
+            assert_eq!(
+                crate::cli::serve::error_code_for(&err),
+                crate::cli::serve::protocol::INVALID_PARAMS,
+                "{bad}: {err}"
             );
         }
     }
