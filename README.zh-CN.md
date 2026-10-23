@@ -297,7 +297,7 @@ longbridge sharelist popular [--count 10] # 获取热门（趋势）分享列表
 longbridge order # 今日订单，或通过 --history 查看历史订单
 longbridge order --history [--start 2024-01-01] # 历史订单（使用 --symbol 过滤）
 longbridge order detail <order-id> # 单笔订单的完整详情，包含费用和历史
-longbridge order executions # 今日成交记录（成交明细），或通过 --history 查看历史
+longbridge order executions # 今日成交记录（成交明细），或通过 --history 查看历史（AP 与美国账户；美国账户历史来自 v1：不按成交时间过滤，跨日可能滞后，范围边缘的成交可能缺失或多出；美国账户的 side 由订单或按订单 ID 查询的订单详情补齐，查不到时为 `Unknown`）
 longbridge order buy TSLA.US 100 --price 250.00 # 提交买单（需确认）
 longbridge order sell TSLA.US 100 --price 260.00 # 提交卖单（需确认）
 longbridge order cancel <order-id> # 撤销待处理订单（需确认）

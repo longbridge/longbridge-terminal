@@ -195,6 +195,9 @@ pub enum Commands {
     /// `trade.us_cash_and_buy_power` and `trade.us_transaction_history`.
     /// `trade.us_order_detail` (`order_id`, digits only) returns the untouched
     /// REST body of `GET /v1/us/orders/{order_id}`, as `api.get` would.
+    /// `trade.today_executions` / `trade.history_executions` stay raw: on US
+    /// accounts their `side` is `Unknown`; join with `trade.us_query_orders`
+    /// (or `trade.us_order_detail`) by `order_id` for the side.
     ///
     /// Order execution is gated: `trade.submit_order`, `trade.cancel_order` and
     /// `trade.replace_order` are DRY RUNS that place nothing unless the params
@@ -3365,8 +3368,9 @@ pub enum OrderCmd {
     /// capped at 1000). AP accounts filter by execution time. US accounts read
     /// the v1 history, which is not filtered by execution time and can lag
     /// across days, so fills near the range edges may be missing or extra.
-    /// US side: filled from the account's orders when the execution lacks it;
-    /// null (`-`) when the order is not found.
+    /// US side: filled from the account's orders, then the order detail (by
+    /// `order_id`), when the execution lacks it; `Unknown` (as on AP) when the
+    /// order is not found.
     /// Example: longbridge order executions
     /// Example: longbridge order executions --history --start 2024-01-01
     Executions {

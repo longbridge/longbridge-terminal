@@ -122,7 +122,8 @@ const TRADE_METHODS: &[&str] = &[
 /// The order methods mirror the CLI: `order` and `order <id>` are rerouted to
 /// the US order APIs on US accounts (`/v1/trade/order` returns HTTP 500
 /// there). The execution methods are not listed: `/v1/trade/execution/*`
-/// serves US accounts with the AP shape.
+/// serves US accounts with the AP shape, but without `side` (reported as
+/// `Unknown`); unlike the CLI, serve does not fill it from the orders.
 fn ap_only_method_error(name: &str) -> Option<&'static str> {
     Some(match name {
         "today_orders" => {
@@ -450,6 +451,9 @@ async fn call_trade(name: &str, p: Params<'_>) -> Result<Value> {
             ok(api.history_orders(opts).await?)
         }
         "order_detail" => ok(api.order_detail(p.str("order_id")?).await?),
+        // Raw by design: on US accounts `side` is "Unknown" (the execution APIs
+        // omit it); agents join with `trade.us_query_orders` or
+        // `trade.us_order_detail` by `order_id`, as `serve -h` says.
         "today_executions" => {
             let mut opts = GetTodayExecutionsOptions::new();
             if let Some(s) = p.str_opt("symbol")? {
@@ -457,6 +461,7 @@ async fn call_trade(name: &str, p: Params<'_>) -> Result<Value> {
             }
             ok(api.today_executions(opts).await?)
         }
+        // Raw like `today_executions`: US `side` is "Unknown".
         "history_executions" => {
             let mut opts = GetHistoryExecutionsOptions::new();
             if let Some(s) = p.str_opt("symbol")? {

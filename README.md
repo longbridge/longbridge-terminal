@@ -329,7 +329,7 @@ longbridge agent --skill                                            # Print the 
 longbridge order                                           # Today's orders, or historical with --history
 longbridge order --history [--start 2024-01-01]            # Historical orders (use --symbol to filter)
 longbridge order detail <order_id>                         # Full detail for a single order including charges and history
-longbridge order executions                                # Today's trade executions (fills); `--history` for past fills (AP and US accounts; US history comes from v1: not filtered by execution time, can lag across days near range edges; US side is filled from orders)
+longbridge order executions                                # Today's trade executions (fills); `--history` for past fills (AP and US accounts; US history comes from v1: not filtered by execution time, can lag across days near range edges; US side is filled from orders or the order detail by order ID, `Unknown` if not found)
 longbridge order buy TSLA.US 100 --price 250.00            # Preview a buy order (dry run); add --execute <CODE> to place it
 longbridge order sell TSLA.US 100 --price 260.00           # Preview a sell order (dry run); add --execute <CODE> to place it
 longbridge order cancel <order_id>                         # Preview cancelling a pending order (dry run); add --execute <CODE> to cancel it
@@ -685,7 +685,9 @@ pending / 2 = filled, `page`, `limit`); `trade.order_detail` → `trade.us_order
 `trade.us_cash_and_buy_power`; `trade.cash_flow` → `trade.us_transaction_history`;
 `trade.stock_positions` → `trade.us_asset_overview`. `trade.fund_positions` and
 `trade.margin_ratio` have no US counterpart. `trade.today_executions` /
-`trade.history_executions` work on US accounts unchanged, in the AP shape.
+`trade.history_executions` work on US accounts unchanged, in the AP shape; they stay raw, so
+their `side` is `Unknown` on US accounts: join with `trade.us_query_orders` (or
+`trade.us_order_detail`) by `order_id` for the side.
 
 A test asserts every `QuoteApi`/`TradeApi` method is reachable over RPC, so adding one
 without exposing it fails the build — `serve` cannot drift behind the CLI.

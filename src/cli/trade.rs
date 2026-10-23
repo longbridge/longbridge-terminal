@@ -1,4 +1,5 @@
 use anyhow::{bail, Result};
+use futures::stream::{self, StreamExt};
 use longbridge::trade::{
     AllExecutionsResponse, EstimateMaxPurchaseQuantityOptions, Execution, GetAllExecutionsOptions,
     GetCashFlowOptions, GetHistoryExecutionsOptions, GetHistoryOrdersOptions,
@@ -526,16 +527,16 @@ struct ExecRow {
     order_id: String,
     trade_id: String,
     symbol: String,
-    /// `None` when the side is not known (a US execution whose order was not
-    /// found); printed as `null` / `-`, never as `Unknown`.
-    side: Option<String>,
+    /// `Buy` / `Sell`, or `Unknown` when it cannot be resolved (as AP
+    /// prints the SDK side).
+    side: String,
     price: String,
     quantity: String,
     time_iso: String,
 }
 
 impl ExecRow {
-    fn from_sdk(e: &Execution, side: Option<String>) -> Self {
+    fn from_sdk(e: &Execution, side: String) -> Self {
         Self {
             order_id: e.order_id.clone(),
             trade_id: e.trade_id.clone(),
@@ -565,16 +566,18 @@ impl ExecRow {
 
 /// Execution rows. AP accounts print the SDK side as is. US accounts: the
 /// execution APIs may omit `side` (the SDK then reports `Unknown`), so it is
-/// taken from `us_sides` (order ID -> side, from the account's orders), or
-/// left `None` when the order was not found.
+/// taken from `us_sides` (order ID -> side, from the account's orders or the
+/// order detail), or kept `Unknown` when the order was not found.
 fn exec_rows(executions: &[Execution], us_sides: Option<&HashMap<String, String>>) -> Vec<ExecRow> {
     executions
         .iter()
         .map(|e| {
             let side = match us_sides {
-                None => Some(format!("{:?}", e.side)),
-                Some(_) if e.side != OrderSide::Unknown => Some(format!("{:?}", e.side)),
-                Some(sides) => sides.get(&e.order_id).cloned(),
+                Some(sides) if e.side == OrderSide::Unknown => sides
+                    .get(&e.order_id)
+                    .cloned()
+                    .unwrap_or_else(|| format!("{:?}", e.side)),
+                _ => format!("{:?}", e.side),
             };
             ExecRow::from_sdk(e, side)
         })
@@ -589,13 +592,79 @@ const US_SIDE_LOOKUP_MAX_PAGES: i32 = 20;
 /// submitted earlier (e.g. GTC orders filled later) are still found.
 const US_SIDE_LOOKUP_LOOKBACK_SECS: i64 = 7 * 86_400;
 
+/// Most unmatched US orders whose side is read from the order detail.
+const US_SIDE_DETAIL_MAX: usize = 20;
+/// Order detail requests in flight at once during the side lookup.
+const US_SIDE_DETAIL_CONCURRENCY: usize = 4;
+
 /// Side (`Buy` / `Sell`) of each US order behind an execution that has no
-/// side, keyed by order ID. Reads the account's orders (`us_query_orders`)
-/// over `start..end` widened to cover every execution time (and
-/// [`US_SIDE_LOOKUP_LOOKBACK_SECS`] earlier), page by page, stopping once all
-/// orders are found, the pages run out, or after
-/// [`US_SIDE_LOOKUP_MAX_PAGES`] pages. Orders not found are absent.
+/// side, keyed by order ID. First reads the account's orders over the
+/// execution range ([`us_sides_from_orders`]); orders still not found are
+/// then read one by one from the order detail, at most
+/// [`US_SIDE_DETAIL_MAX`] of them, [`US_SIDE_DETAIL_CONCURRENCY`] at a time.
+/// Lookup failures only print a warning; orders not found are absent.
 async fn us_execution_sides(
+    api: &dyn TradeApi,
+    executions: &[Execution],
+    start: Option<OffsetDateTime>,
+    end: Option<OffsetDateTime>,
+    symbol: Option<&str>,
+) -> HashMap<String, String> {
+    let mut sides = us_sides_from_orders(api, executions, start, end, symbol)
+        .await
+        .unwrap_or_else(|e| {
+            eprintln!("Warning: could not read US orders to fill the execution side: {e}");
+            HashMap::new()
+        });
+    let mut missing: Vec<&str> = Vec::new();
+    for e in executions {
+        let id = e.order_id.as_str();
+        if e.side == OrderSide::Unknown && !sides.contains_key(id) && !missing.contains(&id) {
+            missing.push(id);
+        }
+    }
+    if missing.is_empty() {
+        return sides;
+    }
+    if missing.len() > US_SIDE_DETAIL_MAX {
+        eprintln!(
+            "Warning: {} US orders were not found in the order list; reading the side of the first {US_SIDE_DETAIL_MAX} from the order detail",
+            missing.len()
+        );
+        missing.truncate(US_SIDE_DETAIL_MAX);
+    }
+    let results: Vec<(&str, Result<serde_json::Value>)> = stream::iter(missing)
+        .map(|id| async move { (id, api.us_order_detail(id.to_string()).await) })
+        .buffer_unordered(US_SIDE_DETAIL_CONCURRENCY)
+        .collect()
+        .await;
+    for (id, res) in results {
+        match res {
+            Ok(body) => {
+                let detail = super::us_shape::order_detail_json(&body);
+                match detail.get("side").and_then(serde_json::Value::as_str) {
+                    Some(side) if side != "Unknown" => {
+                        sides.insert(id.to_string(), side.to_string());
+                    }
+                    _ => {}
+                }
+            }
+            Err(e) => {
+                eprintln!("Warning: could not read US order {id} to fill the execution side: {e}");
+            }
+        }
+    }
+    sides
+}
+
+/// Sides of the US orders behind side-less executions, read from the
+/// account's orders (`us_query_orders`) over `start..end` widened to cover
+/// every execution time (and [`US_SIDE_LOOKUP_LOOKBACK_SECS`] earlier), page
+/// by page. Stops once all orders are found, after
+/// [`US_SIDE_LOOKUP_MAX_PAGES`] pages, or when the pages run out: past
+/// `total_count` when it is positive (the SDK reports a missing
+/// `total_count` as 0), otherwise at a page shorter than the page size.
+async fn us_sides_from_orders(
     api: &dyn TradeApi,
     executions: &[Execution],
     start: Option<OffsetDateTime>,
@@ -620,6 +689,7 @@ async fn us_execution_sides(
         .saturating_sub(US_SIDE_LOOKUP_LOOKBACK_SECS);
     let end_ts = end.map_or(last, |dt| dt.unix_timestamp().max(last));
 
+    let page_size = usize::try_from(US_SIDE_LOOKUP_LIMIT).unwrap_or(usize::MAX);
     let mut seen: i64 = 0;
     for page in 1..=US_SIDE_LOOKUP_MAX_PAGES {
         let resp = api
@@ -649,7 +719,12 @@ async fn us_execution_sides(
                 sides.insert(id.to_string(), side.to_string());
             }
         }
-        if wanted.is_empty() || seen >= i64::from(resp.total_count) {
+        let last_page = if resp.total_count > 0 {
+            seen >= i64::from(resp.total_count)
+        } else {
+            resp.orders.len() < page_size
+        };
+        if wanted.is_empty() || last_page {
             break;
         }
     }
@@ -751,13 +826,7 @@ pub async fn cmd_executions(
     };
 
     let us_sides = if is_us {
-        let sides = us_execution_sides(&api, &executions, start_dt, end_dt, symbol.as_deref())
-            .await
-            .unwrap_or_else(|e| {
-                eprintln!("Warning: could not read US orders to fill the execution side: {e}");
-                HashMap::new()
-            });
-        Some(sides)
+        Some(us_execution_sides(&api, &executions, start_dt, end_dt, symbol.as_deref()).await)
     } else {
         None
     };
@@ -779,7 +848,7 @@ pub async fn cmd_executions(
                         r.order_id.clone(),
                         r.trade_id.clone(),
                         r.symbol.clone(),
-                        r.side.clone().unwrap_or_else(|| "-".to_string()),
+                        r.side.clone(),
                         r.price.clone(),
                         r.quantity.clone(),
                         r.time_iso.clone(),
@@ -2379,7 +2448,7 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
                 ],
             ),
             &[
-                ("side", "Buy / Sell. US accounts: filled from the account's orders when the execution lacks it; null when the order is not found"),
+                ("side", "Buy / Sell, or Unknown when it cannot be resolved. US accounts: filled from the account's orders, then the order detail (by order_id), when the execution lacks it; Unknown when the order is not found"),
                 ("trade_done_at", "Execution time (RFC 3339)"),
                 ("time", "Same value as trade_done_at"),
             ],
@@ -3580,11 +3649,16 @@ mod tests {
         }
     }
 
+    fn detail_err() -> anyhow::Error {
+        anyhow::anyhow!("detail unavailable")
+    }
+
     #[tokio::test]
     async fn us_execution_side_comes_from_orders() {
         let execs = vec![
             exec_without_side("11", "11-1"),
             exec_without_side("22", "22-1"),
+            exec_without_side("44", "44-1"),
         ];
         assert_eq!(execs[0].side, OrderSide::Unknown);
         let mut mock = MockTradeApi::new();
@@ -3615,15 +3689,56 @@ mod tests {
                     3,
                 ))
             });
-        let sides = us_execution_sides(&mock, &execs, None, None, Some("EXMP.US"))
-            .await
-            .unwrap();
+        // Orders 22 and 44 are not in the list: read from the order detail.
+        mock.expect_us_order_detail()
+            .times(2)
+            .returning(|id| match id.as_str() {
+                "44" => Ok(serde_json::json!({ "order": { "id": "44", "action": 1 } })),
+                _ => Err(detail_err()),
+            });
+        let sides = us_execution_sides(&mock, &execs, None, None, Some("EXMP.US")).await;
         let rows = exec_rows(&execs, Some(&sides));
-        assert_eq!(rows[0].side.as_deref(), Some("Sell"));
-        // Order 22 was not found: no side, never "Unknown".
-        assert_eq!(rows[1].side, None);
+        assert_eq!(rows[0].side, "Sell");
+        // Order 22 was not found anywhere: "Unknown", as AP prints it.
+        assert_eq!(rows[1].side, "Unknown");
         let json = rows[1].to_json();
-        assert!(json["side"].is_null(), "{json}");
+        assert_eq!(json["side"], "Unknown", "{json}");
+        assert_eq!(rows[2].side, "Buy");
+    }
+
+    #[tokio::test]
+    async fn us_execution_side_pages_without_total_count() {
+        let mut mock = MockTradeApi::new();
+        let mut seq = mockall::Sequence::new();
+        // total_count 0 (missing) with a full page: read the next page.
+        mock.expect_us_query_orders()
+            .times(1)
+            .in_sequence(&mut seq)
+            .withf(|o| o.page == 1)
+            .returning(|_| {
+                let page: Vec<serde_json::Value> = (0..US_SIDE_LOOKUP_LIMIT)
+                    .map(|i| serde_json::json!({ "id": format!("{}", 1000 + i), "action": 1 }))
+                    .collect();
+                Ok(us_orders(serde_json::Value::Array(page), 0))
+            });
+        // A short page is the last one: no page 3.
+        mock.expect_us_query_orders()
+            .times(1)
+            .in_sequence(&mut seq)
+            .withf(|o| o.page == 2)
+            .returning(|_| {
+                Ok(us_orders(
+                    serde_json::json!([{ "id": "99", "action": 1 }]),
+                    0,
+                ))
+            });
+        mock.expect_us_order_detail()
+            .times(1)
+            .withf(|id| id == "11")
+            .returning(|_| Ok(serde_json::json!({ "order": { "id": "11", "action": 2 } })));
+        let execs = vec![exec_without_side("11", "11-1")];
+        let sides = us_execution_sides(&mock, &execs, None, None, None).await;
+        assert_eq!(sides.get("11").map(String::as_str), Some("Sell"));
     }
 
     #[tokio::test]
@@ -3637,27 +3752,40 @@ mod tests {
                     1_000_000,
                 ))
             });
+        mock.expect_us_order_detail()
+            .times(1)
+            .returning(|_| Err(detail_err()));
         let execs = vec![exec_without_side("11", "11-1")];
-        let sides = us_execution_sides(&mock, &execs, None, None, None)
-            .await
-            .unwrap();
+        let sides = us_execution_sides(&mock, &execs, None, None, None).await;
         assert!(sides.is_empty());
+
+        // The order detail fallback reads at most US_SIDE_DETAIL_MAX orders.
+        let mut mock = MockTradeApi::new();
+        mock.expect_us_query_orders()
+            .times(1)
+            .returning(|_| Ok(us_orders(serde_json::json!([]), 0)));
+        mock.expect_us_order_detail()
+            .times(US_SIDE_DETAIL_MAX)
+            .returning(|id| Ok(serde_json::json!({ "order": { "id": id, "action": 1 } })));
+        let execs: Vec<Execution> = (0..US_SIDE_DETAIL_MAX + 5)
+            .map(|i| exec_without_side(&format!("{}", 500 + i), "t"))
+            .collect();
+        let sides = us_execution_sides(&mock, &execs, None, None, None).await;
+        assert_eq!(sides.len(), US_SIDE_DETAIL_MAX);
 
         // Every execution already has a side: no order lookup at all.
         let mock = MockTradeApi::new();
-        let sides = us_execution_sides(&mock, &[exec("t1")], None, None, None)
-            .await
-            .unwrap();
+        let sides = us_execution_sides(&mock, &[exec("t1")], None, None, None).await;
         assert!(sides.is_empty());
         let rows = exec_rows(&[exec("t1")], Some(&sides));
-        assert_eq!(rows[0].side.as_deref(), Some("Buy"));
+        assert_eq!(rows[0].side, "Buy");
     }
 
     #[test]
     fn ap_execution_side_is_unchanged() {
         let rows = exec_rows(&[exec_without_side("11", "11-1"), exec("t1")], None);
-        assert_eq!(rows[0].side.as_deref(), Some("Unknown"));
-        assert_eq!(rows[1].side.as_deref(), Some("Buy"));
+        assert_eq!(rows[0].side, "Unknown");
+        assert_eq!(rows[1].side, "Buy");
     }
 
     #[tokio::test]
@@ -3759,7 +3887,7 @@ mod tests {
         };
         let mut execs = names("order executions");
         execs.sort();
-        let row = ExecRow::from_sdk(&exec("t1"), None).to_json();
+        let row = ExecRow::from_sdk(&exec("t1"), "Buy".to_string()).to_json();
         let mut keys: Vec<String> = row
             .as_object()
             .expect("execution row is an object")
