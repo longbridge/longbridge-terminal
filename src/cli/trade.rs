@@ -224,12 +224,13 @@ pub async fn cmd_orders(
         };
         let resp = crate::openapi::trade().us_query_orders(opts).await?;
         let data = super::us_shape::orders_json(&resp.orders);
-        if usize::try_from(resp.total_count).unwrap_or_default() > resp.orders.len() {
-            eprintln!(
-                "Note: page {us_page} shows {} of {} orders; use --page / --limit for more",
-                resp.orders.len(),
-                resp.total_count
-            );
+        if let Some(note) = us_orders_page_note(
+            us_page,
+            us_limit,
+            resp.orders.len(),
+            i64::from(resp.total_count),
+        ) {
+            eprintln!("{note}");
         }
         match format {
             OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&data)?),
@@ -268,6 +269,17 @@ pub async fn cmd_orders(
     let rows = ap_order_rows(&orders);
     print_table(ORDER_HEADERS, rows, format);
     Ok(())
+}
+
+/// The stderr note for a US order page that is not the last one: `None` when
+/// page `page` (of `limit` rows, holding `shown`) reaches `total`.
+fn us_orders_page_note(page: u32, limit: u32, shown: usize, total: i64) -> Option<String> {
+    let before = u64::from(page.saturating_sub(1)) * u64::from(limit);
+    let through = before + u64::try_from(shown).unwrap_or(u64::MAX);
+    let total_u = u64::try_from(total).unwrap_or_default();
+    (total_u > through).then(|| {
+        format!("Note: page {page} shows {shown} of {total} orders; use --page / --limit for more")
+    })
 }
 
 /// Column headers of `order` / `order --history`; `--format json` keys are
@@ -313,16 +325,8 @@ pub async fn cmd_order_detail(
 ) -> Result<()> {
     // US accounts always use the US order detail (interface 16).
     if crate::openapi::is_us_account().await {
-        // Read the raw body: the typed SDK answer drops `counter_id`, which is
-        // all the endpoint identifies the security by until the gateway's
-        // counter_id -> symbol conversion covers it.
-        let full = super::api::http_get_dc(
-            &format!("/v1/us/orders/{order_id}"),
-            &[],
-            Some(longbridge::DcRegion::Us),
-            false,
-        )
-        .await?;
+        // Read the raw body: the typed SDK answer has no instrument identifier.
+        let full = super::api::us_order_detail_raw(&order_id).await?;
         // --attached: show the attached child order instead of the main order.
         // current_attached_order may be nested inside full["order"] or at the
         // response root — check both.
@@ -640,18 +644,12 @@ async fn preview_last_price(symbol: &str) -> Option<Decimal> {
 /// Best-effort summary of an existing order, used by the cancel/replace previews
 /// so the operator can confirm they are acting on the order they meant.
 async fn preview_order_summary(order_id: &str) -> Option<serde_json::Value> {
+    if crate::openapi::is_us_account().await {
+        let full = super::api::us_order_detail_raw(order_id).await.ok()?;
+        return Some(us_order_summary(&full));
+    }
     let ctx = crate::openapi::trade();
-    let raw = if crate::openapi::is_us_account().await {
-        let resp = ctx.us_order_detail(order_id.to_string()).await.ok()?;
-        let full = serde_json::to_value(&resp).ok()?;
-        let mut order = full.get("order").cloned().unwrap_or(full);
-        if let Some(m) = order.as_object_mut() {
-            normalize_us_order_map(m);
-        }
-        order
-    } else {
-        serde_json::to_value(ctx.order_detail(order_id.to_string()).await.ok()?).ok()?
-    };
+    let raw = serde_json::to_value(ctx.order_detail(order_id.to_string()).await.ok()?).ok()?;
 
     let pick = |key: &str| -> Option<String> {
         match raw.get(key)? {
@@ -670,6 +668,34 @@ async fn preview_order_summary(order_id: &str) -> Option<serde_json::Value> {
         "executed_quantity": pick("executed_quantity"),
         "price": pick("price"),
     }))
+}
+
+/// The cancel/replace preview summary of a raw `/v1/us/orders/{id}` body
+/// (`{order: {...}}` or the order itself). The security is the response's
+/// `symbol`, or its raw `counter_id` when there is no symbol (shown as is,
+/// never converted), so the user sees which security they are acting on.
+fn us_order_summary(full: &serde_json::Value) -> serde_json::Value {
+    let order = full.get("order").filter(|o| o.is_object()).unwrap_or(full);
+    let pick = |key: &str| -> Option<String> {
+        match order.get(key)? {
+            serde_json::Value::String(s) if !s.is_empty() => Some(s.clone()),
+            serde_json::Value::Number(n) => Some(n.to_string()),
+            _ => None,
+        }
+    };
+    let side = match order.get("action").and_then(serde_json::Value::as_i64) {
+        Some(1) => Some("Buy".to_string()),
+        Some(2) => Some("Sell".to_string()),
+        _ => None,
+    };
+    serde_json::json!({
+        "symbol": pick("symbol").or_else(|| pick("counter_id")),
+        "side": side,
+        "status": pick("status").map(|s| super::us_shape::order_status(&s)),
+        "quantity": pick("quantity"),
+        "executed_quantity": pick("executed_qty"),
+        "price": pick("price"),
+    })
 }
 
 fn print_order_summary(summary: Option<&serde_json::Value>, order_id: &str) {
@@ -1968,50 +1994,109 @@ pub async fn cmd_alert_set_enabled(
     Ok(())
 }
 
+/// `--schema` field notes for the US-only keys of `order` rows.
+const US_ORDER_LEGEND: &[(&str, &str)] = &[
+    ("updated_at", "(US only) Last update time"),
+    ("stock_name", "(US only) Security name"),
+    ("currency", "(US only) Order currency"),
+    ("msg", "(US only) Upstream order message"),
+    ("trigger_price", "(US only) Trigger price"),
+    ("last_done", "(US only) Last done price"),
+    ("executed_amount", "(US only) Executed amount"),
+    ("gtd", "(US only) Good-till date"),
+    ("operate_direction", "(US only) OPEN / CLOSE"),
+    ("security_type", "(US only) Raw US security type code"),
+    (
+        "us_time_in_force",
+        "(US only) Raw US time-in-force code, not the AP enum",
+    ),
+    ("us_tag", "(US only) Raw US order tag code, not the AP enum"),
+];
+
 pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::ResponseSchema> {
-    use super::schema::{array, field, fields, object, schema, text, RootKind};
+    use super::schema::{array, field, fields, object, schema, text, with_legend, RootKind};
 
     let command = path.join(" ");
     let schema = match command.as_str() {
-        "order" => schema(
-            "Orders (today, or --history). Same array shape for HK/CN and US accounts. US rows add stock_name, updated_at, currency, msg, trigger_price, last_done, executed_amount, gtd, operate_direction, security_type, us_time_in_force and us_tag (raw US codes, not the AP enums). US symbols come from the gateway; until it converts these endpoints, US rows carry the raw counter_id instead of symbol",
-            RootKind::Array,
-            fields(&[
-                "order_id",
-                "symbol",
-                "side",
-                "order_type",
-                "status",
-                "quantity",
-                "price",
-                "executed_quantity",
-                "executed_price",
-                "created_at",
-            ]),
+        "order" => with_legend(
+            schema(
+                "Orders (today, or --history). Same array shape for HK/CN and US accounts; fields marked (US only) appear only on US rows. US accounts: one page per call (--page / --limit); when more orders exist past this page, a note with the total goes to stderr, not into the JSON",
+                RootKind::Array,
+                fields(&[
+                    "order_id",
+                    "symbol",
+                    "side",
+                    "order_type",
+                    "status",
+                    "quantity",
+                    "price",
+                    "executed_quantity",
+                    "executed_price",
+                    "created_at",
+                    "updated_at",
+                    "stock_name",
+                    "currency",
+                    "msg",
+                    "trigger_price",
+                    "last_done",
+                    "executed_amount",
+                    "gtd",
+                    "operate_direction",
+                    "security_type",
+                    "us_time_in_force",
+                    "us_tag",
+                ]),
+            ),
+            US_ORDER_LEGEND,
         ),
-        "order detail" => schema(
-            "Order detail. Same object shape for HK/CN and US accounts; US omits time_in_force and outside_rth (no verified US source), carries counter_id instead of symbol until the gateway converts it, and adds us_time_in_force, us_tag, gtd, trigger_price, last_done, operate_direction, security_type, attached_orders. With --attached, US prints the raw attached order",
-            RootKind::Object,
-            fields(&[
-                "order_id",
-                "stock_name",
-                "symbol",
-                "side",
-                "order_type",
-                "status",
-                "quantity",
-                "price",
-                "executed_quantity",
-                "executed_price",
-                "executed_amount",
-                "time_in_force",
-                "outside_rth",
-                "currency",
-                "submitted_at",
-                "updated_at",
-                "remark",
-                "history",
-            ]),
+        "order detail" => with_legend(
+            schema(
+                "Order detail. Same object shape for HK/CN and US accounts; fields marked (AP only) / (US only) appear on that region only. With --attached, US prints the raw attached order",
+                RootKind::Object,
+                fields(&[
+                    "order_id",
+                    "stock_name",
+                    "symbol",
+                    "side",
+                    "order_type",
+                    "status",
+                    "quantity",
+                    "price",
+                    "executed_quantity",
+                    "executed_price",
+                    "executed_amount",
+                    "time_in_force",
+                    "outside_rth",
+                    "currency",
+                    "submitted_at",
+                    "updated_at",
+                    "remark",
+                    "history",
+                    "us_time_in_force",
+                    "us_tag",
+                    "gtd",
+                    "trigger_price",
+                    "last_done",
+                    "operate_direction",
+                    "security_type",
+                    "attached_orders",
+                ]),
+            ),
+            &[
+                (
+                    "time_in_force",
+                    "(AP only) Time in force; US accounts report the raw code as us_time_in_force",
+                ),
+                ("outside_rth", "(AP only) Outside regular trading hours setting"),
+                ("attached_orders", "(US only) Attached child orders, when any"),
+                ("us_time_in_force", "(US only) Raw US time-in-force code, not the AP enum"),
+                ("us_tag", "(US only) Raw US order tag code, not the AP enum"),
+                ("gtd", "(US only) Good-till date"),
+                ("trigger_price", "(US only) Trigger price"),
+                ("last_done", "(US only) Last done price"),
+                ("operate_direction", "(US only) OPEN / CLOSE"),
+                ("security_type", "(US only) Raw US security type code"),
+            ],
         ),
         "order executions" => array(
             "Order executions",
@@ -2021,73 +2106,120 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
         ),
         "order buy" | "order sell" => object("Submitted order", &["order_id"]),
         "order cancel" | "order replace" => text("Order mutation status message"),
-        "assets" => schema(
-            "Account asset overview: array of per-currency balances. US accounts: one element (the account currency) with currency, net_assets (margin nlv), total_cash, buy_power (cash buying power), maintenance_margin (mmr) and cash_infos; max_finance_amount, remaining_finance_amount, init_margin, margin_call and risk_level have no US source and are absent; US cash_infos have no settling_cash but add total_amount, settled_cash, outstanding",
-            RootKind::Array,
-            [
-                fields(&[
-                    "currency",
+        "assets" => with_legend(
+            schema(
+                "Account asset overview: array of per-currency balances. US accounts: one element (the account currency) with currency, net_assets, total_cash, buy_power (cash buying power), maintenance_margin (mmr) and cash_infos; fields marked (AP only) are absent on US; US cash_infos have no settling_cash but add total_amount, settled_cash, outstanding",
+                RootKind::Array,
+                [
+                    fields(&[
+                        "currency",
+                        "net_assets",
+                        "total_cash",
+                        "buy_power",
+                        "max_finance_amount",
+                        "remaining_finance_amount",
+                        "init_margin",
+                        "maintenance_margin",
+                        "margin_call",
+                        "risk_level",
+                        "cash_infos",
+                    ]),
+                    vec![field(
+                        "us",
+                        "object",
+                        "(US only) {buy_limit_info (cash, overnight, day-trade, option, crypto buying power), margin_status (null for cash accounts)}",
+                    )],
+                ]
+                .concat(),
+            ),
+            &[
+                (
                     "net_assets",
-                    "total_cash",
-                    "buy_power",
-                    "max_finance_amount",
-                    "remaining_finance_amount",
-                    "init_margin",
-                    "maintenance_margin",
-                    "margin_call",
-                    "risk_level",
-                    "cash_infos",
+                    "Net assets. US: the margin net liquidation value (nlv); absent when the account reports no net liquidation value",
+                ),
+                ("max_finance_amount", "(AP only) Maximum financing amount"),
+                ("remaining_finance_amount", "(AP only) Remaining financing amount"),
+                ("init_margin", "(AP only) Initial margin"),
+                ("margin_call", "(AP only) Margin call amount"),
+                ("risk_level", "(AP only) Risk level"),
+            ],
+        ),
+        "cash-flow" => with_legend(
+            schema(
+                "Cash flow records, same array shape for HK/CN and US accounts; fields marked (AP only) / (US only) appear on that region only. US rows come from the account transaction history: balance is the signed amount (0 for crypto transfers and fees)",
+                RootKind::Array,
+                fields(&[
+                    "flow_name",
+                    "symbol",
+                    "business_type",
+                    "balance",
+                    "currency",
+                    "time",
+                    "description",
+                    "direction",
+                    "biz_code",
+                    "biz_code_name",
+                    "quantity",
+                    "quantity_description",
+                    "ref_no",
+                    "equity_type",
                 ]),
-                vec![field(
-                    "us",
-                    "object",
-                    "US accounts only: {buy_limit_info (cash, overnight, day-trade, option, crypto buying power), margin_status (null for cash accounts)}",
-                )],
-            ]
-            .concat(),
+            ),
+            &[
+                ("business_type", "(AP only) Business type"),
+                (
+                    "direction",
+                    "(US only) In / Out, from the amount sign or, when the amount is 0, the quantity sign",
+                ),
+                ("biz_code", "(US only) Transaction type code"),
+                ("biz_code_name", "(US only) Transaction type name"),
+                ("quantity", "(US only) Signed security quantity, when the row moves securities"),
+                ("quantity_description", "(US only) Human-readable quantity change"),
+                ("ref_no", "(US only) Transaction reference number"),
+                ("equity_type", "(US only) Equity type of the security, e.g. CRYPTO"),
+            ],
         ),
-        "cash-flow" => schema(
-            "Cash flow records, same array shape for HK/CN and US accounts. US rows come from the account transaction history: balance is the signed amount (0 for crypto transfers and fees), direction is In/Out from the amount sign or, when the amount is 0, the quantity sign; business_type has no US source and is absent (biz_code / biz_code_name classify the row); extras quantity, quantity_description, ref_no, equity_type",
-            RootKind::Array,
-            fields(&[
-                "flow_name",
-                "symbol",
-                "business_type",
-                "balance",
-                "currency",
-                "time",
-                "description",
-                "direction",
-                "biz_code",
-                "biz_code_name",
-            ]),
+        "portfolio" => with_legend(
+            schema(
+                "Portfolio overview, same object shape for HK/CN and US accounts. US: overview has only currency, total_asset and total_cash; holdings are the `positions` rows; cash_balances add settled_cash, outstanding; account type, buying power and margin status are under `us`",
+                RootKind::Object,
+                [
+                    fields(&["overview", "holdings", "cash_balances", "market_accounts"]),
+                    vec![field(
+                        "us",
+                        "object",
+                        "(US only) {account_type, asset_timestamp, cash_buy_power, overnight_buy_power, multi_leg, buy_limit_info, margin_status}",
+                    )],
+                ]
+                .concat(),
+            ),
+            &[
+                (
+                    "overview",
+                    "Account totals. US: {currency, total_asset (margin net liquidation value; absent when the account reports none), total_cash}",
+                ),
+                ("market_accounts", "(AP only) Per-market account breakdown"),
+            ],
         ),
-        "portfolio" => schema(
-            "Portfolio overview, same object shape for HK/CN and US accounts. US: overview has only currency, total_asset (margin nlv) and total_cash; holdings are the `positions` rows; cash_balances add settled_cash, outstanding; market_accounts is absent; account type, buying power and margin status are under `us`",
-            RootKind::Object,
-            [
-                fields(&["overview", "holdings", "cash_balances", "market_accounts"]),
-                vec![field(
-                    "us",
-                    "object",
-                    "US accounts only: {account_type, asset_timestamp, cash_buy_power, overnight_buy_power, multi_leg, buy_limit_info, margin_status}",
-                )],
-            ]
-            .concat(),
-        ),
-        "positions" => schema(
-            "Stock positions, same array shape for HK/CN and US accounts. US rows list stock, option and crypto holdings together (asset_type tells them apart), have no `available` (not in the US overview) and add last_done, market_price, prev_close, today_pl, position_side and other US fields",
-            RootKind::Array,
-            fields(&[
-                "symbol",
-                "name",
-                "quantity",
-                "available",
-                "cost_price",
-                "currency",
-                "market",
-                "asset_type",
-            ]),
+        "positions" => with_legend(
+            schema(
+                "Stock positions, same array shape for HK/CN and US accounts; fields marked (AP only) / (US only) appear on that region only. US rows list stock, option and crypto holdings together and add last_done, market_price, prev_close, today_pl, position_side and other US fields",
+                RootKind::Array,
+                fields(&[
+                    "symbol",
+                    "name",
+                    "quantity",
+                    "available",
+                    "cost_price",
+                    "currency",
+                    "market",
+                    "asset_type",
+                ]),
+            ),
+            &[
+                ("available", "(AP only) Quantity available to sell"),
+                ("asset_type", "(US only) STOCK / OPTION / CRYPTO"),
+            ],
         ),
         "fund-positions" => array(
             "Current fund positions (HK/CN accounts only; US accounts get an error)",
@@ -2936,5 +3068,69 @@ mod tests {
                         "market": "HK"}])
             );
         }
+    }
+
+    #[test]
+    fn us_cancel_preview_shows_the_security() {
+        let full = serde_json::json!({"order": {
+            "id": "900000000000000001", "symbol": "EXMP.US", "action": 2,
+            "status": "NewStatus", "quantity": "2", "executed_qty": "0", "price": "20.5"
+        }});
+        assert_eq!(
+            us_order_summary(&full),
+            serde_json::json!({"symbol": "EXMP.US", "side": "Sell", "status": "New",
+                               "quantity": "2", "executed_quantity": "0", "price": "20.5"})
+        );
+        // No symbol in the response: the raw counter_id is shown unconverted.
+        let full = serde_json::json!({"order": {
+            "id": "1", "symbol": "", "counter_id": "ST/US/EXMP", "action": 1
+        }});
+        let got = us_order_summary(&full);
+        assert_eq!(got["symbol"], "ST/US/EXMP");
+        assert_eq!(got["side"], "Buy");
+    }
+
+    #[test]
+    fn us_order_page_note_only_when_more_pages_exist() {
+        assert!(us_orders_page_note(1, 20, 20, 45).is_some());
+        assert!(us_orders_page_note(2, 20, 20, 45).is_some());
+        // Last page: 40 + 5 = 45 shown through.
+        assert!(us_orders_page_note(3, 20, 5, 45).is_none());
+        assert!(us_orders_page_note(1, 20, 3, 3).is_none());
+        assert!(us_orders_page_note(1, 20, 0, 0).is_none());
+    }
+
+    #[test]
+    fn schema_marks_region_only_fields() {
+        let desc = |cmd: &str, key: &str| -> String {
+            let path: Vec<String> = cmd.split(' ').map(str::to_string).collect();
+            let schema = schema_for_path(&path).unwrap_or_else(|| panic!("schema for {cmd}"));
+            schema
+                .fields
+                .iter()
+                .find(|f| f.name == key)
+                .unwrap_or_else(|| panic!("{cmd}: {key} missing"))
+                .description
+                .clone()
+        };
+        for (cmd, key, marker) in [
+            ("cash-flow", "direction", "(US only)"),
+            ("cash-flow", "biz_code", "(US only)"),
+            ("cash-flow", "biz_code_name", "(US only)"),
+            ("cash-flow", "quantity", "(US only)"),
+            ("cash-flow", "business_type", "(AP only)"),
+            ("positions", "available", "(AP only)"),
+            ("positions", "asset_type", "(US only)"),
+            ("order detail", "time_in_force", "(AP only)"),
+            ("order detail", "outside_rth", "(AP only)"),
+            ("order detail", "us_time_in_force", "(US only)"),
+            ("order detail", "us_tag", "(US only)"),
+            ("order", "us_tag", "(US only)"),
+            ("assets", "risk_level", "(AP only)"),
+        ] {
+            assert!(desc(cmd, key).starts_with(marker), "{cmd} {key}");
+        }
+        assert!(desc("assets", "net_assets").contains("absent"));
+        assert!(desc("portfolio", "overview").contains("absent"));
     }
 }

@@ -641,7 +641,15 @@ async fn call_trade(name: &str, p: Params<'_>) -> Result<Value> {
                 })
                 .await?)
         }
-        "us_order_detail" => ok(api.us_order_detail(p.str("order_id")?).await?),
+        // The untouched `GET /v1/us/orders/{order_id}` body: the SDK type has
+        // no instrument identifier.
+        "us_order_detail" => {
+            let order_id = p.str("order_id")?;
+            if !crate::cli::api::is_us_order_id(&order_id) {
+                bail_param!("`order_id` must be a US order ID (digits only), got `{order_id}`");
+            }
+            Ok(api.us_order_detail(order_id).await?)
+        }
         other => bail!("unknown method `{TRADE_PREFIX}{other}`"),
     }
 }

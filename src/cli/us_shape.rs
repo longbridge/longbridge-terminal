@@ -273,6 +273,10 @@ pub fn order_detail_json(raw: &Value) -> Value {
     m.insert("history".into(), Value::Array(history));
     put_order_extras(&mut m, o);
     m.remove("msg");
+    // AP always prints these (empty when unknown); keep the key set equal.
+    for key in ["stock_name", "currency", "executed_amount"] {
+        m.entry(key).or_insert_with(|| "".into());
+    }
     if let Some(attached) = o
         .get("attached_orders")
         .filter(|v| v.as_array().is_some_and(|a| !a.is_empty()))
@@ -479,7 +483,7 @@ fn margin_status_json(data: &USCashAndBuyPower) -> Result<Value> {
 
 /// `assets` for US accounts: a one-element array (the account currency),
 /// keyed like the AP balance. Mapped: `currency`, `net_assets` (margin
-/// `nlv`), `total_cash`, `buy_power` (`cash_buy_power`), `maintenance_margin`
+/// `nlv`; absent when the account reports none, never estimated), `total_cash`, `buy_power` (`cash_buy_power`), `maintenance_margin`
 /// (`mmr`), `cash_infos`. AP-only fields with no US source are omitted;
 /// buying-power and margin details are under `us`.
 pub fn assets_json(data: &USCashAndBuyPower) -> Result<Value> {
@@ -522,7 +526,8 @@ pub fn assets_json(data: &USCashAndBuyPower) -> Result<Value> {
 }
 
 /// `portfolio` for US accounts, keyed like the AP portfolio: `overview`
-/// (`currency`, `total_asset` = margin `nlv`, `total_cash`), `holdings` (as
+/// (`currency`, `total_asset` = margin `nlv`, absent when the account reports
+/// none, `total_cash`), `holdings` (as
 /// `positions` prints them) and `cash_balances`. AP's `market_accounts` and
 /// the overview P/L, margin and risk fields have no US source and are
 /// omitted; account type, buying power and margin status are under `us`.
@@ -638,6 +643,14 @@ mod tests {
         let got = order_detail_json(&json!({ "order": order }));
         assert!(got.get("symbol").is_none());
         assert_eq!(got["counter_id"], "ST/US/EXMP");
+    }
+
+    #[test]
+    fn us_order_detail_keeps_ap_keys_when_empty() {
+        let got = order_detail_json(&json!({ "order": { "id": "1", "symbol": "EXMP.US" } }));
+        for key in ["stock_name", "currency", "executed_amount"] {
+            assert_eq!(got[key], "", "{key}");
+        }
     }
 
     #[test]
@@ -935,6 +948,11 @@ mod tests {
 
     #[test]
     fn us_portfolio_golden() {
+        let mut cash_account = cash_fixture();
+        cash_account.margin_status = USMarginStatus::default();
+        let got = portfolio_json(&overview_fixture(), &cash_account).unwrap();
+        assert!(got["overview"].get("total_asset").is_none());
+
         let got = portfolio_json(&overview_fixture(), &cash_fixture()).unwrap();
         assert_eq!(
             got["overview"],

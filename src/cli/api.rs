@@ -15,8 +15,7 @@ use longbridge::trade::{
     GetTodayOrdersOptions, GetUSAvailableHoldingOptions, GetUSHistoryOrders,
     GetUSTransactionHistoryOptions, MarginRatio, Order, OrderDetail, QueryUSOrdersResponse,
     ReplaceOrderOptions, StockPositionsResponse, SubmitOrderOptions, SubmitOrderResponse,
-    USAssetOverview, USAvailableHolding, USCashAndBuyPower, USExchangeRates, USOrderDetailResponse,
-    USTransactionHistory,
+    USAssetOverview, USAvailableHolding, USCashAndBuyPower, USExchangeRates, USTransactionHistory,
 };
 use longbridge::{quote::IntradayLine, Market};
 use time::Date;
@@ -137,8 +136,10 @@ pub trait TradeApi: Send + Sync {
     async fn us_exchange_rates(&self) -> Result<USExchangeRates>;
     /// US accounts only: one page of the order list (open and historical).
     async fn us_query_orders(&self, opts: GetUSHistoryOrders) -> Result<QueryUSOrdersResponse>;
-    /// US accounts only: one order with its history and attached order.
-    async fn us_order_detail(&self, order_id: String) -> Result<USOrderDetailResponse>;
+    /// US accounts only: one order with its history and attached order, as
+    /// the untouched body of `GET /v1/us/orders/{order_id}`. The SDK type
+    /// carries no instrument identifier, so the REST body is returned instead.
+    async fn us_order_detail(&self, order_id: String) -> Result<serde_json::Value>;
 }
 
 // ──── Production implementations ────────────────────────────────────────────
@@ -472,12 +473,33 @@ impl TradeApi for LbTradeApi {
         Ok(self.ctx.us_query_orders(opts).await?)
     }
 
-    async fn us_order_detail(&self, order_id: String) -> Result<USOrderDetailResponse> {
-        Ok(self.ctx.us_order_detail(order_id).await?)
+    async fn us_order_detail(&self, order_id: String) -> Result<serde_json::Value> {
+        us_order_detail_raw(&order_id).await
     }
 }
 
 // ── HTTP helpers ─────────────────────────────────────────────────────────────
+
+/// Whether `order_id` is a well-formed US order ID (decimal digits only), so
+/// it can go into a URL path as is.
+pub fn is_us_order_id(order_id: &str) -> bool {
+    !order_id.is_empty() && order_id.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// The untouched body of `GET /v1/us/orders/{order_id}` (US data center).
+/// The order ID is validated first so it cannot alter the request path.
+pub async fn us_order_detail_raw(order_id: &str) -> Result<serde_json::Value> {
+    if !is_us_order_id(order_id) {
+        anyhow::bail!("invalid US order ID `{order_id}`: expected digits only");
+    }
+    http_get_dc(
+        &format!("/v1/us/orders/{order_id}"),
+        &[],
+        Some(longbridge::DcRegion::Us),
+        false,
+    )
+    .await
+}
 
 pub async fn http_get(
     path: &str,

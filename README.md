@@ -680,7 +680,8 @@ On a Longbridge US account, the AP-only trade methods fail with an error that na
 method to call instead: `trade.today_orders` / `trade.history_orders` →
 `trade.us_query_orders` (`symbol`, `side`, `start`, `end`, `query_type` 0 = all / 1 =
 pending / 2 = filled, `page`, `limit`); `trade.order_detail` → `trade.us_order_detail`
-(`order_id`); `trade.today_executions` / `trade.history_executions` →
+(`order_id`, digits only; returns the untouched `GET /v1/us/orders/{order_id}` body);
+`trade.today_executions` / `trade.history_executions` →
 `trade.us_query_orders` (filled orders); `trade.account_balance` →
 `trade.us_cash_and_buy_power`; `trade.cash_flow` → `trade.us_transaction_history`;
 `trade.stock_positions` → `trade.us_asset_overview`. `trade.fund_positions` and

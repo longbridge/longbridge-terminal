@@ -193,6 +193,8 @@ pub enum Commands {
     /// method to call instead — orders via `trade.us_query_orders` and
     /// `trade.us_order_detail`, assets via `trade.us_asset_overview`,
     /// `trade.us_cash_and_buy_power` and `trade.us_transaction_history`.
+    /// `trade.us_order_detail` (`order_id`, digits only) returns the untouched
+    /// REST body of `GET /v1/us/orders/{order_id}`, as `api.get` would.
     ///
     /// Order execution is gated: `trade.submit_order`, `trade.cancel_order` and
     /// `trade.replace_order` are DRY RUNS that place nothing unless the params
@@ -924,8 +926,9 @@ pub enum Commands {
     /// pass a region. --action/--page/--limit apply only to US accounts.
     /// `--format json` has the same keys on both: `order_id`, symbol, side, `order_type`,
     /// status, quantity, price, `executed_quantity`, `executed_price`, `created_at`; US rows
-    /// add US-only extras (see `--schema`). Tell regions apart with `check --format json`
-    /// (`dc_region`).
+    /// add US-only extras (see `--schema`). US lists are paged: when more orders exist past
+    /// the requested page, a note with the total is printed to stderr (never into the JSON).
+    /// Tell regions apart with `check --format json` (`dc_region`).
     ///
     /// Without a subcommand, lists today's orders (or historical with --history).
     /// Example: longbridge order
@@ -968,8 +971,9 @@ pub enum Commands {
     /// `remaining_finance_amount`, `init_margin`, `maintenance_margin`, `margin_call`, `risk_level`,
     /// and a `cash_infos` array with per-currency available/frozen/settling/withdrawable amounts.
     /// US accounts: same array shape with one element; mapped fields only (`net_assets` =
-    /// margin NLV, `buy_power` = cash buying power, `maintenance_margin` = MMR), no
-    /// finance/margin-call/risk fields, buying power and margin status under `us`.
+    /// margin NLV, absent when the account reports no net liquidation value; `buy_power` =
+    /// cash buying power; `maintenance_margin` = MMR), no finance/margin-call/risk fields,
+    /// buying power and margin status under `us`.
     /// Behavior adapts to your account's region automatically; you never pass a region.
     /// Example: longbridge assets
     /// Example: longbridge assets --currency HKD
@@ -1003,8 +1007,9 @@ pub enum Commands {
     ///
     /// Returns: overview (`total_asset`, `market_cap`, `total_cash`, `total_pl`, `total_today_pl`,
     /// `margin_call`, `risk_level`, `credit_limit`, currency), holdings table, and cash balances.
-    /// US accounts: same keys where a US source exists (overview `total_asset`, `total_cash`;
-    /// holdings; cash balances), no `market_accounts`, US-only data under `us`.
+    /// US accounts: same keys where a US source exists (overview `total_asset` = margin NLV,
+    /// absent when the account reports no net liquidation value, and `total_cash`; holdings;
+    /// cash balances), no `market_accounts`, US-only data under `us`.
     ///
     /// Without subcommand: shows full portfolio overview.
     /// Subcommands: short-margin
@@ -3342,7 +3347,7 @@ pub enum OrderCmd {
     ///
     /// Returns all fields from `order` plus `charge_detail`, `history_details`, msg.
     /// US accounts: same `--format json` keys except `time_in_force` / `outside_rth`
-    /// (raw code as `us_time_in_force`); `counter_id` replaces symbol until the gateway converts it.
+    /// (raw code as `us_time_in_force`), plus US-only extras (see `--schema`).
     /// Example: longbridge order detail 20240101-123456789
     /// Example: longbridge order detail 20240101-123456789 --attached
     Detail {
