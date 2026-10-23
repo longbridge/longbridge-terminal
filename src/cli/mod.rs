@@ -34,6 +34,7 @@ pub mod statement;
 pub mod topic;
 pub mod trade;
 pub mod us_asset;
+pub mod us_shape;
 pub mod watchlist;
 
 #[derive(ValueEnum, Clone, Default, Debug)]
@@ -921,6 +922,10 @@ pub enum Commands {
     ///
     /// Behavior adapts to your account's region automatically; you never
     /// pass a region. --action/--page/--limit apply only to US accounts.
+    /// `--format json` has the same keys on both: `order_id`, symbol, side, `order_type`,
+    /// status, quantity, price, `executed_quantity`, `executed_price`, `created_at`; US rows
+    /// add US-only extras (see `--schema`). Tell regions apart with `check --format json`
+    /// (`dc_region`).
     ///
     /// Without a subcommand, lists today's orders (or historical with --history).
     /// Example: longbridge order
@@ -962,9 +967,9 @@ pub enum Commands {
     /// Returns: currency, `net_assets`, `total_cash`, `buy_power`, `max_finance_amount`,
     /// `remaining_finance_amount`, `init_margin`, `maintenance_margin`, `margin_call`, `risk_level`,
     /// and a `cash_infos` array with per-currency available/frozen/settling/withdrawable amounts.
-    /// US accounts instead return cash and buying power: `buy_limit_info` (cash, overnight,
-    /// day-trade, option, crypto buy power), a `cash_list` array (total, available, withdrawable,
-    /// frozen, settled, outstanding per currency) and `margin_status` (null for cash accounts).
+    /// US accounts: same array shape with one element; mapped fields only (`net_assets` =
+    /// margin NLV, `buy_power` = cash buying power, `maintenance_margin` = MMR), no
+    /// finance/margin-call/risk fields, buying power and margin status under `us`.
     /// Behavior adapts to your account's region automatically; you never pass a region.
     /// Example: longbridge assets
     /// Example: longbridge assets --currency HKD
@@ -977,8 +982,8 @@ pub enum Commands {
     /// Cash flow records (deposits, withdrawals, dividends, settlements)
     ///
     /// Returns: `flow_name`, symbol, `business_type`, balance, currency, `business_time`, description.
-    /// US accounts return the account transaction history instead: title, amount, currency,
-    /// symbol, time, remark (all pages in the date range).
+    /// US accounts: same keys from the account transaction history (all pages in range),
+    /// plus `direction` (In/Out) and `biz_code`; no `business_type`.
     /// Defaults to last 30 days if no dates provided.
     /// Example: longbridge cash-flow --start 2024-01-01 --end 2024-03-31
     CashFlow {
@@ -997,8 +1002,8 @@ pub enum Commands {
     ///
     /// Returns: overview (`total_asset`, `market_cap`, `total_cash`, `total_pl`, `total_today_pl`,
     /// `margin_call`, `risk_level`, `credit_limit`, currency), holdings table, and cash balances.
-    /// US accounts return the US asset overview (stock / option / crypto holdings, cash) plus
-    /// `cash_and_buy_power` (buying power, per-currency cash, margin status).
+    /// US accounts: same keys where a US source exists (overview `total_asset`, `total_cash`;
+    /// holdings; cash balances), no `market_accounts`, US-only data under `us`.
     ///
     /// Without subcommand: shows full portfolio overview.
     /// Subcommands: short-margin
@@ -1014,7 +1019,9 @@ pub enum Commands {
     /// Behavior adapts to your account's region automatically; you never
     /// pass a region.
     ///
-    /// Returns: symbol, name, quantity, `available_quantity`, `cost_price`, currency, market.
+    /// Returns: symbol, name, quantity, available, `cost_price`, currency, market.
+    /// US accounts: same array, stock/option/crypto rows together (`asset_type`), no
+    /// `available`, plus US quote/P&L fields.
     /// Example: longbridge positions --format json
     Positions,
 
@@ -1072,7 +1079,8 @@ pub enum Commands {
     /// Exchange rates for all supported currencies
     ///
     /// Behavior adapts to your account's region automatically (US accounts read the
-    /// US exchange-rate table); you never pass a region.
+    /// US exchange-rate table, one row per pair using the `reference` rate, else `am`,
+    /// shown as `spec_key`); you never pass a region.
     /// Example: longbridge exchange-rate
     /// Example: longbridge exchange-rate --format json
     ExchangeRate,
@@ -3332,6 +3340,8 @@ pub enum OrderCmd {
     /// pass a region. --attached applies only to US accounts.
     ///
     /// Returns all fields from `order` plus `charge_detail`, `history_details`, msg.
+    /// US accounts: same `--format json` keys except `time_in_force` / `outside_rth`
+    /// (raw code as `us_time_in_force`); symbol derived from the US counter ID.
     /// Example: longbridge order detail 20240101-123456789
     /// Example: longbridge order detail 20240101-123456789 --attached
     Detail {

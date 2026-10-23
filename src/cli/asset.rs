@@ -548,7 +548,7 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
     let command = path.join(" ");
     let schema = match command.as_str() {
         "exchange-rate" => object(
-            "Exchange rates; each entry has base_currency, other_currency, bid_rate, offer_rate, average_rate. US accounts: rates are numeric strings, and each entry also has universal_key (the account channel, e.g. us_lb_apex) and spec_key (the rate type, e.g. am or reference)",
+            "Exchange rates; each entry has base_currency, other_currency, bid_rate, offer_rate, average_rate (numbers). US accounts: one entry per currency pair using the `reference` rate type (falling back to `am`), named in an extra spec_key",
             &["exchanges"],
         ),
         "portfolio short-margin" => object("Short-selling margin details", &["short_list"]),

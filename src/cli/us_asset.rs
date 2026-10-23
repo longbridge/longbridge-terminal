@@ -10,14 +10,16 @@ use anyhow::{bail, Result};
 use longbridge::trade::{
     GetUSTransactionHistoryOptions, USCashAndBuyPower, USMarginStatus, USTransaction,
 };
-use serde_json::{json, Value};
+use serde_json::Value;
 use time::OffsetDateTime;
 
 use crate::cli::api::TradeApi;
 use crate::cli::output::{print_account_banner, print_table};
-use crate::cli::trade::{normalize_us_overview, print_json_us, print_us_holdings_pretty};
+use crate::cli::trade::{normalize_us_overview, print_us_holdings_pretty};
+use crate::cli::us_shape::{
+    assets_json, cash_flow_json, exchange_rates_json, portfolio_json, table_rows,
+};
 use crate::cli::OutputFormat;
-use crate::utils::datetime::fmt_rfc3339;
 
 /// Page size used to walk `us_transaction_history`.
 const TRANSACTION_PAGE_SIZE: i32 = 20;
@@ -36,7 +38,7 @@ pub fn ensure_not_us(is_us: bool, what: &str) -> Result<()> {
 
 /// A margin status is meaningful only when the server filled in at least one
 /// figure; cash accounts get an all-empty object.
-fn margin_status_is_empty(m: &USMarginStatus) -> bool {
+pub(crate) fn margin_status_is_empty(m: &USMarginStatus) -> bool {
     [
         &m.nlv,
         &m.margin_equity,
@@ -47,16 +49,6 @@ fn margin_status_is_empty(m: &USMarginStatus) -> bool {
     ]
     .iter()
     .all(|v| v.is_empty())
-}
-
-/// `--format json` shape of [`USCashAndBuyPower`]: the SDK fields, with an
-/// empty `margin_status` reported as `null`.
-pub fn cash_and_buy_power_json(data: &USCashAndBuyPower) -> Result<Value> {
-    let mut v = serde_json::to_value(data)?;
-    if margin_status_is_empty(&data.margin_status) {
-        v["margin_status"] = Value::Null;
-    }
-    Ok(v)
 }
 
 fn or_dash(s: &str) -> String {
@@ -156,23 +148,10 @@ pub async fn run_us_assets(
     let data = api.us_cash_and_buy_power(currency).await?;
     print_account_banner(format);
     match format {
-        OutputFormat::Json => print_json_us(&cash_and_buy_power_json(&data)?),
+        OutputFormat::Json => print_json(&assets_json(&data)?),
         OutputFormat::Pretty => print_cash_and_buy_power_pretty(&data),
     }
     Ok(())
-}
-
-/// `--format json` shape of the US `portfolio`: the normalized asset overview
-/// (as `positions --format json` prints it) plus `cash_and_buy_power`.
-pub fn us_portfolio_json(overview: Value, cash: &USCashAndBuyPower) -> Result<Value> {
-    let mut v = overview;
-    if let Some(map) = v.as_object_mut() {
-        map.insert(
-            "cash_and_buy_power".to_string(),
-            cash_and_buy_power_json(cash)?,
-        );
-    }
-    Ok(v)
 }
 
 /// `longbridge portfolio` for US accounts: holdings from the asset overview,
@@ -180,12 +159,11 @@ pub fn us_portfolio_json(overview: Value, cash: &USCashAndBuyPower) -> Result<Va
 pub async fn run_us_portfolio(api: &dyn TradeApi, format: &OutputFormat) -> Result<()> {
     let (overview, cash) =
         tokio::try_join!(api.us_asset_overview(), api.us_cash_and_buy_power(None))?;
-    let overview = normalize_us_overview(&overview)?;
-
     print_account_banner(format);
     match format {
-        OutputFormat::Json => print_json_us(&us_portfolio_json(overview, &cash)?),
+        OutputFormat::Json => print_json(&portfolio_json(&overview, &cash)?),
         OutputFormat::Pretty => {
+            let overview = normalize_us_overview(&overview)?;
             let text = |key: &str| or_dash(overview[key].as_str().unwrap_or_default());
             println!("Account Type: {}", text("account_type"));
             println!("Currency:     {}", text("currency"));
@@ -231,34 +209,33 @@ pub async fn run_us_cash_flow(
     format: &OutputFormat,
 ) -> Result<()> {
     let items = fetch_us_transactions(api, start_at, end_at).await?;
-    let rows = items
-        .iter()
-        .map(|t| {
-            vec![
-                t.title.clone(),
-                t.amount.clone(),
-                t.currency.clone(),
-                t.symbol.clone(),
-                t.done_at
-                    .or(t.create_at)
-                    .map(fmt_rfc3339)
-                    .unwrap_or_default(),
-                t.remark.clone(),
-            ]
-        })
-        .collect();
-    print_table(
-        &["Title", "Amount", "Currency", "Symbol", "Time", "Remark"],
-        rows,
-        format,
-    );
+    let data = cash_flow_json(&items);
+    match format {
+        OutputFormat::Json => print_json(&data),
+        OutputFormat::Pretty => {
+            let headers = &[
+                "Flow Name",
+                "Symbol",
+                "Direction",
+                "Balance",
+                "Currency",
+                "Time",
+                "Description",
+            ];
+            print_table(headers, table_rows(&data, headers), format);
+        }
+    }
     Ok(())
 }
 
-/// `longbridge exchange-rate` for US accounts, as `{exchanges: [...]}`.
+/// `longbridge exchange-rate` for US accounts, in the AP shape (see
+/// [`exchange_rates_json`]).
 pub async fn us_exchange_rates_json(api: &dyn TradeApi) -> Result<Value> {
-    let rates = api.us_exchange_rates().await?;
-    Ok(json!({ "exchanges": serde_json::to_value(rates.exchanges)? }))
+    Ok(exchange_rates_json(&api.us_exchange_rates().await?))
+}
+
+fn print_json(v: &Value) {
+    println!("{}", serde_json::to_string_pretty(v).unwrap_or_default());
 }
 
 #[cfg(test)]
@@ -321,13 +298,14 @@ mod tests {
 
     #[test]
     fn empty_margin_status_is_null_in_json() {
-        let v = cash_and_buy_power_json(&cash_fixture(false)).unwrap();
-        assert!(v["margin_status"].is_null());
-        assert_eq!(v["buy_limit_info"]["cash_buy_power"], "100.5");
-        assert_eq!(v["cash_list"][0]["total_amount"], "120");
+        let v = assets_json(&cash_fixture(false)).unwrap();
+        assert!(v[0]["us"]["margin_status"].is_null());
+        assert_eq!(v[0]["buy_power"], "100.5");
+        assert_eq!(v[0]["total_cash"], "120");
 
-        let v = cash_and_buy_power_json(&cash_fixture(true)).unwrap();
-        assert_eq!(v["margin_status"]["nlv"], "1200");
+        let v = assets_json(&cash_fixture(true)).unwrap();
+        assert_eq!(v[0]["us"]["margin_status"]["nlv"], "1200");
+        assert_eq!(v[0]["net_assets"], "1200");
     }
 
     #[tokio::test]
@@ -359,19 +337,15 @@ mod tests {
             .returning(|_| Ok(cash_fixture(false)));
         run_us_portfolio(&mock, &OutputFormat::Json).await.unwrap();
 
-        let overview = normalize_us_overview(&USAssetOverview {
+        let overview = USAssetOverview {
             account_type: "1".to_string(),
             ..Default::default()
-        })
-        .unwrap();
-        let v = us_portfolio_json(overview, &cash_fixture(false)).unwrap();
-        assert_eq!(v["account_type"], "Cash");
-        assert!(v["stock_list"].is_array());
-        assert_eq!(
-            v["cash_and_buy_power"]["buy_limit_info"]["cash_buy_power"],
-            "100.5"
-        );
-        assert!(v["cash_and_buy_power"]["margin_status"].is_null());
+        };
+        let v = portfolio_json(&overview, &cash_fixture(false)).unwrap();
+        assert_eq!(v["us"]["account_type"], "Cash");
+        assert!(v["holdings"].is_array());
+        assert_eq!(v["us"]["buy_limit_info"]["cash_buy_power"], "100.5");
+        assert!(v["us"]["margin_status"].is_null());
     }
 
     #[tokio::test]
@@ -422,6 +396,6 @@ mod tests {
         });
         let v = us_exchange_rates_json(&mock).await.unwrap();
         assert_eq!(v["exchanges"][0]["other_currency"], "HKD");
-        assert_eq!(v["exchanges"][0]["bid_rate"], "7.8");
+        assert_eq!(v["exchanges"][0]["bid_rate"], serde_json::json!(7.8));
     }
 }

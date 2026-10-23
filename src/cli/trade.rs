@@ -16,7 +16,7 @@ use super::{
     },
     OutputFormat,
 };
-use crate::utils::datetime::{fmt_rfc3339, format_date};
+use crate::utils::datetime::fmt_rfc3339;
 
 fn risk_level_name(level: i32) -> &'static str {
     match level {
@@ -223,50 +223,19 @@ pub async fn cmd_orders(
             limit: i32::try_from(us_limit).unwrap_or(20),
         };
         let resp = crate::openapi::trade().us_query_orders(opts).await?;
-        let mut data = serde_json::to_value(&resp)?;
-        if let Some(orders) = data["orders"].as_array_mut() {
-            for o in orders {
-                if let Some(map) = o.as_object_mut() {
-                    normalize_us_order_map(map);
-                }
-            }
+        let data = super::us_shape::orders_json(&resp.orders);
+        if usize::try_from(resp.total_count).unwrap_or_default() > resp.orders.len() {
+            eprintln!(
+                "Note: page {us_page} shows {} of {} orders; use --page / --limit for more",
+                resp.orders.len(),
+                resp.total_count
+            );
         }
         match format {
             OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&data)?),
             OutputFormat::Pretty => {
-                let empty = vec![];
-                let orders = data["orders"].as_array().unwrap_or(&empty);
-                let val = |v: &serde_json::Value| -> String {
-                    match v {
-                        serde_json::Value::String(s) => s.clone(),
-                        serde_json::Value::Number(n) => n.to_string(),
-                        _ => "-".to_string(),
-                    }
-                };
-                print_table(
-                    &[
-                        "Order ID", "Symbol", "Side", "Type", "Status", "Qty", "Price", "Created",
-                    ],
-                    orders
-                        .iter()
-                        .map(|o| {
-                            let side = val(&o["action"]);
-                            vec![
-                                val(&o["id"]),
-                                val(&o["symbol"]),
-                                side,
-                                val(&o["order_type"]),
-                                val(&o["status"]),
-                                val(&o["quantity"]),
-                                val(&o["price"]),
-                                o["create_time"]
-                                    .as_i64()
-                                    .map_or_else(|| val(&o["create_time"]), format_date),
-                            ]
-                        })
-                        .collect(),
-                    format,
-                );
+                let rows = super::us_shape::table_rows(&data, ORDER_HEADERS);
+                print_table(ORDER_HEADERS, rows, format);
             }
         }
         return Ok(());
@@ -296,19 +265,29 @@ pub async fn cmd_orders(
         ctx.today_orders(opts).await?
     };
 
-    let headers = &[
-        "Order ID",
-        "Symbol",
-        "Side",
-        "Order Type",
-        "Status",
-        "Quantity",
-        "Price",
-        "Executed Quantity",
-        "Executed Price",
-        "Created At",
-    ];
-    let rows = orders
+    let rows = ap_order_rows(&orders);
+    print_table(ORDER_HEADERS, rows, format);
+    Ok(())
+}
+
+/// Column headers of `order` / `order --history`; `--format json` keys are
+/// these in snake case. US rows use the same keys (see `us_shape`).
+const ORDER_HEADERS: &[&str] = &[
+    "Order ID",
+    "Symbol",
+    "Side",
+    "Order Type",
+    "Status",
+    "Quantity",
+    "Price",
+    "Executed Quantity",
+    "Executed Price",
+    "Created At",
+];
+
+/// AP `order` / `order --history` table rows, one per order.
+fn ap_order_rows(orders: &[longbridge::trade::Order]) -> Vec<Vec<String>> {
+    orders
         .iter()
         .map(|o| {
             vec![
@@ -324,10 +303,7 @@ pub async fn cmd_orders(
                 fmt_rfc3339(o.submitted_at),
             ]
         })
-        .collect();
-
-    print_table(headers, rows, format);
-    Ok(())
+        .collect()
 }
 
 pub async fn cmd_order_detail(
@@ -335,28 +311,20 @@ pub async fn cmd_order_detail(
     attached: bool,
     format: &OutputFormat,
 ) -> Result<()> {
-    // US accounts always use us_order_detail (interface 16).
-    // --attached: show the attached child order instead of the main order.
+    // US accounts always use the US order detail (interface 16).
     if crate::openapi::is_us_account().await {
-        let resp = crate::openapi::trade()
-            .us_order_detail(order_id.clone())
-            .await?;
-        let full = serde_json::to_value(&resp)?;
-        // Normalize the inner order object same as order list
-        let mut order_obj = if let Some(o) = full["order"].as_object() {
-            let mut m = o.clone();
-            normalize_us_order_map(&mut m);
-            serde_json::Value::Object(m)
-        } else if let Some(m) = full.as_object() {
-            let mut nm = m.clone();
-            normalize_us_order_map(&mut nm);
-            serde_json::Value::Object(nm)
-        } else {
-            full.clone()
-        };
-        // For --attached: replace with child order if present, applying the same normalization.
-        // current_attached_order may be nested inside full["order"] (same level as order_histories)
-        // or at the response root depending on SDK version — check both.
+        // Read the raw body: the typed SDK answer drops `counter_id`, the only
+        // symbol source the endpoint returns.
+        let full = super::api::http_get_dc(
+            &format!("/v1/us/orders/{order_id}"),
+            &[],
+            Some(longbridge::DcRegion::Us),
+            false,
+        )
+        .await?;
+        // --attached: show the attached child order instead of the main order.
+        // current_attached_order may be nested inside full["order"] or at the
+        // response root — check both.
         let attached_val = if full["order"]["current_attached_order"].is_null() {
             full["current_attached_order"].clone()
         } else {
@@ -372,31 +340,7 @@ pub async fn cmd_order_detail(
                 attached_val
             }
         } else {
-            // Flatten: expose order fields at top level + order_histories.
-            // order_histories is now embedded inside USOrderDetail (order_obj), not at root.
-            if let Some(m) = order_obj.as_object_mut() {
-                if let Some(hist) = m.get("order_histories").and_then(|v| v.as_array()).cloned() {
-                    if !hist.is_empty() {
-                        let normalized: Vec<serde_json::Value> = hist
-                            .iter()
-                            .map(|entry| {
-                                if let Some(hm) = entry.as_object() {
-                                    let mut nm = hm.clone();
-                                    normalize_us_order_map(&mut nm);
-                                    serde_json::Value::Object(nm)
-                                } else {
-                                    entry.clone()
-                                }
-                            })
-                            .collect();
-                        m.insert(
-                            "order_histories".to_string(),
-                            serde_json::Value::Array(normalized),
-                        );
-                    }
-                }
-            }
-            order_obj
+            super::us_shape::order_detail_json(&full)
         };
         match format {
             OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&data)?),
@@ -447,39 +391,7 @@ pub async fn cmd_order_detail(
 
     match format {
         OutputFormat::Json => {
-            let history: Vec<serde_json::Value> = detail
-                .history
-                .iter()
-                .map(|h| {
-                    serde_json::json!({
-                        "status": format!("{:?}", h.status),
-                        "time": fmt_rfc3339(h.time),
-                        "price": h.price.to_string(),
-                        "quantity": h.quantity.to_string(),
-                        "msg": h.msg,
-                    })
-                })
-                .collect();
-            let val = serde_json::json!({
-                "order_id": detail.order_id,
-                "stock_name": detail.stock_name,
-                "symbol": detail.symbol,
-                "side": format!("{:?}", detail.side),
-                "order_type": format!("{:?}", detail.order_type),
-                "status": format!("{:?}", detail.status),
-                "quantity": detail.quantity.to_string(),
-                "price": fmt_decimal(&detail.price),
-                "executed_quantity": detail.executed_quantity.to_string(),
-                "executed_price": fmt_decimal(&detail.executed_price),
-                "executed_amount": executed_amount.map(|a| a.to_string()).unwrap_or_default(),
-                "time_in_force": format!("{:?}", detail.time_in_force),
-                "outside_rth": outside_rth,
-                "currency": detail.currency,
-                "submitted_at": fmt_rfc3339(detail.submitted_at),
-                "updated_at": detail.updated_at.map(fmt_rfc3339).unwrap_or_default(),
-                "remark": detail.msg,
-                "history": history,
-            });
+            let val = ap_order_detail_json(&detail);
             println!("{}", serde_json::to_string_pretty(&val)?);
         }
         OutputFormat::Pretty => {
@@ -542,6 +454,47 @@ pub async fn cmd_order_detail(
         }
     }
     Ok(())
+}
+
+/// AP `order <id> --format json` object.
+fn ap_order_detail_json(detail: &longbridge::trade::OrderDetail) -> serde_json::Value {
+    let executed_amount = detail.executed_price.map(|p| p * detail.executed_quantity);
+    let outside_rth = detail
+        .outside_rth
+        .map_or_else(|| "-".to_string(), |v| format!("{v:?}"));
+    let history: Vec<serde_json::Value> = detail
+        .history
+        .iter()
+        .map(|h| {
+            serde_json::json!({
+                "status": format!("{:?}", h.status),
+                "time": fmt_rfc3339(h.time),
+                "price": h.price.to_string(),
+                "quantity": h.quantity.to_string(),
+                "msg": h.msg,
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "order_id": detail.order_id,
+        "stock_name": detail.stock_name,
+        "symbol": detail.symbol,
+        "side": format!("{:?}", detail.side),
+        "order_type": format!("{:?}", detail.order_type),
+        "status": format!("{:?}", detail.status),
+        "quantity": detail.quantity.to_string(),
+        "price": fmt_decimal(&detail.price),
+        "executed_quantity": detail.executed_quantity.to_string(),
+        "executed_price": fmt_decimal(&detail.executed_price),
+        "executed_amount": executed_amount.map(|a| a.to_string()).unwrap_or_default(),
+        "time_in_force": format!("{:?}", detail.time_in_force),
+        "outside_rth": outside_rth,
+        "currency": detail.currency,
+        "submitted_at": fmt_rfc3339(detail.submitted_at),
+        "updated_at": detail.updated_at.map(fmt_rfc3339).unwrap_or_default(),
+        "remark": detail.msg,
+        "history": history,
+    })
 }
 
 /// One execution row for the today / history output.
@@ -1022,40 +975,45 @@ pub async fn cmd_replace_order(
     Ok(())
 }
 
-fn print_assets(balances: &[longbridge::trade::AccountBalance], format: &OutputFormat) {
-    match format {
-        OutputFormat::Json => {
-            let records: Vec<serde_json::Value> = balances
+/// AP `assets --format json` records, one per currency.
+fn ap_assets_json(balances: &[longbridge::trade::AccountBalance]) -> Vec<serde_json::Value> {
+    balances
+        .iter()
+        .map(|b| {
+            let cash_infos: Vec<serde_json::Value> = b
+                .cash_infos
                 .iter()
-                .map(|b| {
-                    let cash_infos: Vec<serde_json::Value> = b
-                        .cash_infos
-                        .iter()
-                        .map(|c| {
-                            serde_json::json!({
-                                "currency": c.currency,
-                                "available_cash": c.available_cash.to_string(),
-                                "frozen_cash": c.frozen_cash.to_string(),
-                                "settling_cash": c.settling_cash.to_string(),
-                                "withdraw_cash": c.withdraw_cash.to_string(),
-                            })
-                        })
-                        .collect();
+                .map(|c| {
                     serde_json::json!({
-                        "currency": b.currency,
-                        "net_assets": b.net_assets.to_string(),
-                        "total_cash": b.total_cash.to_string(),
-                        "buy_power": b.buy_power.to_string(),
-                        "max_finance_amount": b.max_finance_amount.to_string(),
-                        "remaining_finance_amount": b.remaining_finance_amount.to_string(),
-                        "init_margin": b.init_margin.to_string(),
-                        "maintenance_margin": b.maintenance_margin.to_string(),
-                        "margin_call": b.margin_call.to_string(),
-                        "risk_level": risk_level_name(b.risk_level),
-                        "cash_infos": cash_infos,
+                        "currency": c.currency,
+                        "available_cash": c.available_cash.to_string(),
+                        "frozen_cash": c.frozen_cash.to_string(),
+                        "settling_cash": c.settling_cash.to_string(),
+                        "withdraw_cash": c.withdraw_cash.to_string(),
                     })
                 })
                 .collect();
+            serde_json::json!({
+                "currency": b.currency,
+                "net_assets": b.net_assets.to_string(),
+                "total_cash": b.total_cash.to_string(),
+                "buy_power": b.buy_power.to_string(),
+                "max_finance_amount": b.max_finance_amount.to_string(),
+                "remaining_finance_amount": b.remaining_finance_amount.to_string(),
+                "init_margin": b.init_margin.to_string(),
+                "maintenance_margin": b.maintenance_margin.to_string(),
+                "margin_call": b.margin_call.to_string(),
+                "risk_level": risk_level_name(b.risk_level),
+                "cash_infos": cash_infos,
+            })
+        })
+        .collect()
+}
+
+fn print_assets(balances: &[longbridge::trade::AccountBalance], format: &OutputFormat) {
+    match format {
+        OutputFormat::Json => {
+            let records = ap_assets_json(balances);
             println!(
                 "{}",
                 serde_json::to_string_pretty(&records).unwrap_or_default()
@@ -1158,16 +1116,24 @@ pub async fn cmd_cash_flow(
     let opts = longbridge::trade::GetCashFlowOptions::new(start_at, end_at);
     let flows = ctx.cash_flow(opts).await?;
 
-    let headers = &[
-        "Flow Name",
-        "Symbol",
-        "Business Type",
-        "Balance",
-        "Currency",
-        "Time",
-        "Description",
-    ];
-    let rows = flows
+    print_table(CASH_FLOW_HEADERS, ap_cash_flow_rows(&flows), format);
+    Ok(())
+}
+
+/// Column headers of `cash-flow`; `--format json` keys are these in snake case.
+const CASH_FLOW_HEADERS: &[&str] = &[
+    "Flow Name",
+    "Symbol",
+    "Business Type",
+    "Balance",
+    "Currency",
+    "Time",
+    "Description",
+];
+
+/// AP `cash-flow` table rows, one per flow.
+fn ap_cash_flow_rows(flows: &[longbridge::trade::CashFlow]) -> Vec<Vec<String>> {
+    flows
         .iter()
         .map(|f| {
             vec![
@@ -1180,10 +1146,7 @@ pub async fn cmd_cash_flow(
                 f.description.clone(),
             ]
         })
-        .collect();
-
-    print_table(headers, rows, format);
-    Ok(())
+        .collect()
 }
 
 pub async fn cmd_fund_positions(format: &OutputFormat) -> Result<()> {
@@ -2009,9 +1972,45 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
 
     let command = path.join(" ");
     let schema = match command.as_str() {
-        "order" => text("US accounts: object {orders: array of {id, symbol, action, order_type, status, price, quantity, submitted_at, updated_at}, has_more}; HK/CN accounts: array of {order_id, symbol, side, type, status, price, quantity, created_at, updated_at}"),
-        "order detail" => text(
-            "US accounts: object {id, symbol, action, status, order_type, quantity, price, submitted_at, updated_at, order_histories}; HK/CN accounts: object {order_id, symbol, side, order_type, status, quantity, price, submitted_at, updated_at, history}",
+        "order" => schema(
+            "Orders (today, or --history). Same array shape for HK/CN and US accounts. US rows add stock_name, updated_at, currency, msg, trigger_price, last_done, executed_amount, gtd, operate_direction, security_type, us_time_in_force and us_tag (raw US codes, not the AP enums); US symbols are derived from counter_id",
+            RootKind::Array,
+            fields(&[
+                "order_id",
+                "symbol",
+                "side",
+                "order_type",
+                "status",
+                "quantity",
+                "price",
+                "executed_quantity",
+                "executed_price",
+                "created_at",
+            ]),
+        ),
+        "order detail" => schema(
+            "Order detail. Same object shape for HK/CN and US accounts; US omits time_in_force and outside_rth (no verified US source) and adds us_time_in_force, us_tag, gtd, trigger_price, last_done, operate_direction, security_type, attached_orders. With --attached, US prints the raw attached order",
+            RootKind::Object,
+            fields(&[
+                "order_id",
+                "stock_name",
+                "symbol",
+                "side",
+                "order_type",
+                "status",
+                "quantity",
+                "price",
+                "executed_quantity",
+                "executed_price",
+                "executed_amount",
+                "time_in_force",
+                "outside_rth",
+                "currency",
+                "submitted_at",
+                "updated_at",
+                "remark",
+                "history",
+            ]),
         ),
         "order executions" => array(
             "Order executions",
@@ -2022,8 +2021,8 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
         "order buy" | "order sell" => object("Submitted order", &["order_id"]),
         "order cancel" | "order replace" => text("Order mutation status message"),
         "assets" => schema(
-            "Account asset overview. HK/CN accounts: array of per-currency balances. US accounts: object {buy_limit_info, cash_list, margin_status}",
-            RootKind::Json,
+            "Account asset overview: array of per-currency balances. US accounts: one element (the account currency) with currency, net_assets (margin nlv), total_cash, buy_power (cash buying power), maintenance_margin (mmr) and cash_infos; max_finance_amount, remaining_finance_amount, init_margin, margin_call and risk_level have no US source and are absent; US cash_infos have no settling_cash but add total_amount, settled_cash, outstanding",
+            RootKind::Array,
             [
                 fields(&[
                     "currency",
@@ -2038,28 +2037,16 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
                     "risk_level",
                     "cash_infos",
                 ]),
-                vec![
-                    field(
-                        "buy_limit_info",
-                        "object",
-                        "US accounts: buying power (cash_buy_power, overnight_buy_power, day_trade_buy_power, instant_buy_power, intraday_margin_buy_power, option_buy_power, crypto_buy_power, mme)",
-                    ),
-                    field(
-                        "cash_list",
-                        "object[]",
-                        "US accounts: cash per currency (total_amount, available_cash, withdraw_cash, frozen_cash, settled_cash, outstanding, external_amount)",
-                    ),
-                    field(
-                        "margin_status",
-                        "object | null",
-                        "US accounts: margin status (nlv, margin_equity, margin_maintenance_excess, mmr, reg_t_excess, sma); null for cash accounts",
-                    ),
-                ],
+                vec![field(
+                    "us",
+                    "object",
+                    "US accounts only: {buy_limit_info (cash, overnight, day-trade, option, crypto buying power), margin_status (null for cash accounts)}",
+                )],
             ]
             .concat(),
         ),
         "cash-flow" => schema(
-            "Cash flow records. HK/CN accounts: {flow_name, symbol, business_type, balance, currency, time, description}. US accounts (account transaction history): {title, amount, currency, symbol, time, remark}",
+            "Cash flow records, same array shape for HK/CN and US accounts. US rows come from the account transaction history: balance is unsigned, direction (In/Out, from the amount sign or, for zero-amount crypto transfers, the quantity sign) carries the sign; business_type has no US source and is absent (biz_code / biz_code_name classify the row); extras quantity, quantity_description, ref_no, equity_type",
             RootKind::Array,
             fields(&[
                 "flow_name",
@@ -2069,44 +2056,37 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
                 "currency",
                 "time",
                 "description",
-                "title",
-                "amount",
-                "remark",
+                "direction",
+                "biz_code",
+                "biz_code_name",
             ]),
         ),
         "portfolio" => schema(
-            "Portfolio overview. HK/CN accounts: {overview, holdings, cash_balances, market_accounts}. US accounts: the US asset overview (as `positions` prints it) plus cash_and_buy_power",
+            "Portfolio overview, same object shape for HK/CN and US accounts. US: overview has only currency, total_asset (margin nlv) and total_cash; holdings are the `positions` rows; cash_balances add settled_cash, outstanding; market_accounts is absent; account type, buying power and margin status are under `us`",
             RootKind::Object,
             [
                 fields(&["overview", "holdings", "cash_balances", "market_accounts"]),
-                fields(&[
-                    "account_type",
-                    "currency",
-                    "asset_timestamp",
-                    "cash_buy_power",
-                    "overnight_buy_power",
-                ]),
-                vec![
-                    field("stock_list", "object[]", "US accounts: stock positions"),
-                    field("option_list", "object[]", "US accounts: option positions"),
-                    field("crypto_list", "object[]", "US accounts: crypto holdings"),
-                    field("cash_list", "object[]", "US accounts: cash per currency"),
-                    field(
-                        "multi_leg",
-                        "object | object[] | null",
-                        "US accounts: multi-leg option strategies",
-                    ),
-                    field(
-                        "cash_and_buy_power",
-                        "object",
-                        "US accounts: {buy_limit_info, cash_list, margin_status}, as `assets --format json` prints it",
-                    ),
-                ],
+                vec![field(
+                    "us",
+                    "object",
+                    "US accounts only: {account_type, asset_timestamp, cash_buy_power, overnight_buy_power, multi_leg, buy_limit_info, margin_status}",
+                )],
             ]
             .concat(),
         ),
-        "positions" => text(
-            "US accounts: object {account_type, cash_buy_power, stock_list, option_list, crypto_list, cash_list}; HK/CN accounts: array of {symbol, name, quantity, available, cost_price, currency, market}",
+        "positions" => schema(
+            "Stock positions, same array shape for HK/CN and US accounts. US rows list stock, option and crypto holdings together (asset_type tells them apart), have no `available` (not in the US overview) and add last_done, market_price, prev_close, today_pl, position_side and other US fields",
+            RootKind::Array,
+            fields(&[
+                "symbol",
+                "name",
+                "quantity",
+                "available",
+                "cost_price",
+                "currency",
+                "market",
+                "asset_type",
+            ]),
         ),
         "fund-positions" => array(
             "Current fund positions (HK/CN accounts only; US accounts get an error)",
@@ -2148,35 +2128,42 @@ pub async fn cmd_positions(format: &OutputFormat) -> Result<()> {
         let ctx = crate::openapi::trade();
         let resp = ctx.stock_positions(None).await?;
         print_account_banner(format);
-        let headers = &[
-            "Symbol",
-            "Name",
-            "Quantity",
-            "Available",
-            "Cost Price",
-            "Currency",
-            "Market",
-        ];
-        let mut rows = vec![];
-        for channel in &resp.channels {
-            for pos in &channel.positions {
-                rows.push(vec![
-                    pos.symbol.clone(),
-                    pos.symbol_name.clone(),
-                    pos.quantity.to_string(),
-                    pos.available_quantity.to_string(),
-                    pos.cost_price.to_string(),
-                    pos.currency.clone(),
-                    format!("{:?}", pos.market),
-                ]);
-            }
-        }
-        print_table(headers, rows, format);
+        print_table(POSITION_HEADERS, ap_position_rows(&resp), format);
         Ok(())
     }
 }
 
-pub(crate) fn print_json_us(data: &serde_json::Value) {
+/// Column headers of `positions`; `--format json` keys are these in snake case.
+const POSITION_HEADERS: &[&str] = &[
+    "Symbol",
+    "Name",
+    "Quantity",
+    "Available",
+    "Cost Price",
+    "Currency",
+    "Market",
+];
+
+/// AP `positions` table rows, one per position across channels.
+fn ap_position_rows(resp: &longbridge::trade::StockPositionsResponse) -> Vec<Vec<String>> {
+    resp.channels
+        .iter()
+        .flat_map(|channel| &channel.positions)
+        .map(|pos| {
+            vec![
+                pos.symbol.clone(),
+                pos.symbol_name.clone(),
+                pos.quantity.to_string(),
+                pos.available_quantity.to_string(),
+                pos.cost_price.to_string(),
+                pos.currency.clone(),
+                format!("{:?}", pos.market),
+            ]
+        })
+        .collect()
+}
+
+fn print_json_us(data: &serde_json::Value) {
     let mut v = data.clone();
     super::output::strip_counter_ids(&mut v);
     println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
@@ -2189,10 +2176,13 @@ async fn cmd_us_positions(format: &OutputFormat) -> Result<()> {
 
 /// `longbridge positions` for US accounts, through the [`TradeApi`] seam.
 pub async fn run_us_positions(api: &dyn TradeApi, format: &OutputFormat) -> Result<()> {
-    let data = normalize_us_overview(&api.us_asset_overview().await?)?;
+    let overview = api.us_asset_overview().await?;
     match format {
-        OutputFormat::Json => print_json_us(&data),
-        OutputFormat::Pretty => print_us_positions_pretty(&data),
+        OutputFormat::Json => println!(
+            "{}",
+            serde_json::to_string_pretty(&super::us_shape::positions_json(&overview)?)?
+        ),
+        OutputFormat::Pretty => print_us_positions_pretty(&normalize_us_overview(&overview)?),
     }
     Ok(())
 }
@@ -2713,5 +2703,237 @@ mod tests {
     #[test]
     fn test_parse_tif_invalid() {
         assert!(parse_tif("ioc").is_err());
+    }
+
+    /// Golden `--format json` output of the AP (HK/CN) account commands. US
+    /// accounts are mapped onto these keys, so these must not drift.
+    mod ap_golden {
+        use super::*;
+        use crate::cli::output::table_rows_to_json;
+        use longbridge::trade::{
+            AccountBalance, BalanceType, CashFlow, CashFlowDirection, CashInfo,
+            CommissionFreeStatus, DeductionStatus, Order, OrderDetail, OrderHistoryDetail,
+            OrderStatus, OrderTag, StockPosition, StockPositionChannel, StockPositionsResponse,
+        };
+        use rust_decimal_macros::dec;
+        use serde_json::json;
+
+        fn ts(n: i64) -> time::OffsetDateTime {
+            time::OffsetDateTime::from_unix_timestamp(n).unwrap()
+        }
+
+        fn order() -> Order {
+            Order {
+                order_id: "700000000000000001".to_string(),
+                status: OrderStatus::Filled,
+                stock_name: "Example Corp".to_string(),
+                quantity: dec!(2),
+                executed_quantity: dec!(2),
+                price: Some(dec!(20.5)),
+                executed_price: Some(dec!(20.48)),
+                submitted_at: ts(1_790_000_000),
+                side: OrderSide::Sell,
+                symbol: "EXMP.US".to_string(),
+                order_type: OrderType::LO,
+                last_done: None,
+                trigger_price: None,
+                msg: String::new(),
+                tag: OrderTag::Normal,
+                time_in_force: TimeInForceType::Day,
+                expire_date: None,
+                updated_at: Some(ts(1_790_000_060)),
+                trigger_at: None,
+                trailing_amount: None,
+                trailing_percent: None,
+                limit_offset: None,
+                trigger_status: None,
+                currency: "USD".to_string(),
+                outside_rth: None,
+                limit_depth_level: None,
+                trigger_count: None,
+                monitor_price: None,
+                remark: String::new(),
+                delayed_until: None,
+                attached_orders: vec![],
+                multi_leg: None,
+            }
+        }
+
+        #[test]
+        fn orders() {
+            let mut market = order();
+            market.price = None;
+            market.executed_price = None;
+            market.side = OrderSide::Buy;
+            market.order_type = OrderType::MO;
+            market.status = OrderStatus::Rejected;
+            let got = table_rows_to_json(ORDER_HEADERS, &ap_order_rows(&[order(), market]));
+            assert_eq!(
+                serde_json::Value::Array(got),
+                json!([
+                    {"order_id": "700000000000000001", "symbol": "EXMP.US", "side": "Sell",
+                     "order_type": "LO", "status": "Filled", "quantity": "2", "price": "20.500",
+                     "executed_quantity": "2", "executed_price": "20.480",
+                     "created_at": "2026-09-21T14:13:20Z"},
+                    {"order_id": "700000000000000001", "symbol": "EXMP.US", "side": "Buy",
+                     "order_type": "MO", "status": "Rejected", "quantity": "2", "price": "-",
+                     "executed_quantity": "2", "executed_price": "-",
+                     "created_at": "2026-09-21T14:13:20Z"}
+                ])
+            );
+        }
+
+        #[test]
+        fn order_detail() {
+            let o = order();
+            let detail = OrderDetail {
+                order_id: o.order_id,
+                status: o.status,
+                stock_name: o.stock_name,
+                quantity: o.quantity,
+                executed_quantity: o.executed_quantity,
+                price: o.price,
+                executed_price: o.executed_price,
+                submitted_at: o.submitted_at,
+                side: o.side,
+                symbol: o.symbol,
+                order_type: o.order_type,
+                last_done: None,
+                trigger_price: None,
+                msg: "done".to_string(),
+                tag: o.tag,
+                time_in_force: o.time_in_force,
+                expire_date: None,
+                updated_at: o.updated_at,
+                trigger_at: None,
+                trailing_amount: None,
+                trailing_percent: None,
+                limit_offset: None,
+                trigger_status: None,
+                currency: o.currency,
+                outside_rth: Some(OutsideRTH::RTHOnly),
+                limit_depth_level: None,
+                trigger_count: None,
+                monitor_price: None,
+                remark: String::new(),
+                delayed_until: None,
+                free_status: CommissionFreeStatus::None,
+                free_amount: None,
+                free_currency: None,
+                deductions_status: DeductionStatus::None,
+                deductions_amount: None,
+                deductions_currency: None,
+                platform_deducted_status: DeductionStatus::None,
+                platform_deducted_amount: None,
+                platform_deducted_currency: None,
+                history: vec![OrderHistoryDetail {
+                    price: dec!(20.48),
+                    quantity: dec!(2),
+                    status: OrderStatus::Filled,
+                    msg: String::new(),
+                    time: ts(1_790_000_060),
+                }],
+                charge_detail: None,
+                attached_orders: vec![],
+                multi_leg: None,
+            };
+            assert_eq!(
+                ap_order_detail_json(&detail),
+                json!({
+                    "order_id": "700000000000000001", "stock_name": "Example Corp",
+                    "symbol": "EXMP.US", "side": "Sell", "order_type": "LO", "status": "Filled",
+                    "quantity": "2", "price": "20.500", "executed_quantity": "2",
+                    "executed_price": "20.480", "executed_amount": "40.96",
+                    "time_in_force": "Day", "outside_rth": "RTHOnly", "currency": "USD",
+                    "submitted_at": "2026-09-21T14:13:20Z", "updated_at": "2026-09-21T14:14:20Z",
+                    "remark": "done",
+                    "history": [{"status": "Filled", "time": "2026-09-21T14:14:20Z",
+                                 "price": "20.48", "quantity": "2", "msg": ""}]
+                })
+            );
+        }
+
+        #[test]
+        fn assets() {
+            let balance = AccountBalance {
+                total_cash: dec!(1000.5),
+                max_finance_amount: dec!(0),
+                remaining_finance_amount: dec!(0),
+                risk_level: 0,
+                margin_call: dec!(0),
+                currency: "HKD".to_string(),
+                cash_infos: vec![CashInfo {
+                    withdraw_cash: dec!(900),
+                    available_cash: dec!(1000.5),
+                    frozen_cash: dec!(0),
+                    settling_cash: dec!(10),
+                    currency: "HKD".to_string(),
+                }],
+                net_assets: dec!(2000),
+                init_margin: dec!(0),
+                maintenance_margin: dec!(0),
+                buy_power: dec!(1000.5),
+                frozen_transaction_fees: vec![],
+            };
+            assert_eq!(
+                serde_json::Value::Array(ap_assets_json(&[balance])),
+                json!([{
+                    "currency": "HKD", "net_assets": "2000", "total_cash": "1000.5",
+                    "buy_power": "1000.5", "max_finance_amount": "0",
+                    "remaining_finance_amount": "0", "init_margin": "0",
+                    "maintenance_margin": "0", "margin_call": "0", "risk_level": "Safe",
+                    "cash_infos": [{"currency": "HKD", "available_cash": "1000.5",
+                                    "frozen_cash": "0", "settling_cash": "10",
+                                    "withdraw_cash": "900"}]
+                }])
+            );
+        }
+
+        #[test]
+        fn cash_flow() {
+            let flow = CashFlow {
+                transaction_flow_name: "Deposit".to_string(),
+                direction: CashFlowDirection::In,
+                business_type: BalanceType::Cash,
+                balance: dec!(100),
+                currency: "HKD".to_string(),
+                business_time: ts(1_790_000_000),
+                symbol: None,
+                description: "bank".to_string(),
+            };
+            let got = table_rows_to_json(CASH_FLOW_HEADERS, &ap_cash_flow_rows(&[flow]));
+            assert_eq!(
+                serde_json::Value::Array(got),
+                json!([{"flow_name": "Deposit", "symbol": "", "business_type": "Cash",
+                        "balance": "100", "currency": "HKD", "time": "2026-09-21T14:13:20Z",
+                        "description": "bank"}])
+            );
+        }
+
+        #[test]
+        fn positions() {
+            let resp = StockPositionsResponse {
+                channels: vec![StockPositionChannel {
+                    account_channel: "lb".to_string(),
+                    positions: vec![StockPosition {
+                        symbol: "700.HK".to_string(),
+                        symbol_name: "Example HK".to_string(),
+                        quantity: dec!(100),
+                        available_quantity: dec!(80),
+                        currency: "HKD".to_string(),
+                        cost_price: dec!(300.5),
+                        market: longbridge::Market::HK,
+                        init_quantity: None,
+                    }],
+                }],
+            };
+            let got = table_rows_to_json(POSITION_HEADERS, &ap_position_rows(&resp));
+            assert_eq!(
+                serde_json::Value::Array(got),
+                json!([{"symbol": "700.HK", "name": "Example HK", "quantity": "100",
+                        "available": "80", "cost_price": "300.5", "currency": "HKD",
+                        "market": "HK"}])
+            );
+        }
     }
 }

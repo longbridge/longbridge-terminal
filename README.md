@@ -334,8 +334,8 @@ longbridge order buy TSLA.US 100 --price 250.00            # Preview a buy order
 longbridge order sell TSLA.US 100 --price 260.00           # Preview a sell order (dry run); add --execute <CODE> to place it
 longbridge order cancel <order_id>                         # Preview cancelling a pending order (dry run); add --execute <CODE> to cancel it
 longbridge order replace <order_id> --qty 200 --price 255.00 # Preview modifying a pending order (dry run); add --execute <CODE> to apply it
-longbridge assets [--currency USD]                         # Asset overview: net assets, cash, buy power, margins, and per-currency breakdown (US accounts: cash and buying power)
-longbridge cash-flow [--start 2024-01-01]                  # Cash flow records (deposits, withdrawals, dividends, settlements; US accounts: transaction history)
+longbridge assets [--currency USD]                         # Asset overview: net assets, cash, buy power, margins, and per-currency breakdown (US accounts: same JSON keys where a US source exists)
+longbridge cash-flow [--start 2024-01-01]                  # Cash flow records (deposits, withdrawals, dividends, settlements; US accounts: transaction history in the same JSON keys)
 longbridge portfolio                                       # Portfolio overview: total assets, P/L, holdings, and cash breakdown
 longbridge portfolio short-margin                          # Short-selling margin deposit details
 longbridge positions                                       # Current stock (equity) positions across all sub-accounts
