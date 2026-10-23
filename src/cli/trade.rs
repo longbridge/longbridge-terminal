@@ -661,9 +661,14 @@ async fn us_execution_sides(
 /// account's orders (`us_query_orders`) over `start..end` widened to cover
 /// every execution time (and [`US_SIDE_LOOKUP_LOOKBACK_SECS`] earlier), page
 /// by page. Stops once all orders are found, after
-/// [`US_SIDE_LOOKUP_MAX_PAGES`] pages, or when the pages run out: past
-/// `total_count` when it is positive (the SDK reports a missing
-/// `total_count` as 0), otherwise at a page shorter than the page size.
+/// [`US_SIDE_LOOKUP_MAX_PAGES`] pages, or when the pages run out: at an empty
+/// page, past `total_count` when it is positive (the SDK reports a missing
+/// `total_count` as 0), otherwise at a page shorter than both the requested
+/// limit and the previous page. The server may cap the page below the
+/// requested limit, so a short first page alone does not end the lookup.
+///
+/// Only a failure on the first page is returned as an error; a later page
+/// failing prints a warning and keeps the sides found on earlier pages.
 async fn us_sides_from_orders(
     api: &dyn TradeApi,
     executions: &[Execution],
@@ -691,8 +696,9 @@ async fn us_sides_from_orders(
 
     let page_size = usize::try_from(US_SIDE_LOOKUP_LIMIT).unwrap_or(usize::MAX);
     let mut seen: i64 = 0;
+    let mut prev_len: Option<usize> = None;
     for page in 1..=US_SIDE_LOOKUP_MAX_PAGES {
-        let resp = api
+        let resp = match api
             .us_query_orders(GetUSHistoryOrders {
                 symbol: symbol.map(str::to_string),
                 side: OrderSide::Unknown,
@@ -702,7 +708,17 @@ async fn us_sides_from_orders(
                 page,
                 limit: US_SIDE_LOOKUP_LIMIT,
             })
-            .await?;
+            .await
+        {
+            Ok(resp) => resp,
+            Err(e) if page == 1 => return Err(e),
+            Err(e) => {
+                eprintln!(
+                    "Warning: could not read US orders page {page} to fill the execution side: {e}"
+                );
+                break;
+            }
+        };
         if resp.orders.is_empty() {
             break;
         }
@@ -719,11 +735,13 @@ async fn us_sides_from_orders(
                 sides.insert(id.to_string(), side.to_string());
             }
         }
+        let len = resp.orders.len();
         let last_page = if resp.total_count > 0 {
             seen >= i64::from(resp.total_count)
         } else {
-            resp.orders.len() < page_size
+            len < page_size && prev_len.is_some_and(|prev| len < prev)
         };
+        prev_len = Some(len);
         if wanted.is_empty() || last_page {
             break;
         }
@@ -3739,6 +3757,100 @@ mod tests {
         let execs = vec![exec_without_side("11", "11-1")];
         let sides = us_execution_sides(&mock, &execs, None, None, None).await;
         assert_eq!(sides.get("11").map(String::as_str), Some("Sell"));
+    }
+
+    #[tokio::test]
+    async fn us_execution_side_keeps_earlier_pages_when_a_later_page_fails() {
+        let mut mock = MockTradeApi::new();
+        let mut seq = mockall::Sequence::new();
+        mock.expect_us_query_orders()
+            .times(1)
+            .in_sequence(&mut seq)
+            .withf(|o| o.page == 1)
+            .returning(|_| {
+                Ok(us_orders(
+                    serde_json::json!([{ "id": "11", "action": 2 }]),
+                    5,
+                ))
+            });
+        // Page 2 fails: stop paging, keep the side of order 11 from page 1.
+        mock.expect_us_query_orders()
+            .times(1)
+            .in_sequence(&mut seq)
+            .withf(|o| o.page == 2)
+            .returning(|_| Err(anyhow::anyhow!("orders unavailable")));
+        // Only order 22 is left for the order detail.
+        mock.expect_us_order_detail()
+            .times(1)
+            .withf(|id| id == "22")
+            .returning(|_| Ok(serde_json::json!({ "order": { "id": "22", "action": 1 } })));
+        let execs = vec![
+            exec_without_side("11", "11-1"),
+            exec_without_side("22", "22-1"),
+        ];
+        let sides = us_execution_sides(&mock, &execs, None, None, None).await;
+        assert_eq!(sides.get("11").map(String::as_str), Some("Sell"));
+        assert_eq!(sides.get("22").map(String::as_str), Some("Buy"));
+    }
+
+    #[tokio::test]
+    async fn us_execution_side_falls_back_to_detail_when_the_list_fails() {
+        let mut mock = MockTradeApi::new();
+        mock.expect_us_query_orders()
+            .times(1)
+            .withf(|o| o.page == 1)
+            .returning(|_| Err(anyhow::anyhow!("orders unavailable")));
+        mock.expect_us_order_detail()
+            .times(1)
+            .withf(|id| id == "11")
+            .returning(|_| Ok(serde_json::json!({ "order": { "id": "11", "action": 2 } })));
+        let execs = vec![exec_without_side("11", "11-1")];
+        let sides = us_execution_sides(&mock, &execs, None, None, None).await;
+        let rows = exec_rows(&execs, Some(&sides));
+        assert_eq!(rows[0].side, "Sell");
+    }
+
+    #[tokio::test]
+    async fn us_execution_side_pages_past_a_server_capped_page_size() {
+        fn page_of(n: i32) -> QueryUSOrdersResponse {
+            let page: Vec<serde_json::Value> = (0..n)
+                .map(|i| serde_json::json!({ "id": format!("{}", 1000 + i), "action": 1 }))
+                .collect();
+            us_orders(serde_json::Value::Array(page), 0)
+        }
+        // The server caps pages at 50 (below the requested limit): a page as
+        // long as the previous one is not the last; a shorter one is.
+        let mut mock = MockTradeApi::new();
+        let mut seq = mockall::Sequence::new();
+        for (page, len) in [(1, 50), (2, 50), (3, 20)] {
+            mock.expect_us_query_orders()
+                .times(1)
+                .in_sequence(&mut seq)
+                .withf(move |o| o.page == page)
+                .returning(move |_| Ok(page_of(len)));
+        }
+        mock.expect_us_order_detail()
+            .times(1)
+            .returning(|_| Err(detail_err()));
+        let execs = vec![exec_without_side("11", "11-1")];
+        let sides = us_execution_sides(&mock, &execs, None, None, None).await;
+        assert!(sides.is_empty());
+
+        // A short first page alone does not end the lookup; an empty page does.
+        let mut mock = MockTradeApi::new();
+        let mut seq = mockall::Sequence::new();
+        for (page, len) in [(1, 30), (2, 0)] {
+            mock.expect_us_query_orders()
+                .times(1)
+                .in_sequence(&mut seq)
+                .withf(move |o| o.page == page)
+                .returning(move |_| Ok(page_of(len)));
+        }
+        mock.expect_us_order_detail()
+            .times(1)
+            .returning(|_| Err(detail_err()));
+        let sides = us_execution_sides(&mock, &execs, None, None, None).await;
+        assert!(sides.is_empty());
     }
 
     #[tokio::test]
