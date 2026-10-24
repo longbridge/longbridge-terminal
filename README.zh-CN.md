@@ -297,18 +297,18 @@ longbridge sharelist popular [--count 10] # 获取热门（趋势）分享列表
 longbridge order # 今日订单，或通过 --history 查看历史订单
 longbridge order --history [--start 2024-01-01] # 历史订单（使用 --symbol 过滤）
 longbridge order detail <order-id> # 单笔订单的完整详情，包含费用和历史
-longbridge order executions # 今日成交记录（成交明细），或通过 --history 查看历史
+longbridge order executions # 今日成交记录（成交明细），或通过 --history 查看历史（AP 与美国账户；美国账户历史来自 v1：不按成交时间过滤，跨日可能滞后，范围边缘的成交可能缺失或多出；美国账户的 side 由订单或按订单 ID 查询的订单详情补齐，查不到时为 `Unknown`）
 longbridge order buy TSLA.US 100 --price 250.00 # 提交买单（需确认）
 longbridge order sell TSLA.US 100 --price 260.00 # 提交卖单（需确认）
 longbridge order cancel <order-id> # 撤销待处理订单（需确认）
 longbridge order replace <order-id> --qty 200 --price 255.00 # 修改待处理订单的数量或价格
-longbridge assets [--currency USD] # 资产概览：净资产、现金、购买力、保证金及按币种划分
-longbridge cash-flow [--start 2024-01-01] # 资金流水记录（入金、出金、股息、结算）
+longbridge assets [--currency USD] # 资产概览：净资产、现金、购买力、保证金及按币种划分（美国账户：现金与购买力）
+longbridge cash-flow [--start 2024-01-01] # 资金流水记录（入金、出金、股息、结算；美国账户：交易流水）
 longbridge portfolio # 投资组合概览：总资产、盈亏（P&L）、持仓及现金明细
 longbridge portfolio short-margin # 卖空保证金详情
 longbridge positions # 所有子账户的当前股票（权益类）持仓
-longbridge fund-positions # 所有子账户的当前基金（公募基金）持仓
-longbridge margin-ratio TSLA.US # 某股票的保证金比例要求
+longbridge fund-positions # 所有子账户的当前基金（公募基金）持仓（仅 AP 账户）
+longbridge margin-ratio TSLA.US # 某股票的保证金比例要求（仅 AP 账户）
 longbridge max-qty TSLA.US --side buy --price 250 # 根据当前账户余额估算最大可买或可卖数量
 ```
 
