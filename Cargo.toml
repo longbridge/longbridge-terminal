@@ -37,7 +37,7 @@ crossterm = { version = "0.29", features = ["event-stream"] }
 dashmap = "6.1"
 dirs = "5.0"
 csv = "1"
-longbridge = "5.2.2"
+longbridge = "5.3.0"
 longbridge-ai-acp = { git = "https://github.com/longbridge/longbridge-ai-acp.git", branch = "main" }
 futures = "0.3.28"
 open = "5"
@@ -139,8 +139,3 @@ needless_pass_by_value = "allow"
 pedantic = { level = "deny", priority = -1 }
 too_many_arguments = "allow"
 too_many_lines = "allow"
-
-# TEMP: build against the unpublished SDK branch `feat/us-asset-apis` (US asset
-# APIs). Drop this section before merge, once that SDK release is published.
-[patch.crates-io]
-longbridge = { git = "https://github.com/longbridge/openapi.git", branch = "feat/us-asset-apis" }

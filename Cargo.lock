@@ -2704,8 +2704,9 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "longbridge"
-version = "5.2.2"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fus-asset-apis#f80298022d92e971e67be30b7ac7ec0ac0afc767"
+version = "5.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac9941983da69ed7ef7d893ae7705ac6b7c4de045d5f4f9f790b2fbce3452f3e"
 dependencies = [
  "anyhow",
  "bitflags 2.10.0",
@@ -2757,8 +2758,9 @@ dependencies = [
 
 [[package]]
 name = "longbridge-candlesticks"
-version = "5.2.2"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fus-asset-apis#f80298022d92e971e67be30b7ac7ec0ac0afc767"
+version = "5.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6161eb13a16602d3364830311fda5551b316fb2574667c4b22b92530bd1c96a8"
 dependencies = [
  "bitflags 2.10.0",
  "num-traits",
@@ -2769,16 +2771,18 @@ dependencies = [
 
 [[package]]
 name = "longbridge-geo"
-version = "5.2.2"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fus-asset-apis#f80298022d92e971e67be30b7ac7ec0ac0afc767"
+version = "5.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08a68ce938fde0acc483f65a475501e16141ffa0e6fda4dd7e36eed2f4cb50dd"
 dependencies = [
  "reqwest 0.12.28",
 ]
 
 [[package]]
 name = "longbridge-httpcli"
-version = "5.2.2"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fus-asset-apis#f80298022d92e971e67be30b7ac7ec0ac0afc767"
+version = "5.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "671adda3216f44be62b3bec42a0856e83d6d47d7643952197cd82b069ee0aa01"
 dependencies = [
  "dotenv",
  "eventsource-stream",
@@ -2800,8 +2804,9 @@ dependencies = [
 
 [[package]]
 name = "longbridge-oauth"
-version = "5.2.2"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fus-asset-apis#f80298022d92e971e67be30b7ac7ec0ac0afc767"
+version = "5.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df3a35c33686a59372a8bc4ac40abca9b070bfc694df59c68321a90a8e939692"
 dependencies = [
  "dirs 6.0.0",
  "futures-util",
@@ -2817,8 +2822,9 @@ dependencies = [
 
 [[package]]
 name = "longbridge-proto"
-version = "5.2.2"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fus-asset-apis#f80298022d92e971e67be30b7ac7ec0ac0afc767"
+version = "5.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e286f6ed4244665f57b9cb9a302e28a9a893bd3c2128412c8bd2484da683188"
 dependencies = [
  "prost 0.14.3",
  "serde",
@@ -2900,8 +2906,9 @@ dependencies = [
 
 [[package]]
 name = "longbridge-wscli"
-version = "5.2.2"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Fus-asset-apis#f80298022d92e971e67be30b7ac7ec0ac0afc767"
+version = "5.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5b6352b36426578f2fc3a5aacf51ca52e1090402f8cf39d65479dd4039b09877"
 dependencies = [
  "byteorder",
  "flate2",
