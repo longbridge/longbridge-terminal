@@ -329,18 +329,18 @@ longbridge agent --skill                                            # Print the 
 longbridge order                                           # Today's orders, or historical with --history
 longbridge order --history [--start 2024-01-01]            # Historical orders (use --symbol to filter)
 longbridge order detail <order_id>                         # Full detail for a single order including charges and history
-longbridge order executions                                # Today's trade executions (fills) (AP accounts only; US accounts use `order --history`)
+longbridge order executions                                # Today's trade executions (fills); `--history` for past fills (AP and US accounts; US history comes from v1: not filtered by execution time, can lag across days near range edges; US side is filled from orders or the order detail by order ID, `Unknown` if not found)
 longbridge order buy TSLA.US 100 --price 250.00            # Preview a buy order (dry run); add --execute <CODE> to place it
 longbridge order sell TSLA.US 100 --price 260.00           # Preview a sell order (dry run); add --execute <CODE> to place it
 longbridge order cancel <order_id>                         # Preview cancelling a pending order (dry run); add --execute <CODE> to cancel it
 longbridge order replace <order_id> --qty 200 --price 255.00 # Preview modifying a pending order (dry run); add --execute <CODE> to apply it
-longbridge assets [--currency USD]                         # Asset overview: net assets, cash, buy power, margins, and per-currency breakdown
-longbridge cash-flow [--start 2024-01-01]                  # Cash flow records (deposits, withdrawals, dividends, settlements)
+longbridge assets [--currency USD]                         # Asset overview: net assets, cash, buy power, margins, and per-currency breakdown (US accounts: same JSON keys where a US source exists)
+longbridge cash-flow [--start 2024-01-01]                  # Cash flow records (deposits, withdrawals, dividends, settlements; US accounts: transaction history in the same JSON keys)
 longbridge portfolio                                       # Portfolio overview: total assets, P/L, holdings, and cash breakdown
 longbridge portfolio short-margin                          # Short-selling margin deposit details
 longbridge positions                                       # Current stock (equity) positions across all sub-accounts
-longbridge fund-positions                                  # Current fund (mutual fund) positions across all sub-accounts
-longbridge margin-ratio TSLA.US                            # Margin ratio requirements for a symbol
+longbridge fund-positions                                  # Current fund (mutual fund) positions across all sub-accounts (AP accounts only)
+longbridge margin-ratio TSLA.US                            # Margin ratio requirements for a symbol (AP accounts only)
 longbridge max-qty TSLA.US --side buy --price 250          # Estimate maximum buy or sell quantity given current account balance
 ```
 
@@ -675,6 +675,19 @@ Server notifications: `quote.updated`, `quote.depth`, `quote.brokers`, `quote.tr
 `quote.updated` is a tick rather than a full quote, and a push that raced ahead of
 `subscribe`'s snapshot can still be the older of the two, so keep whichever `timestamp` is
 newer.
+
+On a Longbridge US account, the AP-only trade methods fail with an error that names the US
+method to call instead: `trade.today_orders` / `trade.history_orders` →
+`trade.us_query_orders` (`symbol`, `side`, `start`, `end`, `query_type` 0 = all / 1 =
+pending / 2 = filled, `page`, `limit`); `trade.order_detail` → `trade.us_order_detail`
+(`order_id`, digits only; returns the untouched `GET /v1/us/orders/{order_id}` body);
+`trade.account_balance` →
+`trade.us_cash_and_buy_power`; `trade.cash_flow` → `trade.us_transaction_history`;
+`trade.stock_positions` → `trade.us_asset_overview`. `trade.fund_positions` and
+`trade.margin_ratio` have no US counterpart. `trade.today_executions` /
+`trade.history_executions` work on US accounts unchanged, in the AP shape; they stay raw, so
+their `side` is `Unknown` on US accounts: join with `trade.us_query_orders` (or
+`trade.us_order_detail`) by `order_id` for the side.
 
 A test asserts every `QuoteApi`/`TradeApi` method is reachable over RPC, so adding one
 without exposing it fails the build — `serve` cannot drift behind the CLI.

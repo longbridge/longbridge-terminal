@@ -105,7 +105,50 @@ const TRADE_METHODS: &[&str] = &[
     "fund_positions",
     "margin_ratio",
     "estimate_max_purchase_quantity",
+    "us_asset_overview",
+    "us_cash_and_buy_power",
+    "us_available_holding",
+    "us_transaction_history",
+    "us_exchange_rates",
+    "us_query_orders",
+    "us_order_detail",
 ];
+
+/// AP-only `trade.*` methods whose backend is not deployed in the US data
+/// center, with the error a US session gets instead. Where a US counterpart
+/// exists the error names it; results keep their SDK shape, so a US session is
+/// pointed at the US method rather than silently answered in another shape.
+///
+/// The order methods mirror the CLI: `order` and `order <id>` are rerouted to
+/// the US order APIs on US accounts (`/v1/trade/order` returns HTTP 500
+/// there). The execution methods are not listed: `/v1/trade/execution/*`
+/// serves US accounts with the AP shape, but without `side` (reported as
+/// `Unknown`); unlike the CLI, serve does not fill it from the orders.
+fn ap_only_method_error(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "today_orders" => {
+            "trade.today_orders is not available for US accounts; use trade.us_query_orders"
+        }
+        "history_orders" => {
+            "trade.history_orders is not available for US accounts; use trade.us_query_orders"
+        }
+        "order_detail" => {
+            "trade.order_detail is not available for US accounts; use trade.us_order_detail"
+        }
+        "account_balance" => {
+            "trade.account_balance is not available for US accounts; use trade.us_cash_and_buy_power"
+        }
+        "cash_flow" => {
+            "trade.cash_flow is not available for US accounts; use trade.us_transaction_history"
+        }
+        "stock_positions" => {
+            "trade.stock_positions is not available for US accounts; use trade.us_asset_overview"
+        }
+        "fund_positions" => "trade.fund_positions is not available for US accounts",
+        "margin_ratio" => "trade.margin_ratio is not available for US accounts",
+        _ => return None,
+    })
+}
 
 /// The order-execution gate shared by `trade.submit_order`, `trade.cancel_order`
 /// and `trade.replace_order`.
@@ -377,8 +420,14 @@ async fn call_trade(name: &str, p: Params<'_>) -> Result<Value> {
     use longbridge::trade::{
         EstimateMaxPurchaseQuantityOptions, GetCashFlowOptions, GetHistoryExecutionsOptions,
         GetHistoryOrdersOptions, GetTodayExecutionsOptions, GetTodayOrdersOptions,
-        ReplaceOrderOptions, SubmitOrderOptions,
+        GetUSAvailableHoldingOptions, GetUSHistoryOrders, GetUSTransactionHistoryOptions,
+        OrderSide, ReplaceOrderOptions, SubmitOrderOptions,
     };
+    if let Some(msg) = ap_only_method_error(name) {
+        if crate::openapi::is_us_account().await {
+            bail!(msg);
+        }
+    }
     let api = trade_api();
     match name {
         "today_orders" => {
@@ -402,6 +451,9 @@ async fn call_trade(name: &str, p: Params<'_>) -> Result<Value> {
             ok(api.history_orders(opts).await?)
         }
         "order_detail" => ok(api.order_detail(p.str("order_id")?).await?),
+        // Raw by design: on US accounts `side` is "Unknown" (the execution APIs
+        // omit it); agents join with `trade.us_query_orders` or
+        // `trade.us_order_detail` by `order_id`, as `serve -h` says.
         "today_executions" => {
             let mut opts = GetTodayExecutionsOptions::new();
             if let Some(s) = p.str_opt("symbol")? {
@@ -409,6 +461,7 @@ async fn call_trade(name: &str, p: Params<'_>) -> Result<Value> {
             }
             ok(api.today_executions(opts).await?)
         }
+        // Raw like `today_executions`: US `side` is "Unknown".
         "history_executions" => {
             let mut opts = GetHistoryExecutionsOptions::new();
             if let Some(s) = p.str_opt("symbol")? {
@@ -540,7 +593,84 @@ async fn call_trade(name: &str, p: Params<'_>) -> Result<Value> {
             }
             ok(api.estimate_max_purchase_quantity(opts).await?)
         }
+        "us_asset_overview" => ok(api.us_asset_overview().await?),
+        "us_cash_and_buy_power" => ok(api.us_cash_and_buy_power(p.str_opt("currency")?).await?),
+        "us_available_holding" => ok(api
+            .us_available_holding(GetUSAvailableHoldingOptions {
+                symbol: p.str("symbol")?,
+                equity_type: p.str_opt("equity_type")?.unwrap_or_default(),
+                position_side: p.str_opt("position_side")?.unwrap_or_default(),
+            })
+            .await?),
+        "us_transaction_history" => {
+            let mut opts = GetUSTransactionHistoryOptions::new(
+                crate::cli::output::parse_datetime_start(&p.str("start")?)?,
+                crate::cli::output::parse_datetime_end(&p.str("end")?)?,
+            );
+            opts.page = page_param(p, "page", 1)?;
+            opts.size = page_param(p, "size", 20)?;
+            opts.types = p.strs_opt("types")?;
+            opts.currency = p.str_opt("currency")?.unwrap_or_default();
+            ok(api.us_transaction_history(opts).await?)
+        }
+        "us_exchange_rates" => ok(api.us_exchange_rates().await?),
+        "us_query_orders" => {
+            let start_at = match p.str_opt("start")? {
+                Some(s) => crate::cli::output::parse_datetime_start(&s)?.unix_timestamp(),
+                None => 0,
+            };
+            let end_at = match p.str_opt("end")? {
+                Some(e) => crate::cli::output::parse_datetime_end(&e)?.unix_timestamp(),
+                None => 0,
+            };
+            let side = match p.str_opt("side")? {
+                Some(s) => parse_side(&s)?,
+                None => OrderSide::Unknown,
+            };
+            ok(api
+                .us_query_orders(GetUSHistoryOrders {
+                    symbol: p.str_opt("symbol")?,
+                    side,
+                    start_at,
+                    end_at,
+                    query_type: query_type_param(p)?,
+                    page: page_param(p, "page", 1)?,
+                    limit: page_param(p, "limit", 20)?,
+                })
+                .await?)
+        }
+        // The untouched `GET /v1/us/orders/{order_id}` body: the SDK type has
+        // no instrument identifier.
+        "us_order_detail" => Ok(api.us_order_detail(us_order_id_param(p)?).await?),
         other => bail!("unknown method `{TRADE_PREFIX}{other}`"),
+    }
+}
+
+/// The `order_id` of a US order method: digits only, so it can go into the
+/// request path as is.
+fn us_order_id_param(p: Params<'_>) -> Result<String> {
+    let order_id = p.str("order_id")?;
+    if !crate::cli::api::is_us_order_id(&order_id) {
+        bail_param!("`order_id` must be a US order ID (digits only), got `{order_id}`");
+    }
+    Ok(order_id)
+}
+
+/// A positive page number / page size that fits the SDK's `i32`.
+fn page_param(p: Params<'_>, key: &str, default: usize) -> Result<i32> {
+    match i32::try_from(p.usize_or(key, default)?) {
+        Ok(n) if n > 0 => Ok(n),
+        _ => bail_param!("`{key}` must be a positive integer"),
+    }
+}
+
+/// The US order list filter: 0 = all, 1 = pending, 2 = history (filled only).
+fn query_type_param(p: Params<'_>) -> Result<i32> {
+    match p.usize_or("query_type", 0)? {
+        n @ 0..=2 => Ok(i32::try_from(n).unwrap_or_default()),
+        other => {
+            bail_param!("`query_type` must be 0 (all), 1 (pending) or 2 (filled), got {other}")
+        }
     }
 }
 
@@ -845,6 +975,94 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("obliterate"));
+    }
+
+    #[test]
+    fn ap_only_methods_point_us_sessions_at_the_us_method() {
+        for (name, hint) in [
+            ("account_balance", Some("trade.us_cash_and_buy_power")),
+            ("cash_flow", Some("trade.us_transaction_history")),
+            ("stock_positions", Some("trade.us_asset_overview")),
+            ("fund_positions", None),
+            ("margin_ratio", None),
+            ("today_orders", Some("trade.us_query_orders")),
+            ("history_orders", Some("trade.us_query_orders")),
+            ("order_detail", Some("trade.us_order_detail")),
+        ] {
+            let msg =
+                ap_only_method_error(name).unwrap_or_else(|| panic!("{name} must be AP-only"));
+            assert!(msg.contains("not available for US accounts"), "{msg}");
+            if let Some(hint) = hint {
+                assert!(msg.contains(hint), "{name}: {msg}");
+                assert!(is_known(hint), "{hint} must be a real method");
+            }
+        }
+        for name in [
+            "today_executions",
+            "history_executions",
+            "us_cash_and_buy_power",
+            "us_query_orders",
+            "us_order_detail",
+            "submit_order",
+        ] {
+            assert!(ap_only_method_error(name).is_none(), "{name}");
+        }
+    }
+
+    #[test]
+    fn us_order_methods_are_advertised() {
+        let catalog = all_methods();
+        for method in ["trade.us_query_orders", "trade.us_order_detail"] {
+            assert!(is_known(method), "{method} must be routable");
+            assert!(
+                catalog.contains(&method.to_string()),
+                "{method} missing from catalog"
+            );
+        }
+    }
+
+    #[test]
+    fn us_order_id_rejects_non_digit_ids_as_param_errors() {
+        let v = json!({"order_id": "701276261045858304"});
+        assert_eq!(
+            us_order_id_param(Params(Some(&v))).unwrap(),
+            "701276261045858304"
+        );
+        for bad in [
+            json!({}),
+            json!({"order_id": ""}),
+            json!({"order_id": "123-456"}),
+            json!({"order_id": "../123"}),
+            json!({"order_id": "١٢٣"}),
+            json!({"order_id": 123}),
+        ] {
+            let err = us_order_id_param(Params(Some(&bad))).unwrap_err();
+            assert_eq!(
+                crate::cli::serve::error_code_for(&err),
+                crate::cli::serve::protocol::INVALID_PARAMS,
+                "{bad}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn query_type_defaults_to_all_and_rejects_unknown() {
+        let v = json!({});
+        assert_eq!(query_type_param(Params(Some(&v))).unwrap(), 0);
+        let v = json!({"query_type": 2});
+        assert_eq!(query_type_param(Params(Some(&v))).unwrap(), 2);
+        let v = json!({"query_type": 3});
+        assert!(query_type_param(Params(Some(&v))).is_err());
+    }
+
+    #[test]
+    fn page_params_default_and_reject_zero() {
+        let v = json!({});
+        assert_eq!(page_param(Params(Some(&v)), "page", 1).unwrap(), 1);
+        let v = json!({"size": 50});
+        assert_eq!(page_param(Params(Some(&v)), "size", 20).unwrap(), 50);
+        let v = json!({"page": 0});
+        assert!(page_param(Params(Some(&v)), "page", 1).is_err());
     }
 
     #[test]

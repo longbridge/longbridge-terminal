@@ -33,6 +33,8 @@ pub mod signal;
 pub mod statement;
 pub mod topic;
 pub mod trade;
+pub mod us_asset;
+pub mod us_shape;
 pub mod watchlist;
 
 #[derive(ValueEnum, Clone, Default, Debug)]
@@ -186,6 +188,16 @@ pub enum Commands {
     ///               is how the fundamentals, screener, IPO and news commands
     ///               reach their data
     ///   `quote.subscribe` / `quote.unsubscribe` — live feed, no CLI equivalent
+    ///
+    /// US accounts: AP-only trade methods return an error naming the US
+    /// method to call instead — orders via `trade.us_query_orders` and
+    /// `trade.us_order_detail`, assets via `trade.us_asset_overview`,
+    /// `trade.us_cash_and_buy_power` and `trade.us_transaction_history`.
+    /// `trade.us_order_detail` (`order_id`, digits only) returns the untouched
+    /// REST body of `GET /v1/us/orders/{order_id}`, as `api.get` would.
+    /// `trade.today_executions` / `trade.history_executions` stay raw: on US
+    /// accounts their `side` is `Unknown`; join with `trade.us_query_orders`
+    /// (or `trade.us_order_detail`) by `order_id` for the side.
     ///
     /// Order execution is gated: `trade.submit_order`, `trade.cancel_order` and
     /// `trade.replace_order` are DRY RUNS that place nothing unless the params
@@ -915,15 +927,20 @@ pub enum Commands {
     ///
     /// Behavior adapts to your account's region automatically; you never
     /// pass a region. --action/--page/--limit apply only to US accounts.
+    /// `--format json` has the same keys on both: `order_id`, symbol, side, `order_type`,
+    /// status, quantity, price, `executed_quantity`, `executed_price`, `created_at`; US rows
+    /// add US-only extras (see `--schema`). US lists are paged: when more orders exist past
+    /// the requested page, a note with the total is printed to stderr (never into the JSON).
+    /// Tell regions apart with `check --format json` (`dc_region`).
     ///
     /// Without a subcommand, lists today's orders (or historical with --history).
     /// Example: longbridge order
     /// Example: longbridge order --history --start 2024-01-01 --symbol TSLA.US
-    /// Example: longbridge order detail 20240101-123456789
+    /// Example: longbridge order detail 701276261045858304
     /// Example: longbridge order buy TSLA.US 100 --price 250.00
     /// Example: longbridge order sell TSLA.US 100 --price 260.00
-    /// Example: longbridge order cancel 20240101-123456789
-    /// Example: longbridge order replace 20240101-123456789 --qty 200 --price 255.00
+    /// Example: longbridge order cancel 701276261045858304
+    /// Example: longbridge order replace 701276261045858304 --qty 200 --price 255.00
     /// Example: longbridge order executions --history --start 2024-01-01
     Order {
         /// Return historical orders instead of today's (list mode only)
@@ -956,6 +973,11 @@ pub enum Commands {
     /// Returns: currency, `net_assets`, `total_cash`, `buy_power`, `max_finance_amount`,
     /// `remaining_finance_amount`, `init_margin`, `maintenance_margin`, `margin_call`, `risk_level`,
     /// and a `cash_infos` array with per-currency available/frozen/settling/withdrawable amounts.
+    /// US accounts: same array shape with one element; mapped fields only (`net_assets` =
+    /// margin NLV, absent when the account reports no net liquidation value; `buy_power` =
+    /// cash buying power; `maintenance_margin` = MMR), no finance/margin-call/risk fields,
+    /// buying power and margin status under `us`.
+    /// Behavior adapts to your account's region automatically; you never pass a region.
     /// Example: longbridge assets
     /// Example: longbridge assets --currency HKD
     Assets {
@@ -967,6 +989,9 @@ pub enum Commands {
     /// Cash flow records (deposits, withdrawals, dividends, settlements)
     ///
     /// Returns: `flow_name`, symbol, `business_type`, balance, currency, `business_time`, description.
+    /// US accounts: same keys from the account transaction history (all pages in range),
+    /// with a signed `balance`, plus `direction` (In/Out; from the quantity sign when the
+    /// amount is 0, e.g. crypto transfers) and `biz_code`; no `business_type`.
     /// Defaults to last 30 days if no dates provided.
     /// Example: longbridge cash-flow --start 2024-01-01 --end 2024-03-31
     CashFlow {
@@ -985,6 +1010,9 @@ pub enum Commands {
     ///
     /// Returns: overview (`total_asset`, `market_cap`, `total_cash`, `total_pl`, `total_today_pl`,
     /// `margin_call`, `risk_level`, `credit_limit`, currency), holdings table, and cash balances.
+    /// US accounts: same keys where a US source exists (overview `total_asset` = margin NLV,
+    /// absent when the account reports no net liquidation value, and `total_cash`; holdings;
+    /// cash balances), no `market_accounts`, US-only data under `us`.
     ///
     /// Without subcommand: shows full portfolio overview.
     /// Subcommands: short-margin
@@ -1000,13 +1028,16 @@ pub enum Commands {
     /// Behavior adapts to your account's region automatically; you never
     /// pass a region.
     ///
-    /// Returns: symbol, name, quantity, `available_quantity`, `cost_price`, currency, market.
+    /// Returns: symbol, name, quantity, available, `cost_price`, currency, market.
+    /// US accounts: same array, stock/option/crypto rows together (`asset_type`), no
+    /// `available`, plus US quote/P&L fields.
     /// Example: longbridge positions --format json
     Positions,
 
     /// Current fund (mutual fund) positions across all sub-accounts
     ///
     /// Returns: `counter_id`, name, `current_net_asset_value`, `cost_net_asset_value`, currency, `holding_units`.
+    /// Not available for US accounts.
     FundPositions,
 
     /// Fund (mutual fund) channel — catalog, NAV, holdings, positions, orders, trading
@@ -1029,6 +1060,7 @@ pub enum Commands {
     /// Margin ratio requirements for a symbol
     ///
     /// Returns: `im_factor` (initial), `mm_factor` (maintenance), `fm_factor` (forced liquidation).
+    /// Not available for US accounts.
     /// Example: longbridge margin-ratio TSLA.US
     MarginRatio {
         /// Symbol in <CODE>.<MARKET> format
@@ -1055,6 +1087,9 @@ pub enum Commands {
 
     /// Exchange rates for all supported currencies
     ///
+    /// Behavior adapts to your account's region automatically (US accounts read the
+    /// US exchange-rate table, one row per pair using the `reference` rate, else `am`,
+    /// shown as `spec_key`); you never pass a region.
     /// Example: longbridge exchange-rate
     /// Example: longbridge exchange-rate --format json
     ExchangeRate,
@@ -3314,8 +3349,10 @@ pub enum OrderCmd {
     /// pass a region. --attached applies only to US accounts.
     ///
     /// Returns all fields from `order` plus `charge_detail`, `history_details`, msg.
-    /// Example: longbridge order detail 20240101-123456789
-    /// Example: longbridge order detail 20240101-123456789 --attached
+    /// US accounts: same `--format json` keys except `time_in_force` / `outside_rth`
+    /// (raw code as `us_time_in_force`), plus US-only extras (see `--schema`).
+    /// Example: longbridge order detail 701276261045858304
+    /// Example: longbridge order detail 701276261045858304 --attached
     Detail {
         /// Order ID (from `longbridge order` or returned by `order buy`/`order sell`)
         order_id: String,
@@ -3324,12 +3361,16 @@ pub enum OrderCmd {
         attached: bool,
     },
 
-    /// AP accounts only: today's trade executions (fills), or the full history with --history
+    /// Today's trade executions (fills), or the full history with --history (AP and US accounts, same output)
     ///
-    /// US accounts: use `order --history` instead.
     /// Returns: `order_id`, `trade_id`, symbol, side, price, quantity, `trade_done_at`.
-    /// With --history: every fill in the range, filtered by execution time and
-    /// paginated to completion (not capped at 1000).
+    /// With --history: every fill in the range, paginated to completion (not
+    /// capped at 1000). AP accounts filter by execution time. US accounts read
+    /// the v1 history, which is not filtered by execution time and can lag
+    /// across days, so fills near the range edges may be missing or extra.
+    /// US side: filled from the account's orders, then the order detail (by
+    /// `order_id`), when the execution lacks it; `Unknown` (as on AP) when the
+    /// order is not found.
     /// Example: longbridge order executions
     /// Example: longbridge order executions --history --start 2024-01-01
     Executions {
@@ -3497,8 +3538,8 @@ pub enum OrderCmd {
     /// TWO-STEP BY DESIGN. Without --execute <CODE> the order is only looked up
     /// and shown to you; nothing is cancelled.
     /// Only cancellable states (New, `PartialFilled`, etc.) are accepted.
-    /// Example: longbridge order cancel 20240101-123456789
-    /// Example: longbridge order cancel 20240101-123456789 --execute 473  (cancels it)
+    /// Example: longbridge order cancel 701276261045858304
+    /// Example: longbridge order cancel 701276261045858304 --execute 473  (cancels it)
     Cancel {
         /// Order ID to cancel
         order_id: String,
@@ -3523,8 +3564,8 @@ pub enum OrderCmd {
     /// TWO-STEP BY DESIGN. Without --execute <CODE> the change is only shown as
     /// a before/after preview; the live order is left untouched.
     /// --qty is required. --price is optional (omit to keep current price).
-    /// Example: longbridge order replace 20240101-123456789 --qty 200 --price 255.00
-    /// Example: longbridge order replace 20240101-123456789 --qty 200 --execute 473
+    /// Example: longbridge order replace 701276261045858304 --qty 200 --price 255.00
+    /// Example: longbridge order replace 701276261045858304 --qty 200 --execute 473
     Replace {
         /// Order ID to modify
         order_id: String,
