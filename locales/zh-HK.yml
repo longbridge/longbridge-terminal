@@ -561,3 +561,7 @@ SymbolHint:
   DidYouMean: "「%{symbol}」沒有數據。你是不是要找 %{suggestions}？"
   Unknown: "找不到「%{symbol}」。請使用帶市場後綴的股票代碼，而不是公司名稱，例如 TSLA.US、700.HK、.DJI.US"
   Unchecked: "「%{symbol}」沒有數據。代碼需要帶市場後綴，例如 TSLA.US、700.HK、.DJI.US"
+ScopeGuidance: |-
+  此命令需要「賬戶資產與資金明細查詢」或「交易」權限，當前授權未包含。
+  授權方法：執行 `longbridge auth login`，在授權頁勾選對應權限。
+  如果授權頁沒有這些選項，表示賬戶尚未開通交易，請先在長橋 App 中開通證券賬戶。

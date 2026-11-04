@@ -99,6 +99,9 @@ fn print_cli_error(e: &anyhow::Error) {
                 if let Some(guidance) = http_openapi_guidance(*code, std::env::args()) {
                     eprintln!("\n{guidance}");
                 }
+                if let Some(guidance) = scope_guidance(u64::try_from(*code).unwrap_or(0)) {
+                    eprintln!("\n{guidance}");
+                }
                 if let Some(hint) = e.downcast_ref::<cli::quote::SymbolHint>() {
                     eprintln!("\n{hint}");
                 }
@@ -116,6 +119,9 @@ fn print_cli_error(e: &anyhow::Error) {
                 if let Some(guidance) =
                     option_quote_permission_guidance(detail.code, std::env::args())
                 {
+                    eprintln!("\n{guidance}");
+                }
+                if let Some(guidance) = scope_guidance(detail.code) {
                     eprintln!("\n{guidance}");
                 }
                 return;
@@ -186,6 +192,21 @@ fn http_openapi_guidance(
     args: impl IntoIterator<Item = impl AsRef<str>>,
 ) -> Option<&'static str> {
     option_quote_permission_guidance(u64::try_from(code).unwrap_or(0), args)
+}
+
+/// The gateway rejects a call whose API is bound to an OAuth scope the token
+/// was not granted with this code.
+const SCOPE_NOT_AUTHORIZED_CODE: u64 = 403_308;
+
+/// Guidance for a call outside the token's authorized scopes.
+///
+/// The CLI requests no scopes itself: the consent screen offers them and the
+/// user ticks them, so the fix is always to log in again and grant the missing
+/// one. Account and trading APIs are the scopes behind this code, and the
+/// consent screen offers them only to accounts with a securities account, so
+/// the guidance also covers the case where the option never appears.
+fn scope_guidance(error_code: u64) -> Option<String> {
+    (error_code == SCOPE_NOT_AUTHORIZED_CODE).then(|| t!("ScopeGuidance").to_string())
 }
 
 fn option_quote_permission_guidance(
@@ -757,6 +778,14 @@ mod error_guidance_tests {
             "chain",
             "AAPL.US",
         ]));
+    }
+
+    #[test]
+    fn scope_errors_explain_how_to_grant_the_scope() {
+        let guidance = super::scope_guidance(403_308).expect("403308 yields guidance");
+        assert!(guidance.contains("longbridge auth login"), "{guidance}");
+        assert!(super::scope_guidance(403_201).is_none());
+        assert!(super::scope_guidance(0).is_none());
     }
 
     #[test]
