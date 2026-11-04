@@ -1391,6 +1391,9 @@ fn hint_candidates(symbol: &str) -> Vec<String> {
 /// What probing a missing symbol's other spellings found.
 #[derive(Debug, PartialEq)]
 enum SymbolCheck {
+    /// The symbol itself exists: the command came back empty for another
+    /// reason, most often a market whose quotes the account has no access to.
+    Exists,
     /// These spellings of it exist.
     Suggest(Vec<String>),
     /// No spelling of it exists.
@@ -1399,27 +1402,35 @@ enum SymbolCheck {
     Unchecked,
 }
 
-/// Probe the [`hint_candidates`] of every symbol in `missing` — symbols the
-/// command already queried and got nothing for — in one `static_info` call,
-/// so a batch with many typos still costs a single request.
+/// Probe every symbol in `missing` — symbols the command queried and got
+/// nothing for — together with their [`hint_candidates`], in one
+/// `static_info` call, so a batch with many typos still costs one request.
+///
+/// The symbol itself is probed too: coming back empty from `quote` does not
+/// prove it does not exist (a market without quote access looks the same),
+/// and telling the caller to fix a correct ticker sends it retrying spellings.
 async fn check_missing(api: &dyn QuoteApi, missing: &[String]) -> Vec<SymbolCheck> {
     let candidates: Vec<Vec<String>> = missing.iter().map(|s| hint_candidates(s)).collect();
-    let mut probe: Vec<String> = candidates.iter().flatten().cloned().collect();
+    let mut probe: Vec<String> = missing
+        .iter()
+        .chain(candidates.iter().flatten())
+        .cloned()
+        .collect();
     probe.sort();
     probe.dedup();
-    let existing: std::collections::HashSet<String> = if probe.is_empty() {
-        std::collections::HashSet::new()
-    } else {
-        match api.static_info(probe).await {
-            Ok(infos) => infos.into_iter().map(|i| i.symbol).collect(),
-            // A failed probe proves nothing: never report the symbol as unknown
-            // on the strength of it.
-            Err(_) => return missing.iter().map(|_| SymbolCheck::Unchecked).collect(),
-        }
+    let existing: std::collections::HashSet<String> = match api.static_info(probe).await {
+        Ok(infos) => infos.into_iter().map(|i| i.symbol).collect(),
+        // A failed probe proves nothing: never report the symbol as unknown
+        // on the strength of it.
+        Err(_) => return missing.iter().map(|_| SymbolCheck::Unchecked).collect(),
     };
-    candidates
-        .into_iter()
-        .map(|c| {
+    missing
+        .iter()
+        .zip(candidates)
+        .map(|(symbol, c)| {
+            if existing.contains(symbol) {
+                return SymbolCheck::Exists;
+            }
             let found: Vec<String> = c.into_iter().filter(|s| existing.contains(s)).collect();
             if found.is_empty() {
                 SymbolCheck::Unknown
@@ -1446,6 +1457,7 @@ fn hint_message(symbol: &str, check: &SymbolCheck) -> String {
             )
             .to_string()
         }
+        SymbolCheck::Exists => t!("SymbolHint.NoData", symbol = symbol).to_string(),
         SymbolCheck::Unknown => t!("SymbolHint.Unknown", symbol = symbol).to_string(),
         SymbolCheck::Unchecked => t!("SymbolHint.Unchecked", symbol = symbol).to_string(),
     }
@@ -3995,20 +4007,27 @@ mod tests {
         mock.expect_static_info()
             .withf(|probe| {
                 probe
-                    == &[".DJI.US", ".TESLA.US", "TESLA.US"]
+                    == &[".DJI.US", ".TESLA.US", "700.HK", "DJI.US", "TESLA.US"]
                         .map(str::to_owned)
                         .to_vec()
             })
             .times(1)
-            .returning(|_| Ok(vec![static_info_of(".DJI.US")]));
-        let checks = check_missing(&mock, &["DJI.US".to_owned(), "tesla.US".to_owned()]).await;
+            .returning(|_| Ok(vec![static_info_of(".DJI.US"), static_info_of("700.HK")]));
+        let missing = ["DJI.US", "TESLA.US", "700.HK"].map(str::to_owned);
+        let checks = check_missing(&mock, &missing).await;
         assert_eq!(
             checks,
             [
                 SymbolCheck::Suggest(vec![".DJI.US".to_owned()]),
                 SymbolCheck::Unknown,
+                // Exists, but the command returned nothing (e.g. no quote access):
+                // never tell the caller to fix a correct ticker.
+                SymbolCheck::Exists,
             ]
         );
+        let msg = hint_message("700.HK", &checks[2]);
+        assert!(msg.contains("exists"), "{msg}");
+        assert!(!msg.contains("ticker symbol"), "{msg}");
     }
 
     #[tokio::test]
@@ -4112,7 +4131,10 @@ mod tests {
             .times(1)
             .returning(|_| Ok(vec![]));
         mock.expect_static_info()
-            .with(mockall::predicate::eq(vec![".TSLA.US".to_string()]))
+            .with(mockall::predicate::eq(vec![
+                ".TSLA.US".to_string(),
+                "TSLA.US".to_string(),
+            ]))
             .times(1)
             .returning(|_| Ok(vec![]));
         // Nothing came back and no other spelling exists: the command fails.
@@ -4262,7 +4284,10 @@ mod tests {
             .returning(|_| Ok(vec![]));
         // The symbol hint then probes the index spelling.
         mock.expect_static_info()
-            .with(mockall::predicate::eq(vec![".TSLA.US".to_string()]))
+            .with(mockall::predicate::eq(vec![
+                ".TSLA.US".to_string(),
+                "TSLA.US".to_string(),
+            ]))
             .times(1)
             .returning(|_| Ok(vec![]));
         mock.expect_us_crypto_overview().times(0);
@@ -4303,7 +4328,10 @@ mod tests {
             .returning(|_| Ok(vec![]));
         // The symbol hint then probes the index spelling.
         mock.expect_static_info()
-            .with(mockall::predicate::eq(vec![".AAPL.US".to_string()]))
+            .with(mockall::predicate::eq(vec![
+                ".AAPL.US".to_string(),
+                "AAPL.US".to_string(),
+            ]))
             .times(1)
             .returning(|_| Ok(vec![]));
         mock.expect_us_crypto_overview()
@@ -4326,7 +4354,7 @@ mod tests {
         // Non-US: `.BKKT` goes through static_info, crypto endpoint untouched.
         mock.expect_static_info()
             .with(mockall::predicate::eq(vec!["BTCUSD.BKKT".to_string()]))
-            .times(1)
+            .times(2) // the lookup, then the hint probe
             .returning(|_| Ok(vec![]));
         mock.expect_us_crypto_overview().times(0);
         run_static(

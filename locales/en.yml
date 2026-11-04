@@ -558,10 +558,15 @@ Ai:
   HelpSelect: "Select & copy (word / line)"
   HelpQuit: "Quit"
 SymbolHint:
+  NoData: "\"%{symbol}\" exists but returned no data. If it is in a market you have no quote access to, check with: longbridge auth status"
   DidYouMean: "no data for \"%{symbol}\". Did you mean %{suggestions}?"
   Unknown: "no security matches \"%{symbol}\". Use the ticker symbol with a market suffix, not the company name, e.g. TSLA.US, 700.HK, .DJI.US"
   Unchecked: "no data for \"%{symbol}\". Symbols need a market suffix, e.g. TSLA.US, 700.HK, .DJI.US"
-ScopeGuidance: |-
-  This command needs the "Account & Positions" or "Trade" permission, which your current authorization does not include.
-  Grant it: run `longbridge auth login` and check it on the consent screen.
-  If the consent screen does not offer it, your account has no trading access yet — open a securities account in the Longbridge app first.
+ScopeGuidance:
+  Trading: |-
+    This command needs a trading permission ("Account & Positions", "Trade Order Lookup" or "Trade Execution") that your current authorization does not include.
+    Grant it: run `longbridge auth login` and check it on the consent screen.
+    If the consent screen does not offer these, your account has no securities account yet — open one in the Longbridge app first.
+  Watchlist: |-
+    This command needs the "Watchlist" permission, which your current authorization does not include.
+    Grant it: run `longbridge auth login` and check "Watchlist" on the consent screen.

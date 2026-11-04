@@ -71,7 +71,23 @@ pub struct Args {
     pub logout: bool,
 }
 
-fn print_cli_error(e: &anyhow::Error) {
+/// One failed command, as reported on stderr.
+#[derive(Debug, Default)]
+struct ErrorReport {
+    /// The first line after `Error: ` in table output.
+    headline: String,
+    /// Business code from the API, when the error carries one.
+    code: Option<u64>,
+    /// The server's (or the error's own) message, sanitised.
+    message: String,
+    trace_id: Option<String>,
+    /// Follow-up guidance, each printed as its own paragraph.
+    hints: Vec<String>,
+}
+
+/// Build the report for `e` raised by `command` (its clap path, e.g. `quote`
+/// or `watchlist pin`).
+fn error_report(e: &anyhow::Error, command: &str) -> ErrorReport {
     use longbridge::{httpclient::HttpClientError, wsclient::WsClientError, Error as LbError};
     // Strip terminal control/escape sequences from server-controlled text
     // before it hits stderr, so a hostile API error cannot repaint the
@@ -85,56 +101,60 @@ fn print_cli_error(e: &anyhow::Error) {
                 message,
                 trace_id,
             }) => {
-                eprintln!(
-                    "Error: API error (code {code}): {}",
-                    sanitize_server_text(message)
-                );
-                if !trace_id.is_empty() {
-                    eprintln!("  trace_id: {}", sanitize_server_text(trace_id));
-                }
+                let message = sanitize_server_text(message);
+                let code_u64 = u64::try_from(*code).unwrap_or(0);
+                let mut hints = Vec::new();
                 // Mirror the WS branch: when the HTTP quote path reports
                 // `301604 no quote access` for an option-quote command, append
                 // the OPRA-permission guidance so the migration to HTTP does not
                 // lose the hint the WebSocket path showed.
                 if let Some(guidance) = http_openapi_guidance(*code, std::env::args()) {
-                    eprintln!("\n{guidance}");
+                    hints.push(guidance.to_owned());
                 }
-                if let Some(guidance) = scope_guidance(u64::try_from(*code).unwrap_or(0)) {
-                    eprintln!("\n{guidance}");
-                }
+                hints.extend(scope_guidance(code_u64, command));
                 if let Some(hint) = e.downcast_ref::<cli::quote::SymbolHint>() {
-                    eprintln!("\n{hint}");
+                    hints.push(hint.to_string());
                 }
-                return;
+                return ErrorReport {
+                    headline: format!("API error (code {code}): {message}"),
+                    code: Some(code_u64),
+                    message,
+                    trace_id: (!trace_id.is_empty()).then(|| sanitize_server_text(trace_id)),
+                    hints,
+                };
             }
             LbError::WsClient(WsClientError::ResponseError {
                 status,
                 detail: Some(detail),
             }) => {
-                eprintln!(
-                    "Error: WebSocket error (status={status}, code={}): {}",
-                    detail.code,
-                    sanitize_server_text(&detail.msg)
-                );
+                let message = sanitize_server_text(&detail.msg);
+                let mut hints = Vec::new();
                 if let Some(guidance) =
                     option_quote_permission_guidance(detail.code, std::env::args())
                 {
-                    eprintln!("\n{guidance}");
+                    hints.push(guidance.to_owned());
                 }
-                if let Some(guidance) = scope_guidance(detail.code) {
-                    eprintln!("\n{guidance}");
-                }
-                return;
+                hints.extend(scope_guidance(detail.code, command));
+                return ErrorReport {
+                    headline: format!(
+                        "WebSocket error (status={status}, code={}): {message}",
+                        detail.code
+                    ),
+                    code: Some(detail.code),
+                    message,
+                    trace_id: None,
+                    hints,
+                };
             }
             LbError::WsClient(WsClientError::ConnectionClosed {
                 reason: Some(reason),
             }) => {
-                eprintln!(
-                    "Error: Connection closed ({:?}): {}",
-                    reason.code,
-                    sanitize_server_text(&reason.message)
-                );
-                return;
+                let message = sanitize_server_text(&reason.message);
+                return ErrorReport {
+                    headline: format!("Connection closed ({:?}): {message}", reason.code),
+                    message,
+                    ..ErrorReport::default()
+                };
             }
             _ => {}
         }
@@ -144,9 +164,43 @@ fn print_cli_error(e: &anyhow::Error) {
     // errors) carry no structured detail, so they fall through to the raw
     // message here.
     let rendered = sanitize_server_text(&format!("{e:#}"));
-    eprintln!("Error: {rendered}");
-    if let Some(guidance) = cn_access_point_guidance(&rendered) {
-        eprintln!("\n{guidance}");
+    ErrorReport {
+        headline: rendered.clone(),
+        hints: cn_access_point_guidance(&rendered)
+            .map(str::to_owned)
+            .into_iter()
+            .collect(),
+        message: rendered,
+        ..ErrorReport::default()
+    }
+}
+
+/// Print `e` to stderr. With `--format json` it is one JSON object, so a
+/// caller that parses output never has to scrape prose:
+/// `{"error": {"code", "message", "trace_id", "hints"}}`.
+fn print_cli_error(e: &anyhow::Error, format: &cli::OutputFormat, command: &str) {
+    let report = error_report(e, command);
+    match format {
+        cli::OutputFormat::Json => {
+            let value = serde_json::json!({
+                "error": {
+                    "code": report.code,
+                    "message": report.message,
+                    "trace_id": report.trace_id,
+                    "hints": report.hints,
+                }
+            });
+            eprintln!("{value}");
+        }
+        cli::OutputFormat::Pretty => {
+            eprintln!("Error: {}", report.headline);
+            if let Some(trace_id) = &report.trace_id {
+                eprintln!("  trace_id: {trace_id}");
+            }
+            for hint in &report.hints {
+                eprintln!("\n{hint}");
+            }
+        }
     }
 }
 
@@ -202,11 +256,20 @@ const SCOPE_NOT_AUTHORIZED_CODE: u64 = 403_308;
 ///
 /// The CLI requests no scopes itself: the consent screen offers them and the
 /// user ticks them, so the fix is always to log in again and grant the missing
-/// one. Account and trading APIs are the scopes behind this code, and the
-/// consent screen offers them only to accounts with a securities account, so
-/// the guidance also covers the case where the option never appears.
-fn scope_guidance(error_code: u64) -> Option<String> {
-    (error_code == SCOPE_NOT_AUTHORIZED_CODE).then(|| t!("ScopeGuidance").to_string())
+/// one. Which one follows from the command: `watchlist` needs Watchlist,
+/// everything else behind this code is an account or trading API. The consent
+/// screen offers the trading scopes only to accounts with a securities
+/// account, so that guidance also covers the option never appearing.
+fn scope_guidance(error_code: u64, command: &str) -> Option<String> {
+    if error_code != SCOPE_NOT_AUTHORIZED_CODE {
+        return None;
+    }
+    let is_watchlist = command.split(' ').next() == Some("watchlist");
+    Some(if is_watchlist {
+        t!("ScopeGuidance.Watchlist").to_string()
+    } else {
+        t!("ScopeGuidance.Trading").to_string()
+    })
 }
 
 fn option_quote_permission_guidance(
@@ -265,6 +328,7 @@ async fn main() {
     let matches = cli::Cli::command().get_matches();
     let cli = cli::Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
     let verbose = cli.verbose;
+    let command = command_path(&matches);
 
     locale::init(cli.lang.as_deref());
     rust_i18n::set_locale(locale::get());
@@ -352,7 +416,7 @@ async fn main() {
     // `tui` is left out here as well: it reports its own launch event, and
     // counting it as a command too would double every total.
     if reports && cli.command.is_some() && !matches!(cli.command, Some(cli::Commands::Tui)) {
-        analytics::arm_command(command_path(&matches));
+        analytics::arm_command(command.clone());
         // A session is killed far more often than it exits, so its run event
         // goes out now; a one-shot command reports on the way out instead, where
         // it can say how it went. See `analytics`.
@@ -382,7 +446,7 @@ async fn main() {
                 }
             };
             if let Err(e) = openapi::quote().member_id().await {
-                print_cli_error(&anyhow::anyhow!(e));
+                print_cli_error(&anyhow::anyhow!(e), &cli::OutputFormat::Pretty, &command);
                 return;
             }
             tracing::info!("OpenAPI initialized successfully");
@@ -492,7 +556,7 @@ async fn main() {
                 }
             };
             if let Err(e) = openapi::quote().member_id().await {
-                print_cli_error(&anyhow::anyhow!(e));
+                print_cli_error(&anyhow::anyhow!(e), &cli::OutputFormat::Pretty, &command);
                 analytics::flush().await;
                 std::process::exit(1);
             }
@@ -515,7 +579,7 @@ async fn main() {
 
         Some(cli::Commands::Check) => {
             if let Err(e) = cli::check::cmd_check(&cli.format).await {
-                print_cli_error(&e);
+                print_cli_error(&e, &cli.format, &command);
                 analytics::finish_command(analytics::Outcome::Error).await;
                 std::process::exit(1);
             }
@@ -645,7 +709,7 @@ async fn main() {
             )
             .await;
             if let Err(e) = result {
-                print_cli_error(&anyhow::anyhow!(e));
+                print_cli_error(&anyhow::anyhow!(e), &cli::OutputFormat::Pretty, &command);
                 analytics::flush().await;
                 std::process::exit(1);
             }
@@ -671,7 +735,7 @@ async fn main() {
                 eprintln!("* Host: {http_url}");
             }
             if let Err(e) = cli::dispatch(cmd, &cli.format, cli.verbose).await {
-                print_cli_error(&e);
+                print_cli_error(&e, &cli.format, &command);
                 analytics::finish_command(analytics::Outcome::Error).await;
                 std::process::exit(1);
             }
@@ -781,11 +845,38 @@ mod error_guidance_tests {
     }
 
     #[test]
+    fn error_report_carries_code_trace_and_hints() {
+        use longbridge::httpclient::HttpClientError;
+        let err = anyhow::Error::from(longbridge::Error::from(HttpClientError::OpenApi {
+            code: 403_308,
+            message: "Target API's scope is not in authorized scopes".to_owned(),
+            trace_id: "abc".to_owned(),
+        }));
+        let report = super::error_report(&err, "portfolio");
+        assert_eq!(report.code, Some(403_308));
+        assert_eq!(report.trace_id.as_deref(), Some("abc"));
+        assert!(report.headline.starts_with("API error (code 403308)"));
+        assert_eq!(report.hints.len(), 1);
+
+        // Errors without API detail still report a message and no code.
+        let report = super::error_report(&anyhow::anyhow!("boom"), "quote");
+        assert_eq!(report.code, None);
+        assert_eq!(report.message, "boom");
+    }
+
+    #[test]
     fn scope_errors_explain_how_to_grant_the_scope() {
-        let guidance = super::scope_guidance(403_308).expect("403308 yields guidance");
-        assert!(guidance.contains("longbridge auth login"), "{guidance}");
-        assert!(super::scope_guidance(403_201).is_none());
-        assert!(super::scope_guidance(0).is_none());
+        let trading = super::scope_guidance(403_308, "portfolio").expect("403308 yields guidance");
+        assert!(trading.contains("longbridge auth login"), "{trading}");
+        assert!(trading.contains("Account & Positions"), "{trading}");
+
+        // A watchlist command is missing the Watchlist scope, not a trading one.
+        let watchlist = super::scope_guidance(403_308, "watchlist pin").unwrap();
+        assert!(watchlist.contains("Watchlist"), "{watchlist}");
+        assert!(!watchlist.contains("securities account"), "{watchlist}");
+
+        assert!(super::scope_guidance(403_201, "portfolio").is_none());
+        assert!(super::scope_guidance(0, "portfolio").is_none());
     }
 
     #[test]
