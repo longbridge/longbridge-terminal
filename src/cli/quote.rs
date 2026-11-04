@@ -1365,14 +1365,22 @@ fn hint_candidates(symbol: &str) -> Vec<String> {
     let mut candidates = vec![upper.clone()];
     match upper.rsplit_once('.') {
         Some((code, "US")) if !code.is_empty() && !code.starts_with('.') => {
+            // Share classes are written BRK-B or BRK/B elsewhere (Yahoo,
+            // Bloomberg); Longbridge spells them BRK.B.
+            if code.contains(['-', '/']) {
+                candidates.push(format!("{}.US", code.replace(['-', '/'], ".")));
+            }
             candidates.push(format!(".{code}.US"));
+        }
+        Some((code, "HK")) if code.starts_with('0') && code.chars().all(|c| c.is_ascii_digit()) => {
+            candidates.push(format!("{}.HK", hk_code(code)));
         }
         Some((code, _)) if !code.is_empty() => {}
         _ => {
             let code = upper.trim_matches('.');
             if code.is_empty() {
             } else if code.chars().all(|c| c.is_ascii_digit()) {
-                candidates.push(format!("{code}.HK"));
+                candidates.push(format!("{}.HK", hk_code(code)));
                 if code.len() == 6 {
                     candidates.push(format!("{code}.SH"));
                     candidates.push(format!("{code}.SZ"));
@@ -1386,6 +1394,17 @@ fn hint_candidates(symbol: &str) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     candidates.retain(|c| c != symbol && seen.insert(c.clone()));
     candidates
+}
+
+/// An HK code without the zero padding other sources add (`0700`, `00700`):
+/// Longbridge spells Tencent `700.HK`.
+fn hk_code(code: &str) -> &str {
+    let trimmed = code.trim_start_matches('0');
+    if trimmed.is_empty() {
+        "0"
+    } else {
+        trimmed
+    }
 }
 
 /// What probing a missing symbol's other spellings found.
@@ -4028,6 +4047,12 @@ mod tests {
             hint_candidates("600519"),
             ["600519.HK", "600519.SH", "600519.SZ"]
         );
+        // Spellings other data sources use for the same security.
+        assert_eq!(hint_candidates("BRK-B.US"), ["BRK.B.US", ".BRK-B.US"]);
+        assert_eq!(hint_candidates("BRK/B.US"), ["BRK.B.US", ".BRK/B.US"]);
+        assert_eq!(hint_candidates("0700.HK"), ["700.HK"]);
+        assert_eq!(hint_candidates("00700.HK"), ["700.HK"]);
+        assert_eq!(hint_candidates("00700"), ["700.HK"]);
         // Already an index spelling, or a non-US market: nothing else to try.
         assert_eq!(hint_candidates(".TSLA.US"), Vec::<String>::new());
         assert_eq!(hint_candidates("700.HK"), Vec::<String>::new());
