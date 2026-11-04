@@ -247,7 +247,7 @@ fn page_offsets(total: usize, page: usize, max_pages: usize) -> Vec<usize> {
 /// `HttpClientError` misses that match and falls through to the generic
 /// renderer, losing the `API error (code …)` form, the trace id, and the
 /// option-quote OPRA permission guidance.
-fn to_cli_error(err: longbridge::httpclient::HttpClientError) -> anyhow::Error {
+pub(crate) fn to_cli_error(err: longbridge::httpclient::HttpClientError) -> anyhow::Error {
     anyhow::Error::from(longbridge::Error::from(err))
 }
 

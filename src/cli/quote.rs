@@ -267,7 +267,6 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
     // tracking beacon `quote_cmd()` does) instead of opening the WS; the TUI
     // keeps the real-time `QuoteContext`.
     crate::openapi::track_quote_cmd();
-    let symbols: Vec<String> = symbols.into_iter().map(normalize_symbol).collect();
     let input = symbols.clone();
     let quotes = crate::cli::quote_http::HttpQuoteApi.quote(symbols).await?;
 
@@ -392,7 +391,6 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
 
 pub async fn cmd_depth(symbol: String, format: &OutputFormat) -> Result<()> {
     crate::openapi::track_quote_cmd();
-    let symbol = normalize_symbol(symbol);
     let api = crate::cli::quote_http::HttpQuoteApi;
     let result = api.depth(symbol.clone()).await;
     let depth = with_symbol_hint(&api, &symbol, result).await?;
@@ -455,7 +453,6 @@ pub async fn cmd_depth(symbol: String, format: &OutputFormat) -> Result<()> {
 
 pub async fn cmd_brokers(symbol: String, format: &OutputFormat) -> Result<()> {
     crate::openapi::track_quote_cmd();
-    let symbol = normalize_symbol(symbol);
     let api = crate::cli::quote_http::HttpQuoteApi;
     let result = api.brokers(symbol.clone()).await;
     let brokers = with_symbol_hint(&api, &symbol, result).await?;
@@ -518,7 +515,6 @@ pub async fn cmd_brokers(symbol: String, format: &OutputFormat) -> Result<()> {
 
 pub async fn cmd_trades(symbol: String, count: usize, format: &OutputFormat) -> Result<()> {
     crate::openapi::track_quote_cmd();
-    let symbol = normalize_symbol(symbol);
     let api = crate::cli::quote_http::HttpQuoteApi;
     let result = api.trades(symbol.clone(), count).await;
     let trades = with_symbol_hint(&api, &symbol, result).await?;
@@ -544,7 +540,6 @@ pub async fn cmd_trades(symbol: String, count: usize, format: &OutputFormat) -> 
 pub async fn cmd_intraday(symbol: String, session: &str, format: &OutputFormat) -> Result<()> {
     crate::openapi::track_quote_cmd();
     let trade_sessions = parse_trade_sessions(session)?;
-    let symbol = normalize_symbol(symbol);
     let api = crate::cli::quote_http::HttpQuoteApi;
     let result = api.intraday(symbol.clone(), trade_sessions).await;
     let lines = with_symbol_hint(&api, &symbol, result).await?;
@@ -579,7 +574,6 @@ pub async fn cmd_kline(
     let p = parse_period(period)?;
     let adj = parse_adjust(adjust)?;
     let trade_sessions = parse_trade_sessions(session)?;
-    let symbol = normalize_symbol(symbol);
     let api = crate::cli::quote_http::HttpQuoteApi;
     let result = api
         .candlesticks(symbol.clone(), p, count, adj, trade_sessions)
@@ -641,7 +635,6 @@ pub async fn cmd_kline_history(
     let p = parse_period(period)?;
     let adj = parse_adjust(adjust)?;
     let trade_sessions = parse_trade_sessions(session)?;
-    let symbol = normalize_symbol(symbol);
 
     let api = crate::cli::quote_http::HttpQuoteApi;
     let result = if let (Some(s), Some(e)) = (start, end) {
@@ -708,7 +701,6 @@ pub async fn cmd_static(symbols: Vec<String>, format: &OutputFormat) -> Result<(
     let is_us = crate::openapi::is_us_account().await;
     crate::openapi::track_quote_cmd();
     let api = crate::cli::quote_http::HttpQuoteApi;
-    let symbols = symbols.into_iter().map(normalize_symbol).collect();
     run_static(&api, symbols, is_us, format).await
 }
 
@@ -849,7 +841,8 @@ pub async fn cmd_calc_index(
             print_table(&headers, rows, format);
         }
     }
-    Ok(())
+    let found: Vec<&str> = results.iter().map(|r| r.symbol.as_str()).collect();
+    report_missing_symbols(&api, &symbols, &found).await
 }
 
 pub async fn cmd_capital_flow(symbol: String, format: &OutputFormat) -> Result<()> {
@@ -1360,13 +1353,6 @@ pub async fn cmd_warrant_issuers(format: &OutputFormat) -> Result<()> {
 
 // ─── Testable run_* functions ─────────────────────────────────────────────────
 
-/// Symbols are case-sensitive on the server (`tsla.us` is an invalid
-/// symbol), and every Longbridge symbol is upper-case, so commands normalise
-/// what they are given instead of failing on it.
-fn normalize_symbol(symbol: String) -> String {
-    symbol.to_ascii_uppercase()
-}
-
 /// Spellings of `symbol` worth suggesting when it does not exist: upper-cased,
 /// a missing suffix guessed from the code (digits are HK, or A-shares when six
 /// long; letters are US), and the leading-dot form of a US index (`.DJI.US`).
@@ -1466,9 +1452,13 @@ fn hint_message(symbol: &str, check: &SymbolCheck) -> String {
 }
 
 /// For commands that look up a batch of symbols and silently drop the ones
-/// that do not exist (`quote`, `static`): print a hint for each missing one,
-/// and fail when none of the queried symbols exist, so a caller reading only
-/// stdout and the exit status sees an error instead of an empty success.
+/// that do not exist (`quote`, `static`, `calc-index`): fail with a hint for
+/// each missing symbol once the found ones are printed, like `ls a b` lists
+/// `a` and still exits non-zero for a missing `b`. A caller reading only stdout
+/// and the exit status therefore never mistakes a dropped symbol for success.
+///
+/// The probe only decides the wording: the command's own lookup already
+/// established that these symbols returned nothing.
 async fn report_missing_symbols(
     api: &dyn QuoteApi,
     queried: &[String],
@@ -1490,15 +1480,7 @@ async fn report_missing_symbols(
         .zip(&checks)
         .map(|(sym, check)| hint_message(sym, check))
         .collect();
-    let none_found = found.is_empty() && !checks.contains(&SymbolCheck::Unchecked);
-    if none_found {
-        bail!("{}", messages.join("\n"));
-    }
-    for message in messages {
-        eprintln!();
-        eprintln!("Hint: {message}");
-    }
-    Ok(())
+    bail!("{}", messages.join("\n"))
 }
 
 /// A symbol hint attached to an invalid-symbol API error, printed under it.
@@ -1867,8 +1849,7 @@ pub async fn run_static(
     }
 
     if !stocks.is_empty() {
-        // Crypto pairs already resolved above, so they count as found: a
-        // mixed batch fails only when nothing at all came back.
+        // Crypto pairs already resolved above, so they count as found.
         let found_refs: Vec<&str> = found.iter().chain(&crypto).map(String::as_str).collect();
         report_missing_symbols(api, &symbols, &found_refs).await?;
     }
@@ -1884,7 +1865,7 @@ pub async fn run_calc_index(
     if symbols.is_empty() {
         bail!("At least one symbol is required");
     }
-    let results = api.calc_indexes(symbols, indexes).await?;
+    let results = api.calc_indexes(symbols.clone(), indexes).await?;
     let headers = &["Symbol", "Last Done", "Change Rate", "PE TTM", "PB"];
     let rows = results
         .iter()
@@ -1899,7 +1880,8 @@ pub async fn run_calc_index(
         })
         .collect();
     print_table(headers, rows, format);
-    Ok(())
+    let found: Vec<&str> = results.iter().map(|r| r.symbol.as_str()).collect();
+    report_missing_symbols(api, &symbols, &found).await
 }
 
 pub async fn run_capital_flow(
@@ -4041,30 +4023,56 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn report_missing_symbols_fails_only_when_nothing_was_found() {
+    async fn report_missing_symbols_fails_on_any_missing_symbol() {
         let mut mock = MockQuoteApi::new();
         mock.expect_static_info().returning(|_| Ok(vec![]));
-        let queried = ["TSLA.US".to_owned(), "tesla.US".to_owned()];
+        let queried = ["TSLA.US".to_owned(), "TESLA.US".to_owned()];
 
-        let err = report_missing_symbols(&mock, &queried[1..], &[])
+        // Part of the batch exists: still a failure, naming only the missing one.
+        let err = report_missing_symbols(&mock, &queried, &["TSLA.US"])
             .await
-            .unwrap_err();
-        assert!(err.to_string().contains("ticker symbol"), "{err}");
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("\"TESLA.US\""), "{err}");
+        assert!(!err.contains("\"TSLA.US\""), "{err}");
 
-        // Part of the batch exists: hint, but succeed with what was found.
-        report_missing_symbols(&mock, &queried, &["TSLA.US"])
+        report_missing_symbols(&mock, &queried, &["TSLA.US", "TESLA.US"])
             .await
             .unwrap();
     }
 
     #[tokio::test]
-    async fn report_missing_symbols_does_not_fail_on_an_unchecked_probe() {
+    async fn report_missing_symbols_fails_even_when_the_probe_fails() {
+        // The command's own lookup already found nothing; a failed probe only
+        // changes the wording, never the exit status.
         let mut mock = MockQuoteApi::new();
         mock.expect_static_info()
             .returning(|_| Err(anyhow::anyhow!("rate limited")));
-        report_missing_symbols(&mock, &["tesla.US".to_owned()], &[])
+        let err = report_missing_symbols(&mock, &["TESLA.US".to_owned()], &[])
             .await
-            .unwrap();
+            .unwrap_err()
+            .to_string();
+        assert!(!err.contains("no security matches"), "{err}");
+    }
+
+    #[test]
+    fn invalid_symbol_is_recognised_through_the_http_error_wrapping() {
+        use longbridge::httpclient::HttpClientError;
+        let api_error = |code| {
+            crate::cli::quote_http::to_cli_error(HttpClientError::OpenApi {
+                code,
+                message: "invalid symbol".to_owned(),
+                trace_id: String::new(),
+            })
+        };
+        assert!(is_invalid_symbol(&api_error(INVALID_SYMBOL_CODE)));
+        assert!(!is_invalid_symbol(&api_error(301_604)));
+        assert!(!is_invalid_symbol(&anyhow::anyhow!("invalid symbol")));
+
+        // main.rs finds both the API error and the hint on the same chain.
+        let err = api_error(INVALID_SYMBOL_CODE).context(SymbolHint("x".to_owned()));
+        assert!(err.downcast_ref::<longbridge::Error>().is_some());
+        assert!(err.downcast_ref::<SymbolHint>().is_some());
     }
 
     #[test]
@@ -4075,12 +4083,6 @@ mod tests {
 
         let msg = hint_message("DJI.US", &SymbolCheck::Suggest(vec![".DJI.US".to_owned()]));
         assert!(msg.contains("Did you mean \".DJI.US\"?"), "{msg}");
-    }
-
-    #[test]
-    fn normalize_symbol_upper_cases() {
-        assert_eq!(normalize_symbol("tsla.us".to_owned()), "TSLA.US");
-        assert_eq!(normalize_symbol(".dji.us".to_owned()), ".DJI.US");
     }
 
     #[test]
@@ -4315,7 +4317,7 @@ mod tests {
             &OutputFormat::Json,
         )
         .await
-        .unwrap();
+        .unwrap_err(); // AAPL.US came back empty, so the batch fails after printing
     }
 
     #[tokio::test]
