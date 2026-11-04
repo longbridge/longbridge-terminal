@@ -385,7 +385,7 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
         }
     }
     let found: Vec<&str> = quotes.iter().map(|q| q.symbol.as_str()).collect();
-    hint_symbols_do_you_mean(&input, &found);
+    hint_symbols_do_you_mean(&crate::cli::quote_http::HttpQuoteApi, &input, &found).await;
     Ok(())
 }
 
@@ -395,7 +395,7 @@ pub async fn cmd_depth(symbol: String, format: &OutputFormat) -> Result<()> {
         .depth(symbol.clone())
         .await?;
     if depth.asks.is_empty() && depth.bids.is_empty() {
-        hint_symbol_do_you_mean(&symbol);
+        hint_symbol_do_you_mean(&crate::cli::quote_http::HttpQuoteApi, &symbol).await;
     }
 
     match format {
@@ -538,7 +538,7 @@ pub async fn cmd_trades(symbol: String, count: usize, format: &OutputFormat) -> 
 
     print_table(headers, rows, format);
     if trades.is_empty() {
-        hint_symbol_do_you_mean(&symbol);
+        hint_symbol_do_you_mean(&crate::cli::quote_http::HttpQuoteApi, &symbol).await;
     }
     Ok(())
 }
@@ -566,7 +566,7 @@ pub async fn cmd_intraday(symbol: String, session: &str, format: &OutputFormat) 
 
     print_table(headers, rows, format);
     if lines.is_empty() {
-        hint_symbol_do_you_mean(&symbol);
+        hint_symbol_do_you_mean(&crate::cli::quote_http::HttpQuoteApi, &symbol).await;
     }
     Ok(())
 }
@@ -627,7 +627,7 @@ pub async fn cmd_kline(
         print_table(headers, rows, format);
     }
     if candles.is_empty() {
-        hint_symbol_do_you_mean(&symbol);
+        hint_symbol_do_you_mean(&crate::cli::quote_http::HttpQuoteApi, &symbol).await;
     }
     Ok(())
 }
@@ -705,7 +705,7 @@ pub async fn cmd_kline_history(
         print_table(headers, rows, format);
     }
     if candles.is_empty() {
-        hint_symbol_do_you_mean(&sym);
+        hint_symbol_do_you_mean(&crate::cli::quote_http::HttpQuoteApi, &sym).await;
     }
     Ok(())
 }
@@ -1365,48 +1365,103 @@ pub async fn cmd_warrant_issuers(format: &OutputFormat) -> Result<()> {
 
 // ─── Testable run_* functions ─────────────────────────────────────────────────
 
+/// Spellings of `symbol` worth suggesting when it returned no data, input
+/// first. Symbols are case-sensitive (`tsla.us` finds nothing), so every
+/// candidate is upper-cased; a missing suffix is guessed from the code (digits
+/// are HK, or A-shares when six long; letters are US), and a US code may also
+/// be an index, which takes a leading dot (`.DJI.US`).
+///
+/// These are only guesses: [`hint_symbol_do_you_mean`] checks them against
+/// `static_info` and suggests only the ones that exist.
+fn hint_candidates(symbol: &str) -> Vec<String> {
+    let upper = symbol.to_ascii_uppercase();
+    let mut candidates = vec![symbol.to_owned(), upper.clone()];
+    match upper.rsplit_once('.') {
+        Some((code, "US")) if !code.is_empty() && !code.starts_with('.') => {
+            candidates.push(format!(".{code}.US"));
+        }
+        Some((code, _)) if !code.is_empty() => {}
+        _ => {
+            let code = upper.trim_matches('.');
+            if code.is_empty() {
+            } else if code.chars().all(|c| c.is_ascii_digit()) {
+                candidates.push(format!("{code}.HK"));
+                if code.len() == 6 {
+                    candidates.push(format!("{code}.SH"));
+                    candidates.push(format!("{code}.SZ"));
+                }
+            } else {
+                candidates.push(format!("{code}.US"));
+                candidates.push(format!(".{code}.US"));
+            }
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    candidates.retain(|c| seen.insert(c.clone()));
+    candidates
+}
+
+/// The hint for `symbol`, given which of its [`hint_candidates`] exist.
+/// `None` when the input itself exists: the symbol is right and the command
+/// simply has no data for it (no trades yet, an empty book), so there is
+/// nothing to correct.
+fn hint_message(symbol: &str, existing: &[String]) -> Option<String> {
+    if existing.iter().any(|s| s == symbol) {
+        return None;
+    }
+    if existing.is_empty() {
+        return Some(format!(
+            "Hint: no security matches \"{symbol}\". Use the ticker symbol with a market \
+             suffix, not the company name, e.g. TSLA.US, 700.HK, .DJI.US"
+        ));
+    }
+    let suggestions = existing
+        .iter()
+        .map(|s| format!("\"{s}\""))
+        .collect::<Vec<_>>()
+        .join(" or ");
+    Some(format!(
+        "Hint: no data for \"{symbol}\". Did you mean {suggestions}?"
+    ))
+}
+
 /// Print a "did you mean …?" hint to stderr when a symbol returns no data.
 ///
-/// Handles three cases:
-/// - No market suffix at all (e.g. `TSLA`, `700`) — suggests adding `.US` or `.HK`.
-/// - US symbol missing the leading dot for an index (e.g. `DJI.US`) — suggests `.DJI.US`.
-/// - Other malformed symbols — generic format reminder.
-fn hint_symbol_do_you_mean(symbol: &str) {
-    eprintln!();
-    if let Some((code, market)) = symbol.rsplit_once('.') {
-        // Has a market suffix — check for missing leading dot on US indexes.
-        if market.eq_ignore_ascii_case("US") && !code.starts_with('.') {
-            eprintln!(
-                "Hint: no data for \"{symbol}\". Did you mean \".{code}.{}\"? (US market indexes require a leading dot, e.g. .DJI.US, .VIX.US)",
-                market.to_uppercase()
-            );
+/// Every suggestion is checked against `static_info` first, so the hint never
+/// recommends a symbol that would also come back empty; when none of the
+/// guesses exist it says a ticker is needed instead.
+async fn hint_symbol_do_you_mean(api: &dyn QuoteApi, symbol: &str) {
+    let candidates = hint_candidates(symbol);
+    // The command already queried the input itself and got nothing; with no
+    // alternative spelling there is nothing left to probe.
+    if candidates.len() == 1 {
+        if let Some(message) = hint_message(symbol, &[]) {
+            eprintln!();
+            eprintln!("{message}");
         }
-    } else {
-        // No market suffix — guess from the code pattern.
-
-        if symbol.chars().all(|c| c.is_ascii_digit()) {
-            // All digits are almost always HK stocks (e.g. 700, 9988).
-            eprintln!(
-                "Hint: no data for \"{symbol}\". Did you mean \"{symbol}.HK\"? \n\
-                Symbols require a market suffix, e.g. TSLA.US, 700.HK, .DJI.US"
-            );
-        } else {
-            // Letters: could be a US stock (TSLA.US) or a US index (.VIX.US).
-            eprintln!(
-                "Hint: no data for \"{symbol}\". Did you mean \"{symbol}.US\" or \".{symbol}.US\" (if it's a US market index)? \n\
-                Symbols require a market suffix, e.g. TSLA.US, 700.HK, .DJI.US"
-            );
-        }
+        return;
+    }
+    let existing: Vec<String> = match api.static_info(candidates.clone()).await {
+        Ok(infos) => candidates
+            .into_iter()
+            .filter(|c| infos.iter().any(|i| &i.symbol == c))
+            .collect(),
+        // The probe is best-effort; without it, fall back to the format reminder.
+        Err(_) => Vec::new(),
+    };
+    if let Some(message) = hint_message(symbol, &existing) {
+        eprintln!();
+        eprintln!("{message}");
     }
 }
 
 /// For multi-symbol queries: print hints for each input symbol that is absent
 /// from the returned results.
-fn hint_symbols_do_you_mean(queried: &[String], found_symbols: &[&str]) {
+async fn hint_symbols_do_you_mean(api: &dyn QuoteApi, queried: &[String], found_symbols: &[&str]) {
     let found: std::collections::HashSet<&str> = found_symbols.iter().copied().collect();
     for sym in queried {
         if !found.contains(sym.as_str()) {
-            hint_symbol_do_you_mean(sym);
+            hint_symbol_do_you_mean(api, sym).await;
         }
     }
 }
@@ -1450,7 +1505,7 @@ pub async fn run_quote(
         .collect();
     print_table(headers, rows, format);
     let found: Vec<&str> = quotes.iter().map(|q| q.symbol.as_str()).collect();
-    hint_symbols_do_you_mean(&input, &found);
+    hint_symbols_do_you_mean(api, &input, &found).await;
     Ok(())
 }
 
@@ -1572,7 +1627,7 @@ pub async fn run_trades(
         .collect();
     print_table(headers, rows, format);
     if trades.is_empty() {
-        hint_symbol_do_you_mean(&symbol);
+        hint_symbol_do_you_mean(api, &symbol).await;
     }
     Ok(())
 }
@@ -1594,7 +1649,7 @@ pub async fn run_intraday(api: &dyn QuoteApi, symbol: String, format: &OutputFor
         .collect();
     print_table(headers, rows, format);
     if lines.is_empty() {
-        hint_symbol_do_you_mean(&symbol);
+        hint_symbol_do_you_mean(api, &symbol).await;
     }
     Ok(())
 }
@@ -1627,7 +1682,7 @@ pub async fn run_kline(
         .collect();
     print_table(headers, rows, format);
     if candles.is_empty() {
-        hint_symbol_do_you_mean(&symbol);
+        hint_symbol_do_you_mean(api, &symbol).await;
     }
     Ok(())
 }
@@ -1665,7 +1720,7 @@ pub async fn run_kline_history(
         .collect();
     print_table(headers, rows, format);
     if candles.is_empty() {
-        hint_symbol_do_you_mean(&symbol);
+        hint_symbol_do_you_mean(api, &symbol).await;
     }
     Ok(())
 }
@@ -1749,7 +1804,7 @@ pub async fn run_static(
 
     if !stocks.is_empty() {
         let found_refs: Vec<&str> = found.iter().map(String::as_str).collect();
-        hint_symbols_do_you_mean(&stocks, &found_refs);
+        hint_symbols_do_you_mean(api, &stocks, &found_refs).await;
     }
     Ok(())
 }
@@ -3861,6 +3916,45 @@ mod tests {
     use crate::cli::api::MockQuoteApi;
 
     #[test]
+    fn hint_candidates_cover_case_suffix_and_index_spellings() {
+        assert_eq!(
+            hint_candidates("tesla.US"),
+            ["tesla.US", "TESLA.US", ".TESLA.US"]
+        );
+        assert_eq!(
+            hint_candidates("tsla.us"),
+            ["tsla.us", "TSLA.US", ".TSLA.US"]
+        );
+        assert_eq!(hint_candidates("TSLA"), ["TSLA", "TSLA.US", ".TSLA.US"]);
+        assert_eq!(hint_candidates("700"), ["700", "700.HK"]);
+        assert_eq!(
+            hint_candidates("600519"),
+            ["600519", "600519.HK", "600519.SH", "600519.SZ"]
+        );
+        // Already an index spelling, or a non-US market: nothing to add.
+        assert_eq!(hint_candidates(".TSLA.US"), [".TSLA.US"]);
+        assert_eq!(hint_candidates("700.HK"), ["700.HK"]);
+    }
+
+    #[test]
+    fn hint_suggests_only_symbols_that_exist() {
+        // tesla.US: neither TESLA.US nor .TESLA.US exist — ask for a ticker
+        // instead of steering toward the index spelling.
+        let msg = hint_message("tesla.US", &[]).unwrap();
+        assert!(msg.contains("ticker symbol"), "{msg}");
+        assert!(!msg.contains(".tesla.US"), "{msg}");
+
+        let msg = hint_message("DJI.US", &[".DJI.US".to_owned()]).unwrap();
+        assert!(msg.contains("Did you mean \".DJI.US\"?"), "{msg}");
+
+        let msg = hint_message("tsla.us", &["TSLA.US".to_owned()]).unwrap();
+        assert!(msg.contains("Did you mean \"TSLA.US\"?"), "{msg}");
+
+        // The symbol itself exists: the command just has no data for it.
+        assert_eq!(hint_message("TSLA.US", &["TSLA.US".to_owned()]), None);
+    }
+
+    #[test]
     fn test_market_trade_status_label_matches_openapi_status() {
         let cases = [
             (101, "Closed"),
@@ -3882,6 +3976,8 @@ mod tests {
     #[tokio::test]
     async fn test_run_quote_dispatches() {
         let mut mock = MockQuoteApi::new();
+        // The empty result triggers the symbol hint, which probes alternative spellings.
+        mock.expect_static_info().returning(|_| Ok(vec![]));
         mock.expect_quote()
             .with(mockall::predicate::eq(vec!["TSLA.US".to_string()]))
             .times(1)
@@ -3935,6 +4031,8 @@ mod tests {
     #[tokio::test]
     async fn test_run_trades_dispatches() {
         let mut mock = MockQuoteApi::new();
+        // The empty result triggers the symbol hint, which probes alternative spellings.
+        mock.expect_static_info().returning(|_| Ok(vec![]));
         mock.expect_trades()
             .with(
                 mockall::predicate::eq("AAPL.US".to_string()),
@@ -3950,6 +4048,8 @@ mod tests {
     #[tokio::test]
     async fn test_run_intraday_dispatches() {
         let mut mock = MockQuoteApi::new();
+        // The empty result triggers the symbol hint, which probes alternative spellings.
+        mock.expect_static_info().returning(|_| Ok(vec![]));
         mock.expect_intraday()
             .with(mockall::predicate::eq("TSLA.US".to_string()))
             .times(1)
@@ -3962,6 +4062,8 @@ mod tests {
     #[tokio::test]
     async fn test_run_kline_dispatches() {
         let mut mock = MockQuoteApi::new();
+        // The empty result triggers the symbol hint, which probes alternative spellings.
+        mock.expect_static_info().returning(|_| Ok(vec![]));
         mock.expect_candlesticks()
             .with(
                 mockall::predicate::eq("TSLA.US".to_string()),
@@ -3986,6 +4088,8 @@ mod tests {
     #[tokio::test]
     async fn test_run_kline_history_by_date() {
         let mut mock = MockQuoteApi::new();
+        // The empty result triggers the symbol hint, which probes alternative spellings.
+        mock.expect_static_info().returning(|_| Ok(vec![]));
         let start = time::macros::date!(2024 - 01 - 01);
         let end = time::macros::date!(2024 - 12 - 31);
         mock.expect_history_candlesticks_by_date()
@@ -4007,6 +4111,8 @@ mod tests {
     #[tokio::test]
     async fn test_run_kline_history_by_offset() {
         let mut mock = MockQuoteApi::new();
+        // The empty result triggers the symbol hint, which probes alternative spellings.
+        mock.expect_static_info().returning(|_| Ok(vec![]));
         mock.expect_history_candlesticks_by_offset()
             .times(1)
             .returning(|_, _, _, _| Ok(vec![]));
@@ -4028,6 +4134,14 @@ mod tests {
         let mut mock = MockQuoteApi::new();
         mock.expect_static_info()
             .with(mockall::predicate::eq(vec!["TSLA.US".to_string()]))
+            .times(1)
+            .returning(|_| Ok(vec![]));
+        // The symbol hint then probes the index spelling.
+        mock.expect_static_info()
+            .with(mockall::predicate::eq(vec![
+                "TSLA.US".to_string(),
+                ".TSLA.US".to_string(),
+            ]))
             .times(1)
             .returning(|_| Ok(vec![]));
         mock.expect_us_crypto_overview().times(0);
@@ -4064,6 +4178,14 @@ mod tests {
         let mut mock = MockQuoteApi::new();
         mock.expect_static_info()
             .with(mockall::predicate::eq(vec!["AAPL.US".to_string()]))
+            .times(1)
+            .returning(|_| Ok(vec![]));
+        // The symbol hint then probes the index spelling.
+        mock.expect_static_info()
+            .with(mockall::predicate::eq(vec![
+                "AAPL.US".to_string(),
+                ".AAPL.US".to_string(),
+            ]))
             .times(1)
             .returning(|_| Ok(vec![]));
         mock.expect_us_crypto_overview()
