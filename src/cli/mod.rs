@@ -266,6 +266,7 @@ pub enum Commands {
     /// Example: longbridge quote TSLA.US NVDA.US --format json
     Quote {
         /// Symbols in <CODE>.<MARKET> format, e.g. TSLA.US QQQ.US 700.HK .VIX.US
+        #[arg(value_parser = parse_symbol)]
         symbols: Vec<String>,
     },
 
@@ -275,6 +276,7 @@ pub enum Commands {
     /// Example: longbridge depth TSLA.US
     Depth {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
     },
 
@@ -285,6 +287,7 @@ pub enum Commands {
     /// Example: longbridge brokers 700.HK
     Brokers {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
     },
 
@@ -294,6 +297,7 @@ pub enum Commands {
     /// Example: longbridge trades TSLA.US --count 50
     Trades {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Number of trades to return (default: 20, max: 1000)
         #[arg(long, alias = "limit", default_value = "20")]
@@ -310,6 +314,7 @@ pub enum Commands {
     /// Example: longbridge intraday TSLA.US --date 20240115
     Intraday {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Trade session filter: `intraday` (default) | `all` (includes pre/post market)
         #[arg(long, default_value = "intraday")]
@@ -332,6 +337,7 @@ pub enum Commands {
     /// Example: longbridge kline history TSLA.US --start 2024-01-01 --end 2024-12-31
     Kline {
         /// Symbol in <CODE>.<MARKET> format. Omit when using a subcommand.
+        #[arg(value_parser = parse_symbol)]
         symbol: Option<String>,
         /// Candlestick period: 1m 5m 15m 30m 1h day week month year (default: day)
         /// Aliases: minute=1m, hour=1h, d/1d=day, w=week, m/1mo=month, y=year
@@ -356,6 +362,7 @@ pub enum Commands {
     /// Example: longbridge static TSLA.US 700.HK
     Static {
         /// One or more symbols in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbols: Vec<String>,
     },
 
@@ -381,6 +388,7 @@ pub enum Commands {
     /// Example: `longbridge calc-index SOXL260619C52000.US --fields delta,iv,oi,exp,strike`
     CalcIndex {
         /// One or more symbols in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbols: Vec<String>,
         /// Comma-separated fields to compute. Use --help to see the full field list.
         #[arg(
@@ -397,6 +405,7 @@ pub enum Commands {
     /// Example: longbridge capital TSLA.US --flow
     Capital {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Show intraday capital flow time series instead of distribution snapshot
         #[arg(long)]
@@ -489,6 +498,7 @@ pub enum Commands {
     /// Example: longbridge warrant list 700.HK
     Warrant {
         /// Underlying symbol (e.g. 700.HK). Omit when using a subcommand.
+        #[arg(value_parser = parse_symbol)]
         symbol: Option<String>,
         #[command(subcommand)]
         cmd: Option<WarrantCmd>,
@@ -508,6 +518,7 @@ pub enum Commands {
     /// Example: longbridge financial-report key-metrics AAPL.US
     FinancialReport {
         /// Symbol in <CODE>.<MARKET> format, e.g. TSLA.US 700.HK (omit when using a subcommand)
+        #[arg(value_parser = parse_symbol)]
         symbol: Option<String>,
         /// Statement type: IS (income), BS (balance sheet), CF (cash flow), ALL.
         /// AP accounts only. Ignored for US accounts, which always
@@ -535,6 +546,7 @@ pub enum Commands {
     /// Example: longbridge business-segments AAPL.US --history --report qf
     BusinessSegments {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Fetch historical segment trends instead of current snapshot
         #[arg(long)]
@@ -582,6 +594,7 @@ pub enum Commands {
     /// Example: longbridge industry-peers IN20337.HK
     IndustryPeers {
         /// Industry symbol from `industry-rank`, e.g. IN00258.US
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Market override (default: inferred from symbol suffix)
         #[arg(long)]
@@ -599,6 +612,7 @@ pub enum Commands {
     /// Example: longbridge institution-rating TSLA.US --format json
     InstitutionRating {
         /// Symbol in <CODE>.<MARKET> format. Omit when using a subcommand.
+        #[arg(value_parser = parse_symbol)]
         symbol: Option<String>,
         #[command(subcommand)]
         cmd: Option<InstitutionRatingCmd>,
@@ -627,6 +641,7 @@ pub enum Commands {
     /// Example: longbridge dividend detail AAPL.US
     Dividend {
         /// Symbol in <CODE>.<MARKET> format (omit when using a subcommand)
+        #[arg(value_parser = parse_symbol)]
         symbol: Option<String>,
         /// Page number (default: 1)
         #[arg(long, default_value = "1")]
@@ -644,6 +659,7 @@ pub enum Commands {
     /// Example: longbridge forecast-eps TSLA.US --format json
     ForecastEps {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
     },
 
@@ -653,6 +669,7 @@ pub enum Commands {
     /// Example: longbridge consensus TSLA.US --format json
     Consensus {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
     },
 
@@ -662,6 +679,7 @@ pub enum Commands {
     /// Example: longbridge etf-docs QQQ.US --limit 5 --format json
     EtfDocs {
         /// ETF symbol in <CODE>.US format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Maximum number of documents to return (default: 10)
         #[arg(long, default_value = "10")]
@@ -735,6 +753,7 @@ pub enum Commands {
     /// Example: longbridge valuation TSLA.US --format json
     Valuation {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// AP accounts only: show historical valuation time series
         /// instead of current snapshot. Not supported for US accounts (the region is
@@ -762,7 +781,7 @@ pub enum Commands {
     /// Example: longbridge signals --catalyst-type News --start 2026-08-01
     Signals {
         /// Filter by symbol in <CODE>.<MARKET> format
-        #[arg(long, value_name = "SYMBOL")]
+        #[arg(value_parser = parse_symbol, long, value_name = "SYMBOL")]
         symbol: Option<String>,
         /// Filter by strategy id, e.g. buffett-value
         #[arg(long, value_name = "ID")]
@@ -813,6 +832,7 @@ pub enum Commands {
     /// Example: longbridge facts 700.HK --begin 2026-07-01 --limit 20
     Facts {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Only facts occurring at or after this date/time
         #[arg(long, value_name = "DATE")]
@@ -837,6 +857,7 @@ pub enum Commands {
     /// Example: longbridge news search "AI stocks"
     News {
         /// Symbol in <CODE>.<MARKET> format (e.g. TSLA.US 700.HK). Omit when using a subcommand.
+        #[arg(value_parser = parse_symbol)]
         symbol: Option<String>,
         /// Maximum number of articles to show (default: 20)
         #[arg(long, alias = "limit", default_value = "20")]
@@ -854,6 +875,7 @@ pub enum Commands {
     /// Example: longbridge filing detail AAPL.US 580265529766123777
     Filing {
         /// Symbol in <CODE>.<MARKET> format (e.g. AAPL.US 700.HK). Omit when using a subcommand.
+        #[arg(value_parser = parse_symbol)]
         symbol: Option<String>,
         /// Maximum number of filings to show (default: 20)
         #[arg(long, alias = "limit", default_value = "20")]
@@ -873,6 +895,7 @@ pub enum Commands {
     /// Example: longbridge topic search TSLA
     Topic {
         /// Symbol in <CODE>.<MARKET> format (e.g. TSLA.US 700.HK). Omit when using a subcommand.
+        #[arg(value_parser = parse_symbol)]
         symbol: Option<String>,
         /// Maximum number of topics to show (default: 20)
         #[arg(long, alias = "limit", default_value = "20")]
@@ -953,7 +976,7 @@ pub enum Commands {
         #[arg(long)]
         end: Option<String>,
         /// Filter by symbol (e.g. TSLA.US)
-        #[arg(long)]
+        #[arg(value_parser = parse_symbol, long)]
         symbol: Option<String>,
         /// US accounts only: filter by direction (buy | sell). Ignored for AP accounts (the region is inferred from your account — do not pass it).
         #[arg(long, value_name = "DIRECTION")]
@@ -1064,6 +1087,7 @@ pub enum Commands {
     /// Example: longbridge margin-ratio TSLA.US
     MarginRatio {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
     },
 
@@ -1073,6 +1097,7 @@ pub enum Commands {
     /// Example: longbridge max-qty TSLA.US --side buy --price 250
     MaxQty {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Order side: buy | sell  (case-insensitive, REQUIRED)
         #[arg(long)]
@@ -1106,6 +1131,7 @@ pub enum Commands {
     /// Example: longbridge shareholder AAPL.US --range inc --sort owned
     Shareholder {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Show Top20 major shareholders (multi-period, includes individuals and insiders)
         #[arg(long)]
@@ -1136,6 +1162,7 @@ pub enum Commands {
     /// Example: longbridge company AAPL.US
     Company {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
     },
 
@@ -1144,6 +1171,7 @@ pub enum Commands {
     /// Example: longbridge executive AAPL.US
     Executive {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
     },
 
@@ -1156,6 +1184,7 @@ pub enum Commands {
     /// Example: longbridge industry-valuation AAPL.US --currency USD
     IndustryValuation {
         /// Symbol in <CODE>.<MARKET> format (omit when using subcommand)
+        #[arg(value_parser = parse_symbol)]
         symbol: Option<String>,
         /// Currency: USD | HKD | CNY | SGD
         #[arg(long, default_value = "USD")]
@@ -1170,6 +1199,7 @@ pub enum Commands {
     /// Example: longbridge operating 700.HK --report q1
     Operating {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Report kind filter: af | saf | q1 | q3 (comma-separated for multiple)
         #[arg(long)]
@@ -1182,6 +1212,7 @@ pub enum Commands {
     /// Example: longbridge corp-action 700.HK --all
     CorpAction {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Show all records instead of the default 30
         #[arg(long)]
@@ -1193,6 +1224,7 @@ pub enum Commands {
     /// Example: longbridge invest-relation 700.HK
     InvestRelation {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
     },
 
@@ -1212,6 +1244,7 @@ pub enum Commands {
     /// Example: longbridge constituent IVV.US --limit 0   (full SEC holdings)
     Constituent {
         /// Index or ETF symbol in <CODE>.<MARKET> format (e.g. HSI.HK, .SPX.US, IVV.US)
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Number of results to return (0 = all, for ETF SEC holdings)
         #[arg(long, default_value = "50")]
@@ -1237,6 +1270,7 @@ pub enum Commands {
     /// Example: longbridge broker-holding daily 700.HK --broker B01224
     BrokerHolding {
         /// Symbol in <CODE>.<MARKET> format (omit when using subcommand)
+        #[arg(value_parser = parse_symbol)]
         symbol: Option<String>,
         /// Period for top buy/sell: `rct_1`, `rct_5`, `rct_20`, `rct_60`
         #[arg(long, default_value = "rct_1")]
@@ -1254,6 +1288,7 @@ pub enum Commands {
     /// Example: longbridge ah-premium 939.HK --kline-type day --count 100
     AhPremium {
         /// Symbol in <CODE>.<MARKET> format (omit when using subcommand)
+        #[arg(value_parser = parse_symbol)]
         symbol: Option<String>,
         /// K-line type: 1m | 5m | 15m | 30m | 60m | day | week | month | year
         #[arg(long, default_value = "day")]
@@ -1270,6 +1305,7 @@ pub enum Commands {
     /// Example: longbridge trade-stats 700.HK
     TradeStats {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
     },
 
@@ -1282,7 +1318,7 @@ pub enum Commands {
         #[arg(long, default_value = "HK")]
         market: String,
         /// Filter to a specific symbol
-        #[arg(long)]
+        #[arg(value_parser = parse_symbol, long)]
         symbol: Option<String>,
         /// Number of results (max 100)
         #[arg(long, alias = "limit", default_value = "50")]
@@ -1366,6 +1402,7 @@ pub enum Commands {
     /// Example: longbridge compare 9988.HK 700.HK 9999.HK --currency HKD
     Compare {
         /// Base symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Additional symbols to compare (up to 4)
         others: Vec<String>,
@@ -1383,6 +1420,7 @@ pub enum Commands {
     /// Example: longbridge alert delete 486469
     Alert {
         /// Filter by symbol (omit to list all)
+        #[arg(value_parser = parse_symbol)]
         symbol: Option<String>,
         #[command(subcommand)]
         cmd: Option<AlertCmd>,
@@ -1417,6 +1455,7 @@ pub enum Commands {
     /// Example: longbridge fund-holder AAPL.US --format json
     FundHolder {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Number of results to return (-1 for all)
         #[arg(long, alias = "limit", default_value = "20")]
@@ -1438,6 +1477,7 @@ pub enum Commands {
     /// Example: longbridge insider-trades NVDA.US --format json
     InsiderTrades {
         /// Symbol in <CODE>.<MARKET> format (US market only, e.g. TSLA.US AAPL.US)
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Number of Form 4 filings to fetch (default: 20)
         #[arg(long, alias = "limit", default_value = "20")]
@@ -1493,7 +1533,7 @@ pub enum Commands {
         #[arg(long)]
         status: Option<String>,
         /// Filter plans by symbol (e.g. AAPL.US)
-        #[arg(long)]
+        #[arg(value_parser = parse_symbol, long)]
         symbol: Option<String>,
         /// Page number (default: 1)
         #[arg(long, default_value = "1")]
@@ -1531,7 +1571,7 @@ pub enum Commands {
         )]
         ids: Vec<String>,
         /// Filter by symbol (e.g. 700.HK)
-        #[arg(long)]
+        #[arg(value_parser = parse_symbol, long)]
         symbol: Option<String>,
         /// Filter by status: Performing, Suspended, Canceled
         #[arg(long)]
@@ -1564,6 +1604,7 @@ pub enum Commands {
     /// Example: longbridge short-positions 700.HK
     ShortPositions {
         /// Symbol in <CODE>.<MARKET> format (US or HK, e.g. AAPL.US 700.HK)
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Number of records to return (1–100, default: 20)
         #[arg(long, alias = "limit", default_value = "20")]
@@ -1585,6 +1626,7 @@ pub enum Commands {
     /// Example: longbridge short-trades 700.HK
     ShortTrades {
         /// Symbol in <CODE>.<MARKET> format (US or HK, e.g. AAPL.US 700.HK)
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Number of records to return (1–100, default: 20)
         #[arg(long, alias = "limit", default_value = "20")]
@@ -1631,6 +1673,7 @@ pub enum Commands {
     /// Example: longbridge financial-statement 700.HK --kind BS --format json
     FinancialStatement {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Statement type: IS (income), BS (balance sheet), CF (cash flow)
         #[arg(long, value_name = "TYPE", default_value = "IS")]
@@ -1645,6 +1688,7 @@ pub enum Commands {
     /// Example: longbridge valuation-rank TSLA.US --start 20240101 --end 20241231
     ValuationRank {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Start date YYYYMMDD (default: 1 year ago)
         #[arg(long)]
@@ -1755,6 +1799,7 @@ pub enum QuantCmd {
     /// Example: cat script.pine | longbridge quant run TSLA.US --start 2024-01-01 --end 2024-12-31 --language pine
     Run {
         /// Symbol in <CODE>.<MARKET> format, e.g. TSLA.US 700.HK
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// K-line period: 1m 5m 15m 30m 1h day week month year (default: day)
         #[arg(long, default_value = "day")]
@@ -1783,7 +1828,7 @@ pub enum QuantCmd {
 #[derive(Args, Debug)]
 pub struct FinanceCalendarOpts {
     /// Filter by symbol, repeatable (max 10)
-    #[arg(long, value_name = "SYMBOL")]
+    #[arg(value_parser = parse_symbol, long, value_name = "SYMBOL")]
     pub symbol: Vec<String>,
     /// Filter by symbol group: watchlist or positions (omit for all)
     #[arg(long, value_name = "FILTER")]
@@ -2037,6 +2082,7 @@ pub enum GridCmd {
     /// Preview a new grid order (dry run); add --execute <CODE> to submit it
     Submit {
         /// Symbol (e.g. 700.HK)
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Settlement currency — match the symbol's market (HK→HKD, US→USD);
         /// see `grid info` → `channel_info.settlement_currency`
@@ -2159,6 +2205,7 @@ pub enum GridCmd {
     /// Show a symbol's grid-trading info: lot size, last price, strategy authorization, currency
     Info {
         /// Symbol (e.g. 700.HK)
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
     },
     /// Submit the strategy risk-disclosure questionnaire (compliance authorization)
@@ -2176,6 +2223,7 @@ pub enum DcaCmd {
     /// Example: longbridge dca create 700.HK --amount 1000 --frequency weekly --day-of-week mon
     Create {
         /// Symbol in <CODE>.<MARKET> format (e.g. AAPL.US 700.HK)
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Amount per investment period (as a decimal string, e.g. 500)
         #[arg(long)]
@@ -2268,7 +2316,7 @@ pub enum DcaCmd {
     /// Example: longbridge dca stats --symbol AAPL.US
     Stats {
         /// Filter statistics by symbol
-        #[arg(long)]
+        #[arg(value_parser = parse_symbol, long)]
         symbol: Option<String>,
     },
 
@@ -2279,6 +2327,7 @@ pub enum DcaCmd {
     #[command(name = "calc-date")]
     CalcDate {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Investment frequency: daily | weekly | fortnightly | monthly
         #[arg(long)]
@@ -2296,6 +2345,7 @@ pub enum DcaCmd {
     /// Example: longbridge dca check AAPL.US 700.HK TSLA.US
     Check {
         /// One or more symbols in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbols: Vec<String>,
     },
 
@@ -2483,7 +2533,7 @@ pub enum ScreenerCmd {
     /// Example: longbridge screener indicators --symbol AAPL.US
     Indicators {
         /// Filter to indicators relevant for this symbol
-        #[arg(long)]
+        #[arg(value_parser = parse_symbol, long)]
         symbol: Option<String>,
     },
 }
@@ -2515,6 +2565,7 @@ pub enum IndustryValuationCmd {
     /// Example: longbridge industry-valuation dist AAPL.US
     Dist {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
     },
 }
@@ -2526,6 +2577,7 @@ pub enum BrokerHoldingCmd {
     /// Example: longbridge broker-holding detail 700.HK
     Detail {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
     },
     /// Daily holding history for a specific broker
@@ -2534,6 +2586,7 @@ pub enum BrokerHoldingCmd {
     /// Example: longbridge broker-holding daily 700.HK --broker B01224
     Daily {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Broker participant number from the `parti_no` column (e.g. B01224)
         #[arg(long, value_name = "PARTI_NO")]
@@ -2548,6 +2601,7 @@ pub enum AhPremiumCmd {
     /// Example: longbridge ah-premium intraday 939.HK
     Intraday {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
     },
 }
@@ -2561,6 +2615,7 @@ pub enum ProfitAnalysisCmd {
     /// Example: longbridge profit-analysis detail 700.HK --derivative
     Detail {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Start date/time (local YYYY-MM-DD, local "YYYY-MM-DD HH:MM", or RFC 3339)
         #[arg(long)]
@@ -2629,6 +2684,7 @@ pub enum AlertCmd {
     /// Example: longbridge alert add TSLA.US --price 200 --direction rise
     Add {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Target price or percentage value
         #[arg(long)]
@@ -2676,6 +2732,7 @@ pub enum DividendCmd {
     /// Example: longbridge dividend detail AAPL.US
     Detail {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
     },
 }
@@ -2687,6 +2744,7 @@ pub enum InstitutionRatingCmd {
     /// Example: longbridge institution-rating detail TSLA.US
     Detail {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
     },
 }
@@ -2703,6 +2761,7 @@ pub enum FinancialReportCmd {
     /// Example: longbridge financial-report snapshot AAPL.US --report qf --year 2024 --period 4
     Snapshot {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Report type: qf (quarterly) | saf (semi-annual) | af (annual)
         #[arg(long)]
@@ -2721,6 +2780,7 @@ pub enum FinancialReportCmd {
     /// Example: longbridge financial-report key-metrics AAPL.US --report annual
     KeyMetrics {
         /// Symbol in <CODE>.<MARKET> format (US market only)
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Report period: annual (default) | quarterly
         #[arg(long)]
@@ -2757,6 +2817,7 @@ pub enum IpoCmd {
     /// Example: longbridge ipo detail 6810.HK
     /// Example: longbridge ipo detail SUJA.US
     Detail {
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Market: HK (default) or US
         #[arg(long, default_value = "HK")]
@@ -3189,6 +3250,7 @@ pub enum SharelistCmd {
         /// Sharelist ID
         id: String,
         /// Symbols to add (e.g. TSLA.US AAPL.US 700.HK)
+        #[arg(value_parser = parse_symbol)]
         symbols: Vec<String>,
     },
 
@@ -3199,6 +3261,7 @@ pub enum SharelistCmd {
         /// Sharelist ID
         id: String,
         /// Symbols to remove (e.g. TSLA.US AAPL.US)
+        #[arg(value_parser = parse_symbol)]
         symbols: Vec<String>,
     },
 
@@ -3210,6 +3273,7 @@ pub enum SharelistCmd {
         /// Sharelist ID
         id: String,
         /// Symbols in the desired order (e.g. TSLA.US AAPL.US 700.HK)
+        #[arg(value_parser = parse_symbol)]
         symbols: Vec<String>,
     },
 
@@ -3384,7 +3448,7 @@ pub enum OrderCmd {
         #[arg(long)]
         end: Option<String>,
         /// Filter by symbol
-        #[arg(long)]
+        #[arg(value_parser = parse_symbol, long)]
         symbol: Option<String>,
     },
 
@@ -3405,6 +3469,7 @@ pub enum OrderCmd {
     /// Example: longbridge order buy TSLA.US 100 --price 250.00 --execute 473  (places it for real)
     Buy {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Number of shares/units to buy (integer)
         quantity: u64,
@@ -3482,6 +3547,7 @@ pub enum OrderCmd {
     /// Example: longbridge order sell TSLA.US 100 --price 260.00 --execute 473  (places it for real)
     Sell {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Number of shares/units to sell (integer)
         quantity: u64,
@@ -3631,6 +3697,7 @@ pub enum FilingCmd {
     /// Example: longbridge filing detail AAPL.US 580265529766123777 --file-index 1
     Detail {
         /// Symbol in <CODE>.<MARKET> format, e.g. AAPL.US 700.HK
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Filing ID (from `longbridge filing list`)
         id: String,
@@ -3692,7 +3759,7 @@ pub enum TopicCmd {
         #[arg(long = "type")]
         post_type: Option<String>,
         /// Extra tickers to associate, comma-separated, e.g. 700.HK,TSLA.US (max 10).
-        #[arg(long, value_delimiter = ',')]
+        #[arg(long, value_delimiter = ',', value_parser = parse_symbol)]
         tickers: Vec<String>,
     },
 
@@ -3753,6 +3820,7 @@ pub enum OptionCmd {
     /// Example: longbridge option chain AAPL.US --date 2024-01-19
     Chain {
         /// Underlying symbol in <CODE>.<MARKET> format, e.g. AAPL.US
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Expiry date (YYYY-MM-DD). Omit to list all expiry dates.
         #[arg(long)]
@@ -3767,6 +3835,7 @@ pub enum OptionCmd {
     /// Example: longbridge option quote AAPL240119C190000
     Quote {
         /// Option contract symbols (OCC format for US, e.g. AAPL240119C190000)
+        #[arg(value_parser = parse_symbol)]
         symbols: Vec<String>,
     },
 
@@ -3778,6 +3847,7 @@ pub enum OptionCmd {
     /// Example: longbridge option volume daily AAPL.US --count 60
     Volume {
         /// Symbol in <CODE>.<MARKET> format (US market only). Omit when using a subcommand.
+        #[arg(value_parser = parse_symbol)]
         symbol: Option<String>,
         #[command(subcommand)]
         cmd: Option<VolumeSubCmd>,
@@ -3792,6 +3862,7 @@ pub enum VolumeSubCmd {
     /// Example: longbridge option volume daily AAPL.US --count 60
     Daily {
         /// Symbol in <CODE>.<MARKET> format (US market only, e.g. AAPL.US)
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Number of trading days to return (default: 20)
         #[arg(long, alias = "limit", default_value = "20")]
@@ -3807,6 +3878,7 @@ pub enum WarrantCmd {
     /// Example: longbridge warrant quote 12345.HK
     Quote {
         /// Warrant symbols (e.g. 12345.HK)
+        #[arg(value_parser = parse_symbol)]
         symbols: Vec<String>,
     },
 
@@ -3827,6 +3899,7 @@ pub enum KlineCmd {
     /// Example: longbridge kline history TSLA.US --period 1m --session all --start 2024-01-01 --end 2024-01-02
     History {
         /// Symbol in <CODE>.<MARKET> format
+        #[arg(value_parser = parse_symbol)]
         symbol: String,
         /// Candlestick period: 1m 5m 15m 30m 1h day week month year (default: day)
         #[arg(long, default_value = "day")]
@@ -3974,6 +4047,14 @@ pub enum AcpAuthAction {
     Login,
     /// Clear the locally stored OAuth token.
     Logout,
+}
+
+/// Parser for every symbol argument. Every Longbridge symbol is upper-case and
+/// the server treats any other spelling (`tsla.us`) as an invalid symbol, so
+/// symbols are normalised once here rather than failing on case.
+#[allow(clippy::unnecessary_wraps)] // clap value parsers must return `Result`
+fn parse_symbol(symbol: &str) -> Result<String, std::convert::Infallible> {
+    Ok(symbol.to_ascii_uppercase())
 }
 
 /// Render a top-level subcommand group's help text, e.g. `agent` or `workspace`.
@@ -5220,6 +5301,38 @@ mod tests {
         } else {
             panic!("expected Quote command");
         }
+    }
+
+    #[test]
+    fn symbols_are_upper_cased_at_parse_time() {
+        let cli = parse(&["longbridge", "quote", "tsla.us", ".dji.us"]).unwrap();
+        let Some(Commands::Quote { symbols }) = cli.command else {
+            panic!("expected Quote command");
+        };
+        assert_eq!(symbols, ["TSLA.US", ".DJI.US"]);
+
+        let cli = parse(&["longbridge", "depth", "aapl.us"]).unwrap();
+        assert!(matches!(cli.command, Some(Commands::Depth { symbol }) if symbol == "AAPL.US"));
+
+        // Tickers that are not named `symbol` are symbols all the same.
+        let cli = parse(&[
+            "longbridge",
+            "topic",
+            "create",
+            "--body",
+            "x",
+            "--tickers",
+            "tsla.us,700.hk",
+        ])
+        .unwrap();
+        let Some(Commands::Topic {
+            cmd: Some(TopicCmd::Create { tickers, .. }),
+            ..
+        }) = cli.command
+        else {
+            panic!("expected topic create");
+        };
+        assert_eq!(tickers, ["TSLA.US", "700.HK"]);
     }
 
     #[test]
