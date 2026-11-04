@@ -99,6 +99,9 @@ fn print_cli_error(e: &anyhow::Error) {
                 if let Some(guidance) = http_openapi_guidance(*code, std::env::args()) {
                     eprintln!("\n{guidance}");
                 }
+                if let Some(hint) = e.downcast_ref::<cli::quote::SymbolHint>() {
+                    eprintln!("\n{hint}");
+                }
                 return;
             }
             LbError::WsClient(WsClientError::ResponseError {

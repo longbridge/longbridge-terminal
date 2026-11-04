@@ -557,3 +557,7 @@ Ai:
   HelpEscape: "中斷回答，或清空輸入"
   HelpSelect: "選取並複製（詞/行）"
   HelpQuit: "結束"
+SymbolHint:
+  DidYouMean: "「%{symbol}」沒有數據。你是不是要找 %{suggestions}？"
+  Unknown: "找不到「%{symbol}」。請使用帶市場後綴的股票代碼，而不是公司名稱，例如 TSLA.US、700.HK、.DJI.US"
+  Unchecked: "「%{symbol}」沒有數據。代碼需要帶市場後綴，例如 TSLA.US、700.HK、.DJI.US"

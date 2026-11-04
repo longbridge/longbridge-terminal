@@ -267,6 +267,7 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
     // tracking beacon `quote_cmd()` does) instead of opening the WS; the TUI
     // keeps the real-time `QuoteContext`.
     crate::openapi::track_quote_cmd();
+    let symbols: Vec<String> = symbols.into_iter().map(normalize_symbol).collect();
     let input = symbols.clone();
     let quotes = crate::cli::quote_http::HttpQuoteApi.quote(symbols).await?;
 
@@ -385,18 +386,16 @@ pub async fn cmd_quote(symbols: Vec<String>, format: &OutputFormat) -> Result<()
         }
     }
     let found: Vec<&str> = quotes.iter().map(|q| q.symbol.as_str()).collect();
-    hint_symbols_do_you_mean(&crate::cli::quote_http::HttpQuoteApi, &input, &found).await;
+    report_missing_symbols(&crate::cli::quote_http::HttpQuoteApi, &input, &found).await?;
     Ok(())
 }
 
 pub async fn cmd_depth(symbol: String, format: &OutputFormat) -> Result<()> {
     crate::openapi::track_quote_cmd();
-    let depth = crate::cli::quote_http::HttpQuoteApi
-        .depth(symbol.clone())
-        .await?;
-    if depth.asks.is_empty() && depth.bids.is_empty() {
-        hint_symbol_do_you_mean(&crate::cli::quote_http::HttpQuoteApi, &symbol).await;
-    }
+    let symbol = normalize_symbol(symbol);
+    let api = crate::cli::quote_http::HttpQuoteApi;
+    let result = api.depth(symbol.clone()).await;
+    let depth = with_symbol_hint(&api, &symbol, result).await?;
 
     match format {
         OutputFormat::Json => {
@@ -456,9 +455,10 @@ pub async fn cmd_depth(symbol: String, format: &OutputFormat) -> Result<()> {
 
 pub async fn cmd_brokers(symbol: String, format: &OutputFormat) -> Result<()> {
     crate::openapi::track_quote_cmd();
-    let brokers = crate::cli::quote_http::HttpQuoteApi
-        .brokers(symbol.clone())
-        .await?;
+    let symbol = normalize_symbol(symbol);
+    let api = crate::cli::quote_http::HttpQuoteApi;
+    let result = api.brokers(symbol.clone()).await;
+    let brokers = with_symbol_hint(&api, &symbol, result).await?;
 
     match format {
         OutputFormat::Json => {
@@ -518,9 +518,10 @@ pub async fn cmd_brokers(symbol: String, format: &OutputFormat) -> Result<()> {
 
 pub async fn cmd_trades(symbol: String, count: usize, format: &OutputFormat) -> Result<()> {
     crate::openapi::track_quote_cmd();
-    let trades = crate::cli::quote_http::HttpQuoteApi
-        .trades(symbol.clone(), count)
-        .await?;
+    let symbol = normalize_symbol(symbol);
+    let api = crate::cli::quote_http::HttpQuoteApi;
+    let result = api.trades(symbol.clone(), count).await;
+    let trades = with_symbol_hint(&api, &symbol, result).await?;
 
     let headers = &["Time", "Price", "Volume", "Direction", "Type"];
     let rows = trades
@@ -537,18 +538,16 @@ pub async fn cmd_trades(symbol: String, count: usize, format: &OutputFormat) -> 
         .collect();
 
     print_table(headers, rows, format);
-    if trades.is_empty() {
-        hint_symbol_do_you_mean(&crate::cli::quote_http::HttpQuoteApi, &symbol).await;
-    }
     Ok(())
 }
 
 pub async fn cmd_intraday(symbol: String, session: &str, format: &OutputFormat) -> Result<()> {
     crate::openapi::track_quote_cmd();
     let trade_sessions = parse_trade_sessions(session)?;
-    let lines = crate::cli::quote_http::HttpQuoteApi
-        .intraday(symbol.clone(), trade_sessions)
-        .await?;
+    let symbol = normalize_symbol(symbol);
+    let api = crate::cli::quote_http::HttpQuoteApi;
+    let result = api.intraday(symbol.clone(), trade_sessions).await;
+    let lines = with_symbol_hint(&api, &symbol, result).await?;
 
     let headers = &["Time", "Price", "Volume", "Turnover", "Avg Price"];
     let rows = lines
@@ -565,9 +564,6 @@ pub async fn cmd_intraday(symbol: String, session: &str, format: &OutputFormat) 
         .collect();
 
     print_table(headers, rows, format);
-    if lines.is_empty() {
-        hint_symbol_do_you_mean(&crate::cli::quote_http::HttpQuoteApi, &symbol).await;
-    }
     Ok(())
 }
 
@@ -583,9 +579,12 @@ pub async fn cmd_kline(
     let p = parse_period(period)?;
     let adj = parse_adjust(adjust)?;
     let trade_sessions = parse_trade_sessions(session)?;
-    let candles = crate::cli::quote_http::HttpQuoteApi
+    let symbol = normalize_symbol(symbol);
+    let api = crate::cli::quote_http::HttpQuoteApi;
+    let result = api
         .candlesticks(symbol.clone(), p, count, adj, trade_sessions)
-        .await?;
+        .await;
+    let candles = with_symbol_hint(&api, &symbol, result).await?;
 
     let show_session = matches!(trade_sessions, TradeSessions::All);
     if show_session {
@@ -625,9 +624,6 @@ pub async fn cmd_kline(
             })
             .collect();
         print_table(headers, rows, format);
-    }
-    if candles.is_empty() {
-        hint_symbol_do_you_mean(&crate::cli::quote_http::HttpQuoteApi, &symbol).await;
     }
     Ok(())
 }
@@ -645,25 +641,26 @@ pub async fn cmd_kline_history(
     let p = parse_period(period)?;
     let adj = parse_adjust(adjust)?;
     let trade_sessions = parse_trade_sessions(session)?;
-    let sym = symbol.clone();
+    let symbol = normalize_symbol(symbol);
 
     let api = crate::cli::quote_http::HttpQuoteApi;
-    let candles = if let (Some(s), Some(e)) = (start, end) {
+    let result = if let (Some(s), Some(e)) = (start, end) {
         let start_date = parse_date(&s)?;
         let end_date = parse_date(&e)?;
         api.history_candlesticks_by_date(
-            symbol,
+            symbol.clone(),
             p,
             adj,
             Some(start_date),
             Some(end_date),
             trade_sessions,
         )
-        .await?
+        .await
     } else {
-        api.history_candlesticks_by_offset(symbol, p, adj, false, None, 100, trade_sessions)
-            .await?
+        api.history_candlesticks_by_offset(symbol.clone(), p, adj, false, None, 100, trade_sessions)
+            .await
     };
+    let candles = with_symbol_hint(&api, &symbol, result).await?;
 
     let show_session = matches!(trade_sessions, TradeSessions::All);
     if show_session {
@@ -704,9 +701,6 @@ pub async fn cmd_kline_history(
             .collect();
         print_table(headers, rows, format);
     }
-    if candles.is_empty() {
-        hint_symbol_do_you_mean(&crate::cli::quote_http::HttpQuoteApi, &sym).await;
-    }
     Ok(())
 }
 
@@ -714,6 +708,7 @@ pub async fn cmd_static(symbols: Vec<String>, format: &OutputFormat) -> Result<(
     let is_us = crate::openapi::is_us_account().await;
     crate::openapi::track_quote_cmd();
     let api = crate::cli::quote_http::HttpQuoteApi;
+    let symbols = symbols.into_iter().map(normalize_symbol).collect();
     run_static(&api, symbols, is_us, format).await
 }
 
@@ -1365,17 +1360,23 @@ pub async fn cmd_warrant_issuers(format: &OutputFormat) -> Result<()> {
 
 // ─── Testable run_* functions ─────────────────────────────────────────────────
 
-/// Spellings of `symbol` worth suggesting when it returned no data, input
-/// first. Symbols are case-sensitive (`tsla.us` finds nothing), so every
-/// candidate is upper-cased; a missing suffix is guessed from the code (digits
-/// are HK, or A-shares when six long; letters are US), and a US code may also
-/// be an index, which takes a leading dot (`.DJI.US`).
+/// Symbols are case-sensitive on the server (`tsla.us` is an invalid
+/// symbol), and every Longbridge symbol is upper-case, so commands normalise
+/// what they are given instead of failing on it.
+fn normalize_symbol(symbol: String) -> String {
+    symbol.to_ascii_uppercase()
+}
+
+/// Spellings of `symbol` worth suggesting when it does not exist: upper-cased,
+/// a missing suffix guessed from the code (digits are HK, or A-shares when six
+/// long; letters are US), and the leading-dot form of a US index (`.DJI.US`).
+/// The input itself is left out — the caller already knows it is missing.
 ///
-/// These are only guesses: [`hint_symbol_do_you_mean`] checks them against
-/// `static_info` and suggests only the ones that exist.
+/// These are only guesses: [`check_missing`] checks them against `static_info`
+/// and suggests only the ones that exist.
 fn hint_candidates(symbol: &str) -> Vec<String> {
     let upper = symbol.to_ascii_uppercase();
-    let mut candidates = vec![symbol.to_owned(), upper.clone()];
+    let mut candidates = vec![upper.clone()];
     match upper.rsplit_once('.') {
         Some((code, "US")) if !code.is_empty() && !code.starts_with('.') => {
             candidates.push(format!(".{code}.US"));
@@ -1397,72 +1398,141 @@ fn hint_candidates(symbol: &str) -> Vec<String> {
         }
     }
     let mut seen = std::collections::HashSet::new();
-    candidates.retain(|c| seen.insert(c.clone()));
+    candidates.retain(|c| c != symbol && seen.insert(c.clone()));
     candidates
 }
 
-/// The hint for `symbol`, given which of its [`hint_candidates`] exist.
-/// `None` when the input itself exists: the symbol is right and the command
-/// simply has no data for it (no trades yet, an empty book), so there is
-/// nothing to correct.
-fn hint_message(symbol: &str, existing: &[String]) -> Option<String> {
-    if existing.iter().any(|s| s == symbol) {
-        return None;
-    }
-    if existing.is_empty() {
-        return Some(format!(
-            "Hint: no security matches \"{symbol}\". Use the ticker symbol with a market \
-             suffix, not the company name, e.g. TSLA.US, 700.HK, .DJI.US"
-        ));
-    }
-    let suggestions = existing
-        .iter()
-        .map(|s| format!("\"{s}\""))
-        .collect::<Vec<_>>()
-        .join(" or ");
-    Some(format!(
-        "Hint: no data for \"{symbol}\". Did you mean {suggestions}?"
-    ))
+/// What probing a missing symbol's other spellings found.
+#[derive(Debug, PartialEq)]
+enum SymbolCheck {
+    /// These spellings of it exist.
+    Suggest(Vec<String>),
+    /// No spelling of it exists.
+    Unknown,
+    /// The probe failed, so nothing is known about it.
+    Unchecked,
 }
 
-/// Print a "did you mean …?" hint to stderr when a symbol returns no data.
-///
-/// Every suggestion is checked against `static_info` first, so the hint never
-/// recommends a symbol that would also come back empty; when none of the
-/// guesses exist it says a ticker is needed instead.
-async fn hint_symbol_do_you_mean(api: &dyn QuoteApi, symbol: &str) {
-    let candidates = hint_candidates(symbol);
-    // The command already queried the input itself and got nothing; with no
-    // alternative spelling there is nothing left to probe.
-    if candidates.len() == 1 {
-        if let Some(message) = hint_message(symbol, &[]) {
-            eprintln!();
-            eprintln!("{message}");
+/// Probe the [`hint_candidates`] of every symbol in `missing` — symbols the
+/// command already queried and got nothing for — in one `static_info` call,
+/// so a batch with many typos still costs a single request.
+async fn check_missing(api: &dyn QuoteApi, missing: &[String]) -> Vec<SymbolCheck> {
+    let candidates: Vec<Vec<String>> = missing.iter().map(|s| hint_candidates(s)).collect();
+    let mut probe: Vec<String> = candidates.iter().flatten().cloned().collect();
+    probe.sort();
+    probe.dedup();
+    let existing: std::collections::HashSet<String> = if probe.is_empty() {
+        std::collections::HashSet::new()
+    } else {
+        match api.static_info(probe).await {
+            Ok(infos) => infos.into_iter().map(|i| i.symbol).collect(),
+            // A failed probe proves nothing: never report the symbol as unknown
+            // on the strength of it.
+            Err(_) => return missing.iter().map(|_| SymbolCheck::Unchecked).collect(),
         }
-        return;
-    }
-    let existing: Vec<String> = match api.static_info(candidates.clone()).await {
-        Ok(infos) => candidates
-            .into_iter()
-            .filter(|c| infos.iter().any(|i| &i.symbol == c))
-            .collect(),
-        // The probe is best-effort; without it, fall back to the format reminder.
-        Err(_) => Vec::new(),
     };
-    if let Some(message) = hint_message(symbol, &existing) {
-        eprintln!();
-        eprintln!("{message}");
+    candidates
+        .into_iter()
+        .map(|c| {
+            let found: Vec<String> = c.into_iter().filter(|s| existing.contains(s)).collect();
+            if found.is_empty() {
+                SymbolCheck::Unknown
+            } else {
+                SymbolCheck::Suggest(found)
+            }
+        })
+        .collect()
+}
+
+/// The hint text for a missing `symbol`.
+fn hint_message(symbol: &str, check: &SymbolCheck) -> String {
+    match check {
+        SymbolCheck::Suggest(found) => {
+            let suggestions = found
+                .iter()
+                .map(|s| format!("\"{s}\""))
+                .collect::<Vec<_>>()
+                .join(" / ");
+            t!(
+                "SymbolHint.DidYouMean",
+                symbol = symbol,
+                suggestions = suggestions
+            )
+            .to_string()
+        }
+        SymbolCheck::Unknown => t!("SymbolHint.Unknown", symbol = symbol).to_string(),
+        SymbolCheck::Unchecked => t!("SymbolHint.Unchecked", symbol = symbol).to_string(),
     }
 }
 
-/// For multi-symbol queries: print hints for each input symbol that is absent
-/// from the returned results.
-async fn hint_symbols_do_you_mean(api: &dyn QuoteApi, queried: &[String], found_symbols: &[&str]) {
+/// For commands that look up a batch of symbols and silently drop the ones
+/// that do not exist (`quote`, `static`): print a hint for each missing one,
+/// and fail when none of the queried symbols exist, so a caller reading only
+/// stdout and the exit status sees an error instead of an empty success.
+async fn report_missing_symbols(
+    api: &dyn QuoteApi,
+    queried: &[String],
+    found_symbols: &[&str],
+) -> Result<()> {
     let found: std::collections::HashSet<&str> = found_symbols.iter().copied().collect();
+    let mut missing: Vec<String> = Vec::new();
     for sym in queried {
-        if !found.contains(sym.as_str()) {
-            hint_symbol_do_you_mean(api, sym).await;
+        if !found.contains(sym.as_str()) && !missing.contains(sym) {
+            missing.push(sym.clone());
         }
+    }
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let checks = check_missing(api, &missing).await;
+    let messages: Vec<String> = missing
+        .iter()
+        .zip(&checks)
+        .map(|(sym, check)| hint_message(sym, check))
+        .collect();
+    let none_found = found.is_empty() && !checks.contains(&SymbolCheck::Unchecked);
+    if none_found {
+        bail!("{}", messages.join("\n"));
+    }
+    for message in messages {
+        eprintln!();
+        eprintln!("Hint: {message}");
+    }
+    Ok(())
+}
+
+/// A symbol hint attached to an invalid-symbol API error, printed under it.
+#[derive(Debug)]
+pub struct SymbolHint(pub String);
+
+impl std::fmt::Display for SymbolHint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Hint: {}", self.0)
+    }
+}
+
+/// The server rejects a symbol that does not exist with this code.
+const INVALID_SYMBOL_CODE: i32 = 301_600;
+
+fn is_invalid_symbol(err: &anyhow::Error) -> bool {
+    use longbridge::httpclient::HttpClientError;
+    matches!(
+        err.downcast_ref::<longbridge::Error>(),
+        Some(longbridge::Error::HttpClient(HttpClientError::OpenApi { code, .. }))
+            if *code == INVALID_SYMBOL_CODE
+    )
+}
+
+/// For single-symbol commands, which the server fails with "invalid symbol"
+/// (`depth`, `trades`, `kline`, …): attach a hint to that error. An empty
+/// success means the symbol exists and simply has no data, so it gets none.
+async fn with_symbol_hint<T>(api: &dyn QuoteApi, symbol: &str, result: Result<T>) -> Result<T> {
+    match result {
+        Err(err) if is_invalid_symbol(&err) => {
+            let checks = check_missing(api, &[symbol.to_owned()]).await;
+            Err(err.context(SymbolHint(hint_message(symbol, &checks[0]))))
+        }
+        other => other,
     }
 }
 
@@ -1505,12 +1575,13 @@ pub async fn run_quote(
         .collect();
     print_table(headers, rows, format);
     let found: Vec<&str> = quotes.iter().map(|q| q.symbol.as_str()).collect();
-    hint_symbols_do_you_mean(api, &input, &found).await;
+    report_missing_symbols(api, &input, &found).await?;
     Ok(())
 }
 
 pub async fn run_depth(api: &dyn QuoteApi, symbol: String, format: &OutputFormat) -> Result<()> {
-    let depth = api.depth(symbol.clone()).await?;
+    let result = api.depth(symbol.clone()).await;
+    let depth = with_symbol_hint(api, &symbol, result).await?;
     match format {
         OutputFormat::Json => {
             let val = serde_json::json!({
@@ -1556,7 +1627,8 @@ pub async fn run_depth(api: &dyn QuoteApi, symbol: String, format: &OutputFormat
 }
 
 pub async fn run_brokers(api: &dyn QuoteApi, symbol: String, format: &OutputFormat) -> Result<()> {
-    let brokers = api.brokers(symbol.clone()).await?;
+    let result = api.brokers(symbol.clone()).await;
+    let brokers = with_symbol_hint(api, &symbol, result).await?;
     match format {
         OutputFormat::Json => {
             let val = serde_json::json!({
@@ -1611,7 +1683,8 @@ pub async fn run_trades(
     count: usize,
     format: &OutputFormat,
 ) -> Result<()> {
-    let trades = api.trades(symbol.clone(), count).await?;
+    let result = api.trades(symbol.clone(), count).await;
+    let trades = with_symbol_hint(api, &symbol, result).await?;
     let headers = &["Time", "Price", "Volume", "Direction", "Type"];
     let rows = trades
         .iter()
@@ -1626,14 +1699,12 @@ pub async fn run_trades(
         })
         .collect();
     print_table(headers, rows, format);
-    if trades.is_empty() {
-        hint_symbol_do_you_mean(api, &symbol).await;
-    }
     Ok(())
 }
 
 pub async fn run_intraday(api: &dyn QuoteApi, symbol: String, format: &OutputFormat) -> Result<()> {
-    let lines = api.intraday(symbol.clone()).await?;
+    let result = api.intraday(symbol.clone()).await;
+    let lines = with_symbol_hint(api, &symbol, result).await?;
     let headers = &["Time", "Price", "Volume", "Turnover", "Avg Price"];
     let rows = lines
         .iter()
@@ -1648,9 +1719,6 @@ pub async fn run_intraday(api: &dyn QuoteApi, symbol: String, format: &OutputFor
         })
         .collect();
     print_table(headers, rows, format);
-    if lines.is_empty() {
-        hint_symbol_do_you_mean(api, &symbol).await;
-    }
     Ok(())
 }
 
@@ -1662,9 +1730,10 @@ pub async fn run_kline(
     adjust: AdjustType,
     format: &OutputFormat,
 ) -> Result<()> {
-    let candles = api
+    let result = api
         .candlesticks(symbol.clone(), period, count, adjust)
-        .await?;
+        .await;
+    let candles = with_symbol_hint(api, &symbol, result).await?;
     let headers = &["Time", "Open", "High", "Low", "Close", "Volume", "Turnover"];
     let rows = candles
         .iter()
@@ -1681,9 +1750,6 @@ pub async fn run_kline(
         })
         .collect();
     print_table(headers, rows, format);
-    if candles.is_empty() {
-        hint_symbol_do_you_mean(api, &symbol).await;
-    }
     Ok(())
 }
 
@@ -1696,13 +1762,14 @@ pub async fn run_kline_history(
     end: Option<Date>,
     format: &OutputFormat,
 ) -> Result<()> {
-    let candles = if let (Some(s), Some(e)) = (start, end) {
+    let result = if let (Some(s), Some(e)) = (start, end) {
         api.history_candlesticks_by_date(symbol.clone(), period, adjust, Some(s), Some(e))
-            .await?
+            .await
     } else {
         api.history_candlesticks_by_offset(symbol.clone(), period, adjust, 100)
-            .await?
+            .await
     };
+    let candles = with_symbol_hint(api, &symbol, result).await?;
     let headers = &["Time", "Open", "High", "Low", "Close", "Volume", "Turnover"];
     let rows = candles
         .iter()
@@ -1719,9 +1786,6 @@ pub async fn run_kline_history(
         })
         .collect();
     print_table(headers, rows, format);
-    if candles.is_empty() {
-        hint_symbol_do_you_mean(api, &symbol).await;
-    }
     Ok(())
 }
 
@@ -1803,8 +1867,10 @@ pub async fn run_static(
     }
 
     if !stocks.is_empty() {
-        let found_refs: Vec<&str> = found.iter().map(String::as_str).collect();
-        hint_symbols_do_you_mean(api, &stocks, &found_refs).await;
+        // Crypto pairs already resolved above, so they count as found: a
+        // mixed batch fails only when nothing at all came back.
+        let found_refs: Vec<&str> = found.iter().chain(&crypto).map(String::as_str).collect();
+        report_missing_symbols(api, &symbols, &found_refs).await?;
     }
     Ok(())
 }
@@ -3917,41 +3983,104 @@ mod tests {
 
     #[test]
     fn hint_candidates_cover_case_suffix_and_index_spellings() {
-        assert_eq!(
-            hint_candidates("tesla.US"),
-            ["tesla.US", "TESLA.US", ".TESLA.US"]
-        );
-        assert_eq!(
-            hint_candidates("tsla.us"),
-            ["tsla.us", "TSLA.US", ".TSLA.US"]
-        );
-        assert_eq!(hint_candidates("TSLA"), ["TSLA", "TSLA.US", ".TSLA.US"]);
-        assert_eq!(hint_candidates("700"), ["700", "700.HK"]);
+        assert_eq!(hint_candidates("tesla.US"), ["TESLA.US", ".TESLA.US"]);
+        assert_eq!(hint_candidates("tsla.us"), ["TSLA.US", ".TSLA.US"]);
+        assert_eq!(hint_candidates("TSLA"), ["TSLA.US", ".TSLA.US"]);
+        assert_eq!(hint_candidates("700"), ["700.HK"]);
         assert_eq!(
             hint_candidates("600519"),
-            ["600519", "600519.HK", "600519.SH", "600519.SZ"]
+            ["600519.HK", "600519.SH", "600519.SZ"]
         );
-        // Already an index spelling, or a non-US market: nothing to add.
-        assert_eq!(hint_candidates(".TSLA.US"), [".TSLA.US"]);
-        assert_eq!(hint_candidates("700.HK"), ["700.HK"]);
+        // Already an index spelling, or a non-US market: nothing else to try.
+        assert_eq!(hint_candidates(".TSLA.US"), Vec::<String>::new());
+        assert_eq!(hint_candidates("700.HK"), Vec::<String>::new());
+    }
+
+    fn static_info_of(symbol: &str) -> longbridge::quote::SecurityStaticInfo {
+        serde_json::from_value(serde_json::json!({
+            "symbol": symbol, "name_cn": "", "name_en": "", "name_hk": "",
+            "exchange": "", "currency": "USD", "lot_size": 1,
+            "total_shares": 0, "circulating_shares": 0, "hk_shares": 0,
+            "eps": "0", "eps_ttm": "0", "bps": "0", "dividend_yield": "0",
+            "stock_derivatives": "", "board": "USMain"
+        }))
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn check_missing_probes_every_symbol_in_one_call() {
+        let mut mock = MockQuoteApi::new();
+        mock.expect_static_info()
+            .withf(|probe| {
+                probe
+                    == &[".DJI.US", ".TESLA.US", "TESLA.US"]
+                        .map(str::to_owned)
+                        .to_vec()
+            })
+            .times(1)
+            .returning(|_| Ok(vec![static_info_of(".DJI.US")]));
+        let checks = check_missing(&mock, &["DJI.US".to_owned(), "tesla.US".to_owned()]).await;
+        assert_eq!(
+            checks,
+            [
+                SymbolCheck::Suggest(vec![".DJI.US".to_owned()]),
+                SymbolCheck::Unknown,
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn check_missing_never_claims_unknown_when_the_probe_fails() {
+        let mut mock = MockQuoteApi::new();
+        mock.expect_static_info()
+            .returning(|_| Err(anyhow::anyhow!("rate limited")));
+        let checks = check_missing(&mock, &["tesla.US".to_owned()]).await;
+        assert_eq!(checks, [SymbolCheck::Unchecked]);
+        let msg = hint_message("tesla.US", &checks[0]);
+        assert!(!msg.contains("no security matches"), "{msg}");
+    }
+
+    #[tokio::test]
+    async fn report_missing_symbols_fails_only_when_nothing_was_found() {
+        let mut mock = MockQuoteApi::new();
+        mock.expect_static_info().returning(|_| Ok(vec![]));
+        let queried = ["TSLA.US".to_owned(), "tesla.US".to_owned()];
+
+        let err = report_missing_symbols(&mock, &queried[1..], &[])
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("ticker symbol"), "{err}");
+
+        // Part of the batch exists: hint, but succeed with what was found.
+        report_missing_symbols(&mock, &queried, &["TSLA.US"])
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn report_missing_symbols_does_not_fail_on_an_unchecked_probe() {
+        let mut mock = MockQuoteApi::new();
+        mock.expect_static_info()
+            .returning(|_| Err(anyhow::anyhow!("rate limited")));
+        report_missing_symbols(&mock, &["tesla.US".to_owned()], &[])
+            .await
+            .unwrap();
     }
 
     #[test]
-    fn hint_suggests_only_symbols_that_exist() {
-        // tesla.US: neither TESLA.US nor .TESLA.US exist — ask for a ticker
-        // instead of steering toward the index spelling.
-        let msg = hint_message("tesla.US", &[]).unwrap();
+    fn hint_message_suggests_what_exists() {
+        let msg = hint_message("tesla.US", &SymbolCheck::Unknown);
         assert!(msg.contains("ticker symbol"), "{msg}");
         assert!(!msg.contains(".tesla.US"), "{msg}");
 
-        let msg = hint_message("DJI.US", &[".DJI.US".to_owned()]).unwrap();
+        let msg = hint_message("DJI.US", &SymbolCheck::Suggest(vec![".DJI.US".to_owned()]));
         assert!(msg.contains("Did you mean \".DJI.US\"?"), "{msg}");
+    }
 
-        let msg = hint_message("tsla.us", &["TSLA.US".to_owned()]).unwrap();
-        assert!(msg.contains("Did you mean \"TSLA.US\"?"), "{msg}");
-
-        // The symbol itself exists: the command just has no data for it.
-        assert_eq!(hint_message("TSLA.US", &["TSLA.US".to_owned()]), None);
+    #[test]
+    fn normalize_symbol_upper_cases() {
+        assert_eq!(normalize_symbol("tsla.us".to_owned()), "TSLA.US");
+        assert_eq!(normalize_symbol(".dji.us".to_owned()), ".DJI.US");
     }
 
     #[test]
@@ -3976,15 +4105,18 @@ mod tests {
     #[tokio::test]
     async fn test_run_quote_dispatches() {
         let mut mock = MockQuoteApi::new();
-        // The empty result triggers the symbol hint, which probes alternative spellings.
-        mock.expect_static_info().returning(|_| Ok(vec![]));
         mock.expect_quote()
             .with(mockall::predicate::eq(vec!["TSLA.US".to_string()]))
             .times(1)
             .returning(|_| Ok(vec![]));
+        mock.expect_static_info()
+            .with(mockall::predicate::eq(vec![".TSLA.US".to_string()]))
+            .times(1)
+            .returning(|_| Ok(vec![]));
+        // Nothing came back and no other spelling exists: the command fails.
         run_quote(&mock, vec!["TSLA.US".to_string()], &OutputFormat::Pretty)
             .await
-            .unwrap();
+            .unwrap_err();
     }
 
     #[tokio::test]
@@ -4031,8 +4163,6 @@ mod tests {
     #[tokio::test]
     async fn test_run_trades_dispatches() {
         let mut mock = MockQuoteApi::new();
-        // The empty result triggers the symbol hint, which probes alternative spellings.
-        mock.expect_static_info().returning(|_| Ok(vec![]));
         mock.expect_trades()
             .with(
                 mockall::predicate::eq("AAPL.US".to_string()),
@@ -4048,8 +4178,6 @@ mod tests {
     #[tokio::test]
     async fn test_run_intraday_dispatches() {
         let mut mock = MockQuoteApi::new();
-        // The empty result triggers the symbol hint, which probes alternative spellings.
-        mock.expect_static_info().returning(|_| Ok(vec![]));
         mock.expect_intraday()
             .with(mockall::predicate::eq("TSLA.US".to_string()))
             .times(1)
@@ -4062,8 +4190,6 @@ mod tests {
     #[tokio::test]
     async fn test_run_kline_dispatches() {
         let mut mock = MockQuoteApi::new();
-        // The empty result triggers the symbol hint, which probes alternative spellings.
-        mock.expect_static_info().returning(|_| Ok(vec![]));
         mock.expect_candlesticks()
             .with(
                 mockall::predicate::eq("TSLA.US".to_string()),
@@ -4088,8 +4214,6 @@ mod tests {
     #[tokio::test]
     async fn test_run_kline_history_by_date() {
         let mut mock = MockQuoteApi::new();
-        // The empty result triggers the symbol hint, which probes alternative spellings.
-        mock.expect_static_info().returning(|_| Ok(vec![]));
         let start = time::macros::date!(2024 - 01 - 01);
         let end = time::macros::date!(2024 - 12 - 31);
         mock.expect_history_candlesticks_by_date()
@@ -4111,8 +4235,6 @@ mod tests {
     #[tokio::test]
     async fn test_run_kline_history_by_offset() {
         let mut mock = MockQuoteApi::new();
-        // The empty result triggers the symbol hint, which probes alternative spellings.
-        mock.expect_static_info().returning(|_| Ok(vec![]));
         mock.expect_history_candlesticks_by_offset()
             .times(1)
             .returning(|_, _, _, _| Ok(vec![]));
@@ -4138,10 +4260,7 @@ mod tests {
             .returning(|_| Ok(vec![]));
         // The symbol hint then probes the index spelling.
         mock.expect_static_info()
-            .with(mockall::predicate::eq(vec![
-                "TSLA.US".to_string(),
-                ".TSLA.US".to_string(),
-            ]))
+            .with(mockall::predicate::eq(vec![".TSLA.US".to_string()]))
             .times(1)
             .returning(|_| Ok(vec![]));
         mock.expect_us_crypto_overview().times(0);
@@ -4152,7 +4271,7 @@ mod tests {
             &OutputFormat::Pretty,
         )
         .await
-        .unwrap();
+        .unwrap_err(); // nothing found, no other spelling exists
     }
 
     #[tokio::test]
@@ -4182,10 +4301,7 @@ mod tests {
             .returning(|_| Ok(vec![]));
         // The symbol hint then probes the index spelling.
         mock.expect_static_info()
-            .with(mockall::predicate::eq(vec![
-                "AAPL.US".to_string(),
-                ".AAPL.US".to_string(),
-            ]))
+            .with(mockall::predicate::eq(vec![".AAPL.US".to_string()]))
             .times(1)
             .returning(|_| Ok(vec![]));
         mock.expect_us_crypto_overview()
@@ -4218,7 +4334,7 @@ mod tests {
             &OutputFormat::Pretty,
         )
         .await
-        .unwrap();
+        .unwrap_err(); // nothing found, nothing else to try
     }
 
     #[tokio::test]

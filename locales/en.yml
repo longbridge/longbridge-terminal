@@ -557,3 +557,7 @@ Ai:
   HelpEscape: "Cancel the answer, or clear the input"
   HelpSelect: "Select & copy (word / line)"
   HelpQuit: "Quit"
+SymbolHint:
+  DidYouMean: "no data for \"%{symbol}\". Did you mean %{suggestions}?"
+  Unknown: "no security matches \"%{symbol}\". Use the ticker symbol with a market suffix, not the company name, e.g. TSLA.US, 700.HK, .DJI.US"
+  Unchecked: "no data for \"%{symbol}\". Symbols need a market suffix, e.g. TSLA.US, 700.HK, .DJI.US"
