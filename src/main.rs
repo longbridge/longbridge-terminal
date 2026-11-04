@@ -749,7 +749,16 @@ async fn main() {
             let http_url = match openapi::init_contexts().await {
                 Ok((_, http_url)) => http_url,
                 Err(e) => {
-                    eprintln!("Authentication failed: {e}");
+                    // Not being logged in is the first error an agent meets, so
+                    // `--format json` must report it as JSON like any other.
+                    match cli.format {
+                        cli::OutputFormat::Json => print_cli_error(
+                            &e.context("Authentication failed"),
+                            &cli.format,
+                            &command,
+                        ),
+                        cli::OutputFormat::Pretty => eprintln!("Authentication failed: {e}"),
+                    }
                     // Reported before exiting: a failure to authenticate is
                     // exactly the kind of run worth knowing about, and
                     // `process::exit` gives background tasks no chance to run.
