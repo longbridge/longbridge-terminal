@@ -83,6 +83,11 @@ struct ErrorReport {
     trace_id: Option<String>,
     /// Follow-up guidance, each printed as its own paragraph.
     hints: Vec<String>,
+    /// Symbols the command could not resolve, each with a stable `status`.
+    symbols: Vec<cli::quote::SymbolIssue>,
+    /// The headline already spells out `symbols` (a batch lookup's own
+    /// error), so table output must not repeat them as hints.
+    symbols_in_headline: bool,
 }
 
 /// Build the report for `e` raised by `command` (its clap path, e.g. `quote`
@@ -112,15 +117,18 @@ fn error_report(e: &anyhow::Error, command: &str) -> ErrorReport {
                     hints.push(guidance.to_owned());
                 }
                 hints.extend(scope_guidance(code_u64, command));
-                if let Some(hint) = e.downcast_ref::<cli::quote::SymbolHint>() {
-                    hints.push(hint.to_string());
-                }
                 return ErrorReport {
                     headline: format!("API error (code {code}): {message}"),
                     code: Some(code_u64),
                     message,
                     trace_id: (!trace_id.is_empty()).then(|| sanitize_server_text(trace_id)),
                     hints,
+                    symbols: e
+                        .downcast_ref::<cli::quote::SymbolHint>()
+                        .map(|hint| hint.0.clone())
+                        .into_iter()
+                        .collect(),
+                    symbols_in_headline: false,
                 };
             }
             LbError::WsClient(WsClientError::ResponseError {
@@ -142,8 +150,8 @@ fn error_report(e: &anyhow::Error, command: &str) -> ErrorReport {
                     ),
                     code: Some(detail.code),
                     message,
-                    trace_id: None,
                     hints,
+                    ..ErrorReport::default()
                 };
             }
             LbError::WsClient(WsClientError::ConnectionClosed {
@@ -164,6 +172,10 @@ fn error_report(e: &anyhow::Error, command: &str) -> ErrorReport {
     // errors) carry no structured detail, so they fall through to the raw
     // message here.
     let rendered = sanitize_server_text(&format!("{e:#}"));
+    let symbols = e
+        .downcast_ref::<cli::quote::UnresolvedSymbols>()
+        .map(|u| u.0.clone())
+        .unwrap_or_default();
     ErrorReport {
         headline: rendered.clone(),
         hints: cn_access_point_guidance(&rendered)
@@ -171,37 +183,51 @@ fn error_report(e: &anyhow::Error, command: &str) -> ErrorReport {
             .into_iter()
             .collect(),
         message: rendered,
+        symbols_in_headline: !symbols.is_empty(),
+        symbols,
         ..ErrorReport::default()
     }
 }
 
-/// Print `e` to stderr. With `--format json` it is one JSON object, so a
-/// caller that parses output never has to scrape prose:
-/// `{"error": {"code", "message", "trace_id", "hints"}}`.
-fn print_cli_error(e: &anyhow::Error, format: &cli::OutputFormat, command: &str) {
-    let report = error_report(e, command);
+/// Render a report for stderr. With `--format json` it is one JSON object, so
+/// a caller that parses output never has to scrape prose:
+/// `{"error": {"code", "message", "trace_id", "hints", "symbols"}}`, where
+/// `symbols` lists each unresolved symbol with a language-independent
+/// `status` (`no_data` | `suggest` | `unknown` | `unchecked`).
+fn render_error(report: &ErrorReport, format: &cli::OutputFormat) -> String {
     match format {
-        cli::OutputFormat::Json => {
-            let value = serde_json::json!({
-                "error": {
-                    "code": report.code,
-                    "message": report.message,
-                    "trace_id": report.trace_id,
-                    "hints": report.hints,
-                }
-            });
-            eprintln!("{value}");
-        }
+        cli::OutputFormat::Json => serde_json::json!({
+            "error": {
+                "code": report.code,
+                "message": report.message,
+                "trace_id": report.trace_id,
+                "hints": report.hints,
+                "symbols": report.symbols,
+            }
+        })
+        .to_string(),
         cli::OutputFormat::Pretty => {
-            eprintln!("Error: {}", report.headline);
+            use std::fmt::Write as _;
+            let mut out = format!("Error: {}", report.headline);
+            // Writing to a `String` cannot fail.
             if let Some(trace_id) = &report.trace_id {
-                eprintln!("  trace_id: {trace_id}");
+                let _ = write!(out, "\n  trace_id: {trace_id}");
             }
             for hint in &report.hints {
-                eprintln!("\n{hint}");
+                let _ = write!(out, "\n\n{hint}");
             }
+            if !report.symbols_in_headline {
+                for issue in &report.symbols {
+                    let _ = write!(out, "\n\nHint: {}", issue.message);
+                }
+            }
+            out
         }
     }
+}
+
+fn print_cli_error(e: &anyhow::Error, format: &cli::OutputFormat, command: &str) {
+    eprintln!("{}", render_error(&error_report(e, command), format));
 }
 
 /// Guidance for a failed request against the China Mainland access point.
@@ -862,6 +888,84 @@ mod error_guidance_tests {
         let report = super::error_report(&anyhow::anyhow!("boom"), "quote");
         assert_eq!(report.code, None);
         assert_eq!(report.message, "boom");
+    }
+
+    fn invalid_symbol_error() -> anyhow::Error {
+        use longbridge::httpclient::HttpClientError;
+        anyhow::Error::from(longbridge::Error::from(HttpClientError::OpenApi {
+            code: 301_600,
+            message: "invalid symbol".to_owned(),
+            trace_id: "t1".to_owned(),
+        }))
+        .context(crate::cli::quote::SymbolHint(
+            crate::cli::quote::SymbolIssue {
+                symbol: "DJI.US".to_owned(),
+                status: "suggest",
+                suggestions: vec![".DJI.US".to_owned()],
+                message: "no data for \"DJI.US\". Did you mean \".DJI.US\"?".to_owned(),
+            },
+        ))
+    }
+
+    #[test]
+    fn table_errors_keep_their_layout() {
+        let report = super::error_report(&invalid_symbol_error(), "kline");
+        assert_eq!(
+            super::render_error(&report, &crate::cli::OutputFormat::Pretty),
+            "Error: API error (code 301600): invalid symbol\n  trace_id: t1\n\n\
+             Hint: no data for \"DJI.US\". Did you mean \".DJI.US\"?"
+        );
+    }
+
+    #[test]
+    fn json_errors_carry_structured_symbols() {
+        let report = super::error_report(&invalid_symbol_error(), "kline");
+        let json: serde_json::Value = serde_json::from_str(&super::render_error(
+            &report,
+            &crate::cli::OutputFormat::Json,
+        ))
+        .unwrap();
+        let error = &json["error"];
+        assert_eq!(error["code"], 301_600);
+        assert_eq!(error["trace_id"], "t1");
+        // The symbol hint is structured, not a prefixed string in `hints`.
+        assert_eq!(error["hints"], serde_json::json!([]));
+        assert_eq!(error["symbols"][0]["symbol"], "DJI.US");
+        assert_eq!(error["symbols"][0]["status"], "suggest");
+        assert_eq!(error["symbols"][0]["suggestions"][0], ".DJI.US");
+    }
+
+    #[test]
+    fn batch_symbol_errors_are_structured_and_not_repeated() {
+        use crate::cli::quote::{SymbolIssue, UnresolvedSymbols};
+        let issue = |symbol: &str, status| SymbolIssue {
+            symbol: symbol.to_owned(),
+            status,
+            suggestions: Vec::new(),
+            message: format!("{symbol} {status}"),
+        };
+        let err = anyhow::Error::from(UnresolvedSymbols(vec![
+            issue("TESLA.US", "unknown"),
+            issue("TSLA.US", "no_data"),
+        ]));
+        let report = super::error_report(&err, "quote");
+
+        let table = super::render_error(&report, &crate::cli::OutputFormat::Pretty);
+        assert_eq!(table, "Error: TESLA.US unknown\nTSLA.US no_data");
+
+        let json: serde_json::Value = serde_json::from_str(&super::render_error(
+            &report,
+            &crate::cli::OutputFormat::Json,
+        ))
+        .unwrap();
+        let statuses: Vec<&str> = json["error"]["symbols"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["status"].as_str().unwrap())
+            .collect();
+        assert_eq!(statuses, ["unknown", "no_data"]);
+        assert_eq!(json["error"]["code"], serde_json::Value::Null);
     }
 
     #[test]

@@ -1463,6 +1463,49 @@ fn hint_message(symbol: &str, check: &SymbolCheck) -> String {
     }
 }
 
+/// One symbol a command could not resolve, as reported in its error.
+///
+/// `status` is a stable, language-independent key — `no_data` (the symbol
+/// exists but came back empty), `suggest` (another spelling exists, see
+/// `suggestions`), `unknown`, or `unchecked` (the probe failed) — so a caller
+/// never has to parse the localised `message`.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct SymbolIssue {
+    pub symbol: String,
+    pub status: &'static str,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub suggestions: Vec<String>,
+    pub message: String,
+}
+
+fn symbol_issue(symbol: &str, check: &SymbolCheck) -> SymbolIssue {
+    let (status, suggestions) = match check {
+        SymbolCheck::Exists => ("no_data", Vec::new()),
+        SymbolCheck::Suggest(found) => ("suggest", found.clone()),
+        SymbolCheck::Unknown => ("unknown", Vec::new()),
+        SymbolCheck::Unchecked => ("unchecked", Vec::new()),
+    };
+    SymbolIssue {
+        symbol: symbol.to_owned(),
+        status,
+        suggestions,
+        message: hint_message(symbol, check),
+    }
+}
+
+/// A batch lookup with symbols that came back missing.
+#[derive(Debug)]
+pub struct UnresolvedSymbols(pub Vec<SymbolIssue>);
+
+impl std::fmt::Display for UnresolvedSymbols {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let messages: Vec<&str> = self.0.iter().map(|i| i.message.as_str()).collect();
+        f.write_str(&messages.join("\n"))
+    }
+}
+
+impl std::error::Error for UnresolvedSymbols {}
+
 /// For commands that look up a batch of symbols and silently drop the ones
 /// that do not exist (`quote`, `static`, `calc-index`): fail with a hint for
 /// each missing symbol once the found ones are printed, like `ls a b` lists
@@ -1487,21 +1530,21 @@ async fn report_missing_symbols(
         return Ok(());
     }
     let checks = check_missing(api, &missing).await;
-    let messages: Vec<String> = missing
+    let issues = missing
         .iter()
         .zip(&checks)
-        .map(|(sym, check)| hint_message(sym, check))
+        .map(|(sym, check)| symbol_issue(sym, check))
         .collect();
-    bail!("{}", messages.join("\n"))
+    Err(UnresolvedSymbols(issues).into())
 }
 
 /// A symbol hint attached to an invalid-symbol API error, printed under it.
 #[derive(Debug)]
-pub struct SymbolHint(pub String);
+pub struct SymbolHint(pub SymbolIssue);
 
 impl std::fmt::Display for SymbolHint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Hint: {}", self.0)
+        write!(f, "Hint: {}", self.0.message)
     }
 }
 
@@ -1524,7 +1567,7 @@ async fn with_symbol_hint<T>(api: &dyn QuoteApi, symbol: &str, result: Result<T>
     match result {
         Err(err) if is_invalid_symbol(&err) => {
             let checks = check_missing(api, &[symbol.to_owned()]).await;
-            Err(err.context(SymbolHint(hint_message(symbol, &checks[0]))))
+            Err(err.context(SymbolHint(symbol_issue(symbol, &checks[0]))))
         }
         other => other,
     }
@@ -4089,7 +4132,8 @@ mod tests {
         assert!(!is_invalid_symbol(&anyhow::anyhow!("invalid symbol")));
 
         // main.rs finds both the API error and the hint on the same chain.
-        let err = api_error(INVALID_SYMBOL_CODE).context(SymbolHint("x".to_owned()));
+        let err = api_error(INVALID_SYMBOL_CODE)
+            .context(SymbolHint(symbol_issue("X.US", &SymbolCheck::Unknown)));
         assert!(err.downcast_ref::<longbridge::Error>().is_some());
         assert!(err.downcast_ref::<SymbolHint>().is_some());
     }

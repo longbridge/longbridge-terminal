@@ -3759,7 +3759,7 @@ pub enum TopicCmd {
         #[arg(long = "type")]
         post_type: Option<String>,
         /// Extra tickers to associate, comma-separated, e.g. 700.HK,TSLA.US (max 10).
-        #[arg(long, value_delimiter = ',')]
+        #[arg(long, value_delimiter = ',', value_parser = parse_symbol)]
         tickers: Vec<String>,
     },
 
@@ -5313,6 +5313,26 @@ mod tests {
 
         let cli = parse(&["longbridge", "depth", "aapl.us"]).unwrap();
         assert!(matches!(cli.command, Some(Commands::Depth { symbol }) if symbol == "AAPL.US"));
+
+        // Tickers that are not named `symbol` are symbols all the same.
+        let cli = parse(&[
+            "longbridge",
+            "topic",
+            "create",
+            "--body",
+            "x",
+            "--tickers",
+            "tsla.us,700.hk",
+        ])
+        .unwrap();
+        let Some(Commands::Topic {
+            cmd: Some(TopicCmd::Create { tickers, .. }),
+            ..
+        }) = cli.command
+        else {
+            panic!("expected topic create");
+        };
+        assert_eq!(tickers, ["TSLA.US", "700.HK"]);
     }
 
     #[test]
