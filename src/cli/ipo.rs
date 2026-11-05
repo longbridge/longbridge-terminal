@@ -263,11 +263,10 @@ fn transform_order_item(item: &Value) -> Value {
     Value::Object(obj)
 }
 
+/// Resolved locally from the access token when possible (see
+/// `openapi::member_id`), so `ipo` need not open a WebSocket for it.
 async fn member_id() -> Result<i64> {
-    crate::openapi::quote_cmd()
-        .member_id()
-        .await
-        .map_err(anyhow::Error::from)
+    crate::openapi::member_id().await
 }
 
 // ── read-only IPO list commands ────────────────────────────────────────────────

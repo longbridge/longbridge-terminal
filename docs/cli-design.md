@@ -115,6 +115,9 @@ longbridge login
 Token storage is managed internally by the `longbridge-oauth` SDK crate.
 
 In CLI mode, no persistent WebSocket connection is needed: create Context → call HTTP API → output → exit.
+One-shot quote commands use `cli::quote_http::HttpQuoteApi` (the gateway's `/quote/*` HTTP shim) rather
+than the WS `QuoteContext`, which connects lazily and so is never opened by them; only commands without
+a shim, the TUI and `longbridge serve` use the WebSocket.
 
 ---
 
@@ -141,6 +144,9 @@ clap = { version = "4", features = ["derive"] }  # Upgrade from v3 for derive ma
 ## API Coverage
 
 ### QuoteContext Methods
+
+The CLI commands below that have a `/quote/*` HTTP shim are served by `HttpQuoteApi`, which mirrors
+these `QuoteContext` methods over HTTP; the rest call the `QuoteContext` directly.
 
 | Method                           | CLI Command                                       |
 | -------------------------------- | ------------------------------------------------- |

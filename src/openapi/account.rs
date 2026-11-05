@@ -160,7 +160,15 @@ pub async fn fetch_account_balance() -> Result<AccountBalance> {
 }
 
 /// Fetch stock holdings from Longbridge SDK
-pub async fn fetch_stock_holdings() -> Result<Vec<Holding>> {
+/// Stock holdings enriched with live quotes from the caller-supplied
+/// `fetch_quotes`, so the transport is the caller's choice: the TUI passes the
+/// WebSocket `QuoteContext`, the one-shot CLI passes HTTP REST. Keeps `openapi/`
+/// free of any dependency on `cli/`.
+pub async fn fetch_stock_holdings_with<F, Fut>(fetch_quotes: F) -> Result<Vec<Holding>>
+where
+    F: Fn(Vec<String>) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<Vec<longbridge::quote::SecurityQuote>>>,
+{
     let ctx = openapi::trade();
     let response = ctx.stock_positions(None).await?;
 
@@ -197,8 +205,7 @@ pub async fn fetch_stock_holdings() -> Result<Vec<Holding>> {
 
     // Fetch real-time quotes for all holdings
     if !symbols.is_empty() {
-        let quote_ctx = openapi::quote();
-        if let Ok(quotes) = quote_ctx.quote(&symbols).await {
+        if let Ok(quotes) = fetch_quotes(symbols).await {
             // Create a map for quick lookup: symbol -> (last_done, prev_close)
             let mut quote_map: std::collections::HashMap<
                 String,
@@ -420,12 +427,30 @@ fn extract_cash_balances(balance: &AccountBalance) -> Vec<CashBalance> {
         .collect()
 }
 
-/// Fetch complete portfolio data
+/// Fetch complete portfolio data, with holdings quoted over the WebSocket
+/// `QuoteContext` (the TUI's path). One-shot CLI callers use
+/// [`fetch_portfolio_with`] to quote over HTTP REST instead.
 pub async fn fetch_portfolio() -> Result<PortfolioView> {
+    fetch_portfolio_with(|symbols| async move {
+        openapi::quote()
+            .quote(&symbols)
+            .await
+            .map_err(anyhow::Error::from)
+    })
+    .await
+}
+
+/// [`fetch_portfolio`] with a caller-supplied quote fetcher (see
+/// [`fetch_stock_holdings_with`]), so the transport is the caller's choice.
+pub async fn fetch_portfolio_with<F, Fut>(fetch_quotes: F) -> Result<PortfolioView>
+where
+    F: Fn(Vec<String>) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<Vec<longbridge::quote::SecurityQuote>>>,
+{
     // Fetch balance, holdings, and FX rates concurrently
     let (balance_result, holdings_result, fx_rates) = tokio::join!(
         fetch_account_balance(),
-        fetch_stock_holdings(),
+        fetch_stock_holdings_with(fetch_quotes),
         fetch_fx_rates()
     );
 

@@ -557,3 +557,16 @@ Ai:
   HelpEscape: "中断回答，或清空输入"
   HelpSelect: "选中并复制（词/行）"
   HelpQuit: "退出"
+SymbolHint:
+  NoData: "“%{symbol}” 存在，但没有返回数据。如果它所在的市场没有行情权限，可以用 longbridge auth status 查看"
+  DidYouMean: "“%{symbol}” 没有数据。你是不是要找 %{suggestions}？"
+  Unknown: "没有找到 “%{symbol}”。请使用带市场后缀的股票代码，而不是公司名，例如 TSLA.US、700.HK、.DJI.US"
+  Unchecked: "“%{symbol}” 没有数据。代码需要带市场后缀，例如 TSLA.US、700.HK、.DJI.US"
+ScopeGuidance:
+  Trading: |-
+    此命令需要交易类权限（“账户资产与资金明细查询”“交易查询”或“交易下单”），当前授权未包含。
+    授权方法：运行 `longbridge auth login`，在授权页勾选对应权限。
+    如果授权页没有这些选项，说明账户尚未开通证券账户，请先在长桥 App 中开户。
+  Watchlist: |-
+    此命令需要“自选列表”权限，当前授权未包含。
+    授权方法：运行 `longbridge auth login`，在授权页勾选“自选列表”。

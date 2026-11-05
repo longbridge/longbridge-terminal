@@ -129,8 +129,9 @@ async fn cmd_detail(id: String, format: &OutputFormat) -> Result<()> {
                     .collect();
 
                 let quote_map: HashMap<String, (String, String)> = {
-                    let ctx = crate::openapi::quote_cmd();
-                    ctx.quote(symbols)
+                    crate::openapi::track_quote_cmd();
+                    crate::cli::quote_http::HttpQuoteApi
+                        .quote(symbols)
                         .await
                         .unwrap_or_default()
                         .into_iter()

@@ -72,8 +72,10 @@ pub(crate) static RATE_LIMITED_QUOTE_CTX: Slot<RateLimitedQuoteContext> = Slot::
 /// Global rate-limited `TradeContext` wrapper
 pub(crate) static RATE_LIMITED_TRADE_CTX: Slot<RateLimitedTradeContext> = Slot::new();
 
-/// Map the effective content language to the SDK Language enum.
-fn get_api_language() -> longbridge::Language {
+/// Map the effective content language to the SDK Language enum — the language
+/// the WS contexts are configured with, and that HTTP requests carrying a
+/// `language` field must send to match them.
+pub fn api_language() -> longbridge::Language {
     match crate::locale::get() {
         "zh-CN" => longbridge::Language::ZH_CN,
         "zh-HK" => longbridge::Language::ZH_HK,
@@ -164,7 +166,7 @@ pub async fn init_contexts() -> Result<(
     };
 
     let mut config_builder = longbridge::Config::from_oauth(oauth.clone())
-        .language(get_api_language())
+        .language(api_language())
         .dont_print_quote_packages();
 
     let mut http_client_config = longbridge::httpclient::HttpClientConfig::from_oauth(oauth);
@@ -389,10 +391,12 @@ pub fn grid() -> &'static longbridge::grid::GridContext {
         .expect("GridContext not initialized, please call init_contexts() first")
 }
 
-/// Server-side beacon endpoint. Quote operations flow over the WebSocket quote
-/// channel and never reach the HTTP access log; a request to this fake path lets
-/// the server record (and count) that a WS-backed quote command ran. The path
-/// only needs to exist server-side to be logged.
+/// Server-side beacon endpoint: one access-log entry per CLI quote command, so
+/// the server can count quote commands by name (`x-cli-cmd`) whichever transport
+/// served them. It was introduced because WS quote calls never reach the HTTP
+/// access log; commands now served by the `/quote/*` HTTP shim also log those
+/// requests, but still fire this so the per-command count stays continuous.
+/// The path only needs to exist server-side to be logged.
 pub(crate) const QUOTE_CMD_PATH: &str = "/v1/quote/cmd";
 
 /// Send the tracking beacon over `client`. The (empty) body and any transport
@@ -407,8 +411,8 @@ pub(crate) async fn send_quote_cmd(client: &longbridge::httpclient::HttpClient) 
         .await;
 }
 
-/// Fire a best-effort `GET /v1/quote/cmd` so the server records a log entry for a
-/// WS-backed quote operation. It reuses the global `HttpClient`, which already
+/// Fire a best-effort `GET /v1/quote/cmd` so the server records one log entry for
+/// a CLI quote command (see [`QUOTE_CMD_PATH`]). It reuses the global `HttpClient`, which already
 /// carries the tracking headers (`user-agent`, `x-cli-cmd`, `x-cli-args`) and the
 /// OAuth token, so no extra payload is needed. Fire-and-forget: spawned on the
 /// runtime with its result and errors ignored, never blocking or delaying the
@@ -421,12 +425,33 @@ pub fn track_quote_cmd() {
     tokio::spawn(send_quote_cmd(client));
 }
 
-/// Get the global `QuoteContext` and record the WS quote operation server-side.
-/// Use this at every CLI quote command entry point instead of [`quote`] so the
-/// otherwise-unlogged WebSocket request is counted. See [`track_quote_cmd`].
+/// Get the global `QuoteContext` and record the quote command server-side.
+/// Use this at every WS-backed CLI quote entry point instead of [`quote`] so the
+/// command is counted. See [`track_quote_cmd`].
 pub fn quote_cmd() -> &'static longbridge::quote::QuoteContext {
     track_quote_cmd();
     quote()
+}
+
+/// The signed-in member id for one-shot commands. Read locally from the access
+/// token's JWT claims first (zero network, no WebSocket), falling back to the
+/// `QueryUserQuoteProfile` round trip over the WS `QuoteContext` only when the
+/// token carries no usable id. Keeps `auth status` / `ipo` from opening a
+/// WebSocket just to learn who is signed in.
+///
+/// The claim is decoded **without signature verification** — it is the user's
+/// own locally stored token, so this is fine for display and as a request
+/// parameter (the server still authenticates the request by the token itself).
+/// Do not use it as a trusted identity for any authorization decision.
+pub async fn member_id() -> anyhow::Result<i64> {
+    if let Some(id) = crate::auth::request_member_id() {
+        tracing::debug!("member id resolved from access-token claims (no WebSocket)");
+        return Ok(id);
+    }
+    tracing::debug!(
+        "member id not in access-token claims; falling back to the WebSocket user profile"
+    );
+    quote_cmd().member_id().await.map_err(anyhow::Error::from)
 }
 
 /// Get rate-limited `QuoteContext` (recommended for all API calls)

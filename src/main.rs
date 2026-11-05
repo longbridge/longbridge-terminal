@@ -71,7 +71,28 @@ pub struct Args {
     pub logout: bool,
 }
 
-fn print_cli_error(e: &anyhow::Error) {
+/// One failed command, as reported on stderr.
+#[derive(Debug, Default)]
+struct ErrorReport {
+    /// The first line after `Error: ` in table output.
+    headline: String,
+    /// Business code from the API, when the error carries one.
+    code: Option<u64>,
+    /// The server's (or the error's own) message, sanitised.
+    message: String,
+    trace_id: Option<String>,
+    /// Follow-up guidance, each printed as its own paragraph.
+    hints: Vec<String>,
+    /// Symbols the command could not resolve, each with a stable `status`.
+    symbols: Vec<cli::quote::SymbolIssue>,
+    /// The headline already spells out `symbols` (a batch lookup's own
+    /// error), so table output must not repeat them as hints.
+    symbols_in_headline: bool,
+}
+
+/// Build the report for `e` raised by `command` (its clap path, e.g. `quote`
+/// or `watchlist pin`).
+fn error_report(e: &anyhow::Error, command: &str) -> ErrorReport {
     use longbridge::{httpclient::HttpClientError, wsclient::WsClientError, Error as LbError};
     // Strip terminal control/escape sequences from server-controlled text
     // before it hits stderr, so a hostile API error cannot repaint the
@@ -85,40 +106,63 @@ fn print_cli_error(e: &anyhow::Error) {
                 message,
                 trace_id,
             }) => {
-                eprintln!(
-                    "Error: API error (code {code}): {}",
-                    sanitize_server_text(message)
-                );
-                if !trace_id.is_empty() {
-                    eprintln!("  trace_id: {}", sanitize_server_text(trace_id));
+                let message = sanitize_server_text(message);
+                let code_u64 = u64::try_from(*code).unwrap_or(0);
+                let mut hints = Vec::new();
+                // Mirror the WS branch: when the HTTP quote path reports
+                // `301604 no quote access` for an option-quote command, append
+                // the OPRA-permission guidance so the migration to HTTP does not
+                // lose the hint the WebSocket path showed.
+                if let Some(guidance) = http_openapi_guidance(*code, std::env::args()) {
+                    hints.push(guidance.to_owned());
                 }
-                return;
+                hints.extend(scope_guidance(code_u64, command));
+                return ErrorReport {
+                    headline: format!("API error (code {code}): {message}"),
+                    code: Some(code_u64),
+                    message,
+                    trace_id: (!trace_id.is_empty()).then(|| sanitize_server_text(trace_id)),
+                    hints,
+                    symbols: e
+                        .downcast_ref::<cli::quote::SymbolHint>()
+                        .map(|hint| hint.0.clone())
+                        .into_iter()
+                        .collect(),
+                    symbols_in_headline: false,
+                };
             }
             LbError::WsClient(WsClientError::ResponseError {
                 status,
                 detail: Some(detail),
             }) => {
-                eprintln!(
-                    "Error: WebSocket error (status={status}, code={}): {}",
-                    detail.code,
-                    sanitize_server_text(&detail.msg)
-                );
+                let message = sanitize_server_text(&detail.msg);
+                let mut hints = Vec::new();
                 if let Some(guidance) =
                     option_quote_permission_guidance(detail.code, std::env::args())
                 {
-                    eprintln!("\n{guidance}");
+                    hints.push(guidance.to_owned());
                 }
-                return;
+                hints.extend(scope_guidance(detail.code, command));
+                return ErrorReport {
+                    headline: format!(
+                        "WebSocket error (status={status}, code={}): {message}",
+                        detail.code
+                    ),
+                    code: Some(detail.code),
+                    message,
+                    hints,
+                    ..ErrorReport::default()
+                };
             }
             LbError::WsClient(WsClientError::ConnectionClosed {
                 reason: Some(reason),
             }) => {
-                eprintln!(
-                    "Error: Connection closed ({:?}): {}",
-                    reason.code,
-                    sanitize_server_text(&reason.message)
-                );
-                return;
+                let message = sanitize_server_text(&reason.message);
+                return ErrorReport {
+                    headline: format!("Connection closed ({:?}): {message}", reason.code),
+                    message,
+                    ..ErrorReport::default()
+                };
             }
             _ => {}
         }
@@ -128,10 +172,62 @@ fn print_cli_error(e: &anyhow::Error) {
     // errors) carry no structured detail, so they fall through to the raw
     // message here.
     let rendered = sanitize_server_text(&format!("{e:#}"));
-    eprintln!("Error: {rendered}");
-    if let Some(guidance) = cn_access_point_guidance(&rendered) {
-        eprintln!("\n{guidance}");
+    let symbols = e
+        .downcast_ref::<cli::quote::UnresolvedSymbols>()
+        .map(|u| u.0.clone())
+        .unwrap_or_default();
+    ErrorReport {
+        headline: rendered.clone(),
+        hints: cn_access_point_guidance(&rendered)
+            .map(str::to_owned)
+            .into_iter()
+            .collect(),
+        message: rendered,
+        symbols_in_headline: !symbols.is_empty(),
+        symbols,
+        ..ErrorReport::default()
     }
+}
+
+/// Render a report for stderr. With `--format json` it is one JSON object, so
+/// a caller that parses output never has to scrape prose:
+/// `{"error": {"code", "message", "trace_id", "hints", "symbols"}}`, where
+/// `symbols` lists each unresolved symbol with a language-independent
+/// `status` (`no_data` | `suggest` | `unknown` | `unchecked`).
+fn render_error(report: &ErrorReport, format: &cli::OutputFormat) -> String {
+    match format {
+        cli::OutputFormat::Json => serde_json::json!({
+            "error": {
+                "code": report.code,
+                "message": report.message,
+                "trace_id": report.trace_id,
+                "hints": report.hints,
+                "symbols": report.symbols,
+            }
+        })
+        .to_string(),
+        cli::OutputFormat::Pretty => {
+            use std::fmt::Write as _;
+            let mut out = format!("Error: {}", report.headline);
+            // Writing to a `String` cannot fail.
+            if let Some(trace_id) = &report.trace_id {
+                let _ = write!(out, "\n  trace_id: {trace_id}");
+            }
+            for hint in &report.hints {
+                let _ = write!(out, "\n\n{hint}");
+            }
+            if !report.symbols_in_headline {
+                for issue in &report.symbols {
+                    let _ = write!(out, "\n\nHint: {}", issue.message);
+                }
+            }
+            out
+        }
+    }
+}
+
+fn print_cli_error(e: &anyhow::Error, format: &cli::OutputFormat, command: &str) {
+    eprintln!("{}", render_error(&error_report(e, command), format));
 }
 
 /// Guidance for a failed request against the China Mainland access point.
@@ -165,6 +261,41 @@ fn is_option_quote_command(args: impl IntoIterator<Item = impl AsRef<str>>) -> b
     positional
         .windows(2)
         .any(|pair| pair[0] == "option" && pair[1] == "quote")
+}
+
+/// Guidance for an HTTP `OpenApi` error. The HTTP response envelope carries the
+/// business code as an `i32`; map it to the shared [`option_quote_permission_guidance`]
+/// (used by both the WS and HTTP error branches) so an option-quote `301604`
+/// keeps its OPRA hint over HTTP. A negative/garbage code yields no guidance.
+fn http_openapi_guidance(
+    code: i32,
+    args: impl IntoIterator<Item = impl AsRef<str>>,
+) -> Option<&'static str> {
+    option_quote_permission_guidance(u64::try_from(code).unwrap_or(0), args)
+}
+
+/// The gateway rejects a call whose API is bound to an OAuth scope the token
+/// was not granted with this code.
+const SCOPE_NOT_AUTHORIZED_CODE: u64 = 403_308;
+
+/// Guidance for a call outside the token's authorized scopes.
+///
+/// The CLI requests no scopes itself: the consent screen offers them and the
+/// user ticks them, so the fix is always to log in again and grant the missing
+/// one. Which one follows from the command: `watchlist` needs Watchlist,
+/// everything else behind this code is an account or trading API. The consent
+/// screen offers the trading scopes only to accounts with a securities
+/// account, so that guidance also covers the option never appearing.
+fn scope_guidance(error_code: u64, command: &str) -> Option<String> {
+    if error_code != SCOPE_NOT_AUTHORIZED_CODE {
+        return None;
+    }
+    let is_watchlist = command.split(' ').next() == Some("watchlist");
+    Some(if is_watchlist {
+        t!("ScopeGuidance.Watchlist").to_string()
+    } else {
+        t!("ScopeGuidance.Trading").to_string()
+    })
 }
 
 fn option_quote_permission_guidance(
@@ -223,6 +354,7 @@ async fn main() {
     let matches = cli::Cli::command().get_matches();
     let cli = cli::Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
     let verbose = cli.verbose;
+    let command = command_path(&matches);
 
     locale::init(cli.lang.as_deref());
     rust_i18n::set_locale(locale::get());
@@ -310,7 +442,7 @@ async fn main() {
     // `tui` is left out here as well: it reports its own launch event, and
     // counting it as a command too would double every total.
     if reports && cli.command.is_some() && !matches!(cli.command, Some(cli::Commands::Tui)) {
-        analytics::arm_command(command_path(&matches));
+        analytics::arm_command(command.clone());
         // A session is killed far more often than it exits, so its run event
         // goes out now; a one-shot command reports on the way out instead, where
         // it can say how it went. See `analytics`.
@@ -340,7 +472,7 @@ async fn main() {
                 }
             };
             if let Err(e) = openapi::quote().member_id().await {
-                print_cli_error(&anyhow::anyhow!(e));
+                print_cli_error(&anyhow::anyhow!(e), &cli::OutputFormat::Pretty, &command);
                 return;
             }
             tracing::info!("OpenAPI initialized successfully");
@@ -409,6 +541,12 @@ async fn main() {
                 hook(info);
             }));
 
+            // Detect the terminal background before full-screen setup turns on
+            // mouse capture and focus reporting: their event bytes otherwise
+            // corrupt the OSC 11 reply while it's being read (Ghostty then comes
+            // back as "unsupported" and the palette wrongly falls back to dark).
+            // Latches the palette once for the whole AI session.
+            ai::theme::detect();
             Terminal::enter_full_screen();
             let result = ai::run(agent, quote_receiver).await;
             Terminal::exit_full_screen();
@@ -444,7 +582,7 @@ async fn main() {
                 }
             };
             if let Err(e) = openapi::quote().member_id().await {
-                print_cli_error(&anyhow::anyhow!(e));
+                print_cli_error(&anyhow::anyhow!(e), &cli::OutputFormat::Pretty, &command);
                 analytics::flush().await;
                 std::process::exit(1);
             }
@@ -467,7 +605,7 @@ async fn main() {
 
         Some(cli::Commands::Check) => {
             if let Err(e) = cli::check::cmd_check(&cli.format).await {
-                print_cli_error(&e);
+                print_cli_error(&e, &cli.format, &command);
                 analytics::finish_command(analytics::Outcome::Error).await;
                 std::process::exit(1);
             }
@@ -597,7 +735,7 @@ async fn main() {
             )
             .await;
             if let Err(e) = result {
-                print_cli_error(&anyhow::anyhow!(e));
+                print_cli_error(&anyhow::anyhow!(e), &cli::OutputFormat::Pretty, &command);
                 analytics::flush().await;
                 std::process::exit(1);
             }
@@ -611,7 +749,16 @@ async fn main() {
             let http_url = match openapi::init_contexts().await {
                 Ok((_, http_url)) => http_url,
                 Err(e) => {
-                    eprintln!("Authentication failed: {e}");
+                    // Not being logged in is the first error an agent meets, so
+                    // `--format json` must report it as JSON like any other.
+                    match cli.format {
+                        cli::OutputFormat::Json => print_cli_error(
+                            &e.context("Authentication failed"),
+                            &cli.format,
+                            &command,
+                        ),
+                        cli::OutputFormat::Pretty => eprintln!("Authentication failed: {e}"),
+                    }
                     // Reported before exiting: a failure to authenticate is
                     // exactly the kind of run worth knowing about, and
                     // `process::exit` gives background tasks no chance to run.
@@ -623,7 +770,7 @@ async fn main() {
                 eprintln!("* Host: {http_url}");
             }
             if let Err(e) = cli::dispatch(cmd, &cli.format, cli.verbose).await {
-                print_cli_error(&e);
+                print_cli_error(&e, &cli.format, &command);
                 analytics::finish_command(analytics::Outcome::Error).await;
                 std::process::exit(1);
             }
@@ -705,7 +852,7 @@ mod command_path_tests {
 
 #[cfg(test)]
 mod error_guidance_tests {
-    use super::{is_option_quote_command, option_quote_permission_guidance};
+    use super::{http_openapi_guidance, is_option_quote_command, option_quote_permission_guidance};
 
     #[test]
     fn detects_option_quote_command() {
@@ -730,6 +877,143 @@ mod error_guidance_tests {
             "chain",
             "AAPL.US",
         ]));
+    }
+
+    #[test]
+    fn error_report_carries_code_trace_and_hints() {
+        use longbridge::httpclient::HttpClientError;
+        let err = anyhow::Error::from(longbridge::Error::from(HttpClientError::OpenApi {
+            code: 403_308,
+            message: "Target API's scope is not in authorized scopes".to_owned(),
+            trace_id: "abc".to_owned(),
+        }));
+        let report = super::error_report(&err, "portfolio");
+        assert_eq!(report.code, Some(403_308));
+        assert_eq!(report.trace_id.as_deref(), Some("abc"));
+        assert!(report.headline.starts_with("API error (code 403308)"));
+        assert_eq!(report.hints.len(), 1);
+
+        // Errors without API detail still report a message and no code.
+        let report = super::error_report(&anyhow::anyhow!("boom"), "quote");
+        assert_eq!(report.code, None);
+        assert_eq!(report.message, "boom");
+    }
+
+    fn invalid_symbol_error() -> anyhow::Error {
+        use longbridge::httpclient::HttpClientError;
+        anyhow::Error::from(longbridge::Error::from(HttpClientError::OpenApi {
+            code: 301_600,
+            message: "invalid symbol".to_owned(),
+            trace_id: "t1".to_owned(),
+        }))
+        .context(crate::cli::quote::SymbolHint(
+            crate::cli::quote::SymbolIssue {
+                symbol: "DJI.US".to_owned(),
+                status: "suggest",
+                suggestions: vec![".DJI.US".to_owned()],
+                message: "no data for \"DJI.US\". Did you mean \".DJI.US\"?".to_owned(),
+            },
+        ))
+    }
+
+    #[test]
+    fn table_errors_keep_their_layout() {
+        let report = super::error_report(&invalid_symbol_error(), "kline");
+        assert_eq!(
+            super::render_error(&report, &crate::cli::OutputFormat::Pretty),
+            "Error: API error (code 301600): invalid symbol\n  trace_id: t1\n\n\
+             Hint: no data for \"DJI.US\". Did you mean \".DJI.US\"?"
+        );
+    }
+
+    #[test]
+    fn json_errors_carry_structured_symbols() {
+        let report = super::error_report(&invalid_symbol_error(), "kline");
+        let json: serde_json::Value = serde_json::from_str(&super::render_error(
+            &report,
+            &crate::cli::OutputFormat::Json,
+        ))
+        .unwrap();
+        let error = &json["error"];
+        assert_eq!(error["code"], 301_600);
+        assert_eq!(error["trace_id"], "t1");
+        // The symbol hint is structured, not a prefixed string in `hints`.
+        assert_eq!(error["hints"], serde_json::json!([]));
+        assert_eq!(error["symbols"][0]["symbol"], "DJI.US");
+        assert_eq!(error["symbols"][0]["status"], "suggest");
+        assert_eq!(error["symbols"][0]["suggestions"][0], ".DJI.US");
+    }
+
+    #[test]
+    fn batch_symbol_errors_are_structured_and_not_repeated() {
+        use crate::cli::quote::{SymbolIssue, UnresolvedSymbols};
+        let issue = |symbol: &str, status| SymbolIssue {
+            symbol: symbol.to_owned(),
+            status,
+            suggestions: Vec::new(),
+            message: format!("{symbol} {status}"),
+        };
+        let err = anyhow::Error::from(UnresolvedSymbols(vec![
+            issue("TESLA.US", "unknown"),
+            issue("TSLA.US", "no_data"),
+        ]));
+        let report = super::error_report(&err, "quote");
+
+        let table = super::render_error(&report, &crate::cli::OutputFormat::Pretty);
+        assert_eq!(table, "Error: TESLA.US unknown\nTSLA.US no_data");
+
+        let json: serde_json::Value = serde_json::from_str(&super::render_error(
+            &report,
+            &crate::cli::OutputFormat::Json,
+        ))
+        .unwrap();
+        let statuses: Vec<&str> = json["error"]["symbols"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["status"].as_str().unwrap())
+            .collect();
+        assert_eq!(statuses, ["unknown", "no_data"]);
+        assert_eq!(json["error"]["code"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn scope_errors_explain_how_to_grant_the_scope() {
+        let trading = super::scope_guidance(403_308, "portfolio").expect("403308 yields guidance");
+        assert!(trading.contains("longbridge auth login"), "{trading}");
+        assert!(trading.contains("Account & Positions"), "{trading}");
+
+        // A watchlist command is missing the Watchlist scope, not a trading one.
+        let watchlist = super::scope_guidance(403_308, "watchlist pin").unwrap();
+        assert!(watchlist.contains("Watchlist"), "{watchlist}");
+        assert!(!watchlist.contains("securities account"), "{watchlist}");
+
+        assert!(super::scope_guidance(403_201, "portfolio").is_none());
+        assert!(super::scope_guidance(0, "portfolio").is_none());
+    }
+
+    #[test]
+    fn http_openapi_branch_keeps_opra_guidance() {
+        // The HTTP `OpenApi` error carries the code as i32; the HTTP branch must
+        // surface the same OPRA guidance the WS branch does for option quote.
+        let guidance = http_openapi_guidance(
+            301_604,
+            ["longbridge", "option", "quote", "AAPL260722C320000.US"],
+        )
+        .expect("http option-quote 301604 should yield OPRA guidance");
+        assert!(guidance.contains("OPRA US Options"));
+    }
+
+    #[test]
+    fn http_openapi_branch_no_guidance_for_other_cases() {
+        // Different code, non-option command, and a negative/garbage code must
+        // not produce guidance (and must not panic on the i32→u64 conversion).
+        assert!(http_openapi_guidance(301_604, ["longbridge", "quote", "AAPL.US"]).is_none());
+        assert!(
+            http_openapi_guidance(500, ["longbridge", "option", "quote", "X.US"]).is_none(),
+            "a 500 must not be mistaken for the permission code"
+        );
+        assert!(http_openapi_guidance(-1, ["longbridge", "option", "quote", "X.US"]).is_none());
     }
 
     #[test]

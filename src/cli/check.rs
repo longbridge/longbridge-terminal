@@ -45,11 +45,19 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
     // ── Token verification via market temperature API ─────────────────────────
     let token_ok: bool;
     let token_detail: String;
+    // The account's data center, read locally from the token prefix; `None`
+    // when the session could not be initialized.
+    let mut dc_region: Option<&str> = None;
 
     if let Err(e) = crate::openapi::init_contexts().await {
         token_ok = false;
         token_detail = e.to_string();
     } else {
+        dc_region = Some(if crate::openapi::is_us_account().await {
+            "us"
+        } else {
+            "ap"
+        });
         let ctx = crate::openapi::quote_cmd();
         match ctx.market_temperature(longbridge::Market::HK).await {
             Ok(temp) => {
@@ -94,6 +102,7 @@ pub async fn cmd_check(format: &OutputFormat) -> Result<()> {
                     "token": if token_ok { "valid" } else { "invalid" },
                     "detail": token_detail,
                 },
+                "dc_region": dc_region,
                 "region": {
                     "cached": region_cached,
                     "active": if is_cn { "CN" } else { "Global" },
@@ -173,6 +182,13 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
         root: RootKind::Object,
         fields: vec![
             field("session", "object", "Token validity details"),
+            field(
+                "dc_region",
+                "string | null",
+                "Account data center from the token: \"ap\" (HK/SG/CN accounts) or \"us\" \
+                 (US accounts, whose account commands print the AP JSON shape with US-only \
+                 extras); null when the session could not be initialized",
+            ),
             field(
                 "region",
                 "object",
