@@ -37,7 +37,8 @@ crossterm = { version = "0.29", features = ["event-stream"] }
 dashmap = "6.1"
 dirs = "5.0"
 csv = "1"
-longbridge = "5.3.0"
+# TODO: swap back to a released version once the forex channel ships in a crates.io release.
+longbridge = { git = "https://github.com/longbridge/openapi.git", rev = "ebe1e0b9c326359b77908bcf8eef4d4e2b628d71" }
 longbridge-ai-acp = { git = "https://github.com/longbridge/longbridge-ai-acp.git", branch = "main" }
 futures = "0.3.28"
 open = "5"
