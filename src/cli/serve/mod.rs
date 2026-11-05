@@ -99,6 +99,9 @@ pub fn method_reference() -> String {
          \x20 trade.* are named after the SDK calls they forward to. api.get/api.post\n\
          \x20 return the response body as received, less the account-identifying fields\n\
          \x20 the CLI also strips (aaid, account_channel).\n\n\
+         \x20 US accounts: trade.today_executions and trade.history_executions stay raw,\n\
+         \x20 so their side is \"Unknown\" (the execution APIs omit it). Join them with\n\
+         \x20 trade.us_query_orders (or trade.us_order_detail) by order_id for the side.\n\n\
          NOTIFICATIONS\n\
          \x20 quote.updated, quote.depth, quote.brokers, quote.trades — delivered for the\n\
          \x20 securities and fields named in quote.subscribe, each carrying its symbol.\n\

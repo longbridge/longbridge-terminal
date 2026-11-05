@@ -8,6 +8,21 @@ use serde_json::Value;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 // ── reshape primitives ───────────────────────────────────────────────────────
 
+/// Lift a repeated container field out of the response as an array; a missing
+/// or `null` field (proto3 JSON omits an empty repeated field) is an empty list,
+/// as the SDK's `#[serde(default, deserialize_with = "null_as_default")]` reads it.
+/// A root that is not an object is left as-is, so a wrongly shaped response
+/// still fails to decode instead of reading as an empty list.
+pub(super) fn unwrap_list(value: &mut Value, key: &str) {
+    let Some(map) = value.as_object_mut() else {
+        return;
+    };
+    *value = match map.remove(key) {
+        None | Some(Value::Null) => Value::Array(Vec::new()),
+        Some(inner) => inner,
+    };
+}
+
 /// Lift the single container field (e.g. `secu_quote`) out of the gateway's
 /// response object, so the root matches the SDK's array- or object-rooted shape.
 pub(super) fn unwrap(value: &mut Value, key: &str) {
@@ -285,7 +300,8 @@ pub(super) fn empty_str_to_null(value: &mut Value, keep: &[&str]) {
 /// Replace `""` with `"0"` at exactly the listed numeric paths. The gateway sends
 /// untraded decimal/count fields as `""`; the WS path parses those via
 /// `unwrap_or_default()` → `0`, and the SDK's **non-`Option`** `Decimal`/`i64`
-/// fields reject `""`. This is an explicit allow-list of the numeric fields per
+/// fields reject `""`. Also used for the few `Option` fields where WS yields
+/// `Some(0)` rather than `None` (requested calc-index counts). This is an explicit allow-list of the numeric fields per
 /// struct (rather than "zero every empty string except a skip-list"), so a
 /// string field that legitimately carries `""` can never be corrupted to `"0"`,
 /// and adding a field to a struct is a deliberate edit here. Must run before
@@ -398,8 +414,8 @@ pub(super) fn calc_index_field(index: longbridge::quote::CalcIndex) -> String {
 
 /// Null every index field of each row that is not in `requested`, keeping
 /// `symbol`. The gateway returns whatever it computed; the WS path fills only
-/// the requested indexes and leaves the rest `None`, and `serve` returns the
-/// whole struct, so extra fields would leak into its JSON.
+/// the requested indexes and leaves the rest `None`, so extra fields would
+/// otherwise leak into anything that serializes the whole struct.
 pub(super) fn keep_requested_indexes(
     value: &mut Value,
     requested: &[longbridge::quote::CalcIndex],
@@ -489,6 +505,23 @@ pub(super) fn insert_missing(value: &mut Value, key: &str, default: &Value) {
         Value::Object(map) => {
             map.entry(key.to_string())
                 .or_insert_with(|| default.clone());
+        }
+        _ => {}
+    }
+}
+
+/// Like [`insert_missing`], but an explicit `null` is replaced too — for fields
+/// the SDK's own decoder reads with `null_as_default`.
+pub(super) fn default_null_or_missing(value: &mut Value, key: &str, default: &Value) {
+    match value {
+        Value::Array(arr) => arr
+            .iter_mut()
+            .for_each(|v| default_null_or_missing(v, key, default)),
+        Value::Object(map) => {
+            let slot = map.entry(key.to_string()).or_insert(Value::Null);
+            if slot.is_null() {
+                *slot = default.clone();
+            }
         }
         _ => {}
     }

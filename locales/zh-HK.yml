@@ -557,3 +557,16 @@ Ai:
   HelpEscape: "中斷回答，或清空輸入"
   HelpSelect: "選取並複製（詞/行）"
   HelpQuit: "結束"
+SymbolHint:
+  NoData: "「%{symbol}」存在，但沒有返回數據。如果它所在的市場沒有行情權限，可以用 longbridge auth status 查看"
+  DidYouMean: "「%{symbol}」沒有數據。你是不是要找 %{suggestions}？"
+  Unknown: "找不到「%{symbol}」。請使用帶市場後綴的股票代碼，而不是公司名稱，例如 TSLA.US、700.HK、.DJI.US"
+  Unchecked: "「%{symbol}」沒有數據。代碼需要帶市場後綴，例如 TSLA.US、700.HK、.DJI.US"
+ScopeGuidance:
+  Trading: |-
+    此命令需要交易類權限（「賬戶資產與資金明細查詢」「交易查詢」或「交易下單」），當前授權未包含。
+    授權方法：執行 `longbridge auth login`，在授權頁勾選對應權限。
+    如果授權頁沒有這些選項，表示賬戶尚未開通證券賬戶，請先在長橋 App 中開戶。
+  Watchlist: |-
+    此命令需要「自選列表」權限，當前授權未包含。
+    授權方法：執行 `longbridge auth login`，在授權頁勾選「自選列表」。

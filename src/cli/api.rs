@@ -12,8 +12,10 @@ use longbridge::trade::{
     AccountBalance, CashFlow, EstimateMaxPurchaseQuantityOptions,
     EstimateMaxPurchaseQuantityResponse, Execution, FundPositionsResponse, GetCashFlowOptions,
     GetHistoryExecutionsOptions, GetHistoryOrdersOptions, GetTodayExecutionsOptions,
-    GetTodayOrdersOptions, MarginRatio, Order, OrderDetail, ReplaceOrderOptions,
-    StockPositionsResponse, SubmitOrderOptions, SubmitOrderResponse,
+    GetTodayOrdersOptions, GetUSAvailableHoldingOptions, GetUSHistoryOrders,
+    GetUSTransactionHistoryOptions, MarginRatio, Order, OrderDetail, QueryUSOrdersResponse,
+    ReplaceOrderOptions, StockPositionsResponse, SubmitOrderOptions, SubmitOrderResponse,
+    USAssetOverview, USAvailableHolding, USCashAndBuyPower, USExchangeRates, USTransactionHistory,
 };
 use longbridge::{quote::IntradayLine, Market};
 use time::Date;
@@ -116,6 +118,28 @@ pub trait TradeApi: Send + Sync {
         &self,
         opts: EstimateMaxPurchaseQuantityOptions,
     ) -> Result<EstimateMaxPurchaseQuantityResponse>;
+    /// US accounts only: stock / option / crypto positions plus cash.
+    async fn us_asset_overview(&self) -> Result<USAssetOverview>;
+    /// US accounts only: cash per currency, buying power and margin status.
+    async fn us_cash_and_buy_power(&self, currency: Option<String>) -> Result<USCashAndBuyPower>;
+    /// US accounts only: quantity of a holding available to trade.
+    async fn us_available_holding(
+        &self,
+        opts: GetUSAvailableHoldingOptions,
+    ) -> Result<USAvailableHolding>;
+    /// US accounts only: one page of the account transaction history.
+    async fn us_transaction_history(
+        &self,
+        opts: GetUSTransactionHistoryOptions,
+    ) -> Result<USTransactionHistory>;
+    /// US accounts only: exchange rates used by the account.
+    async fn us_exchange_rates(&self) -> Result<USExchangeRates>;
+    /// US accounts only: one page of the order list (open and historical).
+    async fn us_query_orders(&self, opts: GetUSHistoryOrders) -> Result<QueryUSOrdersResponse>;
+    /// US accounts only: one order with its history and attached order, as
+    /// the untouched body of `GET /v1/us/orders/{order_id}`. The SDK type
+    /// carries no instrument identifier, so the REST body is returned instead.
+    async fn us_order_detail(&self, order_id: String) -> Result<serde_json::Value>;
 }
 
 // ──── Production implementations ────────────────────────────────────────────
@@ -418,9 +442,64 @@ impl TradeApi for LbTradeApi {
     ) -> Result<EstimateMaxPurchaseQuantityResponse> {
         Ok(self.ctx.estimate_max_purchase_quantity(opts).await?)
     }
+
+    async fn us_asset_overview(&self) -> Result<USAssetOverview> {
+        Ok(self.ctx.us_asset_overview().await?)
+    }
+
+    async fn us_cash_and_buy_power(&self, currency: Option<String>) -> Result<USCashAndBuyPower> {
+        Ok(self.ctx.us_cash_and_buy_power(currency.as_deref()).await?)
+    }
+
+    async fn us_available_holding(
+        &self,
+        opts: GetUSAvailableHoldingOptions,
+    ) -> Result<USAvailableHolding> {
+        Ok(self.ctx.us_available_holding(opts).await?)
+    }
+
+    async fn us_transaction_history(
+        &self,
+        opts: GetUSTransactionHistoryOptions,
+    ) -> Result<USTransactionHistory> {
+        Ok(self.ctx.us_transaction_history(opts).await?)
+    }
+
+    async fn us_exchange_rates(&self) -> Result<USExchangeRates> {
+        Ok(self.ctx.us_exchange_rates().await?)
+    }
+
+    async fn us_query_orders(&self, opts: GetUSHistoryOrders) -> Result<QueryUSOrdersResponse> {
+        Ok(self.ctx.us_query_orders(opts).await?)
+    }
+
+    async fn us_order_detail(&self, order_id: String) -> Result<serde_json::Value> {
+        us_order_detail_raw(&order_id).await
+    }
 }
 
 // ── HTTP helpers ─────────────────────────────────────────────────────────────
+
+/// Whether `order_id` is a well-formed US order ID (decimal digits only), so
+/// it can go into a URL path as is.
+pub fn is_us_order_id(order_id: &str) -> bool {
+    !order_id.is_empty() && order_id.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// The untouched body of `GET /v1/us/orders/{order_id}` (US data center).
+/// The order ID is validated first so it cannot alter the request path.
+pub async fn us_order_detail_raw(order_id: &str) -> Result<serde_json::Value> {
+    if !is_us_order_id(order_id) {
+        anyhow::bail!("invalid US order ID `{order_id}`: expected digits only");
+    }
+    http_get_dc(
+        &format!("/v1/us/orders/{order_id}"),
+        &[],
+        Some(longbridge::DcRegion::Us),
+        false,
+    )
+    .await
+}
 
 pub async fn http_get(
     path: &str,
@@ -561,4 +640,29 @@ pub async fn http_put(
     let mut v = resp.0;
     super::output::strip_private_fields(&mut v);
     Ok(v)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn us_order_id_is_ascii_digits_only() {
+        assert!(is_us_order_id("701276261045858304"));
+        assert!(is_us_order_id("1"));
+        for bad in [
+            "",
+            "20240101-123456789",
+            "-1",
+            "../1",
+            "1/../2",
+            "12 3",
+            "123?x=1",
+            // Unicode digits are not ASCII digits.
+            "١٢٣",
+            "１２３",
+        ] {
+            assert!(!is_us_order_id(bad), "{bad:?} must be rejected");
+        }
+    }
 }

@@ -12,6 +12,13 @@ on:
         required: false
         type: string
 
+# One run at a time: a manual dispatch and the automatic run after Release can
+# fire for the same tag. Run in sequence, the second sees the bump already
+# committed and exits through the "no changes" check instead of failing to push.
+concurrency:
+  group: update-scoop-manifest
+  cancel-in-progress: false
+
 jobs:
   update-scoop:
     name: Update scoop.json
@@ -140,4 +147,15 @@ jobs:
           git commit -m "chore: bump scoop manifest to ${VERSION}
 
           Automated version bump triggered by https://github.com/${REPO}/actions/runs/${RUN_ID}"
-          git push origin main
+          # Something can land on main between checkout and push — a merge, or
+          # another bump. Rebase onto it and retry; if the same bump is already
+          # there, the rebase drops this commit and the push is a no-op.
+          for attempt in 1 2 3; do
+            if git push origin main; then
+              exit 0
+            fi
+            echo "Push rejected (attempt ${attempt}); rebasing onto origin/main"
+            git pull --rebase origin main
+          done
+          echo "Push still rejected after 3 attempts"
+          exit 1

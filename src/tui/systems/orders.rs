@@ -1238,7 +1238,8 @@ fn order_status_style(status: longbridge::trade::OrderStatus) -> Style {
         | longbridge::trade::OrderStatus::WaitToReplace
         | longbridge::trade::OrderStatus::PendingReplace
         | longbridge::trade::OrderStatus::WaitToCancel
-        | longbridge::trade::OrderStatus::PendingCancel => Style::default().fg(Color::Yellow),
+        | longbridge::trade::OrderStatus::PendingCancel
+        | longbridge::trade::OrderStatus::DelayedNotReported => Style::default().fg(Color::Yellow),
         longbridge::trade::OrderStatus::PartialFilled => Style::default().fg(Color::Cyan),
         longbridge::trade::OrderStatus::Filled => Style::default().fg(Color::Green),
         longbridge::trade::OrderStatus::Canceled
@@ -1269,6 +1270,7 @@ fn order_status_label(status: longbridge::trade::OrderStatus) -> &'static str {
         longbridge::trade::OrderStatus::Rejected => "Rejected",
         longbridge::trade::OrderStatus::Expired => "Expired",
         longbridge::trade::OrderStatus::PartialWithdrawal => "PartialWithdrawal",
+        longbridge::trade::OrderStatus::DelayedNotReported => "Delayed",
         longbridge::trade::OrderStatus::Unknown => "–",
     }
 }
