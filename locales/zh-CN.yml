@@ -507,6 +507,8 @@ Ai:
   SignInToAsk: "登录后即可提问 —— 输入 /login，或打开 /settings"
   SignedOut: "已退出登录。输入 `/login` 可重新登录。"
   SignedIn: "已登录。运行 `longbridge ai` 开始对话。"
+  SignedInNewChat: "已登录。下一条消息将开启新对话，输入 `/resume` 可回到之前的对话。"
+  NewConversationDivider: "──── 以下为新对话 · 上面的内容不在其中 ────"
   SignOutFailed: "退出登录失败"
   SignInFailed: "登录失败"
   QuoteNoSymbol: "还没有提到标的，试试 /quote 700.HK"
