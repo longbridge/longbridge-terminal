@@ -1133,8 +1133,16 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
                         // only a failure to build them is worth leaving for.
                         if let Ok((rx, _)) = crate::openapi::init_contexts().await {
                             quotes = Box::pin(rx);
+                            // The conversation on screen does not carry over. The
+                            // server fixes a chat's tools when it is created, so
+                            // permissions this sign-in granted (account, positions)
+                            // would never reach it, and the agent would keep saying
+                            // they are switched off. A turn still streaming belongs
+                            // to the old credentials too.
+                            cancel_turn(&mut state, &mut turn);
+                            state.detach_conversation();
                             ui.session = super::account::local();
-                            ui.notice = Some(t!("Ai.SignedIn").to_string());
+                            ui.notice = Some(t!("Ai.SignedInNewChat").to_string());
                             for symbol in ui.tape.clone() {
                                 subscribe_quote(&symbol);
                             }
@@ -1242,10 +1250,7 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
                     // whoever signs in next may be a different account, and this
                     // thread is not theirs. It is still on the server for the
                     // account that owns it, one `/resume` away.
-                    state.chat_uid = None;
-                    state.message_id = None;
-                    state.parent_message_id = None;
-                    state.pending_interrupt = None;
+                    state.detach_conversation();
                     ui.session = super::account::local();
                     ui.tape.clear();
                     ui.quotes.clear();

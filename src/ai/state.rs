@@ -529,6 +529,21 @@ impl ChatState {
         self.pending_interrupt = None;
     }
 
+    /// Let go of the server conversation while keeping the transcript on screen.
+    ///
+    /// The next prompt starts a new chat instead of following up on this one.
+    /// Used whenever the credentials change under a conversation: the server binds
+    /// a chat to the tools the account could reach when it was created, so a chat
+    /// carried across a sign-in never sees what the new sign-in granted — and the
+    /// new account may not be the one that owns it at all. The old conversation is
+    /// still one `/resume` away.
+    pub fn detach_conversation(&mut self) {
+        self.chat_uid = None;
+        self.message_id = None;
+        self.parent_message_id = None;
+        self.pending_interrupt = None;
+    }
+
     /// Take everything queued as a single prompt, or `None` if nothing waits.
     ///
     /// Prompts typed while one answer was streaming are one follow-up thought, not
@@ -763,6 +778,42 @@ mod tests {
             s.turn_error.is_none(),
             "the error is consumed, not left to leak"
         );
+    }
+
+    /// Detaching keeps the transcript readable but makes the next prompt a new
+    /// chat rather than a follow-up on the detached one.
+    #[test]
+    fn detaching_starts_the_next_prompt_in_a_new_chat() {
+        let mut s = state();
+        s.apply(ChatEvent::UserPrompt("q".into()));
+        s.apply(ChatEvent::TurnStarted {
+            chat_uid: "c1".into(),
+            message_id: "m1".into(),
+        });
+        s.apply(ChatEvent::Delta("a".into()));
+        s.apply(ChatEvent::TurnFinished { error: None });
+        assert_eq!(s.parent_message_id.as_deref(), Some("m1"));
+        let shown = s.messages.len();
+
+        s.detach_conversation();
+
+        assert_eq!(s.chat_uid, None);
+        assert_eq!(s.message_id, None);
+        assert_eq!(s.parent_message_id, None);
+        assert_eq!(s.messages.len(), shown, "the transcript stays on screen");
+        match crate::ai::runtime::build_request(&s, "again".into()) {
+            crate::cli::agent::client::ConversationRequest::New {
+                chat_uid,
+                parent_message_id,
+                ..
+            } => {
+                assert_eq!(chat_uid, None);
+                assert_eq!(parent_message_id, None);
+            }
+            crate::cli::agent::client::ConversationRequest::Continue { .. } => {
+                panic!("a detached conversation cannot be continued")
+            }
+        }
     }
 
     #[test]
