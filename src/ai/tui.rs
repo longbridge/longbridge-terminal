@@ -1129,8 +1129,8 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
                         // Signing in finishes here, in the chat — whether it opened
                         // signed out or the reader signed out and back in (as a
                         // different account, usually). The contexts are rebuilt from
-                        // the new credentials and this session carries on with them;
-                        // only a failure to build them is worth leaving for.
+                        // the new credentials and the view carries on with them; only
+                        // a failure to build them is worth leaving for.
                         if let Ok((rx, _)) = crate::openapi::init_contexts().await {
                             quotes = Box::pin(rx);
                             // The conversation on screen does not carry over. The
@@ -1139,8 +1139,7 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
                             // would never reach it, and the agent would keep saying
                             // they are switched off. A turn still streaming belongs
                             // to the old credentials too.
-                            cancel_turn(&mut state, &mut turn);
-                            state.detach_conversation();
+                            leave_conversation(&mut ui, &mut state, &mut turn);
                             ui.session = super::account::local();
                             ui.notice = Some(t!("Ai.SignedInNewChat").to_string());
                             for symbol in ui.tape.clone() {
@@ -1239,18 +1238,18 @@ pub async fn run(agent_uid: String, quotes: Option<QuoteStream>) -> Result<Optio
                     // question). Done here, not before the await, so a failed
                     // clear_token leaves the conversation — and a paused
                     // question's pending_interrupt — untouched.
-                    cancel_turn(&mut state, &mut turn);
+                    //
+                    // The conversation stays on screen to read, but not to add to:
+                    // whoever signs in next may be a different account, and this
+                    // thread is not theirs. It is still on the server for the
+                    // account that owns it, one `/resume` away.
+                    leave_conversation(&mut ui, &mut state, &mut turn);
                     // Signing out stays in the chat. The contexts cannot be torn
                     // down — they are process-wide singletons — so the process is
                     // marked signed out instead, and the view goes back to what an
                     // anonymous start looks like: the transcript is still readable,
                     // and asking or quoting anything says to sign in first.
                     crate::openapi::mark_signed_out();
-                    // The conversation stays on screen to read, but not to add to:
-                    // whoever signs in next may be a different account, and this
-                    // thread is not theirs. It is still on the server for the
-                    // account that owns it, one `/resume` away.
-                    state.detach_conversation();
                     ui.session = super::account::local();
                     ui.tape.clear();
                     ui.quotes.clear();
@@ -1550,6 +1549,20 @@ fn cancel_turn(state: &mut ChatState, turn: &mut Option<JoinHandle<()>>) {
     // Before `cancel`, which clears the turn state `abandon_turn` reads.
     abandon_turn(state, turn);
     state.cancel(&t!("Ai.Cancelled"));
+}
+
+/// Drop the running turn and let go of the server conversation, keeping the
+/// transcript on screen. Used when the credentials change under it.
+///
+/// The question drawer goes too: it asks about the detached chat's paused run,
+/// and an answer typed into it would land in the next chat as a stray prompt.
+fn leave_conversation(ui: &mut Ui, state: &mut ChatState, turn: &mut Option<JoinHandle<()>>) {
+    cancel_turn(state, turn);
+    state.detach_conversation();
+    ui.question = None;
+    if ui.view == View::Question {
+        ui.view = View::Chat;
+    }
 }
 
 /// Conversations view: arrows/Enter select and open, Del removes, typing filters.
@@ -6887,6 +6900,31 @@ mod tests {
         let question = ui.question.as_ref().expect("second question remains");
         assert_eq!(question.qi, 1);
         assert_eq!(question.answers["first"]["_skipped"], "true");
+    }
+
+    /// Leaving a conversation with a paused question closes the drawer: its
+    /// answer would otherwise go to the next chat as a stray prompt.
+    #[test]
+    fn leaving_a_conversation_closes_its_question() {
+        let interrupt = serde_json::json!({
+            "interactions": [{
+                "interrupt_id": "ask_market",
+                "type": "ask_human",
+                "questions": [{"question": "Market?", "choices": ["US"]}]
+            }]
+        });
+        let mut ui = super::Ui::new();
+        ui.view = super::View::Question;
+        ui.question = Some(super::QuestionState::from_interrupt(&interrupt));
+        let mut state = super::ChatState::default();
+        state.chat_uid = Some("c1".into());
+        let mut turn = None;
+
+        super::leave_conversation(&mut ui, &mut state, &mut turn);
+
+        assert!(ui.question.is_none());
+        assert!(ui.view == super::View::Chat);
+        assert_eq!(state.chat_uid, None);
     }
 
     #[test]
