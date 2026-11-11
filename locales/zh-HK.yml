@@ -508,6 +508,7 @@ Ai:
   SignedOut: "已登出。輸入 `/login` 可重新登入。"
   SignedIn: "已登入。執行 `longbridge ai` 開始對話。"
   SignedInNewChat: "已登入。下一則訊息將開啟新對話，輸入 `/resume` 可回到之前的對話。"
+  NewConversationDivider: "──── 以下為新對話 · 上面的內容不在其中 ────"
   SignOutFailed: "登出失敗"
   SignInFailed: "登入失敗"
   QuoteNoSymbol: "還沒有提到標的，試試 /quote 700.HK"

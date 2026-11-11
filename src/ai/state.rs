@@ -541,7 +541,18 @@ impl ChatState {
     /// Bumps the generation: callers abort the running turn first, but events it
     /// already queued — a `TurnStarted`, a `TurnFinished` — would otherwise pass
     /// the gate and write the detached chat's ids straight back.
+    ///
+    /// The transcript gets a divider when a chat was actually let go: what is
+    /// above it stays readable, but the agent will not see it, and a follow-up
+    /// that leans on it ("and the second one?") needs to read as starting over.
+    /// Detaching twice (sign out, then sign in) draws it once.
     pub fn detach_conversation(&mut self) {
+        if self.chat_uid.is_some() {
+            self.messages.push(Message::new(
+                Role::System,
+                rust_i18n::t!("Ai.NewConversationDivider").to_string(),
+            ));
+        }
         self.bump_generation();
         self.title = None;
         self.chat_uid = None;
@@ -811,7 +822,17 @@ mod tests {
         assert_eq!(s.chat_uid, None);
         assert_eq!(s.message_id, None);
         assert_eq!(s.parent_message_id, None);
-        assert_eq!(s.messages.len(), shown, "the transcript stays on screen");
+        assert_eq!(
+            s.messages.len(),
+            shown + 1,
+            "the transcript stays on screen, with a divider after it"
+        );
+        assert_eq!(s.messages.last().unwrap().role, Role::System);
+
+        // Signing out detaches, and the sign-in after it detaches again: there is
+        // no chat left to let go of, so no second divider.
+        s.detach_conversation();
+        assert_eq!(s.messages.len(), shown + 1);
         match crate::ai::runtime::build_request(&s, "again".into()) {
             crate::cli::agent::client::ConversationRequest::New {
                 chat_uid,

@@ -508,6 +508,7 @@ Ai:
   SignedOut: "Signed out. `/login` to sign in again."
   SignedIn: "Signed in. Run `longbridge ai` to start a chat."
   SignedInNewChat: "Signed in. Your next message starts a new conversation; `/resume` returns to earlier ones."
+  NewConversationDivider: "──── New conversation · earlier messages are not part of it ────"
   SignOutFailed: "Could not sign out"
   SignInFailed: "Could not sign in"
   QuoteNoSymbol: "No security mentioned yet. Try /quote 700.HK"
