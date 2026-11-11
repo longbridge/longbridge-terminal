@@ -1649,10 +1649,15 @@ pub async fn cmd_portfolio(format: &OutputFormat) -> Result<()> {
                 vec!["Total Asset".to_string(), fmt_decimal(&Some(o.total_asset))],
                 vec!["Market Cap".to_string(), fmt_decimal(&Some(o.market_cap))],
                 vec!["Total Cash".to_string(), fmt_decimal(&Some(o.total_cash))],
-                vec!["P/L".to_string(), format!("{:.2}", o.total_pl)],
+                vec![
+                    "P/L".to_string(),
+                    o.total_pl
+                        .map_or_else(|| "-".to_string(), |d| format!("{d:.2}")),
+                ],
                 vec![
                     "Intraday P/L".to_string(),
-                    format!("{:.2}", o.total_today_pl),
+                    o.total_today_pl
+                        .map_or_else(|| "-".to_string(), |d| format!("{d:.2}")),
                 ],
                 vec!["Margin Call".to_string(), fmt_decimal(&Some(o.margin_call))],
                 vec!["Risk Level".to_string(), risk_label.to_string()],
@@ -1686,7 +1691,7 @@ pub async fn cmd_portfolio(format: &OutputFormat) -> Result<()> {
                         "HK"
                     };
                     *market_values.entry(market_label.to_string()).or_default() +=
-                        h.market_value_usd;
+                        h.market_value_usd.unwrap_or_default();
                 }
                 // Add cash and fund
                 market_values.insert("Cash".to_string(), o.total_cash);

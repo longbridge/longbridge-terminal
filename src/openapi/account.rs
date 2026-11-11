@@ -196,7 +196,7 @@ where
                 available_quantity: position.available_quantity,
                 cost_price: Some(position.cost_price),
                 market_value: position.cost_price * position.quantity, // Will be updated with real price
-                market_value_usd: Decimal::ZERO, // Will be updated in fetch_portfolio
+                market_value_usd: None, // Will be updated in fetch_portfolio
                 market_price: position.cost_price, // Will be updated with real price
                 prev_close: None,
             });
@@ -248,9 +248,7 @@ where
 }
 
 /// Fetch exchange rates and return a map of currency code -> USD per 1 unit.
-/// Handles both API conventions:
-///   base="HKD", other="USD", rate=0.128  →  1 HKD = 0.128 USD
-///   base="USD", other="HKD", rate=7.82   →  1 HKD = 1/7.82 USD
+/// See [`build_usd_rates`] for how the table is interpreted.
 async fn fetch_fx_rates() -> HashMap<String, Decimal> {
     use longbridge::httpclient::Json;
     use reqwest::Method;
@@ -267,7 +265,7 @@ async fn fetch_fx_rates() -> HashMap<String, Decimal> {
 
     tracing::debug!("exchange_rates raw: {}", resp.0);
 
-    let mut rates = HashMap::new();
+    let mut pairs = Vec::new();
     if let Some(exchanges) = resp.0["exchanges"].as_array() {
         for item in exchanges {
             let base = item["base_currency"].as_str().unwrap_or("");
@@ -279,42 +277,70 @@ async fn fetch_fx_rates() -> HashMap<String, Decimal> {
             } else {
                 continue;
             };
-            if rate == Decimal::ZERO {
-                continue;
-            }
-            // Store "USD per 1 unit of the non-USD currency" in both directions:
-            //   base="USD", other="HKD", rate=0.12767 → rates["HKD"] = 0.12767
-            //   base="HKD", other="USD", rate=0.128  → rates["HKD"] = 0.128
-            let non_usd = if base == "USD" && other != "USD" {
-                Some(other)
-            } else if other == "USD" && base != "USD" {
-                Some(base)
-            } else {
-                None
-            };
-            if let Some(code) = non_usd {
-                rates.insert(code.to_string(), rate);
-            }
+            pairs.push((base.to_string(), other.to_string(), rate));
         }
     }
+    let rates = build_usd_rates(&pairs);
     tracing::info!("fx_rates built: {:?}", rates);
+    rates
+}
+
+/// Build a map of currency code -> USD per 1 unit from `(base, other, rate)`
+/// rows of `/v1/asset/exchange_rates`.
+///
+/// Each row means 1 `other` = `rate` `base`. The table is anchored on one
+/// currency, which differs by account:
+///   base="USD", other="HKD", rate=0.12746 -> 1 HKD = 0.12746 USD
+///   base="HKD", other="USD", rate=7.8     -> 1 USD = 7.8 HKD, so 1 HKD = 1/7.8 USD
+///   base="HKD", other="SGD", rate=6.0     -> 1 SGD = 6.0 HKD, converted via HKD
+///
+/// Currencies that cannot be linked to USD through the table are left out.
+fn build_usd_rates(pairs: &[(String, String, Decimal)]) -> HashMap<String, Decimal> {
+    let mut rates = HashMap::from([("USD".to_string(), Decimal::ONE)]);
+    // Each pass resolves currencies one hop further from USD; a table needs at
+    // most `pairs.len()` hops, and stops early once nothing new is resolved.
+    for _ in 0..pairs.len() {
+        let mut changed = false;
+        for (base, other, rate) in pairs {
+            if *rate <= Decimal::ZERO || base == other {
+                continue;
+            }
+            match (rates.get(base).copied(), rates.get(other).copied()) {
+                (Some(usd_per_base), None) => {
+                    rates.insert(other.clone(), *rate * usd_per_base);
+                    changed = true;
+                }
+                (None, Some(usd_per_other)) => {
+                    rates.insert(base.clone(), usd_per_other / *rate);
+                    changed = true;
+                }
+                _ => {}
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
     rates
 }
 
 /// Convert an amount in `currency` to USD.
 /// `rates` maps currency code -> USD per 1 unit of that currency.
-fn to_usd(amount: Decimal, currency: Currency, rates: &HashMap<String, Decimal>) -> Decimal {
+/// Returns `None` when there is no rate, rather than passing the amount through
+/// unconverted under a USD label.
+fn to_usd(
+    amount: Decimal,
+    currency: Currency,
+    rates: &HashMap<String, Decimal>,
+) -> Option<Decimal> {
     let code = currency.as_str();
     if code == "USD" {
-        return amount;
+        return Some(amount);
     }
-    if let Some(&usd_per_unit) = rates.get(code) {
-        if usd_per_unit > Decimal::ZERO {
-            return amount * usd_per_unit;
-        }
-    }
-    // Fallback: no rate available, return unconverted
-    amount
+    rates
+        .get(code)
+        .filter(|usd_per_unit| **usd_per_unit > Decimal::ZERO)
+        .map(|usd_per_unit| amount * usd_per_unit)
 }
 
 /// Calculate overview data from balance and holdings.
@@ -329,19 +355,21 @@ fn calculate_overview(
 
     // Total P/L: compute directly per holding to avoid net_assets/total_cash ambiguity.
     // Each holding's P/L is in its native currency; convert to USD via fx_rates.
-    let total_pl: Decimal = holdings
+    // `None` if any holding's currency has no rate, so a partial sum is never
+    // reported as the total.
+    let total_pl: Option<Decimal> = holdings
         .iter()
         .map(|h| {
             if let Some(cost) = h.cost_price {
                 to_usd((h.market_price - cost) * h.quantity, h.currency, fx_rates)
             } else {
-                Decimal::ZERO
+                Some(Decimal::ZERO)
             }
         })
         .sum();
 
     // Intraday P/L in USD: (current_price - prev_close) * quantity, converted
-    let total_today_pl: Decimal = holdings
+    let total_today_pl: Option<Decimal> = holdings
         .iter()
         .map(|h| {
             if let Some(prev_close) = h.prev_close {
@@ -350,7 +378,7 @@ fn calculate_overview(
                     return to_usd(daily_change, h.currency, fx_rates);
                 }
             }
-            Decimal::ZERO
+            Some(Decimal::ZERO)
         })
         .sum();
 
@@ -473,4 +501,101 @@ where
         cash_balances,
         holdings,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    fn d(s: &str) -> Decimal {
+        Decimal::from_str(s).unwrap()
+    }
+
+    fn pairs(rows: &[(&str, &str, &str)]) -> Vec<(String, String, Decimal)> {
+        rows.iter()
+            .map(|(b, o, r)| ((*b).to_string(), (*o).to_string(), d(r)))
+            .collect()
+    }
+
+    #[test]
+    fn usd_anchored_table_is_stored_as_is() {
+        // Live AP account shape: 1 other = rate USD.
+        let rates = build_usd_rates(&pairs(&[
+            ("USD", "USD", "1"),
+            ("USD", "HKD", "0.12746"),
+            ("USD", "SGD", "0.78008"),
+        ]));
+        assert_eq!(rates["HKD"], d("0.12746"));
+        assert_eq!(rates["SGD"], d("0.78008"));
+        assert_eq!(
+            to_usd(d("1000"), Currency::HKD, &rates),
+            Some(d("127.46000"))
+        );
+    }
+
+    #[test]
+    fn hkd_anchored_table_is_inverted_and_cross_converted() {
+        // Paper account shape: 1 other = rate HKD, with only HKD/USD linking to USD.
+        let rates = build_usd_rates(&pairs(&[
+            ("HKD", "HKD", "1"),
+            ("HKD", "USD", "7.0001"),
+            ("HKD", "SGD", "6.1442"),
+            ("HKD", "CNY", "1.1465"),
+        ]));
+        let usd_per_hkd = Decimal::ONE / d("7.0001");
+        assert_eq!(rates["HKD"], usd_per_hkd);
+        assert_eq!(rates["SGD"], d("6.1442") * usd_per_hkd);
+        assert_eq!(rates["CNY"], d("1.1465") * usd_per_hkd);
+
+        // 20,320 HKD is about 2,902.82 USD, not 20,320 * 7.0001.
+        let usd = to_usd(d("20320"), Currency::HKD, &rates).unwrap();
+        assert_eq!(usd.round_dp(2), d("2902.82"));
+    }
+
+    #[test]
+    fn currency_without_a_rate_is_not_passed_through() {
+        let rates = build_usd_rates(&pairs(&[("USD", "HKD", "0.12746")]));
+        assert_eq!(to_usd(d("100"), Currency::SGD, &rates), None);
+        assert_eq!(to_usd(d("100"), Currency::HKD, &HashMap::new()), None);
+        assert_eq!(
+            to_usd(d("100"), Currency::USD, &HashMap::new()),
+            Some(d("100"))
+        );
+    }
+
+    #[test]
+    fn overview_totals_are_none_when_a_holding_cannot_be_converted() {
+        let rates = build_usd_rates(&pairs(&[("USD", "HKD", "0.12746")]));
+        let holding = |currency, price: &str, cost: &str| Holding {
+            currency,
+            quantity: d("10"),
+            market_price: d(price),
+            cost_price: Some(d(cost)),
+            prev_close: Some(d(cost)),
+            ..Default::default()
+        };
+        let balance = AccountBalance::default();
+
+        let converted = calculate_overview(
+            &balance,
+            &[
+                holding(Currency::USD, "11", "10"),
+                holding(Currency::HKD, "110", "100"),
+            ],
+            &rates,
+        );
+        assert_eq!(converted.total_pl, Some(d("10") + d("100") * d("0.12746")));
+
+        let partial = calculate_overview(
+            &balance,
+            &[
+                holding(Currency::USD, "11", "10"),
+                holding(Currency::SGD, "2", "1"),
+            ],
+            &rates,
+        );
+        assert_eq!(partial.total_pl, None);
+        assert_eq!(partial.total_today_pl, None);
+    }
 }

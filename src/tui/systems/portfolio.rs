@@ -126,7 +126,9 @@ fn holding_detail_rows(holding: &crate::data::Holding) -> Vec<crate::tui::views:
         ),
         Row::field(
             t!("Detail.ValueUSD"),
-            format!("{:.2} USD", holding.market_value_usd),
+            holding
+                .market_value_usd
+                .map_or_else(|| "-".to_string(), |v| format!("{v:.2} USD")),
         ),
         Row::Blank,
         Row::Section(t!("Detail.Performance").to_string()),
@@ -281,8 +283,10 @@ pub fn render_portfolio(
                 );
 
             // Calculate styles for P/L
-            let pl_style = styles::up(overview.total_pl.cmp(&Decimal::ZERO));
-            let today_pl_style = styles::up(overview.total_today_pl.cmp(&Decimal::ZERO));
+            let total_pl = overview.total_pl.unwrap_or_default();
+            let total_today_pl = overview.total_today_pl.unwrap_or_default();
+            let pl_style = styles::up(total_pl.cmp(&Decimal::ZERO));
+            let today_pl_style = styles::up(total_today_pl.cmp(&Decimal::ZERO));
 
             // Create three-column layout with horizontal margin (1 char each side)
             let block_inner = overview_block.inner(chunks[0]);
@@ -339,10 +343,9 @@ pub fn render_portfolio(
                 ListItem::new(Line::from(vec![
                     Span::styled(format!("{}: ", t!("Portfolio.P/L")), styles::label()),
                     Span::styled(
-                        format!(
-                            "{}{:+.2}",
-                            styles::trend_arrow(overview.total_pl.cmp(&Decimal::ZERO)),
-                            overview.total_pl
+                        overview.total_pl.map_or_else(
+                            || "-".to_string(),
+                            |v| format!("{}{v:+.2}", styles::trend_arrow(v.cmp(&Decimal::ZERO))),
                         ),
                         pl_style,
                     ),
@@ -353,10 +356,9 @@ pub fn render_portfolio(
                         styles::label(),
                     ),
                     Span::styled(
-                        format!(
-                            "{}{:+.2}",
-                            styles::trend_arrow(overview.total_today_pl.cmp(&Decimal::ZERO)),
-                            overview.total_today_pl
+                        overview.total_today_pl.map_or_else(
+                            || "-".to_string(),
+                            |v| format!("{}{v:+.2}", styles::trend_arrow(v.cmp(&Decimal::ZERO))),
                         ),
                         today_pl_style,
                     ),
@@ -421,7 +423,8 @@ pub fn render_portfolio(
                     } else {
                         Market::HK
                     };
-                    *map.entry(market).or_insert(Decimal::ZERO) += h.market_value_usd;
+                    *map.entry(market).or_insert(Decimal::ZERO) +=
+                        h.market_value_usd.unwrap_or_default();
                 }
 
                 // Build sorted list including cash (None = cash)

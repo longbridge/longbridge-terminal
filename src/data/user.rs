@@ -104,8 +104,9 @@ pub struct Holding {
     pub available_quantity: rust_decimal::Decimal,
     pub cost_price: Option<rust_decimal::Decimal>,
     pub market_value: rust_decimal::Decimal,
-    /// Market value converted to the account's base currency (USD).
-    pub market_value_usd: rust_decimal::Decimal,
+    /// Market value converted to USD; `None` when no exchange rate links the
+    /// holding's currency to USD.
+    pub market_value_usd: Option<rust_decimal::Decimal>,
     pub market_price: rust_decimal::Decimal,
     pub prev_close: Option<rust_decimal::Decimal>,
 }
@@ -120,7 +121,7 @@ impl Default for Holding {
             available_quantity: rust_decimal::Decimal::ZERO,
             cost_price: None,
             market_value: rust_decimal::Decimal::ZERO,
-            market_value_usd: rust_decimal::Decimal::ZERO,
+            market_value_usd: None,
             market_price: rust_decimal::Decimal::ZERO,
             prev_close: None,
         }
@@ -133,8 +134,10 @@ pub struct OverviewData {
     pub total_asset: rust_decimal::Decimal,
     pub market_cap: rust_decimal::Decimal,
     pub total_cash: rust_decimal::Decimal,
-    pub total_pl: rust_decimal::Decimal,
-    pub total_today_pl: rust_decimal::Decimal,
+    /// Total P/L in USD; `None` when a holding's currency has no USD rate.
+    pub total_pl: Option<rust_decimal::Decimal>,
+    /// Intraday P/L in USD; `None` when a holding's currency has no USD rate.
+    pub total_today_pl: Option<rust_decimal::Decimal>,
     pub margin_call: rust_decimal::Decimal,
     pub risk_level: u8,
     pub credit_limit: rust_decimal::Decimal,
