@@ -537,7 +537,13 @@ impl ChatState {
     /// carried across a sign-in never sees what the new sign-in granted — and the
     /// new account may not be the one that owns it at all. The old conversation is
     /// still one `/resume` away.
+    ///
+    /// Bumps the generation: callers abort the running turn first, but events it
+    /// already queued — a `TurnStarted`, a `TurnFinished` — would otherwise pass
+    /// the gate and write the detached chat's ids straight back.
     pub fn detach_conversation(&mut self) {
+        self.bump_generation();
+        self.title = None;
         self.chat_uid = None;
         self.message_id = None;
         self.parent_message_id = None;
@@ -794,9 +800,14 @@ mod tests {
         s.apply(ChatEvent::TurnFinished { error: None });
         assert_eq!(s.parent_message_id.as_deref(), Some("m1"));
         let shown = s.messages.len();
+        let generation = s.generation;
 
         s.detach_conversation();
 
+        assert_ne!(
+            s.generation, generation,
+            "events the aborted turn already queued must not re-attach the old chat"
+        );
         assert_eq!(s.chat_uid, None);
         assert_eq!(s.message_id, None);
         assert_eq!(s.parent_message_id, None);
