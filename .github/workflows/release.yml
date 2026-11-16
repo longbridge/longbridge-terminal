@@ -14,11 +14,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # x86_64 Linux builds go through cross, like aarch64, so the C
+          # toolchain and static libs come from cross's images rather than
+          # the runner. The ubuntu-26.04 runner installs the `amd64v3` package
+          # variant: its gcc defaults to -march=x86-64-v3 and its musl libc.a
+          # is built for v3, so native builds crash with SIGILL on CPUs
+          # without AVX2 (#347).
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             name: longbridge-terminal-linux-amd64.tar.gz
             arch: x86_64
-            cross: false
+            cross: true
 
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
@@ -51,7 +57,7 @@ jobs:
             os: ubuntu-latest
             name: longbridge-terminal-linux-musl-amd64.tar.gz
             arch: x86_64
-            cross: false  # Compile natively on x86_64 runner with musl-tools
+            cross: true
 
           - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
@@ -80,14 +86,12 @@ jobs:
             ~/.cargo/git/db/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Install Musl Tools
-        if: contains(matrix.target, 'musl') && matrix.cross == false
-        run: |
-          sudo apt-get install -y musl-tools
-
       - name: Install Cross
         if: matrix.cross == true
-        run: cargo install cross --git https://github.com/cross-rs/cross
+        # Pinned: a git build of cross pulls the floating `:main` images, so
+        # Cross.toml pins those by digest. Bump both together. --force because
+        # the cargo cache may restore a cross binary built from another rev.
+        run: cargo install cross --force --git https://github.com/cross-rs/cross --rev a9301e91f72bba3850460512685f6b16062015ff
 
       - name: Setup | Rust
         uses: dtolnay/rust-toolchain@stable
@@ -127,6 +131,37 @@ jobs:
           cd target/${{ matrix.target }}/release
           ./longbridge --version
           cd -
+
+      # Run a TLS-exercising command on qemu64 (baseline x86-64, no
+      # SSE4/AVX), so a build that silently raises the ISA level fails here
+      # instead of on users' NAS boxes. This is a smoke test of the paths
+      # `check` reaches, not proof. It runs inside the official ubuntu image
+      # (plain amd64 variant), not on the runner, so qemu and the glibc the
+      # gnu build loads are baseline too. `check` exits 0 even when
+      # unauthenticated or offline, so the step also requires at least one
+      # endpoint to be reachable: otherwise the TLS path never ran and a
+      # pass would prove nothing. `--init` matters: without an init process
+      # qemu can end up as PID 1, where the SIGILL it re-raises on itself is
+      # ignored — the run then hangs or exits with a misleading status
+      # instead of 132.
+      - name: Test Bin [Linux x86_64, baseline CPU]
+        if: startsWith(matrix.target, 'x86_64-unknown-linux')
+        timeout-minutes: 10
+        run: |
+          set +e
+          docker run --rm --init -v "$PWD/target/${{ matrix.target }}/release:/w:ro" ubuntu:26.04 bash -c '
+            set -e
+            apt-get -o Acquire::Retries=3 update -qq
+            apt-get -o Acquire::Retries=3 install -y -qq qemu-user ca-certificates jq >/dev/null
+            timeout 300 qemu-x86_64 -cpu qemu64 /w/longbridge check --format json > /tmp/check.json
+            cat /tmp/check.json
+            jq -e "[.connectivity[].ok] | any" /tmp/check.json >/dev/null || exit 3'
+          code=$?
+          case "$code" in
+            132) echo "::error::Binary uses instructions unavailable on baseline x86-64 (SIGILL)" ;;
+            3) echo "::error::check reached no endpoint, so the TLS path was not exercised; re-run the job" ;;
+          esac
+          exit $code
 
       - name: Test Bin [Windows]
         if: matrix.arch == 'x86_64' && matrix.os == 'windows-latest'
