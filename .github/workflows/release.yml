@@ -138,24 +138,29 @@ jobs:
       # `check` reaches, not proof. It runs inside the official ubuntu image
       # (plain amd64 variant), not on the runner, so qemu and the glibc the
       # gnu build loads are baseline too. `check` exits 0 even when
-      # unauthenticated or offline. `--init` matters: bash execs the last
-      # command, so without an init process qemu runs as PID 1, where the
-      # SIGILL it re-raises on itself is ignored — the run then hangs or
-      # exits with a misleading status instead of 132.
+      # unauthenticated or offline, so the step also requires at least one
+      # endpoint to be reachable: otherwise the TLS path never ran and a
+      # pass would prove nothing. `--init` matters: without an init process
+      # qemu can end up as PID 1, where the SIGILL it re-raises on itself is
+      # ignored — the run then hangs or exits with a misleading status
+      # instead of 132.
       - name: Test Bin [Linux x86_64, baseline CPU]
-        if: matrix.arch == 'x86_64' && matrix.os == 'ubuntu-latest'
+        if: startsWith(matrix.target, 'x86_64-unknown-linux')
         timeout-minutes: 10
         run: |
           set +e
           docker run --rm --init -v "$PWD/target/${{ matrix.target }}/release:/w:ro" ubuntu:26.04 bash -c '
             set -e
-            apt-get update -qq
-            apt-get install -y -qq qemu-user ca-certificates >/dev/null
-            timeout 300 qemu-x86_64 -cpu qemu64 /w/longbridge check'
+            apt-get -o Acquire::Retries=3 update -qq
+            apt-get -o Acquire::Retries=3 install -y -qq qemu-user ca-certificates jq >/dev/null
+            timeout 300 qemu-x86_64 -cpu qemu64 /w/longbridge check --format json > /tmp/check.json
+            cat /tmp/check.json
+            jq -e "[.connectivity[].ok] | any" /tmp/check.json >/dev/null || exit 3'
           code=$?
-          if [ "$code" -eq 132 ]; then
-            echo "::error::Binary uses instructions unavailable on baseline x86-64 (SIGILL)"
-          fi
+          case "$code" in
+            132) echo "::error::Binary uses instructions unavailable on baseline x86-64 (SIGILL)" ;;
+            3) echo "::error::check reached no endpoint, so the TLS path was not exercised; re-run the job" ;;
+          esac
           exit $code
 
       - name: Test Bin [Windows]
