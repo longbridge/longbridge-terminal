@@ -1567,6 +1567,14 @@ pub async fn cmd_margin_ratio(symbol: String, format: &OutputFormat) -> Result<(
     Ok(())
 }
 
+/// `longbridge risk-assessment` — the member's risk assessment (suitability)
+/// profile. No region gate: whether US data-center accounts are served is not
+/// known, so the server's own answer is surfaced instead of a client-side guess.
+pub async fn cmd_risk_assessment(format: &OutputFormat) -> Result<()> {
+    let api = LbTradeApi::new(crate::openapi::trade());
+    run_risk_assessment(&api, format).await
+}
+
 pub async fn cmd_max_qty(
     symbol: String,
     side: &str,
@@ -2113,6 +2121,62 @@ pub async fn run_margin_ratio(
     Ok(())
 }
 
+pub async fn run_risk_assessment(api: &dyn TradeApi, format: &OutputFormat) -> Result<()> {
+    let ra = api.risk_assessment().await?;
+    match format {
+        // The full SDK object, field names as the API returns them.
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&ra)?),
+        OutputFormat::Pretty => print_table(&["Field", "Value"], risk_assessment_rows(&ra), format),
+    }
+    Ok(())
+}
+
+/// Field/value rows of the `risk-assessment` table. Unset values (empty
+/// strings, empty maps / lists, a `0` PI end time) render as `-`; maps render
+/// as comma-separated `key=value` pairs.
+fn risk_assessment_rows(ra: &longbridge::trade::RiskAssessment) -> Vec<Vec<String>> {
+    fn or_dash(s: String) -> String {
+        if s.is_empty() {
+            "-".to_owned()
+        } else {
+            s
+        }
+    }
+    fn pairs<V: std::fmt::Display>(map: &std::collections::BTreeMap<String, V>) -> String {
+        or_dash(
+            map.iter()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        )
+    }
+    let pi_end_at = if ra.pi_end_at == 0 {
+        "-".to_owned()
+    } else {
+        ra.pi_end_at.to_string()
+    };
+    vec![
+        vec!["Risk Level".to_owned(), or_dash(ra.risk.clone())],
+        vec!["Score".to_owned(), ra.score.to_string()],
+        vec![
+            "Assessed At".to_owned(),
+            or_dash(ra.risk_assessment_at.clone()),
+        ],
+        vec!["Professional Investor (PI)".to_owned(), ra.pi.to_string()],
+        vec!["PI End At".to_owned(), pi_end_at],
+        vec!["Approvals".to_owned(), pairs(&ra.approvals)],
+        vec!["Deadlines".to_owned(), pairs(&ra.deadlines)],
+        vec![
+            "Re-authentication".to_owned(),
+            or_dash(ra.re_authentication.clone()),
+        ],
+        vec![
+            "Strategy Risk Levels".to_owned(),
+            or_dash(ra.strategy_risk_levels.join(", ")),
+        ],
+    ]
+}
+
 pub async fn run_max_qty(
     api: &dyn TradeApi,
     opts: EstimateMaxPurchaseQuantityOptions,
@@ -2617,6 +2681,41 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
         "margin-ratio" => array(
             "Key/value margin ratio result (HK/CN accounts only; US accounts get an error)",
             &["field", "value"],
+        ),
+        "risk-assessment" => schema(
+            "Risk assessment (suitability) profile of the current member, as returned by the API",
+            RootKind::Object,
+            vec![
+                field("risk", "string", "Risk level of the latest questionnaire (e.g. A5)"),
+                field("pi", "number", "Professional investor (PI) status code"),
+                field(
+                    "approvals",
+                    "object",
+                    "Approval states keyed by item (e.g. car, cka, risk_audit -> \"pass\"; is_corporate_client -> \"false\")",
+                ),
+                field(
+                    "re_authentication",
+                    "string",
+                    "Re-authentication flag (empty when not set)",
+                ),
+                field(
+                    "pi_end_at",
+                    "number",
+                    "PI status end time as returned by the API (0 when not set)",
+                ),
+                field("deadlines", "object", "Deadlines keyed by item, as returned by the API"),
+                field(
+                    "risk_assessment_at",
+                    "string",
+                    "Date of the latest risk assessment (e.g. 2026-10-14)",
+                ),
+                field("score", "number", "Questionnaire score"),
+                field(
+                    "strategy_risk_levels",
+                    "string[]",
+                    "Strategy risk levels the member may trade",
+                ),
+            ],
         ),
         "max-qty" => array("Key/value account calculation result", &["field", "value"]),
         "alert" => object("Price alert list", &["lists"]),
@@ -3143,6 +3242,77 @@ mod tests {
         run_margin_ratio(&mock, "TSLA.US".to_string(), &OutputFormat::Pretty)
             .await
             .unwrap();
+    }
+
+    /// The real test-environment response (2026-11-16).
+    fn sample_risk_assessment() -> longbridge::trade::RiskAssessment {
+        serde_json::from_str(
+            r#"{"risk":"A5","pi":0,"approvals":{"car":"pass","cka":"pass","is_corporate_client":"false","risk_audit":"pass"},"re_authentication":"","pi_end_at":0,"deadlines":{},"risk_assessment_at":"2026-10-14","score":0,"strategy_risk_levels":[]}"#,
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_run_risk_assessment_dispatches() {
+        for format in [OutputFormat::Pretty, OutputFormat::Json] {
+            let mut mock = MockTradeApi::new();
+            mock.expect_risk_assessment()
+                .times(1)
+                .returning(|| Ok(sample_risk_assessment()));
+            run_risk_assessment(&mock, &format).await.unwrap();
+        }
+    }
+
+    #[test]
+    fn test_risk_assessment_rows_render_maps_and_unset_values() {
+        let rows = risk_assessment_rows(&sample_risk_assessment());
+        let get = |label: &str| {
+            rows.iter()
+                .find(|r| r[0] == label)
+                .unwrap_or_else(|| panic!("missing row {label}"))[1]
+                .clone()
+        };
+        assert_eq!(rows.len(), 9, "one row per RiskAssessment field");
+        assert_eq!(get("Risk Level"), "A5");
+        assert_eq!(get("Score"), "0");
+        assert_eq!(get("Assessed At"), "2026-10-14");
+        assert_eq!(get("Professional Investor (PI)"), "0");
+        assert_eq!(get("PI End At"), "-");
+        assert_eq!(
+            get("Approvals"),
+            "car=pass, cka=pass, is_corporate_client=false, risk_audit=pass"
+        );
+        assert_eq!(get("Deadlines"), "-");
+        assert_eq!(get("Re-authentication"), "-");
+        assert_eq!(get("Strategy Risk Levels"), "-");
+
+        let mut ra = sample_risk_assessment();
+        ra.pi_end_at = 1_790_000_000;
+        ra.deadlines.insert("pi".to_owned(), 1_790_000_000);
+        ra.strategy_risk_levels = vec!["R1".to_owned(), "R2".to_owned()];
+        let rows = risk_assessment_rows(&ra);
+        assert_eq!(rows[4][1], "1790000000");
+        assert_eq!(rows[6][1], "pi=1790000000");
+        assert_eq!(rows[8][1], "R1, R2");
+    }
+
+    #[test]
+    fn test_risk_assessment_json_is_the_full_object_and_matches_schema() {
+        let value = serde_json::to_value(sample_risk_assessment()).unwrap();
+        let keys: Vec<&str> = value
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        let schema = schema_for_path(&["risk-assessment".to_string()]).unwrap();
+        let mut documented: Vec<&str> = schema.fields.iter().map(|f| f.name.as_str()).collect();
+        let mut keys_sorted = keys.clone();
+        keys_sorted.sort_unstable();
+        documented.sort_unstable();
+        assert_eq!(keys_sorted, documented);
+        assert_eq!(value["approvals"]["car"], "pass");
+        assert_eq!(value["risk"], "A5");
     }
 
     #[tokio::test]

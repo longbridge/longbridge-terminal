@@ -309,6 +309,7 @@ longbridge portfolio short-margin # 卖空保证金详情
 longbridge positions # 所有子账户的当前股票（权益类）持仓
 longbridge fund-positions # 所有子账户的当前基金（公募基金）持仓（仅 AP 账户）
 longbridge margin-ratio TSLA.US # 某股票的保证金比例要求（仅 AP 账户）
+longbridge risk-assessment # 风险测评结果：风险等级、得分、测评日期、专业投资者（PI）状态、审批状态（CAR / CKA）、可交易的策略风险等级
 longbridge max-qty TSLA.US --side buy --price 250 # 根据当前账户余额估算最大可买或可卖数量
 ```
 

@@ -139,3 +139,11 @@ needless_pass_by_value = "allow"
 pedantic = { level = "deny", priority = -1 }
 too_many_arguments = "allow"
 too_many_lines = "allow"
+
+# TEMPORARY: `TradeContext::risk_assessment` is not in a released SDK yet
+# (longbridge/openapi#625). Remove this section and bump `longbridge` above once
+# the SDK release that contains it is published. Only `longbridge` is patched:
+# it is the sole crate from that workspace this package depends on directly, and
+# its sibling crates come along from the same git source.
+[patch.crates-io]
+longbridge = { git = "https://github.com/longbridge/openapi", branch = "feat/risk-assessment" }

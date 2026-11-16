@@ -343,6 +343,10 @@ fn read_only_probes() -> Vec<Probe> {
             &["margin-ratio", "TSLA.US", "--format", "json"],
         ),
         p(
+            &["risk-assessment"],
+            &["risk-assessment", "--format", "json"],
+        ),
+        p(
             &["max-qty"],
             &[
                 "max-qty", "TSLA.US", "--side", "buy", "--price", "250", "--format", "json",

@@ -14,8 +14,9 @@ use longbridge::trade::{
     GetHistoryExecutionsOptions, GetHistoryOrdersOptions, GetTodayExecutionsOptions,
     GetTodayOrdersOptions, GetUSAvailableHoldingOptions, GetUSHistoryOrders,
     GetUSTransactionHistoryOptions, MarginRatio, Order, OrderDetail, QueryUSOrdersResponse,
-    ReplaceOrderOptions, StockPositionsResponse, SubmitOrderOptions, SubmitOrderResponse,
-    USAssetOverview, USAvailableHolding, USCashAndBuyPower, USExchangeRates, USTransactionHistory,
+    ReplaceOrderOptions, RiskAssessment, StockPositionsResponse, SubmitOrderOptions,
+    SubmitOrderResponse, USAssetOverview, USAvailableHolding, USCashAndBuyPower, USExchangeRates,
+    USTransactionHistory,
 };
 use longbridge::{quote::IntradayLine, Market};
 use time::Date;
@@ -114,6 +115,8 @@ pub trait TradeApi: Send + Sync {
     async fn stock_positions(&self) -> Result<StockPositionsResponse>;
     async fn fund_positions(&self) -> Result<FundPositionsResponse>;
     async fn margin_ratio(&self, symbol: String) -> Result<MarginRatio>;
+    /// Risk assessment (suitability) profile of the current member.
+    async fn risk_assessment(&self) -> Result<RiskAssessment>;
     async fn estimate_max_purchase_quantity(
         &self,
         opts: EstimateMaxPurchaseQuantityOptions,
@@ -434,6 +437,10 @@ impl TradeApi for LbTradeApi {
 
     async fn margin_ratio(&self, symbol: String) -> Result<MarginRatio> {
         Ok(self.ctx.margin_ratio(symbol).await?)
+    }
+
+    async fn risk_assessment(&self) -> Result<RiskAssessment> {
+        Ok(self.ctx.risk_assessment().await?)
     }
 
     async fn estimate_max_purchase_quantity(
