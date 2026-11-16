@@ -136,18 +136,22 @@ jobs:
       # SSE4/AVX), so a build that silently raises the ISA level fails here
       # instead of on users' NAS boxes. This is a smoke test of the paths
       # `check` reaches, not proof. It runs inside the official ubuntu image
-      # (plain amd64 variant),
-      # not on the runner, so qemu and the glibc the gnu build loads are
-      # baseline too. `check` exits 0 even when unauthenticated or offline.
+      # (plain amd64 variant), not on the runner, so qemu and the glibc the
+      # gnu build loads are baseline too. `check` exits 0 even when
+      # unauthenticated or offline. Core dumps are off and the run is
+      # time-limited: qemu-user can hang writing a core for a multi-threaded
+      # guest that died on SIGILL.
       - name: Test Bin [Linux x86_64, baseline CPU]
         if: matrix.arch == 'x86_64' && matrix.os == 'ubuntu-latest'
+        timeout-minutes: 10
         run: |
           set +e
-          docker run --rm -v "$PWD/target/${{ matrix.target }}/release:/w:ro" ubuntu:26.04 bash -c '
+          docker run --rm --ulimit core=0 -v "$PWD/target/${{ matrix.target }}/release:/w:ro" ubuntu:26.04 bash -c '
             set -e
             apt-get update -qq
             apt-get install -y -qq qemu-user ca-certificates >/dev/null
-            qemu-x86_64 -cpu qemu64 /w/longbridge check'
+            ulimit -c 0
+            timeout 300 qemu-x86_64 -cpu qemu64 /w/longbridge check'
           code=$?
           if [ "$code" -eq 132 ]; then
             echo "::error::Binary uses instructions unavailable on baseline x86-64 (SIGILL)"
