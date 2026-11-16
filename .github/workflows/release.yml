@@ -14,15 +14,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # x86_64 Linux builds are pinned to ubuntu-24.04: the ubuntu-26.04
-          # image installs packages from the `amd64v3` variant, so the C code
-          # we compile (ring) and the static libs we link (musl libc.a) target
-          # x86-64-v3 and crash with SIGILL on CPUs without AVX2 (#347).
+          # x86_64 Linux builds go through cross, like aarch64, so the C
+          # toolchain and static libs come from cross's images rather than
+          # the runner. The ubuntu-26.04 runner installs the `amd64v3` package
+          # variant: its gcc defaults to -march=x86-64-v3 and its musl libc.a
+          # is built for v3, so native builds crash with SIGILL on CPUs
+          # without AVX2 (#347).
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-24.04
+            os: ubuntu-latest
             name: longbridge-terminal-linux-amd64.tar.gz
             arch: x86_64
-            cross: false
+            cross: true
 
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
@@ -52,10 +54,10 @@ jobs:
           # Linux install script and work on any Linux system regardless of
           # the glibc version present on the host.
           - target: x86_64-unknown-linux-musl
-            os: ubuntu-24.04
+            os: ubuntu-latest
             name: longbridge-terminal-linux-musl-amd64.tar.gz
             arch: x86_64
-            cross: false  # Compile natively on x86_64 runner with musl-tools
+            cross: true
 
           - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
@@ -83,11 +85,6 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Install Musl Tools
-        if: contains(matrix.target, 'musl') && matrix.cross == false
-        run: |
-          sudo apt-get install -y musl-tools
 
       - name: Install Cross
         if: matrix.cross == true
@@ -134,18 +131,23 @@ jobs:
 
       # Run a TLS-exercising command on a CPU model without AVX, so a build
       # that silently targets x86-64-v3 fails here instead of on users' NAS
-      # boxes. Any exit is fine except SIGILL (132).
+      # boxes. It runs inside the official ubuntu image (plain amd64 variant),
+      # not on the runner, so qemu and the glibc the gnu build loads are
+      # baseline too. `check` exits 0 even when unauthenticated or offline.
       - name: Test Bin [Linux x86_64, no AVX]
-        if: matrix.arch == 'x86_64' && startsWith(matrix.os, 'ubuntu')
+        if: matrix.arch == 'x86_64' && matrix.os == 'ubuntu-latest'
         run: |
-          sudo apt-get install -y qemu-user
           set +e
-          qemu-x86_64 -cpu Westmere target/${{ matrix.target }}/release/longbridge check
+          docker run --rm -v "$PWD/target/${{ matrix.target }}/release:/w:ro" ubuntu:26.04 bash -c '
+            set -e
+            apt-get update -qq
+            apt-get install -y -qq qemu-user ca-certificates >/dev/null
+            qemu-x86_64 -cpu Westmere /w/longbridge check'
           code=$?
           if [ "$code" -eq 132 ]; then
             echo "::error::Binary uses instructions unavailable on baseline x86-64 (SIGILL)"
-            exit 1
           fi
+          exit $code
 
       - name: Test Bin [Windows]
         if: matrix.arch == 'x86_64' && matrix.os == 'windows-latest'
