@@ -14,8 +14,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # x86_64 Linux builds are pinned to ubuntu-24.04: the ubuntu-26.04
+          # image installs packages from the `amd64v3` variant, so the C code
+          # we compile (ring) and the static libs we link (musl libc.a) target
+          # x86-64-v3 and crash with SIGILL on CPUs without AVX2 (#347).
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-24.04
             name: longbridge-terminal-linux-amd64.tar.gz
             arch: x86_64
             cross: false
@@ -48,7 +52,7 @@ jobs:
           # Linux install script and work on any Linux system regardless of
           # the glibc version present on the host.
           - target: x86_64-unknown-linux-musl
-            os: ubuntu-latest
+            os: ubuntu-24.04
             name: longbridge-terminal-linux-musl-amd64.tar.gz
             arch: x86_64
             cross: false  # Compile natively on x86_64 runner with musl-tools
@@ -127,6 +131,21 @@ jobs:
           cd target/${{ matrix.target }}/release
           ./longbridge --version
           cd -
+
+      # Run a TLS-exercising command on a CPU model without AVX, so a build
+      # that silently targets x86-64-v3 fails here instead of on users' NAS
+      # boxes. Any exit is fine except SIGILL (132).
+      - name: Test Bin [Linux x86_64, no AVX]
+        if: matrix.arch == 'x86_64' && startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get install -y qemu-user
+          set +e
+          qemu-x86_64 -cpu Westmere target/${{ matrix.target }}/release/longbridge check
+          code=$?
+          if [ "$code" -eq 132 ]; then
+            echo "::error::Binary uses instructions unavailable on baseline x86-64 (SIGILL)"
+            exit 1
+          fi
 
       - name: Test Bin [Windows]
         if: matrix.arch == 'x86_64' && matrix.os == 'windows-latest'
