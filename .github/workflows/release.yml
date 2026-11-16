@@ -88,7 +88,9 @@ jobs:
 
       - name: Install Cross
         if: matrix.cross == true
-        run: cargo install cross --git https://github.com/cross-rs/cross
+        # Pinned: a git build of cross pulls the floating `:main` images, so
+        # Cross.toml pins those by digest. Bump both together.
+        run: cargo install cross --git https://github.com/cross-rs/cross --rev a9301e91f72bba3850460512685f6b16062015ff
 
       - name: Setup | Rust
         uses: dtolnay/rust-toolchain@stable
@@ -129,12 +131,14 @@ jobs:
           ./longbridge --version
           cd -
 
-      # Run a TLS-exercising command on a CPU model without AVX, so a build
-      # that silently targets x86-64-v3 fails here instead of on users' NAS
-      # boxes. It runs inside the official ubuntu image (plain amd64 variant),
+      # Run a TLS-exercising command on qemu64 (baseline x86-64, no
+      # SSE4/AVX), so a build that silently raises the ISA level fails here
+      # instead of on users' NAS boxes. This is a smoke test of the paths
+      # `check` reaches, not proof. It runs inside the official ubuntu image
+      # (plain amd64 variant),
       # not on the runner, so qemu and the glibc the gnu build loads are
       # baseline too. `check` exits 0 even when unauthenticated or offline.
-      - name: Test Bin [Linux x86_64, no AVX]
+      - name: Test Bin [Linux x86_64, baseline CPU]
         if: matrix.arch == 'x86_64' && matrix.os == 'ubuntu-latest'
         run: |
           set +e
@@ -142,7 +146,7 @@ jobs:
             set -e
             apt-get update -qq
             apt-get install -y -qq qemu-user ca-certificates >/dev/null
-            qemu-x86_64 -cpu Westmere /w/longbridge check'
+            qemu-x86_64 -cpu qemu64 /w/longbridge check'
           code=$?
           if [ "$code" -eq 132 ]; then
             echo "::error::Binary uses instructions unavailable on baseline x86-64 (SIGILL)"
