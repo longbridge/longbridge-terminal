@@ -3265,14 +3265,22 @@ mod tests {
 
     #[test]
     fn test_risk_assessment_rows_render_maps_and_unset_values() {
-        let rows = risk_assessment_rows(&sample_risk_assessment());
+        let sample = sample_risk_assessment();
+        let rows = risk_assessment_rows(&sample);
         let get = |label: &str| {
             rows.iter()
                 .find(|r| r[0] == label)
                 .unwrap_or_else(|| panic!("missing row {label}"))[1]
                 .clone()
         };
-        assert_eq!(rows.len(), 9, "one row per RiskAssessment field");
+        // Tie the row count to the struct, not a literal: a field added to
+        // the SDK must show up in the table instead of being silently dropped.
+        let field_count = serde_json::to_value(&sample)
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .len();
+        assert_eq!(rows.len(), field_count, "one row per RiskAssessment field");
         assert_eq!(get("Risk Level"), "A5");
         assert_eq!(get("Score"), "0");
         assert_eq!(get("Assessed At"), "2026-10-14");
