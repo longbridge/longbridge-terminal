@@ -150,8 +150,12 @@ too_many_lines = "allow"
 # branch-pinned source stops resolving in a clean checkout (CI, release builds)
 # even though a warm ~/.cargo/git cache keeps working locally.
 #
+# NOTE: `longbridge = "5.3.0"` above is a `^5.3.0` requirement, and crates.io
+# 5.4.0 is already published WITHOUT this API — removing the patch without
+# bumping the requirement resolves to a version that does not compile.
+#
 # NOTE: this patch is not only the new API — it also moves the SDK 5.3.0 -> 5.4.0
 # (oauth2 4.4 -> 5.0, reqwest 0.11 -> 0.12, PKCE, typed `Error::OAuth`), which is
 # where most of the Cargo.lock churn comes from.
 [patch.crates-io]
-longbridge = { git = "https://github.com/longbridge/openapi", rev = "0f94aa5d0" }
+longbridge = { git = "https://github.com/longbridge/openapi", rev = "820c2f83bcc1385e331137cfff1f3c1180e513d6" }
