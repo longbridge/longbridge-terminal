@@ -125,11 +125,10 @@ pub fn oauth_credentials_available() -> Result<bool> {
                  The token is bound to this machine's identity, so replacing the host (a new \
                  cloud VM, a reinstall, or a regenerated machine ID) invalidates it even though \
                  the file itself was preserved.\n\
-                 Run `longbridge auth login` to re-authenticate. To keep a token working across \
-                 host replacements, pin the machine ID: on Linux persist `/etc/machine-id` (and \
-                 `/var/lib/dbus/machine-id`) and restore it on each new host before running the \
-                 CLI.\n\
+                 Run `longbridge auth login` to re-authenticate.\n\
+                 {}\n\
                  Token file: {}",
+                machine_id_hint(),
                 token_path.display()
             ),
             _ => anyhow::anyhow!(
@@ -140,6 +139,41 @@ pub fn oauth_credentials_available() -> Result<bool> {
         });
     }
     Ok(true)
+}
+
+/// Advice for keeping a token usable across host replacements.
+///
+/// The machine identity comes from a different place on each platform, so a
+/// single hint would be wrong for most readers. `machine-uid` reads
+/// `/etc/machine-id` (falling back to `/var/lib/dbus/machine-id`) on Linux,
+/// the `MachineGuid` registry value on Windows, and the hardware UUID via
+/// `gethostuuid(3)` on macOS — the last of which is not something a user can
+/// pin, so say so rather than suggest a workaround that cannot work.
+fn machine_id_hint() -> &'static str {
+    #[cfg(target_os = "linux")]
+    {
+        "To keep a token working across host replacements, pin the machine ID: persist \
+         `/etc/machine-id` (and `/var/lib/dbus/machine-id`) and restore it on each new host \
+         before running the CLI."
+    }
+    #[cfg(target_os = "windows")]
+    {
+        "To keep a token working across host replacements, pin the machine ID: the identity \
+         comes from the `MachineGuid` value under \
+         `HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography`, which must be restored to \
+         the same value on each new host before running the CLI."
+    }
+    #[cfg(target_os = "macos")]
+    {
+        "On macOS the identity is the hardware UUID, which cannot be pinned, so a token \
+         cannot be carried to different hardware. Re-authenticating on each machine is the \
+         only option here."
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    {
+        "The token is bound to a platform-specific machine identifier; if that identifier \
+         cannot be kept stable across hosts, re-authenticating on each one is the only option."
+    }
 }
 
 /// Initialize contexts (should be called once at app startup).
