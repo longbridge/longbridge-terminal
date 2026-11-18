@@ -60,10 +60,48 @@ fn load_payload_with_migration(client_id: &str) -> Option<EncryptedPayload> {
     Some(payload)
 }
 
+/// Why a stored token could not be loaded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoadFailure {
+    /// No token file exists for this client.
+    Missing,
+    /// The file is in the encrypted format but this machine's key does not
+    /// open it — the usual cause is that the token was written on a different
+    /// machine, or that the machine identity changed under us (a replaced
+    /// cloud VM, a reinstall, a regenerated `/etc/machine-id`).
+    WrongMachine,
+    /// The file exists and its key works, or it is a legacy plaintext file,
+    /// but the contents could not be parsed.
+    Unreadable,
+}
+
 impl EncryptedFileTokenStorage {
     /// Load the full token payload as JSON (includes `logged_in_at` and all fields).
     pub fn load_full(client_id: &str) -> Option<serde_json::Value> {
         serde_json::to_value(load_payload_with_migration(client_id)?).ok()
+    }
+
+    /// Classify why [`Self::load_full`] came back empty, so the caller can tell
+    /// the user what actually went wrong instead of only that it failed.
+    pub fn diagnose(client_id: &str) -> LoadFailure {
+        let Ok(path) = token_path(client_id) else {
+            return LoadFailure::Missing;
+        };
+        let Ok(bytes) = std::fs::read(&path) else {
+            return LoadFailure::Missing;
+        };
+        classify(&bytes)
+    }
+}
+
+/// Classify the bytes of a token file. Split out from [`EncryptedFileTokenStorage::diagnose`]
+/// so it can be tested without touching the real token path, which is a fixed
+/// location in the user's home directory.
+fn classify(bytes: &[u8]) -> LoadFailure {
+    if bytes.starts_with(MAGIC) && decrypt(bytes).is_err() {
+        LoadFailure::WrongMachine
+    } else {
+        LoadFailure::Unreadable
     }
 }
 
@@ -264,6 +302,39 @@ mod tests {
             decrypt(&encrypted).is_err(),
             "expected decryption failure on tampered data"
         );
+    }
+
+    /// A token file written on another machine is encrypted with a key this
+    /// machine cannot derive, so it must be reported as such rather than as a
+    /// generic read failure — that distinction is the whole point of the
+    /// message the user sees.
+    #[test]
+    fn classifies_a_foreign_machines_token_as_wrong_machine() {
+        // Encrypt with a key derived from a machine ID that is not ours.
+        let hk = hkdf::Hkdf::<sha2::Sha256>::new(None, b"some-other-machines-id");
+        let mut key_bytes = [0u8; 32];
+        hk.expand(HKDF_INFO, &mut key_bytes).unwrap();
+        let key = *aes_gcm::Key::<Aes256Gcm>::from_slice(&key_bytes);
+        let cipher = Aes256Gcm::new(&key);
+        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+        let ciphertext = cipher.encrypt(&nonce, b"token payload".as_ref()).unwrap();
+        let mut data = Vec::new();
+        data.extend_from_slice(MAGIC);
+        data.extend_from_slice(&nonce);
+        data.extend_from_slice(&ciphertext);
+
+        assert_eq!(classify(&data), LoadFailure::WrongMachine);
+    }
+
+    #[test]
+    fn classifies_other_damage_as_unreadable() {
+        // A legacy plaintext file that is no longer valid JSON has no magic
+        // header, so it is not a machine-binding problem.
+        assert_eq!(classify(b"{not json"), LoadFailure::Unreadable);
+        assert_eq!(classify(b""), LoadFailure::Unreadable);
+        // Our own key opens this one; whatever is wrong is not the machine.
+        let ours = encrypt(b"{}").unwrap();
+        assert_eq!(classify(&ours), LoadFailure::Unreadable);
     }
 
     #[test]

@@ -111,14 +111,33 @@ pub fn oauth_credentials_available() -> Result<bool> {
     if !token_path.exists() {
         return Ok(false);
     }
-    if crate::secure_storage::EncryptedFileTokenStorage::load_full(
-        &crate::auth::effective_client_id(),
-    )
-    .is_none()
-    {
-        return Err(anyhow::anyhow!(
-            "Failed to decrypt auth token. Please run `longbridge auth login` to re-authenticate."
-        ));
+    let client_id = crate::auth::effective_client_id();
+    if crate::secure_storage::EncryptedFileTokenStorage::load_full(&client_id).is_none() {
+        use crate::secure_storage::{EncryptedFileTokenStorage, LoadFailure};
+        return Err(match EncryptedFileTokenStorage::diagnose(&client_id) {
+            // Naming the cause matters: the token is encrypted with a key
+            // derived from this machine's identity, so a replaced cloud VM,
+            // a reinstall or a regenerated machine-id silently invalidates a
+            // token file that migrated across with the home directory.
+            LoadFailure::WrongMachine => anyhow::anyhow!(
+                "The stored auth token was encrypted for a different machine and cannot be \
+                 decrypted here.\n\
+                 The token is bound to this machine's identity, so replacing the host (a new \
+                 cloud VM, a reinstall, or a regenerated machine ID) invalidates it even though \
+                 the file itself was preserved.\n\
+                 Run `longbridge auth login` to re-authenticate. To keep a token working across \
+                 host replacements, pin the machine ID: on Linux persist `/etc/machine-id` (and \
+                 `/var/lib/dbus/machine-id`) and restore it on each new host before running the \
+                 CLI.\n\
+                 Token file: {}",
+                token_path.display()
+            ),
+            _ => anyhow::anyhow!(
+                "The stored auth token could not be read ({}). Please run `longbridge auth \
+                 login` to re-authenticate.",
+                token_path.display()
+            ),
+        });
     }
     Ok(true)
 }
