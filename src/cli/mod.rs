@@ -747,6 +747,8 @@ pub enum Commands {
     ///
     /// Default: current metrics + 5-year range + peer comparison.
     /// With --history: returns historical valuation time series (default indicator: pe).
+    /// In history output, high/low are the upper/lower bounds of the fair-value band,
+    /// not the period's max/min (the series can rise above high or fall below low).
     /// Example: longbridge valuation TSLA.US
     /// Example: longbridge valuation TSLA.US --history
     /// Example: longbridge valuation TSLA.US --history --indicator pb --range 5

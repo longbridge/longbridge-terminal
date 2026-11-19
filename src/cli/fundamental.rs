@@ -1128,7 +1128,8 @@ fn print_valuation_detail(data: &Value) {
     }
     let ind = indicator.as_str();
 
-    // Overview: current value vs historical range and industry median
+    // Overview: current value vs the fair-value band (high/low are its upper/lower
+    // bounds, not the period's max/min) and industry median
     {
         let ov_m = &overview["metrics"][ind];
         let hist_m = &data["history"]["metrics"][ind];
