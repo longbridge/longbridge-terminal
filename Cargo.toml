@@ -160,4 +160,4 @@ too_many_lines = "allow"
 # (oauth2 4.4 -> 5.0, reqwest 0.11 -> 0.12, PKCE, typed `Error::OAuth`), which is
 # where most of the Cargo.lock churn comes from.
 [patch.crates-io]
-longbridge = { git = "https://github.com/longbridge/openapi", rev = "c0a8733753b40f6b745cb6f8ef47ed318ff8b6d5" }
+longbridge = { git = "https://github.com/longbridge/openapi", rev = "4fddc66752b47444a252582e99af0f022eea8467" }

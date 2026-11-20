@@ -2113,7 +2113,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
- "webpki-roots 1.0.6",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -2605,8 +2605,8 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "longbridge"
-version = "5.4.0"
-source = "git+https://github.com/longbridge/openapi?rev=c0a8733753b40f6b745cb6f8ef47ed318ff8b6d5#c0a8733753b40f6b745cb6f8ef47ed318ff8b6d5"
+version = "5.5.0"
+source = "git+https://github.com/longbridge/openapi?rev=4fddc66752b47444a252582e99af0f022eea8467#4fddc66752b47444a252582e99af0f022eea8467"
 dependencies = [
  "anyhow",
  "bitflags 2.10.0",
@@ -2658,8 +2658,8 @@ dependencies = [
 
 [[package]]
 name = "longbridge-candlesticks"
-version = "5.4.0"
-source = "git+https://github.com/longbridge/openapi?rev=c0a8733753b40f6b745cb6f8ef47ed318ff8b6d5#c0a8733753b40f6b745cb6f8ef47ed318ff8b6d5"
+version = "5.5.0"
+source = "git+https://github.com/longbridge/openapi?rev=4fddc66752b47444a252582e99af0f022eea8467#4fddc66752b47444a252582e99af0f022eea8467"
 dependencies = [
  "bitflags 2.10.0",
  "num-traits",
@@ -2670,16 +2670,16 @@ dependencies = [
 
 [[package]]
 name = "longbridge-geo"
-version = "5.4.0"
-source = "git+https://github.com/longbridge/openapi?rev=c0a8733753b40f6b745cb6f8ef47ed318ff8b6d5#c0a8733753b40f6b745cb6f8ef47ed318ff8b6d5"
+version = "5.5.0"
+source = "git+https://github.com/longbridge/openapi?rev=4fddc66752b47444a252582e99af0f022eea8467#4fddc66752b47444a252582e99af0f022eea8467"
 dependencies = [
  "reqwest",
 ]
 
 [[package]]
 name = "longbridge-httpcli"
-version = "5.4.0"
-source = "git+https://github.com/longbridge/openapi?rev=c0a8733753b40f6b745cb6f8ef47ed318ff8b6d5#c0a8733753b40f6b745cb6f8ef47ed318ff8b6d5"
+version = "5.5.0"
+source = "git+https://github.com/longbridge/openapi?rev=4fddc66752b47444a252582e99af0f022eea8467#4fddc66752b47444a252582e99af0f022eea8467"
 dependencies = [
  "dotenv",
  "eventsource-stream",
@@ -2701,8 +2701,8 @@ dependencies = [
 
 [[package]]
 name = "longbridge-oauth"
-version = "5.4.0"
-source = "git+https://github.com/longbridge/openapi?rev=c0a8733753b40f6b745cb6f8ef47ed318ff8b6d5#c0a8733753b40f6b745cb6f8ef47ed318ff8b6d5"
+version = "5.5.0"
+source = "git+https://github.com/longbridge/openapi?rev=4fddc66752b47444a252582e99af0f022eea8467#4fddc66752b47444a252582e99af0f022eea8467"
 dependencies = [
  "dirs 6.0.0",
  "futures-util",
@@ -2718,8 +2718,8 @@ dependencies = [
 
 [[package]]
 name = "longbridge-proto"
-version = "5.4.0"
-source = "git+https://github.com/longbridge/openapi?rev=c0a8733753b40f6b745cb6f8ef47ed318ff8b6d5#c0a8733753b40f6b745cb6f8ef47ed318ff8b6d5"
+version = "5.5.0"
+source = "git+https://github.com/longbridge/openapi?rev=4fddc66752b47444a252582e99af0f022eea8467#4fddc66752b47444a252582e99af0f022eea8467"
 dependencies = [
  "prost 0.14.3",
  "serde",
@@ -2801,8 +2801,8 @@ dependencies = [
 
 [[package]]
 name = "longbridge-wscli"
-version = "5.4.0"
-source = "git+https://github.com/longbridge/openapi?rev=c0a8733753b40f6b745cb6f8ef47ed318ff8b6d5#c0a8733753b40f6b745cb6f8ef47ed318ff8b6d5"
+version = "5.5.0"
+source = "git+https://github.com/longbridge/openapi?rev=4fddc66752b47444a252582e99af0f022eea8467#4fddc66752b47444a252582e99af0f022eea8467"
 dependencies = [
  "byteorder",
  "flate2",
@@ -2811,11 +2811,14 @@ dependencies = [
  "longbridge-proto",
  "num_enum",
  "prost 0.14.3",
+ "rustls",
+ "rustls-native-certs",
  "thiserror 2.0.18",
  "tokio",
  "tokio-tungstenite",
  "tracing",
  "url",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -4091,7 +4094,7 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-streams",
  "web-sys",
- "webpki-roots 1.0.6",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -5351,11 +5354,11 @@ dependencies = [
  "futures-util",
  "log",
  "rustls",
+ "rustls-native-certs",
  "rustls-pki-types",
  "tokio",
  "tokio-rustls",
  "tungstenite",
- "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -5931,15 +5934,6 @@ checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "webpki-roots"
-version = "0.26.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9"
-dependencies = [
- "webpki-roots 1.0.6",
 ]
 
 [[package]]
