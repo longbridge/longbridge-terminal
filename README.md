@@ -341,6 +341,7 @@ longbridge portfolio short-margin                          # Short-selling margi
 longbridge positions                                       # Current stock (equity) positions across all sub-accounts
 longbridge fund-positions                                  # Current fund (mutual fund) positions across all sub-accounts (AP accounts only)
 longbridge margin-ratio TSLA.US                            # Margin ratio requirements for a symbol (AP accounts only)
+longbridge risk-assessment                                 # Risk assessment profile: risk level, score, assessment date, PI status, approvals (CAR / CKA), strategy risk levels
 longbridge max-qty TSLA.US --side buy --price 250          # Estimate maximum buy or sell quantity given current account balance
 ```
 

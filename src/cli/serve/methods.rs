@@ -104,6 +104,7 @@ const TRADE_METHODS: &[&str] = &[
     "stock_positions",
     "fund_positions",
     "margin_ratio",
+    "risk_assessment",
     "estimate_max_purchase_quantity",
     "us_asset_overview",
     "us_cash_and_buy_power",
@@ -582,6 +583,7 @@ async fn call_trade(name: &str, p: Params<'_>) -> Result<Value> {
         "stock_positions" => ok(api.stock_positions().await?),
         "fund_positions" => ok(api.fund_positions().await?),
         "margin_ratio" => ok(api.margin_ratio(p.str("symbol")?).await?),
+        "risk_assessment" => ok(api.risk_assessment().await?),
         "estimate_max_purchase_quantity" => {
             let mut opts = EstimateMaxPurchaseQuantityOptions::new(
                 p.str("symbol")?,
@@ -1004,6 +1006,9 @@ mod tests {
             "us_query_orders",
             "us_order_detail",
             "submit_order",
+            // Whether the US data center serves it is unknown, so the server
+            // answers rather than a client-side rejection.
+            "risk_assessment",
         ] {
             assert!(ap_only_method_error(name).is_none(), "{name}");
         }

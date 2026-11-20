@@ -1091,6 +1091,14 @@ pub enum Commands {
         symbol: String,
     },
 
+    /// Risk assessment (suitability) profile of the current member
+    ///
+    /// Returns: `risk` (risk level of the latest questionnaire), `score`, `risk_assessment_at`,
+    /// `pi` (professional investor status code), `pi_end_at`, `approvals` (e.g. car / cka / `risk_audit`),
+    /// `deadlines`, `re_authentication`, `strategy_risk_levels`.
+    /// Example: longbridge risk-assessment
+    RiskAssessment,
+
     /// Estimate maximum buy or sell quantity given current account balance
     ///
     /// Returns: `cash_max_qty` (cash only), `margin_max_qty` (with margin financing).
@@ -4545,6 +4553,7 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
         Commands::FundPositions => trade::cmd_fund_positions(format).await,
         Commands::Fund { cmd } => fund::run(cmd, format).await,
         Commands::MarginRatio { symbol } => trade::cmd_margin_ratio(symbol, format).await,
+        Commands::RiskAssessment => trade::cmd_risk_assessment(format).await,
         Commands::MaxQty {
             symbol,
             side,
@@ -6018,6 +6027,14 @@ mod tests {
         assert!(
             matches!(cli.command, Some(Commands::MarginRatio { symbol }) if symbol == "TSLA.US")
         );
+    }
+
+    #[test]
+    fn test_risk_assessment_subcommand() {
+        let cli = parse(&["longbridge", "risk-assessment"]).unwrap();
+        assert!(matches!(cli.command, Some(Commands::RiskAssessment)));
+        // Takes no arguments.
+        assert!(parse(&["longbridge", "risk-assessment", "TSLA.US"]).is_err());
     }
 
     #[test]

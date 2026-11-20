@@ -74,6 +74,7 @@ const COMMANDS: Command[] = [
   { section: "Account", example: "positions" },
   { section: "Account", example: "fund-positions" },
   { section: "Account", example: "margin-ratio TSLA.US" },
+  { section: "Account", example: "risk-assessment" },
   { section: "Account", example: "max-qty TSLA.US --side buy --price 200" },
 ];
 

@@ -139,3 +139,25 @@ needless_pass_by_value = "allow"
 pedantic = { level = "deny", priority = -1 }
 too_many_arguments = "allow"
 too_many_lines = "allow"
+
+# TEMPORARY: `TradeContext::risk_assessment` is not in a released SDK yet
+# (longbridge/openapi#625). Remove this section and bump `longbridge` above to
+# the release that contains it. Only `longbridge` is patched: it is the sole
+# crate from that workspace this package depends on directly, and its sibling
+# crates come along from the same git source.
+#
+# Pinned by `rev`, not `branch`: a branch pin stops resolving once #625 merges
+# and its branch is deleted; a warm ~/.cargo/git cache hides that locally, CI
+# and release builds do not. The full 40-char SHA is preferred over an
+# abbreviation because cargo can then fetch it directly by SHA instead of
+# resolving the prefix first.
+#
+# NOTE: `longbridge = "5.3.0"` above is a `^5.3.0` requirement, and crates.io
+# 5.4.0 is already published WITHOUT this API — removing the patch without
+# bumping the requirement resolves to a version that does not compile.
+#
+# NOTE: this patch is not only the new API — it also moves the SDK 5.3.0 -> 5.4.0
+# (oauth2 4.4 -> 5.0, reqwest 0.11 -> 0.12, PKCE, typed `Error::OAuth`), which is
+# where most of the Cargo.lock churn comes from.
+[patch.crates-io]
+longbridge = { git = "https://github.com/longbridge/openapi", rev = "c0a8733753b40f6b745cb6f8ef47ed318ff8b6d5" }
