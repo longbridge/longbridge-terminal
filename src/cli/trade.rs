@@ -1067,6 +1067,7 @@ pub async fn cmd_submit_order(
     execute: Option<String>,
     format: &OutputFormat,
 ) -> Result<()> {
+    crate::cli::output::warn_papertrading_mismatch();
     let ot = parse_order_type(&order_type)?;
     let tif_val = parse_tif(&tif)?;
     let qty = Decimal::from(quantity);
@@ -1270,6 +1271,7 @@ pub async fn cmd_replace_order(
     execute: Option<String>,
     format: &OutputFormat,
 ) -> Result<()> {
+    crate::cli::output::warn_papertrading_mismatch();
     let quantity = qty.ok_or_else(|| anyhow::anyhow!("--qty is required"))?;
     let qty_dec = Decimal::from(quantity);
 

@@ -93,6 +93,14 @@ LONGBRIDGE_REGION=global ...  # Pin the access point explicitly (cn or global)
 
 `check` never trusts the cache. It re-detects, measures both endpoints, and repins to whichever one is decisively better — location only approximates that, and a split-tunnel proxy can route the geo probe and the API over entirely different paths. The result is persisted, so later commands follow it too.
 
+### Paper trading
+
+Whether you are on a paper or a live account is decided by **the account you sign in with**, not by a flag. `longbridge auth status` names it, and position and asset output is prefixed with `Account: Demo A/C` or `Account: Live A/C`, both read from your own access token. That is the indicator to trust.
+
+The SDK also reads `LONGBRIDGE_PAPERTRADING=true` from the environment and, when set, sends an `x-papertrading: true` header asking the server to serve the paper account and reject a real-money credential.
+
+> **That header is not protection today.** The server does not apply the check to OAuth credentials — which is what this CLI signs in with — in any region, so a real-money account answers normally and nothing in the output says the switch was ignored. LBUS accounts have no paper trading environment at all. `order buy`, `order sell` and `order replace` therefore print a warning when the switch is set but your account is not a paper account, and the SDK refuses order submission and replacement outright on an LBUS credential (longbridge/openapi#637). Do not rely on the environment variable to keep an order off your real account — check the banner.
+
 ## Shell Completion
 
 Enable tab-completion for `longbridge` commands and flags in your shell:

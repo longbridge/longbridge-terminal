@@ -75,6 +75,36 @@ pub fn print_account_banner(format: &OutputFormat) {
     println!();
 }
 
+/// Warn, on stderr, when paper trading was requested through the environment
+/// but the signed-in account is not a paper trading account.
+///
+/// `LONGBRIDGE_PAPERTRADING=true` only adds an `x-papertrading` header; the
+/// server decides what it means. It does **not** reject a real-money token
+/// under OAuth — which is how this CLI signs in — so the request runs against
+/// the real account with nothing in the response saying so, and the LBUS data
+/// center has no paper trading account to serve in the first place. The SDK
+/// refuses an order on a `us_` token, but it cannot tell for any other region,
+/// and the account channel in our own token can.
+///
+/// Printed to stderr so `--format json` output stays parsable.
+pub fn warn_papertrading_mismatch() {
+    let requested = std::env::var("LONGBRIDGE_PAPERTRADING")
+        .or_else(|_| std::env::var("LONGPORT_PAPERTRADING"))
+        .map(|value| value == "true")
+        .unwrap_or(false);
+    if !requested {
+        return;
+    }
+    if crate::auth::account_channel().as_deref() == Some("lb_papertrading") {
+        return;
+    }
+    eprintln!(
+        "{YELLOW}warning: paper trading is requested (LONGBRIDGE_PAPERTRADING=true), but you are \
+         signed in with a real-money account. The server does not reject this, so this order \
+         would be placed for real.{RESET}"
+    );
+}
+
 fn print_markdown_table(headers: &[&str], rows: &[Vec<String>]) {
     let mut builder = Builder::default();
     builder.push_record(headers.iter().copied());
