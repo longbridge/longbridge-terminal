@@ -219,9 +219,21 @@ longbridge macrodata US00175 [--start 2024-01-01] [--end 2024-12-31] # 某指标
 ### 出入金
 
 ```bash
-longbridge bank-cards # 列出已绑定的银行卡
-longbridge withdrawals [--page 1] [--limit 20] # 出金历史
-longbridge deposits [--page 1] [--limit 20] [--states 0,1,2] [--currencies HKD,USD] # 入金历史
+longbridge bank-cards # 已绑定的银行卡：验证、绑定、授权状态（账号仅显示后 4 位）
+longbridge edda # 各银行卡的 eDDA 授权
+longbridge edda-status --card-id 434810 --currency HKD # 某张卡某币种的 eDDA 授权申请
+longbridge withdrawals [--page 1] [--limit 20] [--start 2026-01-01] [--end 2026-03-31] # 出金历史
+longbridge deposits [--page 1] [--limit 20] [--states 0,2] [--currencies HKD,USD] [--start 2026-01-01] [--end 2026-03-31] # 入金历史（states：0 处理中、1 已到账、2 失败、3 已取消、4 已失效、5 已拒绝）
+longbridge stock-transfers-in [--market HK] [--state 0] [--start 2026-01-01] [--end 2026-03-31] # 转入股票申请
+longbridge stock-transfers-out [--market HK] [--state 0] [--start 2026-01-01] [--end 2026-03-31] # 转出股票申请
+```
+
+### 奖励与卡券
+
+```bash
+longbridge rewards [--kind cash|gift|coupon|task] [--start 2026-08-01] [--end 2026-08-31] # 活动奖励记录
+longbridge coupons [--status valid|expired] [--card-type commission] [--with-terms] # 卡券
+longbridge coupon-orders --card-id <32 位卡券 id> # 卡券用于的订单
 ```
 
 ### 搜索
