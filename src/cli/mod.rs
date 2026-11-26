@@ -2199,9 +2199,9 @@ pub enum EddaCmd {
     ///
     /// Most eDDA authorizations (e.g. pushed by the bank) have no application, so this is
     /// usually empty: check `longbridge edda list` first. Returns applications[]{id, flow_id, name,
-    /// currency, authorization (unauthorized/authorized/authorizing/failed), failure_reason,
-    /// created_at, updated_at}; an authorization with no known label is shown as its raw status
-    /// code. Times are Hong Kong time (+08:00).
+    /// currency, authorization (unauthorized/authorized/authorizing/failed), status (raw code,
+    /// only when authorization has no label: authorization is then absent), failure_reason,
+    /// created_at, updated_at}. Times are Hong Kong time (+08:00).
     ///
     /// Not available for accounts in the US data center (there is no US equivalent).
     ///
@@ -2350,7 +2350,8 @@ pub enum CouponCmd {
     /// ipo_commission{bz_types (1 financing IPO, 2 cash IPO), counter_id, counter_name,
     /// financing_limit}, ipo_interest{discount_rate (annual rate)}, platform_fee_deduct{bz_types,
     /// counter_id, counter_name, markets, usage_count, lave_usage_count, superposition},
-    /// finance_interest{discount_mode, discount_rate, superposition (meaning not confirmed)},
+    /// finance_interest{discount_mode, discount_rate, superposition} (the meaning of all three
+    /// is not confirmed),
     /// fund_deduct{max_risk_level, min_order_amount, order_types, underlying_type,
     /// underlying_values, underlying_names}, crypto{fallback{enabled, counter_id},
     /// optional_counters[]{counter_id}}}, total, expired_count}. Which orders a card was applied

@@ -587,14 +587,14 @@ pub async fn cmd_deposits(
         opts = opts.end(end);
     }
     let ctx = crate::openapi::statement();
-    let items = ap_call(
+    let resp = ap_call(
         "deposits",
         "/v1/account/deposits",
         verbose,
         ctx.deposits(opts),
     )
     .await?;
-    let value = shape_deposits(&items, size as usize);
+    let value = shape_deposits(&resp);
     match format {
         OutputFormat::Json => print_shaped_json(&value),
         OutputFormat::Pretty => {
@@ -682,7 +682,8 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
                 "object[]",
                 "Applications: {id, flow_id, name, currency, authorization \
                  (unauthorized/authorized/authorizing/failed), status (raw code, only when \
-                 authorization has no label), failure_reason, created_at, updated_at}. Usually \
+                 authorization has no label: authorization is then absent), failure_reason, \
+                 created_at, updated_at}. Usually \
                  empty: an eDDA pushed by the bank has no application",
             )],
         ),

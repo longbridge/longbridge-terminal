@@ -335,7 +335,7 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
                      counter_name, financing_limit}, ipo_interest{discount_rate (annual rate)}, \
                      platform_fee_deduct{bz_types, counter_id, counter_name, markets, usage_count, \
                      lave_usage_count, superposition}, finance_interest{discount_mode, \
-                     discount_rate, superposition (meaning not confirmed)}, \
+                     discount_rate, superposition} (the meaning of all three is not confirmed), \
                      fund_deduct{max_risk_level, min_order_amount, order_types, underlying_type, \
                      underlying_values, underlying_names}, crypto{fallback{enabled, counter_id}, \
                      optional_counters[]{counter_id}}}. Times are Hong Kong time (+08:00)",

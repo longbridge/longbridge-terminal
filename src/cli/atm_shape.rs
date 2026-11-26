@@ -13,9 +13,10 @@
 use anyhow::{bail, Result};
 use longbridge::asset::{
     AuthorizationStatus, BankCard, BankCardAuthorization, BankCardBindState, BankCardStatus,
-    BankCardWitnessState, Deposit, DepositState, EddaApplication, StockTransferIn,
-    StockTransferInResponse, StockTransferInState, StockTransferOut, StockTransferOutState,
-    TransferStock, TransferStockState, Withdrawal, WithdrawalState, WithdrawalsResponse,
+    BankCardWitnessState, Deposit, DepositState, DepositsResponse, EddaApplication,
+    StockTransferIn, StockTransferInResponse, StockTransferInState, StockTransferOut,
+    StockTransferOutState, TransferStock, TransferStockState, Withdrawal, WithdrawalState,
+    WithdrawalsResponse,
 };
 use rust_decimal::Decimal;
 use serde_json::{json, Value};
@@ -676,15 +677,11 @@ fn shape_deposit(item: &Deposit) -> Value {
 }
 
 /// `{items[], has_more}` output of `deposits`. The server's `total` is capped
-/// at the page size, so it would read as a wrong record count: `has_more`
-/// replaces it.
-pub(crate) fn shape_deposits(items: &[Deposit], page_size: usize) -> Value {
-    let list: Vec<Value> = items.iter().map(shape_deposit).collect();
-    finish(with_has_more(
-        json!({ "items": list }),
-        items.len(),
-        page_size,
-    ))
+/// at the page size, so it would read as a wrong record count: the SDK's
+/// `has_more` (a full page of the size actually sent) replaces it.
+pub(crate) fn shape_deposits(resp: &DepositsResponse) -> Value {
+    let list: Vec<Value> = resp.items.iter().map(shape_deposit).collect();
+    finish(json!({ "items": list, "has_more": resp.has_more }))
 }
 
 /// Parse a deposit `--states` filter: comma-separated numeric codes 0..5.
@@ -1066,8 +1063,8 @@ mod tests {
         let item = &shape_withdrawals(&resp, 20)["list"][0];
         assert_eq!(item["state"], 42, "raw withdrawal state");
         assert!(item.get("state_label").is_none(), "unlabelled");
-        let items: Vec<Deposit> = decode(json!([{"id": 1, "state_code": 9}]));
-        assert_eq!(shape_deposits(&items, 20)["items"][0]["state_code"], 9);
+        let resp: DepositsResponse = decode(json!({"items": [{"id": 1, "state_code": 9}]}));
+        assert_eq!(shape_deposits(&resp)["items"][0]["state_code"], 9);
         let transfers: StockTransferInResponse =
             decode(json!({"records": [{"state_code": 11, "stocks": [{"state": 6}]}]}));
         let record = &shape_transfers_in(&transfers)["records"][0];
@@ -1133,10 +1130,11 @@ mod tests {
 
     #[test]
     fn deposits_count_vouchers_and_drop_total() {
-        let items: Vec<Deposit> = decode(json!([{"id": 1, "state_code": 1, "state": "已到账",
-            "sub_state_code": 0, "bank_operation_type_id": 3, "disable_link": true,
-            "vouchers": [{"key": "k", "img_url": "https://x/y.png"}]}]));
-        let out = shape_deposits(&items, 20);
+        let resp: DepositsResponse = decode(json!({"items": [{"id": 1, "state_code": 1,
+            "state": "已到账", "sub_state_code": 0, "bank_operation_type_id": 3,
+            "disable_link": true, "vouchers": [{"key": "k", "img_url": "https://x/y.png"}]}],
+            "total": 20}));
+        let out = shape_deposits(&resp);
         let item = &out["items"][0];
         assert_eq!(item["voucher_count"], 1, "vouchers counted");
         assert!(item.get("vouchers").is_none(), "voucher urls dropped");
@@ -1154,11 +1152,14 @@ mod tests {
         assert_eq!(clamp_deposit_page_size(50), 20, "capped");
         assert_eq!(clamp_deposit_page_size(15), 15, "kept");
         assert_eq!(clamp_deposit_page_size(0), 1, "at least one");
-        let items: Vec<Deposit> = decode(json!(vec![json!({"id": 1}); 20]));
+        let resp = DepositsResponse {
+            items: decode(json!(vec![json!({"id": 1}); 20])),
+            has_more: true,
+        };
         assert_eq!(
-            shape_deposits(&items, clamp_deposit_page_size(50) as usize)["has_more"],
+            shape_deposits(&resp)["has_more"],
             true,
-            "a full capped page may have more"
+            "the SDK's has_more is kept"
         );
     }
 
