@@ -2325,11 +2325,29 @@ pub enum CouponCmd {
     /// {cards[]{card_id, card_type, title, title_sec, description, detail, card_status,
     /// card_status_label (unused/used/expired/redeeming/in_use/processing), start_time,
     /// end_time (absent with no_expiry: true for a card that never expires), activate_time,
-    /// amount, currency, available_trade_session, trade_sessions, commission{markets, targets
-    /// (stocks/options/warrants/ETF/LOF), rebate_rate, bz_types, commission_balance,
-    /// commission_duration, unlimited, commission_expired_time, usage_count, lave_usage_count,
-    /// settlement_model}}, total, expired_count}. Which orders a card was applied to: `coupon
-    /// orders`. Times are Hong Kong time (+08:00).
+    /// amount, currency, available_trade_session, trade_sessions, subscription_id, and the terms of
+    /// the card's own type (the other types are absent): commission{markets, targets
+    /// (stocks/options/warrants/ETF/LOF), rebate_rate, bz_types (0 stocks, 1 options, 2 warrants, 3
+    /// ETF, 4 LOF), commission_balance, commission_duration, unlimited (0 proportionate, 1 full, 2
+    /// lifetime, 6 by amount per, 7 by rate per), commission_expired_time, usage_count,
+    /// lave_usage_count, settlement_model, amount_limit, superposition}, cash{receive_duration},
+    /// coffee_coupon{coupon_channel, coupon_id, coupon_no, is_available_all_store, period_type,
+    /// settled_store_id, store_id_list, store_list[]{store_id, store_name}, threshold, use_limit},
+    /// ai_benefit{benefit_days, benefit_start, benefit_end, benefit_tag}, quote{…} and
+    /// fundamental{…} (each {current_end_time, inapplicable, investor_type (0 any, 1
+    /// non-professional, 2 professional), manual_activate, markets, member_investor_type,
+    /// pair_spu_no, quote_duration, quote_market, quote_tags, superposition}), stock{counter_id,
+    /// counter_name, amount, redemption_type, send_way, optional_counters[]{counter_id, shares},
+    /// fallback{enabled, type, counter_id, shares}}, stock_fragment{counter_id, counter_name,
+    /// market, markets, underlying_type (as bz_types), amounts}, ipo{subscription_id},
+    /// ipo_commission{bz_types (1 financing IPO, 2 cash IPO), counter_id, counter_name,
+    /// financing_limit}, ipo_interest{discount_rate}, platform_fee_deduct{bz_types, counter_id,
+    /// counter_name, markets, usage_count, lave_usage_count, superposition},
+    /// finance_interest{discount_mode, discount_rate, superposition}, fund_deduct{max_risk_level,
+    /// min_order_amount, order_types, underlying_type, underlying_values, underlying_names},
+    /// crypto{fallback{enabled, counter_id}, optional_counters[]{counter_id}}}, total,
+    /// expired_count}. Which orders a card was applied to: `coupon orders`. Times are Hong Kong
+    /// time (+08:00).
     ///
     /// Not available for accounts in the US data center (there is no US equivalent).
     ///

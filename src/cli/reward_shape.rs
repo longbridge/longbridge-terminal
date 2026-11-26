@@ -8,8 +8,11 @@
 
 use anyhow::{bail, Result};
 use longbridge::asset::{
-    Coupon, CouponCommission, CouponOrder, CouponStatus, CouponsResponse, RewardDeliverStatus,
-    RewardRecord, RewardRecordsResponse, RewardStatus, RewardType,
+    Coupon, CouponAiBenefit, CouponCash, CouponCoffee, CouponCommission, CouponCrypto,
+    CouponFinanceInterest, CouponFundDeduct, CouponIpo, CouponIpoCommission, CouponIpoInterest,
+    CouponOrder, CouponPlatformFeeDeduct, CouponQuote, CouponStatus, CouponStock,
+    CouponStockFragment, CouponTargetType, CouponsResponse, RewardDeliverStatus, RewardRecord,
+    RewardRecordsResponse, RewardStatus, RewardType,
 };
 use serde_json::{json, Value};
 use time::OffsetDateTime;
@@ -84,15 +87,32 @@ fn coupon_status_label(status: CouponStatus) -> Option<&'static str> {
 }
 
 /// Commission-card `bz_types`: the instruments the card applies to.
-fn target_type_label(code: i32) -> Option<&'static str> {
-    match code {
-        0 => Some("stocks"),
-        1 => Some("options"),
-        2 => Some("warrants"),
-        3 => Some("ETF"),
-        4 => Some("LOF"),
-        _ => None,
+fn target_type_label(target: CouponTargetType) -> Option<&'static str> {
+    match target {
+        CouponTargetType::Stock => Some("stocks"),
+        CouponTargetType::UsOption => Some("options"),
+        CouponTargetType::HkWarrant => Some("warrants"),
+        CouponTargetType::Etf => Some("ETF"),
+        CouponTargetType::Lof => Some("LOF"),
+        CouponTargetType::Unknown => None,
     }
+}
+
+/// The server codes of typed states, leaving out undocumented ones.
+fn codes<T>(values: &[T]) -> Vec<i32>
+where
+    T: Into<i32> + Default + PartialEq + Copy,
+{
+    values
+        .iter()
+        .filter(|v| **v != T::default())
+        .map(|v| (*v).into())
+        .collect()
+}
+
+/// A per-type terms object, or `null` when the coupon has none of this type.
+fn terms<T>(terms: Option<&T>, shape: fn(&T) -> Value) -> Value {
+    terms.map_or(Value::Null, shape)
 }
 
 /// Prize `prize_type` names: only physical goods are shipped.
@@ -228,21 +248,8 @@ pub(crate) fn coupons_expired(status: Option<&str>) -> Result<bool> {
     }
 }
 
-/// A coupon's commission terms, or `null` for a coupon without any.
+/// A coupon's commission terms.
 fn shape_commission(commission: &CouponCommission) -> Value {
-    let empty = commission.markets.is_empty()
-        && commission.rebate_rate.is_empty()
-        && commission.bz_types.is_empty()
-        && commission.commission_balance.is_none()
-        && commission.commission_duration.is_empty()
-        && !commission.unlimited
-        && commission.commission_expired_time.is_none()
-        && commission.usage_count == 0
-        && commission.lave_usage_count == 0
-        && commission.settlement_model.is_empty();
-    if empty {
-        return Value::Null;
-    }
     // Name the instruments a commission card applies to.
     let targets: Vec<&str> = commission
         .bz_types
@@ -253,14 +260,162 @@ fn shape_commission(commission: &CouponCommission) -> Value {
         "markets": commission.markets,
         "targets": (!targets.is_empty()).then_some(targets),
         "rebate_rate": commission.rebate_rate,
-        "bz_types": commission.bz_types,
+        "bz_types": codes(&commission.bz_types),
         "commission_balance": decimal(commission.commission_balance),
         "commission_duration": commission.commission_duration,
-        "unlimited": commission.unlimited,
+        "unlimited": code(commission.unlimited),
         "commission_expired_time": hk_time(commission.commission_expired_time),
         "usage_count": commission.usage_count,
         "lave_usage_count": commission.lave_usage_count,
         "settlement_model": commission.settlement_model,
+        "amount_limit": commission.amount_limit,
+        "superposition": commission.superposition,
+    })
+}
+
+fn shape_ai_benefit(t: &CouponAiBenefit) -> Value {
+    json!({
+        "benefit_days": t.benefit_days,
+        "benefit_start": hk_time(t.benefit_start),
+        "benefit_end": hk_time(t.benefit_end),
+        "benefit_tag": t.benefit_tag,
+    })
+}
+
+fn shape_cash(t: &CouponCash) -> Value {
+    json!({ "receive_duration": t.receive_duration })
+}
+
+fn shape_coffee(t: &CouponCoffee) -> Value {
+    let stores: Vec<Value> = t
+        .store_list
+        .iter()
+        .map(|s| json!({ "store_id": s.store_id, "store_name": s.store_name }))
+        .collect();
+    json!({
+        "coupon_channel": t.coupon_channel,
+        "coupon_id": t.coupon_id,
+        "coupon_no": t.coupon_no,
+        "is_available_all_store": t.is_available_all_store,
+        "period_type": t.period_type,
+        // 0: not settled at a store yet.
+        "settled_store_id": (t.settled_store_id != 0).then_some(t.settled_store_id),
+        "store_id_list": t.store_id_list,
+        "store_list": stores,
+        "threshold": t.threshold,
+        "use_limit": t.use_limit,
+    })
+}
+
+fn shape_crypto(t: &CouponCrypto) -> Value {
+    let counters: Vec<Value> = t
+        .optional_counters
+        .iter()
+        .map(|c| json!({ "counter_id": c.counter_id }))
+        .collect();
+    json!({
+        "fallback": {
+            "enabled": t.fallback.enabled,
+            "counter_id": t.fallback.counter_id,
+        },
+        "optional_counters": counters,
+    })
+}
+
+fn shape_finance_interest(t: &CouponFinanceInterest) -> Value {
+    json!({
+        "discount_mode": t.discount_mode,
+        "discount_rate": decimal(t.discount_rate),
+        "superposition": t.superposition,
+    })
+}
+
+fn shape_fund_deduct(t: &CouponFundDeduct) -> Value {
+    json!({
+        "max_risk_level": t.max_risk_level,
+        "min_order_amount": t.min_order_amount,
+        "order_types": t.order_types,
+        "underlying_type": t.underlying_type,
+        "underlying_values": t.underlying_values,
+        "underlying_names": t.underlying_names,
+    })
+}
+
+fn shape_quote(t: &CouponQuote) -> Value {
+    json!({
+        "current_end_time": hk_time(t.current_end_time),
+        "inapplicable": t.inapplicable,
+        "investor_type": code(t.investor_type),
+        "manual_activate": t.manual_activate,
+        "markets": t.markets,
+        "member_investor_type": t.member_investor_type,
+        "pair_spu_no": t.pair_spu_no,
+        "quote_duration": t.quote_duration,
+        "quote_market": t.quote_market,
+        "quote_tags": t.quote_tags,
+        "superposition": t.superposition,
+    })
+}
+
+fn shape_ipo(t: &CouponIpo) -> Value {
+    json!({ "subscription_id": t.subscription_id })
+}
+
+fn shape_ipo_commission(t: &CouponIpoCommission) -> Value {
+    json!({
+        "bz_types": codes(&t.bz_types),
+        "counter_id": t.counter_id,
+        "counter_name": t.counter_name,
+        "financing_limit": t.financing_limit,
+    })
+}
+
+fn shape_ipo_interest(t: &CouponIpoInterest) -> Value {
+    json!({ "discount_rate": t.discount_rate })
+}
+
+fn shape_platform_fee_deduct(t: &CouponPlatformFeeDeduct) -> Value {
+    json!({
+        "bz_types": codes(&t.bz_types),
+        "counter_id": t.counter_id,
+        "counter_name": t.counter_name,
+        "markets": t.markets,
+        "usage_count": t.usage_count,
+        "lave_usage_count": t.lave_usage_count,
+        "superposition": t.superposition,
+    })
+}
+
+fn shape_stock(t: &CouponStock) -> Value {
+    let counters: Vec<Value> = t
+        .optional_counters
+        .iter()
+        .map(|c| json!({ "counter_id": c.counter_id, "shares": c.shares }))
+        .collect();
+    json!({
+        "counter_id": t.counter_id,
+        "counter_name": t.counter_name,
+        "amount": decimal(t.amount),
+        "redemption_type": t.redemption_type,
+        "send_way": t.send_way,
+        "optional_counters": counters,
+        "fallback": {
+            "enabled": t.fallback.enabled,
+            "type": t.fallback.fallback_type,
+            "counter_id": t.fallback.counter_id,
+            "shares": t.fallback.shares,
+        },
+    })
+}
+
+fn shape_stock_fragment(t: &CouponStockFragment) -> Value {
+    json!({
+        "counter_id": t.counter_id,
+        "counter_name": t.counter_name,
+        "market": t.market,
+        "markets": t.markets,
+        "underlying_type": code(t.underlying_type),
+        "amounts": t.amounts,
     })
 }
 
@@ -295,8 +450,26 @@ pub(crate) fn shape_coupon(coupon: &Coupon, with_terms: bool) -> Value {
         "amount": decimal(coupon.amount),
         "currency": coupon.currency,
         "available_trade_session": coupon.available_trade_session,
-        "trade_sessions": (!coupon.trade_sessions.is_empty()).then_some(&coupon.trade_sessions),
-        "commission": shape_commission(&coupon.commission),
+        "trade_sessions": coupon.trade_sessions,
+        "subscription_id": coupon.subscription_id,
+        "ai_benefit": terms(coupon.ai_benefit.as_ref(), shape_ai_benefit),
+        "cash": terms(coupon.cash.as_ref(), shape_cash),
+        "coffee_coupon": terms(coupon.coffee_coupon.as_ref(), shape_coffee),
+        "commission": terms(coupon.commission.as_ref(), shape_commission),
+        "crypto": terms(coupon.crypto.as_ref(), shape_crypto),
+        "finance_interest": terms(coupon.finance_interest.as_ref(), shape_finance_interest),
+        "fund_deduct": terms(coupon.fund_deduct.as_ref(), shape_fund_deduct),
+        "fundamental": terms(coupon.fundamental.as_ref(), shape_quote),
+        "ipo": terms(coupon.ipo.as_ref(), shape_ipo),
+        "ipo_commission": terms(coupon.ipo_commission.as_ref(), shape_ipo_commission),
+        "ipo_interest": terms(coupon.ipo_interest.as_ref(), shape_ipo_interest),
+        "platform_fee_deduct": terms(
+            coupon.platform_fee_deduct.as_ref(),
+            shape_platform_fee_deduct
+        ),
+        "quote": terms(coupon.quote.as_ref(), shape_quote),
+        "stock": terms(coupon.stock.as_ref(), shape_stock),
+        "stock_fragment": terms(coupon.stock_fragment.as_ref(), shape_stock_fragment),
     })
 }
 
@@ -610,6 +783,69 @@ mod tests {
             second["cards"][0]["detail"], "terms",
             "with terms keeps detail"
         );
+    }
+
+    #[test]
+    fn coupons_keep_the_terms_of_their_type() {
+        // Synthetic values in the server's wire format: every type key is
+        // present, null for the types that do not apply.
+        let resp: CouponsResponse = serde_json::from_value(json!({"list": [{
+            "card_id": "c1", "card_type": "coffee_coupon", "card_status": 0,
+            "subscription_id": "", "cash": null, "commission": null, "quote": null,
+            "coffee_coupon": {"coupon_channel": "chan", "coupon_id": "", "coupon_no": "N1",
+                "is_available_all_store": false, "period_type": "day", "settled_store_id": "0",
+                "store_id_list": [], "store_list": [], "threshold": "2", "use_limit": "total",
+                "cover": "https://x/c.png"},
+        }, {
+            "card_id": "c2", "card_type": "stock_fragment", "coffee_coupon": null,
+            "stock_fragment": {"amounts": {}, "counter_id": "ST/US/X", "counter_name": "X",
+                "market": "US", "markets": ["US"], "underlying_type": 0},
+            "ai_benefit": null,
+        }, {
+            "card_id": "c3", "card_type": "ai_benefit",
+            "ai_benefit": {"benefit_days": 30, "benefit_start": "1767196800",
+                "benefit_end": "0", "benefit_tag": "t"},
+            "commission": {"bz_types": [1], "markets": ["US"], "unlimited": 6,
+                "commission_duration": "0", "usage_count": "1", "lave_usage_count": "0",
+                "amount_limit": "0", "superposition": false, "commission_expired_time": "0"},
+        }], "total": 3, "expired_count": 0}))
+        .expect("coupons decode");
+        let out = shape_coupons(&resp, 1, false);
+        let coffee = &out["cards"][0];
+        assert_eq!(
+            coffee["coffee_coupon"]["coupon_no"], "N1",
+            "coffee terms kept"
+        );
+        assert_eq!(coffee["coffee_coupon"]["threshold"], 2, "int64 as a number");
+        assert!(
+            coffee["coffee_coupon"].get("settled_store_id").is_none(),
+            "unset store dropped"
+        );
+        assert!(
+            coffee["coffee_coupon"].get("cover").is_none(),
+            "styling dropped"
+        );
+        for key in [
+            "cash",
+            "commission",
+            "quote",
+            "stock_fragment",
+            "subscription_id",
+        ] {
+            assert!(coffee.get(key).is_none(), "{key}: other types absent");
+        }
+        let fragment = &out["cards"][1]["stock_fragment"];
+        assert_eq!(fragment["underlying_type"], 0, "underlying type code");
+        assert_eq!(fragment["amounts"], json!({}), "amounts kept");
+        let ai = &out["cards"][2];
+        assert_eq!(
+            ai["ai_benefit"]["benefit_start"], "2026-01-01T00:00:00+08:00",
+            "Hong Kong time"
+        );
+        assert!(ai["ai_benefit"].get("benefit_end").is_none(), "0 is unset");
+        assert_eq!(ai["commission"]["unlimited"], 6, "unlimited code");
+        assert_eq!(ai["commission"]["bz_types"], json!([1]), "codes");
+        assert_eq!(ai["commission"]["targets"], json!(["options"]), "named");
     }
 
     #[test]
