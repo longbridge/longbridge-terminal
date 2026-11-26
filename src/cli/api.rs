@@ -516,6 +516,84 @@ pub async fn http_get(
     http_get_dc(path, params, None, verbose).await
 }
 
+/// Attempts [`http_get_paced`] makes before giving up on a rate limit.
+const PACED_ATTEMPTS: usize = 3;
+
+/// [`http_get`] for a command that sends several requests to the same route
+/// (paging, or one request per filter value). The gateway rate-limits these
+/// routes to about one call a second per member, so a rate-limited request
+/// waits the delay the upstream suggests and is retried, instead of failing
+/// the whole command.
+pub async fn http_get_paced(
+    path: &str,
+    params: &[(&str, &str)],
+    verbose: bool,
+) -> Result<serde_json::Value> {
+    let mut attempt = 1;
+    loop {
+        match http_get(path, params, verbose).await {
+            Err(err) if attempt < PACED_ATTEMPTS && is_rate_limited(&err) => {
+                let delay = backoff_delay(&format!("{err:#}"));
+                if verbose {
+                    eprintln!("* rate limited, retrying in {}ms", delay.as_millis());
+                }
+                tokio::time::sleep(delay).await;
+                attempt += 1;
+            }
+            result => return result,
+        }
+    }
+}
+
+/// Whether `err` is a gateway rate-limit rejection: an `OpenAPI` business code
+/// in the 429xxx range (429002 "区间调用上限", 429003 "最小间隔"). A bare HTTP
+/// 429 is not matched: the SDK's `send()` already retries that itself.
+fn is_rate_limited(err: &anyhow::Error) -> bool {
+    use longbridge::httpclient::HttpClientError;
+    let http_error = err.downcast_ref::<HttpClientError>().or_else(|| {
+        match err.downcast_ref::<longbridge::Error>() {
+            Some(longbridge::Error::HttpClient(e)) => Some(e),
+            _ => None,
+        }
+    });
+    matches!(
+        http_error,
+        Some(HttpClientError::OpenApi { code, .. }) if (429_000..430_000).contains(code)
+    )
+}
+
+/// How long to wait before retrying a rate-limited call: the wait the upstream
+/// suggests ("请 0.4 秒后重试", "retry after: 1s"), clamped to 200ms..1.5s, or
+/// 500ms when it suggests none.
+fn backoff_delay(message: &str) -> std::time::Duration {
+    fn number_before(text: &str, suffix: &str) -> Option<f64> {
+        let head = text[..text.find(suffix)?].trim_end();
+        let start = head
+            .rfind(|c: char| !(c.is_ascii_digit() || c == '.'))
+            .map_or(0, |i| {
+                i + head[i..].chars().next().map_or(1, char::len_utf8)
+            });
+        head[start..].parse().ok()
+    }
+    fn number_after(text: &str, prefix: &str) -> Option<f64> {
+        let tail = text[text.find(prefix)? + prefix.len()..].trim_start();
+        let end = tail
+            .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+            .unwrap_or(tail.len());
+        tail[..end].parse().ok()
+    }
+    number_before(message, "秒后重试")
+        .or_else(|| number_before(message, "秒後重試"))
+        .or_else(|| number_after(message, "retry after:"))
+        .filter(|secs| secs.is_finite() && *secs >= 0.0)
+        .map_or(std::time::Duration::from_millis(500), |secs| {
+            std::time::Duration::from_secs_f64(secs).clamp(
+                std::time::Duration::from_millis(200),
+                std::time::Duration::from_millis(1500),
+            )
+        })
+}
+
 /// [`http_get`], but restricting the request to a single data center via the
 /// SDK's `dc_restrict` API. Region-limited commands declare their region here; the
 /// SDK short-circuits a mismatched session with a unified error.
@@ -652,6 +730,52 @@ pub async fn http_put(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paced_get_retries_only_gateway_rate_limits() {
+        use longbridge::httpclient::HttpClientError;
+        let api = |code| HttpClientError::OpenApi {
+            code,
+            message: String::new(),
+            trace_id: String::new(),
+        };
+        assert!(
+            is_rate_limited(&anyhow::Error::from(api(429_002))),
+            "429002 is a rate limit"
+        );
+        assert!(
+            is_rate_limited(&anyhow::Error::from(longbridge::Error::from(api(429_003)))),
+            "wrapped 429003 is a rate limit"
+        );
+        assert!(
+            !is_rate_limited(&anyhow::Error::from(api(301_604))),
+            "other codes are not retried"
+        );
+        assert!(
+            !is_rate_limited(&anyhow::anyhow!("other")),
+            "plain errors are not retried"
+        );
+    }
+
+    #[test]
+    fn backoff_delay_reads_the_upstream_hint() {
+        use std::time::Duration;
+        assert_eq!(
+            backoff_delay("code=429002: 已达到 1S 区间调用上限，请 0.4 秒后重试"),
+            Duration::from_millis(400),
+            "suggested wait"
+        );
+        assert_eq!(
+            backoff_delay("retry after: 9s"),
+            Duration::from_millis(1500),
+            "clamped to the maximum"
+        );
+        assert_eq!(
+            backoff_delay("minimum interval between two calls should be 0.02 seconds"),
+            Duration::from_millis(500),
+            "no hint: default"
+        );
+    }
 
     #[test]
     fn us_order_id_is_ascii_digits_only() {

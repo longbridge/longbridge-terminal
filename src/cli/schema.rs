@@ -5,8 +5,8 @@ use std::ffi::OsString;
 
 use super::{
     agent, asset, atm, auth, check, completion, dca, fund, fundamental, grid, init, insider_trades,
-    investors, ipo, news, quote, run_script, screener, sharelist, signal, statement, topic, trade,
-    watchlist, Cli,
+    investors, ipo, news, quote, reward, run_script, screener, sharelist, signal, statement, topic,
+    trade, watchlist, Cli,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -414,7 +414,14 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<ResponseSchema> {
         "sharelist" => sharelist::schema_for_path(path),
         "quant" => run_script::schema_for_path(path),
         "screener" => screener::schema_for_path(path),
-        "bank-cards" | "withdrawals" | "deposits" => atm::schema_for_path(path),
+        "bank-cards"
+        | "edda"
+        | "edda-status"
+        | "stock-transfers-in"
+        | "stock-transfers-out"
+        | "withdrawals"
+        | "deposits" => atm::schema_for_path(path),
+        "rewards" | "coupons" | "coupon-orders" => reward::schema_for_path(path),
         "ipo" => ipo::schema_for_path(path),
         "agent" => agent::schema_for_path(path),
         _ => None,
@@ -630,7 +637,7 @@ mod tests {
             let paths = real_leaf_paths(&root);
             assert_eq!(
                 paths.len(),
-                192,
+                199,
                 "real command count changed; review schema coverage"
             );
 
