@@ -1,18 +1,27 @@
 //! Money-movement commands: bank cards and their eDDA authorizations,
 //! deposits, withdrawals, and stock transfers in and out of the account.
 //!
-//! JSON output matches the Longbridge MCP server's account tools; the shaping
-//! lives in [`super::atm_shape`].
+//! The data comes from the SDK's `AssetContext` account APIs; JSON output
+//! matches the Longbridge MCP server's account tools, and the shaping lives in
+//! [`super::atm_shape`].
+
+use std::future::Future;
 
 use anyhow::Result;
-use longbridge::{httpclient::HttpClientError, DcRegion};
+use longbridge::{
+    asset::{
+        BankCard, GetDepositsOptions, GetStockTransfersInOptions, GetStockTransfersOutOptions,
+        GetWithdrawalsOptions,
+    },
+    httpclient::HttpClientError,
+};
 use serde_json::Value;
 
-use super::api::{http_get_dc, http_get_paced};
+use super::api::retry_rate_limited;
 use super::atm_shape::{
     bank_cards_output, check_bank_card_id, check_deposit_states, clamp_page_size, date_range,
-    edda_output, shape_cards, shape_deposits, shape_edda_status, shape_transfers,
-    shape_withdrawals, TransferKind, TRANSFER_IN, TRANSFER_OUT,
+    edda_output, page_number, shape_deposits, shape_edda_status, shape_transfers_in,
+    shape_transfers_out, shape_withdrawals, split_list, transfer_in_state, transfer_out_state,
 };
 use super::output::print_table;
 use super::OutputFormat;
@@ -43,27 +52,41 @@ fn ap_only_error(command: &str, err: anyhow::Error) -> anyhow::Error {
     }
 }
 
-/// GET on an AP-only account route for `command`: the SDK rejects a US-region
-/// session before sending, and the rejection names the command.
-pub(crate) async fn ap_get(
+/// Await an SDK call on an AP-only account route for `command`: the SDK
+/// rejects a US-region session before sending, and the rejection names the
+/// command. `path` is only echoed with `--verbose`.
+pub(crate) async fn ap_call<T, Fut>(
     command: &str,
     path: &str,
-    params: &[(&str, &str)],
     verbose: bool,
-) -> Result<Value> {
-    http_get_dc(path, params, Some(DcRegion::Ap), verbose)
-        .await
-        .map_err(|err| ap_only_error(command, err))
+    call: Fut,
+) -> Result<T>
+where
+    Fut: Future<Output = longbridge::Result<T>>,
+{
+    if verbose {
+        eprintln!("* GET {path}");
+    }
+    call.await
+        .map_err(|err| ap_only_error(command, anyhow::Error::from(err)))
 }
 
-/// [`ap_get`] that retries rate limits, as [`http_get_paced`].
-pub(crate) async fn ap_get_paced(
+/// [`ap_call`] for a command that sends several requests to the same route:
+/// rate limits are retried, as [`retry_rate_limited`].
+pub(crate) async fn ap_call_paced<T, F, Fut>(
     command: &str,
     path: &str,
-    params: &[(&str, &str)],
     verbose: bool,
-) -> Result<Value> {
-    http_get_paced(path, params, Some(DcRegion::Ap), verbose)
+    call: F,
+) -> Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = longbridge::Result<T>>,
+{
+    if verbose {
+        eprintln!("* GET {path}");
+    }
+    retry_rate_limited(verbose, call)
         .await
         .map_err(|err| ap_only_error(command, err))
 }
@@ -104,26 +127,16 @@ pub(crate) fn label_cell(item: &Value, label_key: &str, raw_key: &str) -> String
     }
 }
 
-/// Fetch and shape the bank-card list (`GET /v2/account/bank-cards`).
-async fn fetch_cards(command: &str, verbose: bool) -> Result<Vec<Value>> {
-    let channel = crate::auth::account_channel_or_default();
-    let raw = ap_get(
-        command,
-        "/v2/account/bank-cards",
-        &[
-            ("from_app_page", "cards"),
-            ("account_channel", channel.as_str()),
-        ],
-        verbose,
-    )
-    .await?;
-    Ok(shape_cards(raw))
+/// Fetch the bank-card list (`GET /v2/account/bank-cards`).
+async fn fetch_cards(command: &str, verbose: bool) -> Result<Vec<BankCard>> {
+    let ctx = crate::openapi::statement();
+    ap_call(command, "/v2/account/bank-cards", verbose, ctx.bank_cards()).await
 }
 
 /// List linked bank cards with their verification, binding and authorization
 /// status.
 pub async fn cmd_bank_cards(format: &OutputFormat, verbose: bool) -> Result<()> {
-    let value = bank_cards_output(fetch_cards("bank-cards", verbose).await?);
+    let value = bank_cards_output(&fetch_cards("bank-cards", verbose).await?);
     match format {
         OutputFormat::Json => print_shaped_json(&value),
         OutputFormat::Pretty => {
@@ -191,8 +204,8 @@ pub async fn cmd_bank_cards(format: &OutputFormat, verbose: bool) -> Result<()> 
 }
 
 /// List the eDDA authorizations across all linked bank cards.
-pub async fn cmd_edda(format: &OutputFormat, verbose: bool) -> Result<()> {
-    let value = edda_output(&fetch_cards("edda", verbose).await?);
+pub async fn cmd_edda_list(format: &OutputFormat, verbose: bool) -> Result<()> {
+    let value = edda_output(&fetch_cards("edda list", verbose).await?);
     match format {
         OutputFormat::Json => print_shaped_json(&value),
         OutputFormat::Pretty => {
@@ -256,20 +269,15 @@ pub async fn cmd_edda_status(
 ) -> Result<()> {
     let card_id = card_id.trim();
     check_bank_card_id(card_id)?;
-    let channel = crate::auth::account_channel_or_default();
-    let currency = currency.trim().to_uppercase();
-    let raw = ap_get(
-        "edda-status",
+    let ctx = crate::openapi::statement();
+    let applications = ap_call(
+        "edda status",
         "/v1/account/edda-status",
-        &[
-            ("card_id", card_id),
-            ("currency", currency.as_str()),
-            ("account_channel", channel.as_str()),
-        ],
         verbose,
+        ctx.edda_applications(card_id, currency),
     )
     .await?;
-    let value = shape_edda_status(raw);
+    let value = shape_edda_status(&applications);
     match format {
         OutputFormat::Json => print_shaped_json(&value),
         OutputFormat::Pretty => {
@@ -279,7 +287,7 @@ pub async fn cmd_edda_status(
                 .unwrap_or_default();
             if apps.is_empty() {
                 println!(
-                    "No eDDA application filed for this card; see `longbridge edda` for its current eDDA state."
+                    "No eDDA application filed for this card; see `longbridge edda list` for its current eDDA state."
                 );
                 return Ok(());
             }
@@ -312,7 +320,7 @@ pub async fn cmd_edda_status(
     Ok(())
 }
 
-/// Filters shared by `stock-transfers-in` and `stock-transfers-out`.
+/// Filters shared by `stock-transfer in` and `stock-transfer out`.
 pub struct TransferFilter<'a> {
     pub market: Option<&'a str>,
     pub state: Option<i32>,
@@ -322,35 +330,72 @@ pub struct TransferFilter<'a> {
     pub size: u32,
 }
 
+/// Direction of a stock transfer list.
+#[derive(Clone, Copy)]
+enum TransferDirection {
+    In,
+    Out,
+}
+
 async fn transfer_records(
-    command: &str,
-    kind: &TransferKind,
+    direction: TransferDirection,
     filter: &TransferFilter<'_>,
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let channel = crate::auth::account_channel_or_default();
     let (start, end) = date_range(filter.start, filter.end)?;
-    let mut params: Vec<(&str, String)> = vec![
-        ("page", filter.page.max(1).to_string()),
-        ("size", clamp_page_size(filter.size).to_string()),
-        ("account_channel", channel),
-    ];
-    if let Some(market) = filter.market {
-        params.push(("market", market.trim().to_uppercase()));
-    }
-    if let Some(state) = filter.state {
-        params.push(("state", state.to_string()));
-    }
-    if let Some(start) = start {
-        params.push(("start", start));
-    }
-    if let Some(end) = end {
-        params.push(("end", end));
-    }
-    let params: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    let raw = ap_get(command, kind.path, &params, verbose).await?;
-    let value = shape_transfers(raw, kind);
+    let market = filter.market.map(str::trim).filter(|m| !m.is_empty());
+    let page = page_number(filter.page);
+    let size = clamp_page_size(filter.size).cast_signed();
+    let ctx = crate::openapi::statement();
+    let value = match direction {
+        TransferDirection::In => {
+            let mut opts = GetStockTransfersInOptions::new().page(page).size(size);
+            if let Some(market) = market {
+                opts = opts.market(market);
+            }
+            if let Some(state) = filter.state {
+                opts = opts.state(transfer_in_state(state)?);
+            }
+            if let Some(start) = start {
+                opts = opts.start(start);
+            }
+            if let Some(end) = end {
+                opts = opts.end(end);
+            }
+            let resp = ap_call(
+                "stock-transfer in",
+                "/v1/account/stock-transfers/in",
+                verbose,
+                ctx.stock_transfers_in(opts),
+            )
+            .await?;
+            shape_transfers_in(&resp)
+        }
+        TransferDirection::Out => {
+            let mut opts = GetStockTransfersOutOptions::new().page(page).size(size);
+            if let Some(market) = market {
+                opts = opts.market(market);
+            }
+            if let Some(state) = filter.state {
+                opts = opts.state(transfer_out_state(state)?);
+            }
+            if let Some(start) = start {
+                opts = opts.start(start);
+            }
+            if let Some(end) = end {
+                opts = opts.end(end);
+            }
+            let records = ap_call(
+                "stock-transfer out",
+                "/v1/account/stock-transfers/out",
+                verbose,
+                ctx.stock_transfers_out(opts),
+            )
+            .await?;
+            shape_transfers_out(&records)
+        }
+    };
     match format {
         OutputFormat::Json => print_shaped_json(&value),
         OutputFormat::Pretty => {
@@ -420,7 +465,7 @@ pub async fn cmd_stock_transfers_in(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    transfer_records("stock-transfers-in", &TRANSFER_IN, filter, format, verbose).await
+    transfer_records(TransferDirection::In, filter, format, verbose).await
 }
 
 /// List stock transfer-out applications (this account to another broker).
@@ -429,14 +474,7 @@ pub async fn cmd_stock_transfers_out(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    transfer_records(
-        "stock-transfers-out",
-        &TRANSFER_OUT,
-        filter,
-        format,
-        verbose,
-    )
-    .await
+    transfer_records(TransferDirection::Out, filter, format, verbose).await
 }
 
 fn print_has_more(value: &Value) {
@@ -454,24 +492,26 @@ pub async fn cmd_withdrawals(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let account_channel = crate::auth::account_channel_or_default();
     let size = clamp_page_size(limit);
-    let page_str = page.max(1).to_string();
-    let size_str = size.to_string();
-    let (begin, end) = date_range(start, end)?;
-    let mut params: Vec<(&str, &str)> = vec![
-        ("page", page_str.as_str()),
-        ("size", size_str.as_str()),
-        ("account_channel", account_channel.as_str()),
-    ];
-    if let Some(b) = begin.as_deref() {
-        params.push(("begin", b));
+    let (start, end) = date_range(start, end)?;
+    let mut opts = GetWithdrawalsOptions::new()
+        .page(page_number(page))
+        .size(size.cast_signed());
+    if let Some(start) = start {
+        opts = opts.start(start);
     }
-    if let Some(e) = end.as_deref() {
-        params.push(("end", e));
+    if let Some(end) = end {
+        opts = opts.end(end);
     }
-    let raw = ap_get("withdrawals", "/v1/account/withdrawals", &params, verbose).await?;
-    let value = shape_withdrawals(raw, size as usize);
+    let ctx = crate::openapi::statement();
+    let resp = ap_call(
+        "withdrawals",
+        "/v1/account/withdrawals",
+        verbose,
+        ctx.withdrawals(opts),
+    )
+    .await?;
+    let value = shape_withdrawals(&resp, size as usize);
     match format {
         OutputFormat::Json => print_shaped_json(&value),
         OutputFormat::Pretty => {
@@ -527,31 +567,33 @@ pub async fn cmd_deposits(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let account_channel = crate::auth::account_channel_or_default();
     let size = clamp_page_size(limit);
-    let page_str = page.max(1).to_string();
-    let size_str = size.to_string();
     let states = states.map(check_deposit_states).transpose()?;
-    let (from_date, to_date) = date_range(start, end)?;
-    let mut params: Vec<(&str, &str)> = vec![
-        ("page", page_str.as_str()),
-        ("size", size_str.as_str()),
-        ("account_channel", account_channel.as_str()),
-    ];
-    if let Some(s) = states.as_deref() {
-        params.push(("states", s));
+    let (start, end) = date_range(start, end)?;
+    let mut opts = GetDepositsOptions::new()
+        .page(page_number(page))
+        .size(size.cast_signed());
+    if let Some(states) = states {
+        opts = opts.states(states);
     }
-    if let Some(c) = currencies {
-        params.push(("currencies", c));
+    if let Some(currencies) = currencies {
+        opts = opts.currencies(split_list(currencies));
     }
-    if let Some(f) = from_date.as_deref() {
-        params.push(("from_date", f));
+    if let Some(start) = start {
+        opts = opts.start(start);
     }
-    if let Some(t) = to_date.as_deref() {
-        params.push(("to_date", t));
+    if let Some(end) = end {
+        opts = opts.end(end);
     }
-    let raw = ap_get("deposits", "/v1/account/deposits", &params, verbose).await?;
-    let value = shape_deposits(raw, size as usize);
+    let ctx = crate::openapi::statement();
+    let items = ap_call(
+        "deposits",
+        "/v1/account/deposits",
+        verbose,
+        ctx.deposits(opts),
+    )
+    .await?;
+    let value = shape_deposits(&items, size as usize);
     match format {
         OutputFormat::Json => print_shaped_json(&value),
         OutputFormat::Pretty => {
@@ -594,15 +636,14 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
     use super::schema::{field, schema, RootKind};
 
     let command = path.join(" ");
-    let schema =
-        match command.as_str() {
-            "bank-cards" => schema(
-                "Linked bank cards and their review state",
-                RootKind::Object,
-                vec![field(
-                    "cards",
-                    "object[]",
-                    "Cards: {id, bank, bank_en, bank_code, account (last 4 digits), account_type, \
+    let schema = match command.as_str() {
+        "bank-cards" => schema(
+            "Linked bank cards and their review state",
+            RootKind::Object,
+            vec![field(
+                "cards",
+                "object[]",
+                "Cards: {id, bank, bank_en, bank_code, account (last 4 digits), account_type, \
                  region, region_name, country, verification (unverified/under_review/verified), \
                  witness (not_required/pending/witnessed), binding (binding/bound/failed), \
                  review_days (days since the card was added, only while under_review), bind_tip, \
@@ -610,41 +651,40 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
                  bank-securities transfer, hk_fps: FPS), name, currency, authorization \
                  (unauthorized/authorized/authorizing/failed), failure_reason, max_amount, \
                  max_amount_unlimited, daily_max_count, daily_max_count_unlimited, expiry_date, \
-                 long_term_valid, is_support, doc_reviewing, no_prior_deposit_reviewing}}. \
-                 Times are Hong Kong time (+08:00)",
-                )],
-            ),
-            "edda" => schema(
-                "eDDA authorizations across linked bank cards",
-                RootKind::Object,
-                vec![field(
-                    "authorizations",
-                    "object[]",
-                    "Rows: {card_id, bank, bank_en, account (last 4 digits), card_binding \
+                 long_term_valid, is_support (true: the bank supports this flow), doc_reviewing, \
+                 no_prior_deposit_reviewing}}. Times are Hong Kong time (+08:00)",
+            )],
+        ),
+        "edda list" => schema(
+            "eDDA authorizations across linked bank cards",
+            RootKind::Object,
+            vec![field(
+                "authorizations",
+                "object[]",
+                "Rows: {card_id, bank, bank_en, account (last 4 digits), card_binding \
                  (binding/bound/failed), flow (hk_edda: authorized at the bank, hk_sdda: \
                  authorized in the app), name, currency, authorization \
                  (unauthorized/authorized/authorizing/failed), failure_reason, max_amount, \
                  max_amount_unlimited, daily_max_count, daily_max_count_unlimited, expiry_date, \
-                 long_term_valid, is_support, doc_reviewing, no_prior_deposit_reviewing}. \
-                 Empty when no card has an eDDA authorization",
-                )],
-            ),
-            "edda-status" => schema(
-                "eDDA authorization applications filed for one card and currency",
-                RootKind::Object,
-                vec![field(
-                    "applications",
-                    "object[]",
-                    "Applications: {id, flow_id, name, currency, authorization \
+                 long_term_valid, is_support (true: the bank supports this flow), doc_reviewing, \
+                 no_prior_deposit_reviewing}. Empty when no card has an eDDA authorization",
+            )],
+        ),
+        "edda status" => schema(
+            "eDDA authorization applications filed for one card and currency",
+            RootKind::Object,
+            vec![field(
+                "applications",
+                "object[]",
+                "Applications: {id, flow_id, name, currency, authorization \
                  (unauthorized/authorized/authorizing/failed), failure_reason, created_at, \
                  updated_at}. Usually empty: an eDDA pushed by the bank has no application",
-                )],
-            ),
-            "stock-transfers-in" | "stock-transfers-out" => {
-                schema(
-                    "Stock transfer applications, newest first",
-                    RootKind::Object,
-                    vec![
+            )],
+        ),
+        "stock-transfer in" | "stock-transfer out" => schema(
+            "Stock transfer applications, newest first",
+            RootKind::Object,
+            vec![
                 field(
                     "records",
                     "object[]",
@@ -659,36 +699,35 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
                      creation until execution; for a cancelled or failed one until it ended; \
                      for an open one until today), remark, reason}",
                 ),
-                field("total", "number | string", "Total records (when upstream returns it)"),
+                field("total", "number", "Total records (transfers in only)"),
             ],
-                )
-            }
-            "withdrawals" => schema(
-                "Withdrawal history, newest first",
-                RootKind::Object,
-                vec![
-                    field(
-                        "list",
-                        "object[]",
-                        "Withdrawals: {id, order_id, created_at, currency, amount (applied), fee, \
+        ),
+        "withdrawals" => schema(
+            "Withdrawal history, newest first",
+            RootKind::Object,
+            vec![
+                field(
+                    "list",
+                    "object[]",
+                    "Withdrawals: {id, order_id, created_at, currency, amount (applied), fee, \
                      settlement_amount (paid out), state, state_label (submitted/processing/\
                      rejected/cancelled/remitted/failed/refunded/approved_awaiting_payout/\
                      large_amount_review/awaiting_confirmation/…), state_description (status \
                      text as the app shows it), bank_account (last 4 digits), \
                      display_bank_account, user_bank_swift_code}",
-                    ),
-                    field("total", "number | string", "Total records"),
-                    field(
-                        "has_more",
-                        "boolean",
-                        "A full page came back; request the next page",
-                    ),
-                ],
-            ),
-            "deposits" => schema(
-                "Deposit history, newest first",
-                RootKind::Object,
-                vec![
+                ),
+                field("total", "number", "Total records"),
+                field(
+                    "has_more",
+                    "boolean",
+                    "A full page came back; request the next page",
+                ),
+            ],
+        ),
+        "deposits" => schema(
+            "Deposit history, newest first",
+            RootKind::Object,
+            vec![
                 field(
                     "items",
                     "object[]",
@@ -704,14 +743,16 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
                     "A full page came back; request the next page (there is no reliable total)",
                 ),
             ],
-            ),
-            _ => return None,
-        };
+        ),
+        _ => return None,
+    };
     Some(schema)
 }
 
 #[cfg(test)]
 mod tests {
+    use longbridge::DcRegion;
+
     use super::*;
 
     #[test]
@@ -735,9 +776,9 @@ mod tests {
             },
         ));
         assert!(
-            ap_only_error("coupons", wrapped)
+            ap_only_error("coupon list", wrapped)
                 .to_string()
-                .starts_with("`longbridge coupons` is not available"),
+                .starts_with("`longbridge coupon list` is not available"),
             "an SDK-wrapped restriction is recognised too"
         );
     }

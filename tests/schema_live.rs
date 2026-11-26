@@ -553,22 +553,22 @@ fn read_only_probes() -> Vec<Probe> {
             &["deposits"],
             &["deposits", "--limit", "3", "--format", "json"],
         ),
-        p(&["edda"], &["edda", "--format", "json"]),
+        p(&["edda", "list"], &["edda", "list", "--format", "json"]),
         p(
-            &["stock-transfers-in"],
-            &["stock-transfers-in", "--limit", "3", "--format", "json"],
+            &["stock-transfer", "in"],
+            &["stock-transfer", "in", "--limit", "3", "--format", "json"],
         ),
         p(
-            &["stock-transfers-out"],
-            &["stock-transfers-out", "--limit", "3", "--format", "json"],
+            &["stock-transfer", "out"],
+            &["stock-transfer", "out", "--limit", "3", "--format", "json"],
         ),
         p(
-            &["rewards"],
-            &["rewards", "--limit", "3", "--format", "json"],
+            &["reward", "list"],
+            &["reward", "list", "--limit", "3", "--format", "json"],
         ),
         p(
-            &["coupons"],
-            &["coupons", "--limit", "3", "--format", "json"],
+            &["coupon", "list"],
+            &["coupon", "list", "--limit", "3", "--format", "json"],
         ),
         p(
             &["ipo", "subscriptions"],

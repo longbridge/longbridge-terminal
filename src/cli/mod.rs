@@ -1727,9 +1727,9 @@ pub enum Commands {
     /// auth_list[]{flow_id (hk_edda/hk_sdda: eDDA, hk_bank_sec: bank-securities transfer,
     /// hk_fps: FPS), name, currency, authorization (unauthorized/authorized/authorizing/failed),
     /// failure_reason, max_amount, max_amount_unlimited, daily_max_count,
-    /// daily_max_count_unlimited, expiry_date, long_term_valid, is_support (1: the bank supports
-    /// this flow), doc_reviewing, no_prior_deposit_reviewing}}. For eDDA questions use
-    /// `longbridge edda` alone instead (same upstream call; do not run both). Times are Hong
+    /// daily_max_count_unlimited, expiry_date, long_term_valid, is_support (true: the bank
+    /// supports this flow), doc_reviewing, no_prior_deposit_reviewing}}. For eDDA questions use
+    /// `longbridge edda list` alone instead (same upstream call; do not run both). Times are Hong
     /// Kong time (+08:00).
     ///
     /// Not available for accounts in the US data center (there is no US equivalent).
@@ -1738,103 +1738,27 @@ pub enum Commands {
     #[command(name = "bank-cards")]
     BankCards,
 
-    // Backticks render literally in `--help`, so field names stay bare here.
-    #[allow(clippy::doc_markdown)]
-    /// List eDDA (electronic direct debit) authorizations across linked bank cards
-    ///
-    /// Returns authorizations[]{card_id, bank, bank_en, account (last 4 digits), card_binding
-    /// (binding/bound/failed), flow (hk_edda: authorized at the bank, hk_sdda: authorized in
-    /// the app), name, currency, authorization (unauthorized/authorized/authorizing/failed),
-    /// failure_reason (the bank's message), max_amount (deposit limit), max_amount_unlimited,
-    /// daily_max_count, daily_max_count_unlimited, expiry_date, long_term_valid, is_support (1:
-    /// the bank supports this flow), doc_reviewing (documents under review),
-    /// no_prior_deposit_reviewing (under review because the card has no prior deposit)}. An
-    /// empty list means no card has an eDDA authorization. This is the current state;
-    /// edda-status only lists the applications filed for one card. For eDDA questions use this
-    /// command alone, not bank-cards as well (same upstream call). Times are Hong Kong time
-    /// (+08:00).
+    /// eDDA (electronic direct debit) authorizations of linked bank cards
     ///
     /// Not available for accounts in the US data center (there is no US equivalent).
     ///
-    /// Example: longbridge edda
-    Edda,
-
-    // Backticks render literally in `--help`, so field names stay bare here.
-    #[allow(clippy::doc_markdown)]
-    /// List the eDDA authorization applications filed for one bank card in one currency
-    ///
-    /// Most eDDA authorizations (e.g. pushed by the bank) have no application, so this is
-    /// usually empty: check `longbridge edda` first. Returns applications[]{id, flow_id, name,
-    /// currency, authorization (unauthorized/authorized/authorizing/failed), failure_reason,
-    /// created_at, updated_at}. Times are Hong Kong time (+08:00).
-    ///
-    /// Not available for accounts in the US data center (there is no US equivalent).
-    ///
-    /// Example: longbridge edda-status --card-id 434810 --currency HKD
-    #[command(name = "edda-status")]
-    EddaStatus {
-        /// Bank card id: cards[].id from bank-cards (or authorizations[].card_id from edda)
-        #[arg(long)]
-        card_id: String,
-        /// Authorized currency, e.g. HKD or USD
-        #[arg(long)]
-        currency: String,
+    /// Example: longbridge edda list
+    /// Example: longbridge edda status --card-id 434810 --currency HKD
+    Edda {
+        #[command(subcommand)]
+        cmd: EddaCmd,
     },
 
-    // Backticks render literally in `--help`, so field names stay bare here.
-    #[allow(clippy::doc_markdown)]
-    /// List stock transfer-in applications (shares moving from another broker into this account)
-    ///
-    /// State codes (--state / state_code): 0 submitted, 1 cancelled, 3 completed (shares
-    /// received), 5 processing, 7 partially completed, 8 failed. Returns records[]{id, order_id,
-    /// market, broker, broker_en, code (broker code), account (the user's account at the other
-    /// broker, last 4 digits), state (status text), state_code, state_label
-    /// (submitted/cancelled/completed/processing/partially_completed/failed), can_modify (1: can
-    /// still be cancelled or changed in the app), app_state, user_notified_broker (the user
-    /// tapped "I have notified the broker" in the app; their own confirmation, not a Longbridge
-    /// action), stocks[]{code, name, amount, state, state_label (processing/succeeded/failed)},
-    /// created_at, updated_at, process_at, exec_at, days_in_process (days from creation until
-    /// execution; for a cancelled or failed one until it ended; for an open one until today),
-    /// remark, reason}, total. A failure or cancellation reason, when there is one, is in
-    /// remark/reason. Times are Hong Kong time (+08:00).
+    /// Stock transfer applications: shares moving between another broker and this account
     ///
     /// Not available for accounts in the US data center (there is no US equivalent).
     ///
-    /// Example: longbridge stock-transfers-in
-    /// Example: longbridge stock-transfers-in --market HK --start 2026-01-01
-    #[command(
-        name = "stock-transfers-in",
-        mut_arg("state", |arg| arg.help(TRANSFER_IN_STATE_HELP))
-    )]
-    StockTransfersIn {
-        #[command(flatten)]
-        filter: TransferArgs,
-    },
-
-    // Backticks render literally in `--help`, so field names stay bare here.
-    #[allow(clippy::doc_markdown)]
-    /// List stock transfer-out applications (shares moving from this account to another broker)
-    ///
-    /// State codes (--state / state_code): 0 submitted (the only state that can still be
-    /// cancelled), 1 processing, 2 executing, 3 completed, 4 cancelled, 5 partially completed,
-    /// 6 failed, 7 rejected. Returns records[]{id, broker, broker_en, code (broker code),
-    /// account (last 4 digits), state, state_code, state_label (submitted/processing/executing/
-    /// completed/cancelled/partially_completed/failed/rejected), app_state,
-    /// user_notified_broker, stocks[]{code, name, amount, state, state_label}, created_at,
-    /// updated_at, agree_at, refuse_at, cancel_at, process_at, exec_at, days_in_process,
-    /// reason}. A rejection or cancellation reason, when there is one, is in reason. Times are
-    /// Hong Kong time (+08:00).
-    ///
-    /// Not available for accounts in the US data center (there is no US equivalent).
-    ///
-    /// Example: longbridge stock-transfers-out --state 0
-    #[command(
-        name = "stock-transfers-out",
-        mut_arg("state", |arg| arg.help(TRANSFER_OUT_STATE_HELP))
-    )]
-    StockTransfersOut {
-        #[command(flatten)]
-        filter: TransferArgs,
+    /// Example: longbridge stock-transfer in
+    /// Example: longbridge stock-transfer out --state 0
+    #[command(name = "stock-transfer")]
+    StockTransfer {
+        #[command(subcommand)]
+        cmd: StockTransferCmd,
     },
 
     // Backticks render literally in `--help`, so field names stay bare here.
@@ -1909,97 +1833,26 @@ pub enum Commands {
         end: Option<String>,
     },
 
-    // Backticks render literally in `--help`, so field names stay bare here.
-    #[allow(clippy::doc_markdown)]
-    /// List activity reward records (cash, coupon cards, prizes), newest first
-    ///
-    /// With --start/--end (on send_time) the command pages through up to 300 records and
-    /// returns searched_all instead of total (false: older records were not read, so a missing
-    /// reward may be among them); records not issued yet (no send_time) are always included.
-    /// Returns {rewards[]{reward_type, reward_type_label (cash/gift/coupon/task), record_id,
-    /// activity_title, title, description, card_type, card_status, prize_type,
-    /// prize_type_label (physical: shipped goods), amount, currency, status, status_label
-    /// (upcoming/cancelled/exited_activity/unclaimed/issuing/issued/failed/exchanged/expired/
-    /// refunded), deliver_status, deliver_status_label (issued prizes only), send_time,
-    /// start_time, end_time, effective_time, receive_deadline}, total (all records of this
-    /// type; only without --start/--end)}. A reward is identified by activity_title and
-    /// send_time; coupon cards it granted are listed by coupons. Times are Hong Kong time
-    /// (+08:00).
+    /// Activity reward records (cash, coupon cards, prizes)
     ///
     /// Not available for accounts in the US data center (there is no US equivalent).
     ///
-    /// Example: longbridge rewards
-    /// Example: longbridge rewards --kind cash --start 2026-08-01 --end 2026-08-31
-    Rewards {
-        /// Reward type: cash, gift, coupon or task (default: all)
-        #[arg(long)]
-        kind: Option<String>,
-        /// Issued on or after this date (yyyy-mm-dd as a Hong Kong date, or RFC3339)
-        #[arg(long)]
-        start: Option<String>,
-        /// Issued on or before this date (yyyy-mm-dd as a Hong Kong date, or RFC3339)
-        #[arg(long)]
-        end: Option<String>,
-        /// Page number (default: 1; ignored with --start/--end)
-        #[arg(long, default_value = "1")]
-        page: u32,
-        /// Records per page (default: 20, max 50; ignored with --start/--end)
-        #[arg(long, aliases = ["limit", "size"], default_value = "20")]
-        count: u32,
+    /// Example: longbridge reward list
+    /// Example: longbridge reward list --kind cash --start 2026-08-01 --end 2026-08-31
+    Reward {
+        #[command(subcommand)]
+        cmd: RewardCmd,
     },
 
-    // Backticks render literally in `--help`, so field names stay bare here.
-    #[allow(clippy::doc_markdown)]
-    /// List coupon cards (commission-free, platform-fee deduction, stock, quote, cash, IPO, …)
-    ///
-    /// description is shortened and detail omitted unless --with-terms is set. Returns
-    /// {cards[]{card_id, card_type, title, title_sec, description, detail, card_status,
-    /// card_status_label (unused/used/expired/redeeming/in_use/processing), start_time,
-    /// end_time (absent with no_expiry: true for a card that never expires), activate_time,
-    /// amount, currency, available_trade_session, trade_sessions, commission{markets, targets
-    /// (stocks/options/warrants/ETF/LOF), rebate_rate, bz_types, commission_balance,
-    /// commission_expired_time}, quote{…}, stock{…}, platform_fee_deduct{…}, …}, total,
-    /// expired_count}. Which orders a card was applied to: coupon-orders. Times are Hong Kong
-    /// time (+08:00).
+    /// Coupon cards and the orders they were applied to
     ///
     /// Not available for accounts in the US data center (there is no US equivalent).
     ///
-    /// Example: longbridge coupons
-    /// Example: longbridge coupons --status expired --card-type commission
-    Coupons {
-        /// valid (default: not expired — unused, in use or used) or expired
-        #[arg(long)]
-        status: Option<String>,
-        /// Card type, e.g. commission, platform_fee_deduct, stock, quote, cash (default: all)
-        #[arg(long)]
-        card_type: Option<String>,
-        /// Include each card's full terms of use (description, detail)
-        #[arg(long)]
-        with_terms: bool,
-        /// Page number (default: 1)
-        #[arg(long, default_value = "1")]
-        page: u32,
-        /// Records per page (default: 20, max 50)
-        #[arg(long, aliases = ["limit", "size"], default_value = "20")]
-        count: u32,
-    },
-
-    // Backticks render literally in `--help`, so field names stay bare here.
-    #[allow(clippy::doc_markdown)]
-    /// List the orders a coupon card was applied to
-    ///
-    /// Returns {card_id, locked[] (orders holding the card, rebate not settled yet), settled[]
-    /// (rebate settled)}, each {order_id, state, state_val, executed_price, executed_quantity,
-    /// currency, rebate, rebate_dt, settlement_currency}. Times are Hong Kong time (+08:00).
-    ///
-    /// Not available for accounts in the US data center (there is no US equivalent).
-    ///
-    /// Example: longbridge coupon-orders --card-id bd6b40914cd411f08becae6ae6fae931
-    #[command(name = "coupon-orders")]
-    CouponOrders {
-        /// Coupon card id: cards[].card_id from coupons (32 hex characters)
-        #[arg(long)]
-        card_id: String,
+    /// Example: longbridge coupon list
+    /// Example: longbridge coupon orders --card-id bd6b40914cd411f08becae6ae6fae931
+    Coupon {
+        #[command(subcommand)]
+        cmd: CouponCmd,
     },
 
     // ── Search (new) ─────────────────────────────────────────────────────────
@@ -2269,16 +2122,16 @@ impl GridLimitEventArg {
     }
 }
 
-/// `--state` help for `stock-transfers-in`, shown in `-h`.
+/// `--state` help for `stock-transfer in`, shown in `-h`.
 const TRANSFER_IN_STATE_HELP: &str = "State code (default: all): 0 submitted, 1 cancelled, \
      3 completed (shares received), 5 processing, 7 partially completed, 8 failed";
 
-/// `--state` help for `stock-transfers-out`, shown in `-h`.
+/// `--state` help for `stock-transfer out`, shown in `-h`.
 const TRANSFER_OUT_STATE_HELP: &str = "State code (default: all): 0 submitted (the only \
      state that can still be cancelled), 1 processing, 2 executing, 3 completed, 4 cancelled, \
      5 partially completed, 6 failed, 7 rejected";
 
-/// Shared filter flags for `stock-transfers-in` / `stock-transfers-out`.
+/// Shared filter flags for `stock-transfer in` / `stock-transfer out`.
 #[derive(Debug, Clone, clap::Args)]
 pub struct TransferArgs {
     /// Market: HK, US, CN or SG (default: all)
@@ -2312,6 +2165,210 @@ impl TransferArgs {
             size: self.count,
         }
     }
+}
+
+/// `longbridge edda` subcommands.
+#[derive(Subcommand)]
+pub enum EddaCmd {
+    // Backticks render literally in `--help`, so field names stay bare here.
+    #[allow(clippy::doc_markdown)]
+    /// List eDDA (electronic direct debit) authorizations across linked bank cards
+    ///
+    /// Returns authorizations[]{card_id, bank, bank_en, account (last 4 digits), card_binding
+    /// (binding/bound/failed), flow (hk_edda: authorized at the bank, hk_sdda: authorized in
+    /// the app), name, currency, authorization (unauthorized/authorized/authorizing/failed),
+    /// failure_reason (the bank's message), max_amount (deposit limit), max_amount_unlimited,
+    /// daily_max_count, daily_max_count_unlimited, expiry_date, long_term_valid, is_support
+    /// (true: the bank supports this flow), doc_reviewing (documents under review),
+    /// no_prior_deposit_reviewing (under review because the card has no prior deposit)}. An
+    /// empty list means no card has an eDDA authorization. This is the current state;
+    /// `edda status` only lists the applications filed for one card. For eDDA questions use this
+    /// command alone, not bank-cards as well (same upstream call). Times are Hong Kong time
+    /// (+08:00).
+    ///
+    /// Not available for accounts in the US data center (there is no US equivalent).
+    ///
+    /// Example: longbridge edda list
+    List,
+
+    // Backticks render literally in `--help`, so field names stay bare here.
+    #[allow(clippy::doc_markdown)]
+    /// List the eDDA authorization applications filed for one bank card in one currency
+    ///
+    /// Most eDDA authorizations (e.g. pushed by the bank) have no application, so this is
+    /// usually empty: check `longbridge edda list` first. Returns applications[]{id, flow_id, name,
+    /// currency, authorization (unauthorized/authorized/authorizing/failed), failure_reason,
+    /// created_at, updated_at}. Times are Hong Kong time (+08:00).
+    ///
+    /// Not available for accounts in the US data center (there is no US equivalent).
+    ///
+    /// Example: longbridge edda status --card-id 434810 --currency HKD
+    Status {
+        /// Bank card id: cards[].id from bank-cards (or authorizations[].card_id from edda list)
+        #[arg(long)]
+        card_id: String,
+        /// Authorized currency, e.g. HKD or USD
+        #[arg(long)]
+        currency: String,
+    },
+}
+
+/// `longbridge stock-transfer` subcommands.
+#[derive(Subcommand)]
+pub enum StockTransferCmd {
+    // Backticks render literally in `--help`, so field names stay bare here.
+    #[allow(clippy::doc_markdown)]
+    /// List stock transfer-in applications (shares moving from another broker into this account)
+    ///
+    /// State codes (--state / state_code): 0 submitted, 1 cancelled, 3 completed (shares
+    /// received), 5 processing, 7 partially completed, 8 failed. Returns records[]{id, order_id,
+    /// market, broker, broker_en, code (broker code), account (the user's account at the other
+    /// broker, last 4 digits), state (status text), state_code, state_label
+    /// (submitted/cancelled/completed/processing/partially_completed/failed), can_modify (1: can
+    /// still be cancelled or changed in the app), app_state, user_notified_broker (the user
+    /// tapped "I have notified the broker" in the app; their own confirmation, not a Longbridge
+    /// action), stocks[]{code, name, amount, state, state_label (processing/succeeded/failed)},
+    /// created_at, updated_at, process_at, exec_at, days_in_process (days from creation until
+    /// execution; for a cancelled or failed one until it ended; for an open one until today),
+    /// remark, reason}, total. A failure or cancellation reason, when there is one, is in
+    /// remark/reason. Times are Hong Kong time (+08:00).
+    ///
+    /// Not available for accounts in the US data center (there is no US equivalent).
+    ///
+    /// Example: longbridge stock-transfer in
+    /// Example: longbridge stock-transfer in --market HK --start 2026-01-01
+    #[command(
+        mut_arg("state", |arg| arg.help(TRANSFER_IN_STATE_HELP))
+    )]
+    In {
+        #[command(flatten)]
+        filter: TransferArgs,
+    },
+
+    // Backticks render literally in `--help`, so field names stay bare here.
+    #[allow(clippy::doc_markdown)]
+    /// List stock transfer-out applications (shares moving from this account to another broker)
+    ///
+    /// State codes (--state / state_code): 0 submitted (the only state that can still be
+    /// cancelled), 1 processing, 2 executing, 3 completed, 4 cancelled, 5 partially completed,
+    /// 6 failed, 7 rejected. Returns records[]{id, broker, broker_en, code (broker code),
+    /// account (last 4 digits), state, state_code, state_label (submitted/processing/executing/
+    /// completed/cancelled/partially_completed/failed/rejected), app_state,
+    /// user_notified_broker, stocks[]{code, name, amount, state, state_label}, created_at,
+    /// updated_at, agree_at, refuse_at, cancel_at, process_at, exec_at, days_in_process,
+    /// reason}. A rejection or cancellation reason, when there is one, is in reason. Times are
+    /// Hong Kong time (+08:00).
+    ///
+    /// Not available for accounts in the US data center (there is no US equivalent).
+    ///
+    /// Example: longbridge stock-transfer out --state 0
+    #[command(
+        mut_arg("state", |arg| arg.help(TRANSFER_OUT_STATE_HELP))
+    )]
+    Out {
+        #[command(flatten)]
+        filter: TransferArgs,
+    },
+}
+
+/// `longbridge reward` subcommands.
+#[derive(Subcommand)]
+pub enum RewardCmd {
+    // Backticks render literally in `--help`, so field names stay bare here.
+    #[allow(clippy::doc_markdown)]
+    /// List activity reward records (cash, coupon cards, prizes), newest first
+    ///
+    /// With --start/--end (on send_time) the command pages through up to 300 records and
+    /// returns searched_all instead of total (false: older records were not read, so a missing
+    /// reward may be among them); records not issued yet (no send_time) are always included.
+    /// Returns {rewards[]{reward_type, reward_type_label (cash/gift/coupon/task), record_id,
+    /// activity_title, title, description, card_type, card_status, prize_type,
+    /// prize_type_label (physical: shipped goods), amount, currency, status, status_label
+    /// (upcoming/cancelled/exited_activity/unclaimed/issuing/issued/failed/exchanged/expired/
+    /// refunded), deliver_status, deliver_status_label (issued prizes only), send_time,
+    /// start_time, end_time, effective_time, receive_deadline}, total (all records of this
+    /// type; only without --start/--end)}. A reward is identified by activity_title and
+    /// send_time; coupon cards it granted are listed by `coupon list`. Times are Hong Kong time
+    /// (+08:00).
+    ///
+    /// Not available for accounts in the US data center (there is no US equivalent).
+    ///
+    /// Example: longbridge reward list
+    /// Example: longbridge reward list --kind cash --start 2026-08-01 --end 2026-08-31
+    List {
+        /// Reward type: cash, gift, coupon or task (default: all)
+        #[arg(long)]
+        kind: Option<String>,
+        /// Issued on or after this date (yyyy-mm-dd as a Hong Kong date, or RFC3339)
+        #[arg(long)]
+        start: Option<String>,
+        /// Issued on or before this date (yyyy-mm-dd as a Hong Kong date, or RFC3339)
+        #[arg(long)]
+        end: Option<String>,
+        /// Page number (default: 1; ignored with --start/--end)
+        #[arg(long, default_value = "1")]
+        page: u32,
+        /// Records per page (default: 20, max 50; ignored with --start/--end)
+        #[arg(long, aliases = ["limit", "size"], default_value = "20")]
+        count: u32,
+    },
+}
+
+/// `longbridge coupon` subcommands.
+#[derive(Subcommand)]
+pub enum CouponCmd {
+    // Backticks render literally in `--help`, so field names stay bare here.
+    #[allow(clippy::doc_markdown)]
+    /// List coupon cards (commission-free, platform-fee deduction, stock, quote, cash, IPO, …)
+    ///
+    /// description is shortened and detail omitted unless --with-terms is set. Returns
+    /// {cards[]{card_id, card_type, title, title_sec, description, detail, card_status,
+    /// card_status_label (unused/used/expired/redeeming/in_use/processing), start_time,
+    /// end_time (absent with no_expiry: true for a card that never expires), activate_time,
+    /// amount, currency, available_trade_session, trade_sessions, commission{markets, targets
+    /// (stocks/options/warrants/ETF/LOF), rebate_rate, bz_types, commission_balance,
+    /// commission_duration, unlimited, commission_expired_time, usage_count, lave_usage_count,
+    /// settlement_model}}, total, expired_count}. Which orders a card was applied to: `coupon
+    /// orders`. Times are Hong Kong time (+08:00).
+    ///
+    /// Not available for accounts in the US data center (there is no US equivalent).
+    ///
+    /// Example: longbridge coupon list
+    /// Example: longbridge coupon list --status expired --card-type commission
+    List {
+        /// valid (default: not expired — unused, in use or used) or expired
+        #[arg(long)]
+        status: Option<String>,
+        /// Card type, e.g. commission, platform_fee_deduct, stock, quote, cash (default: all)
+        #[arg(long)]
+        card_type: Option<String>,
+        /// Include each card's full terms of use (description, detail)
+        #[arg(long)]
+        with_terms: bool,
+        /// Page number (default: 1)
+        #[arg(long, default_value = "1")]
+        page: u32,
+        /// Records per page (default: 20, max 50)
+        #[arg(long, aliases = ["limit", "size"], default_value = "20")]
+        count: u32,
+    },
+
+    // Backticks render literally in `--help`, so field names stay bare here.
+    #[allow(clippy::doc_markdown)]
+    /// List the orders a coupon card was applied to
+    ///
+    /// Returns {card_id, locked[] (orders holding the card, rebate not settled yet), settled[]
+    /// (rebate settled)}, each {order_id, state, state_val, executed_price, executed_quantity,
+    /// currency, rebate, rebate_dt, settlement_currency}. Times are Hong Kong time (+08:00).
+    ///
+    /// Not available for accounts in the US data center (there is no US equivalent).
+    ///
+    /// Example: longbridge coupon orders --card-id bd6b40914cd411f08becae6ae6fae931
+    Orders {
+        /// Coupon card id: cards[].card_id from `coupon list` (32 hex characters)
+        #[arg(long)]
+        card_id: String,
+    },
 }
 
 /// Shared grid rule flags for `submit` / `replace`. `trigger-up/down` are
@@ -5140,16 +5197,20 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             fundamental::cmd_valuation_rank(symbol, start.as_deref(), end.as_deref(), format, verbose).await
         }
         Commands::BankCards => atm::cmd_bank_cards(format, verbose).await,
-        Commands::Edda => atm::cmd_edda(format, verbose).await,
-        Commands::EddaStatus { card_id, currency } => {
-            atm::cmd_edda_status(&card_id, &currency, format, verbose).await
-        }
-        Commands::StockTransfersIn { filter } => {
-            atm::cmd_stock_transfers_in(&filter.as_filter(), format, verbose).await
-        }
-        Commands::StockTransfersOut { filter } => {
-            atm::cmd_stock_transfers_out(&filter.as_filter(), format, verbose).await
-        }
+        Commands::Edda { cmd } => match cmd {
+            EddaCmd::List => atm::cmd_edda_list(format, verbose).await,
+            EddaCmd::Status { card_id, currency } => {
+                atm::cmd_edda_status(&card_id, &currency, format, verbose).await
+            }
+        },
+        Commands::StockTransfer { cmd } => match cmd {
+            StockTransferCmd::In { filter } => {
+                atm::cmd_stock_transfers_in(&filter.as_filter(), format, verbose).await
+            }
+            StockTransferCmd::Out { filter } => {
+                atm::cmd_stock_transfers_out(&filter.as_filter(), format, verbose).await
+            }
+        },
         Commands::Withdrawals {
             page,
             count,
@@ -5186,45 +5247,49 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
             )
             .await
         }
-        Commands::Rewards {
-            kind,
-            start,
-            end,
-            page,
-            count,
-        } => {
-            reward::cmd_rewards(
-                kind.as_deref(),
-                start.as_deref(),
-                end.as_deref(),
+        Commands::Reward { cmd } => match cmd {
+            RewardCmd::List {
+                kind,
+                start,
+                end,
                 page,
                 count,
-                format,
-                verbose,
-            )
-            .await
-        }
-        Commands::Coupons {
-            status,
-            card_type,
-            with_terms,
-            page,
-            count,
-        } => {
-            reward::cmd_coupons(
-                status.as_deref(),
-                card_type.as_deref(),
+            } => {
+                reward::cmd_reward_list(
+                    kind.as_deref(),
+                    start.as_deref(),
+                    end.as_deref(),
+                    page,
+                    count,
+                    format,
+                    verbose,
+                )
+                .await
+            }
+        },
+        Commands::Coupon { cmd } => match cmd {
+            CouponCmd::List {
+                status,
+                card_type,
                 with_terms,
                 page,
                 count,
-                format,
-                verbose,
-            )
-            .await
-        }
-        Commands::CouponOrders { card_id } => {
-            reward::cmd_coupon_orders(&card_id, format, verbose).await
-        }
+            } => {
+                reward::cmd_coupon_list(
+                    status.as_deref(),
+                    card_type.as_deref(),
+                    with_terms,
+                    page,
+                    count,
+                    format,
+                    verbose,
+                )
+                .await
+            }
+            CouponCmd::Orders { card_id } => {
+                reward::cmd_coupon_orders(&card_id, format, verbose).await
+            }
+        },
 
         Commands::Ipo { cmd } => match cmd {
             IpoCmd::Subscriptions => ipo::cmd_ipo_subscriptions(format, verbose).await,

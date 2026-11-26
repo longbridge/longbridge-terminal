@@ -414,14 +414,10 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<ResponseSchema> {
         "sharelist" => sharelist::schema_for_path(path),
         "quant" => run_script::schema_for_path(path),
         "screener" => screener::schema_for_path(path),
-        "bank-cards"
-        | "edda"
-        | "edda-status"
-        | "stock-transfers-in"
-        | "stock-transfers-out"
-        | "withdrawals"
-        | "deposits" => atm::schema_for_path(path),
-        "rewards" | "coupons" | "coupon-orders" => reward::schema_for_path(path),
+        "bank-cards" | "edda" | "stock-transfer" | "withdrawals" | "deposits" => {
+            atm::schema_for_path(path)
+        }
+        "reward" | "coupon" => reward::schema_for_path(path),
         "ipo" => ipo::schema_for_path(path),
         "agent" => agent::schema_for_path(path),
         _ => None,

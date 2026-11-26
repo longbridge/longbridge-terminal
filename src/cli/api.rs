@@ -516,25 +516,22 @@ pub async fn http_get(
     http_get_dc(path, params, None, verbose).await
 }
 
-/// Attempts [`http_get_paced`] makes before giving up on a rate limit.
+/// Attempts [`retry_rate_limited`] makes before giving up on a rate limit.
 const PACED_ATTEMPTS: usize = 3;
 
-/// [`http_get`] for a command that sends several requests to the same route
-/// (paging, or one request per filter value). The gateway rate-limits these
-/// routes to about one call a second per member, so a rate-limited request
+/// Run an SDK call for a command that sends several requests to the same
+/// route (paging, or one request per filter value). The gateway rate-limits
+/// these routes to about one call a second per member, so a rate-limited call
 /// waits the delay the upstream suggests and is retried, instead of failing
 /// the whole command.
-///
-/// `dc_restrict` limits the request to one data center, as in [`http_get_dc`].
-pub async fn http_get_paced(
-    path: &str,
-    params: &[(&str, &str)],
-    dc_restrict: Option<longbridge::DcRegion>,
-    verbose: bool,
-) -> Result<serde_json::Value> {
+pub(crate) async fn retry_rate_limited<T, F, Fut>(verbose: bool, mut call: F) -> Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = longbridge::Result<T>>,
+{
     let mut attempt = 1;
     loop {
-        match http_get_dc(path, params, dc_restrict, verbose).await {
+        match call().await.map_err(anyhow::Error::from) {
             Err(err) if attempt < PACED_ATTEMPTS && is_rate_limited(&err) => {
                 let delay = backoff_delay(&format!("{err:#}"));
                 if verbose {
@@ -735,7 +732,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn paced_get_retries_only_gateway_rate_limits() {
+    fn retry_matches_only_gateway_rate_limits() {
         use longbridge::httpclient::HttpClientError;
         let api = |code| HttpClientError::OpenApi {
             code,

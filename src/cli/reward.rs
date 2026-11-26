@@ -1,17 +1,19 @@
 //! Reward-center commands: activity reward records, coupon cards, and the
 //! orders a coupon was applied to.
 //!
-//! JSON output matches the Longbridge MCP server's reward tools; the shaping
-//! lives in [`super::reward_shape`].
+//! The data comes from the SDK's `AssetContext` reward APIs; JSON output
+//! matches the Longbridge MCP server's reward tools, and the shaping lives in
+//! [`super::reward_shape`].
 
 use anyhow::Result;
+use longbridge::asset::{CouponOrderType, GetCouponsOptions, GetRewardRecordsOptions};
 use serde_json::Value;
 
-use super::atm::{ap_get, ap_get_paced, cell, label_cell, print_shaped_json, time_cell};
-use super::atm_shape::{clamp_page_size, parse_hong_kong_end, parse_hong_kong_start};
+use super::atm::{ap_call, ap_call_paced, cell, label_cell, print_shaped_json, time_cell};
+use super::atm_shape::{clamp_page_size, page_number, parse_hong_kong_end, parse_hong_kong_start};
 use super::output::print_table;
 use super::reward_shape::{
-    card_status_code, check_coupon_id, reward_type_code, shape_coupon_orders, shape_coupons,
+    check_coupon_id, coupons_expired, reward_type_filter, shape_coupon_orders, shape_coupons,
     shape_reward_page, DatedRewards, DATED_PAGE_SIZE, MAX_REWARD_PAGES,
 };
 use super::OutputFormat;
@@ -31,7 +33,7 @@ fn amount_cell(item: &Value) -> String {
 /// With `start` / `end`, pages through up to [`MAX_REWARD_PAGES`] pages of the
 /// history (sequentially, retrying rate limits) and reports `searched_all`
 /// instead of `total`.
-pub async fn cmd_rewards(
+pub async fn cmd_reward_list(
     kind: Option<&str>,
     start: Option<&str>,
     end: Option<&str>,
@@ -40,28 +42,30 @@ pub async fn cmd_rewards(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let channel = crate::auth::account_channel_or_default();
-    let reward_type = reward_type_code(kind)?;
+    let reward_type = reward_type_filter(kind)?;
     let start = start.map(parse_hong_kong_start).transpose()?;
     let end = end.map(parse_hong_kong_end).transpose()?;
+    let ctx = crate::openapi::statement();
     let path = "/v1/account/rewards";
+    let options = |page: i32, size: i32| {
+        let opts = GetRewardRecordsOptions::new().page(page).page_size(size);
+        match reward_type {
+            Some(t) => opts.reward_type(t),
+            None => opts,
+        }
+    };
     let value = if start.is_some() || end.is_some() {
-        let size_str = DATED_PAGE_SIZE.to_string();
         let mut dated = DatedRewards::new(start, end);
         let mut searched_all = true;
-        let mut page = 1;
+        let mut page: u32 = 1;
         loop {
-            let current = page.to_string();
-            let mut params = vec![
-                ("current", current.as_str()),
-                ("page_size", size_str.as_str()),
-                ("account_channel", channel.as_str()),
-            ];
-            if let Some(t) = reward_type {
-                params.push(("reward_type", t));
-            }
-            let raw = match ap_get_paced("rewards", path, &params, verbose).await {
-                Ok(raw) => raw,
+            let opts = options(page.cast_signed(), DATED_PAGE_SIZE.cast_signed());
+            let resp = match ap_call_paced("reward list", path, verbose, || {
+                ctx.reward_records(opts.clone())
+            })
+            .await
+            {
+                Ok(resp) => resp,
                 // A later page failed (e.g. still rate-limited): keep what was
                 // read and say the search is incomplete.
                 Err(_) if page > 1 => {
@@ -70,7 +74,7 @@ pub async fn cmd_rewards(
                 }
                 Err(err) => return Err(err),
             };
-            if dated.add_page(raw) {
+            if dated.add_page(&resp) {
                 break;
             }
             if page >= MAX_REWARD_PAGES {
@@ -81,17 +85,9 @@ pub async fn cmd_rewards(
         }
         dated.output(searched_all)
     } else {
-        let current = page.max(1).to_string();
-        let size_str = clamp_page_size(size).to_string();
-        let mut params = vec![
-            ("current", current.as_str()),
-            ("page_size", size_str.as_str()),
-            ("account_channel", channel.as_str()),
-        ];
-        if let Some(t) = reward_type {
-            params.push(("reward_type", t));
-        }
-        shape_reward_page(ap_get("rewards", path, &params, verbose).await?)
+        let opts = options(page_number(page), clamp_page_size(size).cast_signed());
+        let resp = ap_call("reward list", path, verbose, ctx.reward_records(opts)).await?;
+        shape_reward_page(&resp)
     };
     match format {
         OutputFormat::Json => print_shaped_json(&value),
@@ -126,7 +122,7 @@ pub async fn cmd_rewards(
             if value["searched_all"] == Value::Bool(false) {
                 println!(
                     "\nOnly the newest {} records were searched; an older reward may be missing.",
-                    DATED_PAGE_SIZE * MAX_REWARD_PAGES as usize
+                    DATED_PAGE_SIZE * MAX_REWARD_PAGES
                 );
             } else if let Some(total) = value.get("total") {
                 println!("\nTotal: {}", cell(total));
@@ -137,7 +133,7 @@ pub async fn cmd_rewards(
 }
 
 /// List the current account's coupon cards.
-pub async fn cmd_coupons(
+pub async fn cmd_coupon_list(
     status: Option<&str>,
     card_type: Option<&str>,
     with_terms: bool,
@@ -146,22 +142,24 @@ pub async fn cmd_coupons(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let channel = crate::auth::account_channel_or_default();
-    let status = card_status_code(status)?;
+    let expired = coupons_expired(status)?;
     let page = page.max(1);
-    let current = page.to_string();
-    let size_str = clamp_page_size(size).to_string();
-    let mut params = vec![
-        ("current", current.as_str()),
-        ("page_size", size_str.as_str()),
-        ("card_status", status),
-        ("account_channel", channel.as_str()),
-    ];
+    let mut opts = GetCouponsOptions::new()
+        .page(page_number(page))
+        .page_size(clamp_page_size(size).cast_signed())
+        .expired(expired);
     if let Some(t) = card_type.map(str::trim).filter(|t| !t.is_empty()) {
-        params.push(("card_type", t));
+        opts = opts.card_type(t);
     }
-    let raw = ap_get("coupons", "/v1/account/cards", &params, verbose).await?;
-    let value = shape_coupons(raw, page, with_terms);
+    let ctx = crate::openapi::statement();
+    let resp = ap_call(
+        "coupon list",
+        "/v1/account/cards",
+        verbose,
+        ctx.coupons(opts),
+    )
+    .await?;
+    let value = shape_coupons(&resp, page, with_terms);
     match format {
         OutputFormat::Json => print_shaped_json(&value),
         OutputFormat::Pretty => {
@@ -217,23 +215,18 @@ pub async fn cmd_coupon_orders(card_id: &str, format: &OutputFormat, verbose: bo
     let card_id = card_id.trim();
     check_coupon_id(card_id)?;
     let path = "/v1/account/card-orders";
+    let ctx = crate::openapi::statement();
     // Sequential on purpose: the gateway rate-limits this route per member
     // tightly, and two concurrent calls draw 429s.
-    let locked = ap_get_paced(
-        "coupon-orders",
-        path,
-        &[("card_id", card_id), ("order_type", "locked")],
-        verbose,
-    )
+    let locked = ap_call_paced("coupon orders", path, verbose, || {
+        ctx.coupon_orders(card_id, CouponOrderType::Locked)
+    })
     .await?;
-    let settled = ap_get_paced(
-        "coupon-orders",
-        path,
-        &[("card_id", card_id), ("order_type", "settled")],
-        verbose,
-    )
+    let settled = ap_call_paced("coupon orders", path, verbose, || {
+        ctx.coupon_orders(card_id, CouponOrderType::Settled)
+    })
     .await?;
-    let value = shape_coupon_orders(card_id, locked, settled);
+    let value = shape_coupon_orders(card_id, &locked, &settled);
     match format {
         OutputFormat::Json => print_shaped_json(&value),
         OutputFormat::Pretty => {
@@ -277,7 +270,7 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
 
     let command = path.join(" ");
     let schema = match command.as_str() {
-        "rewards" => schema(
+        "reward list" => schema(
             "Activity reward records, newest first",
             RootKind::Object,
             vec![
@@ -294,7 +287,7 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
                 ),
                 field(
                     "total",
-                    "number | string",
+                    "number",
                     "All records of this type; only without --start/--end",
                 ),
                 field(
@@ -305,7 +298,7 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
                 ),
             ],
         ),
-        "coupons" => schema(
+        "coupon list" => schema(
             "Coupon cards",
             RootKind::Object,
             vec![
@@ -318,14 +311,15 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
                      true for a card that never expires), activate_time, amount, currency, \
                      available_trade_session, trade_sessions, commission{markets, targets \
                      (stocks/options/warrants/ETF/LOF), rebate_rate, bz_types, \
-                     commission_balance, commission_expired_time}, quote{…}, stock{…}, \
-                     platform_fee_deduct{…}, …}",
+                     commission_balance, commission_duration, unlimited, \
+                     commission_expired_time, usage_count, lave_usage_count, \
+                     settlement_model}}",
                 ),
-                field("total", "number | string", "Total cards"),
-                field("expired_count", "number | string", "Expired cards"),
+                field("total", "number", "Total cards"),
+                field("expired_count", "number", "Expired cards"),
             ],
         ),
-        "coupon-orders" => schema(
+        "coupon orders" => schema(
             "Orders a coupon card was applied to",
             RootKind::Object,
             vec![
