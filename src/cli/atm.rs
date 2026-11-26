@@ -652,7 +652,9 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
                  (unauthorized/authorized/authorizing/failed), failure_reason, max_amount, \
                  max_amount_unlimited, daily_max_count, daily_max_count_unlimited, expiry_date, \
                  long_term_valid, is_support (true: the bank supports this flow), doc_reviewing, \
-                 no_prior_deposit_reviewing}}. Times are Hong Kong time (+08:00)",
+                 no_prior_deposit_reviewing}}. A code with no known label is shown raw instead: \
+                 status / witness_state / bind_state on a card, status on an authorization. \
+                 Times are Hong Kong time (+08:00)",
             )],
         ),
         "edda list" => schema(
@@ -667,7 +669,8 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
                  (unauthorized/authorized/authorizing/failed), failure_reason, max_amount, \
                  max_amount_unlimited, daily_max_count, daily_max_count_unlimited, expiry_date, \
                  long_term_valid, is_support (true: the bank supports this flow), doc_reviewing, \
-                 no_prior_deposit_reviewing}. Empty when no card has an eDDA authorization",
+                 no_prior_deposit_reviewing, status (raw code, only when authorization has no \
+                 label)}. Empty when no card has an eDDA authorization",
             )],
         ),
         "edda status" => schema(
@@ -677,8 +680,9 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
                 "applications",
                 "object[]",
                 "Applications: {id, flow_id, name, currency, authorization \
-                 (unauthorized/authorized/authorizing/failed), failure_reason, created_at, \
-                 updated_at}. Usually empty: an eDDA pushed by the bank has no application",
+                 (unauthorized/authorized/authorizing/failed), status (raw code, only when \
+                 authorization has no label), failure_reason, created_at, updated_at}. Usually \
+                 empty: an eDDA pushed by the bank has no application",
             )],
         ),
         "stock-transfer in" | "stock-transfer out" => schema(

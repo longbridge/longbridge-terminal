@@ -98,18 +98,6 @@ fn target_type_label(target: CouponTargetType) -> Option<&'static str> {
     }
 }
 
-/// The server codes of typed states, leaving out undocumented ones.
-fn codes<T>(values: &[T]) -> Vec<i32>
-where
-    T: Into<i32> + Default + PartialEq + Copy,
-{
-    values
-        .iter()
-        .filter(|v| **v != T::default())
-        .map(|v| (*v).into())
-        .collect()
-}
-
 /// A per-type terms object, or `null` when the coupon has none of this type.
 fn terms<T>(terms: Option<&T>, shape: fn(&T) -> Value) -> Value {
     terms.map_or(Value::Null, shape)
@@ -123,36 +111,44 @@ fn prize_type_label(prize_type: Option<i32>) -> Option<&'static str> {
 /// One reward record as `{reward_type, reward_type_label, …}`, or `None` for
 /// a record with neither a known type nor any detail.
 pub(crate) fn shape_reward(record: &RewardRecord) -> Option<Value> {
-    let has_detail = !(record.record_id.is_empty()
-        && record.title.is_empty()
-        && record.activity_title.is_empty());
-    if record.reward_type == RewardType::Unknown && !has_detail {
+    // The SDK names the type after the detail object the server sent, and
+    // falls back to the server's code without one: a record with neither is
+    // skipped, as the MCP does.
+    if record.reward_type_raw.is_none() && record.reward_type == RewardType::Unknown {
         return None;
     }
-    // Delivery states follow an issued prize; elsewhere a 0 means nothing.
-    let issued_prize =
-        record.reward_type == RewardType::Gift && record.status == RewardStatus::Issued;
+    // Label the server's code when it is known; otherwise name the type after
+    // the detail object.
+    let type_label = record
+        .reward_type_raw
+        .map(RewardType::from)
+        .and_then(reward_type_label)
+        .or_else(|| reward_type_label(record.reward_type));
+    // Delivery states follow an issued (12) prize detail; elsewhere a 0
+    // means nothing. `Gift` here means the server sent a `prize` object (a
+    // record without any detail object has no status).
+    let issued_prize = record.reward_type == RewardType::Gift && record.status_raw == Some(12);
     let deliver_label = if issued_prize {
         deliver_status_label(record.deliver_status)
     } else {
         None
     };
     Some(json!({
-        "reward_type": code(record.reward_type),
-        "reward_type_label": label(reward_type_label(record.reward_type)),
+        "reward_type": code(record.reward_type_raw),
+        "reward_type_label": label(type_label),
         "record_id": record.record_id,
         "activity_title": record.activity_title,
         "title": record.title,
         "description": record.description,
         "card_type": record.card_type,
-        "card_status": code(record.card_status),
+        "card_status": code(record.card_status_raw),
         "prize_type": record.prize_type,
         "prize_type_label": label(prize_type_label(record.prize_type)),
         "amount": decimal(record.amount),
         "currency": record.currency,
-        "status": code(record.status),
+        "status": code(record.status_raw),
         "status_label": label(reward_status_label(record.status)),
-        "deliver_status": code(record.deliver_status),
+        "deliver_status": code(record.deliver_status_raw),
         "deliver_status_label": label(deliver_label),
         "exit_status": (record.exit_status != 0).then_some(record.exit_status),
         "send_time": hk_time(record.send_time),
@@ -260,10 +256,10 @@ fn shape_commission(commission: &CouponCommission) -> Value {
         "markets": commission.markets,
         "targets": (!targets.is_empty()).then_some(targets),
         "rebate_rate": commission.rebate_rate,
-        "bz_types": codes(&commission.bz_types),
+        "bz_types": commission.bz_types_raw,
         "commission_balance": decimal(commission.commission_balance),
         "commission_duration": commission.commission_duration,
-        "unlimited": code(commission.unlimited),
+        "unlimited": code(commission.unlimited_raw),
         "commission_expired_time": hk_time(commission.commission_expired_time),
         "usage_count": commission.usage_count,
         "lave_usage_count": commission.lave_usage_count,
@@ -345,7 +341,7 @@ fn shape_quote(t: &CouponQuote) -> Value {
     json!({
         "current_end_time": hk_time(t.current_end_time),
         "inapplicable": t.inapplicable,
-        "investor_type": code(t.investor_type),
+        "investor_type": code(t.investor_type_raw),
         "manual_activate": t.manual_activate,
         "markets": t.markets,
         "member_investor_type": t.member_investor_type,
@@ -363,7 +359,7 @@ fn shape_ipo(t: &CouponIpo) -> Value {
 
 fn shape_ipo_commission(t: &CouponIpoCommission) -> Value {
     json!({
-        "bz_types": codes(&t.bz_types),
+        "bz_types": t.bz_types_raw,
         "counter_id": t.counter_id,
         "counter_name": t.counter_name,
         "financing_limit": t.financing_limit,
@@ -376,7 +372,7 @@ fn shape_ipo_interest(t: &CouponIpoInterest) -> Value {
 
 fn shape_platform_fee_deduct(t: &CouponPlatformFeeDeduct) -> Value {
     json!({
-        "bz_types": codes(&t.bz_types),
+        "bz_types": t.bz_types_raw,
         "counter_id": t.counter_id,
         "counter_name": t.counter_name,
         "markets": t.markets,
@@ -414,7 +410,7 @@ fn shape_stock_fragment(t: &CouponStockFragment) -> Value {
         "counter_name": t.counter_name,
         "market": t.market,
         "markets": t.markets,
-        "underlying_type": code(t.underlying_type),
+        "underlying_type": code(t.underlying_type_raw),
         "amounts": t.amounts,
     })
 }
@@ -441,7 +437,7 @@ pub(crate) fn shape_coupon(coupon: &Coupon, with_terms: bool) -> Value {
         "title_sec": coupon.title_sec,
         "description": description,
         "detail": if with_terms { coupon.detail.as_str() } else { "" },
-        "card_status": code(coupon.card_status),
+        "card_status": code(coupon.card_status_raw),
         "card_status_label": label(coupon_status_label(coupon.card_status)),
         "start_time": hk_time(coupon.start_time),
         "end_time": hk_time(coupon.end_time),
@@ -547,7 +543,7 @@ mod tests {
     }
 
     fn reward(item: Value) -> Option<Value> {
-        shape_reward(&rewards(json!([item])).list[0])
+        shape_reward(&rewards(json!([item])).list[0]).map(finish)
     }
 
     #[test]
@@ -612,6 +608,37 @@ mod tests {
             "deliver label"
         );
         assert_eq!(issued["prize_type_label"], "physical", "physical prize");
+    }
+
+    #[test]
+    fn reward_codes_follow_the_server() {
+        let untyped = reward(json!({"card": {"title": "t", "status": 99}})).expect("shapes");
+        assert!(
+            untyped.get("reward_type").is_none(),
+            "no type sent: none printed"
+        );
+        assert_eq!(
+            untyped["reward_type_label"], "coupon",
+            "named after the detail"
+        );
+        assert_eq!(untyped["status"], 99, "unknown status kept raw");
+        assert!(untyped.get("status_label").is_none(), "unlabelled");
+        let odd = reward(json!({"reward_type": 7, "cash": {"title": "t"}})).expect("shapes");
+        assert_eq!(odd["reward_type"], 7, "raw type kept");
+        assert_eq!(odd["reward_type_label"], "cash", "label from the detail");
+        let filled = reward(json!({"reward_type": 1,
+            "prize": {"status": 12, "deliver_status": 11}}))
+        .expect("shapes");
+        assert_eq!(filled["deliver_status"], 11, "11 stays 11");
+        assert_eq!(filled["deliver_status_label"], "address_filled", "labelled");
+        let typed_cash = reward(json!({"reward_type": 1,
+            "cash": {"status": 12, "deliver_status": 8}}))
+        .expect("shapes");
+        assert!(
+            typed_cash.get("deliver_status_label").is_none(),
+            "no prize detail: no delivery label, whatever the type code says"
+        );
+        assert!(reward(json!({"cash": null})).is_none(), "nothing to show");
     }
 
     #[test]

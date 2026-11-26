@@ -1729,8 +1729,9 @@ pub enum Commands {
     /// failure_reason, max_amount, max_amount_unlimited, daily_max_count,
     /// daily_max_count_unlimited, expiry_date, long_term_valid, is_support (true: the bank
     /// supports this flow), doc_reviewing, no_prior_deposit_reviewing}}. For eDDA questions use
-    /// `longbridge edda list` alone instead (same upstream call; do not run both). Times are Hong
-    /// Kong time (+08:00).
+    /// `longbridge edda list` alone instead (same upstream call; do not run both). A code with no
+    /// known label is shown raw instead: status / witness_state / bind_state on a card, status on
+    /// an authorization. Times are Hong Kong time (+08:00).
     ///
     /// Not available for accounts in the US data center (there is no US equivalent).
     ///
@@ -2180,8 +2181,8 @@ pub enum EddaCmd {
     /// failure_reason (the bank's message), max_amount (deposit limit), max_amount_unlimited,
     /// daily_max_count, daily_max_count_unlimited, expiry_date, long_term_valid, is_support
     /// (true: the bank supports this flow), doc_reviewing (documents under review),
-    /// no_prior_deposit_reviewing (under review because the card has no prior deposit)}. An
-    /// empty list means no card has an eDDA authorization. This is the current state;
+    /// no_prior_deposit_reviewing (under review because the card has no prior deposit), status
+    /// (raw code, only when authorization has no known label)}. An empty list means no card has an eDDA authorization. This is the current state;
     /// `edda status` only lists the applications filed for one card. For eDDA questions use this
     /// command alone, not bank-cards as well (same upstream call). Times are Hong Kong time
     /// (+08:00).
@@ -2198,7 +2199,8 @@ pub enum EddaCmd {
     /// Most eDDA authorizations (e.g. pushed by the bank) have no application, so this is
     /// usually empty: check `longbridge edda list` first. Returns applications[]{id, flow_id, name,
     /// currency, authorization (unauthorized/authorized/authorizing/failed), failure_reason,
-    /// created_at, updated_at}. Times are Hong Kong time (+08:00).
+    /// created_at, updated_at}; an authorization with no known label is shown as its raw status
+    /// code. Times are Hong Kong time (+08:00).
     ///
     /// Not available for accounts in the US data center (there is no US equivalent).
     ///
@@ -2281,7 +2283,8 @@ pub enum RewardCmd {
     /// With --start/--end (on send_time) the command pages through up to 300 records and
     /// returns searched_all instead of total (false: older records were not read, so a missing
     /// reward may be among them); records not issued yet (no send_time) are always included.
-    /// Returns {rewards[]{reward_type, reward_type_label (cash/gift/coupon/task), record_id,
+    /// Returns {rewards[]{reward_type (the server's code, only when it sent one),
+    /// reward_type_label (cash/gift/coupon/task), record_id,
     /// activity_title, title, description, card_type, card_status, prize_type,
     /// prize_type_label (physical: shipped goods), amount, currency, status, status_label
     /// (upcoming/cancelled/exited_activity/unclaimed/issuing/issued/failed/exchanged/expired/
@@ -2377,7 +2380,7 @@ pub enum CouponCmd {
     ///
     /// Returns {card_id, locked[] (orders holding the card, rebate not settled yet), settled[]
     /// (rebate settled)}, each {order_id, state, state_val, executed_price, executed_quantity,
-    /// currency, rebate, rebate_dt, settlement_currency}. Times are Hong Kong time (+08:00).
+    /// currency, rebate, rebate_dt (rebate date as the server sends it), settlement_currency}.
     ///
     /// Not available for accounts in the US data center (there is no US equivalent).
     ///

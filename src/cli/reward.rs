@@ -277,7 +277,8 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
                 field(
                     "rewards",
                     "object[]",
-                    "Records: {reward_type, reward_type_label (cash/gift/coupon/task), record_id, \
+                    "Records: {reward_type (the server's code, only when it sent one), \
+                     reward_type_label (cash/gift/coupon/task), record_id, \
                      activity_title, title, description, card_type, card_status, prize_type, \
                      prize_type_label (physical: shipped goods), amount, currency, status, \
                      status_label (upcoming/cancelled/exited_activity/unclaimed/issuing/issued/\
@@ -350,7 +351,7 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
                     "object[]",
                     "Orders holding the card, rebate not settled yet: {order_id, state, \
                      state_val, executed_price, executed_quantity, currency, \
-                     settlement_currency, rebate, rebate_dt}",
+                     settlement_currency, rebate, rebate_dt (as the server sends it)}",
                 ),
                 field(
                     "settled",

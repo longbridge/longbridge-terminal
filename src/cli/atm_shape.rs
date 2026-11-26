@@ -48,16 +48,18 @@ pub(crate) fn decimal(value: Option<Decimal>) -> Value {
     value.map_or(Value::Null, |d| Value::String(d.to_string()))
 }
 
-/// The server code of a typed state, `null` for an undocumented one
-/// (`Unknown`).
-pub(crate) fn code<T>(value: T) -> Value
-where
-    T: Into<i32> + Default + PartialEq + Copy,
-{
-    if value == T::default() {
+/// The server's raw code of a status, `null` when it sent none.
+pub(crate) fn code(raw: Option<i32>) -> Value {
+    raw.map_or(Value::Null, Value::from)
+}
+
+/// The raw code when there is no label for it, so an undocumented code is
+/// still shown; `null` when the label carries it.
+fn code_if_unlabelled(name: Option<&'static str>, raw: Option<i32>) -> Value {
+    if name.is_some() {
         Value::Null
     } else {
-        Value::from(value.into())
+        code(raw)
     }
 }
 
@@ -267,6 +269,7 @@ fn shape_auth(auth: &BankCardAuthorization) -> Value {
         "name": auth.name,
         "currency": auth.currency,
         "authorization": label(authorization_label(auth.status)),
+        "status": code_if_unlabelled(authorization_label(auth.status), auth.status_raw),
         "failure_reason": auth.message,
         "is_support": auth.is_support,
         "max_amount": decimal(auth.max_amount),
@@ -299,9 +302,12 @@ pub(crate) fn shape_card(card: &BankCard) -> Value {
         "region_name": card.region_name,
         "country": card.country,
         "verification": label(card_status_label(card.status)),
+        "status": code_if_unlabelled(card_status_label(card.status), card.status_raw),
         "review_days": review_days,
         "witness": label(witness_label(card.witness_state)),
+        "witness_state": code_if_unlabelled(witness_label(card.witness_state), card.witness_state_raw),
         "binding": label(binding_label(card.bind_state)),
+        "bind_state": code_if_unlabelled(binding_label(card.bind_state), card.bind_state_raw),
         "bind_tip": card.bind_tip,
         "remark": card.remark,
         "created_at": hk_time(card.created_at),
@@ -328,6 +334,7 @@ fn edda_row(card: &BankCard, auth: &BankCardAuthorization) -> Value {
         "name": field("name"),
         "currency": field("currency"),
         "authorization": field("authorization"),
+        "status": field("status"),
         "failure_reason": field("failure_reason"),
         "max_amount": field("max_amount"),
         "max_amount_unlimited": field("max_amount_unlimited"),
@@ -375,6 +382,7 @@ pub(crate) fn shape_edda_status(applications: &[EddaApplication]) -> Value {
                 "name": app.name,
                 "currency": app.currency,
                 "authorization": label(authorization_label(app.status)),
+                "status": code_if_unlabelled(authorization_label(app.status), app.status_raw),
                 "failure_reason": app.message,
                 "created_at": hk_time(app.created_at),
                 "updated_at": hk_time(app.updated_at),
@@ -428,7 +436,7 @@ impl<'a> TransferRecord<'a> {
             broker_code: &record.broker_code,
             account: &record.account,
             state: &record.state,
-            state_code: code(record.state_code),
+            state_code: code(record.state_code_raw),
             state_label: transfer_in_label(record.state_code),
             finished: matches!(
                 record.state_code,
@@ -463,7 +471,7 @@ impl<'a> TransferRecord<'a> {
             broker_code: &record.broker_code,
             account: &record.account,
             state: &record.state,
-            state_code: code(record.state_code),
+            state_code: code(record.state_code_raw),
             state_label: transfer_out_label(record.state_code),
             finished: matches!(
                 record.state_code,
@@ -519,7 +527,7 @@ impl<'a> TransferRecord<'a> {
                     "counter_id": stock.counter_id,
                     "amount": decimal(stock.amount),
                     "currency": stock.currency,
-                    "state": code(stock.state_code),
+                    "state": code(stock.state_code_raw),
                     "state_label": label(transfer_stock_label(stock.state_code)),
                 })
             })
@@ -631,7 +639,7 @@ fn shape_withdrawal(item: &Withdrawal) -> Value {
         "amount": decimal(item.amount),
         "fee": decimal(item.fee),
         "settlement_amount": decimal(item.settlement_amount),
-        "state": code(item.state_code),
+        "state": code(item.state_code_raw),
         "state_label": label(withdrawal_label(item.state_code)),
         "state_description": item.state_description,
         "bank_account": masked(&item.bank_account),
@@ -657,7 +665,7 @@ fn shape_deposit(item: &Deposit) -> Value {
         "amount": decimal(item.amount),
         "receivable_amount": decimal(item.receivable_amount),
         "state": item.state,
-        "state_code": code(item.state_code),
+        "state_code": code(item.state_code_raw),
         "state_label": label(deposit_label(item.state_code)),
         "sub_state_code": item.sub_state_code,
         "bank_operation_type_name": item.bank_operation_type_name,
@@ -1023,6 +1031,41 @@ mod tests {
             open["days_in_process"].as_i64().is_some_and(|d| d > 300),
             "open: until now"
         );
+    }
+
+    #[test]
+    fn undocumented_codes_are_shown_raw() {
+        let cards: Vec<BankCard> = decode(json!([{"id": 1, "status": 9, "witness_state": 1,
+            "bind_state": 7, "auth_list": [{"flow_id": "hk_edda", "status": 8},
+                {"flow_id": "hk_sdda", "status": 1}]}]));
+        let card = &bank_cards_output(&cards)["cards"][0];
+        assert_eq!(card["status"], 9, "unknown card status kept raw");
+        assert!(card.get("verification").is_none(), "no label");
+        assert!(
+            card.get("witness_state").is_none(),
+            "labelled code not repeated"
+        );
+        assert_eq!(card["bind_state"], 7, "unknown bind state kept raw");
+        assert_eq!(card["auth_list"][0]["status"], 8, "unknown auth status raw");
+        assert!(
+            card["auth_list"][1].get("status").is_none(),
+            "labelled auth"
+        );
+        let rows = edda_output(&cards);
+        assert_eq!(rows["authorizations"][0]["status"], 8, "eDDA row too");
+        let apps: Vec<EddaApplication> = decode(json!([{"id": 1, "status": 6}]));
+        assert_eq!(shape_edda_status(&apps)["applications"][0]["status"], 6);
+        let resp: WithdrawalsResponse = decode(json!({"list": [{"id": 1, "state": 42}]}));
+        let item = &shape_withdrawals(&resp, 20)["list"][0];
+        assert_eq!(item["state"], 42, "raw withdrawal state");
+        assert!(item.get("state_label").is_none(), "unlabelled");
+        let items: Vec<Deposit> = decode(json!([{"id": 1, "state_code": 9}]));
+        assert_eq!(shape_deposits(&items, 20)["items"][0]["state_code"], 9);
+        let transfers: StockTransferInResponse =
+            decode(json!({"records": [{"state_code": 11, "stocks": [{"state": 6}]}]}));
+        let record = &shape_transfers_in(&transfers)["records"][0];
+        assert_eq!(record["state_code"], 11, "raw transfer state");
+        assert_eq!(record["stocks"][0]["state"], 6, "raw stock state");
     }
 
     #[test]
