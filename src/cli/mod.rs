@@ -1718,16 +1718,21 @@ pub enum Commands {
     /// List linked bank cards and their review state
     ///
     /// Returns cards[]{id, bank, bank_en, bank_code, account (last 4 digits), account_type,
-    /// region, region_name, country, verification (unverified: not verified yet — a deposit
-    /// from this card or an eDDA / bank-securities authorization verifies it; under_review:
-    /// manual review after binding, card unusable meanwhile; verified), witness
+    /// region, region_name, country, verification (unverified: not verified yet, covering "not
+    /// verified" and "reviewed, awaiting a deposit" — a deposit from this card or an eDDA /
+    /// bank-securities authorization verifies it; under_review: manual review after binding,
+    /// card unusable meanwhile; verified), witness
     /// (not_required/pending/witnessed), binding (binding/bound/failed), review_days (days
     /// since the card was added, only while under_review), bind_tip, remark, created_at,
     /// auth_list[]{flow_id (hk_edda/hk_sdda: eDDA, hk_bank_sec: bank-securities transfer,
     /// hk_fps: FPS), name, currency, authorization (unauthorized/authorized/authorizing/failed),
     /// failure_reason, max_amount, max_amount_unlimited, daily_max_count,
-    /// daily_max_count_unlimited, expiry_date, long_term_valid, is_support, doc_reviewing,
-    /// no_prior_deposit_reviewing}}. Times are Hong Kong time (+08:00).
+    /// daily_max_count_unlimited, expiry_date, long_term_valid, is_support (1: the bank supports
+    /// this flow), doc_reviewing, no_prior_deposit_reviewing}}. For eDDA questions use
+    /// `longbridge edda` alone instead (same upstream call; do not run both). Times are Hong
+    /// Kong time (+08:00).
+    ///
+    /// Not available for accounts in the US data center (there is no US equivalent).
     ///
     /// Example: longbridge bank-cards
     #[command(name = "bank-cards")]
@@ -1741,10 +1746,15 @@ pub enum Commands {
     /// (binding/bound/failed), flow (hk_edda: authorized at the bank, hk_sdda: authorized in
     /// the app), name, currency, authorization (unauthorized/authorized/authorizing/failed),
     /// failure_reason (the bank's message), max_amount (deposit limit), max_amount_unlimited,
-    /// daily_max_count, daily_max_count_unlimited, expiry_date, long_term_valid, is_support,
-    /// doc_reviewing (documents under review), no_prior_deposit_reviewing (under review because
-    /// the card has no prior deposit)}. An empty list means no card has an eDDA authorization.
-    /// This is the current state; edda-status only lists the applications filed for one card.
+    /// daily_max_count, daily_max_count_unlimited, expiry_date, long_term_valid, is_support (1:
+    /// the bank supports this flow), doc_reviewing (documents under review),
+    /// no_prior_deposit_reviewing (under review because the card has no prior deposit)}. An
+    /// empty list means no card has an eDDA authorization. This is the current state;
+    /// edda-status only lists the applications filed for one card. For eDDA questions use this
+    /// command alone, not bank-cards as well (same upstream call). Times are Hong Kong time
+    /// (+08:00).
+    ///
+    /// Not available for accounts in the US data center (there is no US equivalent).
     ///
     /// Example: longbridge edda
     Edda,
@@ -1757,6 +1767,8 @@ pub enum Commands {
     /// usually empty: check `longbridge edda` first. Returns applications[]{id, flow_id, name,
     /// currency, authorization (unauthorized/authorized/authorizing/failed), failure_reason,
     /// created_at, updated_at}. Times are Hong Kong time (+08:00).
+    ///
+    /// Not available for accounts in the US data center (there is no US equivalent).
     ///
     /// Example: longbridge edda-status --card-id 434810 --currency HKD
     #[command(name = "edda-status")]
@@ -1776,17 +1788,24 @@ pub enum Commands {
     /// State codes (--state / state_code): 0 submitted, 1 cancelled, 3 completed (shares
     /// received), 5 processing, 7 partially completed, 8 failed. Returns records[]{id, order_id,
     /// market, broker, broker_en, code (broker code), account (the user's account at the other
-    /// broker, last 4 digits), state (status text), state_code, state_label, can_modify (1: can
+    /// broker, last 4 digits), state (status text), state_code, state_label
+    /// (submitted/cancelled/completed/processing/partially_completed/failed), can_modify (1: can
     /// still be cancelled or changed in the app), app_state, user_notified_broker (the user
     /// tapped "I have notified the broker" in the app; their own confirmation, not a Longbridge
     /// action), stocks[]{code, name, amount, state, state_label (processing/succeeded/failed)},
     /// created_at, updated_at, process_at, exec_at, days_in_process (days from creation until
     /// execution; for a cancelled or failed one until it ended; for an open one until today),
-    /// remark, reason}, total. Times are Hong Kong time (+08:00).
+    /// remark, reason}, total. A failure or cancellation reason, when there is one, is in
+    /// remark/reason. Times are Hong Kong time (+08:00).
+    ///
+    /// Not available for accounts in the US data center (there is no US equivalent).
     ///
     /// Example: longbridge stock-transfers-in
     /// Example: longbridge stock-transfers-in --market HK --start 2026-01-01
-    #[command(name = "stock-transfers-in")]
+    #[command(
+        name = "stock-transfers-in",
+        mut_arg("state", |arg| arg.help(TRANSFER_IN_STATE_HELP))
+    )]
     StockTransfersIn {
         #[command(flatten)]
         filter: TransferArgs,
@@ -1799,13 +1818,20 @@ pub enum Commands {
     /// State codes (--state / state_code): 0 submitted (the only state that can still be
     /// cancelled), 1 processing, 2 executing, 3 completed, 4 cancelled, 5 partially completed,
     /// 6 failed, 7 rejected. Returns records[]{id, broker, broker_en, code (broker code),
-    /// account (last 4 digits), state, state_code, state_label, app_state,
+    /// account (last 4 digits), state, state_code, state_label (submitted/processing/executing/
+    /// completed/cancelled/partially_completed/failed/rejected), app_state,
     /// user_notified_broker, stocks[]{code, name, amount, state, state_label}, created_at,
     /// updated_at, agree_at, refuse_at, cancel_at, process_at, exec_at, days_in_process,
-    /// reason}. Times are Hong Kong time (+08:00).
+    /// reason}. A rejection or cancellation reason, when there is one, is in reason. Times are
+    /// Hong Kong time (+08:00).
+    ///
+    /// Not available for accounts in the US data center (there is no US equivalent).
     ///
     /// Example: longbridge stock-transfers-out --state 0
-    #[command(name = "stock-transfers-out")]
+    #[command(
+        name = "stock-transfers-out",
+        mut_arg("state", |arg| arg.help(TRANSFER_OUT_STATE_HELP))
+    )]
     StockTransfersOut {
         #[command(flatten)]
         filter: TransferArgs,
@@ -1815,13 +1841,17 @@ pub enum Commands {
     #[allow(clippy::doc_markdown)]
     /// List withdrawal history for the current account, newest first
     ///
-    /// Returns {list[]{id, order_id, created_at, currency, amount (amount applied for), fee,
-    /// settlement_amount (amount actually paid out), state, state_label
-    /// (submitted/processing/rejected/cancelled/remitted/failed/refunded/
-    /// approved_awaiting_payout/large_amount_review/awaiting_confirmation/…), state_description
-    /// (status text as the app shows it), bank_account (last 4 digits), display_bank_account,
-    /// user_bank_swift_code}, total, has_more (a full page came back; request the next page)}.
-    /// Times are Hong Kong time (+08:00).
+    /// Returns {list[]{id, order_id, created_at, currency, amount (amount applied for), fee
+    /// (withdrawal fee; empty or absent on old records), settlement_amount (amount actually paid
+    /// out), state, state_label (submitted/processing/rejected/cancelled/remitted/failed/
+    /// refunded/approved_awaiting_payout/large_amount_review/awaiting_confirmation/…),
+    /// state_description (status text as the app shows it; prefer it when present),
+    /// bank_account (last 4 digits; matches cards[].account from bank-cards),
+    /// display_bank_account, user_bank_swift_code}, total, has_more (a full page came back;
+    /// request the next page)}. An estimated processing time and a back-office remark are not
+    /// available. Times are Hong Kong time (+08:00).
+    ///
+    /// Not available for accounts in the US data center (there is no US equivalent).
     ///
     /// Example: longbridge withdrawals
     /// Example: longbridge withdrawals --page 2 --limit 50 --start 2026-01-01
@@ -1830,7 +1860,7 @@ pub enum Commands {
         #[arg(long, default_value = "1")]
         page: u32,
         /// Records per page (default: 20, max 50)
-        #[arg(long, alias = "limit", default_value = "20")]
+        #[arg(long, aliases = ["limit", "size"], default_value = "20")]
         count: u32,
         /// Applied on or after this date (yyyy-mm-dd as a Hong Kong date, or RFC3339)
         #[arg(long)]
@@ -1850,7 +1880,10 @@ pub enum Commands {
     /// (processing/credited/failed/cancelled/invalidated/rejected), sub_state_code,
     /// bank_operation_type_name (deposit method, e.g. eDDA, FPS, bank transfer), reference_no,
     /// can_cancel, voucher_count (receipts uploaded)}, has_more (a full page came back; request
-    /// the next page)}. There is no reliable total count. Times are Hong Kong time (+08:00).
+    /// the next page)}. There is no reliable total count. A back-office remark is not available.
+    /// Times are Hong Kong time (+08:00).
+    ///
+    /// Not available for accounts in the US data center (there is no US equivalent).
     ///
     /// Example: longbridge deposits
     /// Example: longbridge deposits --states 0,2 --currencies HKD,USD --start 2026-01-01
@@ -1859,7 +1892,7 @@ pub enum Commands {
         #[arg(long, default_value = "1")]
         page: u32,
         /// Records per page (default: 20, max 50)
-        #[arg(long, alias = "limit", default_value = "20")]
+        #[arg(long, aliases = ["limit", "size"], default_value = "20")]
         count: u32,
         /// Filter by state codes, comma-separated: 0 processing, 1 credited, 2 failed,
         /// 3 cancelled, 4 invalidated, 5 rejected
@@ -1888,8 +1921,12 @@ pub enum Commands {
     /// prize_type_label (physical: shipped goods), amount, currency, status, status_label
     /// (upcoming/cancelled/exited_activity/unclaimed/issuing/issued/failed/exchanged/expired/
     /// refunded), deliver_status, deliver_status_label (issued prizes only), send_time,
-    /// start_time, end_time, effective_time, receive_deadline}, total}. Coupon cards a reward
-    /// granted are listed by coupons. Times are Hong Kong time (+08:00).
+    /// start_time, end_time, effective_time, receive_deadline}, total (all records of this
+    /// type; only without --start/--end)}. A reward is identified by activity_title and
+    /// send_time; coupon cards it granted are listed by coupons. Times are Hong Kong time
+    /// (+08:00).
+    ///
+    /// Not available for accounts in the US data center (there is no US equivalent).
     ///
     /// Example: longbridge rewards
     /// Example: longbridge rewards --kind cash --start 2026-08-01 --end 2026-08-31
@@ -1922,7 +1959,10 @@ pub enum Commands {
     /// amount, currency, available_trade_session, trade_sessions, commission{markets, targets
     /// (stocks/options/warrants/ETF/LOF), rebate_rate, bz_types, commission_balance,
     /// commission_expired_time}, quote{…}, stock{…}, platform_fee_deduct{…}, …}, total,
-    /// expired_count}. Times are Hong Kong time (+08:00).
+    /// expired_count}. Which orders a card was applied to: coupon-orders. Times are Hong Kong
+    /// time (+08:00).
+    ///
+    /// Not available for accounts in the US data center (there is no US equivalent).
     ///
     /// Example: longbridge coupons
     /// Example: longbridge coupons --status expired --card-type commission
@@ -1950,7 +1990,9 @@ pub enum Commands {
     ///
     /// Returns {card_id, locked[] (orders holding the card, rebate not settled yet), settled[]
     /// (rebate settled)}, each {order_id, state, state_val, executed_price, executed_quantity,
-    /// currency, rebate, rebate_dt, settlement_currency}.
+    /// currency, rebate, rebate_dt, settlement_currency}. Times are Hong Kong time (+08:00).
+    ///
+    /// Not available for accounts in the US data center (there is no US equivalent).
     ///
     /// Example: longbridge coupon-orders --card-id bd6b40914cd411f08becae6ae6fae931
     #[command(name = "coupon-orders")]
@@ -2227,13 +2269,22 @@ impl GridLimitEventArg {
     }
 }
 
+/// `--state` help for `stock-transfers-in`, shown in `-h`.
+const TRANSFER_IN_STATE_HELP: &str = "State code (default: all): 0 submitted, 1 cancelled, \
+     3 completed (shares received), 5 processing, 7 partially completed, 8 failed";
+
+/// `--state` help for `stock-transfers-out`, shown in `-h`.
+const TRANSFER_OUT_STATE_HELP: &str = "State code (default: all): 0 submitted (the only \
+     state that can still be cancelled), 1 processing, 2 executing, 3 completed, 4 cancelled, \
+     5 partially completed, 6 failed, 7 rejected";
+
 /// Shared filter flags for `stock-transfers-in` / `stock-transfers-out`.
 #[derive(Debug, Clone, clap::Args)]
 pub struct TransferArgs {
     /// Market: HK, US, CN or SG (default: all)
     #[arg(long)]
     pub market: Option<String>,
-    /// State code (default: all); codes are listed above
+    /// State code (default: all); each command sets its own list of codes
     #[arg(long)]
     pub state: Option<i32>,
     /// Created on or after this date (yyyy-mm-dd as a Hong Kong date, or RFC3339)

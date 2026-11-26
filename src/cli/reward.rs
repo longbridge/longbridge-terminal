@@ -7,8 +7,7 @@
 use anyhow::Result;
 use serde_json::Value;
 
-use super::api::{http_get, http_get_paced};
-use super::atm::{cell, label_cell, print_shaped_json, time_cell};
+use super::atm::{ap_get, ap_get_paced, cell, label_cell, print_shaped_json, time_cell};
 use super::atm_shape::{clamp_page_size, parse_hong_kong_end, parse_hong_kong_start};
 use super::output::print_table;
 use super::reward_shape::{
@@ -16,6 +15,16 @@ use super::reward_shape::{
     shape_reward_page, DatedRewards, DATED_PAGE_SIZE, MAX_REWARD_PAGES,
 };
 use super::OutputFormat;
+
+/// Table cell for an item's `amount` followed by its `currency`, `-` when
+/// there is no amount.
+fn amount_cell(item: &Value) -> String {
+    match (item.get("amount"), item.get("currency")) {
+        (Some(a), Some(c)) => format!("{} {}", cell(a), cell(c)),
+        (Some(a), None) => cell(a),
+        _ => "-".to_string(),
+    }
+}
 
 /// List the current account's activity reward records, newest first.
 ///
@@ -51,7 +60,7 @@ pub async fn cmd_rewards(
             if let Some(t) = reward_type {
                 params.push(("reward_type", t));
             }
-            let raw = match http_get_paced(path, &params, verbose).await {
+            let raw = match ap_get_paced("rewards", path, &params, verbose).await {
                 Ok(raw) => raw,
                 // A later page failed (e.g. still rate-limited): keep what was
                 // read and say the search is incomplete.
@@ -82,7 +91,7 @@ pub async fn cmd_rewards(
         if let Some(t) = reward_type {
             params.push(("reward_type", t));
         }
-        shape_reward_page(http_get(path, &params, verbose).await?)
+        shape_reward_page(ap_get("rewards", path, &params, verbose).await?)
     };
     match format {
         OutputFormat::Json => print_shaped_json(&value),
@@ -95,11 +104,7 @@ pub async fn cmd_rewards(
                 let rows = rewards
                     .iter()
                     .map(|r| {
-                        let amount = match (r.get("amount"), r.get("currency")) {
-                            (Some(a), Some(c)) => format!("{} {}", cell(a), cell(c)),
-                            (Some(a), None) => cell(a),
-                            _ => "-".to_string(),
-                        };
+                        let amount = amount_cell(r);
                         let status = match r.get("deliver_status_label") {
                             Some(d) => {
                                 format!("{} ({})", label_cell(r, "status_label", "status"), cell(d))
@@ -155,7 +160,7 @@ pub async fn cmd_coupons(
     if let Some(t) = card_type.map(str::trim).filter(|t| !t.is_empty()) {
         params.push(("card_type", t));
     }
-    let raw = http_get("/v1/account/cards", &params, verbose).await?;
+    let raw = ap_get("coupons", "/v1/account/cards", &params, verbose).await?;
     let value = shape_coupons(raw, page, with_terms);
     match format {
         OutputFormat::Json => print_shaped_json(&value),
@@ -169,6 +174,7 @@ pub async fn cmd_coupons(
                 "card id",
                 "type",
                 "title",
+                "amount",
                 "status",
                 "valid from",
                 "valid until",
@@ -185,6 +191,7 @@ pub async fn cmd_coupons(
                         cell(&c["card_id"]),
                         cell(&c["card_type"]),
                         cell(&c["title"]),
+                        amount_cell(c),
                         label_cell(c, "card_status_label", "card_status"),
                         time_cell(&c["start_time"]),
                         until,
@@ -212,13 +219,15 @@ pub async fn cmd_coupon_orders(card_id: &str, format: &OutputFormat, verbose: bo
     let path = "/v1/account/card-orders";
     // Sequential on purpose: the gateway rate-limits this route per member
     // tightly, and two concurrent calls draw 429s.
-    let locked = http_get_paced(
+    let locked = ap_get_paced(
+        "coupon-orders",
         path,
         &[("card_id", card_id), ("order_type", "locked")],
         verbose,
     )
     .await?;
-    let settled = http_get_paced(
+    let settled = ap_get_paced(
+        "coupon-orders",
         path,
         &[("card_id", card_id), ("order_type", "settled")],
         verbose,

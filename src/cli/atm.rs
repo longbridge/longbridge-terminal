@@ -5,9 +5,10 @@
 //! lives in [`super::atm_shape`].
 
 use anyhow::Result;
+use longbridge::{httpclient::HttpClientError, DcRegion};
 use serde_json::Value;
 
-use super::api::http_get;
+use super::api::{http_get_dc, http_get_paced};
 use super::atm_shape::{
     bank_cards_output, check_bank_card_id, check_deposit_states, clamp_page_size, date_range,
     edda_output, shape_cards, shape_deposits, shape_edda_status, shape_transfers,
@@ -15,6 +16,57 @@ use super::atm_shape::{
 };
 use super::output::print_table;
 use super::OutputFormat;
+
+/// The error for an account command run by an account in the US data center:
+/// these routes (lb-portfolio-atm / lb-reward-center) exist only in the AP data
+/// center, and there is no US route covering the same data.
+fn us_unavailable(command: &str) -> anyhow::Error {
+    anyhow::anyhow!(
+        "`longbridge {command}` is not available for accounts in the US data center. \
+         There is no US equivalent; do not retry."
+    )
+}
+
+/// Replace the SDK's data-center restriction error with [`us_unavailable`];
+/// any other error passes through.
+fn ap_only_error(command: &str, err: anyhow::Error) -> anyhow::Error {
+    let http_error = err.downcast_ref::<HttpClientError>().or_else(|| {
+        match err.downcast_ref::<longbridge::Error>() {
+            Some(longbridge::Error::HttpClient(e)) => Some(e),
+            _ => None,
+        }
+    });
+    if matches!(http_error, Some(HttpClientError::DcRegionRestricted { .. })) {
+        us_unavailable(command)
+    } else {
+        err
+    }
+}
+
+/// GET on an AP-only account route for `command`: the SDK rejects a US-region
+/// session before sending, and the rejection names the command.
+pub(crate) async fn ap_get(
+    command: &str,
+    path: &str,
+    params: &[(&str, &str)],
+    verbose: bool,
+) -> Result<Value> {
+    http_get_dc(path, params, Some(DcRegion::Ap), verbose)
+        .await
+        .map_err(|err| ap_only_error(command, err))
+}
+
+/// [`ap_get`] that retries rate limits, as [`http_get_paced`].
+pub(crate) async fn ap_get_paced(
+    command: &str,
+    path: &str,
+    params: &[(&str, &str)],
+    verbose: bool,
+) -> Result<Value> {
+    http_get_paced(path, params, Some(DcRegion::Ap), verbose)
+        .await
+        .map_err(|err| ap_only_error(command, err))
+}
 
 /// Print a shaped value as pretty JSON, unchanged.
 pub(crate) fn print_shaped_json(value: &Value) {
@@ -53,9 +105,10 @@ pub(crate) fn label_cell(item: &Value, label_key: &str, raw_key: &str) -> String
 }
 
 /// Fetch and shape the bank-card list (`GET /v2/account/bank-cards`).
-async fn fetch_cards(verbose: bool) -> Result<Vec<Value>> {
+async fn fetch_cards(command: &str, verbose: bool) -> Result<Vec<Value>> {
     let channel = crate::auth::account_channel_or_default();
-    let raw = http_get(
+    let raw = ap_get(
+        command,
         "/v2/account/bank-cards",
         &[
             ("from_app_page", "cards"),
@@ -70,7 +123,7 @@ async fn fetch_cards(verbose: bool) -> Result<Vec<Value>> {
 /// List linked bank cards with their verification, binding and authorization
 /// status.
 pub async fn cmd_bank_cards(format: &OutputFormat, verbose: bool) -> Result<()> {
-    let value = bank_cards_output(fetch_cards(verbose).await?);
+    let value = bank_cards_output(fetch_cards("bank-cards", verbose).await?);
     match format {
         OutputFormat::Json => print_shaped_json(&value),
         OutputFormat::Pretty => {
@@ -85,6 +138,7 @@ pub async fn cmd_bank_cards(format: &OutputFormat, verbose: bool) -> Result<()> 
                 "account",
                 "type",
                 "verification",
+                "witness",
                 "binding",
                 "review days",
                 "authorizations",
@@ -97,12 +151,19 @@ pub async fn cmd_bank_cards(format: &OutputFormat, verbose: bool) -> Result<()> 
                         .into_iter()
                         .flatten()
                         .map(|auth| {
-                            format!(
+                            let text = format!(
                                 "{} {} {}",
                                 cell(&auth["flow_id"]),
                                 cell(&auth["currency"]),
                                 cell(&auth["authorization"])
-                            )
+                            );
+                            match auth["failure_reason"]
+                                .as_str()
+                                .filter(|r| !r.trim().is_empty())
+                            {
+                                Some(reason) => format!("{text} ({reason})"),
+                                None => text,
+                            }
                         })
                         .collect::<Vec<_>>()
                         .join("; ");
@@ -112,6 +173,7 @@ pub async fn cmd_bank_cards(format: &OutputFormat, verbose: bool) -> Result<()> 
                         cell(&card["account"]),
                         cell(&card["account_type"]),
                         cell(&card["verification"]),
+                        cell(&card["witness"]),
                         cell(&card["binding"]),
                         cell(&card["review_days"]),
                         if auths.is_empty() {
@@ -130,7 +192,7 @@ pub async fn cmd_bank_cards(format: &OutputFormat, verbose: bool) -> Result<()> 
 
 /// List the eDDA authorizations across all linked bank cards.
 pub async fn cmd_edda(format: &OutputFormat, verbose: bool) -> Result<()> {
-    let value = edda_output(&fetch_cards(verbose).await?);
+    let value = edda_output(&fetch_cards("edda", verbose).await?);
     match format {
         OutputFormat::Json => print_shaped_json(&value),
         OutputFormat::Pretty => {
@@ -196,7 +258,8 @@ pub async fn cmd_edda_status(
     check_bank_card_id(card_id)?;
     let channel = crate::auth::account_channel_or_default();
     let currency = currency.trim().to_uppercase();
-    let raw = http_get(
+    let raw = ap_get(
+        "edda-status",
         "/v1/account/edda-status",
         &[
             ("card_id", card_id),
@@ -260,6 +323,7 @@ pub struct TransferFilter<'a> {
 }
 
 async fn transfer_records(
+    command: &str,
     kind: &TransferKind,
     filter: &TransferFilter<'_>,
     format: &OutputFormat,
@@ -285,7 +349,7 @@ async fn transfer_records(
         params.push(("end", end));
     }
     let params: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    let raw = http_get(kind.path, &params, verbose).await?;
+    let raw = ap_get(command, kind.path, &params, verbose).await?;
     let value = shape_transfers(raw, kind);
     match format {
         OutputFormat::Json => print_shaped_json(&value),
@@ -356,7 +420,7 @@ pub async fn cmd_stock_transfers_in(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    transfer_records(&TRANSFER_IN, filter, format, verbose).await
+    transfer_records("stock-transfers-in", &TRANSFER_IN, filter, format, verbose).await
 }
 
 /// List stock transfer-out applications (this account to another broker).
@@ -365,7 +429,14 @@ pub async fn cmd_stock_transfers_out(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    transfer_records(&TRANSFER_OUT, filter, format, verbose).await
+    transfer_records(
+        "stock-transfers-out",
+        &TRANSFER_OUT,
+        filter,
+        format,
+        verbose,
+    )
+    .await
 }
 
 fn print_has_more(value: &Value) {
@@ -385,7 +456,7 @@ pub async fn cmd_withdrawals(
 ) -> Result<()> {
     let account_channel = crate::auth::account_channel_or_default();
     let size = clamp_page_size(limit);
-    let page_str = page.to_string();
+    let page_str = page.max(1).to_string();
     let size_str = size.to_string();
     let (begin, end) = date_range(start, end)?;
     let mut params: Vec<(&str, &str)> = vec![
@@ -399,7 +470,7 @@ pub async fn cmd_withdrawals(
     if let Some(e) = end.as_deref() {
         params.push(("end", e));
     }
-    let raw = http_get("/v1/account/withdrawals", &params, verbose).await?;
+    let raw = ap_get("withdrawals", "/v1/account/withdrawals", &params, verbose).await?;
     let value = shape_withdrawals(raw, size as usize);
     match format {
         OutputFormat::Json => print_shaped_json(&value),
@@ -458,7 +529,7 @@ pub async fn cmd_deposits(
 ) -> Result<()> {
     let account_channel = crate::auth::account_channel_or_default();
     let size = clamp_page_size(limit);
-    let page_str = page.to_string();
+    let page_str = page.max(1).to_string();
     let size_str = size.to_string();
     let states = states.map(check_deposit_states).transpose()?;
     let (from_date, to_date) = date_range(start, end)?;
@@ -479,7 +550,7 @@ pub async fn cmd_deposits(
     if let Some(t) = to_date.as_deref() {
         params.push(("to_date", t));
     }
-    let raw = http_get("/v1/account/deposits", &params, verbose).await?;
+    let raw = ap_get("deposits", "/v1/account/deposits", &params, verbose).await?;
     let value = shape_deposits(raw, size as usize);
     match format {
         OutputFormat::Json => print_shaped_json(&value),
@@ -637,4 +708,43 @@ pub(crate) fn schema_for_path(path: &[String]) -> Option<super::schema::Response
             _ => return None,
         };
     Some(schema)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dc_restriction_names_the_command_and_says_not_to_retry() {
+        let err = anyhow::Error::from(HttpClientError::DcRegionRestricted {
+            path: "/v1/account/deposits".to_string(),
+            required: DcRegion::Ap,
+            current: DcRegion::Us,
+        });
+        assert_eq!(
+            ap_only_error("deposits", err).to_string(),
+            "`longbridge deposits` is not available for accounts in the US data center. \
+             There is no US equivalent; do not retry.",
+            "US rejection replaces the SDK message"
+        );
+        let wrapped = anyhow::Error::from(longbridge::Error::HttpClient(
+            HttpClientError::DcRegionRestricted {
+                path: "/v1/account/cards".to_string(),
+                required: DcRegion::Ap,
+                current: DcRegion::Us,
+            },
+        ));
+        assert!(
+            ap_only_error("coupons", wrapped)
+                .to_string()
+                .starts_with("`longbridge coupons` is not available"),
+            "an SDK-wrapped restriction is recognised too"
+        );
+    }
+
+    #[test]
+    fn other_errors_pass_through() {
+        let err = ap_only_error("bank-cards", anyhow::anyhow!("boom"));
+        assert_eq!(err.to_string(), "boom", "unrelated error unchanged");
+    }
 }

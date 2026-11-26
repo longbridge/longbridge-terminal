@@ -524,14 +524,17 @@ const PACED_ATTEMPTS: usize = 3;
 /// routes to about one call a second per member, so a rate-limited request
 /// waits the delay the upstream suggests and is retried, instead of failing
 /// the whole command.
+///
+/// `dc_restrict` limits the request to one data center, as in [`http_get_dc`].
 pub async fn http_get_paced(
     path: &str,
     params: &[(&str, &str)],
+    dc_restrict: Option<longbridge::DcRegion>,
     verbose: bool,
 ) -> Result<serde_json::Value> {
     let mut attempt = 1;
     loop {
-        match http_get(path, params, verbose).await {
+        match http_get_dc(path, params, dc_restrict, verbose).await {
             Err(err) if attempt < PACED_ATTEMPTS && is_rate_limited(&err) => {
                 let delay = backoff_delay(&format!("{err:#}"));
                 if verbose {
