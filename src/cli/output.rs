@@ -88,14 +88,17 @@ pub fn print_account_banner(format: &OutputFormat) {
 ///
 /// Printed to stderr so `--format json` output stays parsable.
 pub fn warn_papertrading_mismatch() {
+    // The SDK loads `.env` when it builds its Config, which happens after this
+    // check runs. Load it here too, or a variable set in a `.env` file would
+    // enable paper trading without ever tripping the warning. `dotenv` never
+    // overwrites a variable already set in the environment, and a missing file
+    // is not an error.
+    let _ = dotenv::dotenv();
     let requested = std::env::var("LONGBRIDGE_PAPERTRADING")
         .or_else(|_| std::env::var("LONGPORT_PAPERTRADING"))
         .map(|value| value == "true")
         .unwrap_or(false);
-    if !requested {
-        return;
-    }
-    if crate::auth::account_channel().as_deref() == Some("lb_papertrading") {
+    if !is_papertrading_mismatch(requested, crate::auth::account_channel().as_deref()) {
         return;
     }
     eprintln!(
@@ -465,5 +468,44 @@ mod tests {
         let mut v = json!({"account_channel": "lb", "name": "foo", "aaid": "x"});
         strip_private_fields(&mut v);
         assert_eq!(v, json!({"name": "foo"}));
+    }
+}
+
+/// Whether paper trading was asked for while signed in with an account that is
+/// not a paper trading account.
+///
+/// An unknown channel (`None` — an opaque token, or storage we could not read)
+/// counts as a mismatch: the warning costs nothing and silence here is what
+/// lets a real order through.
+fn is_papertrading_mismatch(requested: bool, account_channel: Option<&str>) -> bool {
+    requested && account_channel != Some("lb_papertrading")
+}
+
+#[cfg(test)]
+mod papertrading_tests {
+    use super::is_papertrading_mismatch;
+
+    #[test]
+    fn warns_only_when_paper_is_asked_for_from_a_non_paper_account() {
+        assert!(
+            is_papertrading_mismatch(true, Some("lb")),
+            "a real-money account must be warned about"
+        );
+        assert!(
+            is_papertrading_mismatch(true, Some("us_lb")),
+            "an LBUS account must be warned about"
+        );
+        assert!(
+            is_papertrading_mismatch(true, None),
+            "an unreadable channel must warn rather than stay silent"
+        );
+        assert!(
+            !is_papertrading_mismatch(true, Some("lb_papertrading")),
+            "a real paper account is exactly the supported case"
+        );
+        assert!(
+            !is_papertrading_mismatch(false, Some("lb")),
+            "no warning when paper trading was never requested"
+        );
     }
 }

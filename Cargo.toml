@@ -17,6 +17,9 @@ split-debuginfo = "packed" # Pack debug info into .pdb (Windows) or .dSYM (macOS
 strip = "symbols"          # Strip all symbols from the final binary
 
 [dependencies]
+# Same loader the SDK uses for `.env`, so the paper-trading warning sees the
+# same variables the SDK will read when it builds its Config later.
+dotenv = "0.15"
 ansi-parser = "0.9.1"
 ansi-to-tui = "8.0.1"
 anyhow = "1.0"

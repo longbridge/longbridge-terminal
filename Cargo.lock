@@ -2755,6 +2755,7 @@ dependencies = [
  "csv",
  "dashmap",
  "dirs 5.0.1",
+ "dotenv",
  "flate2",
  "futures",
  "hkdf",
