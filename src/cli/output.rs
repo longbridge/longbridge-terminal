@@ -98,6 +98,11 @@ pub fn warn_papertrading_mismatch() {
         .or_else(|_| std::env::var("LONGPORT_PAPERTRADING"))
         .map(|value| value == "true")
         .unwrap_or(false);
+    // Reading the account channel decrypts the stored token, so do it only
+    // when paper trading was actually asked for — which is the rare case.
+    if !requested {
+        return;
+    }
     if !is_papertrading_mismatch(requested, crate::auth::account_channel().as_deref()) {
         return;
     }
