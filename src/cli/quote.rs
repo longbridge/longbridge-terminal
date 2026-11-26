@@ -622,11 +622,56 @@ pub async fn cmd_kline(
     Ok(())
 }
 
+/// Offset-mode parameters for `kline history`: walk `count` candles from
+/// `time` (exchange local time; latest candle when `None`).
+pub struct KlineOffset {
+    pub time: Option<String>,
+    pub forward: bool,
+    pub count: usize,
+}
+
+/// Maximum candles the offset query returns per request.
+const KLINE_OFFSET_MAX_COUNT: usize = 1000;
+
+/// Parse a `kline history --time` reference point (exchange local time).
+///
+/// Accepts `YYYY-MM-DD HH:MM`, `YYYY-MM-DDTHH:MM`, `YYYY-MM-DDTHH:MM:SS` or
+/// `YYYY-MM-DD`. A bare date resolves to the day's last minute when walking
+/// backward and its first minute when walking forward, so the whole day is
+/// on the requested side of the reference.
+fn parse_offset_time(s: &str, forward: bool) -> Result<time::PrimitiveDateTime> {
+    use time::macros::format_description;
+    let s = s.trim();
+    let formats = [
+        format_description!("[year]-[month]-[day] [hour]:[minute]"),
+        format_description!("[year]-[month]-[day]T[hour]:[minute]"),
+        format_description!("[year]-[month]-[day] [hour]:[minute]:[second]"),
+        format_description!("[year]-[month]-[day]T[hour]:[minute]:[second]"),
+    ];
+    for fmt in &formats {
+        if let Ok(dt) = time::PrimitiveDateTime::parse(s, fmt) {
+            return Ok(dt);
+        }
+    }
+    let date = parse_date(s).map_err(|_| {
+        anyhow::anyhow!(
+            "Invalid --time '{s}': expected YYYY-MM-DD HH:MM, YYYY-MM-DDTHH:MM[:SS] or YYYY-MM-DD"
+        )
+    })?;
+    let t = if forward {
+        time::Time::MIDNIGHT
+    } else {
+        time::Time::from_hms(23, 59, 0).expect("valid time")
+    };
+    Ok(date.with_time(t))
+}
+
 pub async fn cmd_kline_history(
     symbol: String,
     period: &str,
     start: Option<String>,
     end: Option<String>,
+    offset: KlineOffset,
     adjust: &str,
     session: &str,
     format: &OutputFormat,
@@ -635,6 +680,17 @@ pub async fn cmd_kline_history(
     let p = parse_period(period)?;
     let adj = parse_adjust(adjust)?;
     let trade_sessions = parse_trade_sessions(session)?;
+    if !(1..=KLINE_OFFSET_MAX_COUNT).contains(&offset.count) {
+        anyhow::bail!(
+            "--count must be between 1 and {KLINE_OFFSET_MAX_COUNT}, got {}",
+            offset.count
+        );
+    }
+    let ref_time = offset
+        .time
+        .as_deref()
+        .map(|t| parse_offset_time(t, offset.forward))
+        .transpose()?;
 
     let api = crate::cli::quote_http::HttpQuoteApi;
     let result = if let (Some(s), Some(e)) = (start, end) {
@@ -650,8 +706,16 @@ pub async fn cmd_kline_history(
         )
         .await
     } else {
-        api.history_candlesticks_by_offset(symbol.clone(), p, adj, false, None, 100, trade_sessions)
-            .await
+        api.history_candlesticks_by_offset(
+            symbol.clone(),
+            p,
+            adj,
+            offset.forward,
+            ref_time,
+            offset.count,
+            trade_sessions,
+        )
+        .await
     };
     let candles = with_symbol_hint(&api, &symbol, result).await?;
 
@@ -4036,6 +4100,37 @@ fn warrant_quote_schema_fields() -> &'static [&'static str] {
 mod tests {
     use super::*;
     use crate::cli::api::MockQuoteApi;
+
+    #[test]
+    fn parse_offset_time_accepts_datetime_forms() {
+        let want = time::macros::datetime!(2024-06-03 10:05);
+        for s in [
+            "2024-06-03 10:05",
+            "2024-06-03T10:05",
+            "2024-06-03T10:05:00",
+        ] {
+            assert_eq!(parse_offset_time(s, false).unwrap(), want, "{s}");
+            assert_eq!(parse_offset_time(s, true).unwrap(), want, "{s}");
+        }
+    }
+
+    #[test]
+    fn parse_offset_time_bare_date_covers_the_whole_day() {
+        assert_eq!(
+            parse_offset_time("2024-06-03", false).unwrap(),
+            time::macros::datetime!(2024-06-03 23:59)
+        );
+        assert_eq!(
+            parse_offset_time("2024-06-03", true).unwrap(),
+            time::macros::datetime!(2024-06-03 00:00)
+        );
+    }
+
+    #[test]
+    fn parse_offset_time_rejects_garbage() {
+        assert!(parse_offset_time("10:05", false).is_err());
+        assert!(parse_offset_time("2024/06/03", false).is_err());
+    }
 
     #[test]
     fn hint_candidates_cover_case_suffix_and_index_spellings() {

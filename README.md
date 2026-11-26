@@ -148,6 +148,7 @@ longbridge trades TSLA.US [--count 50]              # Recent tick-by-tick trades
 longbridge intraday TSLA.US                         # Intraday minute-by-minute price and volume lines for today
 longbridge kline TSLA.US [--period day]             # OHLCV candlestick (K-line) data [--adjust none|forward]
 longbridge kline history TSLA.US --start 2024-01-01 # Historical OHLCV candlestick data within a date range
+longbridge kline history 700.HK --period 1m --time "2024-06-03 10:00" --count 30  # N candles from a reference time [--direction backward|forward]
 longbridge static TSLA.US                            # Static reference info for one or more symbols
 longbridge calc-index TSLA.US --fields pe,pb,eps     # Calculated financial indexes (PE, PB, EPS, turnover rate, etc.)
 longbridge capital TSLA.US                          # Capital distribution snapshot (large/medium/small inflow and outflow)
