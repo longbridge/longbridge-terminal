@@ -19,9 +19,10 @@ use serde_json::Value;
 
 use super::api::retry_rate_limited;
 use super::atm_shape::{
-    bank_cards_output, check_bank_card_id, check_deposit_states, clamp_page_size, date_range,
-    edda_output, page_number, shape_deposits, shape_edda_status, shape_transfers_in,
-    shape_transfers_out, shape_withdrawals, split_list, transfer_in_state, transfer_out_state,
+    bank_cards_output, check_bank_card_id, check_deposit_states, clamp_deposit_page_size,
+    clamp_page_size, date_range, edda_output, page_number, shape_deposits, shape_edda_status,
+    shape_transfers_in, shape_transfers_out, shape_withdrawals, split_list, transfer_in_state,
+    transfer_out_state,
 };
 use super::output::print_table;
 use super::OutputFormat;
@@ -567,7 +568,7 @@ pub async fn cmd_deposits(
     format: &OutputFormat,
     verbose: bool,
 ) -> Result<()> {
-    let size = clamp_page_size(limit);
+    let size = clamp_deposit_page_size(limit);
     let states = states.map(check_deposit_states).transpose()?;
     let (start, end) = date_range(start, end)?;
     let mut opts = GetDepositsOptions::new()

@@ -723,6 +723,13 @@ pub(crate) fn clamp_page_size(size: u32) -> u32 {
     size.clamp(1, 50)
 }
 
+/// Page size sent to the deposit list: between 1 and 20. The deposit list
+/// honours at most 20 and returns a short 10-record page for a larger size,
+/// which would read as the last page (`has_more: false`) and hide records.
+pub(crate) fn clamp_deposit_page_size(size: u32) -> u32 {
+    size.clamp(1, 20)
+}
+
 /// Page number sent upstream: at least 1.
 pub(crate) fn page_number(page: u32) -> i32 {
     i32::try_from(page.max(1)).unwrap_or(i32::MAX)
@@ -1140,6 +1147,19 @@ mod tests {
         assert_eq!(item["state_label"], "credited", "state labelled");
         assert!(out.get("total").is_none(), "unreliable total dropped");
         assert_eq!(out["has_more"], false, "short page: no more");
+    }
+
+    #[test]
+    fn deposit_page_size_is_capped_at_20() {
+        assert_eq!(clamp_deposit_page_size(50), 20, "capped");
+        assert_eq!(clamp_deposit_page_size(15), 15, "kept");
+        assert_eq!(clamp_deposit_page_size(0), 1, "at least one");
+        let items: Vec<Deposit> = decode(json!(vec![json!({"id": 1}); 20]));
+        assert_eq!(
+            shape_deposits(&items, clamp_deposit_page_size(50) as usize)["has_more"],
+            true,
+            "a full capped page may have more"
+        );
     }
 
     #[test]
