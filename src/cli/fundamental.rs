@@ -1894,6 +1894,7 @@ fn merge_finance_calendar_responses(responses: Vec<serde_json::Value>) -> serde_
     use std::collections::{BTreeMap, HashMap};
     let empty = vec![];
     let mut groups: BTreeMap<String, HashMap<String, serde_json::Value>> = BTreeMap::new();
+    let mut counts: HashMap<String, u64> = HashMap::new();
     let first_date = responses
         .first()
         .and_then(|r| r["date"].as_str())
@@ -1904,6 +1905,10 @@ fn merge_finance_calendar_responses(responses: Vec<serde_json::Value>) -> serde_
         for group in resp["list"].as_array().unwrap_or(&empty) {
             let date = group["date"].as_str().unwrap_or("").to_string();
             let infos = group["infos"].as_array().unwrap_or(&empty);
+            if let Some(count) = group["count"].as_u64() {
+                let slot = counts.entry(date.clone()).or_default();
+                *slot = (*slot).max(count);
+            }
             let bucket = groups.entry(date).or_default();
             for info in infos {
                 // Use id as dedup key; fall back to datetime+market for id-less events (e.g. closed)
@@ -1932,11 +1937,36 @@ fn merge_finance_calendar_responses(responses: Vec<serde_json::Value>) -> serde_
                     .parse::<u64>()
                     .unwrap_or(0)
             });
-            serde_json::json!({ "date": date, "infos": infos })
+            let mut group = serde_json::json!({ "date": date, "infos": infos });
+            if let Some(count) = counts.get(&date) {
+                group["count"] = serde_json::json!(count);
+            }
+            group
         })
         .collect();
 
     serde_json::json!({ "date": first_date, "list": list, "next_date": "", "result": {} })
+}
+
+/// Drop date groups after `end` (inclusive bound, `YYYY-MM-DD`).
+///
+/// The server does not treat `date_end` as an upper bound: it can return
+/// groups weeks past it, so the window is enforced here. A `next_date`
+/// cursor past `end` is cleared as well, since there is nothing more to page
+/// within the window.
+fn clamp_finance_calendar_to_end(resp: &mut serde_json::Value, end: &str) {
+    if let Some(list) = resp["list"].as_array_mut() {
+        list.retain(|g| g["date"].as_str().is_none_or(|d| d <= end));
+    }
+    if resp["next_date"].as_str().is_some_and(|d| d > end) {
+        resp["next_date"] = serde_json::json!("");
+    }
+}
+
+/// Whether paging should continue from `next_date`: it must be a real cursor
+/// that does not jump past `end`.
+fn finance_calendar_has_next(next_date: &str, end: Option<&str>) -> bool {
+    !next_date.is_empty() && end.is_none_or(|end| next_date <= end)
 }
 
 /// Fetch finance calendar events (V2). Optionally filter by symbols, source, market, and star level.
@@ -2040,7 +2070,7 @@ pub async fn cmd_finance_calendar(
                 total_events += page_events;
                 let next_date = r["next_date"].as_str().unwrap_or("").to_string();
                 responses.push(r);
-                if next_date.is_empty() || total_events >= count {
+                if !finance_calendar_has_next(&next_date, end_ref) || total_events >= count {
                     break;
                 }
                 current_date = next_date;
@@ -2053,7 +2083,7 @@ pub async fn cmd_finance_calendar(
         }
     };
 
-    let resp = if cids.len() <= 10 {
+    let mut resp = if cids.len() <= 10 {
         fetch_all_pages(cids).await?
     } else {
         let mut responses = Vec::new();
@@ -2063,6 +2093,9 @@ pub async fn cmd_finance_calendar(
         }
         merge_finance_calendar_responses(responses)
     };
+    if let Some(end) = end_ref {
+        clamp_finance_calendar_to_end(&mut resp, end);
+    }
 
     match format {
         OutputFormat::Json => print_json(&resp),
@@ -4441,4 +4474,66 @@ pub async fn cmd_macroeconomic(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finance_calendar_clamps_groups_past_end() {
+        // HK report 2026-12-07..2026-12-09 came back with groups up to 2027-02-05.
+        let mut resp = serde_json::json!({
+            "date": "2026-12-07",
+            "next_date": "2026-12-15",
+            "list": [
+                {"date": "2026-12-07", "count": 1, "infos": [{"id": "1"}]},
+                {"date": "2026-12-09", "count": 1, "infos": [{"id": "2"}]},
+                {"date": "2026-12-11", "count": 7, "infos": [{"id": "3"}]},
+                {"date": "2027-02-05", "count": 11, "infos": [{"id": "4"}]}
+            ]
+        });
+        clamp_finance_calendar_to_end(&mut resp, "2026-12-09");
+        let dates: Vec<&str> = resp["list"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|g| g["date"].as_str().unwrap())
+            .collect();
+        assert_eq!(dates, vec!["2026-12-07", "2026-12-09"]);
+        assert_eq!(resp["next_date"], "");
+    }
+
+    #[test]
+    fn finance_calendar_keeps_next_date_within_end() {
+        let mut resp = serde_json::json!({
+            "next_date": "2026-12-15",
+            "list": [{"date": "2026-12-11", "infos": []}]
+        });
+        clamp_finance_calendar_to_end(&mut resp, "2026-12-31");
+        assert_eq!(resp["next_date"], "2026-12-15");
+        assert_eq!(resp["list"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn finance_calendar_stops_paging_past_end() {
+        assert!(finance_calendar_has_next("2026-12-15", None));
+        assert!(finance_calendar_has_next("2026-12-15", Some("2026-12-15")));
+        assert!(!finance_calendar_has_next("2026-12-15", Some("2026-12-13")));
+        assert!(!finance_calendar_has_next("", Some("2026-12-31")));
+    }
+
+    #[test]
+    fn finance_calendar_merge_keeps_per_date_count() {
+        let page1 = serde_json::json!({
+            "date": "2026-12-07",
+            "list": [{"date": "2026-12-11", "count": 7, "infos": [{"id": "1"}, {"id": "2"}]}]
+        });
+        let page2 = serde_json::json!({
+            "list": [{"date": "2026-12-14", "infos": [{"id": "3"}]}]
+        });
+        let merged = merge_finance_calendar_responses(vec![page1, page2]);
+        assert_eq!(merged["list"][0]["count"], 7);
+        assert!(merged["list"][1].get("count").is_none());
+    }
 }
