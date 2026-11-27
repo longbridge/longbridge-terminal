@@ -819,6 +819,8 @@ pub(crate) fn stock_detail(
                         candles,
                         (chart_width, area.height),
                     );
+                    // The Linux console's 256/512-glyph fonts can't hold braille.
+                    chart.set_braille(std::env::var("TERM").map_or(true, |term| term != "linux"));
                     chart.set_bull_color(bull);
                     chart.set_vol_bull_color(bull);
                     chart.set_bear_color(bear);
