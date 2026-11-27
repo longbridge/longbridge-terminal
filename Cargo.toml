@@ -1,7 +1,7 @@
 [package]
 edition = "2021"
 name = "longbridge-terminal"
-version = "0.32.0"
+version = "0.33.0"
 license = "Apache-2.0"
 
 [[bin]]
@@ -37,7 +37,7 @@ crossterm = { version = "0.29", features = ["event-stream"] }
 dashmap = "6.1"
 dirs = "5.0"
 csv = "1"
-longbridge = "5.5"
+longbridge = "5.6"
 longbridge-ai-acp = { git = "https://github.com/longbridge/longbridge-ai-acp.git", branch = "main" }
 futures = "0.3.28"
 open = "5"
@@ -139,9 +139,3 @@ needless_pass_by_value = "allow"
 pedantic = { level = "deny", priority = -1 }
 too_many_arguments = "allow"
 too_many_lines = "allow"
-
-# The account commands (bank cards, eDDA, stock transfers, rewards, coupons,
-# deposits, withdrawals) need the AssetContext account APIs of
-# longbridge/openapi#638. Remove this patch once SDK 5.6 is published.
-[patch.crates-io]
-longbridge = { git = "https://github.com/longbridge/openapi.git", branch = "feat/account-atm" }

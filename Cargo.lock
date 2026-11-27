@@ -897,7 +897,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "117725a109d387c937a1533ce01b450cbde6b88abceea8473c4d7a85853cda3c"
 dependencies = [
  "lazy_static",
- "windows-sys 0.48.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2605,8 +2605,9 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "longbridge"
-version = "5.5.0"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Faccount-atm#0a92e4af529b718f4119ff7441c09565a0b8c97b"
+version = "5.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65a2fb082deddd8feac74c109c6e2cfe7ff4e2c0e7847e7491f08bba87e29b6a"
 dependencies = [
  "anyhow",
  "bitflags 2.10.0",
@@ -2658,8 +2659,9 @@ dependencies = [
 
 [[package]]
 name = "longbridge-candlesticks"
-version = "5.5.0"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Faccount-atm#0a92e4af529b718f4119ff7441c09565a0b8c97b"
+version = "5.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8fb5cb9da5451cb253927104d54566087ba43d7873277fe4c3624e9aad82c3c9"
 dependencies = [
  "bitflags 2.10.0",
  "num-traits",
@@ -2670,16 +2672,18 @@ dependencies = [
 
 [[package]]
 name = "longbridge-geo"
-version = "5.5.0"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Faccount-atm#0a92e4af529b718f4119ff7441c09565a0b8c97b"
+version = "5.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59717ec01f0d70ecb8b3292ba29f18dd663ed20c03e39590d4149a6c70949106"
 dependencies = [
  "reqwest",
 ]
 
 [[package]]
 name = "longbridge-httpcli"
-version = "5.5.0"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Faccount-atm#0a92e4af529b718f4119ff7441c09565a0b8c97b"
+version = "5.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb2351357e369ce0b35b38eb486747138a28c312f7b5903e9b00a93fafe3b2c6"
 dependencies = [
  "dotenv",
  "eventsource-stream",
@@ -2701,8 +2705,9 @@ dependencies = [
 
 [[package]]
 name = "longbridge-oauth"
-version = "5.5.0"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Faccount-atm#0a92e4af529b718f4119ff7441c09565a0b8c97b"
+version = "5.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d6dc7a92bfdc6345f5bd0767e079070f86b52fc040464be692d0b6378d5ba167"
 dependencies = [
  "dirs 6.0.0",
  "futures-util",
@@ -2718,8 +2723,9 @@ dependencies = [
 
 [[package]]
 name = "longbridge-proto"
-version = "5.5.0"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Faccount-atm#0a92e4af529b718f4119ff7441c09565a0b8c97b"
+version = "5.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5601ddd2a704e20390eb889e1fdd02bf239dfe36b0d73b2a1d6bc1940e559869"
 dependencies = [
  "prost 0.14.3",
  "serde",
@@ -2727,7 +2733,7 @@ dependencies = [
 
 [[package]]
 name = "longbridge-terminal"
-version = "0.32.0"
+version = "0.33.0"
 dependencies = [
  "aes-gcm",
  "ansi-parser",
@@ -2801,8 +2807,9 @@ dependencies = [
 
 [[package]]
 name = "longbridge-wscli"
-version = "5.5.0"
-source = "git+https://github.com/longbridge/openapi.git?branch=feat%2Faccount-atm#0a92e4af529b718f4119ff7441c09565a0b8c97b"
+version = "5.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01429a1d92557a87ca33d583388fb682685c402c49467cc65f7ff5d697181b85"
 dependencies = [
  "byteorder",
  "flate2",
@@ -6056,7 +6063,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
