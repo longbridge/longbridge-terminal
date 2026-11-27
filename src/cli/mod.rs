@@ -338,6 +338,7 @@ pub enum Commands {
     /// Example: longbridge kline TSLA.US --period 1h --adjust forward
     /// Example: longbridge kline TSLA.US --period 1m --session all
     /// Example: longbridge kline history TSLA.US --start 2024-01-01 --end 2024-12-31
+    /// Example: longbridge kline history 700.HK --period 1m --time "2024-06-03 10:00" --count 30
     Kline {
         /// Symbol in <CODE>.<MARKET> format. Omit when using a subcommand.
         #[arg(value_parser = parse_symbol)]
@@ -4282,13 +4283,18 @@ pub enum WarrantCmd {
 
 #[derive(Subcommand)]
 pub enum KlineCmd {
-    /// Historical OHLCV candlestick data within a date range
+    /// Historical OHLCV candlestick data, by date range or by offset from a reference time
     ///
-    /// Both --start and --end must be provided together; if either is omitted the
-    /// most recent 100 candles are returned (offset-based, ignores the other flag).
+    /// Date range: --start and --end must be provided together.
+    /// Offset: --time sets the reference point (exchange local time), --direction picks
+    /// which way to walk from it, and --count how many candles to return. The candle at
+    /// the reference time is included. Without --time the offset starts from the latest candle.
+    /// If neither a full date range nor --time is given, the most recent --count candles are returned.
     /// Use --session all to include pre/post-market candles (adds a Session column).
     /// Example: longbridge kline history TSLA.US --start 2024-01-01 --end 2024-12-31
     /// Example: longbridge kline history TSLA.US --period 1m --session all --start 2024-01-01 --end 2024-01-02
+    /// Example: longbridge kline history 700.HK --period 1m --time "2024-06-03 10:00" --count 30
+    /// Example: longbridge kline history 700.HK --period 5m --time "2024-06-03 09:30" --direction forward --count 20
     History {
         /// Symbol in <CODE>.<MARKET> format
         #[arg(value_parser = parse_symbol)]
@@ -4302,6 +4308,17 @@ pub enum KlineCmd {
         /// End date (YYYY-MM-DD). Must be used together with --start.
         #[arg(long)]
         end: Option<String>,
+        /// Reference time in exchange local time: `YYYY-MM-DD HH:MM`, `YYYY-MM-DDTHH:MM[:SS]`
+        /// or `YYYY-MM-DD` (the day's last minute for backward, its first for forward).
+        /// Cannot be combined with --start/--end.
+        #[arg(long, conflicts_with_all = ["start", "end"])]
+        time: Option<String>,
+        /// Offset direction from the reference time: `backward` (default, older candles) | `forward` (newer)
+        #[arg(long, default_value = "backward", value_parser = ["backward", "forward"], conflicts_with_all = ["start", "end"])]
+        direction: String,
+        /// Number of candles to return in offset mode (1-1000, default: 100)
+        #[arg(long, alias = "limit", default_value = "100", conflicts_with_all = ["start", "end"])]
+        count: usize,
         /// Price adjustment: `none` (default) | `forward`
         #[arg(long, default_value = "none")]
         adjust: String,
@@ -4517,11 +4534,19 @@ pub async fn dispatch(cmd: Commands, format: &OutputFormat, verbose: bool) -> Re
                 period: h_period,
                 start,
                 end,
+                time,
+                direction,
+                count: h_count,
                 adjust: h_adjust,
                 session: h_session,
             }) => {
+                let offset = quote::KlineOffset {
+                    time,
+                    forward: direction == "forward",
+                    count: h_count,
+                };
                 quote::cmd_kline_history(
-                    h_symbol, &h_period, start, end, &h_adjust, &h_session, format,
+                    h_symbol, &h_period, start, end, offset, &h_adjust, &h_session, format,
                 )
                 .await
             }
@@ -5909,6 +5934,97 @@ mod tests {
         } else {
             panic!("expected Kline History command");
         }
+    }
+
+    #[test]
+    fn test_kline_history_offset() {
+        let cli = parse(&[
+            "longbridge",
+            "kline",
+            "history",
+            "700.HK",
+            "--period",
+            "1m",
+            "--time",
+            "2024-06-03 10:00",
+            "--direction",
+            "forward",
+            "--count",
+            "30",
+        ])
+        .unwrap();
+        if let Some(Commands::Kline {
+            cmd:
+                Some(KlineCmd::History {
+                    time,
+                    direction,
+                    count,
+                    start,
+                    ..
+                }),
+            ..
+        }) = cli.command
+        {
+            assert_eq!(time, Some("2024-06-03 10:00".to_string()));
+            assert_eq!(direction, "forward");
+            assert_eq!(count, 30);
+            assert_eq!(start, None);
+        } else {
+            panic!("expected Kline History command");
+        }
+    }
+
+    #[test]
+    fn test_kline_history_offset_defaults() {
+        let cli = parse(&["longbridge", "kline", "history", "700.HK"]).unwrap();
+        if let Some(Commands::Kline {
+            cmd:
+                Some(KlineCmd::History {
+                    time,
+                    direction,
+                    count,
+                    ..
+                }),
+            ..
+        }) = cli.command
+        {
+            assert_eq!(time, None);
+            assert_eq!(direction, "backward");
+            assert_eq!(count, 100);
+        } else {
+            panic!("expected Kline History command");
+        }
+    }
+
+    #[test]
+    fn test_kline_history_offset_conflicts_with_date_range() {
+        for extra in [
+            &["--time", "2024-06-03 10:00"][..],
+            &["--count", "10"][..],
+            &["--direction", "forward"][..],
+        ] {
+            let mut args = vec![
+                "longbridge",
+                "kline",
+                "history",
+                "700.HK",
+                "--start",
+                "2024-06-01",
+                "--end",
+                "2024-06-03",
+            ];
+            args.extend_from_slice(extra);
+            assert!(parse(&args).is_err(), "{extra:?} should conflict");
+        }
+        assert!(parse(&[
+            "longbridge",
+            "kline",
+            "history",
+            "700.HK",
+            "--direction",
+            "up",
+        ])
+        .is_err());
     }
 
     #[test]
