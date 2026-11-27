@@ -139,3 +139,9 @@ needless_pass_by_value = "allow"
 pedantic = { level = "deny", priority = -1 }
 too_many_arguments = "allow"
 too_many_lines = "allow"
+
+# The account commands (bank cards, eDDA, stock transfers, rewards, coupons,
+# deposits, withdrawals) need the AssetContext account APIs of
+# longbridge/openapi#638. Remove this patch once SDK 5.6 is published.
+[patch.crates-io]
+longbridge = { git = "https://github.com/longbridge/openapi.git", branch = "feat/account-atm" }

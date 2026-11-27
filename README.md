@@ -237,9 +237,21 @@ longbridge macrodata US00175 [--start 2024-01-01] [--end 2024-12-31]  # Historic
 ### Deposits & Withdrawals
 
 ```bash
-longbridge bank-cards                                               # List linked bank cards
-longbridge withdrawals [--page 1] [--limit 20]                      # Withdrawal history
-longbridge deposits [--page 1] [--limit 20] [--states 0,1,2] [--currencies HKD,USD]  # Deposit history
+longbridge bank-cards                                               # Linked bank cards: verification, binding, authorizations (account last 4 digits)
+longbridge edda list                                                # eDDA authorizations across linked bank cards
+longbridge edda status --card-id 434810 --currency HKD              # eDDA applications filed for one card and currency
+longbridge withdrawals [--page 1] [--limit 20] [--start 2026-01-01] [--end 2026-03-31]  # Withdrawal history
+longbridge deposits [--page 1] [--limit 20] [--states 0,2] [--currencies HKD,USD] [--start 2026-01-01] [--end 2026-03-31]  # Deposit history (states: 0 processing, 1 credited, 2 failed, 3 cancelled, 4 invalidated, 5 rejected)
+longbridge stock-transfer in [--market HK] [--state 0] [--start 2026-01-01] [--end 2026-03-31]  # Stock transfer-in applications
+longbridge stock-transfer out [--market HK] [--state 0] [--start 2026-01-01] [--end 2026-03-31] # Stock transfer-out applications
+```
+
+### Rewards & Coupons
+
+```bash
+longbridge reward list [--kind cash|gift|coupon|task] [--start 2026-08-01] [--end 2026-08-31]  # Activity reward records
+longbridge coupon list [--status valid|expired] [--card-type commission] [--with-terms]  # Coupon cards
+longbridge coupon orders --card-id <32-hex coupon id>               # Orders a coupon card was applied to
 ```
 
 ### Search
