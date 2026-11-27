@@ -3562,6 +3562,7 @@ mod tests {
                     frozen_cash: dec!(0),
                     settling_cash: dec!(10),
                     currency: "HKD".to_string(),
+                    redemption_cash: dec!(0),
                 }],
                 net_assets: dec!(2000),
                 init_margin: dec!(0),
